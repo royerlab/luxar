@@ -525,6 +525,8 @@ describe('GPUBufferPool', () => {
     // throw. The tests inject the throw by stubbing `evictUnused` (the
     // release path calls it after pushing the buffer into its free
     // bucket, so the re-claim must find and restore it).
+    // Contrast gpu-pool-byte-budget.test.ts's throwing post-grow sweep:
+    // that throw occurs after this re-claim window and preserves the replacement.
 
     /** Stub evictUnused to throw, assert fn propagates it, restore. */
     const withThrowingEvict = (fn: () => void): void => {

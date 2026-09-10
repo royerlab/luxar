@@ -99,12 +99,12 @@ neither additive_lod= symptom survives, and every branch (including the flat
 fall-through) now agrees with Points/Lines on ordering against
 ``extend_to_all`` too — see the ``TestMeshFlatPathNodeAttrsGateOutranksExtendToAll``
 and ``TestMeshSubstitutiveNodeAttrsGateOutranksExtendToAll`` classes below.
-GSplats' only structural door on ``add_gsplats`` is ``partition=`` (its
-``lod_group=``/``additive_lod=`` doors live on the separate
-``add_gsplats_from_data`` adder — out of scope for THIS section, but see the
+The GSplats leaf implementation's only structural door is ``partition=``;
+the public ``add_gsplats`` method resolves ``substitutive_lod=`` and
+``additive_lod=`` through ``add_gsplats_from_data`` before reaching it. See the
 dedicated ``TestGSplatsFromDataNodeAttrsGate`` section further down this same
-file, which closes the ``lod_group=`` half of the same stranding class);
-#1534 hoists the same check above it.
+file for the LOD-wrapper half of the same stranding class. #1534 hoists the
+same check above the leaf split.
 
 That gate's exclusion list is ``labels``/``image_labels``/``partition``, not
 just the first two. ``partition`` sits in the identical position — a named
@@ -3834,16 +3834,15 @@ class TestTheGsplatsAdditiveLadderStillHasNoLabelsChannel:
     """Not a #1471 door: this path already refused, and for a different reason."""
 
     @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
-    def test_the_additive_ladder_keeps_its_own_pre_existing_answer(
+    def test_the_additive_ladder_reports_its_specific_channel_refusal(
         self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
     ) -> None:
         """``additive_lod=`` on gsplats has NO labels channel — and still says so.
 
         ``write_gsplat_leaf_subtree`` documents labels as a leaf-only scene
-        feature that stays on ``write_gsplats``, so the ladder path answers with
-        the unknown-attr refusal (the ladder-union label support of
-        ``validate_ladder_labels`` is Points/Lines only). #1471 did not touch that
-        path; this pins that it did not drift into the new wording either.
+        feature that stays on ``write_gsplats``. The pipeline therefore reports
+        that specific limitation instead of misclassifying a declared public
+        parameter as an unknown node attribute.
         """
         compiler, scene, _ = open_scene(tmp_path, f"add_{channel}.luxar.zarr")
         data = _multi_substitutive_3d_data().at_substitutive(0)
@@ -3854,7 +3853,7 @@ class TestTheGsplatsAdditiveLadderStillHasNoLabelsChannel:
             )
         )
 
-        assert f"Unknown node attribute '{channel}'" in str(split)
+        assert f"{channel} is not supported on a gsplats additive ladder" in str(split)
         assert "is not supported on a multi-level substitutive" not in str(split)
         assert "g" not in compiler.store
 

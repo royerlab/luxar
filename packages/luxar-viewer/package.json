@@ -32,7 +32,7 @@
   ],
   "type": "module",
   "engines": {
-    "node": ">=20.19.0",
+    "node": "^20.19.0 || >=22.12.0",
     "pnpm": ">=10.6.0"
   },
   "packageManager": "pnpm@10.34.5",
@@ -89,6 +89,7 @@
     "test:e2e:smoke": "LUXAR_E2E_NO_FIXTURES=1 playwright test viewer-initialization.spec.ts url-parameters.spec.ts dataset-switching.spec.ts controls-interaction.spec.ts keyboard-input-system.spec.ts --retries 2 --timeout 60000",
     "test:e2e:smoke:strict": "LUXAR_E2E_NO_FIXTURES=1 LUXAR_E2E_STRICT_CONSOLE=1 playwright test viewer-initialization.spec.ts url-parameters.spec.ts dataset-switching.spec.ts controls-interaction.spec.ts keyboard-input-system.spec.ts --retries 2 --timeout 60000",
     "test:e2e:browsers": "LUXAR_E2E_BROWSERS=all playwright test --project=chromium --project=firefox --project=webkit basic-rendering.spec.ts viewer-initialization.spec.ts geometry-types.spec.ts --ignore-snapshots --retries 0 --timeout 60000",
+    "test:e2e:mobile": "playwright test --config playwright.mobile.config.ts",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",
@@ -101,7 +102,8 @@
     "typedoc:check-warnings": "node scripts/check-typedoc-warnings.mjs",
     "test:typedoc-warnings": "node --test scripts/check-typedoc-warnings-tests.mjs",
     "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc.tsbuildinfo && tsc --project tsconfig.tooling.json --incremental --tsBuildInfoFile node_modules/.cache/tsc-tooling.tsbuildinfo",
-    "lint": "eslint . --cache --cache-location node_modules/.cache/.eslintcache --pass-on-unpruned-suppressions",
+    "lint": "eslint src --ignore-pattern \"src/tests/**\" --cache --cache-location node_modules/.cache/.eslintcache-production && eslint src/tests --cache --cache-location node_modules/.cache/.eslintcache-tests && eslint . --ignore-pattern \"src/**\" --cache --cache-location node_modules/.cache/.eslintcache-tooling",
+    "lint:prune": "eslint src --ignore-pattern \"src/tests/**\" --cache --cache-location node_modules/.cache/.eslintcache-production --prune-suppressions && eslint src/tests --cache --cache-location node_modules/.cache/.eslintcache-tests --prune-suppressions && eslint . --ignore-pattern \"src/**\" --cache --cache-location node_modules/.cache/.eslintcache-tooling --prune-suppressions",
     "check:layers": "depcruise src --config .dependency-cruiser.cjs",
     "check:overrides": "node scripts/check-overrides.mjs",
     "check:node-types": "node scripts/check-node-types-version.mjs",
@@ -112,7 +114,7 @@
     "check": "pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm test --run",
     "check:static": "pnpm run check:overrides && pnpm run check:node-types && pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci",
     "check:coverage-slack": "node scripts/check-coverage-slack.mjs",
-    "check:ci": "pnpm run check:static && pnpm run test:coverage && pnpm run check:coverage-slack",
+    "check:ci": "node scripts/run-ci-checks.mjs",
     "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
   },
   "dependencies": {

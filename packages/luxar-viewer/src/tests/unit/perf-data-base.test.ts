@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { resolvePerfDataBase, resolvePerfDataPort } from '../e2e/perf-data-base';
+import {
+  resolvePerfDataBase,
+  resolvePerfDataPort,
+  resolvePerfSlowDataBase,
+  resolvePerfSlowDataPort,
+} from '../e2e/perf-data-base';
 
 describe('resolvePerfDataPort', () => {
   it('defaults to 9000 when LUXAR_PERF_DATA_PORT is unset', () => {
@@ -54,6 +59,26 @@ describe('resolvePerfDataBase', () => {
     // to `||` would instead fall back to the port default and pass silently.
     expect(resolvePerfDataBase({ LUXAR_PERF_DATA_BASE: '', LUXAR_PERF_DATA_PORT: '9100' })).toBe(
       ''
+    );
+  });
+});
+
+describe('resolvePerfSlowDataPort', () => {
+  it('defaults next to the primary data server', () => {
+    expect(resolvePerfSlowDataPort({})).toBe(9001);
+    expect(resolvePerfSlowDataPort({ LUXAR_PERF_DATA_PORT: '9100' })).toBe(9101);
+  });
+
+  it('honours an explicit port override', () => {
+    expect(resolvePerfSlowDataPort({ LUXAR_PERF_SLOW_DATA_PORT: '9200' })).toBe(9200);
+  });
+});
+
+describe('resolvePerfSlowDataBase', () => {
+  it('tracks the isolated server port and honours an explicit origin', () => {
+    expect(resolvePerfSlowDataBase({ LUXAR_PERF_DATA_PORT: '9100' })).toBe('http://localhost:9101');
+    expect(resolvePerfSlowDataBase({ LUXAR_PERF_SLOW_DATA_BASE: 'https://slow.example' })).toBe(
+      'https://slow.example'
     );
   });
 });

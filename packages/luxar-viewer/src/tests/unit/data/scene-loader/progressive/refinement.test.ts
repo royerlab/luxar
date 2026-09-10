@@ -308,6 +308,29 @@ describe('RefinementFailureTracker', () => {
     expect(t.recordFailure('/p')).toBe(true);
   });
 
+  it('a success clears an exhausted path', () => {
+    const t = new RefinementFailureTracker(2);
+    t.recordFailure('/p');
+    t.recordFailure('/p');
+    expect(t.isExhausted('/p')).toBe(true);
+
+    t.recordSuccess('/p');
+
+    expect(t.isExhausted('/p')).toBe(false);
+    expect(t.recordFailure('/p')).toBe(false);
+  });
+
+  it('reset re-opens every exhausted path', () => {
+    const t = new RefinementFailureTracker(1);
+    t.recordFailure('/a');
+    t.recordFailure('/b');
+
+    expect(t.reset()).toBe(true);
+    expect(t.isExhausted('/a')).toBe(false);
+    expect(t.isExhausted('/b')).toBe(false);
+    expect(t.reset()).toBe(false);
+  });
+
   it('tracks paths independently', () => {
     const t = new RefinementFailureTracker(2);
     t.recordFailure('/a');

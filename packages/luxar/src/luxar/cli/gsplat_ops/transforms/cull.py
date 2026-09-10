@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional
 import typer
 from arbol import aprint, asection
 
+from ..._traceback import exit_with_error
 from ..encoding import _resolve_encoding_mode
 
 if TYPE_CHECKING:
@@ -176,8 +177,4 @@ def run_cull_dataset(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {e}", e)

@@ -48,15 +48,17 @@ export interface DataLoadingPerformanceConfig {
    * eviction). When usage exceeds it, the largest/coldest buffers are
    * disposed until back under budget.
    *
-   * - `null` (default): **auto-size** from `navigator.deviceMemory` with a
-   *   2 GB ceiling and a 512 MB fallback only when no signal exists. An
-   *   explicit `cacheBudgetMB` adds a peer signal at one third of the cache pool;
-   *   without `deviceMemory`, it replaces the fallback in either direction.
+   * - `null` (default): **auto-size** from the lower of 25% of
+   *   `navigator.deviceMemory` and the heap model's non-cache remainder, with a
+   *   2 GB ceiling and a 512 MB fallback only when no signal exists. An explicit
+   *   `cacheBudgetMB` replaces the heap-derived remainder in either direction,
+   *   while mobile keeps an independent 128 MiB peer minimum.
    * - `0`: disable byte-budget eviction entirely (count-only / unbounded
    *   resident geometry).
    * - a positive number: pin the budget to exactly that many bytes.
    *
-   * The `?gpuBudgetMB=` URL param overrides this at runtime.
+   * The standalone `?gpuBudgetMB=` URL param and the embedded app/layer
+   * `gpuPoolMaxBytes` options override this at startup.
    */
   gpuPoolMaxBytes: number | null;
 

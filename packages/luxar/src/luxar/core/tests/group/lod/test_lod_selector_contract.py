@@ -598,6 +598,13 @@ _EXEMPT_LOD_GROUP_CALLERS = {
         "hand-built demo ladder; thresholds are always derived and its anchor "
         "depends on the realized BSP part count"
     ),
+    # Same shape for the protein-universe backdrop: 64 BSP tiles, each a
+    # two-level POINTS ladder whose thresholds always come from
+    # ``partitioned_coverage_fractions`` (no explicit-threshold branch exists).
+    "demos/demo_esm_protein_universe.py": (
+        "hand-built demo ladder (per-tile two-level points ladder); thresholds "
+        "are always derived from partitioned_coverage_fractions"
+    ),
 }
 
 #: The full expected set of production ``add_lod_group(...)`` call sites.

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import builtins
 import os
 import shutil
+import subprocess
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -254,6 +258,263 @@ class TestEnvCapture:
             env = capture_environment()
             assert env.env_vars.get("CUDA_HOME") == "/usr/local/cuda"
             assert env.env_vars.get("TORCH_HOME") == "/tmp/torch"
+
+    @pytest.mark.parametrize(
+        ("probe_name", "args", "expected"),
+        [
+            ("get_slurm_scheduler_info", (), "unknown"),
+            ("is_slurm_mps_available", (), False),
+            ("_partition_has_gpu", ("gpu",), False),
+            ("detect_preemptible_gpu_partition", (), None),
+            ("validate_partition_access", ("gpu",), False),
+        ],
+    )
+    def test_broken_slurm_probe_warns_once_and_keeps_fallback(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        probe_name: str,
+        args: tuple[str, ...],
+        expected: object,
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture.subprocess,
+            "run",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+        probe = getattr(env_capture, probe_name)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            first = probe(*args)
+            second = probe(*args)
+
+        if probe_name == "get_slurm_scheduler_info":
+            assert first["scheduler_type"] == expected
+            assert second["scheduler_type"] == expected
+        else:
+            assert first == expected
+            assert second == expected
+        assert len(caught) == 1
+        assert probe_name in str(caught[0].message)
+        assert "RuntimeError: boom" in str(caught[0].message)
+
+    @pytest.mark.parametrize(
+        ("probe_name", "args", "expected"),
+        [
+            ("get_slurm_scheduler_info", (), "unknown"),
+            ("is_slurm_mps_available", (), False),
+            ("_partition_has_gpu", ("gpu",), False),
+            ("detect_preemptible_gpu_partition", (), None),
+            ("validate_partition_access", ("gpu",), False),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "probe_error",
+        [
+            FileNotFoundError("missing Slurm command"),
+            subprocess.TimeoutExpired("Slurm command", 5),
+        ],
+        ids=["missing", "timeout"],
+    )
+    def test_unavailable_slurm_probe_stays_quiet(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        probe_name: str,
+        args: tuple[str, ...],
+        expected: object,
+        probe_error: Exception,
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture.subprocess,
+            "run",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(probe_error),
+        )
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+        probe = getattr(env_capture, probe_name)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = probe(*args)
+
+        if probe_name == "get_slurm_scheduler_info":
+            assert result["scheduler_type"] == expected
+        else:
+            assert result == expected
+        assert not caught
+
+    def test_preemptible_partition_warns_when_sinfo_probe_breaks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        partition_listing = SimpleNamespace(
+            returncode=0,
+            stdout="PartitionName=preempt-gpu State=UP\n",
+        )
+
+        def run(command: list[str], **_kwargs: object) -> object:
+            if command[0] == "scontrol":
+                return partition_listing
+            raise RuntimeError("sinfo broke")
+
+        monkeypatch.setattr(env_capture.subprocess, "run", run)
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(
+            RuntimeWarning, match="_partition_has_gpu.*RuntimeError: sinfo broke"
+        ) as caught:
+            assert env_capture.detect_preemptible_gpu_partition() is None
+        assert Path(caught[0].filename) == Path(__file__)
+
+    def test_malformed_cuda_build_info_warns_and_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        info_path = tmp_path / "cuda_build_info.json"
+        info_path.write_text("{not json")
+        monkeypatch.setattr(env_capture, "_cuda_build_info_path", lambda: info_path)
+        monkeypatch.setattr(env_capture, "_detect_loaded_modules", lambda: [])
+        monkeypatch.setattr(env_capture, "version", lambda _name: "test")
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(
+            RuntimeWarning, match="read_cuda_build_info.*JSONDecodeError"
+        ) as caught:
+            env = env_capture.capture_environment()
+
+        assert env.loaded_modules == []
+        assert Path(caught[0].filename) == Path(__file__)
+
+    def test_missing_cuda_package_stays_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(env_capture, "find_spec", lambda _name: None)
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert env_capture._cuda_build_info_path() is None
+
+        assert not caught
+
+    def test_cuda_spec_import_failure_stays_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture,
+            "find_spec",
+            lambda _name: (_ for _ in ()).throw(ImportError("optional dependency")),
+        )
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert env_capture._cuda_build_info_path() is None
+
+        assert not caught
+
+    def test_cuda_metadata_lookup_does_not_import_backend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        real_import = builtins.__import__
+
+        def import_module(
+            name: str,
+            globals: object = None,
+            locals: object = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
+            if name == "luxar.gsplats.models.gsplats.cuda":
+                raise AssertionError("metadata lookup imported the CUDA backend")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", import_module)
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            info_path = env_capture._cuda_build_info_path()
+
+        assert info_path is not None
+        assert info_path.name == "cuda_build_info.json"
+        assert not caught
+
+    def test_broken_cuda_package_warns_at_external_caller(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture,
+            "find_spec",
+            lambda _name: (_ for _ in ()).throw(RuntimeError("CUDA package broke")),
+        )
+        monkeypatch.setattr(env_capture, "_detect_loaded_modules", lambda: [])
+        monkeypatch.setattr(env_capture, "version", lambda _name: "test")
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(
+            RuntimeWarning,
+            match="_cuda_build_info_path.*RuntimeError: CUDA package broke",
+        ) as caught:
+            env = env_capture.capture_environment()
+
+        assert env.loaded_modules == []
+        assert Path(caught[0].filename) == Path(__file__)
+
+    def test_version_probe_failure_warns_and_uses_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(env_capture, "_detect_loaded_modules", lambda: [])
+        monkeypatch.setattr(env_capture, "read_cuda_build_info", lambda: {})
+        monkeypatch.setattr(
+            env_capture,
+            "version",
+            lambda _name: (_ for _ in ()).throw(RuntimeError("metadata broke")),
+        )
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(
+            RuntimeWarning, match="_luxar_version.*RuntimeError"
+        ) as caught:
+            env = env_capture.capture_environment()
+
+        assert env.luxar_version == "unknown"
+        assert Path(caught[0].filename) == Path(__file__)
+
+    def test_missing_version_metadata_stays_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture,
+            "version",
+            lambda _name: (_ for _ in ()).throw(
+                env_capture.PackageNotFoundError("luxar")
+            ),
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert env_capture._luxar_version() == "unknown"
+
+        assert not caught
 
     def test_generate_preamble_conda(self) -> None:
         from luxar.gsplats.batch.env_capture import CapturedEnv, generate_env_preamble

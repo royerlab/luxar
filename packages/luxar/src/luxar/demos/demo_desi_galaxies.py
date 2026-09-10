@@ -92,6 +92,7 @@ from luxar import (
     CameraConfig,
     Dimension,
     Dimensions,
+    LuxarScene,
     LuxarZarrCompiler,
     ViewerConfig,
 )
@@ -102,6 +103,7 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    stamp_input_digests,
     substitutive_lod_or_flat,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
@@ -799,75 +801,29 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
 # =============================================================================
 
 
-def _finest_level_cloud(root: Any, layer_name: str) -> tuple[np.ndarray, np.ndarray]:
-    """Decode one layer's finest-level positions and per-point RGB.
-
-    Walks whatever structure the level happens to have — a bare leaf, an
-    additive ladder, or a partition of ladders — and concatenates every
-    sub-node, so this reads both the partitioned scene the demo authors and the
-    unpartitioned one the record carries.
-
-    NOT :func:`dequantize_positions`. That inverts this demo's own ``.npz``
-    scheme (one global ``pos_offset``/``pos_scale``); a COMPILED scene stores
-    positions as uint16 against per-chunk ``chunk_bounds``, which only
-    ``luxar.encoding``'s decoder knows how to invert. Reaching for the local
-    helper here yields plausible-looking garbage coordinates.
-    """
-    from luxar.encoding.decoder import ArrayDecoder
-
-    decoder = ArrayDecoder()
-    layer = root[layer_name]
-
-    positions: list[np.ndarray] = []
-    colors: list[np.ndarray] = []
-    for node in _finest_nodes(layer):
-        sub_names = _numbered_children(node, "additive_")
-        # An additive ladder stores DISJOINT increments, so concatenating every
-        # rung reconstructs the level exactly once — not a prefix, and not a
-        # duplicate of the whole.
-        sources = [node[name] for name in sub_names] or [node]
-        for source in sources:
-            if "positions" not in source:
-                continue
-            positions.append(decoder.decode(source["positions"], root))
-            colors.append(decoder.decode(source["colors"], root))
-
-    if not positions:
-        raise ValueError(f"{layer_name!r} carries no decodable positions")
-    return np.concatenate(positions), np.concatenate(colors)
-
-
-def _finest_level_colors(root: Any, layer_name: str) -> tuple[int, np.ndarray]:
-    """Decode RGB without materialising a second copy of shared positions."""
-    from luxar.encoding.decoder import ArrayDecoder
-
-    decoder = ArrayDecoder()
-    nodes = _finest_nodes(root[layer_name])
-    colors: list[np.ndarray] = []
-    for node in nodes:
-        sub_names = _numbered_children(node, "additive_")
-        sources = [node[name] for name in sub_names] or [node]
-        colors.extend(
-            decoder.decode(source["colors"], root)
-            for source in sources
-            if "colors" in source
-        )
-    if not colors:
-        raise ValueError(f"{layer_name!r} carries no decodable colors")
-    return sum(int(node.attrs.get("n_points", 0)) for node in nodes), np.concatenate(
-        colors
-    )
-
-
 def read_scene_clouds(scene_path: Path) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Both layers' finest-level clouds, decoded out of a compiled scene."""
-    import zarr
+    scene = LuxarScene.load(scene_path)
+    clouds = {}
+    for layer_name in ("By tracer type", "By redshift"):
+        data = scene.get_points(layer_name, flatten=True)
+        if data.colors is None:
+            raise ValueError(f"{layer_name!r} carries no decodable colors")
+        clouds[layer_name] = (data.positions, data.colors)
+    return clouds
 
-    root = zarr.open(str(scene_path), mode="r")
-    return {
-        layer_name: _finest_level_cloud(root, layer_name)
-        for layer_name in ("By tracer type", "By redshift")
-    }
+
+def _read_restructure_arrays(
+    scene_path: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    scene = LuxarScene.load(scene_path)
+    tracer = scene.get_points("By tracer type", flatten=True)
+    redshift_rgb = scene.get_point_array("By redshift", "colors", flatten=True)
+    if tracer.colors is None:
+        raise ValueError("'By tracer type' carries no decodable colors")
+    if redshift_rgb is None:
+        raise ValueError("'By redshift' carries no decodable colors")
+    return tracer.positions, tracer.colors, redshift_rgb
 
 
 def restructure_scene(scene_path: Path) -> Path:
@@ -898,9 +854,9 @@ def restructure_scene(scene_path: Path) -> Path:
     to <=0.16 Mpc, RMS <=0.05 Mpc, on a cloud spanning ~14,000 Mpc (1.2e-5
     relative).
 
-    Stopgap: reads the scene through ``luxar.encoding``'s decoder directly
-    because there is no general "extract a node's data from a compiled scene"
-    API yet. Rewrite onto that surface when it lands -- see #2482.
+    Readback goes through :class:`luxar.LuxarScene`, including its
+    structure-aware flattening path, rather than reaching into the encoding
+    decoder directly.
     """
     import shutil
 
@@ -921,27 +877,17 @@ def restructure_scene(scene_path: Path) -> Path:
         )
         return scene_path
 
-    tracer_positions, tracer_rgb = _finest_level_cloud(root, "By tracer type")
-    redshift_count, redshift_rgb = _finest_level_colors(root, "By redshift")
+    tracer_positions, tracer_rgb, redshift_rgb = _read_restructure_arrays(scene_path)
+    redshift_count = redshift_rgb.shape[0]
 
     # The author shares ONE positions array between the layers (deduplicated by
-    # the encoder's array_ref). The stored point counts let us verify that
+    # the encoder's array_ref). The redshift colour-row count lets us verify that
     # contract without decoding another ~117 MB copy of those shared positions.
     if tracer_positions.shape[0] != redshift_count:
         raise ValueError(
             "the two layers carry different point counts "
             f"({tracer_positions.shape[0]:,} vs {redshift_count:,}); "
             "this scene is not the two-layer shape restructure_scene expects"
-        )
-    if tracer_rgb.shape[0] != tracer_positions.shape[0]:
-        raise ValueError(
-            f"'By tracer type' carries {tracer_positions.shape[0]:,} points but "
-            f"{tracer_rgb.shape[0]:,} colors"
-        )
-    if redshift_rgb.shape[0] != redshift_count:
-        raise ValueError(
-            f"'By redshift' carries {redshift_count:,} points but "
-            f"{redshift_rgb.shape[0]:,} colors"
         )
 
     aprint(
@@ -1098,6 +1044,7 @@ def create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True, camera=camera),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "DESI DR1 — The Cosmic Web"
 
             # Layer 1: colored by tracer type (categorical populations).

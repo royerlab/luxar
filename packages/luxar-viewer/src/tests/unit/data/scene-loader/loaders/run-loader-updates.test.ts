@@ -14,13 +14,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
-  filterPartitionVisibleLoaders,
-  isPartitionPathVisible,
+  resolveLoadEligibleLoaders,
+  isLoaderPathEligible,
+  isUnderAny,
   runLoaderUpdates,
 } from '../../../../../data/scene-loader/loaders/run-loader-updates';
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
+import type { ChunkSource } from '../../../../../cache/chunk-source';
+import { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching-store';
 import { log } from '../../../../../utils/log';
 
 function makeCtx() {
@@ -97,6 +100,37 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it('records an exhausted chunk fetch as Network without staging a fresh commit', async () => {
+    const source: ChunkSource = {
+      identity: 'always-fails',
+      describe: 'always-fails',
+      get: vi.fn().mockResolvedValue({
+        kind: 'error',
+        cause: new Error('fetch exhausted retries for positions/0'),
+      }),
+      probeIdentityToken: vi.fn().mockResolvedValue(null),
+      dispose: vi.fn(),
+    };
+    const store = new MultiLevelCachingStore(source, { noCache: true });
+    const ctx = makeCtx();
+    const freshCommit = vi.fn();
+
+    const results = await runLoaderUpdates(
+      new Map<string, object>([['/scene/points', {}]]),
+      'Points',
+      async () => {
+        const bytes = await store.get('positions/0');
+        freshCommit(bytes ?? new Uint8Array(0));
+        return { count: 0 };
+      },
+      ctx
+    );
+
+    expect(results[0].staged).toBeNull();
+    expect(freshCommit).not.toHaveBeenCalled();
+    expect(ctx.failedLoaders.get('/scene/points')?.kind).toBe('Network');
   });
 
   it('keeps the original failure path when rollback itself throws', async () => {
@@ -215,6 +249,85 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/culled');
   });
 
+  it('isUnderAny matches exact paths and descendants, not sibling prefixes', () => {
+    const targets = new Set(['/a', '/tiled/part_1']);
+    expect(isUnderAny('/a', targets)).toBe(true);
+    expect(isUnderAny('/a/b', targets)).toBe(true);
+    expect(isUnderAny('/tiled/part_1/level_0', targets)).toBe(true);
+    // `/a/bc` shares a string prefix with `/a/b`-style targets but is NOT under `/a/b`.
+    expect(isUnderAny('/ab', targets)).toBe(false);
+    expect(isUnderAny('/tiled/part_10', targets)).toBe(false);
+    expect(isUnderAny('/tiled', targets)).toBe(false);
+  });
+
+  it('skips non-target loaders during a targeted resync without forgetting their prefetch baseline', async () => {
+    const ctx = makeCtx();
+    const loaders = new Map<string, object>([
+      ['/tiled/part_0/level_0', {}],
+      ['/tiled/part_1/level_0', {}],
+      ['/other', {}],
+    ]);
+    const update = vi.fn((path: string) => Promise.resolve({ path }));
+    const skipped: string[] = [];
+    const profiler = {
+      beginTopLevel: vi.fn(() => ({
+        begin: vi.fn(),
+        end: vi.fn(),
+        setMetadata: vi.fn(),
+        markSkipped: vi.fn((reason: string) => {
+          skipped.push(reason);
+        }),
+      })),
+    };
+    const targets = new Set(['/tiled/part_1']);
+
+    const results = await runLoaderUpdates(loaders, 'Points', update, {
+      ...ctx,
+      profiler: profiler as never,
+      isResyncTarget: (path) => isUnderAny(path, targets),
+    });
+
+    // Only the loader under the re-entering part re-runs...
+    expect(update).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledWith('/tiled/part_1/level_0', {}, expect.anything());
+    expect(results.map(({ staged }) => staged)).toEqual([
+      null,
+      { path: '/tiled/part_1/level_0' },
+      null,
+    ]);
+    // ...the others are skipped with their own reason, and — unlike a culled
+    // part — keep their predictive-prefetch baseline: nothing about their view
+    // changed.
+    expect(skipped).toEqual([
+      'outside partition resync targets',
+      'outside partition resync targets',
+    ]);
+    expect(ctx.forgetPath).not.toHaveBeenCalled();
+  });
+
+  it('a culled resync TARGET is still skipped as culled, but a culled NON-target keeps its baseline', async () => {
+    const ctx = makeCtx();
+    const loaders = new Map<string, object>([
+      ['/tiled/part_1/level_0', {}], // target, culled → culled skip (forgets)
+      ['/tiled/part_0/level_0', {}], // non-target, culled → resync skip (keeps)
+    ]);
+    const update = vi.fn((path: string) => Promise.resolve({ path }));
+    const targets = new Set(['/tiled/part_1']);
+
+    const results = await runLoaderUpdates(loaders, 'Points', update, {
+      ...ctx,
+      shouldUpdatePath: () => false,
+      isResyncTarget: (path) => isUnderAny(path, targets),
+    });
+
+    expect(update).not.toHaveBeenCalled();
+    expect(results.map(({ staged }) => staged)).toEqual([null, null]);
+    // Rising edges fire when many parts are culled; a targeted resync must not
+    // strip every culled non-target of its predictive-prefetch baseline.
+    expect(ctx.forgetPath).toHaveBeenCalledOnce();
+    expect(ctx.forgetPath).toHaveBeenCalledWith('/tiled/part_1/level_0');
+  });
+
   it('finds a culled partition marker anywhere in the loader ancestor chain', () => {
     const root = new THREE.Group();
     const part = new THREE.Group();
@@ -225,9 +338,23 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     part.add(nestedLod);
     nestedLod.add(leaf);
 
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(true);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(true);
     part.userData.partitionFrustumVisible = false;
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(false);
+  });
+
+  it('finds a hidden layer marker without treating an undisplayed LOD leaf as hidden', () => {
+    const root = new THREE.Group();
+    const layer = new THREE.Group();
+    const leaf = new THREE.Group();
+    leaf.name = '/layer/level_2';
+    leaf.visible = false;
+    root.add(layer);
+    layer.add(leaf);
+
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(true);
+    layer.userData.layerVisible = false;
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(false);
   });
 
   it('removes culled partition loaders from progressive refinement maps', () => {
@@ -241,7 +368,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     const visibleLoader = {};
     const culledLoader = {};
 
-    const filtered = filterPartitionVisibleLoaders(
+    const getObjectByName = vi.spyOn(root, 'getObjectByName');
+    const resolved = resolveLoadEligibleLoaders(
       root,
       new Map([
         [visible.name, visibleLoader],
@@ -249,6 +377,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
       ])
     );
 
-    expect([...filtered]).toEqual([[visible.name, visibleLoader]]);
+    expect([...resolved.loaders]).toEqual([[visible.name, visibleLoader]]);
+    expect([...resolved.objects]).toEqual([[visible.name, visible]]);
+    expect(getObjectByName).toHaveBeenCalledTimes(2);
   });
 });

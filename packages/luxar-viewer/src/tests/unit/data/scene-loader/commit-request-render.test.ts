@@ -23,13 +23,17 @@ import { SceneLoaderManager } from '../../../../data/scene-loader-manager';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
+import type { StagedMeshCommit } from '../../../../data/scene-loader/process/data-processor-mesh';
 
 /** Reach-in surface for the private commit methods under test. */
 interface SceneLoaderInternals {
-  rootGroup: THREE.Group;
+  rootGroup: THREE.Group | null;
+  lodGroupRegistry: { invalidatePartitionFootprint(path: string): void };
+  _gpuBufferPool: unknown;
   updatePointsGeometry(path: string, data: LoadedPointsData): void;
   commitLinesGeometry(staged: StagedLinesCommit): void;
   commitGSplatsGeometry(staged: StagedGSplatsCommit): void;
+  commitMeshGeometry(staged: StagedMeshCommit): void;
 }
 
 const internals = (loader: SceneLoader): SceneLoaderInternals =>
@@ -112,35 +116,102 @@ function makeStagedGSplats(splatCount = 2): StagedGSplatsCommit {
   } as StagedGSplatsCommit;
 }
 
-function makeLoaderWithScene(): { loader: SceneLoader; spy: ReturnType<typeof vi.fn> } {
+function makeLoaderWithScene(): {
+  loader: SceneLoader;
+  spy: ReturnType<typeof vi.fn>;
+  invalidatePartitionFootprint: ReturnType<typeof vi.fn>;
+} {
   const loader = new SceneLoader({ enableMonitor: false });
   const spy = vi.fn();
+  const invalidatePartitionFootprint = vi.fn();
   loader.setRequestRender(spy);
+  internals(loader).lodGroupRegistry = { invalidatePartitionFootprint };
   const root = new THREE.Group();
   root.add(makeMesh('/p', 'points'));
   root.add(makeMesh('/lines', 'lines'));
   root.add(makeMesh('/g', 'gsplats'));
   internals(loader).rootGroup = root;
-  return { loader, spy };
+  return { loader, spy, invalidatePartitionFootprint };
 }
 
 describe('SceneLoader commit → requestRender funnel', () => {
   it('updatePointsGeometry invokes the render request', () => {
-    const { loader, spy } = makeLoaderWithScene();
+    const { loader, spy, invalidatePartitionFootprint } = makeLoaderWithScene();
     internals(loader).updatePointsGeometry('/p', makePointsData(2));
     expect(spy).toHaveBeenCalled();
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/p');
   });
 
   it('commitLinesGeometry invokes the render request', () => {
-    const { loader, spy } = makeLoaderWithScene();
+    const { loader, spy, invalidatePartitionFootprint } = makeLoaderWithScene();
     internals(loader).commitLinesGeometry(makeStagedLines(2));
     expect(spy).toHaveBeenCalled();
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/lines');
   });
 
   it('commitGSplatsGeometry invokes the render request', () => {
-    const { loader, spy } = makeLoaderWithScene();
+    const { loader, spy, invalidatePartitionFootprint } = makeLoaderWithScene();
     internals(loader).commitGSplatsGeometry(makeStagedGSplats(2));
     expect(spy).toHaveBeenCalled();
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/g');
+  });
+
+  it('commitMeshGeometry invalidates the partition footprint', () => {
+    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    internals(loader).rootGroup = null;
+    internals(loader).commitMeshGeometry({ path: '/mesh' } as StagedMeshCommit);
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/mesh');
+  });
+
+  it('invalidates the partition footprint when a pooled points commit throws', () => {
+    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const geometry = new THREE.BufferGeometry();
+    internals(loader)._gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => geometry),
+      updatePointsGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+
+    expect(() => internals(loader).updatePointsGeometry('/p', makePointsData(2))).toThrow(
+      'upload failed'
+    );
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/p');
+  });
+
+  it('invalidates the partition footprint when a pooled lines commit throws', () => {
+    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const geometry = new THREE.BufferGeometry();
+    internals(loader)._gpuBufferPool = {
+      acquireLinesGeometry: vi.fn(() => geometry),
+      updateLinesGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+
+    expect(() => internals(loader).commitLinesGeometry(makeStagedLines(2))).toThrow(
+      'upload failed'
+    );
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/lines');
+  });
+
+  it('invalidates the partition footprint when a pooled gsplats commit throws', () => {
+    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const geometry = new THREE.BufferGeometry();
+    internals(loader)._gpuBufferPool = {
+      acquireGSplatsGeometry: vi.fn(() => geometry),
+      updateGSplatsGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+
+    expect(() => internals(loader).commitGSplatsGeometry(makeStagedGSplats(2))).toThrow(
+      'upload failed'
+    );
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/g');
   });
 
   it('bare loaders without a callback do not throw', () => {

@@ -219,6 +219,7 @@ function harness(
     getSceneGraph: () => graph,
     state,
     requestRender: () => {},
+    requestReprocess: () => {},
   });
   const layer = () => state.getLayer(objPath)!;
   return {

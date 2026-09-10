@@ -412,6 +412,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     // No need to clear velocity as it will quickly dampen out
   }
 
+  /** Keep translational glide but discard residual user-input look damping. */
+  public settleDamping(): void {
+    this.angularVelocity.set(0, 0, 0);
+  }
+
   /**
    * Smoothly look at a target position
    * @param target - Target position to look at

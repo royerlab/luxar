@@ -29,7 +29,7 @@ rendering/
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
 ├── gpu-byte-budget.ts                  # Single adaptive VRAM budget (pool + LOD registry share it)
 ├── adaptive-dpr-manager.ts             # Adaptive resolution
-├── pixel-ratio-cap.ts                  # The max DPR the viewer may render at (high DPR is opt-in)
+├── pixel-ratio-cap.ts                  # The max DPR the viewer may render at (high DPR is opt-in; 2 on a phone/tablet)
 ├── colormap-textures.ts                # Built-in/custom DataTexture creation and cache disposal
 ├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
 ├── renderer-capabilities.ts            # WebGL2 vs WebGPU capability detection
@@ -450,7 +450,8 @@ The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-ti
 **Control loop:**
 
 - Samples FPS using a 1-second sliding window, evaluated every 500 ms; a frame gap counts as dead time (window reset, pending probe voided) only when it is BOTH > `gapResetMs` and strictly more than 4× the median of the four PRECEDING inter-frame intervals (the interval under test is never part of the median it is judged against — with a short post-boundary memory that made a startup stall read as "the frame rate"), so an isolated stall or idle-resume is still discarded while a genuinely slow cadence is kept and the loop keeps adapting below ~1000/`gapResetMs` fps (a software rasterizer at 0.5 fps used to sit at native DPR forever); the sliding window likewise retains a two-sample minimum so the estimate stays defined slower than the window itself. A dead-time reset no longer touches the evaluation clock at all; what keeps dead time from counting as progress toward the next evaluation is that a tick with no frame rate to judge is not an evaluation and does not consume the interval budget. Pinned to the frame’s own timestamp (the pre-fix line), a hitch recurring more often than 500 ms re-pinned the clock forever and the loop never evaluated at all (measured: zero evaluations in 43 s on a 16.7/16.7/400 ms cadence). Clamping that pin to one interval before the frame was tried and measured INERT — identical evaluations, DPR, floor and applied-ratio counts on six cadences — so the return-value rule is the whole fix. Up to two dead intervals in a row stay outliers and are discarded; by the third, half the cadence memory is dead time and it is absorbed as the frame rate, so the window it lands in is treated as unrepresentative for a couple of intervals (scale-downs apply, nothing is learned). The protection is bounded and counted in INTERVALS — a burst of up to four teaches nothing — and that is the only form the guarantee takes: what it buys in wall clock depends on the interval length and on how much of its own window a probe can still gather, so it has to be measured per cadence rather than stated as a number (measured for consecutive 400 ms hitches inside a 60 fps session: eight, 3.2 s, leave the floor untouched; nine, 3.6 s, pin one). Residual limitation: a dead period alternating one-for-one with a SINGLE fast frame lands the median between the phases, so the dead time is kept as "the frame rate" and the FPS window mixes it with render cost — the manager still adapts, but the rate it reports is not the rate the user perceives
-- Thresholds are RELATIVE to the display's estimated achievable rAF rate: scale down below `scaleDownFpsRatio × cap`, count toward scale-up above `scaleUpFpsRatio × cap` (works unchanged on 30/60/120/144 Hz; the estimator holds a high-water mark, lower-bounded by `refreshRateFallback` until genuine rAF throttling is detected)
+- Thresholds are RELATIVE to the display's estimated achievable rAF rate: scale down below `scaleDownFpsRatio × cap`, count toward scale-up above `scaleUpFpsRatio × cap` (works unchanged on 30/60/120/144 Hz; the estimator holds a high-water mark, lower-bounded by `refreshRateFallback` until genuine rAF throttling is detected, and upper-bounded by `refreshRateCeiling` when set — the mobile runtime sets 60 so a ProMotion iPad's steady 60 fps is not read as distress)
+- On a MOBILE device class (`utils/input-capabilities`), `pipeline.ts` constructs the manager with `mobileAdaptiveDprOverrides()`: `minDPR` 0.75 (an absolute 0.5 is 1/6 of a DPR-3 phone panel's linear resolution) and `refreshRateCeiling` 60. `allowHighDPR` resolves to a cap of 2, not `Infinity`, there (`MOBILE_MAX_PIXEL_RATIO`); `?dpr=` pins and the recording panel's `captureDPR` stay unclamped. Laptops and desktops construct exactly as before
 - Scale-up fires after `hysteresisSeconds` of sustained high FPS, with a small mid-band grace so isolated dropped-frame samples don't restart the wait
 - The DPR walks multiplicatively below the session CEILING — the LIVE `window.devicePixelRatio` (re-read on every evaluation and public read; a monitor/zoom change rebases all learned state and clamps an engaged override — no supersampling on a lower-DPI display), capped by the allow-high-DPR setting, which is OFF by default and pins the ceiling at 1.0 even on a HiDPI display (see `pixel-ratio-cap.ts`) — and stops strictly above `max(minDPR, learned floor)`
 
@@ -538,6 +539,7 @@ Multisample Anti-Aliasing:
 Super-Sample Anti-Aliasing:
 
 - Renders at higher resolution (1.5x, 2x, 3x, 4x)
+- Suspends MSAA while the multiplier is above 1x to avoid redundant multisample allocations
 - Best possible quality
 - **Heavy performance cost**
 - Recommended only for screenshots or high-end GPUs
@@ -613,6 +615,7 @@ postProcessing.updateDetectorNoiseSettings({
 
 #### MSAA Not Working
 
+- SSAA above 1x suspends MSAA; disable SSAA to see the configured MSAA mode
 - Check console for GPU support warnings
 - Under WebGL2, MSAA requires float-buffer extensions on the active context; check `RendererCapabilities.maxMSAASamples > 0`
 - Under WebGPU, MSAA is native (no extension required); the same `maxMSAASamples` query reports the adapter's supported sample counts

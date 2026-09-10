@@ -37,6 +37,15 @@ two-finger pinch as page zoom and the orbit controls' touch handlers never run. 
 standalone page declares the same in `styles/base/layout.css` (`#app`); a
 `LuxarLayer` host owns its canvas and sets `touch-action` itself.
 
+## Context-menu ownership
+
+`context-menu-ownership.ts` — `installContextMenuOwnership(canvas, events)`,
+also installed by `LuxarApp.init()`. A capture-phase listener suppresses the
+native menu on the canvas and viewer-mounted DOM, including overlays that
+WebKit targets instead of the canvas. Typing surfaces, and selected text or a
+link in an interactive overlay, retain their native menu, and universal
+ancestors do not claim an embedder's sibling DOM.
+
 ## File Structure
 
 ```
@@ -44,12 +53,18 @@ interaction/
 ├── picked-element-cache.ts   # the settled pick + its staleness guard
 ├── element-actions.ts        # attrs → safe URL + copy string (pure)
 ├── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
-└── canvas-gesture-ownership.ts # touch-action / callout stamp + Safari gesture cancel
+├── canvas-gesture-ownership.ts # touch-action / callout stamp + Safari gesture cancel
+├── context-menu-ownership.ts # delegated native-menu suppression on viewer DOM
+└── double-tap-to-fit.ts      # touch double-tap → re-frame; app-lifetime, picking-free
 ```
 
-`initPicking` (`../picking/init-picking.ts`) constructs all three and registers
-the listeners through the picking session's `EventGroup`, so one
-`pickingEvents.dispose()` tears everything down together.
+`initPicking` (`../picking/init-picking.ts`) constructs the first three and
+registers the listeners through the picking session's `EventGroup`, so one
+`pickingEvents.dispose()` tears everything down together. `double-tap-to-fit`
+is installed the same way `canvas-gesture-ownership` is — by `LuxarApp.init`,
+once, on the app's own `EventGroup` — because the picking session is
+provisioned only for scenes with labels, keys, interaction templates or an
+embedder consumer, and a re-frame has to work on a bare point cloud too.
 
 ## `picked-element-cache.ts`
 
@@ -136,6 +151,37 @@ The keyboard path arrives as a `luxar-open-element-menu` window event, because
 the Shift+F10 / ContextMenu binding is registered once for the app's lifetime
 while these listeners are rebuilt on every dataset load — the same decoupling
 `open-dataset-browser` uses.
+
+## Touch
+
+A finger neither hovers nor right-clicks, so the mouse model has no touch
+equivalent on its own. Touch-like pointers (`utils/input-capabilities.isTouchLikePointer`)
+get a wider slop (`TOUCH_CLICK_SLOP_PX` = 12 vs the mouse's 4 — a tap drifts 8–15 px,
+so at 4 px every tap read as a camera drag), and three gestures:
+
+- **Tap** — pick at the tap through `PickGenerationPort.pickAt` (the
+  `PickingSystem` method that bypasses the hover-settle scheduler; the tooltip
+  shows through the normal result path), then the click action. Before picking,
+  the accepted release discards residual user-input damping in orbit, ortho, or
+  fly mode, so the camera cannot clear the new tooltip/cache on the next frame;
+  fly translation continues, since only its touch-look angular velocity is
+  settled. `pickAt` resolves only after the result handler has _finished_, not
+  merely been called: that handler stores the cache after an asynchronous label
+  fetch, so a read on delivery alone would see the cache as it was before the
+  tap's own pick landed (the long-press menu silently never opened under
+  emulation). Any navigation is deferred by `DOUBLE_TAP_MS` so a second tap can
+  pre-empt it. That delay
+  starts only after the GPU readback and label / key / image fetch finish, so
+  the total tap-to-navigation gap is the async pick latency plus 300 ms; the
+  mouse path stays synchronous so its user activation is never spent.
+- **Long-press** (`LONG_PRESS_MS`, held within the slop, one finger) — pick, then
+  the element menu; the finger's release is then inert.
+- **Double-tap** (two presses that each release before `LONG_PRESS_MS`, within
+  `DOUBLE_TAP_MS` / `DOUBLE_TAP_SLOP_PX`) — re-frame, via
+  `double-tap-to-fit.ts` → `LuxarApp.recenterCamera`. `canvas-actions` recognises
+  the same second tap only to cancel the first tap's deferred navigation and
+  skip the re-pick; it never re-frames itself, so the gesture behaves identically
+  on scenes that never provision picking.
 
 ## The kill switch
 

@@ -9,9 +9,10 @@
  * Ctrl+wheel FOV all consumed that raw number, so on Firefox each moved about
  * a thirtieth as far per notch — wheel zoom felt essentially dead.
  *
- * This module converts a wheel event's vertical delta into a
+ * This module converts a wheel event's selected axis delta into a
  * pixel-mode-equivalent number so every wheel entry point can keep doing the
- * arithmetic it already does, on a browser-independent input.
+ * arithmetic it already does, on a browser-independent input. Most callers
+ * select `deltaY`; Shift+wheel roll may explicitly fall back to `deltaX`.
  *
  * @module utils/wheel-delta
  */
@@ -52,6 +53,28 @@ export const NOMINAL_PAGE_HEIGHT_PX = 800;
  */
 export const MAX_NORMALIZED_DELTA_PX = 200;
 
+function normalizeDelta(delta: number, deltaMode: number, element?: HTMLElement | null): number {
+  if (!Number.isFinite(delta)) return 0;
+  if (delta === 0) return 0;
+
+  let pixels: number;
+  if (deltaMode === 1) {
+    pixels = delta * PIXELS_PER_LINE;
+  } else if (deltaMode === 2) {
+    const clientHeight = element?.clientHeight;
+    const pageHeight =
+      typeof clientHeight === 'number' && Number.isFinite(clientHeight) && clientHeight > 0
+        ? clientHeight
+        : NOMINAL_PAGE_HEIGHT_PX;
+    pixels = delta * pageHeight;
+  } else {
+    // Pixel mode (0) and any unknown mode: pass through untouched.
+    return delta;
+  }
+
+  return clamp(pixels, -MAX_NORMALIZED_DELTA_PX, MAX_NORMALIZED_DELTA_PX);
+}
+
 /**
  * Convert a wheel event's `deltaY` into a pixel-mode-equivalent value.
  *
@@ -78,8 +101,8 @@ export const MAX_NORMALIZED_DELTA_PX = 200;
  * camera 100% of its distance in one event.
  *
  * A zero delta of either sign returns `+0`. That is contract hygiene, not a
- * consumer requirement — all three call sites either branch on `< 0` / `> 0`
- * or accumulate, and none can tell `+0` from `-0`.
+ * consumer requirement — consumers either branch on `< 0` / `> 0` or
+ * accumulate, and none can tell `+0` from `-0`.
  *
  * @param event - The wheel event to read `deltaY` / `deltaMode` from.
  * @param element - Element the wheel is over, used as the page height in
@@ -87,24 +110,26 @@ export const MAX_NORMALIZED_DELTA_PX = 200;
  * @returns A pixel-equivalent vertical delta, sign preserved.
  */
 export function normalizeWheelDelta(event: WheelEvent, element?: HTMLElement | null): number {
-  const { deltaY } = event;
-  if (!Number.isFinite(deltaY)) return 0;
-  if (deltaY === 0) return 0;
+  return normalizeDelta(event.deltaY, event.deltaMode, element);
+}
 
-  let pixels: number;
-  if (event.deltaMode === 1) {
-    pixels = deltaY * PIXELS_PER_LINE;
-  } else if (event.deltaMode === 2) {
-    const clientHeight = element?.clientHeight;
-    const pageHeight =
-      typeof clientHeight === 'number' && Number.isFinite(clientHeight) && clientHeight > 0
-        ? clientHeight
-        : NOMINAL_PAGE_HEIGHT_PX;
-    pixels = deltaY * pageHeight;
-  } else {
-    // Pixel mode (0) and any unknown mode: pass through untouched.
-    return deltaY;
-  }
-
-  return clamp(pixels, -MAX_NORMALIZED_DELTA_PX, MAX_NORMALIZED_DELTA_PX);
+/**
+ * Normalize the axis carrying a Shift+wheel gesture.
+ *
+ * Some browsers move a standard mouse wheel's delta from `deltaY` to
+ * `deltaX` while Shift is held. Prefer `deltaY` whenever it is non-zero, then
+ * fall back to `deltaX`; this preserves genuine two-axis events while making
+ * the swapped-axis gesture usable. Callers must opt in deliberately: ordinary
+ * horizontal trackpad scrolling must not become zoom, FOV, or forward motion.
+ *
+ * @param event - The wheel event whose carrying axis should be normalized.
+ * @param element - Optional page-height source, as in {@link normalizeWheelDelta}.
+ * @returns A pixel-equivalent delta from `deltaY`, or `deltaX` when `deltaY` is zero.
+ */
+export function normalizeWheelDeltaWithAxisFallback(
+  event: WheelEvent,
+  element?: HTMLElement | null
+): number {
+  const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+  return normalizeDelta(delta, event.deltaMode, element);
 }

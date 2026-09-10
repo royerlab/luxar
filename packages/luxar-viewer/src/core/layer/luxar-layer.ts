@@ -119,6 +119,7 @@ import {
 } from '../../rendering/renderer-capabilities';
 import {
   getGpuByteBudget,
+  initializeGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../rendering/gpu-byte-budget';
 import {
@@ -143,6 +144,7 @@ import {
   getOrthoFrustumHeight,
   type LuxarCamera,
 } from '../../utils/camera-utils';
+import { getInputProfile } from '../../utils/input-capabilities';
 import { config } from '../../config';
 import { isLuxarMaterial } from '../../ui/layers/luxar-material';
 import { clamp } from '../../utils/clamp';
@@ -186,6 +188,13 @@ export interface LuxarLayerOptions {
   requestRender?: () => void;
   /** Cache and prefetch flags forwarded to the data loader. */
   loaderConfig?: LoaderConfig;
+  /**
+   * Session-wide GPU geometry budget in bytes. `null` auto-sizes from device
+   * memory, measured heap, and device class; `0` disables byte-budget eviction,
+   * and a positive value pins the budget. Defaults to
+   * `config.dataLoading.performance.gpuPoolMaxBytes`.
+   */
+  gpuPoolMaxBytes?: number | null;
   /** Override for bundlers that can't resolve `import.meta.url` asset URLs. */
   wasmPath?: string;
   /** Same, for the data worker. */
@@ -196,6 +205,11 @@ export interface LuxarLayerOptions {
   lodEnergyComp?: boolean;
   /** Force the finest replacement LOD regardless of coverage. Default false. */
   lodFinest?: boolean;
+  /**
+   * Replacement-LOD bias in screen-area units. Non-finite or non-positive
+   * values are treated as the neutral `1`. Default 1.
+   */
+  lodBias?: number;
   /** Worker-based back-to-front sorting for order-dependent geometry. Default true. */
   depthSort?: boolean;
   /**
@@ -268,6 +282,7 @@ export class LuxarLayer {
     this.options = options;
 
     applyModuleOverrides({ wasmPath: options.wasmPath, workerPath: options.workerPath });
+    initializeGpuByteBudget(options.gpuPoolMaxBytes);
 
     // Materials must know the renderer's capabilities BEFORE any node is
     // built — the GLSL vs. TSL dispatch in the material factories branches on
@@ -777,7 +792,7 @@ export class LuxarLayer {
   private configureBlendWarmup(): void {
     const renderer = isWebGLRenderer(this.options.renderer) ? this.options.renderer : null;
     configureBlendModeProgramWarmup({
-      enabled: renderer !== null,
+      enabled: renderer !== null && getInputProfile().deviceClass !== 'mobile',
       renderer,
       camera: this.options.getCamera(),
       targetScene: this.options.scene,
@@ -917,7 +932,7 @@ export class LuxarLayer {
   }
 
   private installLodRegistryFactory(): void {
-    const { lodFade = true, lodEnergyComp = true, lodFinest = false } = this.options;
+    const { lodFade = true, lodEnergyComp = true, lodFinest = false, lodBias = 1 } = this.options;
     SceneLoaderManager.getInstance().setLODGroupRegistryFactory(
       (owner) =>
         new LODGroupRegistry({
@@ -929,8 +944,11 @@ export class LuxarLayer {
           // Matches `core/app/init/pipeline.ts`.
           getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
           hasArchiveFault: () => owner.archiveFault !== null,
-          requestReprocess: () => owner.requestReprocess(),
-          isUpdateInProgress: () => owner.isUpdateInProgress(),
+          hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
+          requestReprocess: (paths) => owner.requestReprocess(paths),
+          // A view PASS in flight or queued — not a refinement hold (see the
+          // app pipeline's identical wiring).
+          isUpdateInProgress: () => owner.isLoadPassInProgress(),
           getResidentByteBudget: () => getGpuByteBudget(),
           // Both halves of the budget are required: `lod-eviction` bails on
           // `!getResidentBytes`, so supplying only the budget makes it
@@ -941,6 +959,7 @@ export class LuxarLayer {
           getCrossFadeEnabled: () => lodFade,
           getEnergyCompEnabled: () => lodEnergyComp,
           getForceFinestLOD: () => lodFinest,
+          getLodBias: () => lodBias,
           registerMaterial: (material) => materialManager.register(material),
           requestRender: () => this.handleGeometryCommit(),
         })

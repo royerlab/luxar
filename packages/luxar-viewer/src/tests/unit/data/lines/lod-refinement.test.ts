@@ -26,11 +26,14 @@ const baseViewState: ViewState = {
   tolerance: [0, 0, 0, 1],
 };
 
-defineRefinementLoopContract('runLinesRefinement', 'Lines', 'showing reduced detail', (w) =>
-  runLinesRefinement({
-    rootGroup: new THREE.Group(),
+defineRefinementLoopContract('runLinesRefinement', 'Lines', 'showing reduced detail', (w) => {
+  const rootGroup = w.rootGroup ?? new THREE.Group();
+  return runLinesRefinement({
+    objects:
+      w.objects ??
+      new Map([...w.loaders.keys()].map((path) => [path, rootGroup.getObjectByName(path)])),
     viewStateQueue: w.viewStateQueue,
-    linesLoaders: w.loaders as LinesRefinementCtx['linesLoaders'],
+    loaders: w.loaders as LinesRefinementCtx['loaders'],
     deriveNodeViewState: w.deriveNodeViewState as LinesRefinementCtx['deriveNodeViewState'],
     processLines: w.processSpy as LinesRefinementCtx['processLines'],
     commitLines: vi.fn(),
@@ -39,8 +42,8 @@ defineRefinementLoopContract('runLinesRefinement', 'Lines', 'showing reduced det
     retriggerUpdate: w.retriggerUpdate,
     signal: w.signal,
     residencyBudget: w.residencyBudget,
-  })
-);
+  });
+});
 
 describe('runLinesRefinement — Lines-specific behaviour', () => {
   it('skips loaders that do not expose hasMoreLODs (non-progressive loaders)', async () => {
@@ -51,9 +54,9 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     const processLines = vi.fn();
 
     await runLinesRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', singleShot]]),
+      loaders: new Map([['/l', singleShot]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processLines,
       commitLines: vi.fn(),
@@ -93,9 +96,9 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     const commitLines = vi.fn();
 
     await runLinesRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', loader]]),
+      loaders: new Map([['/l', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processLines,
       commitLines,
@@ -140,9 +143,9 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     const commitLines = vi.fn();
 
     await runLinesRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', loader]]),
+      loaders: new Map([['/l', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processLines,
       commitLines,
@@ -190,9 +193,9 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     const commitLines = vi.fn();
 
     await runLinesRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', loader]]),
+      loaders: new Map([['/l', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processLines,
       commitLines,
@@ -230,9 +233,9 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
       const controller = new AbortController();
       if (opts.aborted) controller.abort();
       await runLinesRefinement({
-        rootGroup: new THREE.Group(),
+        objects: new Map(),
         viewStateQueue: new ViewStateQueue(),
-        linesLoaders: new Map([['/l', oneShotLoader(data)]]),
+        loaders: new Map([['/l', oneShotLoader(data)]]),
         deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
         processLines: vi.fn().mockResolvedValue(opts.staged),
         commitLines: vi.fn(),

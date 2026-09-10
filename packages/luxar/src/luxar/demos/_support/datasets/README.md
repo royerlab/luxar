@@ -27,9 +27,13 @@ from luxar.demos import ensure_dataset
   that same generation, otherwise the whole dataset is refused. Unrecognized
   bytes are quarantined as `.corrupt` and never returned or used as a
   download-resume base. `file_names` selects an exact subset in manifest order;
-  unknown names and selections that split a positional pair are rejected.
+  unknown names and selections that split a positional pair are rejected. The
+  returned `ResolvedDataset` exposes a canonical `input_digests` map and behaves
+  as a list, but list operations degrade to plain lists without that map.
 - `load_dataset_gsplats()` loads a manifest-backed Zenodo GSplat dataset, or
-  returns `None` when recomputation is requested.
+  returns `None` when recomputation is requested. Its `ResolvedDataset` carries
+  `input_digests` for the selected files and has the same list-operation
+  degradation.
 - `load_manifest()` and `dataset_spec()` return independent copies of the
   memoized manifest; `clear_manifest_cache()` refreshes it after an on-disk
   rewrite.

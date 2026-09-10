@@ -27,6 +27,7 @@ describe('computePerfSnapshot', () => {
       updateInProgress: null,
       loadPassInProgress: null,
       lodLevelLoading: null,
+      visiblePartitionResyncPending: null,
       refinementComplete: false,
     });
   });
@@ -42,6 +43,7 @@ describe('computePerfSnapshot', () => {
       isUpdateInProgress: () => false,
       isAnyLoadPassInProgress: () => false,
       isAnyLodLevelLoading: () => false,
+      hasVisiblePendingPartitionResync: () => false,
     };
     markLoad('loadStart');
     expect(computePerfSnapshot(hooks).isSettled).toBe(false); // refinement not complete
@@ -58,6 +60,9 @@ describe('computePerfSnapshot', () => {
     expect(computePerfSnapshot({ ...hooks, isAnyLodLevelLoading: () => true }).isSettled).toBe(
       false
     );
+    expect(
+      computePerfSnapshot({ ...hooks, hasVisiblePendingPartitionResync: () => true }).isSettled
+    ).toBe(false);
   });
 
   it('a throwing hook reads as null instead of breaking the snapshot', () => {

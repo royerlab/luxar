@@ -75,6 +75,7 @@ group table.
 | `src`              | `string`              | config          | Initial Zarr URL. Empty/missing shows the dataset browser.                                                                                                                                                   |
 | `debug`            | `boolean`             | `false`         | Exposes `window.__luxarDebug` for Playwright / dev console.                                                                                                                                                  |
 | `loaderConfig`     | `LoaderConfig`        | —               | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).                                                                                                             |
+| `gpuPoolMaxBytes`  | `number \| null`      | config          | Session-wide GPU geometry budget in bytes. `null` auto-sizes from device memory, measured heap, and device class; `0` disables byte-budget eviction; a positive value pins it.                              |
 | `updateBrowserUrl` | `boolean`             | `false`         | Opt in to mirroring picked datasets into the browser URL. `bootstrapStandalone()` sets this to `true`.                                                                                                       |
 | `wasmPath`         | `string`              | —               | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.). Serving the published package unbundled usually costs one benign 404 before the next candidate wins.        |
 | `workerPath`       | `string`              | —               | Same, for the data worker.                                                                                                                                                                                   |
@@ -86,6 +87,7 @@ group table.
 | `lodFade`          | `boolean`             | `true`          | Cross-fade adjacent replacement LOD levels instead of swapping abruptly.                                                                                                                                     |
 | `lodEnergyComp`    | `boolean`             | `true`          | Compensate incomplete stream ladders by their committed energy fraction to reduce brightness popping.                                                                                                        |
 | `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                           |
+| `lodBias`          | `number`              | `1`             | Bias replacement LOD selection in screen-area units; `2` selects one occupancy-halved level finer and `4` selects two. Below `1`, a partition-anchored ladder cannot reach its finest level; below `0.5`, neither can a whole-object ladder.               |
 | `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                               |
 | `allowLinks`       | `boolean`             | `true`          | Allow element-authored links to navigate. Set `false` to keep `element-click` / `element-contextmenu` events and copy actions while suppressing navigation and link menu items.                              |
 | `factories`        | `AppFactories`        | —               | Construction overrides for the heavy components built by `init()` (scene manager, recording panel, …). For tests and advanced embedders; omit for the production path.                                       |
@@ -205,9 +207,11 @@ The host must call `update()` each frame before rendering, `resize()` after a
 viewport or camera-projection change, and pass `requestRender` if it renders
 on demand rather than continuously. `renderOrder` defaults to 10 and is stamped
 onto every nested Luxar Group; host transparent groups should use explicit
-lower/higher values. On WebGL context loss, call `handleContextLost()` so Luxar
-backs off its GPU budget; after rebuilding the host renderer and post-processing,
-call `handleContextRestored()`.
+lower/higher values. `gpuPoolMaxBytes` controls the session-wide geometry budget:
+`null` auto-sizes from device memory, measured heap, and device class, `0`
+disables byte-budget eviction, and a positive value pins bytes. On WebGL context
+loss, call `handleContextLost()` so Luxar backs off that budget; after rebuilding
+the host renderer and post-processing, call `handleContextRestored()`.
 
 nD navigation coalesces, so a host can drive it from a slider at frame rate:
 
@@ -253,7 +257,7 @@ A runnable example with a non-trivial host page lives in
 
 ### Prerequisites
 
-- Node.js 22.22+ (Node.js 22 LTS recommended) and pnpm — the floor for developing in this repo (jsdom 30 test toolchain); consuming the published library package only requires Node.js 20.19+ (`engines.node`)
+- Node.js 22.22+ (Node.js 22 LTS recommended) and pnpm — the floor for developing in this repo (jsdom 30 test toolchain); the published library package supports `^20.19.0 || >=22.12.0` (`engines.node`)
 - Modern web browser with WebGL 2.0 support
 - Zarr dataset (see [Data Format](#data-format) section)
 
@@ -534,14 +538,15 @@ pnpm test:with-fixtures  # Generate test fixtures, then run tests
 # Prerequisite: examples + fixtures must exist. Run once locally:
 #   make run-examples
 #   pnpm test:generate-fixtures
-# `make test-e2e` refreshes the examples but does not generate the test
-# fixtures; the pre-flight aborts the run if those fixtures are absent.
-# E2E is currently disabled in GitHub CI (browser/GPU reliability);
-# `pnpm test:e2e:smoke` is the subset the workflow re-enable would
-# run (also useful locally for quick verification). Visual snapshots
-# are Linux-only developer aids and are not validated by green CI.
+# The Make targets refresh their required examples and generated fixtures.
+# GitHub CI runs the Chromium mobile/touch suite; the full, smoke, cross-browser,
+# and visual suites remain local entry points. Visual snapshots are Linux-only
+# developer aids and are not validated by green CI.
 pnpm test:e2e               # Run all E2E tests
 pnpm test:e2e:smoke         # Run the non-GPU smoke subset
+pnpm test:e2e:smoke:strict  # Run smoke with strict console handling
+pnpm test:e2e:mobile        # Run the Chromium mobile/touch suite used by CI
+pnpm test:e2e:browsers      # Run the Firefox/WebKit cross-browser subset
 pnpm test:e2e:visual        # Run visual tests (snapshot checks on Linux)
 pnpm test:e2e:visual:update # Refresh Linux visual baselines
 pnpm test:e2e:ui            # Run E2E tests with interactive UI
@@ -577,9 +582,10 @@ repo root and used by `luxar export --native ...`) honor:
   S-cache) the launcher passes to the viewer via `?cacheBudgetMB=`
   (default 2048). WebKit WebViews don't implement `performance.memory`,
   so the viewer can't auto-size its caches from the JS heap. The same value
-  supplies the auto GPU-geometry/LOD residency signal at one third of the pool;
-  the default therefore raises that budget from 512 to 716 MB when
-  `deviceMemory` is unavailable. Lower it on a constrained machine (e.g. `=512`).
+  supplies the auto GPU-geometry/LOD residency signal through the implied
+  non-cache remainder; the default therefore raises that budget from 512 to
+  1432 MB when `deviceMemory` is unavailable. Lower it on a constrained machine
+  (e.g. `=512`).
 
 ### Configuration
 
@@ -682,6 +688,7 @@ renderingControls: {
 **Anti-Aliasing Notes:**
 
 - **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes. Note: MSAA has limitations with additive blending (used by GSplats); consider FXAA for scenes with Gaussian splats
+- **SSAA + MSAA**: SSAA above 1x temporarily suspends MSAA allocation. Combining multisampling with an already-upscaled SSAA target is redundant and can exceed browser framebuffer-allocation limits; returning to 1x or disabling SSAA restores the configured MSAA setting.
 - **FXAA**: Fastest post-process AA, may slightly blur the image
 - **SSAA**: Highest quality (supersampling), significant performance cost
 
@@ -773,10 +780,10 @@ toolchain-derived version floor.
 Verified 2026-09-04 on macOS arm64 by running the E2E smoke subset (13 tests)
 against Playwright's bundled engines:
 
-| Engine   | Smoke subset | Notes                                                |
-| -------- | ------------ | ---------------------------------------------------- |
-| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
-| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| Engine   | Smoke subset | Notes                                                                                                                           |
+| -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                                                                                                |
+| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                                                                                                |
 | WebKit   | 13/13 pass   | **runs without the L2 disk cache** — the OPFS store's init / write probe fails, so chunk data is not persisted between sessions |
 
 Reproduce after running `pnpm test:generate-fixtures` and `pnpm exec playwright
@@ -818,6 +825,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?no-lod-fade` — Disable replacement-LOD cross-fading (enabled by default)
 - `?no-lod-energy` — Disable stream-ladder energy compensation (enabled by default)
 - `?lod-finest` — Force the finest replacement LOD regardless of projected coverage
+- `?lod-bias=<N>` — Bias replacement LOD selection in screen-area units (`2` = one level finer on occupancy-halved ladders; positive values only). Because finite screen-area coverage tops out at `1`, values below `1` make a partition-anchored finest threshold of `1` unreachable, and values below `0.5` make a whole-object finest threshold of `0.5` unreachable; near-plane saturation can still select finest
 - `?no-blend-warmup` — Disable the WebGL blend-variant program warm-up (enabled by default): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
 - `?no-links` — Disable element-authored navigation and link menu items while preserving copy actions and `element-click` / `element-contextmenu` events
 - `?depthSort=0` — Disable worker depth sorting (`false` and `off` are also accepted)
@@ -825,11 +833,11 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
 - `?perf-timestamp` — Enable WebGPU timestamp-query profiling for performance tests
 - `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to `[0.25, native]`) and lock adaptive resolution off
-- `?input=<touch|mouse>` — Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets, primary-tip pen routing, and the Safari gesture-canceller gate; long-press menus and tap-oriented copy land in follow-up touch work. Stylesheets and per-event gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including iPadOS masquerading as macOS
+- `?input=<touch|mouse>` — Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including iPadOS masquerading as macOS
 - `?lineJoin=<none|miter>` — Force the line join style for the session; applies only to `linePrimitive=screen-space` (the capsule partitions joints unconditionally)
 - `?linePrimitive=<capsule|screen-space>` — Select the line rendering primitive for the session (#1352), overriding the `Settings → Advanced → Line primitive` policy; default policy `auto` builds the `capsule` (gaussian-like 2D point-to-segment profile: stable end-on discs, seamless partitioned joints) except for very large line nodes, which build the leaner `screen-space` quad. The third primitive, `volumetric`, was deleted after the capsule flip
 - `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded
-- `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari), and also supplies one third of the pool as a GPU-geometry/LOD residency signal (replacing the 512 MB fallback in either direction when `deviceMemory` is unavailable)
+- `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari), and also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal (replacing the 512 MB fallback in either direction when `deviceMemory` is unavailable, capped at 2 GB)
 
 ### Programmatic Usage
 

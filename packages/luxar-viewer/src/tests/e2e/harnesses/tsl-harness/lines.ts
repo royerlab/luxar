@@ -582,7 +582,7 @@ function perspectivePixelPos(px: number, py: number, depth: number): [number, nu
  * its own segment-constant width` in
  * `tests/unit/rendering/materials/line/material-glsl.test.ts`, the codegen
  * snapshot `tests/__codegen__/line.vertex.glsl.txt` (generated from the TSL
- * graph, so it pins the TSL twin — but only in this `if: false` CI job), the
+ * graph, so it pins the TSL twin in local full-suite runs), the
  * always-running TSL-source lock
  * `tests/unit/rendering/materials/line/join-width-tsl.test.ts`, and the CPU
  * mirror in `tests/unit/rendering/line-join-math.test.ts`.

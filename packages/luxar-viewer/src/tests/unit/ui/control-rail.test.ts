@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlRail, RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../utils/input-capabilities';
 
 function items(overrides: Partial<ControlRailItem>[] = []): ControlRailItem[] {
   const base: ControlRailItem[] = [
@@ -75,6 +79,42 @@ describe('ControlRail', () => {
     expect(root.querySelector('.luxar-control-rail__collapse')?.parentElement).toBe(root);
     expect(wrapper.querySelector('.luxar-control-rail__collapse')).toBeNull();
     expect(root.children.length).toBe(3); // wrapper, footer, collapse handle
+  });
+
+  it('a touch long-press on a context-popover button opens it without activating (touch)', () => {
+    const activate = vi.fn();
+    const build = vi.fn();
+    rail = new ControlRail(items([{}, { activate, popover: { build, trigger: 'context' } }]));
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="render"]')!;
+    btn.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 20,
+        clientY: 100,
+        bubbles: true,
+      })
+    );
+    vi.advanceTimersByTime(500);
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('.luxar-control-rail__popover')).not.toBeNull();
+    // The release click is swallowed: the button's primary action must not run.
+    btn.dispatchEvent(
+      new PointerEvent('pointerup', { pointerId: 1, pointerType: 'touch', bubbles: true })
+    );
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it('a mouse press never long-presses', () => {
+    const build = vi.fn();
+    rail = new ControlRail(items([{}, { popover: { build, trigger: 'context' } }]));
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="render"]')!;
+    btn.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerId: 1, pointerType: 'mouse', bubbles: true })
+    );
+    vi.advanceTimersByTime(2000);
+    expect(build).not.toHaveBeenCalled();
   });
 
   it('collapses and expands via the handle, persisting the state', () => {
@@ -227,6 +267,30 @@ describe('ControlRail', () => {
     rail.dispose();
     rail = new ControlRail(items());
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
+  });
+
+  it('the first-run hint says "Tap … (hold for options)" when nothing can hover', () => {
+    setInputProfileOverride('touch');
+    try {
+      rail = new ControlRail(items());
+      const text = document.querySelector('.luxar-control-rail-hint')!.textContent!;
+      expect(text).toContain('Tap these controls (hold for options)');
+      expect(text).not.toContain('Hover');
+    } finally {
+      resetInputProfileForTests();
+    }
+  });
+
+  it('the first-run hint says "Hover" on a mouse machine', () => {
+    setInputProfileOverride('mouse');
+    try {
+      rail = new ControlRail(items());
+      expect(document.querySelector('.luxar-control-rail-hint')!.textContent).toContain(
+        'Hover these controls'
+      );
+    } finally {
+      resetInputProfileForTests();
+    }
   });
 
   it('clicking any button dismisses the first-run hint', () => {

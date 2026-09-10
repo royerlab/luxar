@@ -8,6 +8,7 @@ from typing import Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
+from ..._traceback import exit_with_error
 from ...utils import format_memory_size
 from ..encoding import _resolve_encoding_mode
 from .parsing import (
@@ -233,11 +234,7 @@ def run_filter_dataset(
     except (typer.Exit, typer.BadParameter):
         raise
     except Exception as e:
-        aprint(f"❌ Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"❌ Error: {e}", e)
 
 
 def run_slice_dataset(
@@ -310,8 +307,4 @@ def run_slice_dataset(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"❌ Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"❌ Error: {e}", e)

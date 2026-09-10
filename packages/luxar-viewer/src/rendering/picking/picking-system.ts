@@ -66,6 +66,9 @@ import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 import { isPhysicalMeshMaterial } from '../materials/mesh-physical/config';
 
+/** Maximum time a touch pick may defer tooltip fades while its handler settles. */
+const EXPLICIT_PICK_FADE_GUARD_MS = 5_000;
+
 /** Result of a successful pick operation. */
 export interface PickResult {
   /** Assigned pick ID of the node */
@@ -209,14 +212,26 @@ export class PickingSystem {
    */
   private _shouldPick: () => boolean = () => true;
 
+  /** Explicit picks ignore hover/view invalidation until their result handler finishes. */
+  private _explicitPickSeq = 0;
+  private _explicitPicksInFlight = 0;
+  private _lastExplicitPickStartedAt = -Infinity;
+
   /** Optional post-processing reference for lens distortion correction. */
   private postProcessing: PostProcessingManager | null = null;
 
+  /**
+   * `onPickResult` is asynchronous: the app handler fetches the label / image /
+   * key before it stores the picked-element cache, so
+   * {@link pickAt} awaits the handler's promise before resolving — a caller
+   * that reads the cache "right after the pick" would otherwise race the fetch.
+   * The hover path voids the pick promise instead, so nothing there waits on it.
+   */
   constructor(
     private renderer: Renderer,
     private capabilities: RendererCapabilities,
     private camera: THREE.Camera,
-    private onPickResult: (result: PickResult | null) => void
+    private onPickResult: (result: PickResult | null) => Promise<void>
   ) {
     this.pickScene = new THREE.Scene();
     // No background — pick buffer clears to (0,0,0,0) which means "no hit"
@@ -464,6 +479,9 @@ export class PickingSystem {
    * Invalidate the cached pick buffer. Call when camera, geometry, or
    * viewport changes. Fades the current hover overlay (matches the
    * drag-suppression UX: while the camera is moving, tooltips hide).
+   * While a recent explicit tap pick is in flight, keep its delivery authoritative
+   * and defer that fade for at most EXPLICIT_PICK_FADE_GUARD_MS; the tap describes
+   * the frame where the finger lifted, while a stalled handler eventually fades.
    * The rAF scheduler will fire a fresh pick once everything has been
    * still for HOVER_SETTLE_MS.
    */
@@ -473,9 +491,14 @@ export class PickingSystem {
     // Supersede any in-flight readback so its late result can't override
     // this fade.
     this._pickSeq++;
+    if (this.hasFreshExplicitPick()) {
+      this.scheduler.markDirty();
+      return;
+    }
+    this._explicitPickSeq++;
     // Fade overlay (OverlayManager dedupes against the last state, so
     // repeated calls do no DOM work).
-    this.onPickResult(null);
+    void this.deliverPickResult(null);
     this.scheduler.markDirty();
   }
 
@@ -533,9 +556,44 @@ export class PickingSystem {
     // Supersede any in-flight readback — the cursor moved, so an older
     // pick's late result is now stale.
     this._pickSeq++;
-    // Fade existing overlay while moving (dedupe-safe).
-    this.onPickResult(null);
+    // Keep a recent explicit tap pick authoritative through async result delivery,
+    // matching markDirty(), but let a stalled handler fade after the bounded guard.
+    // Hover readbacks are still superseded by _pickSeq.
+    if (!this.hasFreshExplicitPick()) {
+      // Fade existing overlay while moving (dedupe-safe).
+      void this.deliverPickResult(null);
+    }
     this.scheduler.recordMouseMove(x, y);
+  }
+
+  /**
+   * Pick NOW at a viewport position — the touch counterpart of the
+   * hover-settle path. A finger never hovers, so a tap has nothing to settle:
+   * it bypasses the scheduler (cancelling any pending settle so the same
+   * point is not picked twice) and runs the pick directly. Resolves after
+   * the result has been delivered through `onPickResult` AND that handler
+   * has finished (or the result was dropped as stale by the sequence guard),
+   * so the caller can read the picked-element cache immediately afterwards.
+   * The wait matters: the app's handler stores the cache only after an
+   * asynchronous label fetch, so resolving on delivery alone would hand a
+   * tap the cache as it was BEFORE its own pick landed. Honours the same `setShouldPick` gate as a
+   * hover pick: with no consumer there is nothing to pick for.
+   */
+  pickAt(clientX: number, clientY: number): Promise<void> {
+    if (!this._canvasRect) {
+      this._canvasRect = this.renderer.domElement.getBoundingClientRect();
+    }
+    const x = clientX - this._canvasRect.left;
+    const y = clientY - this._canvasRect.top;
+    this.scheduler.cancelPending();
+    if (!this._shouldPick()) return Promise.resolve();
+    const explicitPickSeq = ++this._explicitPickSeq;
+    this._explicitPicksInFlight++;
+    this._lastExplicitPickStartedAt = performance.now();
+    return this.performPick(x, y, true, explicitPickSeq).finally(() => {
+      this._explicitPicksInFlight--;
+      if (this._explicitPicksInFlight === 0) this._lastExplicitPickStartedAt = -Infinity;
+    });
   }
 
   /**
@@ -547,8 +605,9 @@ export class PickingSystem {
     // Supersede any in-flight readback so it can't re-show a tooltip after
     // the cursor has already left the canvas.
     this._pickSeq++;
+    this._explicitPickSeq++;
     this.scheduler.recordMouseLeave();
-    this.onPickResult(null);
+    void this.deliverPickResult(null);
   }
 
   /** Clean up all resources — render target, pick materials, scene. */
@@ -557,6 +616,7 @@ export class PickingSystem {
     // dispose must not emit a result to the (now torn-down) session's
     // handlers — same generation guard the mutation paths use.
     this._pickSeq++;
+    this._explicitPickSeq++;
     this.scheduler.dispose();
 
     // Dispose all pick materials (unregisters from materialManager automatically)
@@ -581,6 +641,13 @@ export class PickingSystem {
   // Private implementation
   // ---------------------------------------------------------------------------
 
+  private hasFreshExplicitPick(): boolean {
+    return (
+      this._explicitPicksInFlight > 0 &&
+      performance.now() - this._lastExplicitPickStartedAt < EXPLICIT_PICK_FADE_GUARD_MS
+    );
+  }
+
   /**
    * Perform a pick at the given screen coordinates.
    *
@@ -588,7 +655,12 @@ export class PickingSystem {
    * all effectively visible registered nodes to the cached buffer first. Otherwise just reads
    * from the cached buffer — zero GPU cost on hover.
    */
-  private async performPick(screenX: number, screenY: number): Promise<void> {
+  private async performPick(
+    screenX: number,
+    screenY: number,
+    authoritative: boolean = false,
+    explicitPickSeq: number = 0
+  ): Promise<void> {
     // Claim this pick's slot. Any later pick/move/dirty/leave bumps
     // `_pickSeq`, marking this readback stale (see the post-`await` guard).
     const pickSeq = ++this._pickSeq;
@@ -675,7 +747,7 @@ export class PickingSystem {
     const ray = this.raycaster.ray;
 
     if (!rayHitsAnyNode(ray, this.nodeMap, this._worldBoxCache)) {
-      this.onPickResult(null);
+      await this.deliverPickResult(null);
       return;
     }
 
@@ -688,8 +760,36 @@ export class PickingSystem {
     // Drop the result if a newer pick/move/dirty/leave superseded us while
     // the readback was in flight — emitting it would clobber fresher state
     // with a stale tooltip.
-    if (pickSeq !== this._pickSeq) return;
-    this.onPickResult(result);
+    if (pickSeq !== this._pickSeq && (!authoritative || explicitPickSeq !== this._explicitPickSeq))
+      return;
+    await this.deliverPickResult(result);
+  }
+
+  /**
+   * Hand a result to `onPickResult`, containing both synchronous throws and
+   * async rejections so a failing handler is logged rather than leaked.
+   *
+   * Returns a promise that settles once the handler has finished, so the
+   * awaited delivery in {@link performPick} — which is what lets
+   * {@link pickAt} resolve only after the picked-element cache is written —
+   * gets the same containment as the fire-and-forget fades.
+   *
+   * The `Promise.resolve` is load-bearing, not ceremony — it is the narrowed
+   * type's restatement of the truthiness guard the containment helper was
+   * written with. The handler type is not enforced at runtime, and on a
+   * callback that returns nothing `.catch` throws a `TypeError` that the
+   * catch below would misreport as a handler failure while silently dropping
+   * the wait that {@link pickAt} depends on.
+   */
+  private deliverPickResult(result: PickResult | null): Promise<void> {
+    try {
+      return Promise.resolve(this.onPickResult(result)).catch((error: unknown) => {
+        log.error(Modules.RENDERER, 'Pick result handler failed', error);
+      });
+    } catch (error) {
+      log.error(Modules.RENDERER, 'Pick result handler failed', error);
+      return Promise.resolve();
+    }
   }
 
   /**

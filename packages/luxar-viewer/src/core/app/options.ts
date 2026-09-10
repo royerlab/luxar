@@ -36,6 +36,13 @@ export interface LuxarAppOptions {
   /** Cache and prefetch flags forwarded to the data loader. */
   loaderConfig?: LoaderConfig;
   /**
+   * Session-wide GPU geometry budget in bytes. `null` auto-sizes from device
+   * memory, measured heap, and device class; `0` disables byte-budget eviction,
+   * and a positive value pins the budget. Defaults to
+   * `config.dataLoading.performance.gpuPoolMaxBytes`.
+   */
+  gpuPoolMaxBytes?: number | null;
+  /**
    * Reflect the loaded dataset URL in the browser address bar via
    * `history.replaceState` so the page can be reloaded or shared.
    *
@@ -159,6 +166,16 @@ export interface LuxarAppOptions {
   lodFinest?: boolean;
 
   /**
+   * Replacement-LOD selection bias in screen-area units. `2` selects one
+   * occupancy-halved level finer and `4` selects two. Because finite screen-area
+   * coverage tops out at `1`, values below `1` make partition-anchored finest
+   * levels unreachable and values below `0.5` do the same for whole-object
+   * finest levels. Non-finite or non-positive values are treated as the neutral
+   * `1`. Default: 1. Mirrors `UrlParams.lodBias` (`?lod-bias=<N>`).
+   */
+  lodBias?: number;
+
+  /**
    * Bake the scene-derived environment once the load settles and hand the
    * container to `luxar env bake` (`__luxarDebug.environment.lastBake` + a
    * download). Mirrors `UrlParams.bakeEnv` / `probe` / `envResolution`
@@ -169,9 +186,9 @@ export interface LuxarAppOptions {
   /**
    * WebGL-only blend warm-up (pre-compile each DISTINCT reachable
    * blend-mode program variant, one compile per macrotask). Default:
-   * true. Mirrors `UrlParams.blendWarmup` (`?no-blend-warmup`
-   * disables) — the standalone bootstrap threads it here; embedders
-   * set it directly.
+   * true on laptops/desktops and false on phones/tablets. Mirrors
+   * `UrlParams.blendWarmup` (`?no-blend-warmup` disables) — the
+   * standalone bootstrap threads it here; embedders can disable it directly.
    */
   blendWarmup?: boolean;
 

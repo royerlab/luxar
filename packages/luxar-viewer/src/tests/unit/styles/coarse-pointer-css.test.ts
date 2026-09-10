@@ -27,7 +27,7 @@ const raw = readFileSync(FILE, 'utf8');
 const css = stripComments(raw);
 
 /** The pointer/hover features a block may be keyed on. */
-const POINTER_FEATURES = /\((pointer:\s*coarse|hover:\s*none|any-hover:\s*hover)\)/;
+const POINTER_FEATURES = /\((pointer:\s*coarse|hover:\s*none|any-hover:\s*(?:none|hover))\)/;
 /** Nested `@supports` is allowed (dvh fallback) — only inside a media block. */
 const SUPPORTS_DVH = /@supports\s*\(height:\s*100dvh\)/;
 
@@ -184,8 +184,92 @@ describe('coarse-pointer.css contract', () => {
     expect(coarse).toMatch(/\.luxar-control-rail__btn,[\s\S]*?\{[^}]*touch-action:\s*manipulation/);
   });
 
-  it('keeps the rail visible without hover under (hover: none)', () => {
-    const noHover = mediaBlock(css, /hover:\s*none/);
+  it('grows the tap targets and the text inputs under (pointer: coarse)', () => {
+    const coarse = mediaBlock(css, /pointer:\s*coarse/);
+    // 44 px primary targets through the local --luxar-hit-min property.
+    expect(coarse).toMatch(/--luxar-hit-min:\s*44px/);
+    expect(coarse).toMatch(
+      /\.luxar-control-rail__btn,\s*\.luxar-control-rail__chip\s*\{[^}]*width:\s*var\(--luxar-hit-min/
+    );
+    expect(ruleBody(coarse, '.luxar-panel-close')).toMatch(/height:\s*var\(--luxar-hit-min/);
+    // 36 px secondary targets; 24 px slider thumbs; 28 px range-slider thumbs.
+    const secondaryTargets = ruleBody(
+      coarse,
+      '.luxar-layer-row__eye,\n  .luxar-dimension-slider__play-btn,\n  .luxar-dimension-slider__step,\n  .luxar-dimension-slider__context-item'
+    );
+    expect(secondaryTargets).toMatch(/min-height:\s*36px/);
+    expect(coarse).toMatch(/\.luxar-gui__slider::-webkit-slider-thumb[^{]*\{[^}]*height:\s*24px/);
+    expect(coarse).toMatch(
+      /\.luxar-range-slider__input::-webkit-slider-thumb\s*\{[^}]*height:\s*28px/
+    );
+    expect(ruleBody(coarse, '.luxar-range-slider__track-container')).toMatch(/height:\s*28px/);
+    expect(ruleBody(coarse, '.luxar-range-slider__input')).toMatch(/height:\s*28px/);
+    expect(ruleBody(coarse, '.luxar-range-slider__track')).toMatch(
+      /top:\s*12px[^}]*left:\s*14px[^}]*right:\s*14px/
+    );
+    expect(coarse).toMatch(
+      /\[data-theme='light'\] \.luxar-gui__slider,[\s\S]*?background:\s*transparent/
+    );
+    expect(coarse).toMatch(
+      /\[data-theme='liquid-glass'\] \.luxar-layers-panel__slider,[\s\S]*?background:\s*transparent/
+    );
+    expect(coarse).toMatch(
+      /\.luxar-layers-panel__slider::-moz-range-track[^{]*\{[^}]*height:\s*3px/
+    );
+    expect(coarse).toMatch(
+      /\.luxar-dimension-slider__context-item[^{]*\{[^}]*touch-action:\s*manipulation/
+    );
+    // 16 px inputs: the iOS focus-zoom threshold.
+    expect(coarse).toMatch(/\.luxar-help-overlay input[^{]*\{[^}]*font-size:\s*16px/);
+    expect(coarse).toMatch(
+      /\.luxar-dimension-slider__context-menu input,[\s\S]*?\.luxar-dimension-slider__context-menu select[^{]*\{[^}]*font-size:\s*16px/
+    );
+    expect(coarse).toMatch(/\.luxar-debug-console__filter,[\s\S]*?\{[^}]*font-size:\s*16px/);
+    expect(ruleBody(coarse, '.luxar-dimension-slider__context-menu')).toMatch(
+      /max-height:\s*calc\(100vh - 20px\)[^}]*overflow-y:\s*auto/
+    );
+    expect(css).toMatch(
+      /@supports\s*\(height:\s*100dvh\)[\s\S]*?\.luxar-dimension-slider__context-menu\s*\{[^}]*max-height:\s*calc\(100dvh - 20px\)/
+    );
+    // The first-run hint stays beside the rail instead of across the canvas.
+    expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/max-width:\s*calc\(/);
+  });
+
+  it('swaps hover feedback for press feedback under (any-hover: none)', () => {
+    const noHover = mediaBlock(css, /any-hover:\s*none/);
+    expect(noHover).toMatch(/\.luxar-control-rail__btn:active[^{]*\{[^}]*background:/);
+    // A stuck :hover after a tap goes back to the rest state.
+    expect(noHover).toMatch(/\.luxar-control-rail__btn:hover:not\(:active\)/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__btn:hover:not(:active):not(.is-active)')
+    ).toMatch(/color:\s*var\(--luxar-text-muted\)/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__collapse:hover:not(:active):not(.is-active)')
+    ).toMatch(/color:\s*var\(--luxar-text-secondary\)/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__chip:hover:not(:active):not(.is-active)')
+    ).toMatch(/background:\s*none[^}]*color:\s*var\(--luxar-text-muted\)/);
+    expect(
+      ruleBody(noHover, '.luxar-layer-row:hover:not(:active):not(.luxar-layer-row--selected)')
+    ).toMatch(/background:\s*none/);
+    expect(ruleBody(noHover, '.luxar-dimension-slider__play-btn:hover:not(:active)')).toMatch(
+      /background:\s*var\(--luxar-highlight\)[^}]*transform:\s*none/
+    );
+    expect(
+      ruleBody(noHover, '.luxar-dimension-slider__play-btn--playing:hover:not(:active)')
+    ).toMatch(/background:\s*var\(--luxar-warning\)/);
+    // Tooltips need a hover; without one they show on keyboard focus only.
+    expect(noHover).toMatch(/\.luxar-control-rail__btn:focus-visible \.luxar-control-rail__tip/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__chip:hover .luxar-control-rail__chip-tip')
+    ).toMatch(/opacity:\s*0/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__chip:focus-visible .luxar-control-rail__chip-tip')
+    ).toMatch(/opacity:\s*1/);
+  });
+
+  it('keeps the rail visible without hover under (any-hover: none)', () => {
+    const noHover = mediaBlock(css, /any-hover:\s*none/);
     expect(noHover).toMatch(
       /\.luxar-control-rail,\s*\.luxar-control-rail\.is-collapsed\s*\{[^}]*opacity:\s*1/
     );

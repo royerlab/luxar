@@ -54,8 +54,8 @@ PostProcessingManager (class)
 - **Pure-over-ctx.** No helper reads `this` or mutates orchestrator
   fields directly. The orchestrator owns state; helpers return values
   or write through supplied references on the ctx bundle.
-- **Physical-pixel sizing.** `getPhysicalSize` returns
-  `effectiveSize × renderer.getPixelRatio()`. Render targets and the
+- **Physical-pixel sizing.** `getPhysicalSize` floors the effective size at the renderer DPR and
+  clamps it to the framebuffer limit. Render targets and the
   mega-shader / bloom / FXAA passes are sized in physical pixels so they
   match `renderer.getDrawingBufferSize()`. A mismatch at DPR > 1
   silently brightens the scene.

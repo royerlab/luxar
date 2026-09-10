@@ -278,6 +278,19 @@ Written by passing `citation=` to `LuxarZarrCompiler.create_scene(...)`. The
 payload is validated at write time (`luxar.core.citation.validate_citation`), so
 a malformed citation raises instead of being baked into every copy of the data.
 
+### `input_digests` (optional root attr)
+
+`input_digests` maps each resolved input artifact's basename to the lowercase
+sha256 digest of the bytes the demo resolver accepted. The map is canonical by
+basename and records every manifest artifact resolved in the process before the
+scene was stamped; basenames are therefore expected to be unique within that
+set.
+
+The attribute participates in the root `content_hash`, so changing the resolved
+input generation changes the scene's content identity even when its geometry is
+otherwise unchanged. This differs from the root `environment/` sidecar group,
+which is derived metadata and is explicitly excluded from `content_hash`.
+
 ### `incomplete` (optional root attr)
 
 `incomplete` (boolean) is written to the root `.zattrs` only when the writer
@@ -1623,9 +1636,18 @@ The clip is stored verbatim beside the overlay as `video.webm` or `video.mp4`
 refuses anything else); an optional `poster_file` follows the image-overlay
 payload rules. A `null` height in `size` keeps the clip's own aspect ratio.
 `autoplay` requires `muted` (browsers block un-muted autoplay), and the viewer
-plays a clip only while its `visible_range` matches, pausing it otherwise. A
-VP9 WebM with an alpha channel renders transparent over the scene in Chrome and
-Firefox; Safari cannot decode alpha WebM and shows the poster instead.
+plays a clip only while its `visible_range` matches, pausing it otherwise.
+
+Transparency travels as a **stacked alpha matte**, `"alpha_matte": "stacked"`:
+the frame is the colour on top and the alpha channel as a grey matte of the same
+size below — one ordinary opaque clip twice as tall (ffmpeg
+`split[c][a];[a]alphaextract[a];[c][a]vstack`) — and the viewer recombines the
+halves in a shader onto a canvas, so the clip is transparent in every browser,
+Safari and WKWebView included (the exported native app). A VP9 WebM with an
+alpha plane (`yuva420p`) is still accepted as a plain clip, but only Chrome and
+Firefox render its alpha; Safari decodes it and drops the alpha, showing the clip
+on a black square. Without WebGL the viewer shows a stacked clip as is (colour
+over matte).
 
 **HTML overlay** (`overlay_html`):
 ```json

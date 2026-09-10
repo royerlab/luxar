@@ -20,6 +20,7 @@
  */
 
 import { RAIL_ICONS } from '../control-rail/icons';
+import { isTouchLikePointer } from '../../utils/input-capabilities';
 
 export interface HomePopoverContext {
   /** Frame all visible geometry (same as the F shortcut / Home left-click). */
@@ -147,6 +148,11 @@ export function buildHomePopover(host: HTMLElement, ctx: HomePopoverContext): ()
       });
       chip.addEventListener('mouseenter', () => setCaption(action.label, action.hint));
       chip.addEventListener('focus', () => setCaption(action.label, action.hint));
+      // A finger cannot hover: name the action as the press begins, so the
+      // caption reads before the tap commits. Mouse presses already hovered.
+      chip.addEventListener('pointerdown', (e) => {
+        if (isTouchLikePointer(e)) setCaption(action.label, action.hint);
+      });
     }
 
     chips.appendChild(chip);

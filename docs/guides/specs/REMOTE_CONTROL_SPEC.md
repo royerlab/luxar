@@ -223,6 +223,20 @@ vc.waypoints = [
   carries snake_case `ViewerConfig` keys (validated in Python against the
   rendering field list) and rides `RenderingControls.applyOverrides` via
   `extractRenderingOverrides` — the same path as authored defaults.
+- `reveal` decides WHEN the story's dimension-bound overlays appear.
+  `"immediate"` (default) shows them as the dimension changes, while the
+  camera is still flying. `"on_arrival"` holds overlays that would newly
+  appear until the flight resolves, so the caption and the turntable show up
+  when the camera has arrived — the same `waypoint-arrived` event the sound
+  layer's `on_arrive` narration keys on (`SOUND_SPEC.md` §4.3), so text and
+  voice land together. The rule is a gate, not a timer: a snap, a
+  camera-less waypoint and a flight the visitor cancels all count as arrival;
+  a flight a newer waypoint supersedes never reveals (scrubbing through five
+  stories shows only the one you stop on); departing overlays hide at once
+  either way; overlays without a `visible_range` are untouched. Viewer side:
+  `WaypointDriver.inTransit` + `OverlayManager.setTransitGate` — the app
+  re-runs the visibility pass after the driver evaluates and on arrival, so
+  listener order between the two cannot flash a caption.
 
 Viewer rule (`core/app/camera/waypoint-driver.ts`, wired in
 `LuxarApp.applyViewerConfigState` after `dimensions.current_step` is applied):

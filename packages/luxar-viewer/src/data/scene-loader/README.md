@@ -86,6 +86,16 @@ The subfolders:
   override, and `nd_transform` inverse-query all live in that one helper
   — diverging means a retry can succeed against a different region than
   the update that failed.
+- **The view version bumps only on a query-determinant change.**
+  `updateView` compares the merged view state with the current one
+  (`viewStatesEqual`: displayDims / slicePosition / tolerance / dims
+  signature) and advances `currentViewVersion` only when they differ. A
+  same-view pass — a partition part re-entering the frustum
+  (`requestReprocess(paths)`, swept only for loaders under those paths),
+  a retry re-run, a depth-sort re-commit — re-sweeps under the SAME
+  version. Lazy `lod_group` levels are outside the sweep and are never
+  re-stamped by it, so a bump on an unchanged view invalidates every
+  resident fine level at once and drops all groups to coarse.
 - **Async process / synchronous commit split.** `process/` runs the nD
   → 3D projection (worker-preferred, main-thread fallback) and returns
   `Staged*Commit` payloads without touching geometry; `commit/` writes

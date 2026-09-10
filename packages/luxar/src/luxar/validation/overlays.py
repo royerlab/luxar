@@ -296,6 +296,47 @@ def validate_visible_range(
     return validated
 
 
+_SUPPORTED_IMAGE_INPUTS = (
+    "Supported: str/Path, bytes, numpy array, PIL Image, or imageio-compatible."
+)
+
+
+def _try_imageio_to_bytes(image: Any, fmt: str) -> Tuple[bytes, str] | None:
+    """Decode an optional imageio input, preserving runtime decoder failures."""
+    try:
+        import imageio.v3 as iio
+    except ImportError:
+        return None
+
+    if hasattr(image, "read"):
+        try:
+            arr = iio.imread(image)
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot process image of type {type(image).__name__}: imageio failed "
+                f"with {type(exc).__name__}: {exc}. {_SUPPORTED_IMAGE_INPUTS}"
+            ) from exc
+    else:
+        try:
+            arr = np.asarray(image)
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot process image of type {type(image).__name__}: array conversion "
+                f"failed with {type(exc).__name__}: {exc}. {_SUPPORTED_IMAGE_INPUTS}"
+            ) from exc
+        if arr.ndim not in (2, 3):
+            return None
+        try:
+            return _numpy_to_bytes(arr, fmt), fmt
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot process image of type {type(image).__name__}: image conversion "
+                f"failed with {type(exc).__name__}: {exc}. {_SUPPORTED_IMAGE_INPUTS}"
+            ) from exc
+
+    return _numpy_to_bytes(arr, fmt), fmt
+
+
 def validate_image_input(
     image: Any,
     fmt: str = "png",
@@ -352,26 +393,34 @@ def validate_image_input(
     if isinstance(image, np.ndarray):
         return _numpy_to_bytes(image, fmt), fmt
 
-    # Try imageio as fallback
-    try:
-        import imageio.v3 as iio
-
-        # imageio can read many formats; convert to numpy then to bytes
-        if hasattr(image, "read"):
-            arr = iio.imread(image)
-        else:
-            arr = np.asarray(image)
-        return _numpy_to_bytes(arr, fmt), fmt
-    except (ImportError, Exception):
-        pass
+    imageio_result = _try_imageio_to_bytes(image, fmt)
+    if imageio_result is not None:
+        return imageio_result
 
     raise ValueError(
-        f"Cannot process image of type {type(image).__name__}. "
-        f"Supported: str/Path, bytes, numpy array, PIL Image, or imageio-compatible."
+        f"Cannot process image of type {type(image).__name__}. {_SUPPORTED_IMAGE_INPUTS}"
     )
 
 
 VALID_VIDEO_FORMATS: Set[str] = {"webm", "mp4"}
+
+#: How a video overlay carries transparency. ``"stacked"``: the frame is the
+#: colour on top and the alpha channel as a grey matte of the same size below
+#: (an ordinary opaque clip twice as tall), which the viewer recombines in a
+#: shader. Chosen over a VP9 alpha plane because Safari / WKWebView decode that
+#: and silently drop the alpha.
+VALID_VIDEO_ALPHA_MATTES: Set[str] = {"stacked"}
+
+
+def validate_video_alpha_matte(alpha_matte: Any) -> None:
+    """Refuse an ``alpha_matte`` layout the viewer does not recombine."""
+    if alpha_matte is None:
+        return
+    if alpha_matte not in VALID_VIDEO_ALPHA_MATTES:
+        raise ValueError(
+            f"alpha_matte must be one of {sorted(VALID_VIDEO_ALPHA_MATTES)} or None, "
+            f"got {alpha_matte!r}"
+        )
 
 
 def _detect_encoded_video_format(data: bytes) -> str:

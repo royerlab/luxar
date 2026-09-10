@@ -9,10 +9,16 @@
  * disabled predicate (grayed when the scene has no layers).
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { buildRailItems, type RailItemsDeps } from '../../../../../core/app/init/build-rail-items';
 import { RAIL_ICONS, type ControlRailItem } from '../../../../../ui/control-rail';
 import { KeyAction } from '../../../../../input/input-handler/key-bindings/actions';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../../../utils/input-capabilities';
+import { notifier } from '../../../../../utils/cross-layer/notifier';
+import { eventBus } from '../../../../../utils/cross-layer/event-bus';
 
 function makeDeps(
   overrides: {
@@ -46,6 +52,8 @@ function makeDeps(
         cycleDataMonitor: vi.fn(),
         toggleCinematicMode: vi.fn(),
         toggleFullscreen: vi.fn(),
+        closeAllPanels: vi.fn(),
+        handleEscape: vi.fn(),
         togglePerformanceStats: vi.fn(),
         recenterCamera: vi.fn(),
         toggleDatasetBrowser: vi.fn(),
@@ -273,7 +281,7 @@ describe('buildRailItems', () => {
       expect(btn.querySelector('.luxar-control-rail__tip kbd')).toBeNull();
       expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Navigation · Orbit');
       expect(btn.getAttribute('aria-label')).toBe(
-        'Navigation: Orbit — click for fly, right-click for options'
+        'Navigation: Orbit — click for fly, right-click or hold for options'
       );
     });
 
@@ -327,7 +335,30 @@ describe('buildRailItems', () => {
         get: () => (on ? document.body : null),
       });
     };
-    afterEach(() => setFullscreen(false));
+    /** jsdom has no Fullscreen API at all: declare it available like a desktop browser. */
+    const setFullscreenEnabled = (enabled: boolean | undefined): void => {
+      Object.defineProperty(document, 'fullscreenEnabled', {
+        configurable: true,
+        get: () => enabled,
+      });
+    };
+    beforeEach(() => setFullscreenEnabled(true));
+    afterEach(() => {
+      setFullscreen(false);
+      setFullscreenEnabled(undefined);
+    });
+
+    it('omits the fullscreen chip where the Fullscreen API is absent (iPhone Safari)', () => {
+      setFullscreenEnabled(undefined);
+      expect(findView().flyout!.map((t) => t.id)).toEqual([
+        'scalebar',
+        'legend',
+        'overlays',
+        'cinematic',
+      ]);
+      setFullscreenEnabled(false);
+      expect(findView().flyout!.some((t) => t.id === 'fullscreen')).toBe(false);
+    });
 
     it('carries the five view toggles in order, fullscreen last', () => {
       expect(findView().flyout!.map((t) => t.id)).toEqual([
@@ -477,16 +508,140 @@ describe('buildRailItems', () => {
       findAudio(makeDeps({ hasSoundNodes: true, muted: true })).render!(btn);
       expect(btn.dataset.audioState).toBe('muted');
       expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Sound · Muted');
+      expect(btn.getAttribute('aria-label')).toBe(
+        'Sound: muted — click to unmute, right-click or hold for the mixer'
+      );
       expect(btn.innerHTML).toContain(RAIL_ICONS.audioMuted.slice(0, 40));
       findAudio(makeDeps({ hasSoundNodes: true, muted: false })).render!(btn);
       expect(btn.dataset.audioState).toBe('on');
       expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Sound · On');
+      expect(btn.getAttribute('aria-label')).toBe(
+        'Sound: on — click to mute, right-click or hold for the mixer'
+      );
     });
 
     it('right-click opens the Sound popover', () => {
       const item = findAudio(makeDeps({ hasSoundNodes: true }));
       expect(item.popover?.trigger).toBe('context');
       expect(item.popover?.title).toBe('Sound');
+    });
+  });
+
+  describe('coarse pointer (touch-first device)', () => {
+    afterEach(() => {
+      resetInputProfileForTests();
+      vi.restoreAllMocks();
+    });
+
+    it('adds a momentary Hide panels item that closes panels without the fullscreen Escape path', () => {
+      setInputProfileOverride('touch');
+      const deps = makeDeps();
+      const items = buildRailItems(deps);
+      const hide = items.find((i: ControlRailItem) => i.id === 'hide-panels')!;
+      expect(hide).toBeDefined();
+      expect(hide.momentary).toBe(true);
+      expect(RAIL_ICONS.hidePanels).toContain('<svg');
+      expect(hide.icon).toBe(RAIL_ICONS.hidePanels);
+      expect(hide.icon).not.toBe(RAIL_ICONS.view);
+      hide.activate();
+      expect(
+        (deps as unknown as { ui: { commands: { closeAllPanels: ReturnType<typeof vi.fn> } } }).ui
+          .commands.closeAllPanels
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        (deps as unknown as { ui: { commands: { handleEscape: ReturnType<typeof vi.fn> } } }).ui
+          .commands.handleEscape
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not add Hide panels on a mouse-and-keyboard machine', () => {
+      setInputProfileOverride('mouse');
+      expect(buildRailItems(makeDeps()).some((i: ControlRailItem) => i.id === 'hide-panels')).toBe(
+        false
+      );
+    });
+
+    it('help activation closes the docked panels under a coarse pointer, not under a mouse', () => {
+      const hideHelp = vi.spyOn(notifier, 'hideHelp').mockImplementation(() => {});
+      setInputProfileOverride('touch');
+      let deps = makeDeps({ renderVisible: true });
+      buildRailItems(deps)
+        .find((i: ControlRailItem) => i.id === 'help')!
+        .activate();
+      const commands = (
+        deps as unknown as {
+          ui: {
+            commands: {
+              toggleRenderingControls: ReturnType<typeof vi.fn>;
+              toggleHelp: ReturnType<typeof vi.fn>;
+            };
+          };
+        }
+      ).ui.commands;
+      expect(commands.toggleRenderingControls).toHaveBeenCalledTimes(1);
+      expect(commands.toggleHelp).toHaveBeenCalledTimes(1);
+      expect(hideHelp).not.toHaveBeenCalled();
+
+      setInputProfileOverride('mouse');
+      deps = makeDeps({ renderVisible: true });
+      buildRailItems(deps)
+        .find((i: ControlRailItem) => i.id === 'help')!
+        .activate();
+      expect(
+        (
+          deps as unknown as {
+            ui: { commands: { toggleRenderingControls: ReturnType<typeof vi.fn> } };
+          }
+        ).ui.commands.toggleRenderingControls
+      ).not.toHaveBeenCalled();
+      hideHelp.mockRestore();
+    });
+
+    it('monitor activation closes other coarse surfaces without hiding the monitor', () => {
+      const hideHelp = vi.spyOn(notifier, 'hideHelp').mockImplementation(() => {});
+      const hiddenPanels: string[] = [];
+      const off = eventBus.on('panel-hide', ({ panelId }) => hiddenPanels.push(panelId));
+      setInputProfileOverride('touch');
+
+      const deps = makeDeps({ renderVisible: true });
+      buildRailItems(deps)
+        .find((item) => item.id === 'monitor')!
+        .activate();
+
+      expect(hideHelp).toHaveBeenCalledTimes(1);
+      expect(hiddenPanels).not.toContain('data-monitor');
+      expect(mocks(deps).ui.commands.toggleRenderingControls).toHaveBeenCalledTimes(1);
+      off();
+      hideHelp.mockRestore();
+    });
+
+    it('docked panels close Help and the data monitor only under a coarse pointer', () => {
+      const hideHelp = vi.spyOn(notifier, 'hideHelp').mockImplementation(() => {});
+      const hiddenPanels: string[] = [];
+      const off = eventBus.on('panel-hide', ({ panelId }) => hiddenPanels.push(panelId));
+
+      setInputProfileOverride('touch');
+      for (const id of ['render', 'layers', 'recording']) {
+        const deps = makeDeps({ layerCount: 3 });
+        buildRailItems(deps)
+          .find((item) => item.id === id)!
+          .activate();
+      }
+      expect(hideHelp).toHaveBeenCalledTimes(3);
+      expect(hiddenPanels).toEqual(['data-monitor', 'data-monitor', 'data-monitor']);
+
+      hideHelp.mockClear();
+      hiddenPanels.length = 0;
+      setInputProfileOverride('mouse');
+      for (const id of ['render', 'layers', 'recording']) {
+        const deps = makeDeps({ layerCount: 3 });
+        buildRailItems(deps)
+          .find((item) => item.id === id)!
+          .activate();
+      }
+      expect(hideHelp).not.toHaveBeenCalled();
+      expect(hiddenPanels).toEqual([]);
+      off();
     });
   });
 });

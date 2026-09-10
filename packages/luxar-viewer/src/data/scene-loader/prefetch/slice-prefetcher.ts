@@ -46,7 +46,7 @@
  * shared SliceCache under content-keyed entries — it cannot stall or corrupt
  * a foreground tick. `prefetch()` is fire-and-forget (never awaited; every
  * rejection, including expected AbortErrors, is swallowed); its fetches share
- * the global 64-wide fetch gate and are bounded by the budget + abort.
+ * the global 24-slot data fetch lane and are bounded by the budget + abort.
  * `abortInFlight()` / `releaseShadows()` (playback end) / `dispose()` tear it
  * down.
  *
@@ -62,6 +62,8 @@ import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import { deriveNodeViewState } from '../view-state/derive-node-view-state';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isAbortError } from '../../loaders';
+import { isObjectLoadEligible } from '../loaders/run-loader-updates';
+import type * as THREE from 'three';
 
 /** Everything the prefetcher may read off its owning SceneLoader. */
 export interface SlicePrefetcherCtx {
@@ -73,6 +75,8 @@ export interface SlicePrefetcherCtx {
   registry: Pick<LoaderRegistry, 'loaders' | 'linesLoaders' | 'gsplatLoaders'>;
   /** Compose a node's effective rendering attrs up the scene-graph ancestry. */
   applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'];
+  /** Resolve the live rendered object for a loader path. */
+  resolveObject(path: string): THREE.Object3D | null | undefined;
 }
 
 /**
@@ -176,15 +180,15 @@ export class SlicePrefetcher {
 
     const { registry } = this.ctx;
     const tasks: Array<Promise<void>> = [];
-    for (const path of registry.loaders.keys()) {
-      tasks.push(this.prefetchNode(path, 'points', viewState, budgetMs, controller.signal));
-    }
-    for (const path of registry.linesLoaders.keys()) {
-      tasks.push(this.prefetchNode(path, 'lines', viewState, budgetMs, controller.signal));
-    }
-    for (const path of registry.gsplatLoaders.keys()) {
-      tasks.push(this.prefetchNode(path, 'gsplats', viewState, budgetMs, controller.signal));
-    }
+    const request = { viewState, budgetMs, signal: controller.signal };
+    const objects = new Map<string, THREE.Object3D | null | undefined>();
+    const resolveObject = (path: string): THREE.Object3D | null | undefined => {
+      if (!objects.has(path)) objects.set(path, this.ctx.resolveObject(path));
+      return objects.get(path);
+    };
+    this.queueVisible(tasks, registry.loaders, 'points', request, resolveObject);
+    this.queueVisible(tasks, registry.linesLoaders, 'lines', request, resolveObject);
+    this.queueVisible(tasks, registry.gsplatLoaders, 'gsplats', request, resolveObject);
 
     this.inFlight = tasks.length;
     // Reopen the gate once the whole batch settles so the next tick re-targets.
@@ -226,6 +230,23 @@ export class SlicePrefetcher {
     this.releaseShadows();
   }
 
+  private queueVisible(
+    tasks: Array<Promise<void>>,
+    loaders: ReadonlyMap<string, unknown>,
+    kind: GeometryKind,
+    request: { viewState: ViewState; budgetMs: number; signal: AbortSignal },
+    resolveObject: (path: string) => THREE.Object3D | null | undefined
+  ): void {
+    for (const path of loaders.keys()) {
+      const object = resolveObject(path);
+      if (!isObjectLoadEligible(object)) {
+        this.dropShadow(path);
+        continue;
+      }
+      tasks.push(this.prefetchNode(path, kind, { ...request, object }));
+    }
+  }
+
   /**
    * Derive the per-node state and run one shadow load. Returns a promise that
    * settles when the pass finishes (or is skipped/aborted) so the batch can
@@ -234,10 +255,14 @@ export class SlicePrefetcher {
   private prefetchNode(
     path: string,
     kind: GeometryKind,
-    viewState: ViewState,
-    budgetMs: number,
-    signal: AbortSignal
+    request: {
+      viewState: ViewState;
+      budgetMs: number;
+      signal: AbortSignal;
+      object: THREE.Object3D | null | undefined;
+    }
   ): Promise<void> {
+    const { viewState, budgetMs, signal, object } = request;
     const graph = this.ctx.getSceneGraph();
     const node = findNodeByPath(graph, path);
     if (!node) return Promise.resolve();
@@ -278,6 +303,10 @@ export class SlicePrefetcher {
     return this.getShadow(path, kind, node)
       .then((shadow) => {
         if (signal.aborted || this.disposed) return;
+        if (!isObjectLoadEligible(object)) {
+          this.dropShadow(path);
+          return;
+        }
         // Structurally identical view-state shapes across the three
         // geometry loader interfaces (same cast the handlers perform).
         return (shadow as DataLoader).updateView(shadowViewState, undefined, signal);
@@ -313,5 +342,16 @@ export class SlicePrefetcher {
       if (this.shadows.get(path) === promise) this.shadows.delete(path);
     });
     return promise;
+  }
+
+  /** Forget and dispose one shadow whose path is no longer load-eligible. */
+  private dropShadow(path: string): void {
+    const pending = this.shadows.get(path);
+    if (!pending) return;
+    this.shadows.delete(path);
+    pending.then(
+      (loader) => loader.dispose(),
+      () => undefined
+    );
   }
 }

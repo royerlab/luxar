@@ -33,7 +33,7 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 - **Result<T, E>**: Discriminated-union return type for fallible operations
 - **Camera Type Helpers**: Unified `LuxarCamera` union and type guards for perspective vs orthographic
 - **Effective Visibility**: `isEffectivelyVisible` — the single parent-chain walk answering "does this node actually render?" (`visible` is a LOCAL flag, so a hidden layer or a hidden LOD level leaves its descendants' flags true). Shared by the LOD load gate, LOD eviction, the pick pass, and the depth-sort scheduler
-- **Wheel Delta Normalization**: `normalizeWheelDelta` — converts a `WheelEvent`'s line/page-mode `deltaY` to a pixel equivalent (pixel mode passes through verbatim) so a notch lands in the same ballpark in every browser instead of ~32x apart
+- **Wheel Delta Normalization**: `normalizeWheelDelta` converts a `WheelEvent`'s line/page-mode `deltaY` to a pixel equivalent (pixel mode passes through verbatim) so a notch lands in the same ballpark in every browser instead of ~32x apart; `normalizeWheelDeltaWithAxisFallback` adds opt-in `deltaX` fallback for Shift+wheel handlers
 - **Platform Detection**: Single `isMacPlatform()` helper for OS-conditional defaults
 - **Input Capabilities**: `getInputProfile()` — one memoised answer to "touch-first device? iPhone/iPad? can it hover?" (`coarsePointer`, `hoverCapable`, `isIPad` incl. the iPadOS-as-macOS masquerade, `deviceClass`), plus `isTouchLikePointer(event)` for per-event gesture routing and the `?input=touch|mouse` override
 - **HTML Escaping**: XSS prevention for safe HTML rendering
@@ -50,12 +50,13 @@ utils/
 ├── format-error.ts          # Unknown thrown value → message / name: message / stack
 ├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
+├── long-press.ts            # attachLongPress(el, …) — touch long-press → secondary action, single opener across platforms
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
 ├── platform.ts              # isMacPlatform()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
-├── wheel-delta.ts           # normalizeWheelDelta (deltaMode line/page → pixel equivalent)
+├── wheel-delta.ts           # deltaMode normalization + opt-in Shift-axis fallback
 ├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
 │   ├── event-group.ts       # DOM-listener group with single dispose() teardown
@@ -197,13 +198,17 @@ Dependency-inverted UI notification surface so lower layers can surface user-vis
 
 ### input-capabilities.ts - Input / Device Capability Profile
 
-The single answer to "is this a touch-first device, is it an iPhone or an iPad, can its pointer hover?" for every JS-side touch adaptation (gesture routing, long-press menus, mobile rendering budgets, tap-oriented copy). Deliberately import-free so leaf modules such as `rendering/pixel-ratio-cap.ts` can depend on it without joining an import cycle. CSS adaptations do **not** go through here — they use the `(pointer: coarse)` / `(hover: none)` media features directly.
+The single answer to "is this a touch-first device, is it an iPhone or an iPad, can its pointer hover?" for every JS-side touch adaptation (gesture routing, long-press menus, mobile rendering budgets, tap-oriented copy). Deliberately import-free so leaf modules such as `rendering/pixel-ratio-cap.ts` can depend on it without joining an import cycle. CSS adaptations do **not** go through here — they use the `(pointer: coarse)` / `(any-hover: none)` media features directly.
 
 - `getInputProfile()` — memoised `InputProfile`: `coarsePointer` (primary pointer is a finger), `hoverCapable` (`(any-hover: hover)` OR a fine primary pointer — an iPad with a trackpad keeps hover tooltips), `touchPoints`, `isIPhone`, `isIPad` (real iPad UA OR `platform` starts `Mac` with `maxTouchPoints > 1` — iPadOS Safari reports a Macintosh UA by default), `isIOS`, `isAndroid`, `deviceClass` (`mobile | laptop | desktop`, the budget tier `cache/heap-budget.ts` sizes the cache pool from), `source`. Re-derived when the pointer media queries fire `change` (trackpad attach, DevTools emulation).
 - `setInputProfileOverride('touch' | 'mouse' | null)` — the `?input=` URL override, applied once in `core/bootstrap.ts` before anything reads the profile. `touch` = bare phone/tablet (coarse, no hover, `mobile` tier); `mouse` = fine, hover-capable profile while keeping the detected memory tier — the tier is the operative WebKit cache budget, and the override is pointer-only. Platform flags stay detected in both modes (they gate WebKit workarounds that remain true). JS-only: stylesheets and per-event gesture routing still follow the real media features and `PointerEvent.pointerType`.
 - `isTouchLikePointer(event)` — a finger, or a pen used as a finger on a coarse-pointer device (iPad + Pencil, with no secondary button held). Consistent across a gesture: `pointermove` reports `button === -1`, so held buttons are read from `buttons`. A pen on a fine-pointer desktop keeps the mouse mapping.
 - `deriveInputProfile(signals)`, `inferDeviceClass(signals)`, `readInputSignals()` — the pure derivation and its raw browser signals (`InputSignals`), injectable for tests. No-signal default (node, jsdom) is a hover-capable fine-pointer laptop, i.e. the historical desktop behaviour.
 - `resetInputProfileForTests()`.
+
+### long-press.ts - Long-press → secondary action (touch)
+
+`attachLongPress(el, { onLongPress, durationMs = 500, slopPx = 12 })` arms a delegated long-press on `el` for touch-like pointers only (`isTouchLikePointer`; a mouse keeps its right button and never sees a timer). Cancels on movement past the slop, on release, on `pointercancel`/`pointerleave`, or when a second finger lands (a pinch). The callback runs after `durationMs`, or immediately when a platform `contextmenu` arrives mid-press, and returns whether it handled the press. Only a handled press becomes the SINGLE opener across platforms: it swallows that `contextmenu` (iOS never fires one) so a press cannot open two menus, and swallows the release `click` so the button's primary action does not run under the menu that just opened. Returns a disposer. Used by the control rail (context popovers), the dimension sliders' play button (animation settings) and the layers panel (row / eye / header menus); the canvas has its own long-press inside `core/app/interaction/canvas-actions.ts` because its release path is `pointerup`, not `click`.
 
 ### platform.ts - Platform Detection
 

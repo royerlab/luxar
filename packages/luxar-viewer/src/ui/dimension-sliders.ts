@@ -1,12 +1,15 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { calculateStepSize } from '../scene/dims/step-math';
+import { calculateNextPosition, calculateStepSize } from '../scene/dims/step-math';
 import { getNonDisplayedDimensions } from '../scene/dims/selection';
 import { getViewerContainer } from '../utils/viewer-container';
+import { getInputProfile } from '../utils/input-capabilities';
+import { normalizeWheelDeltaWithAxisFallback } from '../utils/wheel-delta';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
+import { attachLongPress } from '../utils/long-press';
 import {
   clampWithCyclicWrap,
   valueToFraction,
@@ -14,6 +17,29 @@ import {
   fractionToThumbLeft,
   clampInteger,
 } from './dimension-sliders/slider-math';
+
+function placeContextMenuVertically(
+  menuHeight: number,
+  pressY: number,
+  viewportHeight: number
+): { top: number; maxHeight: string } {
+  const edgePadding = 10;
+  const pressGap = 10;
+  const aboveTop = pressY - menuHeight;
+  if (aboveTop >= edgePadding) return { top: aboveTop, maxHeight: '' };
+
+  const belowTop = pressY + pressGap;
+  if (belowTop + menuHeight <= viewportHeight - edgePadding) {
+    return { top: belowTop, maxHeight: '' };
+  }
+
+  const availableAbove = Math.max(0, pressY - pressGap - edgePadding);
+  const availableBelow = Math.max(0, viewportHeight - edgePadding - belowTop);
+  if (availableAbove >= availableBelow) {
+    return { top: edgePadding, maxHeight: `${availableAbove}px` };
+  }
+  return { top: belowTop, maxHeight: `${availableBelow}px` };
+}
 
 /**
  * Configuration interface for initializing dimension sliders.
@@ -38,6 +64,13 @@ export interface SliderConfig {
 
   /** Zero-based position in the non-displayed dimension list selected for [ / ]. */
   selectedDimension?: number;
+
+  /**
+   * Fired when the panel selects the [ / ] target itself: under a coarse
+   * pointer each dimension's name is a tappable chip, the finger's stand-in
+   * for the 1–9 keys. Receives the position in the non-displayed list.
+   */
+  onSelectDimension?: (navigableIndex: number) => void;
 }
 
 /**
@@ -101,6 +134,7 @@ export class DimensionSliders {
 
   /** Zero-based position in the non-displayed dimension list selected for [ / ]. */
   private selectedDimension: number;
+  private readonly onSelectDimension?: (navigableIndex: number) => void;
 
   /** Map of dimension indices to their corresponding HTML slider elements */
   private sliders: Map<number, HTMLInputElement> = new Map();
@@ -208,6 +242,7 @@ export class DimensionSliders {
     this.dimensionNames = config.dimensionNames;
     this.dimensionUnits = config.dimensionUnits || [];
     this.selectedDimension = config.selectedDimension ?? 0;
+    this.onSelectDimension = config.onSelectDimension;
 
     // Build the UI hierarchy
     const { root, scroll } = this.createSlidersContainer();
@@ -799,10 +834,7 @@ export class DimensionSliders {
       // preventDefault: don't scroll the page, and don't let Ctrl+wheel
       // zoom it (requires { passive: false }).
       event.preventDefault();
-      // Shift+wheel on a standard mouse arrives as a HORIZONTAL scroll
-      // (the browser swaps the axis, leaving deltaY = 0) — read whichever
-      // axis carries the motion.
-      const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+      const delta = normalizeWheelDeltaWithAxisFallback(event);
       if (delta === 0) return;
       const wheelStep = calculateStepSize(dimIndex, this.dims, {
         shift: event.shiftKey,
@@ -827,10 +859,84 @@ export class DimensionSliders {
     sliderContainer.appendChild(thumb);
 
     sliderGroup.appendChild(label);
-    sliderGroup.appendChild(sliderContainer);
+    if (getInputProfile().coarsePointer) {
+      sliderGroup.appendChild(this.wrapWithStepButtons(dimIndex, name, sliderContainer));
+      this.makeNameChip(dimIndex, dimName);
+    } else {
+      sliderGroup.appendChild(sliderContainer);
+    }
 
     this.scrollBody.appendChild(sliderGroup);
     this.sliders.set(dimIndex, slider);
+  }
+
+  /**
+   * Coarse pointers only: `‹ track ›`, one dimension step per tap (the
+   * authored step, else 1 % of the range — the same base step as the [ / ]
+   * keys), in the same wrapper the play button later joins.
+   * A finger cannot scroll a slider by a single step, and a phone has no
+   * bracket keys; the buttons are the missing precise input.
+   */
+  private wrapWithStepButtons(
+    dimIndex: number,
+    name: string,
+    sliderContainer: HTMLElement
+  ): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'luxar-dimension-slider__controls-wrapper';
+    const makeStep = (direction: -1 | 1): HTMLButtonElement => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'luxar-dimension-slider__step';
+      btn.textContent = direction < 0 ? '\u2039' : '\u203A';
+      btn.setAttribute('aria-label', `${direction < 0 ? 'Previous' : 'Next'} ${name}`);
+      this.sliderEvents.on(btn, 'click', () => {
+        const dimMeta = this.dims.metadata?.[dimIndex];
+        const step = calculateStepSize(
+          dimIndex,
+          this.dims,
+          {},
+          undefined,
+          this.animationManager?.getStepSize(dimIndex) ?? null
+        );
+        const next = calculateNextPosition(
+          this.dims.currentStep[dimIndex],
+          direction,
+          step,
+          this.dimensionRanges[dimIndex],
+          dimMeta?.discrete,
+          dimMeta?.cyclic,
+          dimMeta?.step
+        );
+        sceneDimsManager.setDimensionValue(dimIndex, next);
+      });
+      return btn;
+    };
+    wrapper.appendChild(makeStep(-1));
+    wrapper.appendChild(sliderContainer);
+    wrapper.appendChild(makeStep(1));
+    return wrapper;
+  }
+
+  /** Coarse pointers only: the dimension's name selects it as the [ / ] target. */
+  private makeNameChip(dimIndex: number, dimName: HTMLElement): void {
+    dimName.classList.add('luxar-dimension-slider__name--chip');
+    dimName.setAttribute('role', 'button');
+    dimName.tabIndex = 0;
+    const select = (): void => {
+      const navigableIndex = getNonDisplayedDimensions(this.dims).indexOf(dimIndex);
+      if (navigableIndex < 0) return;
+      this.setSelectedDimension(navigableIndex);
+      this.onSelectDimension?.(navigableIndex);
+    };
+    this.sliderEvents.on(dimName, 'click', select);
+    this.sliderEvents.on(dimName, 'keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
+      if (key === 'Enter' || key === ' ') {
+        e.preventDefault();
+        select();
+      }
+    });
   }
 
   /**
@@ -910,7 +1016,7 @@ export class DimensionSliders {
     const thumb = cached?.thumb ?? document.getElementById(`luxar-dim-thumb-${dimIndex}`);
     if (thumb) {
       const containerWidth = thumb.parentElement?.offsetWidth || 300;
-      const thumbWidth = 16;
+      const thumbWidth = thumb.offsetWidth || 16;
       thumb.style.left = `${fractionToThumbLeft(fraction, containerWidth, thumbWidth)}px`;
     }
   }
@@ -1080,9 +1186,12 @@ export class DimensionSliders {
     // Create compact play/pause button
     const playButton = document.createElement('button');
     playButton.className = 'luxar-dimension-slider__play-btn';
-    playButton.setAttribute('aria-label', 'Play/Pause animation (right-click for settings)');
-    playButton.setAttribute('title', 'Play/Pause (right-click for settings)');
-    playButton.textContent = '▶'; // Play icon
+    playButton.setAttribute(
+      'aria-label',
+      'Play/Pause animation (right-click or press and hold for settings)'
+    );
+    playButton.setAttribute('title', 'Play/Pause (right-click or hold for settings)');
+    playButton.textContent = '▶';
 
     // Click handler for play/pause
     const playClickHandler = () => {
@@ -1110,11 +1219,27 @@ export class DimensionSliders {
     // Cleanup handled centrally by sliderEvents.dispose() in createSliders().
     this.sliderEvents.on(playButton, 'click', playClickHandler);
     this.sliderEvents.on(playButton, 'contextmenu', contextMenuHandler);
+    // Touch: press and hold opens the same settings menu (no right button).
+    this.sliderEvents.add(
+      attachLongPress(playButton, {
+        onLongPress: (x, y) => {
+          this.showContextMenu(dimIndex, x, y);
+          return true;
+        },
+      })
+    );
     this.playButtons.set(dimIndex, playButton);
 
-    // Create a wrapper to hold play button and slider track horizontally
+    // Create a wrapper to hold play button and slider track horizontally.
+    // Under a coarse pointer the track already sits in a wrapper with the
+    // step buttons (see wrapWithStepButtons); the play button joins it.
     const sliderTrack = sliderGroup.querySelector('.luxar-dimension-slider__track');
     if (sliderTrack) {
+      const existing = sliderTrack.parentElement;
+      if (existing?.classList.contains('luxar-dimension-slider__controls-wrapper')) {
+        existing.appendChild(playButton);
+        return;
+      }
       // Create wrapper container for horizontal layout
       const controlsWrapper = document.createElement('div');
       controlsWrapper.className = 'luxar-dimension-slider__controls-wrapper';
@@ -1359,7 +1484,7 @@ export class DimensionSliders {
 
     // Ensure menu stays within viewport bounds
     let menuX = x;
-    let menuY = y - menuHeight;
+    const verticalPlacement = placeContextMenuVertically(menuHeight, y, window.innerHeight);
 
     // Check right edge
     if (menuX + menuWidth > window.innerWidth) {
@@ -1371,13 +1496,9 @@ export class DimensionSliders {
       menuX = 10; // 10px padding from edge
     }
 
-    // Check top edge - if menu would go above viewport, show below cursor instead
-    if (menuY < 10) {
-      menuY = y + 10; // Show below cursor with 10px gap
-    }
-
     menu.style.left = `${menuX}px`;
-    menu.style.top = `${menuY}px`;
+    menu.style.top = `${verticalPlacement.top}px`;
+    menu.style.maxHeight = verticalPlacement.maxHeight;
 
     // Close on click outside - store handler for cleanup
     const closeOnClickOutside = (e: MouseEvent) => {
@@ -1436,7 +1557,7 @@ export class DimensionSliders {
       playButton.textContent = '⏸'; // Pause icon
       playButton.classList.add('luxar-dimension-slider__play-btn--playing');
     } else {
-      playButton.textContent = '▶'; // Play icon
+      playButton.textContent = '▶';
       playButton.classList.remove('luxar-dimension-slider__play-btn--playing');
     }
   }

@@ -25,7 +25,9 @@ import {
   type PickResult,
 } from '../../../../rendering/picking/picking-system';
 import { MAX_PICK_NODE_ID } from '../../../../rendering/picking/picking-system/pick-render';
+import { buildPickResultHandler } from '../../../../core/app/picking/pick-result-handler';
 import { setElementIdMap } from '../../../../types/committed-data';
+import { log } from '../../../../utils/log';
 
 /** A promise plus its external `resolve` — lets a test gate when the readback completes. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -573,6 +575,46 @@ function makeMouseEvent(x: number, y: number): MouseEvent {
   return { clientX: x, clientY: y } as MouseEvent;
 }
 
+describe('PickingSystem — pickAt', () => {
+  it('resolves only after an asynchronous result handler has finished', async () => {
+    // The app's handler fetches the label before it stores the picked-element
+    // cache. A tap reads that cache as soon as pickAt resolves, so resolving
+    // on delivery alone would race the fetch (the touch menu never opened).
+    const gate = deferred<void>();
+    let handled = false;
+    const onPickResult = vi.fn(async (_result: PickResult | null) => {
+      await gate.promise;
+      handled = true;
+    });
+    const canvas = document.createElement('canvas');
+    Object.defineProperty(canvas, 'clientWidth', { value: 200 });
+    Object.defineProperty(canvas, 'clientHeight', { value: 100 });
+    const renderer = {
+      domElement: canvas,
+      getDrawingBufferSize: vi.fn((target: THREE.Vector2) => target.set(200, 100)),
+      readRenderTargetPixels: vi.fn(),
+    } as unknown as THREE.WebGLRenderer;
+    const system = new PickingSystem(renderer, makeStubCapabilities(), makeCamera(), onPickResult);
+    // No GL here: the buffer render is a no-op, and with no registered nodes
+    // the ray-bbox cull takes the miss path, which delivers `null`.
+    (system as unknown as { renderPickBuffer: () => void }).renderPickBuffer = () => {};
+
+    let settled = false;
+    const pending = system.pickAt(50, 50).then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onPickResult).toHaveBeenCalledWith(null);
+    expect(settled).toBe(false);
+
+    gate.resolve();
+    await pending;
+    expect(handled).toBe(true);
+    expect(settled).toBe(true);
+    system.dispose();
+  });
+});
+
 describe('PickingSystem — settle scheduler', () => {
   let system: PickingSystem;
   let onPickResult: ReturnType<typeof vi.fn>;
@@ -750,6 +792,64 @@ describe('PickingSystem — settle scheduler', () => {
     onPickResult.mockClear();
     system.markDirty();
     expect(onPickResult).toHaveBeenCalledWith(null);
+  });
+
+  it('logs a rejected pick-result callback instead of leaking it', async () => {
+    const failure = new Error('overlay failed');
+    const rejectedCallback = vi.fn().mockRejectedValue(failure);
+    const rejectedSystem = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      rejectedCallback
+    );
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    rejectedSystem.markDirty();
+
+    await vi.waitFor(() => {
+      expect(error).toHaveBeenCalledWith('Renderer', 'Pick result handler failed', failure);
+    });
+    error.mockRestore();
+    rejectedSystem.dispose();
+  });
+
+  it('logs a synchronously throwing pick-result callback instead of leaking it', () => {
+    const failure = new Error('overlay exploded');
+    const throwingSystem = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn(() => {
+        throw failure;
+      })
+    );
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    expect(() => throwingSystem.markDirty()).not.toThrow();
+    expect(error).toHaveBeenCalledWith('Renderer', 'Pick result handler failed', failure);
+    error.mockRestore();
+    throwingSystem.dispose();
+  });
+
+  // The handler type says `Promise<void>`, but nothing enforces that at
+  // runtime — a callback returning nothing must not be reported as a failure,
+  // and must not silently drop the wait `pickAt` is built on.
+  it('treats a callback that returns nothing as a completed delivery', async () => {
+    const voidSystem = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn(() => undefined as unknown as Promise<void>)
+    );
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    voidSystem.markDirty();
+    await expect(voidSystem.pickAt(10, 10)).resolves.toBeUndefined();
+
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+    voidSystem.dispose();
   });
 });
 
@@ -1239,8 +1339,7 @@ describe('PickingSystem — stale readback ordering', () => {
    * camera origin so the cursor ray always hits (skips the ray-cull
    * early-out), and `readbackAndVote` replaced by a caller-gated promise.
    */
-  function buildGatedSystem() {
-    const onPickResult = vi.fn();
+  function buildGatedSystem(onPickResult = vi.fn()) {
     const renderer = {
       domElement: document.createElement('canvas'),
       getDrawingBufferSize: vi.fn((t: THREE.Vector2) => t.set(800, 600)),
@@ -1305,6 +1404,136 @@ describe('PickingSystem — stale readback ordering', () => {
     await pending;
 
     expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+  });
+
+  it('delivers an explicit pick when a compatibility mousemove lands during readback', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const pending = system.pickAt(400, 300);
+    system.onMouseMove(makeMouseEvent(400, 300));
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await pending;
+
+    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+  });
+
+  it('keeps an explicit pick authoritative while view changes continue during delivery', async () => {
+    const delivery = deferred<void>();
+    const onPickResult = vi.fn(async (result: PickResult | null) => {
+      if (result) await delivery.promise;
+    });
+    const { system, gate, fakeResult } = buildGatedSystem(onPickResult);
+
+    const pending = system.pickAt(400, 300);
+    system.markDirty();
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await vi.waitFor(() => expect(onPickResult).toHaveBeenCalledWith(fakeResult));
+
+    system.markDirty();
+    delivery.resolve();
+    await pending;
+
+    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+  });
+
+  it('keeps an explicit pick authoritative when mousemove lands during delivery', async () => {
+    const label = deferred<string | null>();
+    const getLabel = vi.fn(() => label.promise);
+    const onPicked = vi.fn();
+    const onPickResult = vi.fn(
+      buildPickResultHandler({
+        labelLoader: { getLabel },
+        onPicked,
+      })
+    );
+    const { system, gate, fakeResult } = buildGatedSystem(onPickResult);
+    fakeResult.mainNode.name = '/Cells';
+
+    const pending = system.pickAt(400, 300);
+    gate.resolve(fakeResult);
+    await vi.waitFor(() => expect(getLabel).toHaveBeenCalledWith('/Cells', 7));
+
+    system.onMouseMove(makeMouseEvent(400, 300));
+    label.resolve('Cell 7');
+    await pending;
+
+    expect(onPicked).toHaveBeenCalledExactlyOnceWith({
+      mainNode: fakeResult.mainNode,
+      nodeName: '/Cells',
+      hitNodeName: '/Cells',
+      elementIndex: 7,
+      label: 'Cell 7',
+      key: null,
+      screenX: 0,
+      screenY: 0,
+    });
+  });
+
+  it('drops an explicit pick when a newer explicit pick supersedes it', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const first = system.pickAt(400, 300);
+    const second = system.pickAt(400, 300);
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await Promise.all([first, second]);
+
+    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+  });
+
+  it('resumes tooltip fading when an explicit pick delivery stalls', async () => {
+    const delivery = deferred<void>();
+    const onPickResult = vi.fn(async (result: PickResult | null) => {
+      if (result) await delivery.promise;
+    });
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const { system, gate, fakeResult } = buildGatedSystem(onPickResult);
+
+    const pending = system.pickAt(400, 300);
+    gate.resolve(fakeResult);
+    await vi.waitFor(() => expect(onPickResult).toHaveBeenCalledWith(fakeResult));
+    onPickResult.mockClear();
+
+    system.markDirty();
+    system.onMouseMove(makeMouseEvent(400, 300));
+    expect(onPickResult).not.toHaveBeenCalled();
+
+    now.mockReturnValue(60_000);
+    system.markDirty();
+    system.onMouseMove(makeMouseEvent(400, 300));
+    expect(onPickResult).toHaveBeenCalledTimes(2);
+    expect(onPickResult).toHaveBeenNthCalledWith(1, null);
+    expect(onPickResult).toHaveBeenNthCalledWith(2, null);
+
+    delivery.resolve();
+    await pending;
+    now.mockRestore();
+  });
+
+  it('drops an explicit pick when the pointer leaves during readback', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const pending = system.pickAt(400, 300);
+    system.onMouseLeave();
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await pending;
+
+    expect(onPickResult).not.toHaveBeenCalled();
+  });
+
+  it('drops an explicit pick when the system is disposed during readback', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const pending = system.pickAt(400, 300);
+    system.dispose();
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await pending;
+
+    expect(onPickResult).not.toHaveBeenCalled();
   });
 });
 

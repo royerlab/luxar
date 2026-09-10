@@ -215,6 +215,24 @@ def _fetch_calls(path: Path) -> dict[str, set[str]]:
     return out
 
 
+@pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.stem)
+def test_manifest_backed_demos_stamp_their_resolved_input_digests(path: Path) -> None:
+    """A hosted input must remain traceable in the scene it produced."""
+    if not (_fetch_calls(path).keys() & MANIFEST_DRIVEN):
+        return
+    tree = ast.parse(path.read_text())
+    calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Attribute, ast.Name))
+    }
+    assert "stamp_input_digests" in calls, (
+        f"{path.name} resolves manifest-backed input but never stamps its verified "
+        "digest on the scene"
+    )
+
+
 @pytest.mark.parametrize("path", FETCH_PATHS, ids=lambda p: p.stem)
 def test_hosted_datasets_are_fetched_through_the_manifest(path: Path) -> None:
     ds = _manifest()

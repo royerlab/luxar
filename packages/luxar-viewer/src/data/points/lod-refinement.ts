@@ -20,26 +20,26 @@ import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profi
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
-import {
-  RefinementFailureTracker,
-  runProgressiveRefinement,
-} from '../scene-loader/progressive/refinement';
+import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
 import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
+  failureTrackerFor,
   handleRefinementError,
   makeRefinementProgressCallbacks,
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
+import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'Points';
 
 export interface PointsRefinementCtx {
-  rootGroup: THREE.Group | null;
+  /** Scene objects already resolved by the phase eligibility sweep. */
+  objects: ReadonlyMap<string, THREE.Object3D | undefined>;
   viewStateQueue: ViewStateQueue;
-  pointsLoaders: Map<string, PointsDataLoader>;
+  loaders: Map<string, PointsDataLoader>;
   deriveNodeViewState(
     path: string,
     attrs: PointsMetadata | undefined,
@@ -79,28 +79,26 @@ export interface PointsRefinementCtx {
 }
 
 export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<void> {
-  // Per-run failure backoff: a loader that fails MAX_CONSECUTIVE times is
-  // excluded for the rest of this run (and from anyHasMoreLODs, so the loop
-  // can terminate) instead of retrying at frame rate forever.
-  const failures = new RefinementFailureTracker();
+  const objects = ctx.objects;
+  const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
-    loaders: ctx.pointsLoaders,
+    loaders: ctx.loaders,
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
-      // Every progressive field is optional here because `pointsLoaders` is
+      // Every progressive field is optional here because `loaders` is
       // typed as plain `PointsDataLoader`: single-shot PointsSpatialIndexLoader
       // has no ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
       const progressiveLoader = loader as PointsDataLoader & RefinableLoader;
       const admission = admitRefinementCandidate(
         path,
         progressiveLoader,
-        failures,
-        ctx.residencyBudget
+        ctx.residencyBudget,
+        isPathVisible
       );
       if (!admission.admitted) return false;
       try {
-        const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const mesh = objects.get(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as PointsMetadata | undefined;
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.points,
@@ -142,19 +140,19 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
           session?.end();
           pass?.end();
         }
-        failures.recordSuccess(path);
+        failureTrackerFor(progressiveLoader).recordSuccess(path);
         return true;
       } catch (error) {
-        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader, failures);
+        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader);
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
     },
     ...makeRefinementProgressCallbacks(
       LABEL,
-      ctx.pointsLoaders as Map<string, PointsDataLoader & RefinableLoader>,
-      failures,
-      ctx.residencyBudget
+      ctx.loaders as Map<string, PointsDataLoader & RefinableLoader>,
+      ctx.residencyBudget,
+      isPathVisible
     ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),

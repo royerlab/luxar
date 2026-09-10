@@ -109,6 +109,7 @@ const EMPTY_PARAMS: UrlParams = {
   densityGuard: true,
   densityCap: null,
   lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
+  lodBias: null,
   noPrefetch: false,
   prefetchDebug: false,
   cacheStats: false,
@@ -181,6 +182,17 @@ describe('bootstrapStandalone', () => {
           source: 'override',
           coarsePointer: true,
         });
+      } finally {
+        resetInputProfileForTests();
+      }
+    });
+
+    it('detects the input profile when a partial URL-params object omits input', async () => {
+      const { getInputProfile, resetInputProfileForTests } =
+        await import('../../../utils/input-capabilities');
+      try {
+        await bootstrapStandalone({ canvas: CANVAS, urlParams: {} as UrlParams });
+        expect(getInputProfile().source).toBe('detected');
       } finally {
         resetInputProfileForTests();
       }
@@ -511,6 +523,18 @@ describe('bootstrapStandalone', () => {
       });
     });
 
+    it('leaves mobile blend-warm-up resolution to the shared init pipeline', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, input: 'touch' },
+      });
+      expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(true);
+      // Bootstrap only threads the URL option. The shared pipeline applies the
+      // mobile clamp for both standalone and direct LuxarApp construction.
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(true);
+    });
+
     it('threads urlParams.dpr into init() as pinnedDPR, and omits it when absent', async () => {
       await bootstrapStandalone({
         canvas: CANVAS,
@@ -523,7 +547,7 @@ describe('bootstrapStandalone', () => {
       expect(mocks.init.mock.calls.at(-1)?.[0].pinnedDPR).toBeUndefined();
     });
 
-    it('threads the on-by-default feature flags (lodFade/lodEnergyComp/blendWarmup/depthSort) into init()', async () => {
+    it('threads the LOD/rendering URL controls into init()', async () => {
       // An embedder-supplied urlParams object must control these flags —
       // the init pipeline reads options, never window.location.
       await bootstrapStandalone({
@@ -535,6 +559,7 @@ describe('bootstrapStandalone', () => {
           blendWarmup: false,
           depthSort: false,
           lodFinest: true, // opt-IN flag — flipped the other way
+          lodBias: 4,
         },
       });
       const flipped = mocks.init.mock.calls.at(-1)?.[0];
@@ -543,6 +568,7 @@ describe('bootstrapStandalone', () => {
       expect(flipped.blendWarmup).toBe(false);
       expect(flipped.depthSort).toBe(false);
       expect(flipped.lodFinest).toBe(true);
+      expect(flipped.lodBias).toBe(4);
 
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
       const defaults = mocks.init.mock.calls.at(-1)?.[0];
@@ -551,6 +577,7 @@ describe('bootstrapStandalone', () => {
       expect(defaults.blendWarmup).toBe(true);
       expect(defaults.depthSort).toBe(true);
       expect(defaults.lodFinest).toBe(false);
+      expect(defaults.lodBias).toBeUndefined();
     });
 
     it('does not set perfTimestamp on the init() call when urlParams.perfTimestamp is false', async () => {

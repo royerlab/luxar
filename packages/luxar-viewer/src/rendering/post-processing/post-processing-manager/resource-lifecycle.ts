@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { BloomChain } from '../bloom/chain';
 import { FxaaPass } from '../fxaa/pass';
 import { FullscreenPass } from '../fullscreen/pass';
-import { computeEffectiveRenderSize } from '../render-target-sizing';
+import { computeEffectiveRenderSize, computeRenderTargetAllocation } from '../render-target-sizing';
 import { resolveToneMappingDefault } from '../tone-mapping';
 import { materialManager, type LuxarMegaShaderMaterial } from '../../material-manager';
 import { config } from '../../../config';
@@ -28,6 +28,7 @@ export interface SizingInputs {
   readonly renderSize: { readonly width: number; readonly height: number };
   readonly ssaaEnabled: boolean;
   readonly ssaaMultiplier: number;
+  readonly maxPhysicalDimension: number;
 }
 
 /** Effective (logical SSAA) render size in CSS pixels. */
@@ -36,19 +37,25 @@ export function computeEffectiveSize(s: SizingInputs): { width: number; height: 
 }
 
 /**
- * Physical-pixel framebuffer size = effective × renderer.getPixelRatio().
- * Render targets and the mega-shader / bloom / FXAA passes are all
- * sized here so they match the renderer's canvas backbuffer AND what
- * materials read from `renderer.getDrawingBufferSize()`. At DPR > 1 a
- * mismatch would silently brighten the scene via over-coverage.
+ * Physical-pixel framebuffer size derived from the effective size, DPR,
+ * and framebuffer limit. Render targets and the mega-shader / bloom /
+ * FXAA passes are all sized here so they match the renderer's canvas
+ * backbuffer AND what materials read from `renderer.getDrawingBufferSize()`.
+ * At DPR > 1 a mismatch would silently brighten the scene via over-coverage.
  */
 export function getPhysicalSize(s: SizingInputs): { width: number; height: number } {
-  const { width, height } = computeEffectiveSize(s);
-  const dpr = s.renderer.getPixelRatio();
-  return {
-    width: Math.max(1, Math.round(width * dpr)),
-    height: Math.max(1, Math.round(height * dpr)),
-  };
+  return getRenderTargetAllocation(s).physical;
+}
+
+/** Matching logical renderer size and physical attachment size. */
+export function getRenderTargetAllocation(s: SizingInputs) {
+  return computeRenderTargetAllocation(
+    s.renderSize,
+    s.ssaaEnabled,
+    s.ssaaMultiplier,
+    s.renderer.getPixelRatio(),
+    s.maxPhysicalDimension
+  );
 }
 
 /** Allocate the HDR target the scene renders into. */
@@ -104,7 +111,6 @@ export interface PipelineResources {
 export interface BuildResourcesConfig {
   readonly physW: number;
   readonly physH: number;
-  readonly msaaEnabled: boolean;
   readonly msaaSamples: number;
   readonly fxaaEnabled: boolean;
   readonly capabilities: RendererCapabilities;
@@ -138,7 +144,7 @@ export interface BuildResourcesConfig {
  * orchestrator assigns each field back to its private store.
  */
 export function buildTransientResources(c: BuildResourcesConfig): PipelineResources {
-  const hdrTarget = createHdrTarget(c.physW, c.physH, c.msaaEnabled ? c.msaaSamples : 0);
+  const hdrTarget = createHdrTarget(c.physW, c.physH, c.msaaSamples);
   const ldrTarget = createLdrTarget(c.physW, c.physH);
 
   // Mega-shader + fullscreen mesh. The materialManager dispatches on

@@ -27,6 +27,7 @@ import { clamp } from '../../utils/clamp';
 import {
   computeEffectiveSize,
   getPhysicalSize,
+  getRenderTargetAllocation,
   createHdrTarget,
   buildTransientResources,
   buildBloomChain,
@@ -168,7 +169,7 @@ export class PostProcessingManager {
       `PostProcessingManager initialized - Output: ${size.width}x${size.height}, ` +
         `Render: ${this.computeEffectiveSize().width}x${this.computeEffectiveSize().height}` +
         `${this.ssaaEnabled ? ' (SSAA)' : ''}, ` +
-        `MSAA: ${this.msaaEnabled ? this.msaaSamples + 'x' : 'off'}`
+        `MSAA: ${this.describeMSAA()}`
     );
   }
 
@@ -182,7 +183,29 @@ export class PostProcessingManager {
       renderSize: this.renderSize,
       ssaaEnabled: this.ssaaEnabled,
       ssaaMultiplier: this.ssaaMultiplier,
+      maxPhysicalDimension: this.maxPhysicalDimension,
     });
+  }
+
+  private get maxPhysicalDimension(): number {
+    return Math.min(this.capabilities.maxTextureSize, this.capabilities.maxRenderbufferSize);
+  }
+
+  private get activeMSAASamples(): number {
+    // SSAA already supersamples the scene; retaining MSAA would add redundant
+    // multisample colour/depth renderbuffers that can exceed the GPU allocation budget.
+    // At exactly 1x, the target matches SSAA-off size, so keep the configured mode.
+    return this.msaaEnabled && !(this.ssaaEnabled && this.ssaaMultiplier > 1)
+      ? this.msaaSamples
+      : 0;
+  }
+
+  private describeMSAA(): string {
+    if (!this.msaaEnabled) return 'off';
+    if (this.activeMSAASamples > 0) {
+      return `${this.msaaSamples}x`;
+    }
+    return `${this.msaaSamples}x configured; suspended by SSAA`;
   }
 
   private getPhysicalSize(): { width: number; height: number } {
@@ -191,6 +214,17 @@ export class PostProcessingManager {
       renderSize: this.renderSize,
       ssaaEnabled: this.ssaaEnabled,
       ssaaMultiplier: this.ssaaMultiplier,
+      maxPhysicalDimension: this.maxPhysicalDimension,
+    });
+  }
+
+  private getRenderTargetAllocation() {
+    return getRenderTargetAllocation({
+      renderer: this.renderer,
+      renderSize: this.renderSize,
+      ssaaEnabled: this.ssaaEnabled,
+      ssaaMultiplier: this.ssaaMultiplier,
+      maxPhysicalDimension: this.maxPhysicalDimension,
     });
   }
 
@@ -201,8 +235,7 @@ export class PostProcessingManager {
     const r = buildTransientResources({
       physW: width,
       physH: height,
-      msaaEnabled: this.msaaEnabled,
-      msaaSamples: this.msaaSamples,
+      msaaSamples: this.activeMSAASamples,
       fxaaEnabled: this.fxaaEnabled,
       capabilities: this.capabilities,
       bloomLevels: this.bloomLevels,
@@ -559,7 +592,7 @@ export class PostProcessingManager {
     this.reallocateForSize();
     log.update(
       Modules.POST_PROCESSING,
-      `MSAA ${enabled ? `enabled (${this.msaaSamples}x)` : 'disabled'}`
+      `MSAA ${enabled ? `enabled (${this.describeMSAA()})` : 'disabled'}`
     );
   }
 
@@ -569,7 +602,7 @@ export class PostProcessingManager {
     this.msaaSamples = validated;
     if (this.msaaEnabled) {
       this.reallocateForSize();
-      log.info(Modules.POST_PROCESSING, `MSAA samples set to ${validated}`);
+      log.info(Modules.POST_PROCESSING, `MSAA samples set to ${this.describeMSAA()}`);
     }
   }
 
@@ -579,19 +612,17 @@ export class PostProcessingManager {
     this.reallocateForSize();
     log.update(
       Modules.POST_PROCESSING,
-      `SSAA ${enabled ? `enabled (${this.ssaaMultiplier}x)` : 'disabled'}`
+      `SSAA ${enabled ? `enabled (${this.ssaaMultiplier}x)` : 'disabled'}; MSAA: ${this.describeMSAA()}`
     );
   }
 
   /**
    * The SSAA factor sitting between the size passed to {@link resize}
-   * and the size the render targets have. It EXCLUDES the pixel ratio:
-   * the targets are `display × this × renderer.getPixelRatio()`, so a
-   * caller that wants true physical dimensions has to fold the DPR in
-   * itself. Exposed for callers that must control the PHYSICAL output
-   * dimensions, such as the recording session picking a capture
-   * resolution an encoder will accept (it forces the pixel ratio to 1
-   * first, which is what makes this factor sufficient there).
+   * and the requested render-target size. It EXCLUDES the pixel ratio.
+   * A framebuffer-limit clamp may reduce the achieved physical size,
+   * but limited allocations are always even in both axes. This keeps
+   * the factor sufficient for the recording session's encoder alignment
+   * after it forces the pixel ratio to 1.
    */
   getEffectiveRenderScale(): number {
     return this.ssaaEnabled ? this.ssaaMultiplier : 1;
@@ -617,7 +648,10 @@ export class PostProcessingManager {
     this.ssaaMultiplier = multiplier;
     if (this.ssaaEnabled) {
       this.reallocateForSize();
-      log.update(Modules.POST_PROCESSING, `SSAA multiplier changed to ${multiplier}x`);
+      log.update(
+        Modules.POST_PROCESSING,
+        `SSAA multiplier changed to ${multiplier}x; MSAA: ${this.describeMSAA()}`
+      );
     }
   }
 
@@ -717,6 +751,7 @@ export class PostProcessingManager {
     physH: number;
     msaaSamples: number;
   } | null = null;
+  private wasAllocationLimited = false;
 
   /**
    * Re-allocate every GPU resource whose size depends on the effective
@@ -733,9 +768,10 @@ export class PostProcessingManager {
    * complete no-op (see `lastAllocation`).
    */
   private reallocateForSize(): void {
-    const { width: logicalW, height: logicalH } = this.computeEffectiveSize();
-    const { width: physW, height: physH } = this.getPhysicalSize();
-    const msaaSamples = this.msaaEnabled ? this.msaaSamples : 0;
+    const allocation = this.getRenderTargetAllocation();
+    const { width: logicalW, height: logicalH } = allocation.logical;
+    const { width: physW, height: physH } = allocation.physical;
+    const msaaSamples = this.activeMSAASamples;
 
     const last = this.lastAllocation;
     if (
@@ -750,6 +786,25 @@ export class PostProcessingManager {
     ) {
       return; // identical allocation — the redundant resize path lands here
     }
+    // All render targets at PHYSICAL size — matches canvas backbuffer
+    // and the resolution materials read from `getDrawingBufferSize()`.
+    // Resize them before the renderer: WebGPURenderer dispatches a
+    // synchronous resize event from setSize(), so observers must never
+    // see a new backbuffer paired with stale post-processing targets.
+    this.hdrTarget.dispose();
+    this.hdrTarget = createHdrTarget(physW, physH, msaaSamples);
+
+    this.ldrTarget.setSize(physW, physH);
+    if (this.bloomChain) {
+      this.bloomChain.setSize(physW, physH);
+      // setSize may have reallocated the mip targets — rebind the
+      // (possibly new) bloom texture identity into the mega-shader.
+      this.megaShader.setBloom(this.bloomIntensity, this.bloomChain.outputTexture);
+    }
+    this.fxaaPass?.setSize(physW, physH);
+    this.refractionSplit?.setSize(physW, physH);
+    this.megaShader.setResolution(physW, physH);
+
     this.lastAllocation = {
       displayW: this.renderSize.width,
       displayH: this.renderSize.height,
@@ -766,21 +821,19 @@ export class PostProcessingManager {
     this.renderer.domElement.style.width = `${this.renderSize.width}px`;
     this.renderer.domElement.style.height = `${this.renderSize.height}px`;
 
-    // All render targets at PHYSICAL size — matches canvas backbuffer
-    // and the resolution materials read from `getDrawingBufferSize()`.
-    this.hdrTarget.dispose();
-    this.hdrTarget = createHdrTarget(physW, physH, this.msaaEnabled ? this.msaaSamples : 0);
-
-    this.ldrTarget.setSize(physW, physH);
-    if (this.bloomChain) {
-      this.bloomChain.setSize(physW, physH);
-      // setSize may have reallocated the mip targets — rebind the
-      // (possibly new) bloom texture identity into the mega-shader.
-      this.megaShader.setBloom(this.bloomIntensity, this.bloomChain.outputTexture);
+    if (allocation.limited && !this.wasAllocationLimited) {
+      const requested = this.computeEffectiveSize();
+      const dpr = this.renderer.getPixelRatio();
+      log.warning(
+        Modules.POST_PROCESSING,
+        `Render target ${Math.floor(requested.width * dpr)}x${Math.floor(requested.height * dpr)} ` +
+          `exceeds the ${this.maxPhysicalDimension}px framebuffer limit; ` +
+          `using ${physW}x${physH}`
+      );
+    } else if (!allocation.limited && this.wasAllocationLimited) {
+      log.update(Modules.POST_PROCESSING, 'Render target is back within framebuffer limits');
     }
-    this.fxaaPass?.setSize(physW, physH);
-    this.refractionSplit?.setSize(physW, physH);
-    this.megaShader.setResolution(physW, physH);
+    this.wasAllocationLimited = allocation.limited;
 
     log.info(
       Modules.POST_PROCESSING,

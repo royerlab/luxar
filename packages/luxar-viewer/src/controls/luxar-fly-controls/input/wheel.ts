@@ -12,6 +12,10 @@
 
 import * as THREE from 'three';
 import type { LuxarCamera } from '../../../utils/camera-utils';
+import {
+  normalizeWheelDelta,
+  normalizeWheelDeltaWithAxisFallback,
+} from '../../../utils/wheel-delta';
 
 // Module-local scratch to avoid per-event allocation.
 const _v0 = new THREE.Vector3();
@@ -45,11 +49,12 @@ export interface FlyWheelCtx {
 
 /**
  * Handle a scroll wheel event. Ctrl/Meta+scroll is left unhandled (ceded to
- * the upstream FOV handler). The sign of `deltaY` drives either roll about
- * the viewing axis (Shift held) or forward/backward motion (plain scroll):
- * inertial mode adds an angular/linear velocity impulse, non-inertial mode
- * applies the rotation or translation directly. Dispatches `change`; no-op
- * while disabled.
+ * the upstream FOV handler). Plain scroll uses the sign of `deltaY` for
+ * forward/backward motion; Shift+scroll falls back to `deltaX` when the
+ * browser swaps the wheel axis, then uses that sign for roll. Inertial mode
+ * adds an angular/linear velocity impulse, non-inertial mode applies the
+ * rotation or translation directly. Dispatches `change`; no-op while disabled
+ * or when the selected delta is zero.
  */
 export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
   if (!ctx.enabled) return;
@@ -59,12 +64,15 @@ export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
 
   event.preventDefault();
 
-  // Discard the magnitude entirely and keep only the direction: one notch is
-  // one fixed impulse regardless of how far the browser says the wheel
-  // turned. That makes `deltaMode` (pixel vs line vs page) irrelevant on this
-  // path — unlike the orbit zoom / roll / FOV paths, which do consume the
-  // magnitude and therefore normalize it via `utils/wheel-delta`.
-  const delta = -Math.sign(event.deltaY);
+  // Discard magnitude and keep only direction: normalization ensures a
+  // non-finite delta cannot reach the physics, while deltaMode scaling and
+  // clamping cannot affect the fixed impulse below. Only Shift+wheel opts into
+  // the axis fallback, so plain horizontal scrolling cannot move the camera.
+  const wheelDelta = event.shiftKey
+    ? normalizeWheelDeltaWithAxisFallback(event)
+    : normalizeWheelDelta(event);
+  const delta = -Math.sign(wheelDelta);
+  if (delta === 0) return;
 
   if (event.shiftKey) {
     // Shift+scroll: roll around viewing axis

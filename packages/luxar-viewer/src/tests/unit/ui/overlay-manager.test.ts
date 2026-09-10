@@ -42,6 +42,24 @@ vi.mock('../../../scene/scene-dims-manager', () => ({
   },
 }));
 
+/**
+ * The stacked-alpha-matte compositor needs WebGL, which jsdom lacks; the
+ * factory is mocked so tests can hand the manager a fake compositor and observe
+ * how it is driven.
+ */
+type MatteModule = typeof import('../../../ui/video-matte');
+const matteFactory =
+  vi.fn<
+    (
+      video: HTMLVideoElement,
+      options?: import('../../../ui/video-matte').VideoMatteOptions
+    ) => import('../../../ui/video-matte').VideoMatteCompositor
+  >();
+vi.mock('../../../ui/video-matte', () => ({
+  createVideoMatteCompositor: ((video, options) =>
+    matteFactory(video, options)) as MatteModule['createVideoMatteCompositor'],
+}));
+
 function makeTextOverlay(overrides: Partial<OverlayConfig> = {}): OverlayConfig {
   return {
     name: 'caption',
@@ -318,6 +336,170 @@ describe('OverlayManager.loadOverlays', () => {
     playSpy.mockRestore();
     pauseSpy.mockRestore();
     pausedSpy.mockRestore();
+  });
+
+  it('shows a compositor canvas for a stacked-alpha-matte clip and drives it with visibility', async () => {
+    // jsdom has no WebGL, so substitute a compositor and check the manager's
+    // side of the contract: the canvas is what shows
+    // and is sized, the <video> stays as a hidden frame source, start/stop
+    // follow the overlay's visibility, and dispose releases the compositor.
+    const matte = {
+      canvas: document.createElement('canvas'),
+      start: vi.fn(),
+      stop: vi.fn(),
+      dispose: vi.fn(),
+    };
+    let firstFrame: (() => void) | undefined;
+    matteFactory.mockImplementationOnce((_video, opts) => {
+      firstFrame = opts?.onFirstFrame;
+      return matte;
+    });
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const setStory = (value: number): void => {
+      mockDimsState.current = {
+        ndim: 2,
+        currentStep: [0, value],
+        displayed: [0],
+        metadata: [
+          { name: 'x', unit: '', scale: 1 },
+          { name: 'story', unit: '', scale: 1 },
+        ],
+      };
+      manager.updateVisibility();
+    };
+    setStory(0);
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          poster_file: 'poster.png',
+          alpha_matte: 'stacked',
+          size: [0.26, null],
+          visible_range: { story: 2 },
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+
+    const el = document.querySelector('.luxar-overlay--video') as HTMLDivElement;
+    const video = el.querySelector('video') as HTMLVideoElement;
+    expect(matteFactory).toHaveBeenCalledWith(
+      video,
+      expect.objectContaining({ onFailure: expect.any(Function) })
+    );
+    // WebGL must be allowed to read the clip when the store is on another origin.
+    expect(video.crossOrigin).toBe('anonymous');
+    expect(el.contains(matte.canvas)).toBe(true);
+    // The canvas is the sized, shown element; the video is the hidden source.
+    expect(matte.canvas.style.width).toBe('26vw');
+    expect(matte.canvas.style.height).toBe('auto');
+    expect(video.style.width).toBe('');
+    expect(video.classList.contains('luxar-overlay__matte-source')).toBe(true);
+    // The poster sits behind the canvas until the first frame is drawn — as a
+    // background IMAGE only: the colour stays untouched (and the stylesheet
+    // pins it transparent) so the page's black `canvas` rule cannot show.
+    expect(matte.canvas.style.backgroundImage).toContain('poster.png');
+    expect(matte.canvas.style.backgroundColor).toBe('');
+    video.dispatchEvent(new Event('playing'));
+    expect(matte.canvas.style.backgroundImage).toContain('poster.png');
+    firstFrame!();
+    expect(matte.canvas.style.backgroundImage).toBe('none');
+    expect(matte.canvas.style.backgroundColor).toBe('');
+
+    expect(matte.start).not.toHaveBeenCalled();
+    setStory(2);
+    expect(matte.start).toHaveBeenCalledTimes(1);
+    setStory(0);
+    expect(matte.stop).toHaveBeenCalled();
+
+    manager.dispose();
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    mockDimsState.current = null;
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['same-origin directory', `${window.location.origin}/scene.luxar.zarr/`, false],
+    ['zipped store', 'https://example.com/scene.luxar.zarr.zip', true],
+  ])('does not request CORS for a %s clip', async (_label, baseUrl, zipped) => {
+    const matte = {
+      canvas: document.createElement('canvas'),
+      start: vi.fn(),
+      stop: vi.fn(),
+      dispose: vi.fn(),
+    };
+    matteFactory.mockReturnValueOnce(matte);
+    const readFile = zipped
+      ? vi.fn().mockResolvedValue(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]))
+      : undefined;
+    if (zipped) {
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:stacked-video');
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    }
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          alpha_matte: 'stacked',
+        }),
+      ],
+      baseUrl,
+      readFile
+    );
+
+    const video = document.querySelector('video') as HTMLVideoElement;
+    expect(video.getAttribute('crossorigin')).toBeNull();
+  });
+
+  it('abandons the matte and shows the raw clip when the compositor cannot read the video', async () => {
+    const matte = {
+      canvas: document.createElement('canvas'),
+      start: vi.fn(),
+      stop: vi.fn(),
+      dispose: vi.fn(),
+    };
+    let fail: ((error: unknown) => void) | undefined;
+    matteFactory.mockImplementationOnce((_video, opts) => {
+      fail = opts?.onFailure;
+      return matte;
+    });
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          alpha_matte: 'stacked',
+          size: [0.26, null],
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+    const el = document.querySelector('.luxar-overlay--video') as HTMLDivElement;
+    const video = el.querySelector('video') as HTMLVideoElement;
+    expect(el.contains(matte.canvas)).toBe(true);
+
+    fail!(new DOMException('tainted', 'SecurityError'));
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    expect(el.contains(matte.canvas)).toBe(false);
+    expect(video.classList.contains('luxar-overlay__matte-source')).toBe(false);
+    // The raw clip takes over the canvas's sizing.
+    expect(video.style.width).toBe('26vw');
+    expect(video.style.height).toBe('auto');
+    expect(video.style.display).toBe('block');
+    expect(warnSpy).toHaveBeenCalledWith(Modules.UI, expect.stringContaining('could not read'));
+    // A second failure report is a no-op (the compositor is already gone).
+    fail!(new Error('again'));
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
   });
 
   it('shows native controls when video autoplay is disabled', async () => {
@@ -1715,5 +1897,117 @@ describe('OverlayManager HTML size cap (issue #768)', () => {
     expect(el.querySelector('span')).not.toBeNull();
     expect(el.querySelector('span')!.textContent).toBe(filler);
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('OverlayManager.updateVisibility — arrival gate (Waypoint.reveal = "on_arrival")', () => {
+  let manager: OverlayManager;
+  let inTransit = false;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    mockDimsState.current = null;
+    inTransit = false;
+    manager = new OverlayManager();
+    manager.setTransitGate(() => inTransit);
+  });
+
+  afterEach(() => {
+    manager.dispose();
+  });
+
+  function setStory(value: number): void {
+    mockDimsState.current = {
+      ndim: 1,
+      currentStep: [value],
+      displayed: [],
+      metadata: [{ name: 'story', unit: '', scale: 1 }],
+    };
+  }
+
+  function visibleNames(): string[] {
+    return manager
+      .getVisibleOverlays()
+      .map((o) => o.config.name)
+      .sort();
+  }
+
+  async function loadStoryOverlays(): Promise<void> {
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({ name: 'title' }), // no visible_range: never gated
+        makeTextOverlay({ name: 'panel-0', visible_range: { story: 0 } }),
+        makeTextOverlay({ name: 'panel-1', visible_range: { story: 1 }, transition: 'fade' }),
+        makeTextOverlay({ name: 'both', visible_range: { story: [0, 1] } }),
+      ],
+      'http://example.com'
+    );
+  }
+
+  it('holds an overlay that would newly appear while in transit, hides the departing one at once, keeps the rest', async () => {
+    setStory(0);
+    await loadStoryOverlays();
+    expect(visibleNames()).toEqual(['both', 'panel-0', 'title']);
+
+    // The story steps to 1 and the camera is flying: panel-1 waits.
+    inTransit = true;
+    setStory(1);
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'title']);
+    const held = document.querySelector('[data-overlay-name="panel-1"]') as HTMLDivElement;
+    expect(held.classList.contains('luxar-overlay--hidden')).toBe(true);
+
+    // Arrival: the gate opens and the app re-runs the pass — panel-1 fades in.
+    inTransit = false;
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+    expect(held.classList.contains('luxar-overlay--hidden')).toBe(false);
+  });
+
+  it('re-hides a caption the FIRST pass showed when the driver closes the gate afterwards (listener order)', async () => {
+    // The overlay manager may hear the dimension change before the waypoint
+    // driver does. Its first pass then shows panel-1 with the gate still open;
+    // the app re-runs the pass at the same position once the gate is closed,
+    // and that second pass must withhold panel-1 — it was not on screen before
+    // this position was reached — while keeping 'both' and 'title'.
+    setStory(0);
+    await loadStoryOverlays();
+    setStory(1);
+    manager.updateVisibility(); // gate still open: panel-1 appears
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+
+    inTransit = true;
+    manager.updateVisibility(); // the driver has since closed the gate
+    expect(visibleNames()).toEqual(['both', 'title']);
+
+    inTransit = false;
+    manager.updateVisibility(); // arrival
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+
+    // The next story step snapshots what is on screen NOW, so panel-1 departs
+    // at once and panel-0 waits — nothing is remembered from two steps ago.
+    inTransit = true;
+    setStory(0);
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'title']);
+  });
+
+  it('without a gate (or with it open) behaves exactly as before', async () => {
+    manager.setTransitGate(null);
+    setStory(0);
+    await loadStoryOverlays();
+    setStory(1);
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+  });
+
+  it('a scene loaded mid-transit shows nothing dimension-bound until arrival', async () => {
+    inTransit = true;
+    setStory(1);
+    await loadStoryOverlays();
+    expect(visibleNames()).toEqual(['title']);
+    inTransit = false;
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
   });
 });

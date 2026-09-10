@@ -184,9 +184,9 @@ Append parameters to the viewer URL to control startup behavior.
 | `webgpu-force-webgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
 | `perf-timestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
-| `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies a GPU-geometry/LOD residency signal at one third of the cache pool; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it. |
+| `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it, capped at 2 GB. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
-| `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets, primary-tip pen routing, and the Safari gesture-canceller gate; long-press menus and tap-oriented copy land in follow-up touch work. Stylesheets and per-event gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
+| `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there. |
 | `linePrimitive` | `capsule` \| `screen-space` | Select the line rendering primitive (#1352). Default **`capsule`**: a gaussian-like profile of the 2D point-to-segment distance — stable round discs end-on, seamless bisector-partitioned joints, quad-class cost. `screen-space` is the classic quad — the lean path for very large line scenes. With no URL override, the **`Settings → Advanced → Line primitive`** policy decides: `Auto` (default) builds the capsule, except line nodes whose effective segment load (authored count × a rendered-width factor) reaches 2 M, which build the quad; `Capsule`/`Quad` force one primitive everywhere. `?linePrimitive=` overrides the policy for the session. |
 
@@ -657,12 +657,13 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
 | Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
-| Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
+| Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `reveal`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
 
 Set `allow_high_dpr=True` if your scene is **line-dominated** — a river network,
-a tractogram, a wiring diagram. The viewer renders at CSS resolution by default
-even on a Retina display, because a 2x panel costs 4x the fragment work and
-soft-edged emissive geometry barely rewards it. Measured against DPR 2,
+a tractogram, a wiring diagram. Phones and tablets cap this setting at DPR 2;
+laptops and desktops use the panel's native DPR. The viewer renders at CSS
+resolution by default even on a Retina display, because a 2x panel costs 4x the
+fragment work and soft-edged emissive geometry barely rewards it. Measured against DPR 2,
 brightness and coverage hold to within 2.5% on every geometry type and the whole
 visible effect is a 15-35% loss of fine detail: on points and splats that is
 mild softening, but on dense thin lines the individual strands stop being
@@ -729,6 +730,9 @@ waypoint with its own `duration_ms` (default 1500; `0` snaps) and `easing`
 (`"ease-in-out"` or `"linear"`); moves that stay inside the same waypoint's
 ranges do nothing, and leaving every waypoint leaves the camera where it is.
 Any mouse, touch or key input during a flight cancels it where it is. The
+optional `reveal="on_arrival"` holds newly matching dimension-bound overlays
+until that flight resolves; the default `"immediate"` shows them as the
+dimension changes. The
 optional `rendering` block takes the same snake_case keys as `ViewerConfig`
 itself and is applied on arrival through the same validated path.
 
@@ -752,9 +756,10 @@ story step, or a spatial source that gets louder as the camera approaches. Their
 audibility is the same hidden-dimension slab rule that decides which points are
 visible, so scrubbing a story dimension starts and stops the clips that belong
 to each step. When a loaded scene has sound nodes a **Sound** button appears in
-the rail: click mutes everything (persisted across scenes), right-click opens
-the mixer (master gain, the `ambient` / `voice` / `effects` buses, equal-power
-vs HRTF panning). The voice bus ducks the ambient bed while a narration plays.
+the rail: click mutes everything (persisted across scenes), while right-click or
+a hold opens the mixer (master gain, the `ambient` / `voice` / `effects` buses,
+equal-power vs HRTF panning). The voice bus ducks the ambient bed while a
+narration plays.
 Scene defaults live in `ViewerConfig(audio=AudioConfig(...))`, and a controller
 drives the same knobs through `setAudio()`, `playSound()`, `stopSound()` and
 `getViewerState().audio`.

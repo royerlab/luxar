@@ -5,16 +5,15 @@ Input validation and configuration preparation for Gaussian splat fitting.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from luxar.gsplats.fitting.config import FitConfig
+from luxar.gsplats.fitting.config import FitConfig, FitParameters
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.typing_utils.constants import (
     DEFAULT_SIGMA_MIN_DIAG as _DEFAULT_SIGMA_MIN_DIAG,
 )
-from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter
@@ -228,53 +227,216 @@ def _resolve_source_dtype(V: Any, source_dtype: Any) -> tuple[str, Optional[int]
     return name, source_itemsize
 
 
+def _prepare_input(
+    V: Any,
+    source_dtype: Any,
+    source_shape: Any,
+    source_stored_bytes: Any,
+) -> tuple[np.ndarray, str, Optional[int], Optional[list[int]], Optional[int]]:
+    """Normalize the input volume and source-size metadata in validation order."""
+    source_dtype, source_itemsize = _resolve_source_dtype(V, source_dtype)
+    source_shape = _explicit_source_shape(source_shape)
+    source_stored_bytes = _explicit_source_stored_bytes(source_stored_bytes)
+    V = np.asarray(V, dtype=np.float32)
+    if V.size == 0:
+        raise ValueError("Input image V cannot be empty")
+    if V.ndim == 0:
+        raise ValueError("Input image V must have at least 1 dimension")
+    return V, source_dtype, source_itemsize, source_shape, source_stored_bytes
+
+
+def _normalize_seeds(seeds: Any, ndim: int) -> Any:
+    """Validate and normalize explicit seed specifications."""
+    if seeds is None:
+        return None
+    if isinstance(seeds, GSplatData):
+        _validate_gsplat_seeds(seeds, ndim)
+        return seeds
+    if isinstance(seeds, int):
+        if seeds <= 0:
+            raise ValueError("seeds as int must be positive")
+        return seeds
+    if isinstance(seeds, float):
+        if seeds <= 0 or seeds > 1.0:
+            raise ValueError(
+                "seeds as float (compression ratio) must be in range (0, 1.0]"
+            )
+        return seeds
+    return _normalize_seed_array(seeds, ndim)
+
+
+def _validate_gsplat_seeds(seeds: GSplatData, ndim: int) -> None:
+    """Validate the dimensionality of a GSplatData warm start."""
+    if seeds.centers is not None and len(seeds.centers) > 0:
+        if seeds.centers.shape[1] != ndim:
+            raise ValueError(
+                f"GSplatData centers must have {ndim} columns to match image dimensions"
+            )
+
+
+def _normalize_seed_array(seeds: Any, ndim: int) -> np.ndarray:
+    """Normalize and validate an explicit seed-center array."""
+    seed_array = np.asarray(seeds, dtype=np.float32)
+    if seed_array.ndim != 2:
+        raise ValueError("seeds must be a 2D array (N, ndim)")
+    if seed_array.shape[1] != ndim:
+        raise ValueError(f"seeds must have {ndim} columns to match image dimensions")
+    return seed_array
+
+
+def _validate_core_hyperparameters(parameters: FitParameters) -> None:
+    """Validate model, optimization, and loss parameters in public order."""
+    if parameters.init_sigma_vox is not None and parameters.init_sigma_vox <= 0:
+        raise ValueError("init_sigma_vox must be positive if specified")
+    if parameters.n_iters <= 0:
+        raise ValueError("n_iters must be positive")
+    if parameters.lr <= 0:
+        raise ValueError("lr must be positive")
+    if parameters.loss_type not in ["mse", "poisson", "l1"]:
+        raise ValueError("loss_type must be 'mse', 'poisson', or 'l1'")
+    if parameters.l1_amp is not None and parameters.l1_amp < 0:
+        raise ValueError("l1_amp must be non-negative if specified")
+    if parameters.l1_diag is not None and parameters.l1_diag < 0:
+        raise ValueError("l1_diag must be non-negative if specified")
+    if (
+        parameters.asymmetric_penalty is not None
+        and parameters.asymmetric_penalty < 1.0
+    ):
+        raise ValueError(
+            "asymmetric_penalty must be >= 1.0 (values < 1.0 would invert the penalty)"
+        )
+    if parameters.gradient_clip is not None and parameters.gradient_clip <= 0:
+        raise ValueError("gradient_clip must be positive if specified")
+
+
+def _validate_scheduler_parameters(parameters: FitParameters) -> None:
+    """Validate learning-rate scheduler parameters in public order."""
+    if parameters.patience < 1:
+        raise ValueError("patience must be >= 1")
+    if parameters.lr_reduction_factor <= 0.0 or parameters.lr_reduction_factor >= 1.0:
+        raise ValueError("lr_reduction_factor must be in range (0, 1)")
+    if (
+        parameters.early_stop_patience is not None
+        and parameters.early_stop_patience < 1
+    ):
+        raise ValueError("early_stop_patience must be >= 1 if specified")
+    if parameters.scheduler_type not in ["plateau", "exponential"]:
+        raise ValueError("scheduler_type must be 'plateau' or 'exponential'")
+
+
+def _validate_stopping_parameters(parameters: FitParameters) -> None:
+    """Validate stopping, movie, and normalization controls in public order."""
+    if parameters.truncate <= 0:
+        raise ValueError("truncate must be positive")
+    if parameters.max_abs_error is not None and parameters.max_abs_error <= 0:
+        raise ValueError("max_abs_error must be positive if specified")
+    if parameters.rel_l2_target is not None and parameters.rel_l2_target <= 0:
+        raise ValueError("rel_l2_target must be positive if specified")
+    if parameters.movie_max_frames is not None and parameters.movie_max_frames <= 0:
+        raise ValueError("movie_max_frames must be positive or None")
+    if parameters.movie_every < 1:
+        raise ValueError("movie_every must be >= 1")
+    if not 0.0 <= parameters.norm_percentile < 50.0:
+        raise ValueError(
+            "norm_percentile must be in range [0.0, 50.0), "
+            f"got {parameters.norm_percentile}"
+        )
+    _validate_floor(parameters.floor)
+
+
+def _normalize_sigma_min(sigma_min_diag: Any, ndim: int) -> Any:
+    """Normalize per-axis minimum sigma constraints."""
+    if sigma_min_diag is None:
+        return [DEFAULT_SIGMA_MIN_DIAG] * ndim
+    if isinstance(sigma_min_diag, (int, float)):
+        if sigma_min_diag <= 0:
+            raise ValueError("sigma_min_diag must be positive if specified")
+        return [float(sigma_min_diag)] * ndim
+    if len(sigma_min_diag) != ndim:
+        raise ValueError(f"sigma_min_diag must have length {ndim}")
+    if any(s <= 0 for s in sigma_min_diag):
+        raise ValueError("All sigma_min_diag values must be positive")
+    return sigma_min_diag
+
+
+def _normalize_sigma_max(
+    sigma_max_diag: Any, sigma_min_diag: Any, V: np.ndarray
+) -> Any:
+    """Normalize per-axis maximum sigma constraints."""
+    if sigma_max_diag is None:
+        return None
+    if isinstance(sigma_max_diag, (int, float)):
+        # A scalar is a fraction of each axis's own extent, preserving
+        # anisotropic volume proportions.
+        fraction = float(sigma_max_diag)
+        if fraction <= 0:
+            raise ValueError("sigma_max_diag fraction must be positive")
+        sigma_max_diag = [size * fraction for size in V.shape]
+    else:
+        if len(sigma_max_diag) != V.ndim:
+            raise ValueError(f"sigma_max_diag must have length {V.ndim}")
+        if any(s <= 0 for s in sigma_max_diag):
+            raise ValueError("All sigma_max_diag values must be positive")
+    if any(s_max <= s_min for s_max, s_min in zip(sigma_max_diag, sigma_min_diag)):
+        raise ValueError("sigma_max_diag must be greater than sigma_min_diag")
+    return sigma_max_diag
+
+
+def _validate_constraints(parameters: FitParameters) -> None:
+    """Validate remaining fit constraints in public order."""
+    if parameters.amp_max is not None and parameters.amp_max <= 0:
+        raise ValueError("amp_max must be positive if specified")
+    _validate_norm_range(parameters.norm_range)
+    if parameters.max_eccentricity is not None and parameters.max_eccentricity < 1.0:
+        raise ValueError(
+            "max_eccentricity must be >= 1.0 (ratio of longest to shortest axis)"
+        )
+    correction = parameters.voxel_footprint_correction
+    # bool is an enable/disable switch here, despite being an int subclass.
+    if (
+        isinstance(correction, (int, float))
+        and not isinstance(correction, bool)
+        and correction <= 0
+    ):
+        raise ValueError("voxel_footprint_correction sigma must be positive")
+    if parameters.boundary_penalty is not None and parameters.boundary_penalty < 0:
+        raise ValueError("boundary_penalty must be non-negative if specified")
+
+
+def _normalize_voxel_size(voxel_size: Any, ndim: int) -> Optional[np.ndarray]:
+    """Normalize scalar or per-axis voxel spacing."""
+    if voxel_size is None:
+        return None
+    if isinstance(voxel_size, (int, float)):
+        if voxel_size <= 0:
+            raise ValueError("voxel_size must be positive")
+        return np.array([float(voxel_size)] * ndim, dtype=np.float32)
+    voxel_size_arr = np.asarray(voxel_size, dtype=np.float32)
+    if voxel_size_arr.shape != (ndim,):
+        raise ValueError(
+            f"voxel_size must have length {ndim} to match image dimensions, "
+            f"got length {len(voxel_size_arr)}"
+        )
+    if np.any(voxel_size_arr <= 0):
+        raise ValueError("All voxel_size values must be positive")
+    return voxel_size_arr
+
+
+def _validate_output_controls(parameters: FitParameters) -> None:
+    """Validate output sorting and callback controls in public order."""
+    if parameters.output_space not in ("real", "voxel"):
+        raise ValueError("output_space must be 'real' or 'voxel'")
+    if parameters.sort_splats_interval < 1:
+        raise ValueError("sort_splats_interval must be >= 1")
+    if parameters.iter_callback is not None and not callable(parameters.iter_callback):
+        raise ValueError("iter_callback must be callable or None")
+    if parameters.iter_callback_every < 1:
+        raise ValueError("iter_callback_every must be >= 1")
+
+
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
-    V: np.ndarray,
-    seeds: Optional[np.ndarray | int | float | GSplatData] = None,
-    norm_percentile: float = 0.0,
-    floor: "str | float | None" = "auto",
-    norm_range: "tuple[float, float] | None" = None,
-    downscale: Optional[int | Sequence[int]] = None,
-    init_sigma_vox: Optional[float] = None,
-    n_iters: int = 1000,
-    lr: float = 0.01,
-    loss_type: str = "l1",
-    asymmetric_penalty: Optional[float] = 1.0,
-    l1_amp: Optional[float] = None,
-    l1_diag: Optional[float] = None,
-    sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
-    sigma_max_diag: Optional[Sequence[float] | float] = None,
-    amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
-    max_eccentricity: Optional[float] = 10.0,
-    truncate: float = DEFAULT_TRUNCATION_RADIUS,
-    verbose: bool = True,
-    max_abs_error: Optional[float] = None,
-    rel_l2_target: Optional[float] = None,
-    gradient_clip: Optional[float] = None,
-    napari_movie: bool = False,
-    movie_every: int = 1,
-    movie_max_frames: Optional[int] = None,
-    scheduler_type: str = "plateau",
-    patience: int = 15,
-    lr_reduction_factor: float = 0.9,
-    early_stop_patience: Optional[int] = 300,
-    dynamic_ops_verbose: bool = False,
-    seed_method: str = "auto",
-    voxel_footprint_correction: bool | float = False,
-    boundary_penalty: Optional[float] = None,
-    clip_to_bounds: bool = False,
-    voxel_size: Optional[Sequence[float] | float] = None,
-    output_space: str = "real",
-    sort_splats_enabled: bool = True,
-    sort_splats_interval: int = 1000,
-    iter_callback: Optional[Any] = None,
-    iter_callback_every: int = 25,
-    seed_amps_background_relative: bool = False,
-    source_dtype: Optional[str] = None,
-    source_shape: Optional[Sequence[int]] = None,
-    source_stored_bytes: Optional[int] = None,
-    **seed_kwargs: Any,
+    parameters: FitParameters,
 ) -> FitConfig:
     """
     Validate input parameters and prepare configuration for fitting.
@@ -283,27 +445,8 @@ def prepare_fit_config(
     ----------
     fitter : GaussianSplatFitter
         The fitter instance (for device and dynamic ops config)
-    V : np.ndarray
-        Input image/volume to reconstruct
-    seed_method : str, default="auto"
-        Method for generating seeds when seeds=None:
-        - "decomposition": Scale-hierarchical detection via image decomposition
-        - "grid": Uniform grid seeding for spatial coverage
-        - "edges": Edge-based seeding with anisotropic shapes
-        - "auto": Principled combination of all methods (recommended)
-        This parameter is only used when seeds=None. If seeds are provided,
-        this parameter is ignored.
-    seed_amps_background_relative : bool, default=False
-        Amplitude convention of a ``seeds=GSplatData`` warm start. False (the
-        default) = raw-image-sampled, as ``generate_seeds()`` returns; True =
-        background-relative, as a previous fit's output is. See
-        ``fit_gaussian_splats`` for the full explanation. Ignored unless
-        ``seeds`` is a GSplatData.
-    **seed_kwargs
-        Additional keyword arguments for seed generation (e.g., num_scales,
-        percentile_thresh, etc.). Only used when seeds=None.
-    **kwargs
-        All other fitting parameters
+    parameters : FitParameters
+        Raw fit parameters from the public entry point.
 
     Returns
     -------
@@ -315,188 +458,81 @@ def prepare_fit_config(
     ValueError
         If any parameters are invalid
     """
-    # Input validation.
-    # Capture the caller's dtype BEFORE the cast below (see the helper: after the
-    # cast the original element size is gone).
-    source_dtype, source_itemsize = _resolve_source_dtype(V, source_dtype)
-    source_shape = _explicit_source_shape(source_shape)
-    source_stored_bytes = _explicit_source_stored_bytes(source_stored_bytes)
-    V = np.asarray(V, dtype=np.float32)
-    if V.size == 0:
-        raise ValueError("Input image V cannot be empty")
-    if V.ndim == 0:
-        raise ValueError("Input image V must have at least 1 dimension")
+    V = parameters.V
+    seeds = parameters.seeds
+    norm_percentile = parameters.norm_percentile
+    floor = parameters.floor
+    norm_range = parameters.norm_range
+    downscale = parameters.downscale
+    init_sigma_vox = parameters.init_sigma_vox
+    n_iters = parameters.n_iters
+    lr = parameters.lr
+    loss_type = parameters.loss_type
+    asymmetric_penalty = parameters.asymmetric_penalty
+    l1_amp = parameters.l1_amp
+    l1_diag = parameters.l1_diag
+    sigma_min_diag = parameters.sigma_min_diag
+    sigma_max_diag = parameters.sigma_max_diag
+    amp_max = parameters.amp_max
+    max_eccentricity = parameters.max_eccentricity
+    truncate = parameters.truncate
+    verbose = parameters.verbose
+    max_abs_error = parameters.max_abs_error
+    rel_l2_target = parameters.rel_l2_target
+    gradient_clip = parameters.gradient_clip
+    napari_movie = parameters.napari_movie
+    movie_every = parameters.movie_every
+    movie_max_frames = parameters.movie_max_frames
+    scheduler_type = parameters.scheduler_type
+    patience = parameters.patience
+    lr_reduction_factor = parameters.lr_reduction_factor
+    early_stop_patience = parameters.early_stop_patience
+    dynamic_ops_verbose = parameters.dynamic_ops_verbose
+    seed_method = parameters.seed_method
+    voxel_footprint_correction = parameters.voxel_footprint_correction
+    boundary_penalty = parameters.boundary_penalty
+    clip_to_bounds = parameters.clip_to_bounds
+    voxel_size = parameters.voxel_size
+    output_space = parameters.output_space
+    sort_splats_enabled = parameters.sort_splats_enabled
+    sort_splats_interval = parameters.sort_splats_interval
+    iter_callback = parameters.iter_callback
+    iter_callback_every = parameters.iter_callback_every
+    seed_amps_background_relative = parameters.seed_amps_background_relative
+    source_dtype = parameters.source_dtype
+    source_shape = parameters.source_shape
+    source_stored_bytes = parameters.source_stored_bytes
+    seed_kwargs = dict(parameters.seed_kwargs)
+
+    V, source_dtype, source_itemsize, source_shape, source_stored_bytes = (
+        _prepare_input(V, source_dtype, source_shape, source_stored_bytes)
+    )
 
     # Normalize and validate downscale parameter
     from luxar.gsplats.fitting.downscale import normalize_downscale
 
     downscale_normalized = normalize_downscale(downscale, V.ndim)
 
-    # Validate seeds if provided
-    if seeds is not None:
-        if isinstance(seeds, GSplatData):
-            # GSplatData object - will be handled in preprocessing
-            if seeds.centers is not None and len(seeds.centers) > 0:
-                if seeds.centers.shape[1] != V.ndim:
-                    raise ValueError(
-                        f"GSplatData centers must have {V.ndim} columns to match image dimensions"
-                    )
-        elif isinstance(seeds, int):
-            # Integer exact count
-            if seeds <= 0:
-                raise ValueError("seeds as int must be positive")
-        elif isinstance(seeds, float):
-            # Float compression ratio (splat floats / image floats)
-            if seeds <= 0 or seeds > 1.0:
-                raise ValueError(
-                    "seeds as float (compression ratio) must be in range (0, 1.0]"
-                )
-        else:
-            # Array of seed centers
-            seeds = np.asarray(seeds, dtype=np.float32)
-            if seeds.ndim != 2:
-                raise ValueError("seeds must be a 2D array (N, ndim)")
-            if seeds.shape[1] != V.ndim:
-                raise ValueError(
-                    f"seeds must have {V.ndim} columns to match image dimensions"
-                )
+    seeds = _normalize_seeds(seeds, V.ndim)
 
     # L1 regularization defaults will be set in preprocessing.py after gradient dilution
     # is calculated, to ensure they scale properly with effective learning rates
 
-    # Validate hyperparameters
-    if init_sigma_vox is not None and init_sigma_vox <= 0:
-        raise ValueError("init_sigma_vox must be positive if specified")
-    if n_iters <= 0:
-        raise ValueError("n_iters must be positive")
-    if lr <= 0:
-        raise ValueError("lr must be positive")
-    if loss_type not in ["mse", "poisson", "l1"]:
-        raise ValueError("loss_type must be 'mse', 'poisson', or 'l1'")
-    if l1_amp is not None and l1_amp < 0:
-        raise ValueError("l1_amp must be non-negative if specified")
-    if l1_diag is not None and l1_diag < 0:
-        raise ValueError("l1_diag must be non-negative if specified")
-    if asymmetric_penalty is not None and asymmetric_penalty < 1.0:
-        raise ValueError(
-            "asymmetric_penalty must be >= 1.0 (values < 1.0 would invert the penalty)"
-        )
-    if gradient_clip is not None and gradient_clip <= 0:
-        raise ValueError("gradient_clip must be positive if specified")
-    if patience < 1:
-        raise ValueError("patience must be >= 1")
-    if lr_reduction_factor <= 0.0 or lr_reduction_factor >= 1.0:
-        raise ValueError("lr_reduction_factor must be in range (0, 1)")
-    if early_stop_patience is not None and early_stop_patience < 1:
-        raise ValueError("early_stop_patience must be >= 1 if specified")
-    if scheduler_type not in ["plateau", "exponential"]:
-        raise ValueError("scheduler_type must be 'plateau' or 'exponential'")
-    if truncate <= 0:
-        raise ValueError("truncate must be positive")
-    if max_abs_error is not None and max_abs_error <= 0:
-        raise ValueError("max_abs_error must be positive if specified")
-    if rel_l2_target is not None and rel_l2_target <= 0:
-        raise ValueError("rel_l2_target must be positive if specified")
-    if movie_max_frames is not None and movie_max_frames <= 0:
-        raise ValueError("movie_max_frames must be positive or None")
-    if movie_every < 1:
-        raise ValueError("movie_every must be >= 1")
-    if not 0.0 <= norm_percentile < 50.0:
-        raise ValueError(
-            f"norm_percentile must be in range [0.0, 50.0), got {norm_percentile}"
-        )
-    _validate_floor(floor)
+    # Validators inspect the raw parameter bundle; normalized values stay in
+    # coordinator locals and are passed explicitly to normalization helpers.
+    _validate_core_hyperparameters(parameters)
+    _validate_scheduler_parameters(parameters)
+    _validate_stopping_parameters(parameters)
+    movie_max_frames = (
+        10000 if parameters.movie_max_frames is None else parameters.movie_max_frames
+    )
 
-    # Movie frame limit
-    if movie_max_frames is None:
-        movie_max_frames = 10000  # Large but finite limit
-
-    # Validate sigma constraints
     d = V.ndim
-    if sigma_min_diag is None:
-        sigma_min_diag = [DEFAULT_SIGMA_MIN_DIAG] * d
-    elif isinstance(sigma_min_diag, (int, float)):
-        if sigma_min_diag <= 0:
-            raise ValueError("sigma_min_diag must be positive if specified")
-        sigma_min_diag = [float(sigma_min_diag)] * d
-    else:
-        if len(sigma_min_diag) != d:
-            raise ValueError(f"sigma_min_diag must have length {d}")
-        if any(s <= 0 for s in sigma_min_diag):
-            raise ValueError("All sigma_min_diag values must be positive")
-
-    if sigma_max_diag is not None:
-        if isinstance(sigma_max_diag, (int, float)):
-            # Single scalar: interpret as fraction of volume extent per axis.
-            # Each dimension gets shape[i] * fraction independently,
-            # which correctly handles anisotropic volumes.
-            fraction = float(sigma_max_diag)
-            if fraction <= 0:
-                raise ValueError("sigma_max_diag fraction must be positive")
-            sigma_max_diag = [s * fraction for s in V.shape]
-        else:
-            if len(sigma_max_diag) != d:
-                raise ValueError(f"sigma_max_diag must have length {d}")
-            if any(s <= 0 for s in sigma_max_diag):
-                raise ValueError("All sigma_max_diag values must be positive")
-        if any(s_max <= s_min for s_max, s_min in zip(sigma_max_diag, sigma_min_diag)):
-            raise ValueError("sigma_max_diag must be greater than sigma_min_diag")
-
-    # Validate amp_max
-    if amp_max is not None and amp_max <= 0:
-        raise ValueError("amp_max must be positive if specified")
-
-    _validate_norm_range(norm_range)
-
-    # Validate max_eccentricity
-    if max_eccentricity is not None and max_eccentricity < 1.0:
-        raise ValueError(
-            "max_eccentricity must be >= 1.0 (ratio of longest to shortest axis)"
-        )
-
-    # Validate voxel_footprint_correction
-    # Check for numeric types (int/float) but exclude bool (which is a subclass of int)
-    if (
-        isinstance(voxel_footprint_correction, (int, float))
-        and not isinstance(voxel_footprint_correction, bool)
-        and voxel_footprint_correction <= 0
-    ):
-        raise ValueError("voxel_footprint_correction sigma must be positive")
-
-    # Validate boundary_penalty
-    if boundary_penalty is not None and boundary_penalty < 0:
-        raise ValueError("boundary_penalty must be non-negative if specified")
-
-    # Validate voxel_size
-    voxel_size_arr = None
-    if voxel_size is not None:
-        if isinstance(voxel_size, (int, float)):
-            if voxel_size <= 0:
-                raise ValueError("voxel_size must be positive")
-            voxel_size_arr = np.array([float(voxel_size)] * d, dtype=np.float32)
-        else:
-            voxel_size_arr = np.asarray(voxel_size, dtype=np.float32)
-            if voxel_size_arr.shape != (d,):
-                raise ValueError(
-                    f"voxel_size must have length {d} to match image dimensions, "
-                    f"got length {len(voxel_size_arr)}"
-                )
-            if np.any(voxel_size_arr <= 0):
-                raise ValueError("All voxel_size values must be positive")
-
-    # Validate output_space
-    if output_space not in ("real", "voxel"):
-        raise ValueError("output_space must be 'real' or 'voxel'")
-
-    # Validate sort_splats_interval
-    if sort_splats_interval < 1:
-        raise ValueError("sort_splats_interval must be >= 1")
-
-    # Validate iter_callback
-    if iter_callback is not None and not callable(iter_callback):
-        raise ValueError("iter_callback must be callable or None")
-    if iter_callback_every < 1:
-        raise ValueError("iter_callback_every must be >= 1")
+    sigma_min_diag = _normalize_sigma_min(sigma_min_diag, d)
+    sigma_max_diag = _normalize_sigma_max(sigma_max_diag, sigma_min_diag, V)
+    _validate_constraints(parameters)
+    voxel_size_arr = _normalize_voxel_size(voxel_size, d)
+    _validate_output_controls(parameters)
 
     return FitConfig(
         V=V,

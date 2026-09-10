@@ -17,6 +17,7 @@ scripts/
 ├── build-wasm.sh             # Rust → WASM build via wasm-pack (pnpm build:wasm[:dev])
 ├── check-build-identity.mjs       # Asserts a built bundle carries its build stamp
 ├── check-build-identity.test.mjs  # unit coverage for the stamp gate
+├── check-coverage-slack.mjs       # Coverage floor/baseline drift gate and refresh printer
 ├── check-lib-exports.mjs          # Post-build sanity check on dist/lib/
 ├── check-jsdoc-coverage.ts        # Standalone JSDoc coverage report
 ├── check-overrides.mjs            # pnpm overrides single-source guard
@@ -26,6 +27,7 @@ scripts/
 ├── generate-third-party-licenses.test.mjs # Tests for complete notices
 ├── perf-diff.mjs                  # Markdown delta table from perf-bench JSON
 ├── perf-diff.test.mjs             # tests for perf-diff's buildPerfDiff()
+├── run-ci-checks.mjs              # Aggregate viewer static + coverage merge gates
 └── perf/                          # perf-bench capture fixtures / helpers
 ```
 

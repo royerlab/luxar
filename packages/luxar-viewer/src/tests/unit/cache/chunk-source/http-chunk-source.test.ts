@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { HttpChunkSource } from '../../../../cache/chunk-source/http-chunk-source';
+import { log } from '../../../../utils/log';
 
 const BASE = 'https://example.com/data.zarr';
 
@@ -81,6 +82,43 @@ describe('HttpChunkSource — outcomes', () => {
     expect((await new HttpChunkSource(BASE).get('c/9/9')).kind).toBe('missing');
   });
 
+  it.each([400, 401, 403, 410, 416])(
+    'maps HTTP %s to an error instead of pretending the key is missing',
+    async (status) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => bodyResponse(new Uint8Array(0), status))
+      );
+
+      const outcome = await new HttpChunkSource(BASE).get('c/9/9');
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') return;
+      expect(outcome.cause.message).toContain(String(status));
+      expect(outcome.cause.message).toContain('c/9/9');
+    }
+  );
+
+  it.each(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata'])(
+    'treats HTTP 403/410 for metadata probe %s as missing with a warning',
+    async (key) => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      try {
+        for (const status of [403, 410]) {
+          vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => bodyResponse(new Uint8Array(0), status))
+          );
+
+          expect((await new HttpChunkSource(BASE).get(`nested/${key}`)).kind).toBe('missing');
+        }
+        expect(warning).toHaveBeenCalledTimes(2);
+      } finally {
+        warning.mockRestore();
+      }
+    }
+  );
+
   it('retries a 5xx and succeeds when the server recovers', async () => {
     let attempt = 0;
     vi.stubGlobal(
@@ -132,8 +170,8 @@ describe('HttpChunkSource — outcomes', () => {
     // The branch the fix was written for, and the one the existing
     // already-aborted case never reaches: the signal fires after the headers
     // arrive, so `arrayBuffer()` is the thing that rejects. A throw here escapes
-    // as NetworkError → undefined → zarrita fills the chunk. Silently wrong
-    // geometry, which is why this branch has to be pinned.
+    // as NetworkError instead of the cancellation classification the store
+    // needs, which is why this branch has to be pinned.
     const controller = new AbortController();
     vi.stubGlobal(
       'fetch',

@@ -322,11 +322,9 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * `mesh-whole-node-loader.ts`'s optional-array open catch reads a zarr
    * not-found as "the presence flag disagrees with the store", leaves the slot
    * empty, and `preflightMesh`'s flag-with-no-array check then `rejectMesh`es
-   * it. A genuinely transient outage lands in that same branch, because
-   * `MultiLevelCachingStore.get` returns `undefined` for a retry-exhausted
-   * `NetworkError` to keep zarrita's "key missing" contract — so an offline
-   * blip on an optional array is indistinguishable here from a store that
-   * really lacks it. Under-inclusive: an
+   * it. Network failures now reject before zarrita can classify them as
+   * missing, but the deterministic Validation cases remain indistinguishable
+   * from transient publication races. Under-inclusive: an
    * absent REQUIRED `vertices`/`faces` array throws zarrita's `NotFoundError`,
    * which `classifyLoaderError` matches nowhere and files as `Unexpected`. So
    * latching by kind would strand nodes that the failed-loads banner's manual

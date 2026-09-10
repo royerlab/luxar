@@ -153,6 +153,104 @@ class TestSpecsAreValidRequirements:
             f"reader cannot tell whether it is still needed: {unexplained}"
         )
 
+    def test_pyarrow_floor_starts_at_numpy_copy_control_release(self) -> None:
+        packaging = pytest.importorskip("packaging.requirements")
+        version_mod = pytest.importorskip("packaging.version")
+
+        specifier = packaging.Requirement(INSTALL_SPECS["pyarrow"].spec).specifier
+        assert version_mod.Version("12.0.0") not in specifier, (
+            "pyarrow 12 lacks ChunkedArray.to_numpy(zero_copy_only=...)"
+        )
+        assert version_mod.Version("13.0.0") in specifier
+
+
+class TestHatchEnvironments:
+    def test_default_environment_matches_shared_demo_dependencies(self) -> None:
+        pyproject = _pyproject()
+        if not pyproject.is_file():  # installed wheel — no source tree to check
+            pytest.skip("pyproject.toml not available (installed package)")
+
+        import tomllib
+
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        Requirement = pytest.importorskip("packaging.requirements").Requirement
+        default_dependencies = {
+            Requirement(raw).name.lower(): Requirement(raw)
+            for raw in data["tool"]["hatch"]["envs"]["default"]["dependencies"]
+        }
+        demo_dependencies = {
+            Requirement(raw).name.lower(): Requirement(raw)
+            for raw in data["project"]["optional-dependencies"]["demos"]
+        }
+
+        shared = default_dependencies.keys() & demo_dependencies.keys()
+        assert shared, "default Hatch environment must share dependencies with demos"
+        for name in sorted(shared):
+            assert (
+                default_dependencies[name].specifier
+                == demo_dependencies[name].specifier
+            ), f"default Hatch environment and demos extra disagree on {name}"
+
+    def test_moderngl_stays_out_of_python_matrix_environments(self) -> None:
+        """The optional GPU renderer must not block Python matrix setup."""
+        pyproject = _pyproject()
+        if not pyproject.is_file():  # installed wheel — no source tree to check
+            pytest.skip("pyproject.toml not available (installed package)")
+
+        import tomllib
+
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        environments = data["tool"]["hatch"]["envs"]
+        default_environment = environments["default"]
+        test_environment = environments["test"]
+        Requirement = pytest.importorskip("packaging.requirements").Requirement
+        default_names = {
+            Requirement(raw).name.lower() for raw in default_environment["dependencies"]
+        }
+        test_names = {
+            Requirement(raw).name.lower() for raw in test_environment["dependencies"]
+        }
+
+        assert "moderngl" not in default_names, (
+            "moderngl is demo-only and moderngl/glcontext lack CPython 3.14 wheels; "
+            "putting it in the default Hatch environment makes the Python 3.14 "
+            "CI leg require system OpenGL headers before tests can run"
+        )
+        assert "moderngl" not in test_names, (
+            "moderngl is demo-only and moderngl/glcontext lack CPython 3.14 wheels; "
+            "putting it in the test Hatch environment breaks its Python 3.14 matrix"
+        )
+        assert "demos" not in default_environment["features"], (
+            "the demos feature includes moderngl/glcontext, which lack CPython 3.14 "
+            "wheels and must stay out of the default Hatch environment"
+        )
+        assert "demos" not in test_environment["features"], (
+            "the demos feature includes moderngl/glcontext, which lack CPython 3.14 "
+            "wheels and must stay out of the test Hatch environment"
+        )
+
+    def test_demos_environment_can_run_gpu_renderer_tests(self) -> None:
+        """The GL tests retain an explicit environment with pytest and demo deps."""
+        pyproject = _pyproject()
+        if not pyproject.is_file():  # installed wheel — no source tree to check
+            pytest.skip("pyproject.toml not available (installed package)")
+
+        import tomllib
+
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        demos_environment = data["tool"]["hatch"]["envs"]["demos"]
+
+        assert demos_environment["template"] == "demos"
+        assert set(demos_environment["features"]) == {"test", "demos"}
+        for name in (
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+        ):
+            assert demos_environment["env-vars"][name] == f"{{env:{name}:1}}"
+        assert demos_environment["scripts"]["pytest"].startswith("python -m pytest ")
+
 
 class TestSpecsMatchPyproject:
     """Every spec must accept exactly the versions its pyproject pin accepts."""
@@ -259,8 +357,9 @@ class TestSpecsMatchPyproject:
                 "9.0.0",
                 "10.0",
                 "12.0.0",
+                "13.0.0",
                 # A date-versioned sample below the 2023.1.0 floor shared by
-                # tifffile/imagecodecs: without one in [12.0.0, 2023.1.0) those
+                # tifffile/imagecodecs: without one in [13.0.0, 2023.1.0) those
                 # rows have a decade-wide blind window where a relaxed pin reads
                 # identical to the current one.
                 "2020.1.1",

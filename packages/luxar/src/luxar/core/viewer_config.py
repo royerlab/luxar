@@ -333,6 +333,7 @@ class AnimationConfig:
 
 
 VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out")
+VALID_WAYPOINT_REVEALS = ("immediate", "on_arrival")
 
 # A `when` clause: dimension NAME -> exact value, or an inclusive (min, max)
 # range. Deliberately the same syntax as an overlay's `visible_range`, so one
@@ -373,6 +374,16 @@ class Waypoint:
             ``bloom_strength``, ``tone_mapping``, ...). Validated against that
             key list; values are validated by the viewer exactly as authored
             defaults are.
+        reveal: When the waypoint's dimension-bound overlays (``visible_range``)
+            appear. ``"immediate"`` (the default, also when ``None``) shows them
+            as the dimension changes, while the camera is still flying;
+            ``"on_arrival"`` holds overlays that would newly appear until the
+            flight resolves, so the caption and the turntable show up when the
+            camera has arrived. A snap, a waypoint without a camera block and a
+            flight the visitor cancels all count as arrival; a flight a newer
+            waypoint supersedes never reveals. Departing overlays hide at once
+            either way, and overlays without a ``visible_range`` are untouched.
+            The sound layer's ``on_arrive`` narration keys on the same event.
     """
 
     when: WaypointCondition
@@ -380,6 +391,7 @@ class Waypoint:
     duration_ms: Optional[float] = None
     easing: Optional[str] = None
     rendering: Optional[Dict[str, Any]] = None
+    reveal: Optional[str] = None
 
     def __post_init__(self) -> None:
         self._validate_when()
@@ -399,6 +411,11 @@ class Waypoint:
         if self.easing is not None and self.easing not in VALID_WAYPOINT_EASINGS:
             raise ValueError(
                 f"easing must be one of {VALID_WAYPOINT_EASINGS}, got '{self.easing}'"
+            )
+
+        if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
+            raise ValueError(
+                f"reveal must be one of {VALID_WAYPOINT_REVEALS}, got '{self.reveal}'"
             )
 
         if self.rendering is not None:
@@ -458,6 +475,8 @@ class Waypoint:
             result["easing"] = self.easing
         if self.rendering:
             result["rendering"] = dict(self.rendering)
+        if self.reveal is not None:
+            result["reveal"] = self.reveal
         return result
 
     @classmethod
@@ -474,6 +493,7 @@ class Waypoint:
             duration_ms=data.get("duration_ms"),
             easing=data.get("easing"),
             rendering=data.get("rendering"),
+            reveal=data.get("reveal"),
         )
 
 
@@ -879,7 +899,7 @@ class ViewerConfig:
 
     # Anti-aliasing. SMAA is unsupported because its 3-pass blend does
     # not fit Luxar's single-pass post-processing model. FXAA / MSAA /
-    # SSAA remain.
+    # SSAA remain; configured MSAA is suspended while SSAA is above 1x.
     fxaa_enabled: Optional[bool] = None
     msaa_enabled: Optional[bool] = None
     msaa_samples: Optional[int] = None

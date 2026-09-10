@@ -124,6 +124,7 @@ The project enforces quality standards automatically through pre-commit hooks an
 
 ### 🌐 TypeScript Code Quality
 - **Formatting**: ESLint + Prettier (automatic)
+- **Lint suppressions**: A reduced baselined count fails lint until you run `pnpm lint:prune` from `packages/luxar-viewer/` and commit `eslint-suppressions.json`; inspect the removed entries with `git diff -- eslint-suppressions.json`. Deleting a baselined file is not detected, so prune manually after deletions. After moving a baselined file, re-key it with `pnpm exec eslint . --suppress-rule <rule>`, then prune. Resolve suppression-file conflicts by pruning after the merge, never by hand-merging counts or adding `eslint-disable` comments.
 - **Type Safety**: Strict TypeScript configuration
 - **Documentation**: JSDoc comments for complex functions
 - **Memory Management**: Proper WebGL resource cleanup
@@ -151,7 +152,7 @@ def test_new_feature(tmp_path):
 - All new public methods must have tests
 - Edge cases and error conditions must be covered
 - Use pytest fixtures for common setup
-- Maintain the enforced coverage floors; after viewer test changes, run `pnpm test:coverage && pnpm check:coverage-slack` and refresh `coverage-thresholds.mjs` when required
+- Maintain the enforced coverage floors; after viewer test changes, run `pnpm test:coverage && pnpm check:coverage-slack -- --print`, update `COVERAGE_THRESHOLDS` when required, and refresh `COVERAGE_RECORDED` when accepting the new measurements. A downward refresh resets the erosion baseline and should be called out in the PR
 - Mark slow tests with `@pytest.mark.slow`
 - Mark integration tests with `@pytest.mark.integration`
 
