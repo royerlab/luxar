@@ -367,10 +367,10 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    approach. Under an ORTHOGRAPHIC projection nothing degenerates (`w`
    stays 1), so neither function ever saturates and each metric's plain
    value is used directly.
-   A session-wide replacement-LOD bias is applied between measurement and
-   selection: `b` multiplies `screen-area`, while `sqrt(b)` multiplies legacy
-   diagonal `coverage`, so both move by the same area factor. The neutral
-   default is `b = 1`.
+   A session-wide replacement-LOD bias (`?lod-bias` / `LuxarAppOptions.lodBias`)
+   is applied between measurement and selection: `b` multiplies `screen-area`,
+   while `sqrt(b)` multiplies legacy diagonal `coverage`, so both move by the
+   same area factor. The neutral default is `b = 1`.
 5. Pick the finest child whose `coverageFraction` threshold (the
    per-child value read from the zarr attr `coverage_fraction`, in
    whichever units step 4's `selector` names) is satisfied by that

@@ -170,7 +170,8 @@ export interface LuxarAppOptions {
    * occupancy-halved level finer and `4` selects two. Because finite screen-area
    * coverage tops out at `1`, values below `1` make partition-anchored finest
    * levels unreachable and values below `0.5` do the same for whole-object
-   * finest levels. Default: 1. Mirrors `UrlParams.lodBias` (`?lod-bias=<N>`).
+   * finest levels. Non-finite or non-positive values are treated as the neutral
+   * `1`. Default: 1. Mirrors `UrlParams.lodBias` (`?lod-bias=<N>`).
    */
   lodBias?: number;
 

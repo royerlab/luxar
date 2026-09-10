@@ -1666,6 +1666,23 @@ describe('LODGroupRegistry — auto evaluation', () => {
       reg.evaluatePerFrame();
 
       expect(children[1].object.visible, `neutral fallback for ${lodBias}`).toBe(true);
+
+      const ceilingChildren = [0, 0.5].map((threshold) => ({
+        ...makeChild(threshold),
+        positionBounds: bounds,
+      }));
+      const ceilingEntry = makeEntry(ceilingChildren, 0, `/invalid-bias-ceiling-${lodBias}`);
+      ceilingEntry.selector = 'screen-area';
+      reg.register(ceilingEntry);
+
+      reg.evaluatePerFrame();
+
+      expect(ceilingChildren[0].object.visible, `neutral ceiling fallback for ${lodBias}`).toBe(
+        true
+      );
+      expect(ceilingChildren[1].object.visible, `neutral ceiling fallback for ${lodBias}`).toBe(
+        false
+      );
     }
   });
 

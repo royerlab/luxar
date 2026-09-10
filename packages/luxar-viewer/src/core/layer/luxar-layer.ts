@@ -205,7 +205,10 @@ export interface LuxarLayerOptions {
   lodEnergyComp?: boolean;
   /** Force the finest replacement LOD regardless of coverage. Default false. */
   lodFinest?: boolean;
-  /** Replacement-LOD bias in screen-area units. Default 1. */
+  /**
+   * Replacement-LOD bias in screen-area units. Non-finite or non-positive
+   * values are treated as the neutral `1`. Default 1.
+   */
   lodBias?: number;
   /** Worker-based back-to-front sorting for order-dependent geometry. Default true. */
   depthSort?: boolean;
