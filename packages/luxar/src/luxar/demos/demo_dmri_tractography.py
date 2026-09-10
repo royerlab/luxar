@@ -522,6 +522,11 @@ LINE_INTENSITY: Final = 1.0 / 74.976
 #: why, and #2679 for the API that should eventually replace this recipe.
 LOD_LEVELS: Final = 3
 LOD_COMPRESSION: Final = 4
+#: Hover-link template for every tract level (the demo link gate requires one
+#: unshadowed module-level constant per template).
+TRACT_LINK_TEMPLATE: Final = (
+    "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}"
+)
 
 # NOTE — `additive_lod=False` on every level is deliberate. This indexed layout
 # qualifies for a composed ladder (every streamline is an ascending simple path,
@@ -1037,7 +1042,6 @@ def _add_tract(
     n_paths = len(xyz) // points
     label = tract_label(name, division)
     key = tract_key(name)
-    link = "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}"
     counts = lod_streamline_counts(n_paths)
 
     def level_arrays(
@@ -1067,7 +1071,7 @@ def _add_tract(
             line_type="indexed",
             labels=[label] * n_verts,
             keys=[key] * n_verts,
-            link=link,
+            link=TRACT_LINK_TEMPLATE,
             copy="{hover_key}",
             additive_lod=False,
             blending_mode="additive",
@@ -1108,7 +1112,7 @@ def _add_tract(
             line_type="indexed",
             labels=[label] * n_verts,
             keys=[key] * n_verts,
-            link=link,
+            link=TRACT_LINK_TEMPLATE,
             copy="{hover_key}",
             coverage_fraction=float(cover),
             additive_lod=False,
