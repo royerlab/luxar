@@ -61,7 +61,7 @@ def test_recorded_recipe_constants_match_the_source_and_published_run() -> None:
     # is gone: the uncelled merge is the recipe.
     assert not hasattr(demo, "AMPLITUDE_MIN")
     assert not hasattr(demo, "EXPECTED_SPLATS")
-    assert demo.EXPECTED_RUNGS == 14
+    assert demo.EXPECTED_RUNGS == 5  # per-slice --merge-target-ms sizing (#2374/#2376)
 
 
 def test_docstring_records_the_measured_streaming_tradeoffs() -> None:

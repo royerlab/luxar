@@ -184,16 +184,14 @@ ONCE across all 500 frames rather than per timepoint. That is what keeps the
 exposure from drifting as the embryo brightens, and it is why the appearance
 constants below are portable across the whole recording.
 
-``--merge-target-ms 200`` reproduces the shipped 14-rung ladder, but the target
-is sized against the whole node rather than the displayed time slice. Its first
-rung therefore contains a median 45 splats per timepoint (p05 7; one timepoint
-empty), not 200 ms worth of the visible frame. Prefer ``--merge-n-lods 4`` for a
-new sliced archive; keep the target only when reproducing this artifact. See
-#2374 and #2376.
-
-Step 2 records the fixed amplitude cutoff used to build the shipped archive after
-#2260 (issue #2258). Do not replace it with a fresh cumulative cull: that does not
-reproduce the published 83,221,420-splat artifact.
+``--merge-target-ms 200`` is sized per DISPLAYED TIME SLICE since #2374/#2376:
+the merge multiplies the download budget by the 500 slices it observes, so rung 0
+holds ~10.4 M splats (~20,800 per timepoint, ~200 ms of the visible frame) and
+the geometric ladder has 5 rungs. The 2026-08 archive was laddered before that
+fix: the same flag sized the budget against the whole node, its first rung held a
+median 45 splats per timepoint (p05 7; one timepoint empty) and the ladder had 14
+rungs. ``EXPECTED_RUNGS`` pins the corrected 5-rung ladder; a 14-rung result
+means the old, starved sizing came back.
 
 The fit directory is preserved across recompute attempts so ``batch-fit run`` can
 resume completed timepoints. Only the derived filter, transform, and archive
@@ -332,7 +330,8 @@ FLOOR = 8
 #: Recorded acquisition-box scheduling; two workers kept the GPU occupied.
 GPUS = "0"
 JOBS_PER_GPU = 2
-#: Progressive first-paint ladder produced during the streaming merge.
+#: Progressive first-paint ladder produced during the streaming merge (sized
+#: per time slice, see the docstring; 5 rungs on this recording).
 MERGE_RECIPE = "stream"
 MERGE_TARGET_MS = 200
 #: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
@@ -341,7 +340,7 @@ VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
 CHUNK_PROFILE = "archive"
 #: Nominal whole-recording seed budget; a refit may drift as dynamic ops run.
 NOMINAL_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
-EXPECTED_RUNGS = 14
+EXPECTED_RUNGS = 5
 #: Parallel fit reductions can move a threshold count, but not by recipe scale.
 SPLAT_COUNT_TOLERANCE = 0.01
 
