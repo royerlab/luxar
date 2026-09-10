@@ -17,10 +17,10 @@ This package splits cleanly into two layers:
   Partition kind.
 - **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`,
   `mesh.py`) — one peer per leaf type, interpreting the `additive_lod=` /
-  `substitutive_lod=` (and, for gsplats, `lod_group=`) convenience kwargs that
-  `add_points` / `add_lines` / `add_gsplats_from_data` / `add_mesh` accept. All four
-  take both axes; mesh's vocabulary is the shortest — decimation rather than a lift,
-  and a **reveal-only** additive axis.
+  `substitutive_lod=` / `additive_lod=` convenience kwargs that the four geometry
+  adders accept. Gsplats also retain `lod_group=` as a backward-compatible alias
+  for `substitutive_lod=`. Mesh's vocabulary is the shortest — decimation rather
+  than a lift, and a **reveal-only** additive axis.
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are NumPy
 ordering primitives shared by the Points and Lines resolvers (`poisson_disk` also
@@ -532,7 +532,7 @@ scene.add_points(
 # and add a 4-level additive ladder per level
 scene.add_gsplats_from_data(
     "splats", gsplat_data,
-    lod_group=True,            # require/use stored substitutive levels
+    substitutive_lod=True,     # require/use stored substitutive levels
     additive_lod=dict(n_lods=4),
 )
 ```
