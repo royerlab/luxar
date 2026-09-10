@@ -337,7 +337,7 @@
       "script": "demo_nuclear_pore_complex.py",
       "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr",
       "citation": "Mosalaganti et al. 2022",
-      "fillTarget": 0.7,
+      "fillTarget": 0.70,
       "note": "fillTarget 0.70, re-derived after #2262 replaced one Nup107-160 Y-complex ring (41,288 elements) with the whole pore (9,874,128) \u2014 a 239x change, so the previous 0.75 was metered on a different object. Three arms, final coverage / final lit / border-lit: 0.75 -> 85.8% / 73.9% / 504 of 4316 (11.7%); 0.70 -> 77.8% / 62.3% / 70 (1.6%); 0.65 -> 71.3% / 53.1% / 1 (0.0%). CHOSEN ON THE RENDER, not on the warning clearing. The still is well framed at ALL THREE values \u2014 the crop metric spans all 10 orbit poses, so a clean still can carry a real warning from a pose nobody sees in isolation. Pulling orbit frames with ffmpeg settled it: at 0.75 the outer lilac ring is cut flat against the frame edge, at 0.70 every frame is complete with margin. 0.65 removes the last graze but shrinks the subject visibly for no gain the eye can see. Note the harness suggested 0.65 -> 0.55 for a SINGLE lit pixel: it recommends lower whenever a dense silhouette grazes an edge, which a rotating disc always eventually will, so do not follow it mechanically."
     },
     {
@@ -571,7 +571,7 @@
       "category": "synthetic",
       "script": "demo_particle_collision.py",
       "dataset": "datasets/demos/collision.luxar.zarr",
-      "fillTarget": 0.8,
+      "fillTarget": 0.80,
       "note": "FILLTARGET: the corrected #1970 tracks run farther toward the detector edge. Measured on every encoded 900x900 orbit frame at luma >0.04, summed border-lit pixels (worst frame): previous tile 194,404 (1,974); merged geometry at 0.95 214,205 (2,611); 0.90 219,151 (2,696); 0.80 37,489 (408). The lower target restores margin rather than preserving the tighter full-bleed wash"
     },
     {
@@ -932,9 +932,9 @@
       "category": "embeddings",
       "script": "demo_esm3_protein_stories.py",
       "dataset": "datasets/demos/esm3_protein_stories.luxar.zarr",
-      "citation": "UniProt / EvolutionaryScale 2024 \u00b7 CC BY 4.0",
+      "citation": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
       "fillTarget": 0.85,
-      "note": "Captured at fillTarget 0.85, not the 0.95 default: the first capture put 54.1% (stories) / 36.6% (universe) of the frame perimeter alight, i.e. the point cloud ran off every edge. Unlike bird_plumage_colorspace, where border contact is deliberate composition, here the subject is a roughly isotropic blob and the overflow just crops it \u2014 the capture's own advisory suggested this value."
+      "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=82.8%, final lit=50.3%, dropped=0. Border-lit fell from 54.1% to 8.1%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85."
     },
     {
       "id": "esm_protein_universe",
@@ -943,9 +943,9 @@
       "category": "embeddings",
       "script": "demo_esm_protein_universe.py",
       "dataset": "datasets/demos/esm_protein_universe.luxar.zarr",
-      "citation": "ESM Atlas, Candido et al. 2026 \u00b7 3D map shown with permission",
+      "citation": "ESM Atlas cluster map (Candido et al. 2026)",
       "fillTarget": 0.85,
-      "note": "Captured at fillTarget 0.85, not the 0.95 default: the first capture put 54.1% (stories) / 36.6% (universe) of the frame perimeter alight, i.e. the point cloud ran off every edge. Unlike bird_plumage_colorspace, where border contact is deliberate composition, here the subject is a roughly isotropic blob and the overflow just crops it \u2014 the capture's own advisory suggested this value."
+      "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=88.5%, final lit=69.4%, dropped=0. Border-lit fell from 36.6% to 14.9%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85."
     }
   ]
 }

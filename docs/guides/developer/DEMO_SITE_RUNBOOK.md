@@ -1315,14 +1315,14 @@ change what the earlier sections tell you to do.
 
 ### 8.1 Where the site stands right now
 
-- Data prefix: **`data/2026-09-02`**, 86 stores. **This is the only prefix.**
+- Data prefix: **`data/2026-09-02`**, 88 stores. **This is the only prefix.**
 - **There is no rollback prefix.** `2026-09-01` was purged after verification.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
-- Gallery: 86 tiles, 91 stills, 89 videos. Two demos are deliberately
+- Gallery: 88 tiles, 91 stills, 89 videos. Two demos are deliberately
   still-only (§8.2).
-- 94 stable `/d/` routes (§8.1.1).
+- 96 stable `/d/` routes (§8.1.1).
 
 #### 8.1.1 Stable per-demo routes — `/d/<demo-key>`
 
@@ -1345,7 +1345,7 @@ python scripts/gallery/gen_redirects.py \
 
 Two things it handles that a reimplementation gets wrong:
 
-- **A demo key is not always its store name** — 8 of 87 manifest entries differ
+- **A demo key is not always its store name** — 8 of 90 manifest entries differ
   (`cosmicflows_laniakea` → `cosmicflows_laniakea_full`, `nd_transforms` →
   `nd_transforms_bench`, and six more). Take the store from the entry's
   `dataset`, never from its `id`. Routes are emitted for both spellings.
