@@ -20,7 +20,9 @@ or a cycling year. All four Luxar geometry types share the frame:
   autumn thins and turns to fire; winter strips the deciduous species bare
   while the conifers keep frost-dusted needles.
 - **Points** — the accents: summer fireflies, winter frost sparkle on the
-  snow, spring petals drifting under the blossom trees.
+  snow, spring petals drifting under the blossom trees — and a very light
+  multiscale cloud cover over the whole forest whose coverage follows the
+  season (summer wisps, a near-closed winter deck).
 
 L-system grammar (turtle commands):
     F/G: move forward drawing a segment (G = apical leader, drawn longer)
@@ -146,7 +148,7 @@ STACKED_AXIS_SIGMA = 1e-6
 
 #: Bump when the generation logic changes in a way that must invalidate
 #: cached bundles (also passed as `version=` to :func:`cache_computed`).
-SCENE_VERSION = 9
+SCENE_VERSION = 11
 
 
 def _maturity_length_scale(m: float) -> float:
@@ -1601,6 +1603,113 @@ def _build_accents(
 
 
 # =============================================================================
+# Seasonal cloud cover
+# =============================================================================
+
+#: Cloud deck floor above the highest terrain point (m). Well clear of the
+#: tallest canopy so the veil reads as sky, not as fog in the trees.
+CLOUD_DECK_HEIGHT = 26.0
+#: Vertical thickness of the deck (m); the noise field also modulates it.
+CLOUD_DECK_THICKNESS = 10.0
+#: The deck extends past the terrain so its edge never shows in the opening view.
+CLOUD_FIELD_SIZE = TERRAIN_SIZE * 1.6
+#: Candidate spacing on the jittered sampling grid (m).
+CLOUD_SPACING = 2.0
+#: Hard cap per season, so four decks stay a light accent in the element budget.
+CLOUD_MAX_POINTS = 3400
+#: Coverage threshold on the normalised [0, 1] noise field, per season slot:
+#: lower = more sky covered. Spring: scattered fair-weather clouds; summer: a
+#: few high wisps; autumn: broken cover; winter: a heavy, mostly closed deck.
+CLOUD_THRESHOLDS = (0.54, 0.66, 0.47, 0.40)
+#: Deck tint per season (sRGB intent; linearised on write). Winter is grey-blue.
+CLOUD_TINTS: tuple[RGB, RGB, RGB, RGB] = (
+    (1.00, 0.97, 0.93),
+    (1.00, 0.99, 0.96),
+    (0.94, 0.92, 0.90),
+    (0.80, 0.85, 0.92),
+)
+#: Per-season drift of the field (m) so the same sky does not sit still over
+#: the year; the coverage change alone would only fade one cloud in and out.
+CLOUD_DRIFT = ((0.0, 0.0), (23.0, -11.0), (47.0, 9.0), (70.0, -26.0))
+#: How faint the veil is: additive points at this gain barely lift the sky
+#: over the far canopy ("very very light" was the brief).
+CLOUD_INTENSITY = 0.03
+
+
+def cloud_field(fbm: FBm, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Multiscale value-noise cloud density in [0, 1] (0.5 = the field's mean)."""
+    raw = fbm(x, y)
+    # An fBm with amplitude 1 and gain 0.5 over 4 octaves spans about +-1.9.
+    return np.clip(0.5 + raw / 3.8, 0.0, 1.0)
+
+
+def _cloud_deck_for_season(
+    rng: np.random.Generator, fbm: FBm, terrain: Terrain, season: int
+) -> np.ndarray:
+    """Cloud points (N, 3) for one season: a thresholded, edge-feathered field."""
+    half = CLOUD_FIELD_SIZE / 2
+    n_side = int(CLOUD_FIELD_SIZE / CLOUD_SPACING)
+    axis = np.linspace(-half, half, n_side)
+    gx, gy = np.meshgrid(axis, axis, indexing="ij")
+    x = gx.ravel() + rng.uniform(-0.5, 0.5, gx.size) * CLOUD_SPACING
+    y = gy.ravel() + rng.uniform(-0.5, 0.5, gy.size) * CLOUD_SPACING
+    dx, dy = CLOUD_DRIFT[season]
+    density = cloud_field(fbm, x + dx, y + dy)
+    threshold = CLOUD_THRESHOLDS[season]
+    # Feathered edges: a point survives with probability rising from 0 at the
+    # threshold to 1 well inside a cloud, so the deck has no hard outline.
+    inside = np.clip((density - threshold) / max(1.0 - threshold, 1e-6), 0.0, 1.0)
+    keep = rng.random(x.size) < np.sqrt(inside)
+    x, y, inside = x[keep], y[keep], inside[keep]
+    if len(x) > CLOUD_MAX_POINTS:
+        pick = rng.choice(len(x), CLOUD_MAX_POINTS, replace=False)
+        x, y, inside = x[pick], y[pick], inside[pick]
+    # Thicker where denser, floating on a gently undulating deck.
+    z = (
+        terrain.h_max
+        + CLOUD_DECK_HEIGHT
+        + inside * CLOUD_DECK_THICKNESS * rng.uniform(0.2, 1.0, len(x))
+        + 2.5 * fbm(y * 0.5 + 31.0, x * 0.5 - 17.0)
+    )
+    return np.column_stack([x, y, z]).astype(np.float32)
+
+
+def _build_cloud_cover(
+    rng: np.random.Generator, terrain: Terrain
+) -> dict[str, Any] | None:
+    """Very light multiscale cloud cover above the forest, one deck per season.
+
+    A single Points node stacked on the ``season`` axis (like the accents):
+    the same fBm field is thresholded at a per-season coverage and drifted so
+    the sky thins to summer wisps and closes over in winter.
+    """
+    fbm = FBm(rng, octaves=4, base_cell=42.0, amplitude=1.0, gain=0.5)
+    blocks: list[np.ndarray] = []
+    colors: list[np.ndarray] = []
+    labels: list[str] = []
+    for season in range(4):
+        xyz = _cloud_deck_for_season(rng, fbm, terrain, season)
+        if len(xyz) == 0:
+            continue
+        n = len(xyz)
+        blocks.append(np.column_stack([np.full(n, float(season), np.float32), xyz]))
+        tint = np.asarray(CLOUD_TINTS[season], np.float32)
+        colors.append(
+            _linear_rgb(np.tile(tint, (n, 1)) * rng.uniform(0.85, 1.0, (n, 1)))
+        )
+        labels.extend([f"Cloud cover · {SEASONS[season].lower()}"] * n)
+    if not blocks:
+        return None
+    positions = np.concatenate(blocks).astype(np.float32)
+    return dict(
+        positions=positions,
+        colors=np.concatenate(colors).astype(np.float32),
+        radii=rng.uniform(3.0, 6.0, len(positions)).astype(np.float32),
+        labels=labels,
+    )
+
+
+# =============================================================================
 # Bundle build (cached) and scene authoring
 # =============================================================================
 
@@ -1665,6 +1774,17 @@ def build_forest_bundle(
         for name, accent in accents.items():
             aprint(f"  {name}: {len(accent['positions']):,} points")
 
+    with asection("Drawing seasonal cloud cover"):
+        clouds = _build_cloud_cover(rng, terrain)
+        if clouds is not None:
+            per_season = np.bincount(clouds["positions"][:, 0].astype(int), minlength=4)
+            aprint(
+                "  Cloud points per season: "
+                + ", ".join(
+                    f"{SEASONS[i]} {int(n):,}" for i, n in enumerate(per_season)
+                )
+            )
+
     species_bundles = {}
     for species, out in zip(SPECIES, species_arrays):
         if out.n_segments == 0:
@@ -1701,6 +1821,7 @@ def build_forest_bundle(
         species=species_bundles,
         foliage=foliage_bundle,
         accents=accents,
+        clouds=clouds,
         total_segments=sum(out.n_segments for out in species_arrays),
     )
 
@@ -1954,6 +2075,26 @@ def _author_scene(scene: Any, bundle: dict[str, Any]) -> None:
             )
             aprint(f"  {name}: {len(positions):,} points ({SEASONS[accent['season']]})")
 
+    clouds = bundle.get("clouds")
+    if clouds is not None:
+        with asection("Adding seasonal cloud cover"):
+            scene.add_points(
+                "Cloud Cover",
+                positions=clouds["positions"],
+                colors=clouds["colors"],
+                radii=clouds["radii"],
+                # Very soft, very faint: a veil over the sky, not a ceiling.
+                sharpness=0.05,
+                labels=clouds["labels"],
+                dim_order=["season", "x", "y", "z"],
+                fill={"growth": 0.0},
+                extend_to_all=["growth"],
+                blending_mode="additive",
+                intensity=CLOUD_INTENSITY,
+                layer=True,
+            )
+            aprint(f"  Cloud Cover: {len(clouds['positions']):,} points (4 seasons)")
+
     _add_overlays(scene)
 
 
@@ -2024,7 +2165,8 @@ def main() -> None:
     aprint("  Mesh    - fBm heightfield terrain, shaded, snowy in winter")
     aprint("  Lines   - eight tree species as merged indexed-line nodes")
     aprint("  GSplats - volumetric foliage clouds, re-dressed per season")
-    aprint("  Points  - fireflies (summer), frost (winter), petals (spring)")
+    aprint("  Points  - fireflies (summer), frost (winter), petals (spring),")
+    aprint("            and a faint seasonal cloud deck over the canopy")
     aprint("")
     aprint("Two navigable dimensions:")
     aprint("  growth - six derivation stages, staggered per tree")
