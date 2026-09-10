@@ -52,6 +52,7 @@ import type { PickingSystem } from '../rendering/picking/picking-system';
 import type { LabelLoader, ImageLabelLoader } from '../data/loaders';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import { installCanvasGestureOwnership } from './app/interaction/canvas-gesture-ownership';
+import { installContextMenuOwnership } from './app/interaction/context-menu-ownership';
 import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
@@ -247,6 +248,14 @@ export class LuxarApp {
     if (options.canvas instanceof HTMLElement) {
       installCanvasGestureOwnership(options.canvas, this.events);
     }
+
+    // The same claim for the secondary click, across every surface the viewer
+    // mounts — WebKit resolves the context-menu target to the overlay above
+    // the canvas, not to the canvas the controls listen on.
+    installContextMenuOwnership(
+      options.canvas instanceof HTMLCanvasElement ? options.canvas : null,
+      this.events
+    );
 
     // Mutable accumulator: pipeline writes each subsystem here as it
     // constructs it, so even if init() throws partway through, the

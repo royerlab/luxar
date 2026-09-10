@@ -37,6 +37,15 @@ two-finger pinch as page zoom and the orbit controls' touch handlers never run. 
 standalone page declares the same in `styles/base/layout.css` (`#app`); a
 `LuxarLayer` host owns its canvas and sets `touch-action` itself.
 
+## Context-menu ownership
+
+`context-menu-ownership.ts` — `installContextMenuOwnership(canvas, events)`,
+also installed by `LuxarApp.init()`. A capture-phase listener suppresses the
+native menu on the canvas and viewer-mounted DOM, including overlays that
+WebKit targets instead of the canvas. Typing surfaces, and selected text or a
+link in an interactive overlay, retain their native menu, and universal
+ancestors do not claim an embedder's sibling DOM.
+
 ## File Structure
 
 ```
@@ -45,6 +54,7 @@ interaction/
 ├── element-actions.ts        # attrs → safe URL + copy string (pure)
 ├── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
 ├── canvas-gesture-ownership.ts # touch-action / callout stamp + Safari gesture cancel
+├── context-menu-ownership.ts # delegated native-menu suppression on viewer DOM
 └── double-tap-to-fit.ts      # touch double-tap → re-frame; app-lifetime, picking-free
 ```
 
