@@ -15,7 +15,7 @@
  *    sensitivity control that pins the OTHER branch.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   MeshProgressiveLoader,
   concatenateMeshData,
@@ -235,6 +235,18 @@ describe('concatenateMeshData', () => {
 // ============================================================================
 
 describe('MeshProgressiveLoader', () => {
+  let clockSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    // Depth assertions must not depend on scheduler speed; timing-policy tests
+    // override this stable clock with their own moving implementation.
+    clockSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+  });
+
+  afterEach(() => {
+    clockSpy.mockRestore();
+  });
+
   function makeLadder(
     levels: LoadedMeshData[],
     opts: { resident?: boolean } = {}
@@ -249,7 +261,6 @@ describe('MeshProgressiveLoader', () => {
   it('records mesh additive load timing keys', async () => {
     resetLodLoadStats();
     setLodLoadStatsEnabled(true);
-    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
     try {
       const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
       await loader.updateView(VIEW);
@@ -258,51 +269,22 @@ describe('MeshProgressiveLoader', () => {
         'additive:mesh:level:1:resident',
       ]);
     } finally {
-      nowSpy.mockRestore();
       setLodLoadStatsEnabled(false);
       resetLodLoadStats();
     }
   });
 
   it('streams every level on a refine pass and reports completion', async () => {
-    // The clock is PINNED for this one test, and the reason is the assertion
-    // itself. These stubs are cache hits by construction — they resolve
-    // immediately and report `allResident: true` — but the ladder loop times
-    // each level with a clock that tracks wall time and stops after any level
-    // that took longer than `CACHE_HIT_THRESHOLD_MS`, resident or not (rightly:
-    // a slow level should yield the frame). So a >15ms scheduler stall between
-    // `t0` and the stub's resolution — a loaded runner, a GC pause under
-    // coverage — was charged to level 1 as work it never did and truncated the
-    // pass at 2 of 3 levels: machine load, not the ladder.
-    //
-    // Any test asserting that a refine pass streamed an ALL-RESIDENT ladder of
-    // three or more levels to completion needs the same freeze. The file's
-    // 2-level ladders do not: the break lands after the level is pushed, so even
-    // a spurious stop leaves both of them committed. The sibling
-    // progressive-loader suites never meet this at all — they install
-    // `vi.useFakeTimers()`, which substitutes a clock that only advances when
-    // told to — whereas this file runs on real timers. Restored in a `finally`
-    // so a failing assertion cannot leak the pin into the tests that follow
-    // (this file sets no global `restoreMocks`).
-    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
-    try {
-      const { loader } = makeLadder([
-        level(4, [0, 1, 2]),
-        level(3, [0, 1, 2]),
-        level(3, [0, 1, 2]),
-      ]);
+    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])]);
 
-      expect(loader.hasMoreLODs).toBe(true);
-      const data = await loader.updateView(VIEW);
+    expect(loader.hasMoreLODs).toBe(true);
+    const data = await loader.updateView(VIEW);
 
-      expect(loader.loadedLODCount).toBe(3);
-      expect(loader.totalLODCount).toBe(3);
-      expect(loader.hasMoreLODs).toBe(false);
-      expect(data.faceCount).toBe(3);
-      expect(data.vertexCount).toBe(10);
-    } finally {
-      nowSpy.mockRestore();
-    }
+    expect(loader.loadedLODCount).toBe(3);
+    expect(loader.totalLODCount).toBe(3);
+    expect(loader.hasMoreLODs).toBe(false);
+    expect(data.faceCount).toBe(3);
+    expect(data.vertexCount).toBe(10);
   });
 
   it(`stops after a RESIDENT level that took > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
@@ -357,76 +339,61 @@ describe('MeshProgressiveLoader', () => {
   });
 
   it('retains one cumulative payload after concatenation', async () => {
-    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
-    try {
-      const { loader, subs } = makeLadder([
-        level(4, [0, 1, 2]),
-        level(3, [0, 1, 2]),
-        level(3, [0, 1, 2]),
-      ]);
+    const { loader, subs } = makeLadder([
+      level(4, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+    ]);
 
-      const result = await loader.updateView(VIEW);
-      const retained = (loader as unknown as { loadedLODs: LoadedMeshData[] }).loadedLODs;
+    const result = await loader.updateView(VIEW);
+    const retained = (loader as unknown as { loadedLODs: LoadedMeshData[] }).loadedLODs;
 
-      expect(loader.loadedLODCount).toBe(3);
-      expect(retained).toEqual([result]);
-      for (const sub of subs) expect(sub.releaseData).toHaveBeenCalledOnce();
-    } finally {
-      nowSpy.mockRestore();
-    }
+    expect(loader.loadedLODCount).toBe(3);
+    expect(retained).toEqual([result]);
+    for (const sub of subs) expect(sub.releaseData).toHaveBeenCalledOnce();
   });
 
   it('unwinds intact rung payloads when concatenation fails before folding', async () => {
-    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
-    try {
-      const { loader } = makeLadder([
-        level(4, [0, 1, 2]),
-        level(3, [0, 1, 2], { ndim: 4 }),
-        level(3, [0, 1, 2]),
-      ]);
+    const { loader } = makeLadder([
+      level(4, [0, 1, 2]),
+      level(3, [0, 1, 2], { ndim: 4 }),
+      level(3, [0, 1, 2]),
+    ]);
 
-      await expect(loader.updateView(VIEW)).rejects.toThrow('mixed dimensionality');
-      expect(loader.loadedLODCount).toBe(3);
+    await expect(loader.updateView(VIEW)).rejects.toThrow('mixed dimensionality');
+    expect(loader.loadedLODCount).toBe(3);
 
-      expect(loader.rollbackToPassStart()).toBe(3);
-      expect(loader.loadedLODCount).toBe(0);
-      expect(loader.hasMoreLODs).toBe(true);
-    } finally {
-      nowSpy.mockRestore();
-    }
+    expect(loader.rollbackToPassStart()).toBe(3);
+    expect(loader.loadedLODCount).toBe(0);
+    expect(loader.hasMoreLODs).toBe(true);
   });
 
   it('replays a failed pass without duplicating levels behind a folded prefix', async () => {
-    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
-    try {
-      const levels = [
-        level(4, [0, 1, 2]),
-        level(3, [0, 1, 2]),
-        level(3, [0, 1, 2]),
-        level(3, [0, 1, 2]),
-      ];
-      const subs = [
-        subLoader(levels[0]),
-        subLoader(levels[1], { resident: false }),
-        subLoader(levels[2]),
-        subLoader(levels[3]),
-      ];
-      const loader = new MeshProgressiveLoader(subs, levels.length, '/surf');
+    const levels = [
+      level(4, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+    ];
+    const subs = [
+      subLoader(levels[0]),
+      subLoader(levels[1], { resident: false }),
+      subLoader(levels[2]),
+      subLoader(levels[3]),
+    ];
+    const loader = new MeshProgressiveLoader(subs, levels.length, '/surf');
 
-      const prefix = await loader.updateView(VIEW);
-      expect(prefix.vertexCount).toBe(7);
-      expect(prefix.faceCount).toBe(2);
+    const prefix = await loader.updateView(VIEW);
+    expect(prefix.vertexCount).toBe(7);
+    expect(prefix.faceCount).toBe(2);
 
-      vi.mocked(subs[3].updateViewWithResidency).mockRejectedValueOnce(new Error('fetch failed'));
-      await expect(loader.updateView(VIEW)).rejects.toThrow('fetch failed');
-      expect(loader.rollbackToPassStart()).toBe(1);
+    vi.mocked(subs[3].updateViewWithResidency).mockRejectedValueOnce(new Error('fetch failed'));
+    await expect(loader.updateView(VIEW)).rejects.toThrow('fetch failed');
+    expect(loader.rollbackToPassStart()).toBe(1);
 
-      const replayed = await loader.updateView(VIEW);
-      expect(replayed.vertexCount).toBe(13);
-      expect(replayed.faceCount).toBe(4);
-    } finally {
-      nowSpy.mockRestore();
-    }
+    const replayed = await loader.updateView(VIEW);
+    expect(replayed.vertexCount).toBe(13);
+    expect(replayed.faceCount).toBe(4);
   });
 
   it('keeps an incrementally folded prefix and cursor paired', async () => {
@@ -463,22 +430,17 @@ describe('MeshProgressiveLoader', () => {
   });
 
   it('streams resident levels under a playback frame budget', async () => {
-    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
-    try {
-      const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
 
-      await loader.updateView({ ...VIEW, frameBudgetMs: 8 });
+    await loader.updateView({ ...VIEW, frameBudgetMs: 8 });
 
-      // Playback spends its budget on levels that come back cache-resident
-      // rather than committing the LOD-0 floor and stopping (#2374, #2376) —
-      // on a sliced node the floor alone can be a near-empty frame.
-      expect(loader.loadedLODCount).toBe(2);
-      // The budgeted prefix IS the target while playback is running, so nothing
-      // should schedule background refinement between animation ticks.
-      expect(loader.hasMoreLODs).toBe(false);
-    } finally {
-      nowSpy.mockRestore();
-    }
+    // Playback spends its budget on levels that come back cache-resident
+    // rather than committing the LOD-0 floor and stopping (#2374, #2376) —
+    // on a sliced node the floor alone can be a near-empty frame.
+    expect(loader.loadedLODCount).toBe(2);
+    // The budgeted prefix IS the target while playback is running, so nothing
+    // should schedule background refinement between animation ticks.
+    expect(loader.hasMoreLODs).toBe(false);
   });
 
   it('stops a warmed-cache refinement pass after spending its residency allowance', async () => {
