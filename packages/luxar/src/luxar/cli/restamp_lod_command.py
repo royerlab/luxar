@@ -43,8 +43,9 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
             "--anchor",
             help=(
                 "Re-derive whole-object ladders at this finest-level screen-area "
-                "fraction (0 < anchor <= 1), including ladders already stamped "
-                "screen-area; partition-bound ladders stay anchored at 1"
+                "fraction (0 < anchor <= 1), both legacy ladders being migrated "
+                "and ladders already stamped screen-area; partition-bound ladders "
+                "stay anchored at 1"
             ),
         ),
     ) -> None:
@@ -57,14 +58,16 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
         screen-occupancy halving and its group stamped ``screen-area``. A group
         already on ``screen-area`` is skipped by default, so a second run changes
         nothing — not even the ``content_hash``. ``--anchor`` explicitly
-        re-derives whole-object ladders already on ``screen-area`` at a requested
-        finest-level area fraction; partition-bound ladders remain at ``1.0``.
+        sets the requested finest-level area fraction for every whole-object
+        ladder it processes, both legacy and already ``screen-area``;
+        partition-bound ladders remain at ``1.0``.
 
         **This is an explicit opt-in, and it may override a deliberate choice.**
-        An authored ``coverage_fractions=[...]`` list and a legacy derived ladder
-        are indistinguishable on disk, which is why nothing does this
-        automatically. The per-group old→new ladder is printed for exactly that
-        reason — use ``--dry-run`` first, and ``--group`` to restrict the pass.
+        An authored ``coverage_fractions=[...]`` list is indistinguishable from a
+        derived ladder on disk, including one already stamped ``screen-area``,
+        which is why nothing does this automatically. The per-group old→new
+        ladder is printed for exactly that reason — use ``--dry-run`` first, and
+        ``--group`` to restrict the pass.
 
         When anything changes, the store's ``content_hash`` is restamped and the
         metadata re-consolidated, so a warm viewer cache invalidates on an

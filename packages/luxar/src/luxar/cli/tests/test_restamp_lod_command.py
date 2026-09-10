@@ -109,6 +109,7 @@ def test_anchor_rederives_an_already_current_ladder(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "[0, 0.5] → [0, 0.25]" in result.output
+    assert "pts: anchor whole-object 0.25" in result.output
     assert _node_attrs(store)["pts/child_1"]["coverage_fraction"] == 0.25
     assert _node_attrs(store)["tiled/part_0/child_1"]["coverage_fraction"] == 1.0
 
@@ -120,7 +121,7 @@ def test_invalid_anchor_exits_one_without_writing(tmp_path: Path) -> None:
     result = runner.invoke(app, ["restamp-lod", str(store), "--anchor", "nan"])
 
     assert result.exit_code == 1, result.output
-    assert "anchor must be finite and in" in result.output
+    assert "--anchor must be finite and in" in result.output
     assert _node_attrs(store) == before
 
 

@@ -632,6 +632,7 @@ def test_anchor_rederives_an_already_current_whole_object_ladder(
 
     assert [g.path for g in report.restamped] == ["pts"]
     assert not report.already_current
+    assert report.restamped[0].anchor == 0.25
     assert _ladder(store, "pts") == [0.0, 0.25]
     assert report.clean
 
@@ -675,6 +676,26 @@ def test_anchor_keeps_partition_bound_ladders_at_the_fills_screen_anchor(
     assert _attrs(legacy_scene)["/"]["content_hash"] != before_hash
 
 
+def test_anchor_skips_current_partition_ladders_without_resolving_counts(
+    legacy_scene: Path,
+) -> None:
+    restamp_lod_store(legacy_scene)
+    root = open_group(legacy_scene, mode="r+")
+    del root["tiled/part_1/child_1"].attrs["n_points"]
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(legacy_scene, finest_anchor=0.25)
+
+    assert report.clean
+    assert not report.unresolved
+    assert {g.path for g in report.already_current} == {
+        "tiled/part_0",
+        "tiled/part_1",
+    }
+    assert _ladder(legacy_scene, "tiled/part_1") == [0.0, PARTITION_FINEST_AREA]
+
+
 def test_anchor_must_be_a_finite_screen_area_fraction(tmp_path: Path) -> None:
     store = tmp_path / "current.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
@@ -683,7 +704,7 @@ def test_anchor_must_be_a_finite_screen_area_fraction(tmp_path: Path) -> None:
     before = _attrs(store)
 
     for anchor in (0.0, -0.25, 1.01, float("inf"), float("nan")):
-        with pytest.raises(ValueError, match="finest_anchor must be finite and in"):
+        with pytest.raises(ValueError, match="--anchor must be finite and in"):
             restamp_lod_store(store, finest_anchor=anchor)
 
     assert _attrs(store) == before
@@ -1181,6 +1202,23 @@ def test_a_dry_run_reports_everything_and_writes_nothing(legacy_scene: Path) -> 
     assert report.content_hash_status == HASH_UNCHANGED
 
 
+def test_anchor_dry_run_plans_current_ladders_without_writing(
+    legacy_scene: Path,
+) -> None:
+    restamp_lod_store(legacy_scene)
+    before = _attrs(legacy_scene)
+
+    report = restamp_lod_store(legacy_scene, dry_run=True, finest_anchor=0.25)
+
+    assert {g.path for g in report.restamped} == {
+        "pts",
+        "curves",
+        "surf",
+        "lonely/part_0",
+    }
+    assert _attrs(legacy_scene) == before
+
+
 # ────────────────────────────────────────────────────────────────────────
 # --group
 # ────────────────────────────────────────────────────────────────────────
@@ -1382,6 +1420,7 @@ def test_the_verifier_reports_a_ladder_that_did_not_land(legacy_scene: Path) -> 
         RestampedGroup(
             path="pts",
             partition_bound=False,
+            anchor=0.125,
             old_selector=LEGACY_LOD_SELECTOR,
             old_thresholds=LEGACY_LADDER,
             new_thresholds=[0.0, 0.125],

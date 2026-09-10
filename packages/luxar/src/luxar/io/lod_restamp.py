@@ -169,14 +169,15 @@ class RestampedGroup:
 
     path: str
     partition_bound: bool
+    anchor: float
     old_selector: Optional[str]
     old_thresholds: List[Optional[float]]
     new_thresholds: List[float]
     element_counts: List[Optional[int]]
 
     @property
-    def anchor(self) -> str:
-        """Human name of the anchor the re-derivation used."""
+    def anchor_name(self) -> str:
+        """Human name of the anchor binding the re-derivation used."""
         return "fills-screen (tile)" if self.partition_bound else "whole-object"
 
 
@@ -458,6 +459,10 @@ def _derive_thresholds(
     path: str,
 ) -> List[float]:
     """Derive one ladder, applying an explicit whole-object anchor if requested."""
+    # Only the LENGTH and the finest entry are consumed (see the two derivation
+    # docstrings). The caller checks the finest, so a coarser level whose count
+    # the store never recorded is passed as 0 rather than blocking a
+    # re-derivation it cannot affect. The report keeps the honest `None`.
     resolved_counts = [0 if count is None else count for count in counts]
     if partition_bound:
         return [
@@ -504,7 +509,7 @@ def _plan_lod(
     path = group.path or "/"
     selector = attrs.get("selector")
 
-    if selector == DERIVED_LOD_SELECTOR and finest_anchor is None:
+    if selector == DERIVED_LOD_SELECTOR and (finest_anchor is None or partition_bound):
         report.already_current.append(
             SkippedGroup(path, "already-current", f"selector={DERIVED_LOD_SELECTOR!r}")
         )
@@ -567,10 +572,6 @@ def _plan_lod(
         )
         return None
 
-    # Only the LENGTH and the finest entry are consumed (see the two derivation
-    # docstrings), and the finest is checked above — so a coarser level whose
-    # count the store never recorded is passed as 0 rather than blocking a
-    # re-derivation it cannot affect. The report keeps the honest `None`.
     new_thresholds = _derive_thresholds(
         counts,
         partition_bound=partition_bound,
@@ -594,6 +595,7 @@ def _plan_lod(
     entry = RestampedGroup(
         path=path,
         partition_bound=partition_bound,
+        anchor=resolved_anchor,
         old_selector=None if selector is None else str(selector),
         old_thresholds=old,
         new_thresholds=new_thresholds,
@@ -602,7 +604,7 @@ def _plan_lod(
     report.restamped.append(entry)
 
     aprint(
-        f"  🪜 {path}: anchor {entry.anchor}, "
+        f"  🪜 {path}: anchor {entry.anchor_name} {entry.anchor:g}, "
         f"selector {entry.old_selector or '<absent>'} → {DERIVED_LOD_SELECTOR}"
     )
     aprint(
@@ -1132,7 +1134,7 @@ def _validate_finest_anchor(finest_anchor: Optional[float]) -> None:
     if math.isfinite(finest_anchor) and 0.0 < finest_anchor <= 1.0:
         return
     raise ValueError(
-        "finest_anchor must be finite and in the screen-area interval (0, 1]; "
+        "--anchor must be finite and in the screen-area interval (0, 1]; "
         f"got {finest_anchor!r}"
     )
 
