@@ -66,9 +66,9 @@ def test_a_clean_run_exits_zero_and_prints_the_audit_trail(tmp_path: Path) -> No
     # Anchor pinned TO ITS GROUP on one line: asserting the two labels appear
     # somewhere in the output passes just as happily when they are swapped, and
     # a swapped anchor is exactly the mistake worth catching.
-    assert "pts: anchor whole-object" in result.output
-    assert "tiled/part_0: anchor fills-screen" in result.output
-    assert "tiled/part_1: anchor fills-screen" in result.output
+    assert "pts: anchor whole-object 0.5" in result.output
+    assert "tiled/part_0: anchor fills-screen (tile) 1" in result.output
+    assert "tiled/part_1: anchor fills-screen (tile) 1" in result.output
     assert _node_attrs(store)["pts"]["selector"] == DERIVED_LOD_SELECTOR
 
 
