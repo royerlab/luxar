@@ -23,13 +23,16 @@
  * is not ours to eat:
  *
  *   - **Ownership.** Only a target that is the canvas, or that sits inside an
- *     element carrying a `luxar-` class, is suppressed. The container defaults
- *     to `document.body`, which an embedder may share with their own UI (see
- *     `utils/viewer-container`), so "inside the container" alone is too broad.
- *   - **Text fields.** An `input`, `textarea` or `contenteditable` keeps its
- *     native menu, which is the only way to paste — the layers panel already
- *     carves out the same exception for its filter box and bound editor, and
- *     the dataset browser's URL field needs it too.
+ *     element carrying a `luxar-` class, is suppressed. Universal ancestors
+ *     (the container, body and document element) do not establish ownership:
+ *     the container defaults to `document.body`, which an embedder may share
+ *     with their own UI (see `utils/viewer-container`).
+ *   - **Text entry.** A typing surface keeps its native menu, which is the only
+ *     way to paste — while range, checkbox and radio inputs remain viewer
+ *     controls whose menu should be suppressed.
+ *   - **Selected overlay text.** An interactive overlay with a live selection
+ *     keeps the native Copy action. Its pointer events already prevent a
+ *     right-drag from reaching the camera controls.
  *
  * Capture phase, so an inner handler that calls `stopPropagation` (the
  * dimension sliders' play-button menu does) cannot leave the native menu
@@ -39,6 +42,7 @@
  */
 
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
+import { isTypingInInput } from '../../../utils/dom/focus';
 import { getViewerContainer } from '../../../utils/viewer-container';
 
 /**
@@ -47,10 +51,37 @@ import { getViewerContainer } from '../../../utils/viewer-container';
  * an unclassed child — the `<img>` inside an image overlay, a matte `<canvas>`
  * — reaches one through `closest`.
  */
-const VIEWER_OWNED = '[class*="luxar-"]';
+const VIEWER_OWNED = '[class^="luxar-"], [class*=" luxar-"]';
 
-/** Where the native menu is the only clipboard the user has. */
-const TEXT_ENTRY = 'input, textarea, [contenteditable=""], [contenteditable="true"]';
+/** Candidate fields classified by the canonical typing-surface predicate. */
+const FIELD = 'input, textarea, select, [contenteditable]';
+
+function isTextEntry(target: Element): boolean {
+  const field = target.closest(FIELD);
+  return !!field && (isTypingInInput(field) || field.getAttribute('contenteditable') === '');
+}
+
+function hasSelectedInteractiveOverlay(target: Element): boolean {
+  return (
+    target.closest('.luxar-overlay--interactive') !== null &&
+    window.getSelection()?.isCollapsed === false
+  );
+}
+
+function isViewerOwned(
+  target: Element,
+  canvas: HTMLCanvasElement | null,
+  container: Element
+): boolean {
+  if (target === canvas) return true;
+  const owner = target.closest(VIEWER_OWNED);
+  return (
+    owner !== null &&
+    owner !== container &&
+    owner !== document.body &&
+    owner !== document.documentElement
+  );
+}
 
 /**
  * Suppress the browser's context menu across the viewer's own DOM.
@@ -74,8 +105,13 @@ export function installContextMenuOwnership(
     (event: Event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (target.closest(TEXT_ENTRY)) return;
-      if (target === canvas || target.closest(VIEWER_OWNED)) event.preventDefault();
+      if (
+        !isTextEntry(target) &&
+        !hasSelectedInteractiveOverlay(target) &&
+        isViewerOwned(target, canvas, container)
+      ) {
+        event.preventDefault();
+      }
     },
     true
   );

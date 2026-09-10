@@ -46,6 +46,8 @@ describe('installContextMenuOwnership', () => {
   afterEach(() => {
     events.dispose();
     resetViewerContainer();
+    window.getSelection()?.removeAllRanges();
+    document.body.className = '';
     document.body.innerHTML = '';
   });
 
@@ -64,6 +66,16 @@ describe('installContextMenuOwnership', () => {
     expect(rightClick(appendTo(document.body, tag, className))).toBe(true);
   });
 
+  it.each([
+    ['dimension slider range', 'luxar-dimension-sliders', 'range'],
+    ['gui checkbox', 'luxar-gui', 'checkbox'],
+  ])('suppresses the menu on the %s input', (_label, panelClass, inputType) => {
+    const panel = appendTo(document.body, 'div', panelClass);
+    const input = appendTo(panel, 'input') as HTMLInputElement;
+    input.type = inputType;
+    expect(rightClick(input)).toBe(true);
+  });
+
   it('suppresses the menu on an unclassed child of an overlay (the logo img)', () => {
     // The image overlay's <img> carries no class of its own — only `closest`
     // on the ancestor overlay identifies it as ours.
@@ -77,6 +89,7 @@ describe('installContextMenuOwnership', () => {
     input.type = 'text';
     expect(rightClick(input)).toBe(false);
     expect(rightClick(appendTo(panel, 'textarea'))).toBe(false);
+    expect(rightClick(appendTo(panel, 'select'))).toBe(false);
     const editable = appendTo(panel, 'div');
     editable.setAttribute('contenteditable', 'true');
     expect(rightClick(editable)).toBe(false);
@@ -84,8 +97,24 @@ describe('installContextMenuOwnership', () => {
 
   it('leaves DOM the viewer does not own alone', () => {
     // An embedder sharing document.body keeps their own menus: the default
-    // container is body, so ownership is decided by the class, not the parent.
+    // container is body, whose control-rail marker must not claim every child.
+    document.body.classList.add('luxar-has-control-rail');
     expect(rightClick(appendTo(document.body, 'div', 'host-app-sidebar'))).toBe(false);
+    expect(rightClick(appendTo(document.body, 'div', 'my-luxar-panel'))).toBe(false);
+  });
+
+  it('keeps Copy available for selected text in an interactive overlay', () => {
+    const overlay = appendTo(document.body, 'div', 'luxar-overlay luxar-overlay--interactive');
+    const caption = appendTo(overlay, 'span');
+    caption.textContent = 'Selectable accession';
+    const range = document.createRange();
+    range.selectNodeContents(caption);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(selection?.isCollapsed).toBe(false);
+    expect(rightClick(caption)).toBe(false);
   });
 
   it('still fires when an inner handler stops propagation', () => {
