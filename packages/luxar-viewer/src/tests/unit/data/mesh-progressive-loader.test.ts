@@ -234,19 +234,19 @@ describe('concatenateMeshData', () => {
 // MeshProgressiveLoader
 // ============================================================================
 
+let clockSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  // Depth assertions must not depend on scheduler speed; timing-policy tests
+  // override this stable clock with their own moving implementation.
+  clockSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+});
+
+afterEach(() => {
+  clockSpy.mockRestore();
+});
+
 describe('MeshProgressiveLoader', () => {
-  let clockSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    // Depth assertions must not depend on scheduler speed; timing-policy tests
-    // override this stable clock with their own moving implementation.
-    clockSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
-  });
-
-  afterEach(() => {
-    clockSpy.mockRestore();
-  });
-
   function makeLadder(
     levels: LoadedMeshData[],
     opts: { resident?: boolean } = {}
