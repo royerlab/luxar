@@ -5,6 +5,7 @@ These tests guard correctness invariants of the CUDA splatting kernels:
 
 - The backward kernel's grad_output cache must not overflow its buffer, and
   the backward pass must always yield finite, physically sensible gradients.
+- Forward and backward must run on the CUDA device that owns their tensors.
 - Amplitude-based early rejection in ``effective_truncate_sq`` must keep
   low-amplitude (near-``intensity_floor``) splats consistent with the PyTorch
   reference, and kernel output must stay bounded by per-splat amplitude.
@@ -103,6 +104,101 @@ def _run_pytorch_reference(data, truncate=3.0, intensity_floor=1e-5):
         truncate,
         intensity_floor,
     )
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Need multiple GPUs")
+def test_forward_backward_on_non_default_cuda_device():
+    """Kernels should match the default GPU and restore the caller's device.
+
+    An illegal access here poisons the CUDA context and causes later tests in
+    the worker to fail for unrelated reasons.
+    """
+    from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import cholesky_to_conic
+
+    shape = (16, 16, 16)
+
+    def run(device_index):
+        device = torch.device(f"cuda:{device_index}")
+        centers = torch.tensor([[8.0, 8.0, 8.0]], device=device)
+        cholesky = torch.eye(3, device=device).unsqueeze(0)
+        conic = cholesky_to_conic(cholesky)
+        amps = torch.ones(1, device=device)
+
+        with torch.cuda.device(0):
+            output, shape_tensor = cuda_splatting_backend.forward(
+                centers.contiguous(),
+                conic.contiguous(),
+                amps.contiguous(),
+                list(shape),
+                3.0,
+                1e-5,
+            )
+            gradients = cuda_splatting_backend.backward(
+                torch.ones_like(output),
+                centers.contiguous(),
+                conic.contiguous(),
+                amps.contiguous(),
+                list(shape),
+                3.0,
+                1e-5,
+                shape_tensor_cached=shape_tensor,
+            )
+            assert torch.cuda.current_device() == 0
+
+        assert output.device == device
+        assert shape_tensor.device == device
+        assert all(gradient.device == device for gradient in gradients)
+        return output.cpu(), tuple(gradient.cpu() for gradient in gradients)
+
+    default_output, default_gradients = run(0)
+    other_output, other_gradients = run(1)
+
+    torch.testing.assert_close(other_output, default_output)
+    for other_gradient, default_gradient in zip(
+        other_gradients, default_gradients, strict=True
+    ):
+        torch.testing.assert_close(other_gradient, default_gradient)
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Need multiple GPUs")
+@pytest.mark.parametrize("mismatched_name", ["conic", "amps"])
+def test_forward_rejects_mixed_cuda_devices(mismatched_name):
+    """Forward should reject mixed-device inputs before launching a kernel."""
+    centers = torch.tensor([[8.0, 8.0, 8.0]], device="cuda:1")
+    conic = torch.tensor([[1.0, 0.0, 0.0, 1.0, 0.0, 1.0]], device="cuda:1")
+    amps = torch.ones(1, device="cuda:1")
+    tensors = {"centers": centers, "conic": conic, "amps": amps}
+    tensors[mismatched_name] = tensors[mismatched_name].to("cuda:0")
+
+    with pytest.raises(RuntimeError, match="same CUDA device"):
+        cuda_splatting_backend.forward(
+            tensors["centers"],
+            tensors["conic"],
+            tensors["amps"],
+            [16, 16, 16],
+            3.0,
+            1e-5,
+        )
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Need multiple GPUs")
+def test_backward_rejects_mixed_cuda_devices():
+    """Backward should reject a gradient from a different CUDA device."""
+    centers = torch.tensor([[8.0, 8.0, 8.0]], device="cuda:1")
+    conic = torch.tensor([[1.0, 0.0, 0.0, 1.0, 0.0, 1.0]], device="cuda:1")
+    amps = torch.ones(1, device="cuda:1")
+    grad_output = torch.ones(16**3, device="cuda:0")
+
+    with pytest.raises(RuntimeError, match="same CUDA device"):
+        cuda_splatting_backend.backward(
+            grad_output,
+            centers,
+            conic,
+            amps,
+            [16, 16, 16],
+            3.0,
+            1e-5,
+        )
 
 
 class TestAmplitudeBasedTruncation:
