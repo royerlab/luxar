@@ -183,7 +183,9 @@ class TestHatchEnvironments:
             for raw in data["project"]["optional-dependencies"]["demos"]
         }
 
-        for name in sorted(default_dependencies.keys() & demo_dependencies.keys()):
+        shared = default_dependencies.keys() & demo_dependencies.keys()
+        assert shared, "default Hatch environment must share dependencies with demos"
+        for name in sorted(shared):
             assert (
                 default_dependencies[name].specifier
                 == demo_dependencies[name].specifier
