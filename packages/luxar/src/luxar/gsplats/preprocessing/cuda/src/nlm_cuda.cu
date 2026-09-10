@@ -345,6 +345,7 @@ torch::Tensor nlm_denoise_2d(
     TORCH_CHECK(input.dtype() == torch::kFloat32, "Input must be float32");
     TORCH_CHECK(h > 0, "h must be positive");
 
+    // Make the input's device current for allocations and kernel launches.
     const c10::cuda::CUDAGuard device_guard(input.device());
 
     const int H = input.size(0);
@@ -380,6 +381,7 @@ torch::Tensor nlm_denoise_3d(
     TORCH_CHECK(input.dtype() == torch::kFloat32, "Input must be float32");
     TORCH_CHECK(h > 0, "h must be positive");
 
+    // Also applies the per-device shared-memory opt-in to the input's device.
     const c10::cuda::CUDAGuard device_guard(input.device());
 
     const int D = input.size(0);
