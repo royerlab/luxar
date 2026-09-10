@@ -343,6 +343,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityCap: urlParams.densityCap ?? undefined,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
+    // Session-wide replacement-LOD threshold bias (`?lod-bias=N`).
+    lodBias: urlParams.lodBias ?? undefined,
     // The shared init pipeline applies the mobile default so direct LuxarApp
     // embedders and the standalone app behave identically.
     blendWarmup: urlParams.blendWarmup,

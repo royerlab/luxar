@@ -1563,6 +1563,81 @@ describe('LODGroupRegistry — selector mode', () => {
 });
 
 describe('LODGroupRegistry — auto evaluation', () => {
+  it("applies lod bias in area units to selector='screen-area'", () => {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getLodBias: () => 2,
+    });
+    const bounds = { min: [-0.5, -0.25, -0.1], max: [0.5, 0.25, 0.1] };
+    const children = [0, 0.25].map((threshold) => ({
+      ...makeChild(threshold),
+      positionBounds: bounds,
+    }));
+    const entry = makeEntry(children, 0, '/biased-area');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(children[1].object.visible).toBe(true);
+  });
+
+  it('defines lod bias in area units for legacy coverage by applying its square root', () => {
+    function evaluateAtBias(lodBias: number): boolean {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getLodBias: () => lodBias,
+      });
+      const bounds = { min: [-0.1, -0.1, -0.1], max: [0.1, 0.1, 0.1] };
+      const children = [0, 0.6].map((threshold) => ({
+        ...makeChild(threshold),
+        positionBounds: bounds,
+      }));
+      reg.register(makeEntry(children, 0, `/legacy-bias-${lodBias}`));
+      reg.evaluatePerFrame();
+      return children[1].object.visible;
+    }
+
+    expect(evaluateAtBias(2), 'sqrt(2) keeps the 0.333 metric below 0.6').toBe(false);
+    expect(evaluateAtBias(4), 'sqrt(4) raises the 0.333 metric above 0.6').toBe(true);
+  });
+
+  it('treats invalid programmatic lod bias values as neutral', () => {
+    for (const lodBias of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getLodBias: () => lodBias,
+      });
+      const bounds = { min: [-0.5, -0.25, -0.1], max: [0.5, 0.25, 0.1] };
+      const children = [0, 0.2].map((threshold) => ({
+        ...makeChild(threshold),
+        positionBounds: bounds,
+      }));
+      const entry = makeEntry(children, 0, `/invalid-bias-${lodBias}`);
+      entry.selector = 'screen-area';
+      reg.register(entry);
+
+      reg.evaluatePerFrame();
+
+      expect(children[0].object.visible, `neutral fallback for ${lodBias}`).toBe(true);
+    }
+  });
+
   it('picks the finest child whose coverage_fraction is satisfied by the projected diagonal', () => {
     // bbox spans the full NDC cube → identity camera projects to a 1000 px
     // diagonal on an 800x600 viewport, whose fitted axis is min(800,600)=600
@@ -1870,6 +1945,33 @@ describe('LODGroupRegistry — auto evaluation', () => {
     expect(children[2].object.visible, 'second-finest at 25% occupancy').toBe(true);
     expect(children[3].object.visible, 'finest requires ≥ half-screen occupancy').toBe(false);
     expect(children[0].object.visible, 'NOT pinned to the coarsest').toBe(false);
+  });
+
+  it('keeps the elongated-content anchor unchanged unless lod bias is explicitly requested', () => {
+    const rodBox = { min: [-1, -0.25, -0.1], max: [1, 0.25, 0.1] };
+    const activeLevel = (lodBias?: number): number => {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        ...(lodBias == null ? {} : { getLodBias: () => lodBias }),
+      });
+      const children = [0, 0.125, 0.25, 0.5].map((threshold) => ({
+        ...makeChild(threshold),
+        positionBounds: rodBox,
+      }));
+      const entry = makeEntry(children, 0, `/rod-bias-${lodBias ?? 1}`);
+      entry.selector = 'screen-area';
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      return entry.activeChildIndex;
+    };
+
+    expect(activeLevel()).toBe(2);
+    expect(activeLevel(2)).toBe(3);
   });
 
   it("selector='screen-area': a two-level ladder holds the coarsest for a fitted 25%-occupancy object (the documented degenerate-config case)", () => {

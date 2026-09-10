@@ -205,6 +205,8 @@ export interface LuxarLayerOptions {
   lodEnergyComp?: boolean;
   /** Force the finest replacement LOD regardless of coverage. Default false. */
   lodFinest?: boolean;
+  /** Replacement-LOD bias in screen-area units. Default 1. */
+  lodBias?: number;
   /** Worker-based back-to-front sorting for order-dependent geometry. Default true. */
   depthSort?: boolean;
   /**
@@ -927,7 +929,7 @@ export class LuxarLayer {
   }
 
   private installLodRegistryFactory(): void {
-    const { lodFade = true, lodEnergyComp = true, lodFinest = false } = this.options;
+    const { lodFade = true, lodEnergyComp = true, lodFinest = false, lodBias = 1 } = this.options;
     SceneLoaderManager.getInstance().setLODGroupRegistryFactory(
       (owner) =>
         new LODGroupRegistry({
@@ -954,6 +956,7 @@ export class LuxarLayer {
           getCrossFadeEnabled: () => lodFade,
           getEnergyCompEnabled: () => lodEnergyComp,
           getForceFinestLOD: () => lodFinest,
+          getLodBias: () => lodBias,
           registerMaterial: (material) => materialManager.register(material),
           requestRender: () => this.handleGeometryCommit(),
         })

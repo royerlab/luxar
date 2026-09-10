@@ -166,6 +166,13 @@ export interface LuxarAppOptions {
   lodFinest?: boolean;
 
   /**
+   * Replacement-LOD selection bias in screen-area units. `2` selects one
+   * occupancy-halved level finer and `4` selects two; values below `1` bias
+   * coarser. Default: 1. Mirrors `UrlParams.lodBias` (`?lod-bias=<N>`).
+   */
+  lodBias?: number;
+
+  /**
    * Bake the scene-derived environment once the load settles and hand the
    * container to `luxar env bake` (`__luxarDebug.environment.lastBake` + a
    * download). Mirrors `UrlParams.bakeEnv` / `probe` / `envResolution`

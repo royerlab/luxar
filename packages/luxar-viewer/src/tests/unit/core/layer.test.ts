@@ -388,6 +388,7 @@ describe('LuxarLayer', () => {
           'getDisplayDims',
           'getEnergyCompEnabled',
           'getForceFinestLOD',
+          'getLodBias',
           'hasArchiveFault',
           'hasNetworkFailureUnder',
           'isUpdateInProgress',
@@ -432,18 +433,22 @@ describe('LuxarLayer', () => {
     });
 
     it('threads the LOD flags through to the registry', () => {
-      new LuxarLayer(makeOptions({ lodFade: false, lodEnergyComp: false, lodFinest: true }));
+      new LuxarLayer(
+        makeOptions({ lodFade: false, lodEnergyComp: false, lodFinest: true, lodBias: 4 })
+      );
       const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
         deps: {
           getCrossFadeEnabled: () => boolean;
           getEnergyCompEnabled: () => boolean;
           getForceFinestLOD: () => boolean;
+          getLodBias: () => number;
         };
       };
       const { deps } = factory({ currentViewVersion: 1 });
       expect(deps.getCrossFadeEnabled()).toBe(false);
       expect(deps.getEnergyCompEnabled()).toBe(false);
       expect(deps.getForceFinestLOD()).toBe(true);
+      expect(deps.getLodBias()).toBe(4);
     });
   });
 
