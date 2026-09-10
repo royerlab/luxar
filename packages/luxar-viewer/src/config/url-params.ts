@@ -161,6 +161,12 @@ export interface UrlParams {
    */
   lodFinest: boolean;
   /**
+   * Session-wide replacement-LOD bias (`?lod-bias=<positive number>`), in
+   * screen-area units. `2` advances an occupancy-halved ladder by one level;
+   * `4` by two. Null keeps the neutral `1` default.
+   */
+  lodBias: number | null;
+  /**
    * WebGL-only blend warm-up. **On by default**; pass `?no-blend-warmup`
    * to disable the off-interaction-path pre-linking of reachable
    * blend-mode program variants.
@@ -353,6 +359,7 @@ export function readUrlParams(search?: string): UrlParams {
     allowLinks: !params.has('no-links'),
     lodEnergyComp: !params.has('no-lod-energy'),
     lodFinest: params.has('lod-finest'),
+    lodBias: parsePositiveFloat(params.get('lod-bias')),
     blendWarmup: !params.has('no-blend-warmup'),
     depthSort: parseEnabledFlag(params.get('depthSort')),
     densityGuard: !params.has('no-density-guard'),

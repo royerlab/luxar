@@ -223,6 +223,8 @@ export async function runInitPipeline(
   const lodEnergyCompEnabled = ports.options.lodEnergyComp ?? true;
   // Opt-in: force the finest LOD for capture-quality output (?lod-finest).
   const lodFinestEnabled = ports.options.lodFinest ?? false;
+  // The registry owns the neutral default and validates the live value.
+  const lodBias = ports.options.lodBias;
   SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
@@ -281,6 +283,8 @@ export async function runInitPipeline(
       // Force-finest capture override (?lod-finest via LuxarAppOptions.lodFinest):
       // always select the finest level and never coarsen off-screen.
       getForceFinestLOD: () => lodFinestEnabled,
+      // Area-unit threshold bias (?lod-bias via LuxarAppOptions.lodBias).
+      getLodBias: () => lodBias,
       // Register a fade's clone-on-first-use material so it keeps receiving
       // per-frame camera-uniform updates (an unregistered gsplat clone would
       // project with stale camera params).

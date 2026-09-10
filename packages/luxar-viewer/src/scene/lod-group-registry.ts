@@ -871,6 +871,15 @@ export interface LODGroupRegistryDeps {
    */
   getForceFinestLOD?: () => boolean;
   /**
+   * Replacement-LOD bias in screen-area units. `2` advances one level on an
+   * occupancy-halved ladder. Legacy diagonal coverage receives `sqrt(bias)`
+   * so both selectors shift by the same area factor. Since finite screen-area
+   * coverage is at most `1`, bias below `1` makes a partition-anchored finest
+   * level unreachable and bias below `0.5` does the same for a whole-object
+   * finest level. Invalid values are neutral.
+   */
+  getLodBias?: () => number | undefined;
+  /**
    * Register a clone-on-first-fade material with the material manager so it keeps
    * receiving per-frame camera-uniform updates (the fade clones the shared cached
    * material to fade one level independently; an unregistered gsplat clone would
@@ -1787,6 +1796,10 @@ export class LODGroupRegistry {
             const fittedAxisPx = Math.min(viewport.width, viewport.height);
             coverageMetric = diagonalPx / (FILL_FACTOR * fittedAxisPx);
           }
+          const configuredBias = this.deps.getLodBias?.() ?? 1;
+          const lodBias =
+            Number.isFinite(configuredBias) && configuredBias > 0 ? configuredBias : 1;
+          coverageMetric *= entry.selector === 'screen-area' ? lodBias : Math.sqrt(lodBias);
         }
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;

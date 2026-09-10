@@ -27,6 +27,7 @@ describe('readUrlParams', () => {
       densityGuard: true, // projected-density guard is ON by default (opt-out via ?no-density-guard)
       densityCap: null, // configured cap unless ?density-cap=N
       lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
+      lodBias: null, // normal LOD thresholds unless ?lod-bias=N
       noPrefetch: false,
       prefetchDebug: false,
       cacheStats: false,
@@ -112,6 +113,16 @@ describe('readUrlParams', () => {
     expect(readUrlParams('').lodFinest).toBe(false);
     expect(readUrlParams('?debug').lodFinest).toBe(false);
     expect(readUrlParams('?lod-finest').lodFinest).toBe(true);
+  });
+
+  it('parses ?lod-bias= as a positive float, anything else → null', () => {
+    expect(readUrlParams('').lodBias).toBeNull();
+    expect(readUrlParams('?lod-bias=4').lodBias).toBe(4);
+    expect(readUrlParams('?lod-bias=0.25').lodBias).toBe(0.25);
+    expect(readUrlParams('?lod-bias=0').lodBias).toBeNull();
+    expect(readUrlParams('?lod-bias=-2').lodBias).toBeNull();
+    expect(readUrlParams('?lod-bias=lots').lodBias).toBeNull();
+    expect(readUrlParams('?lod-bias=').lodBias).toBeNull();
   });
 
   it('blendWarmup defaults ON and is disabled only by ?no-blend-warmup', () => {

@@ -290,6 +290,24 @@ describe('runInitPipeline', () => {
     expect(initializeGpuByteBudget).toHaveBeenCalledWith(undefined);
   });
 
+  it('threads lodBias through the app registry factory', async () => {
+    const ports = makePorts();
+    const { factories } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+    ports.options.lodBias = 4;
+
+    await runInitPipeline(ports, {});
+
+    const manager = SceneLoaderManager.getInstance() as unknown as {
+      setLODGroupRegistryFactory: ReturnType<typeof vi.fn>;
+    };
+    const factory = manager.setLODGroupRegistryFactory.mock.calls[0][0] as (owner: unknown) => {
+      deps: { getLodBias: () => number };
+    };
+    const registry = factory({ currentViewVersion: 1 });
+    expect(registry.deps.getLodBias()).toBe(4);
+  });
+
   describe('partial-accumulator contract (load-bearing)', () => {
     it('writes partial.sceneManager BEFORE awaiting sceneManager.init (preserves dispose-on-init-throw)', async () => {
       const { factories, sceneStub } = makeFactoryOverrides({ sceneInitThrows: true });
