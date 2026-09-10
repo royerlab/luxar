@@ -252,13 +252,12 @@ class TestBothChannelsNeedTheirOwnSource:
         floors = {ch["name"]: ch["background_floor"] for ch in demo.CHANNELS}
         assert len(set(floors.values())) == 2
 
-    def test_the_two_channels_carry_different_expected_counts(self):
-        """None means the uncelled rebuild has not recorded a count yet; once
-        both are recorded they must differ, or one channel was fitted twice."""
-        counts = [ch["expected_splats"] for ch in demo.CHANNELS]
-        recorded = [c for c in counts if c is not None]
-        assert all(isinstance(c, int) and c > 0 for c in recorded)
-        assert len(set(recorded)) == len(recorded)
+    def test_the_expected_counts_are_the_uncelled_seed_budget(self):
+        """With no cull anywhere (fit-time retention 0, no post-fit step) every
+        frame keeps exactly its seeds, so both channels record SEEDS x frames.
+        The 2026-08 culled build had 5,864,440 / 5,530,300 and the two differed."""
+        for ch in demo.CHANNELS:
+            assert ch["expected_splats"] == demo.SEEDS * REAL_SOURCE_SHAPE[0]
 
     def test_every_channel_carries_a_layer_order(self):
         """``create_luxar_scene`` reads ``ch["layer_order"]`` per channel.
@@ -444,7 +443,9 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         monkeypatch.setattr(demo, "_subtract_background", lambda *a, **k: None)
         monkeypatch.setattr(demo, "load_gsplat_node", lambda *a, **k: (None, None))
         monkeypatch.setattr(demo, "iter_leaves", lambda node: [])
-        monkeypatch.setattr(demo, "_validate_rebuilt_channel", lambda ch, leaves: 7)
+        monkeypatch.setattr(
+            demo, "_validate_rebuilt_channel", lambda ch, leaves: ch["expected_splats"]
+        )
 
         demo.recompute_channel(demo.CHANNELS[0], tmp_path / "src.zarr", tmp_path)
 

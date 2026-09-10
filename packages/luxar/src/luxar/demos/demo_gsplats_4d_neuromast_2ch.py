@@ -209,11 +209,10 @@ CHANNELS = [
         #: Re-measuring would drift, and the fit's own `--floor auto` runs on top
         #: of the subtraction rather than replacing it.
         "background_floor": 105.9911880493164,
-        #: What the recipe must reproduce, from the merge that built the shipped
-        #: archive ("Wrote single stream lod: 5,864,440 splats, 4D").
-        # Recorded count of the 2026-08 (redundancy-culled) build was 5_864_440; the
-        # uncelled rebuild sets a new value once it lands.
-        "expected_splats": None,
+        #: What the recipe must reproduce. The uncelled 2026-09 rebuild keeps every
+        #: seed (64,000 x 100 frames); the 2026-08 redundancy-culled build had
+        #: 5,864,440 ("Wrote single stream lod: 5,864,440 splats, 4D").
+        "expected_splats": 6_400_000,
     },
     {
         "name": "nuclei",
@@ -228,8 +227,8 @@ CHANNELS = [
         "source_flag": "source-nuclei",
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
         "background_floor": 103.88801574707031,
-        # Recorded count of the 2026-08 (redundancy-culled) build was 5_530_300; see above.
-        "expected_splats": None,
+        # 2026-09 uncelled rebuild: every seed kept (2026-08 culled build: 5,530,300).
+        "expected_splats": 6_400_000,
     },
 ]
 
