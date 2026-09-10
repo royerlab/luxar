@@ -46,7 +46,14 @@ PIPELINE — reproducible per channel with ``--recompute``:
     3. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
        Recorded, not re-run: the sweep is hours and its answer is stable.
     4. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
-       64k seeds, ``--floor auto``, no fit-time cull.
+       64k seeds, ``--floor none``, no fit-time cull. The pinned subtraction of
+       step 2 is the ONLY floor: on the corrected (numerically floor-subtracted)
+       input, ``--floor auto`` finds the mode of the remaining dim background
+       (0.198 / 0.259 of the unit-scale frame on the two channels, measured
+       2026-09-10) and removes the whole dim band -- background actin ruffles
+       and most of the membrane sheet -- before fitting. On the 2026-08 input,
+       which was numerically raw despite its attrs, the same flag found the
+       camera pedestal once and was harmless; that is why it was in the recipe.
     5. (Removed 2026-09.) The 2026-08 build redundancy-culled every tile at
        threshold 0.20, validated by SSIM. Per-frame PSNR against the raw frame
        showed the cull removing bright nuclear splats as "redundant" with the
@@ -206,8 +213,8 @@ CHANNELS = [
         #: Durable upstream TIFF tree.
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Membranes/Deconvolved",
         #: Global background floor, measured ONCE on this channel and recorded.
-        #: Re-measuring would drift, and the fit's own `--floor auto` runs on top
-        #: of the subtraction rather than replacing it.
+        #: Re-measuring would drift. It is subtracted before the fit, and the fit
+        #: itself runs with `--floor none` so nothing is subtracted twice.
         "background_floor": 105.9911880493164,
         #: What the recipe must reproduce. The uncelled 2026-09 rebuild keeps every
         #: seed (64,000 x 100 frames); the 2026-08 redundancy-culled build had
@@ -425,8 +432,9 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
             PRESET,
             "--seeds",
             str(SEEDS),
+            # The pinned subtraction above is the only floor (docstring step 4).
             "--floor",
-            "auto",
+            "none",
             # No fit-time cull (0 keeps every splat): the fit's own pruning of
             # zero-amplitude seeds is the only reduction; see docstring step 5 for
             # why the 2026-08 post-fit redundancy cull was dropped.

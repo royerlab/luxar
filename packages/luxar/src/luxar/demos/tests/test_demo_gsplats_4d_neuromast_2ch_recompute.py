@@ -457,6 +457,9 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert fit[fit.index("--cull-retention") + 1] == "0.0"
         assert fit[fit.index("--merge-recipe") + 1] == "stream"
         assert fit[fit.index("--merge-n-lods") + 1] == str(demo.EXPECTED_RUNGS)
+        # The pinned subtraction is the only floor; `auto` on the subtracted input
+        # removed the dim band (floor 0.198 / 0.259 of the frame, 2026-09-10).
+        assert fit[fit.index("--floor") + 1] == "none"
         assert not hasattr(demo, "REDUNDANCY_THRESHOLD")
 
     def test_the_seed_budget_is_the_calibrated_k_star(self):
