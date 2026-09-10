@@ -24,7 +24,8 @@ attributes and nothing else, in place. They are siblings, not one command with a
 flag.
 
 **Why it is never automatic.** An authored ``coverage_fractions=[...]`` list and
-a legacy derived one are INDISTINGUISHABLE on disk — the point
+a derived one are INDISTINGUISHABLE on disk, including a hand-authored ladder
+already stamped ``screen-area`` — the point
 ``io/_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors``
 makes normatively, which is why that check only ever warns. Running this command
 IS the opt-in: nothing else may trigger it, and it prints the old→new ladder for
@@ -1157,10 +1158,10 @@ def restamp_lod_store(
     :func:`~luxar.core.group.lod.group.coverage_fractions` otherwise — and the
     group is stamped :data:`~luxar.typing_utils.constants.DERIVED_LOD_SELECTOR`.
     A group already on that selector is skipped unless ``finest_anchor`` is
-    supplied. That explicit override re-derives whole-object ladders at the
-    requested screen-area fraction; partition-bound ladders remain anchored at
-    fills-screen ``1.0``. A requested ladder that already matches is still a
-    no-op down to the ``content_hash``.
+    supplied. That explicit override sets the requested screen-area fraction for
+    every whole-object ladder processed, both legacy and already current;
+    partition-bound ladders remain anchored at fills-screen ``1.0``. A requested
+    ladder that already matches is still a no-op down to the ``content_hash``.
 
     The ladder rewrite moves no chunk and opens no array. When anything changed,
     the store's ``content_hash`` is restamped and the metadata re-consolidated,
