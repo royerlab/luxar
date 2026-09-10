@@ -114,6 +114,28 @@ VIEWER_EXPOSURE_EV: Final = 0.0
 LINE_INTENSITY: Final = float(2.0**-7.0)  # ≈ 0.00781
 CELL_INTENSITY: Final = LINE_INTENSITY * 0.5
 REF_CUBE_INTENSITY: Final = LINE_INTENSITY * 0.35
+#: Streamlines are the point of the demo and read too faint at the comet gain
+#: (2026-09-10 review). The Layers panel shows a direct-colour node's gain as a
+#: COLOUR RANGE ``0 – 1/intensity``; the reviewed setting was 0 – 45.26 on a
+#: slider that spanned 0 – 128 (the old 2^-7 gain), i.e. 2.8x brighter.
+STREAMLINE_WINDOW_TOP: Final = 45.26
+STREAMLINE_INTENSITY: Final = 1.0 / STREAMLINE_WINDOW_TOP
+
+#: Bloom (2026-09-10 review): the shipped 0.74 strength / 0.55 radius / 0.0
+#: threshold haloed every additive line into a fog. A faint, wide bloom over a
+#: full mipmap chain keeps only the brightest cores glowing.
+BLOOM_THRESHOLD: Final = 0.01
+BLOOM_STRENGTH: Final = 0.05
+BLOOM_RADIUS: Final = 1.0
+BLOOM_LEVELS: Final = 8
+
+#: One-paragraph subtitle under the title; the legend used to carry a longer
+#: version of this and is now only the anatomy-class key.
+SUBTITLE: Final = (
+    "Cells coloured by anatomy class. Comet tails point along each cell's "
+    "RNA velocity; streamlines advect every cell briefly through the smoothed "
+    "velocity field and fade with advection time."
+)
 
 
 @dataclass(frozen=True)
@@ -787,14 +809,8 @@ def build_legend_html(
         '<div style="font-size:1.25vh;line-height:1.45;'
         "background:rgba(0,0,0,0.58);padding:0.7vh 0.9vh;"
         'border-radius:5px;max-width:34vh">'
-        '<div style="color:#ffcc44;font-weight:bold;margin-bottom:0.45vh">'
-        "Zebrahub RNA-velocity field</div>"
-        '<div style="color:#ddd;margin-bottom:0.6vh">'
-        "Cells colored by anatomy ontology class.  Each cell carries a comet "
-        "tail: <b>tip → head</b> = local RNA-velocity direction.  "
-        "Streamlines briefly forward-advect every cell through the smoothed "
-        "velocity field and fade out along advection time."
-        "</div>"
+        # The explanatory paragraph moved to SUBTITLE under the title
+        # (2026-09-10 review); this box is only the colour key now.
         '<div style="color:#ffcc44;font-weight:bold;margin-bottom:0.25vh">'
         f"Top anatomy classes ({len(anatomy_categories)})</div>"
     ]
@@ -911,9 +927,10 @@ def write_scene(
             tone_mapping="ACES",
             exposure=VIEWER_EXPOSURE_EV,
             bloom_enabled=True,
-            bloom_strength=0.74,
-            bloom_radius=0.55,
-            bloom_threshold=0.0,
+            bloom_strength=BLOOM_STRENGTH,
+            bloom_radius=BLOOM_RADIUS,
+            bloom_threshold=BLOOM_THRESHOLD,
+            bloom_levels=BLOOM_LEVELS,
             auto_rotate=True,
             auto_rotate_speed=0.16,
             dynamic_clipping_enabled=True,
@@ -977,7 +994,7 @@ def write_scene(
                     line_type="indexed",
                     blending_mode="additive",
                     opacity=0.95,
-                    intensity=LINE_INTENSITY,
+                    intensity=STREAMLINE_INTENSITY,
                     layer=True,
                     substitutive_lod=streamline_lod,
                 )
@@ -1014,10 +1031,22 @@ def write_scene(
                 transition_duration=0.15,
                 hover=True,
             )
+            # Subtitle under the title (word-wrapped by `width`).
+            scene.add_text(
+                SUBTITLE,
+                position=(0.02, 0.10),
+                font_size=0.02,
+                anchor="top-left",
+                color="rgba(255,255,255,0.45)",
+                width=0.58,
+                line_height=1.35,
+            )
+            # Colour key in the lower-left corner (2026-09-10 review), clear of
+            # the caption at bottom-right and the hover label at centre-left.
             scene.add_html(
                 build_legend_html(data.anatomy_categories, palette, counts),
-                position=(0.98, 0.50),
-                anchor="center-right",
+                position=(0.02, 0.98),
+                anchor="bottom-left",
                 opacity=0.92,
             )
             add_demo_caption(
