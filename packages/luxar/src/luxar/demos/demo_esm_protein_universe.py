@@ -57,6 +57,7 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe
     python -m luxar.demos.demo_esm_protein_universe --no-serve
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
+    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 """
 
@@ -1467,10 +1468,11 @@ def _viewer_config(
     *,
     auto_rotate: bool,
     audio: bool,
+    high_quality: bool = False,
 ) -> ViewerConfig:
-    # Mirrors the Swiss-Prot tour's kiosk settings (see its build for the why).
-    # `overview` is the raw distance-tuned pose; `pull_in` carries it to the
-    # cinematic 63° lens.
+    # Mirrors the Swiss-Prot tour's kiosk settings (see its build for the why),
+    # except for render quality: see `high_quality` below. `overview` is the raw
+    # distance-tuned pose; `pull_in` carries it to the cinematic 63° lens.
     return ViewerConfig(
         cinematic_mode=True,
         camera=CameraConfig(position=pull_in(overview), target=(0.0, 0.0, 0.0)),
@@ -1482,8 +1484,15 @@ def _viewer_config(
         auto_rotate=auto_rotate,
         auto_rotate_speed=0.5 if auto_rotate else None,
         auto_rotate_axis="world-y" if auto_rotate else None,
-        ssaa_enabled=True,
-        allow_high_dpr=True,
+        # Render quality (2026-09-10 review): supersampling and rendering above
+        # CSS resolution are what make the kiosk build crisp, and also what made
+        # it crawl on an ordinary laptop — SSAA is a 4x fragment cost on top of
+        # the 4x a 2x display already asks for. The shipped default is the
+        # laptop build: SSAA off and the DPR capped at 1.0 (`allow_high_dpr`
+        # False is that cap). `--high-quality` (the kiosk / big-GPU switch)
+        # turns both back on.
+        ssaa_enabled=high_quality,
+        allow_high_dpr=high_quality,
         environment=EnvironmentConfig(source="scene", probe="auto"),
         waypoints=waypoints,
         audio=AudioConfig(
@@ -1738,8 +1747,13 @@ def build_universe_scene(
     turntables: bool = True,
     turntable_cache: Path | None = None,
     audio: bool = True,
+    high_quality: bool = False,
 ) -> int:
-    """Write the universe scene. Returns the number of clusters in the backdrop."""
+    """Write the universe scene. Returns the number of clusters in the backdrop.
+
+    ``high_quality`` re-enables the kiosk render settings (SSAA and rendering at
+    the display's full device pixel ratio); the default is the laptop build.
+    """
     n = len(universe)
     assets: dict[str, TurntableAssets] = {}
     if turntables:
@@ -1781,7 +1795,11 @@ def build_universe_scene(
                 )
             )
         viewer_config = _viewer_config(
-            waypoints, overview_raw, auto_rotate=auto_rotate, audio=audio
+            waypoints,
+            overview_raw,
+            auto_rotate=auto_rotate,
+            audio=audio,
+            high_quality=high_quality,
         )
 
     dims = Dimensions(
@@ -1888,6 +1906,9 @@ def main() -> None:
     auto_rotate = "--no-auto-rotate" not in sys.argv
     turntables = "--no-turntables" not in sys.argv
     audio = "--no-audio" not in sys.argv
+    # Kiosk / big-GPU build: SSAA on and rendering at full device resolution.
+    # Off by default so the hosted demo runs on an ordinary laptop.
+    high_quality = "--high-quality" in sys.argv
     try:
         annotations = find_input(ANNOTATIONS_PARQUET, parse_path_arg("annotations"))
         cache = CACHE_DIR / UNIVERSE_CACHE
@@ -1900,7 +1921,12 @@ def main() -> None:
     universe = load_universe(cache)
     aprint(f"✓ Loaded {len(universe):,} clusters from {cache}")
 
-    kwargs = dict(auto_rotate=auto_rotate, turntables=turntables, audio=audio)
+    kwargs = dict(
+        auto_rotate=auto_rotate,
+        turntables=turntables,
+        audio=audio,
+        high_quality=high_quality,
+    )
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm_protein_universe.luxar.zarr"
         n = build_universe_scene(output_path, universe, annotations, **kwargs)
