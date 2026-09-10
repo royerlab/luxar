@@ -450,6 +450,36 @@ def _descending_ladder_refusal(
     )
 
 
+def _derive_thresholds(
+    counts: List[Optional[int]],
+    *,
+    partition_bound: bool,
+    finest_anchor: Optional[float],
+    path: str,
+) -> List[float]:
+    """Derive one ladder, applying an explicit whole-object anchor if requested."""
+    resolved_counts = [0 if count is None else count for count in counts]
+    if partition_bound:
+        return [
+            float(value) for value in partitioned_coverage_fractions(resolved_counts)
+        ]
+
+    thresholds = coverage_fractions(resolved_counts)
+    if finest_anchor is None:
+        return [float(value) for value in thresholds]
+
+    scale = finest_anchor / WHOLE_OBJECT_FINEST_ANCHOR
+    reanchored = [float(value * scale) for value in thresholds]
+    if any(
+        right <= left for left, right in zip(reanchored, reanchored[1:], strict=False)
+    ):
+        raise ValueError(
+            f"finest_anchor={finest_anchor!r} is too small to represent a "
+            f"strictly increasing {len(reanchored)}-level ladder at {path}"
+        )
+    return reanchored
+
+
 def _plan_lod(
     group: "zarr.Group",
     attrs: Dict[str, Any],
@@ -537,24 +567,20 @@ def _plan_lod(
         )
         return None
 
-    derive = partitioned_coverage_fractions if partition_bound else coverage_fractions
     # Only the LENGTH and the finest entry are consumed (see the two derivation
     # docstrings), and the finest is checked above — so a coarser level whose
     # count the store never recorded is passed as 0 rather than blocking a
     # re-derivation it cannot affect. The report keeps the honest `None`.
-    new = derive([0 if c is None else c for c in counts])
+    new_thresholds = _derive_thresholds(
+        counts,
+        partition_bound=partition_bound,
+        finest_anchor=finest_anchor,
+        path=path,
+    )
     resolved_anchor = 1.0 if partition_bound else WHOLE_OBJECT_FINEST_ANCHOR
     if finest_anchor is not None and not partition_bound:
         resolved_anchor = finest_anchor
-        scale = finest_anchor / WHOLE_OBJECT_FINEST_ANCHOR
-        new = [value * scale for value in new]
-        if any(right <= left for left, right in zip(new, new[1:])):
-            raise ValueError(
-                f"finest_anchor={finest_anchor!r} is too small to represent a "
-                f"strictly increasing {len(new)}-level ladder at {path}"
-            )
 
-    new_thresholds = [float(value) for value in new]
     if selector == DERIVED_LOD_SELECTOR and old == new_thresholds:
         report.already_current.append(
             SkippedGroup(
@@ -1099,6 +1125,18 @@ def _summarise(report: RestampReport) -> None:
         aprint(f"  ❌ verify: {message}")
 
 
+def _validate_finest_anchor(finest_anchor: Optional[float]) -> None:
+    """Reject values that cannot be a finite screen-area fraction."""
+    if finest_anchor is None:
+        return
+    if math.isfinite(finest_anchor) and 0.0 < finest_anchor <= 1.0:
+        return
+    raise ValueError(
+        "finest_anchor must be finite and in the screen-area interval (0, 1]; "
+        f"got {finest_anchor!r}"
+    )
+
+
 def restamp_lod_store(
     path: "str | Path",
     *,
@@ -1186,13 +1224,7 @@ def restamp_lod_store(
             f"{store_path} (unpack a .zip/.tar.gz store first — an attrs rewrite "
             f"of a compressed archive cannot happen in place)"
         )
-    if finest_anchor is not None and not (
-        math.isfinite(finest_anchor) and 0.0 < finest_anchor <= 1.0
-    ):
-        raise ValueError(
-            "finest_anchor must be finite and in the screen-area interval (0, 1]; "
-            f"got {finest_anchor!r}"
-        )
+    _validate_finest_anchor(finest_anchor)
 
     root = open_group(store_path, mode="r" if dry_run else "r+")
     # `optimise.ensure_luxar_store` is the same gate but its message names
