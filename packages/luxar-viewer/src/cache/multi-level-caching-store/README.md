@@ -114,14 +114,17 @@ Key behaviours:
   5xx, network errors, and per-attempt timeouts are retried with
   exponential backoff bounded by ±25% jitter and a 500ms ceiling. The
   configured timeout is split across attempts and applied separately to
-  time-to-headers and no-body-progress stalls. A progressing body also has
-  an absolute deadline derived from `Content-Length` at 16 KiB/s, or eight
-  stall windows when the length is unavailable. A caller-aborted signal
-  exits immediately without consuming retry budget. Accepts
-  `timeoutMsOverride` for validation probes that want a shorter budget than
-  data fetches. The consumer runs inside the shared fetch-gate lease and may
-  call `readBody()` once; returning without reading cancels the body before
-  the lease is released.
+  time-to-headers and aggregate body-progress stalls. A quiet multiplexed
+  stream stays alive while another live lease receives bytes. Its absolute
+  deadline starts when body reading begins and is derived from `Content-Length`
+  at a 16 KiB/s aggregate floor shared across at most eight active leases, or
+  eight stall windows shared across at most four leases when the length is
+  unavailable. Metadata probes use a separate four-slot lane from the 24
+  data-body slots; this prevents lane-level starvation on multiplexed transports,
+  while HTTP/1.1 can still queue both lanes on the browser's per-origin socket
+  pool. A caller-aborted signal exits immediately without consuming retry budget.
+  The consumer runs inside its fetch-gate lease and may call `readBody()` once;
+  returning without reading cancels the body before release.
 
 ### `bandwidth-window.ts` — sliding-window throughput
 

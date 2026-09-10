@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   boundedConcurrencyStore,
+  fetchLaneForKey,
   withFetchGate,
   MAX_CONCURRENT_CHUNK_FETCHES,
+  MAX_CONCURRENT_METADATA_FETCHES,
 } from '../../../utils/fetch-concurrency';
 
 /**
@@ -11,6 +13,14 @@ import {
  * the cap + the pass-through surface; fails on the pre-fix unbounded path.
  */
 describe('fetch-concurrency gate', () => {
+  it('classifies nested zarr documents into the metadata lane only', () => {
+    for (const key of ['zarr.json', 'group/.zattrs', 'a/b/.zarray', '.zgroup', '.zmetadata']) {
+      expect(fetchLaneForKey(key)).toBe('metadata');
+    }
+    expect(fetchLaneForKey('group/colors/c/3/0')).toBe('data');
+    expect(fetchLaneForKey('group/zarr.json/c/0')).toBe('data');
+  });
+
   it('never exceeds MAX_CONCURRENT_CHUNK_FETCHES concurrent calls', async () => {
     let active = 0;
     let peak = 0;
@@ -73,5 +83,53 @@ describe('fetch-concurrency gate', () => {
       await Promise.resolve();
     }
     await Promise.all(calls);
+  });
+
+  it('lets metadata start while every data-body slot is occupied', async () => {
+    const releaseData: Array<() => void> = [];
+    const data = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES }, () =>
+      withFetchGate(() => new Promise<void>((resolve) => releaseData.push(resolve)))
+    );
+    await Promise.resolve();
+
+    let metadataStarted = false;
+    const metadata = withFetchGate(async () => {
+      metadataStarted = true;
+    }, 'metadata');
+    await Promise.resolve();
+
+    expect(metadataStarted).toBe(true);
+    await metadata;
+    releaseData.forEach((release) => release());
+    await Promise.all(data);
+  });
+
+  it('bounds metadata independently from data', async () => {
+    let active = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+    const requests = Array.from({ length: MAX_CONCURRENT_METADATA_FETCHES * 2 }, () =>
+      withFetchGate(() => {
+        active += 1;
+        peak = Math.max(peak, active);
+        return new Promise<void>((resolve) =>
+          release.push(() => {
+            active -= 1;
+            resolve();
+          })
+        );
+      }, 'metadata')
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(active).toBe(MAX_CONCURRENT_METADATA_FETCHES);
+    while (release.length) {
+      release.shift()!();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    await Promise.all(requests);
+    expect(peak).toBe(MAX_CONCURRENT_METADATA_FETCHES);
   });
 });

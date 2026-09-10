@@ -15,12 +15,9 @@ import {
   type RemoteValidationToken,
 } from '../multi-level-caching-store/validation-queue';
 import { log, Modules } from '../../utils/log';
+import { fetchLaneForKey } from '../../utils/fetch-concurrency';
 
-const ZARR_METADATA_KEYS = new Set(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata']);
-
-function isZarrMetadataKey(key: string): boolean {
-  return ZARR_METADATA_KEYS.has(key.slice(key.lastIndexOf('/') + 1));
-}
+const isZarrMetadataKey = (key: string): boolean => fetchLaneForKey(key) === 'metadata';
 
 /** Reads chunks from a directory-backed zarr store over HTTP. */
 export class HttpChunkSource implements ChunkSource {
@@ -46,7 +43,11 @@ export class HttpChunkSource implements ChunkSource {
     try {
       const outcome = await fetchWithRetry(
         buildUrl(this.baseUrl, key),
-        { signal, onExhausted: (error) => (exhaustedCause = error) },
+        {
+          signal,
+          lane: fetchLaneForKey(key),
+          onExhausted: (error) => (exhaustedCause = error),
+        },
         async (attempt) => {
           if (attempt.response.status === 404) return { kind: 'missing' } as const;
           if (
