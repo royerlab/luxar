@@ -153,6 +153,23 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   panel's max straight into `intensity=` stores a window `hi²` times too narrow and
   the scene renders blown out. Read it back the same way:
   `lo = -offset/intensity`, `hi = (1-offset)/intensity`.
+- **A DIRECT-COLOUR node shows a COLOUR RANGE instead, and that is a plain gain.**
+  The panel draws `0 – 1/intensity` on a slider whose top is the authored
+  `1/intensity`; a reviewer dragging the top to 45.26 on a 0-128 slider means
+  `intensity = 1/45.26` (2.8x brighter than the authored `2**-7`). Colormapped
+  node: window pair. Direct colour: `intensity = 1/hi`. Same panel, two meanings.
+- **`validate_intensity` caps `intensity` at 100.** A window top of 0.002 asks for
+  x500; fold the excess into a build-time amplitude boost (the TotalSegmentator
+  nervous system does `amp_boost=5.0` at `intensity=100`) and say so in a comment,
+  or the panel silently reads a different window than the one you meant.
+- **Bloom is a global, not a per-layer knob, and additive line scenes fog under
+  it.** The Zebrahub streamlines shipped at strength 0.74 / radius 0.55 /
+  threshold 0; the reviewed values were threshold 0.01, strength 0.05, radius 1.0
+  over 8 mipmap levels — a faint, wide glow that keeps only the brightest cores.
+- **SSAA and `allow_high_dpr` together are a 16x fragment bill.** Ship the laptop
+  build by default (SSAA off, DPR capped at 1.0) and put the kiosk settings behind
+  a `--high-quality` flag (`demo_esm_protein_universe.py`). A demo tuned on a
+  dedicated big-GPU display will crawl on the machines its visitors own.
 - **Amplitudes MUST be normalised into `[0, ~1]` before the node enters the
   scene, and no viewer control can substitute for it.** A fitted
   `.gsplats.zarr` stores amplitudes in RAW SOURCE UNITS — the fitter multiplies
@@ -418,6 +435,24 @@ luxar info my_scene.luxar.zarr --stats              # inspect a built scene
   example above uses 5000). The default is 1000 — *below* the CLI's lowest preset —
   and on thin structures it leaves splats at their isotropic seed shape and renders
   filaments as bead chains. See the `luxar-gsplat-pipeline` skill.
+- **The element-cap gate (`test_demo_element_caps.py`) refuses `**kwargs` spreads
+  in geometry adder calls** (`add_points`/`add_lines`/`add_gsplats*`), because it
+  resolves each call's budget statically. Spell every keyword out; a
+  `common = dict(...)` + `**common` pattern fails the corpus gate even when the
+  values are right.
+- **`DimensionsConfig` indexes its two fields DIFFERENTLY**: `current_step` by
+  absolute dimension (one entry per declared dim), `selected_dimension` by
+  NAVIGABLE position among the non-displayed dims (`0` for the first hidden axis).
+  `auto_rotate_speed` is revolutions per MINUTE (`60 / period_s`); `exposure` is
+  log2 stops.
+- **A hidden axis with `discrete=True` (the default `__post_init__` gives a hidden
+  non-spatial dim) makes the writer order SLICE-MAJOR** — that axis is lexsorted
+  first and the Hilbert curve runs within each slice, for points, lines and
+  gsplats alike. Per-frame chunk locality is therefore free; what you choose is
+  the chunk SIZE (frames per chunk) — see the gsplat-pipeline skill.
+- **Time-lapse splat scenes: prefer one part per timepoint with a per-part capped
+  stream ladder over one sliced leaf with a global ladder** (measured 2026-09-10;
+  see the gsplat-pipeline skill and `demo_gsplats_4d_h2afva_timelapse.py`).
 - **A demo that caches a fit must key the cache on every parameter that changes the
   result**, the optimizer schedule included. Seeds/floor/retention are the obvious
   ones, but the schedule changes splat SHAPES while leaving the COUNT identical, so a

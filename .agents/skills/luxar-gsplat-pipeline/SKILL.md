@@ -435,16 +435,60 @@ warns on the node total rather than the resident slice, so that warning is
 expected for a sliced nD node that satisfies the runtime limit. For a STATIC
 object over the cap, parts are load-bearing.
 
-**On a time-stacked 4D node, a partition buys nothing at all.** The writer
-lexsorts by the time barrier, so a timepoint's splats are already contiguous and
-chunk-local without any partition. Measured: partition-per-timepoint cost +9%
-bytes for zero benefit; substitutive levels cost +49%.
+**On a time-stacked 4D node, a SPATIAL partition buys nothing.** The writer
+lexsorts by the time barrier (compound ordering: discrete hidden dims first,
+Hilbert within a slice), so a timepoint's splats are already contiguous and
+chunk-local without any partition. Measured: spatial parts cost +9% bytes for
+zero request benefit; substitutive levels cost +49%.
+
+**A partition per TIMEPOINT is a different animal, and it won (2026-09-10).**
+Measured on the h2afva 51-timepoint archive at identical chunking, cold cache,
+stepping the time axis: the single sliced leaf with a global 11-rung ladder
+re-streams that ladder from its bottom on every slice and leaves **3-27%** of
+the frame resident while a step loads; 44 spatial parts keep 68-85% resident
+but pay ~30 MB per step because every part is still sliced by time; **one part
+per timepoint** with its own capped stream ladder fetches exactly one part per
+step (~27 MB, nothing from other timepoints), paints its 39 K-splat first rung
+at once, and can never starve a slice because the ladder is sized against that
+frame alone. Its cost is the full part per step with no reuse across
+timepoints, and one live GPU buffer per part (51 here) — pair it with
+next-timepoint prefetch and watch the GPU byte budget (the refinement residency
+gate stops rungs when the pool is near its ceiling). `equi-energy` ladders lost
+on the same data: first rungs of 2-7 K splats let the viewer's stop-early rules
+end a pass at e(k)=0.33. Reach for equi-energy where a few heavy elements carry
+most of the light, not on a uniform nuclei field. Recipe, from Python: take the
+finest content, split on the time column, `make_additive_lod(part,
+method="self_energy", breakpoints=capped_stream_cuts(n, 39_062))` per part,
+write a `GSplatPartition` with `barrier_dims=[time_col]`, graft it with
+`add_gsplats_from_file` (see `demo_gsplats_4d_h2afva_timelapse.py`).
 
 **One catch that comes with `stream`:** a flat store needs re-chunking or
 scrubbing gets WORSE. Measured per timepoint step on a 4D leaf: **173 requests
 as-built, 2 after `luxar optimise --profile archive`** — the as-built figure is
 worse than a partitioned store's re-chunked 12. Additive-only and re-chunking
 are a package, not alternatives.
+
+**But judge a chunk profile on the node's ACCESS PATTERN, not on the store.**
+`optimise` sizes chunks per array from a byte budget only; it knows nothing
+about hidden dimensions. Three regimes (2026-08-30 and 2026-09-10 measurements):
+
+- *Laddered, played* (drosophila, h2afva): a coarse rung that fits ONE chunk
+  stays cache-resident and the viewer serves every later timepoint from it
+  (#2377). 1 MB wins; 64 KB made playback 13x worse there.
+- *Un-laddered, played* (`collision_animated`, an animated Lines node): the store
+  is already slice-major, so a 1 MB chunk simply holds ~6 frames. Every ~6
+  frames the playhead crosses into the next chunk of each array and waits for a
+  0.25-0.85 MB fetch; the viewer's time lookahead is ONE step deep, so it cannot
+  hide a boundary six frames wide. Here the number to compute is
+  **frames-per-chunk** = (rows per zarr chunk / `chunk_size` atom) x the atom's
+  hidden-axis span from `chunk_bounds`. `hosting` (~1.5 frames per chunk) is the
+  middle of the request/byte trade; the request cap of the hosted site
+  (Cloudflare Functions) rules out `local`'s 3,500 chunks. Issue #2686 proposes
+  the per-node guard.
+- *Not animated* (keypress-navigated, refine pass): smaller is a pure win.
+
+The slice-major ordering is NOT something to add — it already exists
+(`io/_ordering/compound.py`); do not re-propose it.
 
 ```bash
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6

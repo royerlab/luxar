@@ -717,6 +717,17 @@ Result now pinned for `h2afva_51tp`: 1,873,559,527 → 1,115,714,088 bytes
 125,751 to 2,316, with all 51 timepoints intact at uniform spacing and none
 blended.
 
+**Superseded at the SCENE level on 2026-09-10.** The pinned archive stays one
+laddered leaf, but `demo_gsplats_4d_h2afva_timelapse.py` now re-authors it at
+build time into a `kind=partition` of one part per TIMEPOINT (51 parts, each with
+a capped stream ladder: 39,062-splat first rung, doubling, 900 K cap), cached
+beside the download. Measured cold against the single leaf and against 44
+spatial parts at identical chunking: the single leaf's global ladder re-streamed
+from its bottom on every slice (3-27% of the frame resident while a step loads);
+spatial parts paid ~30 MB per step; time parts fetch exactly one part per step
+and never starve a slice. The "a partition buys nothing on a time-stacked node"
+rule above is about SPATIAL parts; time parts are a different structure.
+
 ### 3.18 A probe must emit the evidence that its own window was valid
 
 3.16 says to check the observation window is longer than the phenomenon. That is
@@ -988,6 +999,31 @@ disagree with the committed pin, because a checksum `ValueError` is an integrity
 failure rather than an ordinary `DatasetUnavailable` fallback. The live gallery
 tile is indifferent because it serves an already-derived scene and never
 consults the pin (3.10).
+
+### 3.22 `--profile archive` on an animated, un-laddered node stalls playback at every chunk boundary
+
+The 2026-09-02 wave re-chunked every store with `optimise --profile archive`.
+On `collision_animated` (a 4.66 M-vertex Lines node over 250 frames, no ladder)
+that made a 1 MB vertex chunk hold ~6 frames; every ~6 frames the playhead
+crossed into the next chunk of each of the four arrays and waited for a
+0.25-0.85 MB fetch (0.4-0.9 s on a 7 Mbps link, cold cache, 40 steps = 65
+requests / 21 MB). The viewer's hidden-axis lookahead is one step deep, so it
+cannot hide a boundary that far ahead. Two things were NOT the cause, and the
+first version of #2686 wrongly blamed one of them: the ordering is already
+slice-major (compound ordering, `vertex_ordering.slice_dims == [3]`, every atom
+inside one frame), and the prefetcher does run — one step ahead.
+
+Rules that fall out, alongside 3.17 and the #2377 residency finding:
+
+- Compute **frames-per-chunk** before choosing a profile for an animated node:
+  rows per zarr chunk / `chunk_size` atom x the atom's time span from the
+  bounds array.
+- Laddered + played (splat timelapses): 1 MB, so the coarse rung is one resident
+  chunk. Un-laddered + played (animated lines/points): `hosting` (~1.5 frames per
+  chunk) is the middle of the request/byte trade; `local` is 3,500 chunks
+  against the Functions request cap. Not animated: smaller is a pure win.
+- `optimise` is per-array and hidden-dim blind; until #2686's per-node guard
+  lands, the operator decides per store.
 
 ### 3.21 Guard the artefact you ship, not only the inputs you fed it
 
