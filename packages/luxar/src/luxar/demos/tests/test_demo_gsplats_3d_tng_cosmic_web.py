@@ -108,7 +108,7 @@ class TestLayerDisplaySettings:
     These four values were chosen together against the fit's own
     `amplitude_data_range` window, and three of them only make sense as a set:
     volumetric compositing is what makes `absorption` mean anything, and the
-    reduced `opacity` is a consequence of accumulating alpha along the ray. A
+    `opacity` was tuned alongside it for alpha accumulating along the ray. A
     later edit that reverts one of them in isolation is a regression, so they
     are read straight off the call rather than left to a screenshot.
 
@@ -137,8 +137,8 @@ class TestLayerDisplaySettings:
         kwargs = self._add_gsplats_kwargs()
         assert kwargs["colormap"] == "turbo"
         assert kwargs["blending_mode"] == "volumetric"
-        assert kwargs["absorption"] == pytest.approx(10.0)
-        assert kwargs["opacity"] == pytest.approx(0.66)
+        assert kwargs["absorption"] == pytest.approx(0.8)
+        assert kwargs["opacity"] == pytest.approx(0.95)
 
     def test_absorption_is_only_meaningful_under_volumetric(self) -> None:
         """kappa is read by the volumetric mode; additive ignores it."""
