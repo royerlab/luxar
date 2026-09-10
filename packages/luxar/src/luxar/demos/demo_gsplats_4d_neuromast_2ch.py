@@ -52,8 +52,9 @@ PIPELINE — reproducible per channel with ``--recompute``:
        showed the cull removing bright nuclear splats as "redundant" with the
        pedestal splats beneath them, at a 17-26 dB foreground cost; SSIM is
        blind to that (an empty render scores 0.82). No post-fit cull now.
-    6. ``batch-fit run --merge-recipe stream`` merges the (uncelled) tiles into
-       ONE leaf with a progressive ladder (the run's own merge).
+    6. ``batch-fit run --merge-recipe stream --merge-n-lods 8`` merges the
+       (uncelled) tiles into ONE leaf with the recorded 8-rung progressive
+       ladder (the run's own merge; the run's default would be 4 rungs).
     7. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
        → isotropic Z, amplitudes on a 0-1 scale.
 
@@ -438,6 +439,11 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
             # post-fit cull any more (docstring step 5).
             "--merge-recipe",
             "stream",
+            # Pinned: `batch-fit run`'s merge defaults to a 4-rung ladder while the
+            # 2026-08 archive (built by a standalone `batch-fit merge`) has 8; the
+            # rung count is part of the recorded recipe and validated below.
+            "--merge-n-lods",
+            str(EXPECTED_RUNGS),
         )
         merged = fit_dir / "merged" / "final.gsplats.zarr"
         if not merged.exists():

@@ -455,6 +455,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         fit = calls[0]
         assert fit[fit.index("--cull-retention") + 1] == "0.0"
         assert fit[fit.index("--merge-recipe") + 1] == "stream"
+        assert fit[fit.index("--merge-n-lods") + 1] == str(demo.EXPECTED_RUNGS)
         assert not hasattr(demo, "REDUNDANCY_THRESHOLD")
 
     def test_the_seed_budget_is_the_calibrated_k_star(self):
