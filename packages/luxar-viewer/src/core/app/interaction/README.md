@@ -42,8 +42,8 @@ standalone page declares the same in `styles/base/layout.css` (`#app`); a
 `context-menu-ownership.ts` — `installContextMenuOwnership(canvas, events)`,
 also installed by `LuxarApp.init()`. A capture-phase listener suppresses the
 native menu on the canvas and viewer-mounted DOM, including overlays that
-WebKit targets instead of the canvas. Typing surfaces and selected text in an
-interactive overlay retain their native clipboard menu, and universal
+WebKit targets instead of the canvas. Typing surfaces, and selected text or a
+link in an interactive overlay, retain their native menu, and universal
 ancestors do not claim an embedder's sibling DOM.
 
 ## File Structure
