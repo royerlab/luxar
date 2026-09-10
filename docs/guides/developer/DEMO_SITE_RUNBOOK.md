@@ -1000,7 +1000,7 @@ failure rather than an ordinary `DatasetUnavailable` fallback. The live gallery
 tile is indifferent because it serves an already-derived scene and never
 consults the pin (3.10).
 
-### 3.22 `--profile archive` on an animated, un-laddered node stalls playback at every chunk boundary
+### 3.21 `--profile archive` on an animated, un-laddered node stalls playback at every chunk boundary
 
 The 2026-09-02 wave re-chunked every store with `optimise --profile archive`.
 On `collision_animated` (a 4.66 M-vertex Lines node over 250 frames, no ladder)
@@ -1025,7 +1025,7 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
 - `optimise` is per-array and hidden-dim blind; until #2686's per-node guard
   lands, the operator decides per store.
 
-### 3.21 Guard the artefact you ship, not only the inputs you fed it
+### 3.22 Guard the artefact you ship, not only the inputs you fed it
 
 A publish deployed a gallery page carrying **9 tiles instead of 85**, and every
 guard passed. They were all reasonable guards — and all of them checked *inputs*:
