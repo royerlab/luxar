@@ -1,12 +1,17 @@
 import { getEventListeners } from 'node:events';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+  bodyAbsoluteDeadlineMs,
   buildUrl,
   fetchWithRetry as fetchWithRetryScoped,
   hashUrl,
   mergeAbortSignals,
 } from '../../../cache/multi-level-caching-store/fetch-retry';
-import { MAX_CONCURRENT_CHUNK_FETCHES, withFetchGate } from '../../../utils/fetch-concurrency';
+import {
+  MAX_CONCURRENT_CHUNK_FETCHES,
+  resetFetchProgressEpoch,
+  withFetchGate,
+} from '../../../utils/fetch-concurrency';
 import { log } from '../../../utils/log';
 
 function mockResponse(status: number, body: ArrayBuffer | string = ''): Response {
@@ -212,6 +217,16 @@ describe('fetchWithRetry', () => {
 
   beforeEach(() => {
     originalFetch = global.fetch;
+    resetFetchProgressEpoch();
+  });
+
+  it('caps unknown-length body deadline sharing at four leases', () => {
+    expect(bodyAbsoluteDeadlineMs(new Response(), 7_500, 24)).toBe(240_000);
+  });
+
+  it('caps known-length body deadline sharing at eight leases', () => {
+    const response = new Response(null, { headers: { 'Content-Length': String(500 * 1024) } });
+    expect(bodyAbsoluteDeadlineMs(response, 7_500, 24)).toBe(250_000);
   });
 
   afterEach(() => {
@@ -787,6 +802,54 @@ describe('fetchWithRetry', () => {
     expect((await active)?.byteLength).toBe(12);
     expect(Array.from((await quiet) ?? [])).toEqual([8, 9]);
     expect(calls.get('https://example.com/quiet')).toBe(1);
+  });
+
+  it('bounds a headers-only body while another fetch keeps making progress', async () => {
+    vi.useFakeTimers();
+    const activeAbort = new AbortController();
+    const calls = new Map<string, number>();
+    const fetchMock = vi.fn(async (url: string) => {
+      calls.set(url, (calls.get(url) ?? 0) + 1);
+      if (url.endsWith('/active')) {
+        let timer: ReturnType<typeof setInterval>;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              timer = setInterval(() => controller.enqueue(new Uint8Array([1])), 50);
+            },
+            cancel() {
+              clearInterval(timer);
+            },
+          }),
+          { headers: { 'Content-Length': String(1024 * 1024) } }
+        );
+      }
+      return new Response(new ReadableStream<Uint8Array>({}));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const active = fetchWithRetryScoped(
+      'https://example.com/active',
+      { signal: activeAbort.signal, timeoutMsOverride: 400 },
+      async ({ readBody }) => readBody()
+    );
+    let quietSettled = false;
+    const quiet = fetchWithRetryScoped(
+      'https://example.com/quiet',
+      { timeoutMsOverride: 400 },
+      async ({ readBody }) => readBody()
+    ).finally(() => {
+      quietSettled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(8_000);
+
+    expect(quietSettled).toBe(true);
+    expect(await quiet).toBeUndefined();
+    expect(calls.get('https://example.com/quiet')).toBe(4);
+
+    activeAbort.abort();
+    await active;
   });
 
   it('stops a body read immediately when the caller aborts', async () => {

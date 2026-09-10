@@ -14,6 +14,8 @@ const INITIAL_RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 500;
 const MIN_BODY_THROUGHPUT_BYTES_PER_SECOND = 16 * 1024;
 const BODY_DEADLINE_FALLBACK_MULTIPLIER = 8;
+const MAX_BODY_DEADLINE_FALLBACK_CONCURRENCY_SCALE = 4;
+const MAX_BODY_DEADLINE_CONCURRENCY_SCALE = 8;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const NOOP_DISPOSE = (): void => {};
 
@@ -68,13 +70,20 @@ function releaseUnconsumedBody(response: Response): void {
   void body.cancel().catch(() => {});
 }
 
-function bodyAbsoluteDeadlineMs(
+export function bodyAbsoluteDeadlineMs(
   response: Response,
   stallTimeoutMs: number,
   concurrentFetches: number
 ): number {
-  const concurrencyScale = Math.max(1, concurrentFetches);
-  const fallbackMs = stallTimeoutMs * BODY_DEADLINE_FALLBACK_MULTIPLIER * concurrencyScale;
+  const concurrencyScale = Math.min(
+    MAX_BODY_DEADLINE_CONCURRENCY_SCALE,
+    Math.max(1, concurrentFetches)
+  );
+  const fallbackConcurrencyScale = Math.min(
+    MAX_BODY_DEADLINE_FALLBACK_CONCURRENCY_SCALE,
+    concurrencyScale
+  );
+  const fallbackMs = stallTimeoutMs * BODY_DEADLINE_FALLBACK_MULTIPLIER * fallbackConcurrencyScale;
   const contentLengthHeader = response.headers?.get('content-length');
   if (contentLengthHeader === null || contentLengthHeader === undefined) {
     return Math.min(MAX_TIMER_DELAY_MS, fallbackMs);
@@ -146,9 +155,9 @@ async function readBodyWithStallWatchdog(
   });
 
   try {
+    startAbsoluteDeadline();
     const reader = response.body?.getReader();
     if (!reader) {
-      startAbsoluteDeadline();
       armWatchdog();
       return new Uint8Array(
         await Promise.race([response.arrayBuffer(), abortPromise])
@@ -163,7 +172,6 @@ async function readBodyWithStallWatchdog(
         const { done, value } = await Promise.race([reader.read(), abortPromise]);
         if (done) break;
         if (value.byteLength === 0) continue;
-        startAbsoluteDeadline();
         chunks.push(value);
         byteLength += value.byteLength;
         noteFetchProgress();
@@ -352,11 +360,10 @@ export async function hashUrl(url: string): Promise<string> {
  * retried using the configured retry budget. The configured timeout is split
  * across attempts and applied separately to time-to-headers and aggregate
  * body-progress stalls. A quiet HTTP/2 stream remains valid while any live
- * fetch is receiving bytes. Once this response receives its first byte, an
- * absolute deadline — the longer of eight stall windows or `Content-Length`
- * divided by a 16 KiB/s aggregate floor, scaled by the concurrent leases that
- * share it — bounds a true trickle. Multiplexing queue time before that first
- * byte is not charged to the response or retry budget.
+ * fetch is receiving bytes. Once body reading begins, an absolute deadline —
+ * the longer of eight stall windows or `Content-Length` divided by a 16 KiB/s
+ * aggregate floor, scaled by at most eight concurrent leases — bounds both a
+ * zero-byte response and a true trickle.
  *
  * @param url - URL to fetch.
  * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation

@@ -14,9 +14,10 @@
  * (`data/zarr.ts`). Shared lane counters cap the total in flight, keeping
  * throughput high while staying within the browser's socket/memory budget.
  *
- * Data and metadata use separate lanes. Body-sized chunk reads stay bounded
- * without letting a root `zarr.json` / `.zattrs` probe wait behind every active
- * chunk body on a slow connection.
+ * Data and metadata use separate lanes. Body-sized chunk reads stay bounded,
+ * and on multiplexed transports a root `zarr.json` / `.zattrs` probe does not
+ * wait behind every active chunk body. HTTP/1.1 can still queue both lanes on
+ * the browser's smaller per-origin socket pool.
  */
 
 /**
@@ -60,6 +61,11 @@ export function noteFetchProgress(): void {
 /** Monotonic aggregate-progress snapshot used by body-stall watchdogs. */
 export function getFetchProgressEpoch(): number {
   return fetchProgressEpoch;
+}
+
+/** Reset aggregate progress state between isolated tests. */
+export function resetFetchProgressEpoch(): void {
+  fetchProgressEpoch = 0;
 }
 
 /** Current leases in one lane, including the caller while its body is read. */

@@ -116,14 +116,15 @@ Key behaviours:
   configured timeout is split across attempts and applied separately to
   time-to-headers and aggregate body-progress stalls. A quiet multiplexed
   stream stays alive while another live lease receives bytes. Its absolute
-  deadline starts on its own first body byte and is derived from
-  `Content-Length` at a 16 KiB/s aggregate floor shared across the active
-  leases, or eight similarly scaled stall windows when the length is
-  unavailable. HTTP/2 queue time is not charged, but a true trickle remains
-  bounded. Metadata probes use a separate four-slot lane from the 24 data-body
-  slots. A caller-aborted signal exits immediately without consuming retry
-  budget. The consumer runs inside its fetch-gate lease and may call
-  `readBody()` once; returning without reading cancels the body before release.
+  deadline starts when body reading begins and is derived from `Content-Length`
+  at a 16 KiB/s aggregate floor shared across at most eight active leases, or
+  eight stall windows shared across at most four leases when the length is
+  unavailable. Metadata probes use a separate four-slot lane from the 24
+  data-body slots; this prevents lane-level starvation on multiplexed transports,
+  while HTTP/1.1 can still queue both lanes on the browser's per-origin socket
+  pool. A caller-aborted signal exits immediately without consuming retry budget.
+  The consumer runs inside its fetch-gate lease and may call `readBody()` once;
+  returning without reading cancels the body before release.
 
 ### `bandwidth-window.ts` — sliding-window throughput
 
