@@ -137,3 +137,29 @@ def test_burial_shading_varies_without_changing_hue(
     assert float(scale[:, 0].min()) < 0.9
     np.testing.assert_allclose(scale[:, 1], scale[:, 0], atol=1e-6)
     np.testing.assert_allclose(scale[:, 2], scale[:, 0], atol=1e-6)
+
+
+def test_standing_camera_puts_the_wide_end_up_and_the_stalk_right() -> None:
+    """A synthetic F1F0: a long cylinder, a fat head at +z, a thin stalk at +x."""
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    stalk_axis = rng.normal(size=(2000, 3)) * [0.6, 0.6, 3.0]  # long along z
+    head = rng.normal(size=(3000, 3)) * [2.5, 2.5, 1.0] + [0.0, 0.0, 4.0]  # wide, at +z
+    peripheral = rng.normal(size=(600, 3)) * [0.3, 0.3, 3.0] + [
+        4.0,
+        0.0,
+        1.0,
+    ]  # off-axis +x
+    pts = np.concatenate([stalk_axis, head, peripheral]).astype(np.float32)
+
+    cam = _load_demo_module().standing_camera(pts)
+    up = np.asarray(cam.up)
+    assert up[2] > 0.95, f"up should be the +z head direction, got {up}"
+    view = np.asarray(cam.target) - np.asarray(cam.position)
+    view /= np.linalg.norm(view)
+    right = np.cross(view, up)
+    assert right[0] > 0.9, f"screen-right should point at the +x stalk, got {right}"
+    # Framed: the camera stands off far enough to see the whole cloud.
+    radius = np.linalg.norm(pts - pts.mean(0), axis=1).max()
+    assert np.linalg.norm(np.asarray(cam.position) - np.asarray(cam.target)) > radius
