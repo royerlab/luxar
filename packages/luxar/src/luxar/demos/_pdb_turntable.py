@@ -18,7 +18,9 @@ each story's panel. Two tools take part:
 Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
 
 1. Fetch ``<ID>.pdb`` and the entry title from RCSB (``files.rcsb.org`` and
-   ``data.rcsb.org``).
+   ``data.rcsb.org``); an entry too large for the legacy format (a whole ATP
+   synthase, a phage tail) is served only as mmCIF, so a 404 falls back to
+   ``<ID>.cif``.
 2. PyMOL headless (``pymol -cq <script>``) exports the molecular surface of the
    polymer, one mesh per chain (OBJ, re-saved as compressed float32 ``.npz``),
    into ``<ID>_mesh_v<MESH_VERSION>_q<Q>/``
@@ -54,6 +56,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +101,8 @@ DEFAULT_COLOR: tuple[float, float, float] = (0.69, 0.42, 0.85)
 RGB = tuple[float, float, float]
 
 RCSB_FILE_URL = "https://files.rcsb.org/download/{pdb_id}.pdb"
+#: The mmCIF fallback for entries too large for the legacy PDB format.
+RCSB_CIF_URL = "https://files.rcsb.org/download/{pdb_id}.cif"
 RCSB_ENTRY_URL = "https://data.rcsb.org/rest/v1/core/entry/{pdb_id}"
 
 PYMOL_INSTALL_HINT = (
@@ -303,16 +308,36 @@ def pymol_surface_script(pdb_path: Path, mesh_dir: Path, *, quality: int) -> str
 
 
 def fetch_pdb(pdb_id: str, cache_dir: Path) -> tuple[Path, str]:
-    """Download ``<ID>.pdb`` and the entry title into the cache (idempotent)."""
+    """Download the structure and the entry title into the cache (idempotent).
+
+    ``<ID>.pdb`` when RCSB serves one; the large cryo-EM assemblies a "show the
+    whole machine" story wants (a complete ATP synthase, a phage tail) exceed
+    the legacy format's limits and exist only as mmCIF, so a 404 falls back to
+    ``<ID>.cif``. PyMOL loads either by extension, and both spell their atom
+    records ``ATOM``/``HETATM`` at line start, so :func:`structure_atoms` reads
+    them alike.
+    """
     pdb_id = pdb_id.upper()
     cache_dir.mkdir(parents=True, exist_ok=True)
     pdb_path = cache_dir / f"{pdb_id}.pdb"
+    cif_path = cache_dir / f"{pdb_id}.cif"
     meta_path = cache_dir / f"{pdb_id}.json"
-    if not pdb_path.exists():
-        with urllib.request.urlopen(
-            RCSB_FILE_URL.format(pdb_id=pdb_id), timeout=60
-        ) as r:  # noqa: S310
-            pdb_path.write_bytes(r.read())
+    if cif_path.exists():
+        pdb_path = cif_path
+    elif not pdb_path.exists():
+        try:
+            with urllib.request.urlopen(
+                RCSB_FILE_URL.format(pdb_id=pdb_id), timeout=60
+            ) as r:  # noqa: S310
+                pdb_path.write_bytes(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            with urllib.request.urlopen(
+                RCSB_CIF_URL.format(pdb_id=pdb_id), timeout=60
+            ) as r:  # noqa: S310
+                cif_path.write_bytes(r.read())
+            pdb_path = cif_path
     if not meta_path.exists():
         try:
             with urllib.request.urlopen(

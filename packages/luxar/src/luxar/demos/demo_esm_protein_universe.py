@@ -1,0 +1,1922 @@
+#!/usr/bin/env python3
+"""ESM Protein Universe — twelve stories across 7.7 million protein clusters.
+
+The big-map sibling of ``demo_esm3_protein_stories``. Every point is one of
+7.7 million CLUSTERS of proteins from the ESM Atlas (Candido et al., bioRxiv
+2026): 6.8 billion sequences from eight public databases — 5.6 billion of them
+from metagenomes alone, read straight out of soil, seawater and guts rather than
+from any organism grown in a lab — grouped by the features a protein language
+model (ESM C) sees in them (Jaccard ≥ 0.6 to the cluster centre in
+sparse-autoencoder feature space) and laid out by 3D UMAP. A point is a cluster
+of at least fifty members; the 7.7 million together stand for 817 million
+proteins. A hidden ``story`` dimension walks through twelve stops: seven protein families
+carried over from the Swiss-Prot tour (hemoglobin, photosystem II, Hsp70, the
+viral spike, ATP synthase, RuBisCO, RecA), three stories only this map can tell
+(the ABC-transporter spur flung off the cloud, the dark proteome, the phage
+universe), and two more families whose knots are sharp here (beta-lactamases,
+CRISPR-Cas). Each stop flies the camera to the family's densest knot, lights
+its members, blows a soap bubble around them, shows a panel of sourced facts
+and a spinning representative structure, and is narrated on arrival.
+
+What changes against the Swiss-Prot tour, and why:
+
+- **Scale.** Thirteen times the points. The backdrop carries no per-point hover
+  labels (seven million strings would dominate the store); the story members
+  do, with their product name, taxon and a UniRef link.
+- **Grain.** This map is coherent at a far finer scale than the Swiss-Prot
+  one: ten nearest neighbours share a Pfam family three times out of four, but
+  they sit within a hundredth of a unit, and a family forms several small
+  pure knots rather than one blob. Stories therefore select by **Pfam family**
+  (or a product-name pattern, or a region predicate) and frame the densest
+  knot, scored by member count times purity, within a radius of ~0.3 rather
+  than 0.8.
+- **Colour.** The backdrop is coloured by the main branch of life of each
+  cluster's dominant phylum, and clusters with no characterised member at all
+  — one in four; no member carries a Pfam domain of known function, the same
+  count the preprint reports as "over two million" — are dimmed, so the "dark
+  proteome" reads as geography before its story is told.
+
+Dataset facts are from the preprint (Candido et al., "Language Modeling
+Materializes a World Model of Protein Biology", bioRxiv 2026, doi
+10.64898/2026.06.03.729735 — the atlas section and Appendix A.5); every
+map-specific line in a story (what a knot IS) was re-measured against the
+annotation table.
+
+Inputs are two parquet files handed over by the ESM Atlas team (not public, so
+``local_data="manual-file"``): the coordinates
+(``umap_coordinates_3d.parquet``: ``cluster_rep_protein_hash``, ``umap_1..3``)
+and the annotations (``representative_proteins_min50_pfam_taxa_desc_named_v3
+.parquet``: ``protein_hash``, ``cluster_pct_characterized``,
+``cluster_top_pfam_domains``, ``top_phyla``, ``product_name``,
+``uniref_match_accession``, ...), joined on the hash (MD5 of the representative
+sequence). Drop them in ``~/.cache/luxar/esm_protein_universe/`` (or
+``~/Downloads``, or pass ``--coords`` / ``--annotations``); the first run folds
+them into a compact cache and every later run starts from that.
+
+Usage:
+    python -m luxar.demos.demo_esm_protein_universe
+    python -m luxar.demos.demo_esm_protein_universe --no-serve
+    python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
+    python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
+"""
+
+from __future__ import annotations
+
+DEMO_META = {
+    "key": "esm_protein_universe",
+    "title": "ESM Protein Universe — twelve stories across 7.7 million protein clusters",
+    "description": (
+        "The ESM Atlas cluster map (Candido et al. 2026): a 3D UMAP of 7.7 "
+        "million protein clusters drawn from 6.8 billion sequences, most of them "
+        "environmental, with a hidden story dimension: "
+        "twelve stops — seven classic families, the ABC-transporter spur, the dark "
+        "proteome, the phage universe, beta-lactamases and CRISPR-Cas — each with "
+        "a fly-to waypoint, a highlight, a soap bubble, a turning structure and a "
+        "narrated panel of researched facts."
+    ),
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        # The CC0 ambient bed (~6 MiB, shared with the Swiss-Prot tour); the two
+        # parquet inputs (~900 MB) are a manual hand-off, not a download.
+        "download_mb": 7,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": "manual-file",
+    },
+    # Its own cache (the folded parquet inputs, narration, ambisonic bed), the
+    # shared turntable cache, and the Swiss-Prot tour's cache dir, where the
+    # shared ambient-bed download lives (`add_story_sounds` fetches it there).
+    "caches": ["esm_protein_universe", "pdb_turntables", "esm3_protein_stories"],
+    "outputs": ["esm_protein_universe"],
+    "citation": {
+        "short": "ESM Atlas cluster map (Candido et al. 2026)",
+        "ref": "ESM Atlas, Candido et al. 2026",
+        "doi": "10.64898/2026.06.03.729735",
+        "url": "https://biohub.ai/esmc/atlas",
+        # What governs OUR data is the permission, not a public licence: the 3D
+        # coordinates and the per-cluster annotation table are a hand-off from
+        # the ESM Atlas team, not the published release. Nor is the release's
+        # licence unambiguous — Biohub's own page says CC-BY-4.0 while the AWS
+        # Open Data registry entry says CC BY-SA 4.0 — so the footer claims
+        # neither and names only the permission we actually have.
+        "license": "3D map shown with permission",
+    },
+}
+
+import html
+import sys
+import tempfile
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from arbol import aprint, asection
+
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.compositing import position_bounds_from_array
+from luxar.core.group.lod.group import partitioned_coverage_fractions
+from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
+from luxar.core.viewer_config import (
+    AudioConfig,
+    CameraConfig,
+    EnvironmentConfig,
+    ViewerConfig,
+    Waypoint,
+)
+from luxar.demos import launch_viewer, parse_path_arg
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
+from luxar.demos._dependencies import require_module
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
+from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
+from luxar.demos.demo_esm3_protein_landscape import TAXON_COLORS
+from luxar.demos.demo_esm3_protein_stories import (
+    BIOHUB_LOGO,
+    BIOHUB_LOGO_WIDTH,
+    BUBBLE_DISPERSION,
+    BUBBLE_IOR,
+    BUBBLE_IRIDESCENCE,
+    BUBBLE_REFRACT_DATA,
+    BUBBLE_ROUGHNESS,
+    BUBBLE_THICKNESS_FRAC,
+    BUBBLE_TINT,
+    PANEL_WIDTH,
+    SPHERE_LAYER_ORDER,
+    STORY_DIM,
+    TURNTABLE_CACHE,
+    TURNTABLE_CAPTION_POSITION,
+    TURNTABLE_POSITION,
+    TURNTABLE_WIDTH,
+    Story,
+    StoryCluster,
+    _turntable_environment,
+    add_story_sounds,
+    bubble_radius,
+    cluster_geometry,
+    icosphere,
+    story_camera,
+    story_camera_distance,
+    story_node_name,
+    story_panel_html,
+)
+from luxar.demos.demo_esm3_protein_stories import (
+    STORIES as SWISSPROT_STORIES,
+)
+from luxar.utils.paths import get_demos_output_dir
+
+# =============================================================================
+# Inputs and cache
+# =============================================================================
+
+CACHE_DIR = Path.home() / ".cache" / "luxar" / "esm_protein_universe"
+COORDS_PARQUET = "umap_coordinates_3d.parquet"
+ANNOTATIONS_PARQUET = "representative_proteins_min50_pfam_taxa_desc_named_v3.parquet"
+#: The folded inputs: positions + the per-cluster columns every build needs.
+#: Bump the suffix when the layout below changes.
+UNIVERSE_CACHE = "universe_v3.npz"
+#: Points farther than this from the cloud's median are UMAP outliers (0.12% of
+#: the rows, some 60 units out) that would otherwise set the scene's extent.
+CULL_RADIUS = 40.0
+#: Beyond this radius from the centre lies the spur (see the ABC story) — but
+#: not only the spur: a few hundred stragglers sit that far out in other
+#: directions, and they would drag the story's bounding-box centre off the
+#: streak (from [3, 5, -30] to [-9, -2, -15]). So the spur is the far points
+#: within ``SPUR_HALF_ANGLE_DEG`` of the far set's mean direction, computed
+#: from the data at build time.
+SPUR_RADIUS = 22.0
+SPUR_HALF_ANGLE_DEG = 15.0
+#: The spur story is a GEOMETRY predicate whose panel makes a FAMILY claim, so
+#: the build checks that at least ``SPUR_PFAM_MIN_FRACTION`` of the lit
+#: clusters have an ABC-transporter Pfam family as their dominant domain; a
+#: different Atlas release could move the spur. Measured on this release:
+#: 8,277 clusters on the spur, 96% of them ABC parts — the ATP-binding cassette
+#: itself (PF00005), the ABC-type AAA ATPase domain (PF13304) or the ABC
+#: membrane domain (PF00664). Taking every point beyond r=22 instead gives
+#: 9,196 at 86%: the difference is the stragglers.
+SPUR_PFAMS = ("PF00005", "PF13304", "PF00664")
+SPUR_PFAM_MIN_FRACTION = 0.9
+
+# The annotation columns the cache folds in (the rest are read per story member
+# at build time).
+_ANNOTATION_COLUMNS = (
+    "protein_hash",
+    "cluster_pct_characterized",
+    "cluster_top_pfam_domains",
+    "top_phyla",
+)
+_MEMBER_COLUMNS = ("product_name", "uniref_match_accession", "lca_taxonomy")
+
+
+def find_input(name: str, explicit: Path | None) -> Path:
+    """Locate a hand-delivered parquet: ``explicit``, the cache dir, Downloads."""
+    candidates = [explicit] if explicit is not None else []
+    candidates += [CACHE_DIR / name, Path.home() / "Downloads" / name]
+    for c in candidates:
+        if c is not None and c.is_file():
+            return c
+    raise FileNotFoundError(
+        f"{name} not found. This demo needs the two parquet files from the ESM "
+        f"Atlas team; put them in {CACHE_DIR} (or ~/Downloads), or pass "
+        "--coords PATH / --annotations PATH."
+    )
+
+
+def _dominant_map_key(table: Any, column: str) -> tuple[np.ndarray, np.ndarray]:
+    """Per row of a ``map<string, int>`` column: the key with the largest value.
+
+    Returns ``(codes, vocab)`` with ``codes[i] == -1`` for an empty/null map.
+    """
+    arr = table.column(column).combine_chunks()
+    offsets = arr.offsets.to_numpy()
+    rows = np.repeat(np.arange(len(arr)), np.diff(offsets))
+    keys = np.asarray(arr.keys.to_numpy(zero_copy_only=False))
+    values = np.asarray(arr.items.to_numpy(zero_copy_only=False), dtype=np.float64)
+    values = np.nan_to_num(values, nan=0.0)
+    order = np.lexsort((-values, rows))
+    first = np.r_[True, rows[order][1:] != rows[order][:-1]]
+    dom_rows, dom_keys = rows[order][first], keys[order][first]
+    vocab, inverse = np.unique(dom_keys, return_inverse=True)
+    codes = np.full(len(arr), -1, dtype=np.int32)
+    codes[dom_rows] = inverse.astype(np.int32)
+    return codes, vocab
+
+
+def _characterized_percentages(column: Any) -> np.ndarray:
+    values = np.asarray(column.to_numpy(zero_copy_only=False), dtype=np.float32)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("cluster_pct_characterized contains null or non-finite values")
+    if np.any((values < 0) | (values > 100)):
+        raise ValueError("cluster_pct_characterized contains values outside [0, 100]")
+    return values
+
+
+def build_universe_cache(coords: Path, annotations: Path, out: Path) -> Path:
+    """Fold the two parquet inputs into the compact per-cluster cache.
+
+    Centres the coordinates on their median, culls the far outliers, joins the
+    annotation table on the hash and keeps the per-cluster columns every build
+    needs: characterised fraction, dominant Pfam family, dominant phylum, and
+    the annotation row (so a build can pull member details later).
+    """
+    pq = require_module("pyarrow.parquet")
+    t0 = time.time()
+    with asection(f"Reading {coords.name}"):
+        ct = pq.read_table(coords)
+        hashes = np.array(
+            ct.column("cluster_rep_protein_hash").to_pylist(), dtype="S32"
+        )
+        xyz = np.stack(
+            [ct.column(c).to_numpy() for c in ("umap_1", "umap_2", "umap_3")], axis=1
+        ).astype(np.float32)
+        del ct
+        centre = np.median(xyz, axis=0)
+        xyz -= centre
+        keep = np.linalg.norm(xyz, axis=1) <= CULL_RADIUS
+        aprint(
+            f"{len(xyz):,} clusters; culling {int((~keep).sum()):,} beyond "
+            f"radius {CULL_RADIUS:g} from the median"
+        )
+        xyz, hashes = xyz[keep], hashes[keep]
+    with asection(f"Reading {annotations.name}"):
+        at = pq.read_table(annotations, columns=list(_ANNOTATION_COLUMNS))
+        ahash = np.array(at.column("protein_hash").to_pylist(), dtype="S32")
+        order = np.argsort(ahash)
+        pos = np.searchsorted(ahash[order], hashes)
+        pos = np.minimum(pos, len(order) - 1)
+        hit = ahash[order][pos] == hashes
+        row = np.where(hit, order[pos], -1).astype(np.int32)
+        aprint(f"{int(hit.sum()):,} of {len(hashes):,} kept clusters have annotations")
+        if hit.mean() < 0.99:
+            raise ValueError(
+                "fewer than 99% of the coordinate rows have an annotation row — "
+                "are the two parquet files from the same release?"
+            )
+        pct_rows = _characterized_percentages(at.column("cluster_pct_characterized"))
+        pfam_rows, pfam_vocab = _dominant_map_key(at, "cluster_top_pfam_domains")
+        phylum_rows, phylum_vocab = _dominant_map_key(at, "top_phyla")
+        del at
+
+    def per_point(rows: np.ndarray, fill: float) -> np.ndarray:
+        out_arr = np.full(len(row), fill, dtype=rows.dtype)
+        out_arr[hit] = rows[row[hit]]
+        return out_arr
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        out,
+        positions=xyz,
+        annotation_row=row,
+        # A coordinate row without an annotation is unknown, not dark. Keep a
+        # neutral fill here; `dark_mask` also checks `annotation_row` explicitly.
+        pct_characterized=per_point(pct_rows, np.nan),
+        pfam_code=per_point(pfam_rows, -1),
+        pfam_vocab=pfam_vocab.astype("U16"),
+        phylum_code=per_point(phylum_rows, -1),
+        phylum_vocab=phylum_vocab.astype("U64"),
+    )
+    aprint(f"✓ Wrote {out} in {time.time() - t0:.0f}s")
+    return out
+
+
+@dataclass(frozen=True)
+class Universe:
+    """The per-cluster arrays a build works from (all aligned to ``positions``)."""
+
+    positions: np.ndarray
+    annotation_row: np.ndarray
+    pct_characterized: np.ndarray
+    pfam_code: np.ndarray
+    pfam_vocab: np.ndarray
+    phylum_code: np.ndarray
+    phylum_vocab: np.ndarray
+
+    def __len__(self) -> int:
+        return len(self.positions)
+
+    def pfam_mask(self, ids: tuple[str, ...]) -> np.ndarray:
+        """Clusters whose DOMINANT Pfam family is one of ``ids``."""
+        codes = np.flatnonzero(np.isin(self.pfam_vocab, list(ids)))
+        return np.isin(self.pfam_code, codes)
+
+    def phylum_mask(self, name: str) -> np.ndarray:
+        codes = np.flatnonzero(self.phylum_vocab == name)
+        return np.isin(self.phylum_code, codes)
+
+    def dark_mask(self) -> np.ndarray:
+        """Clusters with not one characterised member."""
+        return (self.annotation_row >= 0) & (self.pct_characterized == 0)
+
+    def phylum_names(self) -> np.ndarray:
+        """Per-cluster dominant phylum name ('' when unknown)."""
+        vocab = np.append(self.phylum_vocab, "")
+        return vocab[np.where(self.phylum_code < 0, len(vocab) - 1, self.phylum_code)]
+
+
+def load_universe(cache: Path) -> Universe:
+    data = np.load(cache)
+    return Universe(**{k: data[k] for k in data.files})
+
+
+# =============================================================================
+# Domains of life: phylum → the landscape demo's taxon palette
+# =============================================================================
+
+# The dominant phyla covering ~97% of the annotated clusters, mapped onto the
+# groups the Swiss-Prot landscape colours (so the two maps read alike). Any
+# phylum ending in "viricota" is a virus; anything else unlisted is "Other".
+_PHYLUM_GROUPS: dict[str, str] = {
+    "Pseudomonadota": "Proteobacteria",
+    "Bacillota": "Firmicutes & Actino",
+    "Actinomycetota": "Firmicutes & Actino",
+    "Mycoplasmatota": "Firmicutes & Actino",
+    "Chordata": "Other Vertebrates",
+    "Arthropoda": "Insects & Worms",
+    "Nematoda": "Insects & Worms",
+    "Mollusca": "Insects & Worms",
+    "Streptophyta": "Plants",
+    "Chlorophyta": "Plants",
+    "Bacillariophyta": "Plants",
+    "Haptophyta": "Plants",
+    "Ascomycota": "Fungi",
+    "Basidiomycota": "Fungi",
+}
+_OTHER_BACTERIA = frozenset(
+    {
+        "Bacteroidota", "Acidobacteriota", "Chloroflexota", "Planctomycetota",
+        "Verrucomicrobiota", "Cyanobacteriota", "Myxococcota",
+        "Thermodesulfobacteriota", "Gemmatimonadota", "Campylobacterota",
+        "Spirochaetota", "Nitrospirota", "Minisyncoccota", "Fidelibacterota",
+        "Candidatus Saccharimonadota", "Bdellovibrionota", "Candidatus Binatota",
+        "Candidatus Omnitrophota", "Candidatus Methylomirabilota", "Fusobacteriota",
+        "Armatimonadota", "Candidatus Melainabacteria", "Ignavibacteriota",
+        "Deinococcota", "Thermotogota", "Aquificota", "Chlorobiota",
+        "Deferribacterota", "Synergistota", "Elusimicrobiota", "Balneolota",
+        "Rhodothermota", "Calditrichota", "Candidatus Eisenbacteria",
+    }
+)  # fmt: skip
+_ARCHAEA = frozenset(
+    {
+        "Methanobacteriota", "Thermoplasmatota", "Nitrososphaerota",
+        "Candidatus Bathyarchaeota", "Thermoproteota", "Nanobdellota",
+        "Candidatus Thermoplasmatota", "Candidatus Micrarchaeota",
+        "Candidatus Aenigmarchaeota", "Candidatus Lokiarchaeota",
+        "Candidatus Korarchaeota", "Candidatus Woesearchaeota",
+        "Candidatus Nanohaloarchaeota", "Candidatus Diapherotrites",
+    }
+)  # fmt: skip
+#: Brightness factor for clusters with no characterised member: dim enough that
+#: the dark proteome reads as a shadow on the map, bright enough to still be
+#: there when a story frames one of its knots.
+DARK_DIM = 0.45
+
+
+def phylum_group(phylum: str) -> str:
+    """The landscape palette group a dominant phylum belongs to."""
+    if not phylum:
+        return "Other"
+    if phylum in _PHYLUM_GROUPS:
+        return _PHYLUM_GROUPS[phylum]
+    if phylum.endswith("viricota"):
+        return "Viruses"
+    if phylum in _ARCHAEA:
+        return "Archaea"
+    if phylum in _OTHER_BACTERIA:
+        return "Other Bacteria"
+    return "Other"
+
+
+def backdrop_colors(universe: Universe) -> np.ndarray:
+    """Per-cluster linear RGB: the domain palette, dimmed for dark clusters."""
+    groups = [phylum_group(str(p)) for p in universe.phylum_vocab] + ["Other"]
+    palette = np.array(
+        [TAXON_COLORS.get(g, TAXON_COLORS["Other"]) for g in groups], dtype=np.float32
+    )
+    code = np.where(universe.phylum_code < 0, len(groups) - 1, universe.phylum_code)
+    rgb = palette[code]
+    rgb[universe.dark_mask()] *= DARK_DIM
+    return rgb
+
+
+# =============================================================================
+# The stories
+# =============================================================================
+#
+# Every number below was checked against a source when the demo was written;
+# the source is named next to the fact. Counts about THIS map come from the
+# annotation table itself, and the dataset facts from the ESM Atlas preprint
+# (Candido et al., bioRxiv 2026, doi 10.64898/2026.06.03.729735): 6,824,676,938
+# sequences from eight databases (UniParc, IMG/M, IMG/VR, two JGI MAG sets,
+# MGnify, UHGG, SPIRE), with 5.6 billion from the two metagenome catalogues
+# SPIRE and MGnify alone; ESMC 6B embeddings → 16,384-feature SAE → Jaccard
+# ≥ 0.6 to the cluster centre → 3.05 billion clusters, of which 7.7 million
+# have at least fifty members (817 million proteins; this map); 1.1 billion
+# ESMFold2 structures; "characterised" means the cluster has a member carrying
+# a Pfam domain (release 38.1) whose FAMILY NAME does not mark it unknown
+# (DUF/UPF/"uncharacterized" — Appendix A.4.5.2's string rule, which the paper
+# itself calls a reasonable estimate), and "over two million" clusters have
+# none. Note the paper's other dark number, 1.5 million, is clusters with no
+# Pfam family AT ALL, a stricter cut than ours. Every
+# map-specific line (what a knot IS) was re-measured on 2026-09-09; the knot
+# compositions quoted in the comments come from that audit.
+
+
+@dataclass(frozen=True)
+class UniverseStory(Story):
+    """A story resolved against the cluster map rather than Swiss-Prot names.
+
+    Members are the union of: clusters whose dominant Pfam family is in
+    ``pfam``; clusters whose product name matches ``pattern`` (when non-empty);
+    and, for ``region`` stories, a predicate over the whole map — ``"spur"``
+    (beyond :data:`SPUR_RADIUS`), ``"dark"`` (no characterised member) or
+    ``"phage"`` (dominant phylum Uroviricota, the tailed phages). The camera
+    frames the densest, purest knot of those members within ``radius``.
+    """
+
+    pfam: tuple[str, ...] = ()
+    region: str | None = None
+    #: Keep only clusters whose dominant phylum falls in these landscape palette
+    #: groups (see :func:`phylum_group`). Hemoglobin needs it: the globin family
+    #: forms two knots of equal size, one bacterial and one animal, and the
+    #: purity-weighted seed lands on the bacterial one — which would make a
+    #: story titled "the molecule of breath" light flavohemoglobins.
+    groups: tuple[str, ...] = ()
+    #: Light and frame the WHOLE selection rather than its densest knot: a story
+    #: about the map itself (a quarter of it is dark; half a million clusters
+    #: are phage) must show every member, or the panel's numbers and the
+    #: picture contradict each other. No knot cut, no bubble, camera pulled
+    #: back to hold all of them.
+    whole: bool = False
+    #: Look at the members from the SIDE (perpendicular to the ray from the
+    #: map's centre) instead of from the outside along it: the spur points
+    #: straight away from the centre, so the default pose looks down its length
+    #: and foreshortens an 18-unit streak into a dot.
+    side_on: bool = False
+
+
+VALID_REGIONS = ("spur", "dark", "phage")
+
+_SWISSPROT = {s.key: s for s in SWISSPROT_STORIES}
+
+
+def _carry(key: str, **overrides: object) -> UniverseStory:
+    """A Swiss-Prot story re-targeted at this map, its vetted facts kept.
+
+    Only the map-specific lines change (subtitle, the fact that describes what
+    the blob shows, the narration sentence that repeats it) plus the selector.
+    """
+    base = asdict(_SWISSPROT[key])
+    base["kingdom"] = None  # Swiss-Prot taxon filter; this map selects by Pfam
+    base.update(overrides)
+    return UniverseStory(**base)  # type: ignore[arg-type]
+
+
+def _swap_fact(key: str, index: int, replacement: str) -> tuple[str, ...]:
+    facts = list(_SWISSPROT[key].facts)
+    facts[index] = replacement
+    return tuple(facts)
+
+
+#: Knot radius for a family story in this map (the Swiss-Prot tour used 0.8).
+FAMILY_RADIUS = 0.3
+#: Camera floor for a family story: a 0.2 bubble framed at 46% sits ~0.7 away.
+FAMILY_MIN_DISTANCE = 0.7
+#: Every pose here is composed for the cinematic lens (the distance rule in
+#: `story_camera_distance` divides by tan of half this angle).
+STORY_LENS_FOV_DEG = CINEMATIC_FOV_DEG
+
+# Appearance, retuned for thirteen times the point density AND a camera that
+# parks ~0.7 units from a knot (the Swiss-Prot tour sat 2-5 units out). A point
+# radius is a WORLD size: the tour's 0.028 highlight would span ~25 px of frame
+# height here and its 0.012 backdrop ~10 px, so a story frame was a wall of
+# overlapping soft discs (checked in the browser: the knot read as one blurred
+# blob, the near backdrop as haze over the panel). Radii sized for ~1% of the
+# frame at knot distance keep individual clusters visible and the map a texture
+# behind them; at the overview they are sub-pixel and render as 1 px points as
+# before. The bubble's floor drops from 0.35 to 0.2 so a knot fills its bubble.
+# BRIGHTNESS IS A PAIR: a per-layer window and a global exposure. `intensity`
+# is a plain linear colour multiplier (a 1/16 window here), `exposure` is in
+# log2 stops on top of it, and the pair below is the one MEASURED in the
+# browser: the overview reads as a cloud, the view from a knot through the
+# map's centre stays short of a whiteout (it whited out at +4.4 stops, a value
+# found persisted in the app's storage), and the story highlights (0.4, one
+# node, composed once) sit ~6x above the backdrop so a knot still pops. The
+# tour's 0.08 at 0 stops was the dim overview the owner reported. These values
+# reach the material as written: the wrapper is the only node that carries
+# them (see `_add_backdrop`).
+BACKDROP_RADIUS = 0.004
+BACKDROP_INTENSITY = 0.0625
+#: Global exposure in log2 stops (see `_viewer_config`).
+BACKDROP_EXPOSURE_STOPS = 2.5
+BACKDROP_OPACITY = 0.5
+HIGHLIGHT_RADIUS = 0.006
+HIGHLIGHT_INTENSITY = 0.4
+#: A knot of this many members gets the full highlight intensity; bigger
+#: highlights (the region stories light thousands) are dimmed by the square
+#: root of the ratio, so the additive glow of a knot stays roughly constant
+#: instead of saturating into one white ball.
+HIGHLIGHT_REFERENCE_MEMBERS = 300
+
+
+def highlight_intensity(n_members: int) -> float:
+    """Per-node highlight intensity for a knot of ``n_members`` clusters."""
+    ratio = HIGHLIGHT_REFERENCE_MEMBERS / max(n_members, HIGHLIGHT_REFERENCE_MEMBERS)
+    return HIGHLIGHT_INTENSITY * ratio**0.5
+
+
+BUBBLE_MIN_RADIUS = 0.2
+#: A whole-map highlight (hundreds of thousands of points seen from the
+#: overview distance) renders as 1 px points: a larger, brighter point than a
+#: knot's, so the region reads as a coloured shadow laid over the dim backdrop.
+WHOLE_HIGHLIGHT_RADIUS = 0.008
+WHOLE_HIGHLIGHT_INTENSITY = 0.35
+#: A whole-map highlight draws at most this many of its members (a fixed random
+#: sample; the panel says so). The backdrop alone sits at the viewer's residency
+#: ceiling (7.7M points ≈ 500 MiB), and a two-million-point highlight on top was
+#: declined at its first rung — measured in the browser: 312K of the dark
+#: proteome's 2.03M arrived, then nothing. At overview distance the points are
+#: sub-pixel anyway, so one in seven draws the same shadow as all of them.
+WHOLE_HIGHLIGHT_MAX_POINTS = 300_000
+#: The backdrop is a hand-built ``kind=partition`` of 64 BSP tiles of at most
+#: this many points, each tile its own ``kind=lod`` ladder of two POINTS
+#: levels: a fixed random 1-in-K subsample (colours scaled by K so the additive
+#: light is conserved) and the full tile. Two ceilings at once: one points node
+#: renders at most 5,591,040 on a 4096-class GPU and silently drops the tail
+#: (one contiguous Hilbert-order region, so a clean-edged hole); and the owner
+#: wants the drawn count near 2M for frame rate. ``coverage`` is evaluated PER
+#: TILE against the tile's own projected box, so the tiles must be small: with
+#: 8 tiles each was a 20-unit cube whose box filled the screen even from the
+#: overview, and three of them sat at full detail there. At 64 tiles the
+#: overview and the whole-map stories draw every tile coarse (~1.9M points)
+#: and a knot swaps in only its nearest handful. Two dead ends, both measured
+#: in the browser: a single lod group over a partition swapped ALL parts at
+#: once (9.6M resident at every knot); and the library's substitutive coarse
+#: levels — synthesised GAUSSIANS — rendered the view from a knot toward the
+#: map's centre at 6 fps at DPR 1 (1 fps at DPR 2), against 144 fps for the
+#: same 6.6M positions as plain points: merged Gaussians are fat where the
+#: cloud is sparse, and from inside the cloud a million of them overlap on
+#: every pixel. Points stay 1 px however many there are.
+BACKDROP_TILE_POINTS = 125_000
+#: Coarse level = one point in this many (light conserved by scaling colours).
+BACKDROP_LOD_FACTOR = 4
+
+STORIES: tuple[UniverseStory, ...] = (
+    _carry(
+        "Hemoglobin",
+        subtitle="A hundred animal globin clusters, out of four hundred in the map",
+        pattern="",
+        pfam=("PF00042",),  # Globin
+        # The 423 globin clusters break into two components of 159 (linked at
+        # 0.3): one purely bacterial (Pseudomonadota flavohemoglobins), one
+        # animal-dominated. Without this filter the purer bacterial knot wins
+        # the purity-weighted seed; with it the story lands on 102 animal
+        # clusters (Chordata 53, Nematoda 38, Arthropoda 9, Mollusca 2).
+        groups=("Other Vertebrates", "Insects & Worms"),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=_swap_fact(
+            "Hemoglobin",
+            3,
+            # Knot (audit): 102 clusters — Chordata 53, Nematoda 38,
+            # Arthropoda 9, Mollusca 2. Only 14 are named "hemoglobin"; most
+            # carry the generic "globin domain-containing protein", and a
+            # handful are neuroglobin, cytoglobin or myoglobin — the whole
+            # animal globin family, of which our blood protein is one member
+            # (Vinogradov & Moens, JBC 283:8773 (2008), for the fold's reach
+            # into bacteria, fungi and plants; that bacterial knot of 159 sits
+            # elsewhere in the map).
+            "This knot is the animal globins: hemoglobin beside the myoglobin "
+            "of muscle, the neuroglobin of nerves, and the globins of worms and "
+            "insects. The fold is far older than blood — bacteria, fungi and "
+            "plants carry globins that sense oxygen or detoxify nitric oxide, "
+            "and the model files those in a knot of their own elsewhere.",
+        ),
+    ),
+    _carry(
+        "Photosystem II",
+        subtitle="D1, the water-splitting protein — in cyanobacteria and plants, and in the viruses that hijack them",
+        pattern="",
+        pfam=("PF00124",),  # Photo_RC: D1/D2 and the L/M chains
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=_swap_fact(
+            "Photosystem II",
+            3,
+            # Knot (audit): 44 clusters — Uroviricota 18, Cyanobacteriota 13,
+            # Rhodophyta 7, Streptophyta 5. Twenty are named "photosystem II
+            # protein D1", three are the far-red D1 paralogue chlorophyll f
+            # synthase, nine carry the generic reaction-centre name and six are
+            # hypothetical; NOT ONE is D2, and there are no purple bacteria —
+            # the D2 and L/M chains sit in knots of their own. Cyanophage
+            # psbA: Mann et al., Nature 424:741 (2003); Lindell et al., Nature
+            # 438:86 (2005) — the phage copy of D1 is expressed during infection
+            # and keeps photosynthesis running while the phage replicates.
+            "This knot is D1 itself, from cyanobacteria, red algae and plants — "
+            "and two in five of its clusters belong to viruses. Cyanophages "
+            "carry their own copy of D1, and switch it on during infection to "
+            "keep the host's photosynthesis running while they replicate "
+            "inside it.",
+        ),
+    ),
+    _carry(
+        "Hsp70",
+        subtitle="Nearly four thousand clusters of one chaperone, in every branch of life on this map",
+        pattern="",
+        pfam=("PF00012",),  # HSP70
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=_swap_fact(
+            "Hsp70",
+            2,
+            # Hsp70's "about 47% identical" (fact 1) is measured, not quoted:
+            # a global alignment of E. coli DnaK (P0A6Y8) against human HSPA1A
+            # (P0DMV8) gives 47.9% identity over 629 aligned columns, and 45.9%
+            # against Hsc70 (P11142).
+            # Audit: 3,799 HSP70 clusters in 73 knots (19 of 20+ members);
+            # the big ones mix bacterial phyla (Pseudomonadota, Bacillota,
+            # Actinomycetota, Bacteroidota...), and plants and vertebrates share
+            # a few smaller ones with them — no knot is one branch of life.
+            "That is why the map holds it in dozens of knots — most of them "
+            "bacterial DnaK in one variation or another, with the plant and "
+            "animal versions filed among them — all recognisably the same "
+            "protein. The map is showing a protein older than the deepest split "
+            "in the tree of life.",
+        ),
+        narration=(
+            "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
+            "refolds the damaged ones, and hands the hopeless ones to the "
+            "shredder. Every bacterium and every eukaryote has one. After "
+            "three billion years apart, the human and E. coli "
+            "versions are still nearly half identical, letter for letter. The "
+            "map holds it in dozens of knots, most of them bacterial, all "
+            "recognisably the same protein. "
+            "Cancer cells over-produce it to survive their own chaos, and drugs "
+            "against it have been tried for decades. None has reached the "
+            "clinic. Why is such a universal protein so hard to target?"
+        ),
+    ),
+    _carry(
+        "Viral surface proteins",
+        title="The intruders' spike",
+        subtitle="Spike, haemagglutinin and the coats of a thousand viruses",
+        pattern=(
+            r"(?i)hemagglutinin|spike glycoprotein|envelope glycoprotein|"
+            r"fusion glycoprotein|major capsid|capsid protein|tail fiber|"
+            r"tail fibre|coat protein"
+        ),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=_swap_fact(
+            "Viral surface proteins",
+            3,
+            # Audit: knot of 372 clusters, every named one a spike glycoprotein
+            # (Pisuviricota, the phylum that holds the coronaviruses; most have
+            # no phylum recorded). Hosts are the family's, not read from the
+            # table: coronaviruses of bats, birds (IBV), pigs (PEDV, TGEV),
+            # camels (MERS) and people.
+            "This knot is the coronavirus spike in hundreds of versions — a "
+            "family that infects bats, birds, pigs, camels and people — the "
+            "protein the whole world learned to read in 2020.",
+        ),
+        pdb_id="6VXX",  # SARS-CoV-2 spike, closed state
+        narration=(
+            "The intruders' spike. Influenza's haemagglutinin, the coronavirus "
+            "spike, HIV's envelope: unrelated viruses, one trick. Each snaps "
+            "into a bundle that drags virus and cell together. The 1918 flu "
+            "killed tens of millions of people with a protein like this one. "
+            "This knot is the coronavirus spike, in hundreds of versions, from a "
+            "family that infects bats, birds, camels and people. Most viral proteins have no known relatives at all. "
+            "Where does that dark matter land on this map?"
+        ),
+    ),
+    _carry(
+        "ATP synthase",
+        subtitle="The rotary motor that makes the currency of life, in bacteria and in us",
+        pattern=r"(?i)ATP synthase (subunit )?beta",
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=_swap_fact(
+            "ATP synthase",
+            3,
+            # Audit: knot of 295, 93% pure — Bacillota 106, Pseudomonadota 62,
+            # Bacteroidota 39, Actinomycetota 28, and 10 named "chloroplastic".
+            "This knot is the beta subunit as bacteria build it, in hundreds of "
+            "versions, with the chloroplast copies of plants filed among them. "
+            "The copies in our own mitochondria descend from the same source: "
+            "one motor, inherited from the bacteria that became part of our "
+            "cells.",
+        ),
+    ),
+    _carry(
+        "RuBisCO",
+        subtitle="The protein that pulls carbon out of the air for almost all life",
+        pattern="",
+        pfam=("PF00016", "PF02788"),  # RuBisCO_large, RuBisCO_large_N
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=_swap_fact(
+            "RuBisCO",
+            3,
+            # RuBisCO's "one CO2 every thirty seconds" (fact 1) is Bar-On &
+            # Milo, PNAS 116:4738 (2019): the effective time-averaged rate on
+            # land is ~0.03/s, one per 33 s, about 1% of the ~3/s kcat. Their
+            # 0.7 Gt global mass is the same paper.
+            # Audit: knot of 117 — Streptophyta 58 (50%), Pseudomonadota 27,
+            # Bacillota 10; 83 named for the large chain and seven "2,3-diketo-
+            # 5-methylthiopentyl-1-phosphate enolase": the RuBisCO-like protein
+            # of the methionine salvage pathway (Ashida et al., Science 302:286
+            # (2003), Bacillus subtilis).
+            "The knot here is the large chain: half of it the plant enzyme, the "
+            "rest bacterial forms — and a few RuBisCO-like proteins that never "
+            "fix carbon at all. In Bacillus, one of them recycles methionine "
+            "instead.",
+        ),
+    ),
+    _carry(
+        "RecA and Rad51",
+        subtitle="One recombinase, from phages and E. coli to the BRCA2 pathway in our cells",
+        pattern="",
+        pfam=("PF00154",),  # RecA (Rad51 has its own knot far away)
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=_swap_fact(
+            "RecA and Rad51",
+            3,
+            # Audit: knot of 171, 169 of them Uroviricota (tailed phages); 669
+            # of the 1,560 RecA clusters in the map are viral. Phage-encoded
+            # RecA homologs (T4's UvsX among them) are well known. RAD51 is
+            # its own Pfam family (PF08423, 535 clusters: archaea 222, fungi
+            # 69, vertebrates 48, plants 47) in 21 components, the largest of
+            # them archaeal RadA and centred one unit from this knot.
+            "The densest RecA knot in this map belongs to viruses: many tailed "
+            "phages carry a RecA of their own, to repair and reshuffle their "
+            "genomes inside the host. Our RAD51 and its archaeal cousin RadA "
+            "make knots of their own a short way off; the shape has barely "
+            "moved in billions of years.",
+        ),
+        narration=(
+            "RecA and Rad51, the machine that mends broken DNA. It coats a "
+            "broken strand and searches the entire genome for the matching "
+            "sequence. Our version, RAD51, is loaded by BRCA2, the protein "
+            "whose mutations cause much of hereditary breast cancer. This knot "
+            "belongs to phages, which carry a RecA of their own, and our RAD51 "
+            "sits in a knot just beside it; the shape has barely moved in "
+            "billions of years. It finds one match among "
+            "millions of base pairs in minutes. How it searches that fast is "
+            "still argued over."
+        ),
+    ),
+    UniverseStory(
+        key="ABC transporters",
+        title="The spur — ABC transporters flung off the map",
+        subtitle="Eight thousand clusters, nearly all of them parts of ABC transporters, in a streak of their own",
+        pattern="",
+        region="spur",
+        whole=True,
+        color=(0.3, 0.95, 0.95),
+        # The streak is long and thin: seen side-on and framed at 1.2 it runs
+        # across the frame like a river, not a dot in the distance.
+        side_on=True,
+        frame_fraction=1.2,
+        flight_ms=3000,
+        facts=(
+            # Linton & Higgins, Mol. Microbiol. 28:5 (1998): ~5% of the E. coli
+            # genome encodes ABC transporter components.
+            "ATP-binding cassette transporters pump molecules across membranes, "
+            "burning ATP to do it: nutrients in, toxins out. Every genome has "
+            "them — about five percent of E. coli's genes are devoted to them — "
+            "and they are among the largest protein families known.",
+            # Dean, Rzhetsky & Allikmets, Genome Res. 11:1156 (2001): 48 human
+            # ABC genes; CFTR = ABCC7; Juliano & Ling 1976 (P-glycoprotein).
+            "Humans have 48. When one of them, CFTR, is broken, the result is "
+            "cystic fibrosis; another, P-glycoprotein, pumps chemotherapy back "
+            "out of cancer cells and is a major cause of drug resistance in "
+            "tumours.",
+            "The engine is the same everywhere: a pair of nucleotide-binding "
+            "domains that clamp shut around two ATPs and spring open when they "
+            "are spent. That engine — the cassette — is what these clusters "
+            "share.",
+            # 8,277 clusters on the spur; 96% carry an ABC-transporter Pfam
+            # family as their dominant domain (see SPUR_PFAMS). ABC_tran
+            # (PF00005) has long been reported as the largest Pfam-A family by
+            # sequence count, and it is far and away the commonest dominant
+            # family in this map: 48,106 clusters against 31,024 for the next,
+            # the MFS transporters (PF07690). The measured number is ours; the
+            # Pfam ranking is not restated as a bare fact in the panel.
+            "The map put them on a spur of their own. A streak like this is "
+            "what the layout algorithm does with a huge, tightly knit family "
+            "that shares few features with anything else — partly an artefact, "
+            "but an honest one: the ATP-binding cassette is among the largest "
+            "protein families known, and by a wide margin the commonest on "
+            "this map.",
+        ),
+        mystery=(
+            "The same cassette powers importers and exporters, in bacteria and "
+            "in us. How its ATP cycle is coupled to the movement of cargo — the "
+            "actual mechanics of the pump — is still argued for most of the "
+            "family."
+        ),
+        tags=("membranes", "medicine", "map artefact"),
+        pdb_id="2HYD",  # Sav1866, a multidrug ABC exporter
+        narration=(
+            "The spur. These eight thousand clusters were flung off the map, and "
+            "nearly all of them are one thing: the ATP-binding cassette, the "
+            "engine of the ABC transporters. Every genome has them, pumping "
+            "nutrients in and toxins out. Humans have forty-eight; a broken one "
+            "causes cystic fibrosis, another pumps chemotherapy out of tumours. "
+            "The streak is a habit of the layout algorithm, but an honest one: "
+            "no design is repeated more often on this map. How the engine "
+            "actually moves its cargo is still argued over."
+        ),
+    ),
+    UniverseStory(
+        key="Dark proteome",
+        title="The dark proteome — two million clusters nobody has characterised",
+        subtitle="A quarter of this map has no characterised member at all",
+        pattern="",
+        region="dark",
+        whole=True,
+        color=(0.5, 0.65, 1.0),
+        frame_fraction=1.0,
+        facts=(
+            # Annotation table: 2,025,330 of 7,723,579 clusters have
+            # cluster_pct_characterized == 0 (no member carries a Pfam domain of
+            # known function — the preprint's own definition, which reports
+            # "over two million" such clusters); 76% of those are named
+            # "hypothetical protein".
+            "Two million of the 7.7 million clusters here — one in four — "
+            "contain not a single protein anyone has characterised: no member "
+            "carries a domain of known function. Most wear the placeholder "
+            "name “hypothetical protein”. They are the dim points of this map.",
+            # Preprint, atlas section + Appendix A.5.1/A.5.2: 6.82 billion
+            # sequences, 5.6 billion from metagenomic samples (SPIRE, MGnify:
+            # gut, aquatic, soil, wastewater, agriculture, built environment);
+            # 1.1 billion representative structures from ESMFold2.
+            "They come from metagenomics: DNA read straight out of soil, "
+            "seawater, wastewater and guts, from organisms nobody has grown in "
+            "a lab. Of the 6.8 billion sequences behind this map, 5.6 billion "
+            "came that way — and a structure has been predicted for 1.1 "
+            "billion of them.",
+            # Annotation table (re-measured): the ten nearest neighbours of a
+            # dark cluster are dark 80% of the time against a 26% base rate,
+            # rising to 85% for dark clusters in the densest 1% of the map.
+            # An earlier draft said "more than nine in ten in the densest
+            # pockets" — that holds only for a handful of hand-picked voxels,
+            # not for the densest regions generally, so it is gone.
+            "Dark sits next to dark: eight of the ten nearest neighbours of an "
+            "unnamed cluster are unnamed too, where one in four would be the "
+            "rate if they were scattered. Whatever these proteins do, they do "
+            "it in families of their own.",
+            # CRISPR: Ishino et al. 1987 → Jinek et al. 2012. GFP: Shimomura
+            # 1962 → Chalfie et al. 1994.
+            "Some of the most useful tools in biology were dark once. The "
+            "CRISPR repeats were “unusual” DNA for twenty-five years; green "
+            "fluorescent protein was a jellyfish curiosity for thirty.",
+        ),
+        mystery=(
+            "Are these families genuinely new chemistry, or old folds whose "
+            "sequences drifted beyond recognition? The predicted structures say "
+            "a little of both — and nobody yet knows the proportion."
+        ),
+        tags=("metagenomics", "unknown function"),
+        pdb_id="2GA1",  # a DUF433 protein of unknown function (structural genomics)
+        narration=(
+            "The dark proteome. Two million of these clusters, one in four, "
+            "contain not a single protein anyone has characterised. They are "
+            "the dim points of this map, read straight out of soil, seawater "
+            "and guts, from organisms nobody has grown. Dark sits next to dark: "
+            "eight of the ten nearest neighbours of an unnamed cluster are "
+            "unnamed too, where one in four would be the rate by chance. "
+            "Some of biology's best tools were dark once; CRISPR was unusual "
+            "DNA for twenty-five years. Are these new chemistry, or old folds "
+            "drifted beyond recognition? Nobody knows the proportion."
+        ),
+    ),
+    UniverseStory(
+        key="Phage",
+        title="The phage universe — the viruses that outnumber everything",
+        subtitle="Half a million clusters of tailed bacteriophages, half of them unnamed",
+        pattern="",
+        region="phage",
+        whole=True,
+        color=(1.0, 0.55, 0.75),
+        frame_fraction=1.0,
+        facts=(
+            # Hendrix et al., PNAS 96:2192 (1999): ~10^31 tailed phages.
+            # Annotation table: 580,733 clusters with Uroviricota (the tailed
+            # phages) as dominant phylum — 93% of the 622,879 viral clusters.
+            # Preprint: "Almost all viral sequences are metagenomic, largely
+            # derived from bacteriophages" (atlas section).
+            "Bacteriophages — the viruses of bacteria — are the most abundant "
+            "biological entities on Earth: an estimated ten million trillion "
+            "trillion of them, more than every other organism combined. Here "
+            "581,000 clusters are theirs.",
+            # Suttle, Nat. Rev. Microbiol. 5:801 (2007): viruses kill ~20% of
+            # ocean microbial biomass per day (the "viral shunt").
+            "In the oceans they kill around a fifth of all microbial biomass "
+            "every day, spilling its carbon back into the water — the “viral "
+            "shunt” that shapes the planet's carbon cycle.",
+            # Twort, Lancet 1915; d'Hérelle, C. R. Acad. Sci. 1917.
+            "Discovered twice, by Frederick Twort in 1915 and Félix d'Hérelle "
+            "in 1917, they were medicine before penicillin — and, with "
+            "antibiotic resistance rising, phage therapy is being tried again.",
+            # Annotation table: 51% of Uroviricota clusters have
+            # cluster_pct_characterized == 0.
+            "Half of the phage clusters here are dark: no member has ever been "
+            "characterised. Phage genomes are probably the largest reservoir "
+            "of unexplored genes on the planet.",
+        ),
+        mystery=(
+            "Every gram of soil and every millilitre of seawater holds millions "
+            "of phages. What most of their genes do — and how many kinds of "
+            "phage there really are — nobody knows."
+        ),
+        tags=("virology", "ecology"),
+        # The whole tail machine of phage T7 — collar, nozzle and tube — a
+        # recognisable piece of a phage, not one fibre tip (2XGF). The full T4
+        # baseplate (5IV5) renders too, but face-on it reads as a hexagonal blob.
+        pdb_id="6R21",
+        narration=(
+            "The phage universe. Bacteriophages, the viruses of bacteria, are "
+            "the most abundant biological entities on Earth: ten million "
+            "trillion trillion of them, more than everything else combined. "
+            "Half a million clusters here are theirs. In the oceans they kill a "
+            "fifth of all microbial biomass every day. They were medicine before "
+            "penicillin, and are being tried again. Half of the phage clusters "
+            "here are dark. What most of their genes do, nobody knows."
+        ),
+    ),
+    UniverseStory(
+        key="Beta-lactamases",
+        title="Beta-lactamase — the enzyme that fights back",
+        subtitle="Nine thousand clusters of the beta-lactamase fold; this knot is the class A enzymes, TEM-1's own family",
+        pattern="",
+        # PF00144 (7,168 clusters) is the beta-lactamase FOLD — class C
+        # enzymes, but also penicillin-binding proteins and esterases that never
+        # touch an antibiotic; PF13354 (2,251) is the class A beta-lactamases
+        # proper (TEM, SHV, CTX-M). The densest knot (398 clusters) is 97%
+        # PF13354, so the turntable's TEM-1 is the right molecule for it.
+        pfam=("PF00144", "PF13354"),  # Beta-lactamase, Beta-lactamase2
+        color=(0.95, 0.25, 0.5),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            "Penicillin works by jamming the enzymes that build the bacterial "
+            "cell wall. A beta-lactamase cuts open the antibiotic's "
+            "four-membered ring before it gets there, and the drug is dead.",
+            # Abraham & Chain, Nature 146:837 (1940); first patient treated
+            # February 1941.
+            "Resistance was there before the cure. Edward Abraham and Ernst "
+            "Chain described an E. coli enzyme that destroyed penicillin in "
+            "1940 — a year before the first patient was ever treated with it.",
+            # Murray et al., Lancet 399:629 (2022): 4.95 million deaths
+            # associated with, 1.27 million attributable to, bacterial AMR in 2019.
+            "Antibiotic resistance is now associated with nearly five million "
+            "deaths a year, 1.3 million of them directly attributable. "
+            "Beta-lactamases — TEM-1, CTX-M, NDM-1 — are the core of the "
+            "problem in Gram-negative bacteria.",
+            # D'Costa et al., Nature 477:457 (2011): resistance genes in
+            # 30,000-year-old Beringian permafrost.
+            # Hall & Barlow, Drug Resist. Updat. 7:111 (2004): phylogenies put
+            # the origin of the serine beta-lactamases more than two billion
+            # years back, and some on plasmids for millions of years. The
+            # beta-lactam producers are moulds (Penicillium) and soil bacteria
+            # (Streptomyces).
+            "Beta-lactamase genes have been recovered from 30,000-year-old "
+            "permafrost, and phylogenies reckon the serine beta-lactamases far "
+            "older still — a couple of billion years. Moulds and soil bacteria "
+            "have long made penicillin-like antibiotics, and their neighbours "
+            "have long destroyed them.",
+        ),
+        mystery=(
+            "Thousands of beta-lactamase variants are known and new ones appear "
+            "every year. Can inhibitors and new antibiotics keep pace with an "
+            "enzyme family that evolves in real time, in every hospital on "
+            "Earth?"
+        ),
+        tags=("medicine", "antibiotic resistance"),
+        pdb_id="1BTL",  # TEM-1
+        narration=(
+            "Beta-lactamase, the enzyme that fights back. Penicillin jams the "
+            "machinery that builds the bacterial cell wall; this enzyme cuts "
+            "the antibiotic open first. Resistance came before the cure: it was "
+            "described in 1940, a year before the first patient was treated. "
+            "Today antibiotic resistance is linked to nearly five million deaths "
+            "a year, and these genes turn up in thirty-thousand-year-old "
+            "permafrost. Can new drugs keep pace with an enzyme that evolves in "
+            "real time?"
+        ),
+    ),
+    UniverseStory(
+        key="CRISPR-Cas",
+        title="CRISPR-Cas9 — a bacterial immune system turned into scissors",
+        subtitle="Hundreds of clusters of the enzyme bacteria use to cut viral DNA",
+        pattern="",
+        # The preprint's own Cas9 class (Table S15 of Candido et al. 2026):
+        # the RuvC, REC-lobe, bridge-helix, WED, PI and C-terminal families of
+        # Cas9, plus HNH_4 (PF13395) — a GENERIC HNH endonuclease family, and
+        # the one that supplies 585 of the 874 clusters, so the selection is
+        # broader than "Cas9" at the family level. The knot it lands on is not:
+        # 260 clusters, 88% pure, 132 of them named for Cas9 itself.
+        pfam=(
+            "PF22702",
+            "PF13395",
+            "PF16593",
+            "PF16592",
+            "PF16595",
+            "PF18470",
+            "PF21069",
+            "PF18525",
+            "PF18061",
+            "PF17893",
+            "PF17894",
+            "PF18070",
+        ),  # fmt: skip
+        color=(0.4, 1.0, 0.8),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            # Barrangou et al., Science 315:1709 (2007).
+            "CRISPR is an immune system. Bacteria keep snippets of the DNA of "
+            "viruses that attacked them, and Cas proteins use those snippets "
+            "as a guide to find and cut the same virus next time.",
+            # Ishino et al., J. Bacteriol. 169:5429 (1987); Mojica et al.,
+            # Pourcel et al., Bolotin et al. (2005).
+            "The repeats were first noticed in E. coli in 1987 and stayed a "
+            "curiosity for years; in 2005 three groups realised that the "
+            "spacers between them matched viral DNA.",
+            # Jinek et al., Science 337:816 (2012); Nobel Prize in Chemistry 2020.
+            "In 2012 Jennifer Doudna and Emmanuelle Charpentier showed that "
+            "Cas9 could be pointed at any DNA sequence by rewriting its guide — "
+            "programmable scissors. Nobel Prize in Chemistry 2020.",
+            # Casgevy (exagamglogene autotemcel): MHRA Nov 2023, FDA Dec 2023.
+            "Eleven years later the first CRISPR medicine was approved: a "
+            "therapy for sickle-cell disease — the illness of the first story "
+            "on this tour.",
+        ),
+        # Makarova et al., Nat. Rev. Microbiol. 13:722 (2015): CRISPR-Cas in
+        # ~45% of bacterial and ~85% of archaeal genomes. (The often-quoted
+        # 40% / 90% pair traces to survey papers that do not agree with each
+        # other; CRISPRdb itself, Grissa et al. 2007, gives ~45% / ~83%.)
+        mystery=(
+            "Roughly 45% of bacteria and 85% of archaea carry CRISPR systems, "
+            "yet many highly successful bacteria do without. Why would an "
+            "organism give up an immune system?"
+        ),
+        tags=("genome editing", "immunity"),
+        pdb_id="4OO8",  # S. pyogenes Cas9 with guide RNA and target DNA
+        narration=(
+            "CRISPR-Cas9, a bacterial immune system turned into scissors. "
+            "Bacteria keep snippets of the viruses that attacked them, and Cas "
+            "proteins use those snippets to find and cut the same virus next "
+            "time. Noticed in 1987, understood in 2005, and in 2012 Doudna and "
+            "Charpentier showed Cas9 could be pointed at any DNA at all. Eleven "
+            "years later the first CRISPR medicine was approved, for sickle-cell "
+            "disease, the illness of the first story on this tour. Yet many "
+            "successful bacteria do without CRISPR. Why give up an immune "
+            "system?"
+        ),
+    ),
+)
+
+OVERVIEW_TITLE = "Twelve stories in the protein universe"
+ATTRIBUTION = f"{DEMO_META['citation']['ref']} · {DEMO_META['citation']['license']}"
+OVERVIEW_HTML = (
+    "Every point is one of {n:,} clusters of proteins from the ESM Atlas: 6.8 "
+    "billion sequences, most of them read straight out of soil, seawater and "
+    "guts rather than from any organism grown in a lab, grouped by the features "
+    "a protein language model sees in them and laid out in 3D with UMAP so that "
+    "similar clusters sit close together. Colours are the main branches of "
+    "life; the dim points are clusters nobody has characterised."
+    "<br><br>Step the <b>story</b> dimension to fly to twelve knots that each "
+    "tell a piece of biology: blood, sunlight, the oldest chaperone, the "
+    "coronavirus spike, the cell's turbine, the slowest important enzyme, the "
+    "machine that mends DNA, a spur flung off the map, the dark proteome, the "
+    "phage universe, the enzyme that beats penicillin, and CRISPR."
+)
+#: Spoken introduction at the Overview slot.
+OVERVIEW_NARRATION = (
+    "Every point here is a family of proteins: seven point seven million of "
+    "them, drawn from nearly seven billion sequences, most read straight out "
+    "of the environment, and grouped by a language model so that similar "
+    "proteins sit close together. The dim points are families nobody has "
+    "characterised. Twelve of these knots hide a story. Step through them."
+)
+UNIREF_LINK = "https://www.uniprot.org/uniref?query={hover_key}"
+NARRATION_CACHE_DIR = CACHE_DIR / "narration"
+AMBISONIC_BED_CACHE_DIR = CACHE_DIR / "ambisonic"
+
+
+# =============================================================================
+# Selection (unit-tested)
+# =============================================================================
+
+#: Candidate knot seeds are subsampled to this many members: exact for every
+#: family story, and far denser than any knot for the million-member regions.
+MAX_SEED_CANDIDATES = 20_000
+
+
+def spur_mask(positions: np.ndarray) -> np.ndarray:
+    """The spur: far points within :data:`SPUR_HALF_ANGLE_DEG` of their mean direction.
+
+    The mean direction of everything beyond :data:`SPUR_RADIUS` is the spur's
+    axis (the streak dominates that set), and the cone around it drops the
+    stragglers that sit equally far out in other directions.
+    """
+    radius = np.linalg.norm(positions, axis=1)
+    far = radius > SPUR_RADIUS
+    if not far.any():
+        return far
+    axis = positions[far].mean(axis=0)
+    axis_norm = float(np.linalg.norm(axis))
+    if axis_norm <= 1e-9:
+        raise ValueError("far clusters have no dominant direction for the spur")
+    axis /= axis_norm
+    cos = (positions @ axis) / np.maximum(radius, 1e-9)
+    return far & (cos > np.cos(np.radians(SPUR_HALF_ANGLE_DEG)))
+
+
+def densest_core(
+    family_pos: np.ndarray,
+    radius: float,
+    all_tree: Any,
+    *,
+    seed: int = 0,
+) -> np.ndarray:
+    """The member whose ``radius``-ball holds the most members, weighted by purity.
+
+    Score = members within the ball × (members / all clusters within the ball).
+    Purity matters here because a region story's members (a quarter of the map
+    for the dark proteome) are everywhere: the raw count would land on the
+    densest place in the map, the purity weight lands on the darkest.
+    """
+    spatial = require_module("scipy.spatial")
+    n = len(family_pos)
+    if n == 1:
+        return family_pos[0]
+    if n > MAX_SEED_CANDIDATES:
+        rng = np.random.default_rng(seed)
+        cand = family_pos[rng.choice(n, MAX_SEED_CANDIDATES, replace=False)]
+    else:
+        cand = family_pos
+    fam_tree = spatial.cKDTree(family_pos)
+    fam_count = np.asarray(
+        fam_tree.query_ball_point(cand, radius, return_length=True), dtype=np.float64
+    )
+    all_count = np.asarray(
+        all_tree.query_ball_point(cand, radius, return_length=True), dtype=np.float64
+    )
+    score = fam_count * fam_count / np.maximum(all_count, 1.0)
+    return cand[int(np.argmax(score))]
+
+
+def family_mask(
+    story: UniverseStory, universe: Universe, name_mask: np.ndarray | None
+) -> np.ndarray:
+    """Which clusters belong to the story before the knot cut (see the class doc)."""
+    mask = np.zeros(len(universe), dtype=bool)
+    if story.pfam:
+        mask |= universe.pfam_mask(story.pfam)
+    if story.pattern:
+        if name_mask is None:
+            raise ValueError(f"story {story.key!r} selects by name but no names given")
+        mask |= name_mask
+    if story.region == "spur":
+        mask |= spur_mask(universe.positions)
+    elif story.region == "dark":
+        mask |= universe.dark_mask()
+    elif story.region == "phage":
+        mask |= universe.phylum_mask("Uroviricota")
+    elif story.region is not None:
+        raise ValueError(f"story {story.key!r}: unknown region {story.region!r}")
+    if story.groups:
+        names = universe.phylum_names()
+        group_of = {p: phylum_group(str(p)) for p in np.unique(names)}
+        in_group = np.array([group_of[p] in story.groups for p in names])
+        mask &= in_group
+    return mask
+
+
+def select_universe_members(
+    story: UniverseStory,
+    universe: Universe,
+    mask: np.ndarray,
+    all_tree: Any,
+) -> StoryCluster:
+    """Resolve a story to the clusters of its densest knot — or, for a
+    ``whole`` story, to every matching cluster.
+
+    A knot story seeds on the member with the most (and purest) member
+    neighbours within two thirds of ``story.radius``, keeps the members within
+    ``story.radius`` of it, and re-centres on their bounding box (see
+    :func:`~luxar.demos.demo_esm3_protein_stories.cluster_geometry`).
+    """
+    n_named = int(mask.sum())
+    if n_named == 0:
+        raise ValueError(f"story {story.key!r}: no cluster matched its selector")
+    if story.whole:
+        indices = np.flatnonzero(mask)
+        centre, radial = cluster_geometry(universe.positions[indices])
+        return StoryCluster(
+            indices=indices,
+            centre=centre,
+            r95=float(np.percentile(radial, 95)),
+            n_named=n_named,
+            r50=float(np.percentile(radial, 50)),
+            r_max=float(radial.max()),
+        )
+    seed = densest_core(
+        universe.positions[mask].astype(np.float64), story.radius * 2.0 / 3.0, all_tree
+    )
+    ball = np.asarray(all_tree.query_ball_point(seed, story.radius), dtype=np.int64)
+    indices = ball[mask[ball]]
+    if len(indices) == 0:
+        raise ValueError(f"story {story.key!r}: no member within radius {story.radius}")
+    indices = np.sort(indices)
+    # Bounding-box centre + enclosing radius: the bubble holds every member
+    # and sits on the knot, not on its dense half (see the stories tour).
+    centre, radial = cluster_geometry(universe.positions[indices])
+    return StoryCluster(
+        indices=indices,
+        centre=centre,
+        r95=float(np.percentile(radial, 95)),
+        n_named=n_named,
+        r50=float(np.percentile(radial, 50)),
+        r_max=float(radial.max()),
+    )
+
+
+def whole_highlight_sample(indices: np.ndarray, *, seed: int = 0) -> np.ndarray:
+    """The members a whole-map highlight draws: all of them, or a fixed sample."""
+    if len(indices) <= WHOLE_HIGHLIGHT_MAX_POINTS:
+        return indices
+    rng = np.random.default_rng(seed)
+    pick = rng.choice(len(indices), WHOLE_HIGHLIGHT_MAX_POINTS, replace=False)
+    return np.sort(indices[pick])
+
+
+def highlight_unit(n_members: int, n_drawn: int) -> str:
+    """The panel's count unit: ``clusters``, or the sampling ratio when drawn short."""
+    if n_drawn >= n_members:
+        return "clusters"
+    return f"clusters (one in {round(n_members / n_drawn)} drawn)"
+
+
+def universe_story_camera(
+    cluster: StoryCluster, story: UniverseStory, global_centre: np.ndarray
+) -> CameraConfig:
+    """The waypoint pose: the stories tour's outside-in shot, or side-on.
+
+    Side-on keeps the tour's distance rule and swaps the direction for one
+    perpendicular to the centre→cluster ray (the horizontal perpendicular,
+    lifted a little), so an elongated radial feature is seen across, not along.
+    """
+    if not story.side_on:
+        return story_camera(cluster, story, global_centre, min_radius=BUBBLE_MIN_RADIUS)
+    outward = cluster.centre - global_centre
+    side = np.cross(outward, np.array([0.0, 1.0, 0.0]))
+    norm = float(np.linalg.norm(side))
+    side = side / norm if norm > 1e-6 else np.array([1.0, 0.0, 0.0])
+    direction = side + np.array([0.0, 0.35, 0.0])
+    direction /= np.linalg.norm(direction)
+    distance = story_camera_distance(cluster, story, min_radius=BUBBLE_MIN_RADIUS)
+    position = cluster.centre + direction * distance
+    return CameraConfig(
+        position=tuple(float(v) for v in position),
+        target=tuple(float(v) for v in cluster.centre),
+        up=(0.0, 1.0, 0.0),
+    )
+
+
+def spur_pfam_fraction(universe: Universe, cluster: StoryCluster) -> float:
+    """Share of a cluster's members whose dominant Pfam family is an ABC part."""
+    return float(universe.pfam_mask(SPUR_PFAMS)[cluster.indices].mean())
+
+
+def check_spur_story(universe: Universe, cluster: StoryCluster) -> float:
+    """Raise unless the spur's members are ABC-transporter-dominated; return the share."""
+    share = spur_pfam_fraction(universe, cluster)
+    if share < SPUR_PFAM_MIN_FRACTION:
+        raise ValueError(
+            f"the spur (r > {SPUR_RADIUS:g}) is only {share:.0%} ABC-transporter "
+            f"Pfam families {SPUR_PFAMS}; the panel claims that family (needs >= "
+            f"{SPUR_PFAM_MIN_FRACTION:.0%}). Re-measure this Atlas release."
+        )
+    return share
+
+
+def overview_panel_html(n_clusters: int) -> str:
+    """The overview panel shown at story 0."""
+    return (
+        '<div style="font-size:1.3vh;line-height:1.35;color:#e8e8e8;'
+        "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
+        'border-left:0.5vh solid #ffffff">'
+        f'<div style="font-size:2.2vh;font-weight:bold;margin-bottom:0.6vh">'
+        f"{html.escape(OVERVIEW_TITLE)}</div>"
+        f"{OVERVIEW_HTML.format(n=n_clusters)}"
+        f'<div style="margin-top:1.1vh;font-size:1.05vh;color:rgba(232,232,232,0.55)">'
+        f"{html.escape(ATTRIBUTION)}</div>"
+        "</div>"
+    )
+
+
+def member_labels(
+    names: list[str], phyla: list[str], lcas: list[str], unirefs: list[str]
+) -> tuple[list[str], list[str]]:
+    """Hover labels and link keys for a story's members.
+
+    Label: ``product name — taxon`` (the dominant phylum, else the lowest common
+    ancestor the table records, else nothing). Key: the UniRef match, which the
+    link searches for; a cluster without one searches its product name instead.
+    """
+    labels, keys = [], []
+    for name, phylum, lca, uniref in zip(names, phyla, lcas, unirefs, strict=True):
+        taxon = phylum or (lca.split(":", 1)[-1] if lca else "")
+        labels.append(f"{name} — {taxon}" if taxon else name)
+        keys.append(uniref or name)
+    return labels, keys
+
+
+# =============================================================================
+# Scene construction
+# =============================================================================
+
+
+def _member_details(
+    annotations: Path, universe: Universe, clusters: dict[int, StoryCluster]
+) -> dict[int, tuple[list[str], list[str]]]:
+    """Read the label columns for every knot-story member (one parquet pass).
+
+    ``clusters`` maps story slot → cluster for the KNOT stories only: a
+    whole-map highlight of two million points carries no hover labels (the
+    strings would dominate the store).
+    """
+    pq = require_module("pyarrow.parquet")
+    if not clusters:
+        return {}
+    rows = np.unique(
+        np.concatenate([universe.annotation_row[c.indices] for c in clusters.values()])
+    )
+    rows = rows[rows >= 0]
+    table = pq.read_table(annotations, columns=list(_MEMBER_COLUMNS)).take(rows)
+    cols = {c: table.column(c).to_pylist() for c in _MEMBER_COLUMNS}
+    lookup = {int(r): i for i, r in enumerate(rows)}
+    phyla = universe.phylum_names()
+    out: dict[int, tuple[list[str], list[str]]] = {}
+    for k, c in clusters.items():
+        idx = [lookup.get(int(r), -1) for r in universe.annotation_row[c.indices]]
+        names = [
+            str(cols["product_name"][i] or "cluster") if i >= 0 else "cluster"
+            for i in idx
+        ]
+        lcas = [str(cols["lca_taxonomy"][i] or "") if i >= 0 else "" for i in idx]
+        unirefs = [
+            str(cols["uniref_match_accession"][i] or "") if i >= 0 else "" for i in idx
+        ]
+        out[k] = member_labels(names, [str(p) for p in phyla[c.indices]], lcas, unirefs)
+    return out
+
+
+def _name_masks(
+    annotations: Path, universe: Universe, stories: tuple[UniverseStory, ...]
+) -> dict[str, np.ndarray]:
+    """Per-point product-name matches for the stories that select by pattern."""
+    pq = require_module("pyarrow.parquet")
+    pc = require_module("pyarrow.compute")
+    patterns = {s.key: s.pattern for s in stories if s.pattern}
+    if not patterns:
+        return {}
+    names = pq.read_table(annotations, columns=["product_name"]).column("product_name")
+    valid = universe.annotation_row >= 0
+    out: dict[str, np.ndarray] = {}
+    for key, pattern in patterns.items():
+        row_hit = pc.match_substring_regex(names, pattern).to_numpy(
+            zero_copy_only=False
+        )
+        row_hit = np.asarray(row_hit, dtype=bool)
+        mask = np.zeros(len(universe), dtype=bool)
+        mask[valid] = row_hit[universe.annotation_row[valid]]
+        out[key] = mask
+    return out
+
+
+def _render_story_turntables(
+    stories: tuple[UniverseStory, ...], output_path: Path, cache: Path | None
+) -> dict[str, TurntableAssets]:
+    with asection("Rendering PDB turntables"):
+        cache_dir = cache or (Path.home() / ".cache" / "luxar" / TURNTABLE_CACHE)
+        # Hints only for a durable store: on the serve path the output lives
+        # in a TemporaryDirectory that is gone before anyone could bake it.
+        environment = _turntable_environment(output_path)
+        assets = render_turntables(
+            [s.pdb_id for s in stories if s.pdb_id],
+            cache_dir,
+            colors={s.pdb_id: s.color for s in stories if s.pdb_id},
+            environment=environment,
+        )
+        aprint(
+            f"{len(assets)} of {sum(1 for s in stories if s.pdb_id)} turntables ready"
+        )
+        return assets
+
+
+def _viewer_config(
+    waypoints: list[Waypoint],
+    overview: tuple[float, float, float],
+    *,
+    auto_rotate: bool,
+    audio: bool,
+) -> ViewerConfig:
+    # Mirrors the Swiss-Prot tour's kiosk settings (see its build for the why).
+    # `overview` is the raw distance-tuned pose; `pull_in` carries it to the
+    # cinematic 63° lens.
+    return ViewerConfig(
+        cinematic_mode=True,
+        camera=CameraConfig(position=pull_in(overview), target=(0.0, 0.0, 0.0)),
+        # Authored, not left to the slider (see the BRIGHTNESS note by
+        # `BACKDROP_INTENSITY`). The Rendering Controls remember per-source
+        # edits in localStorage and those WIN over this value at load; "Reset
+        # to Defaults" comes back here.
+        exposure=BACKDROP_EXPOSURE_STOPS,
+        auto_rotate=auto_rotate,
+        auto_rotate_speed=0.5 if auto_rotate else None,
+        auto_rotate_axis="world-y" if auto_rotate else None,
+        ssaa_enabled=True,
+        allow_high_dpr=True,
+        environment=EnvironmentConfig(source="scene", probe="auto"),
+        waypoints=waypoints,
+        audio=AudioConfig(
+            enabled=True,
+            master_gain=0.8,
+            panning_model="equalpower",
+            buses={"ambient": 0.6, "voice": 1.0, "effects": 0.8},
+            duck_db=-9.0,
+        )
+        if audio
+        else None,
+    )
+
+
+def _add_overlays(
+    scene: Any,
+    stories: tuple[UniverseStory, ...],
+    clusters: list[StoryCluster],
+    assets: dict[str, TurntableAssets],
+    n: int,
+    units: dict[int, str],
+) -> None:
+    scene.add_text(
+        "ESM Protein Universe",
+        position=(0.02, 0.02),
+        font_size=0.05,
+        anchor="top-left",
+        color="rgba(255,255,255,0.65)",
+        blend_mode="difference",
+    )
+    scene.add_text(
+        "{hover_label}",
+        position=(0.02, 0.5),
+        anchor="center-left",
+        font_size=0.02,
+        color="white",
+        background="rgba(0,0,0,0.72)",
+        padding=0.01,
+        text_align="left",
+        transition="fade",
+        transition_duration=0.15,
+        hover=True,
+    )
+    scene.add_html(
+        overview_panel_html(n),
+        position=(0.98, 0.5),
+        anchor="center-right",
+        width=PANEL_WIDTH,
+        visible_range={STORY_DIM: 0},
+        transition="fade",
+        transition_duration=0.35,
+    )
+    total = len(stories)
+    for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
+        scene.add_html(
+            story_panel_html(s, len(c.indices), k, total, unit=units[k]),
+            position=(0.98, 0.5),
+            anchor="center-right",
+            width=PANEL_WIDTH,
+            visible_range={STORY_DIM: k},
+            transition="fade",
+            transition_duration=0.35,
+        )
+    for k, s in enumerate(stories, start=1):
+        a = assets.get(s.pdb_id.upper()) if s.pdb_id else None
+        if a is None:
+            continue
+        scene.add_video(
+            a.webm,
+            position=TURNTABLE_POSITION,
+            anchor="center-left",
+            size=(TURNTABLE_WIDTH, None),
+            poster=a.poster,
+            alpha_matte="stacked",
+            visible_range={STORY_DIM: k},
+            transition="fade",
+            transition_duration=0.35,
+        )
+        scene.add_text(
+            f"PDB {a.pdb_id} · {a.title}",
+            position=TURNTABLE_CAPTION_POSITION,
+            anchor="top-center",
+            text_align="center",
+            font_size=0.013,
+            width=TURNTABLE_WIDTH,
+            color="rgba(255,255,255,0.7)",
+            visible_range={STORY_DIM: k},
+            transition="fade",
+            transition_duration=0.35,
+        )
+    scene.add_html(
+        '<div style="font-size:1.05vh;letter-spacing:0.22em;'
+        "font-weight:300;color:rgba(255,255,255,0.22);"
+        'text-transform:uppercase;white-space:nowrap">'
+        "Designed by Loic A. Royer</div>",
+        position=(0.02, 0.97),
+        anchor="bottom-left",
+        interactive=False,
+    )
+    scene.add_image(
+        BIOHUB_LOGO,
+        position=(0.98, 0.97),
+        anchor="bottom-right",
+        size=(BIOHUB_LOGO_WIDTH, None),
+        opacity=0.85,
+        blend_mode="difference",
+    )
+
+
+def _add_bubbles(
+    scene: Any, stories: tuple[UniverseStory, ...], clusters: list[StoryCluster]
+) -> None:
+    unit_verts, unit_faces = icosphere()
+    nv = len(unit_verts)
+    for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
+        if s.whole:
+            continue  # a story about the whole map has nothing to bubble
+        radius = bubble_radius(c, min_radius=BUBBLE_MIN_RADIUS)
+        vertices = np.column_stack(
+            [
+                np.full(nv, float(k), dtype=np.float32),
+                (unit_verts * radius + c.centre.astype(np.float32)).astype(np.float32),
+            ]
+        ).astype(np.float32)
+        film = (1.0 - BUBBLE_TINT) * np.ones(3, dtype=np.float32) + (
+            BUBBLE_TINT * np.asarray(s.color, dtype=np.float32)
+        )
+        scene.add_mesh(
+            f"Marker {k}: {s.key}",
+            vertices,
+            unit_faces,
+            normals=unit_verts,
+            normal_dims=[1, 2, 3],
+            colors=np.tile(film.astype(np.float32), (nv, 1)),
+            shading="smooth",
+            double_sided=True,
+            material="physical",
+            roughness=BUBBLE_ROUGHNESS,
+            metalness=0.0,
+            transmission=1.0,
+            ior=BUBBLE_IOR,
+            thickness=float(radius * BUBBLE_THICKNESS_FRAC),
+            dispersion=BUBBLE_DISPERSION,
+            iridescence=BUBBLE_IRIDESCENCE,
+            refract_data=BUBBLE_REFRACT_DATA,
+            layer=True,
+            layer_order=SPHERE_LAYER_ORDER,
+        )
+
+
+def _add_backdrop(
+    scene: Any, positions: np.ndarray, colors: np.ndarray, dims: Dimensions
+) -> None:
+    """The backdrop as BSP tiles of per-tile two-level POINTS ladders (see
+    :data:`BACKDROP_TILE_POINTS`).
+
+    Splits on the three spatial columns (the story column is constant), so the
+    serialized split axes are the displayed dimensions and the viewer can use
+    the tree for exact back-to-front ordering. Each tile is a hand-authored
+    ``kind=lod`` group (the shape ``examples/partition_of_lod_example.py``
+    builds): child 0 a seeded 1-in-K subsample with colours × K, child 1 the
+    whole tile, thresholds from the partition-bound fills-screen rule. The
+    compositing attrs ride on the WRAPPER: it is the node the Layers panel
+    reads and pushes down to every descendant material.
+    """
+    tree = spatial_bsp_tree(
+        positions, BACKDROP_TILE_POINTS, rule="median", split_axes=[1, 2, 3]
+    )
+    parts = bsp_leaf_parts(tree)
+    sizes = [int(p.size) for p in parts]
+    # The only cheap place to catch the per-node clamp: every leaf under budget.
+    assert max(sizes) <= BACKDROP_TILE_POINTS, sizes
+    aprint(
+        f"Backdrop: {len(positions):,} clusters -> {len(parts)} BSP tiles "
+        f"({min(sizes):,}..{max(sizes):,} points), coarse level 1 in "
+        f"{BACKDROP_LOD_FACTOR} as points"
+    )
+    wrapper = scene.add_partition_group(
+        "Backdrop",
+        display_type="points",
+        max_elements=BACKDROP_TILE_POINTS,
+        layer=True,
+        position_bounds=position_bounds_from_array(positions),
+        bsp_tree=tree.to_serializable(),
+        opacity=BACKDROP_OPACITY,
+        intensity=BACKDROP_INTENSITY,
+    )
+    rng = np.random.default_rng(0)
+    for i, idx in enumerate(parts):
+        n_coarse = max(1, int(idx.size) // BACKDROP_LOD_FACTOR)
+        coarse = np.sort(rng.choice(idx, n_coarse, replace=False))
+        coverage = partitioned_coverage_fractions([n_coarse, int(idx.size)])
+        lod = wrapper.add_lod_group(f"part_{i}", selector="screen-area")
+        levels = ((coarse, float(BACKDROP_LOD_FACTOR)), (idx, 1.0))
+        for level, (sel, gain) in enumerate(levels):
+            level_positions = positions[sel]
+            # No opacity/intensity here: compositing attrs compose
+            # MULTIPLICATIVELY root→leaf, so a copy on the levels would square
+            # the wrapper's (the closing review measured opacity 0.49 and a
+            # 1/16 window reaching the material when both carried them).
+            lod.add_points(
+                f"child_{level}",
+                level_positions,
+                colors=(colors[sel] * np.float32(gain)).astype(np.float32),
+                radii=np.full(sel.size, BACKDROP_RADIUS, dtype=np.float32),
+                sharpness=np.full(sel.size, 0.6, dtype=np.float32),
+                extend_to_all=[STORY_DIM],
+                coverage_fraction=float(coverage[level]),
+                # One hidden coordinate (story 0, extended to all): the slice
+                # count is 1, but the policy is stated rather than assumed.
+                additive_lod=stream_ladder(
+                    sel.size,
+                    slices=hidden_axis_stops(level_positions, dims.non_displayed),
+                ),
+            )
+
+
+def resolve_stories(
+    universe: Universe,
+    annotations: Path,
+    stories: tuple[UniverseStory, ...] = STORIES,
+) -> list[StoryCluster]:
+    """Resolve every story against the map (selection + knot framing)."""
+    spatial = require_module("scipy.spatial")
+    with asection("Resolving stories against the map"):
+        all_tree = spatial.cKDTree(universe.positions)
+        masks = _name_masks(annotations, universe, stories)
+        clusters = []
+        for s in stories:
+            mask = family_mask(s, universe, masks.get(s.key))
+            c = select_universe_members(s, universe, mask, all_tree)
+            clusters.append(c)
+            if s.region == "spur":
+                aprint(
+                    f"{s.key}: {check_spur_story(universe, c):.0%} ABC-transporter Pfams"
+                )
+            scope = "whole map" if s.whole else f"within {s.radius:g} of the knot"
+            aprint(
+                f"{s.key}: {len(c.indices):,} of {c.n_named:,} matching clusters, "
+                f"{scope}; centre={c.centre.round(2)} r95={c.r95:.2f}"
+            )
+    return clusters
+
+
+def build_universe_scene(
+    output_path: Path,
+    universe: Universe,
+    annotations: Path,
+    *,
+    stories: tuple[UniverseStory, ...] = STORIES,
+    auto_rotate: bool = True,
+    turntables: bool = True,
+    turntable_cache: Path | None = None,
+    audio: bool = True,
+) -> int:
+    """Write the universe scene. Returns the number of clusters in the backdrop."""
+    n = len(universe)
+    assets: dict[str, TurntableAssets] = {}
+    if turntables:
+        assets = _render_story_turntables(stories, output_path, turntable_cache)
+
+    clusters = resolve_stories(universe, annotations, stories)
+    knots = {
+        k: c
+        for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1)
+        if not s.whole
+    }
+    details = _member_details(annotations, universe, knots)
+
+    with asection("Composing waypoints"):
+        positions = universe.positions
+        global_centre = positions.mean(axis=0)
+        # Frame the cloud, not the spur: the 99.9th-percentile radius is the
+        # body of the map (the spur reaches almost twice as far).
+        spatial_max = float(np.percentile(np.linalg.norm(positions, axis=1), 99.9))
+        overview_distance = spatial_max * 2.2
+        overview_raw = (overview_distance, overview_distance * 0.55, overview_distance)
+        waypoints = [
+            Waypoint(
+                when={STORY_DIM: 0},
+                camera=CameraConfig(
+                    position=pull_in(overview_raw), target=(0.0, 0.0, 0.0), up=(0, 1, 0)
+                ),
+                duration_ms=3000,
+                reveal="on_arrival",
+            )
+        ]
+        for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
+            waypoints.append(
+                Waypoint(
+                    when={STORY_DIM: k},
+                    camera=universe_story_camera(c, s, global_centre),
+                    duration_ms=s.flight_ms,
+                    reveal="on_arrival",
+                )
+            )
+        viewer_config = _viewer_config(
+            waypoints, overview_raw, auto_rotate=auto_rotate, audio=audio
+        )
+
+    dims = Dimensions(
+        [
+            Dimension(
+                STORY_DIM,
+                unit="",
+                categories=["Overview", *(s.key for s in stories)],
+                display=False,
+                description="Guided tour: overview, then one story per step",
+            ),
+            Dimension("x", unit="UMAP", display=True),
+            Dimension("y", unit="UMAP", display=True),
+            Dimension("z", unit="UMAP", display=True),
+        ]
+    )
+
+    with asection("Writing to Zarr"):
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=viewer_config,
+            )
+            backdrop_positions = np.column_stack(
+                [np.zeros(n, dtype=np.float32), positions]
+            ).astype(np.float32)
+            # No hover labels on the backdrop: 7.7M strings would dominate the
+            # store, and a kiosk visitor hovers the lit stories, which carry them.
+            _add_backdrop(scene, backdrop_positions, backdrop_colors(universe), dims)
+            units: dict[int, str] = {}
+            for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
+                idx = whole_highlight_sample(c.indices) if s.whole else c.indices
+                m = len(idx)
+                units[k] = highlight_unit(len(c.indices), m)
+                labels, keys = details.get(k, (None, None))
+                # Hover labels + UniRef link on knot stories only (see
+                # `_member_details`). `labels`/`keys` accept None; `link`
+                # refuses it, so the template rides in the link-metadata spread
+                # the element-cap gate knows (`link_attrs`, never a budget).
+                link_attrs = {"link": UNIREF_LINK} if keys is not None else {}
+                radius = WHOLE_HIGHLIGHT_RADIUS if s.whole else HIGHLIGHT_RADIUS
+                intensity = (
+                    WHOLE_HIGHLIGHT_INTENSITY if s.whole else highlight_intensity(m)
+                )
+                highlight_positions = np.column_stack(
+                    [np.full(m, float(k), dtype=np.float32), positions[idx]]
+                ).astype(np.float32)
+                scene.add_points(
+                    story_node_name(k, s),
+                    highlight_positions,
+                    colors=np.broadcast_to(
+                        np.asarray(s.color, dtype=np.float32), (m, 3)
+                    ).copy(),
+                    radii=np.full(m, radius, dtype=np.float32),
+                    sharpness=np.full(m, 0.85, dtype=np.float32),
+                    opacity=0.95,
+                    intensity=intensity,
+                    labels=labels,
+                    keys=keys,
+                    **link_attrs,
+                    # Every highlight streams like the backdrop: a whole-map
+                    # one needs the ladder, a knot's few hundred points fit its
+                    # first rung and cost nothing (and the slice-policy gate
+                    # reads one call shape, not a conditional).
+                    additive_lod=stream_ladder(
+                        m,
+                        slices=hidden_axis_stops(
+                            highlight_positions, dims.non_displayed
+                        ),
+                    ),
+                    layer=True,
+                    # Additive and in its own band: the highlight shares every
+                    # position with its backdrop twin (see the Swiss-Prot tour).
+                    blending_mode="additive",
+                    layer_order=10,
+                )
+            _add_bubbles(scene, stories, clusters)
+            _add_overlays(scene, stories, clusters, assets, n, units)
+            if audio:
+                with asection("Sound layer"):
+                    add_story_sounds(
+                        scene,
+                        stories,
+                        narration_dir=NARRATION_CACHE_DIR,
+                        ambisonic_dir=AMBISONIC_BED_CACHE_DIR,
+                        overview_narration=OVERVIEW_NARRATION,
+                    )
+
+    aprint(f"✓ Wrote {n:,} clusters and {len(stories)} stories to {output_path}")
+    return n
+
+
+# =============================================================================
+# Entry point
+# =============================================================================
+
+
+def main() -> None:
+    aprint("=" * 70)
+    aprint("ESM PROTEIN UNIVERSE — twelve stories across 7.7 million clusters")
+    aprint("=" * 70)
+
+    auto_rotate = "--no-auto-rotate" not in sys.argv
+    turntables = "--no-turntables" not in sys.argv
+    audio = "--no-audio" not in sys.argv
+    try:
+        annotations = find_input(ANNOTATIONS_PARQUET, parse_path_arg("annotations"))
+        cache = CACHE_DIR / UNIVERSE_CACHE
+        if not cache.exists():
+            coords = find_input(COORDS_PARQUET, parse_path_arg("coords"))
+            build_universe_cache(coords, annotations, cache)
+    except (FileNotFoundError, ValueError) as e:
+        aprint(f"\nError: {e}")
+        sys.exit(1)
+    universe = load_universe(cache)
+    aprint(f"✓ Loaded {len(universe):,} clusters from {cache}")
+
+    kwargs = dict(auto_rotate=auto_rotate, turntables=turntables, audio=audio)
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "esm_protein_universe.luxar.zarr"
+        n = build_universe_scene(output_path, universe, annotations, **kwargs)
+        aprint(f"Dataset generated at {output_path} ({n:,} clusters)")
+        return
+
+    with tempfile.TemporaryDirectory(prefix="luxar_esm_universe_") as tmpdir:
+        output_path = Path(tmpdir) / "esm_protein_universe.luxar.zarr"
+        n = build_universe_scene(output_path, universe, annotations, **kwargs)
+        aprint("")
+        aprint("  Press '1' to select the STORY slider, then '[' / ']' to step.")
+        aprint(f"  Total clusters: {n:,}")
+        launch_viewer(output_path)
+
+    aprint("Cleanup complete")
+
+
+if __name__ == "__main__":
+    main()
