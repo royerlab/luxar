@@ -1242,13 +1242,16 @@ class TestDeviceMovement:
             device="cuda:0",
         )
 
-        # Move to second GPU
-        model = model.to("cuda:1")
+        with torch.cuda.device(0):
+            output_before = model().clone()
 
-        # Verify FP16 preserved
-        for param in model.parameters():
-            assert param.dtype == torch.float16
-            assert param.device == torch.device("cuda:1")
+            # Move to second GPU
+            model = model.to("cuda:1")
 
-        output = model()
-        assert torch.isfinite(output).all()
+            # Verify FP16 preserved
+            for param in model.parameters():
+                assert param.dtype == torch.float16
+                assert param.device == torch.device("cuda:1")
+
+            output = model()
+            assert torch.allclose(output_before.cpu(), output.cpu(), atol=1e-5)
