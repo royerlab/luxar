@@ -32,7 +32,8 @@ test.describe('mobile pick', () => {
   test('a long-press opens the element menu; the camera does not move', async ({ page }) => {
     const c = await canvasCentre(page);
     const before = await cameraPose(page);
-    await longPress(page, c, 800);
+    // Outlast cold llvmpipe stalls: pointerup cancels the pending 500 ms canvas timer.
+    await longPress(page, c, 2000);
     const menu = page.locator('.luxar-context-menu');
     await expect(menu).toBeVisible({ timeout: 10000 });
     await expect(menu.getByRole('menuitem').first()).toContainText(/Copy|Open link/);
@@ -47,6 +48,7 @@ test.describe('mobile pick', () => {
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
     const before = await cameraPose(page);
+    // The rail path avoids the canvas pick/render stall, so ordinary threshold headroom suffices.
     await longPress(page, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }, 800);
     await expect(page.locator('.luxar-control-rail__popover')).toBeVisible({ timeout: 5000 });
     const after = await cameraPose(page);

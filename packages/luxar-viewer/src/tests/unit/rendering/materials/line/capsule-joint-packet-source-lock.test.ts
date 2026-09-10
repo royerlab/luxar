@@ -49,9 +49,8 @@
  *   whole `rp` base — `clamp(xp, 0.0, cut.w)` included — on all four surfaces,
  *   so removing BOTH halves reds the eight cases here plus four of its.
  *   Neither half was covered anywhere when this file was written.
- * - The TSL↔GLSL parity harness cannot see it either: it runs under
- *   `.github/workflows/ci.yml`'s `e2e-tests` job, which is `if: false`
- *   repo-wide, and until the fixture added alongside this file
+ * - The TSL↔GLSL parity harness could not see it either: until the fixture
+ *   added alongside this file
  *   (`line-capsule-joint-short-partner`) no capsule joint fixture published a
  *   deficit packet with a SHORT partner at all — every one had uniform widths,
  *   and `line-capsule-fold`'s packet carries gradient 0 with ql ≈ 28.8 px, far
