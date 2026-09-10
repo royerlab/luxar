@@ -1320,7 +1320,7 @@ change what the earlier sections tell you to do.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
-- Gallery: 88 tiles, 91 stills, 89 videos. Two demos are deliberately
+- Gallery: 88 tiles, 93 stills, 91 videos. Two demos are deliberately
   still-only (§8.2).
 - 96 stable `/d/` routes (§8.1.1).
 
