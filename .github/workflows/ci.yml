@@ -1577,6 +1577,7 @@ jobs:
         working-directory: packages/luxar-viewer
         env:
           CI: true
+          LUXAR_E2E_NO_FIXTURES: "1"
           LUXAR_PERF_BROWSER: chromium
           LUXAR_PERF_HEADLESS: "1"
 
