@@ -1029,64 +1029,89 @@ def _add_tract(
     and every level carries the tract's label/key so hover works at any zoom.
     A bundle too small to ladder is written as one flat Lines node with the
     same compositing.
+
+    The two ``add_lines`` calls spell every keyword out (no ``**`` spreads): the
+    corpus-wide element-cap gate reads geometry calls by AST and refuses spreads
+    it cannot see through.
     """
     n_paths = len(xyz) // points
     label = tract_label(name, division)
     key = tract_key(name)
     link = "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}"
-    compositing = dict(
-        # `additive` — see the module docstring's RENDERING NOTE.
-        # Order-independent, so 87 mutually-overlapping nodes never pop as the
-        # camera moves. Rides on the lod wrapper so the Layers panel gets one
-        # row per tract and every level inherits the same look.
-        blending_mode="additive",
-        opacity=LINE_OPACITY,
-        intensity=LINE_INTENSITY,
-    )
     counts = lod_streamline_counts(n_paths)
 
-    def level_kwargs(kept: np.ndarray) -> dict:
+    def level_arrays(
+        kept: np.ndarray,
+    ) -> tuple[np.ndarray, float, np.ndarray, np.ndarray, int]:
         keep = (kept[:, None] * points + np.arange(points)[None, :]).ravel()
-        return dict(
-            vertices=xyz[keep],
-            # Width x subsampling factor: sum(width) along a ray is what
-            # additive blending integrates, so the coarse level emits the
-            # light of the fibres it stands in for.
-            widths=LINE_WIDTH * (n_paths / kept.size),
-            colors=rgb[keep],
-            # `indexed`, NOT `segments`: interior joints must share a vertex
-            # index or thick lines render as chains of beads.
-            indices=polyline_segment_indices(int(kept.size), points),
-            line_type="indexed",
-            # Lines labels are PER VERTEX, and every vertex of a bundle belongs
-            # to the same tract — so the one tract string is broadcast across
-            # the level. That broadcast is also what makes the lookup safe: the
-            # line picker reports a SEGMENT slot, which is fed unremapped into
-            # this per-vertex, vertex-sorted array; every entry holds the same
-            # string (and a segment index is always < the vertex count), so the
-            # tooltip is right regardless. Click a tract to read about it,
-            # right-click to copy its name (#1917) — per vertex for the same
-            # reason.
-            labels=[label] * len(keep),
-            keys=[key] * len(keep),
-            link=link,
-            copy="{hover_key}",
-            additive_lod=False,
+        # Width x subsampling factor: sum(width) along a ray is what additive
+        # blending integrates, so the coarse level emits the light of the
+        # fibres it stands in for.
+        width = float(LINE_WIDTH * (n_paths / kept.size))
+        return (
+            xyz[keep],
+            width,
+            rgb[keep],
+            polyline_segment_indices(int(kept.size), points),
+            len(keep),
         )
 
     if len(counts) == 1:
+        verts, width, cols, idx, n_verts = level_arrays(np.arange(n_paths))
         group.add_lines(
-            name, **level_kwargs(np.arange(n_paths)), **compositing, layer=True
+            name,
+            vertices=verts,
+            widths=width,
+            colors=cols,
+            indices=idx,
+            line_type="indexed",
+            labels=[label] * n_verts,
+            keys=[key] * n_verts,
+            link=link,
+            copy="{hover_key}",
+            additive_lod=False,
+            blending_mode="additive",
+            opacity=LINE_OPACITY,
+            intensity=LINE_INTENSITY,
+            layer=True,
         )
         return
 
     # `layer=True` on the wrapper, not the levels: one Layers-panel row per
-    # tract, and every level inherits the same look from here.
-    tract = group.add_lod_group(name, selector="screen-area", **compositing, layer=True)
+    # tract, and every level inherits the same look from here. `additive` —
+    # see the module docstring's RENDERING NOTE: order-independent, so 87
+    # mutually-overlapping nodes never pop as the camera moves.
+    tract = group.add_lod_group(
+        name,
+        selector="screen-area",
+        blending_mode="additive",
+        opacity=LINE_OPACITY,
+        intensity=LINE_INTENSITY,
+        layer=True,
+    )
     for level, (count, cover) in enumerate(zip(counts, coverage_fractions(counts))):
         kept = subsample_indices(n_paths, count, seed=seed + level)
+        verts, width, cols, idx, n_verts = level_arrays(kept)
+        # `indexed`, NOT `segments`: interior joints must share a vertex index
+        # or thick lines render as chains of beads. Lines labels are PER VERTEX
+        # and every vertex of a bundle belongs to the same tract, so the one
+        # tract string is broadcast across the level; the line picker reports a
+        # SEGMENT slot fed unremapped into this per-vertex array, and every
+        # entry holds the same string, so the tooltip is right regardless.
+        # Click a tract to read about it, right-click to copy its name (#1917).
         tract.add_lines(
-            f"child_{level}", coverage_fraction=float(cover), **level_kwargs(kept)
+            f"child_{level}",
+            vertices=verts,
+            widths=width,
+            colors=cols,
+            indices=idx,
+            line_type="indexed",
+            labels=[label] * n_verts,
+            keys=[key] * n_verts,
+            link=link,
+            copy="{hover_key}",
+            coverage_fraction=float(cover),
+            additive_lod=False,
         )
 
 

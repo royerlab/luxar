@@ -671,14 +671,6 @@
       "dataset": "datasets/demos/collision_animated.luxar.zarr"
     },
     {
-      "id": "network_performance",
-      "title": "Network Performance Test (4D)",
-      "geometry": "points",
-      "category": "synthetic",
-      "script": "demo_network_performance.py",
-      "dataset": "datasets/demos/performance_test.luxar.zarr"
-    },
-    {
       "id": "ocean_currents_earth",
       "title": "Ocean Currents of Earth",
       "geometry": "mixed",
@@ -793,14 +785,6 @@
       "dataset": "datasets/demos/gsplats_interop_sog_matrixcity.luxar.zarr",
       "citation": "Li et al. 2023 (MatrixCity)",
       "lodFinest": false
-    },
-    {
-      "id": "sharpness_showcase",
-      "title": "Point Sharpness Showcase",
-      "geometry": "points",
-      "category": "synthetic",
-      "script": "demo_sharpness_showcase.py",
-      "dataset": "datasets/demos/sharpness_showcase.luxar.zarr"
     },
     {
       "id": "nd_transforms",

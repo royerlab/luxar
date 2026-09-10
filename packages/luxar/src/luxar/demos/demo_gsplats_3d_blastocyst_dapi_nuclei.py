@@ -503,20 +503,17 @@ def add_volume_frame(scene, centers: np.ndarray) -> None:
     box, box_edges, grid, grid_edges = volume_frame_lines(centers)
     extent = float(np.ptp(np.asarray(centers, dtype=np.float64), axis=0).max())
     width = extent * 0.002  # hairline at the opening framing
-    common = dict(
-        line_type="indexed",
-        blending_mode="additive",
-        sharpness=0.8,
-        layer=True,
-    )
     scene.add_lines(
         "volume_box",
         vertices=box,
         widths=width,
         colors=FRAME_COLOR,
         indices=box_edges,
+        line_type="indexed",
+        blending_mode="additive",
+        sharpness=0.8,
         opacity=0.35,
-        **common,
+        layer=True,
     )
     scene.add_lines(
         "floor_grid",
@@ -524,8 +521,11 @@ def add_volume_frame(scene, centers: np.ndarray) -> None:
         widths=width * 0.6,
         colors=FRAME_COLOR,
         indices=grid_edges,
+        line_type="indexed",
+        blending_mode="additive",
+        sharpness=0.8,
         opacity=0.18,
-        **common,
+        layer=True,
     )
 
 

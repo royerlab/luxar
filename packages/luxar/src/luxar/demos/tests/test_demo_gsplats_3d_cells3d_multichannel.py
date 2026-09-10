@@ -56,7 +56,11 @@ def test_add_gsplats_receives_the_window() -> None:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "add_gsplats"
         ):
-            splats = [kw for kw in node.keywords if kw.arg is None]
-            assert splats and "window_attrs" in ast.unparse(splats[0].value)
+            # The element-cap gate forbids ``**`` spreads in geometry adder
+            # calls, so the window arrives as two explicit keywords that both
+            # read from the ``window_attrs`` dict.
+            by_name = {kw.arg: ast.unparse(kw.value) for kw in node.keywords}
+            assert by_name["intensity"] == "window['intensity']"
+            assert by_name["offset"] == "window['offset']"
             return
     raise AssertionError("no add_gsplats call found in the demo")

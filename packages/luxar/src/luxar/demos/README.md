@@ -423,15 +423,6 @@ Rows: identity, `offset +5`, `offset -3`, `scale ×2`, `scale ×2 offset +2`, a 
 
 ### Feature Showcase Demos
 
-#### demo_sharpness_showcase.py - Point Sharpness Showcase
-Comprehensive showcase of the point sharpness feature: gradient from peaky (0.0) to hard-edged (1.0) on the normalized knob, fixed sharpness comparison rows, mixed sharpness cloud, and sinusoidal wave pattern.
-
-**Run**: `luxar demo run sharpness_showcase [-- --points N]`
-
-**Demonstrates**: Sharpness parameter control (normalized [0, 1] knob mapping to a super-Gaussian falloff exponent beta=2^(6s-2); 0.5 = Gaussian), soft/peaky points (low s) vs sharp disc-like points (high s), color-coded sharpness values, multiple visualization patterns.
-
----
-
 #### demo_lsystem_forest.py - L-System Forest: a Year in a Growing Forest (All Four Geometry Types)
 The flagship synthetic scene: a terrain-planted procedural forest scrubbable through time on two non-displayed dimensions — `growth` (six stages, each a genuine re-derivation of every tree at increasing iteration depth, staggered per tree so maturity rolls across the field in waves) and `season` (spring blossom, summer green, autumn fire, winter frost). All four geometry types share the frame: a shaded fBm-heightfield **Mesh** terrain (snow in winter), eight tree species as merged indexed **Lines** nodes (one Layers-panel row per species, per-vertex hover labels with species/instance/season/stage), volumetric **GSplat** foliage clouds oriented along their parent branches (blossom splats in spring, fire palette in autumn, evergreen conifers in winter), and **Points** accents (summer fireflies, winter frost sparkle, spring petals, each pinned to its season and extended over growth).
 
@@ -447,20 +438,6 @@ The 3D Hilbert curve — a continuous, self-similar polyline that visits every c
 **Run**: `luxar demo run hilbert_curve_3d [-- --max-order=6]`
 
 **Demonstrates**: Single ultra-long `polyline` Lines node (262k+ vertices, 262k segments), thin constant width with color gradient along traversal, runtime-verified Hamiltonian path on the integer lattice, slider-driven recursion exploration (each order on its own slot of a non-displayed `order` dim), Skilling's vectorized 3D Hilbert algorithm.
-
----
-
-#### demo_network_performance.py - Network Performance Testing
-Large multi-cluster dataset (1M points) for testing viewer performance under network constraints.
-
-**Run**:
-```bash
-luxar demo run network_performance
-luxar demo run network_performance -- --profile 3g
-luxar demo run network_performance -- --points=2000000 --profile satellite
-```
-
-**Demonstrates**: Network simulation (bandwidth throttling, latency, jitter, packet loss), progressive loading behavior with limited bandwidth, cache effectiveness under bandwidth constraints, multi-cluster particle systems (1M+ points).
 
 ---
 
@@ -1508,10 +1485,8 @@ hatch run python packages/luxar/src/luxar/demos/demo_galaxy_simulation.py
 hatch run python packages/luxar/src/luxar/demos/demo_nd_transforms.py
 
 # --- Feature Showcases ---
-hatch run python packages/luxar/src/luxar/demos/demo_sharpness_showcase.py
 hatch run python packages/luxar/src/luxar/demos/demo_lsystem_forest.py
 hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py
-hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 
 # --- Embedding / UMAP ---
 hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py

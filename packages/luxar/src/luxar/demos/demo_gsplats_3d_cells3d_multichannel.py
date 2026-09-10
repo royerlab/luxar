@@ -392,6 +392,7 @@ Controls:
                     gsplats = gsplats.scale_intensity(LAYER_INTENSITY)
 
                     n_splats = len(gsplats.amplitudes)
+                    window = window_attrs(ch_config["window"])
 
                     # colormap= applies a BOP LUT at display time; layer=True
                     # exposes the node in the Layers panel. Data columns are
@@ -409,7 +410,9 @@ Controls:
                         blending_mode="additive",
                         layer=True,
                         colormap=colormap,
-                        **window_attrs(ch_config["window"]),
+                        # The Layers-panel window, stored as intensity/offset.
+                        intensity=window["intensity"],
+                        offset=window["offset"],
                     )
                     aprint(
                         f"  Added {n_splats:,} splats with colormap='{colormap}' "
