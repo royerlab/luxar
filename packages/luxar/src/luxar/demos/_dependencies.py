@@ -154,8 +154,8 @@ INSTALL_SPECS: dict[str, DependencySpec] = {
         "pyarrow>=13.0.0",
         "demos",
         "Version 13 added the `zero_copy_only` keyword to "
-        "`ChunkedArray.to_numpy`, which the biodiversity demo uses while "
-        "loading its point table.",
+        "`ChunkedArray.to_numpy`, which the biodiversity and protein-universe "
+        "demos use while loading their point tables.",
     ),
     "scipy": DependencySpec(
         "scipy>=1.15.0,<2.0",
