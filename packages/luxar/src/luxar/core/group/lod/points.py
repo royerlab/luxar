@@ -335,7 +335,7 @@ def _parse_breakpoints_spec(
                     "internal error"
                 )
             return equi_energy_cuts(
-                np.asarray(energy, dtype=np.float64)[perm].tolist(),
+                np.asarray(energy, dtype=np.float64)[perm],
                 parse_equi_energy_rungs(spec),
             )
         if not spec.startswith("energy:"):

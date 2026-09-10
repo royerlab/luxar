@@ -1746,21 +1746,19 @@ def test_make_additive_lod_equi_energy_rungs_share_the_energy() -> None:
 
 
 def test_make_additive_lod_equi_energy_splits_at_the_commit_cap(monkeypatch) -> None:
-    import luxar.utils.lod_breakpoints as lb
-
-    # Force a tiny cap so the fat dim tail must be split.
-    monkeypatch.setattr(lb, "DEFAULT_MAX_ADDITIVE_COMMIT", 500)
     import luxar.gsplats.lod.additive as additive_mod
 
-    # The gsplat builder calls equi_energy_cuts with the default cap bound at
-    # import time; call the helper the way the builder does to pin the shape.
+    original = additive_mod.equi_energy_cuts
+    monkeypatch.setattr(
+        additive_mod,
+        "equi_energy_cuts",
+        lambda energy, n_rungs: original(energy, n_rungs, max_commit=500),
+    )
     data = _make_heavy_tailed_gsplat(n=3_000)
-    energy = additive_mod._self_energy_score(data)
-    order = np.argsort(-energy, kind="stable")
-    cuts = lb.equi_energy_cuts(energy[order].tolist(), 3, max_commit=500)
-    increments = [b - a for a, b in zip([0, *cuts[:-1]], cuts)]
-    assert max(increments) <= 500
-    assert cuts[-1] == 3_000
+    built = make_additive_lod(data, method="self_energy", breakpoints="equi-energy:3")
+    rung_counts = [int(rung.n_splats) for rung in built.additive_sublods]
+    assert max(rung_counts) <= 500
+    assert sum(rung_counts) == data.n_splats
 
 
 def test_equi_energy_rung_count_is_unknown_without_the_energy_curve() -> None:

@@ -8,9 +8,9 @@ and how the rest grow — is a property of the network and the payload, not of t
 geometry type, so Points, Lines and GSplats must derive identical cuts from an
 identical spec. That shared math lives here.
 
-Dependency-free by design (stdlib only): ``luxar.gsplats`` already depends on
-``luxar.utils``, and ``luxar.core`` may too, so this is the one place both can
-reach without introducing a new import direction.
+Kept below the geometry packages by design: ``luxar.gsplats`` already depends
+on ``luxar.utils``, and ``luxar.core`` may too, so this is the one place both
+can reach without introducing a new import direction.
 
 The ``stream:<c>`` spec
 -----------------------
@@ -43,6 +43,9 @@ from __future__ import annotations
 
 import math
 from typing import Any, List, Sequence, Union
+
+import numpy as np
+from numpy.typing import NDArray
 
 #: Breakpoint specification for an additive ladder. Either a string form
 #: (``"equal-count"``, ``"stream:<c>"``, ``"equi-energy:<n>"``,
@@ -80,6 +83,36 @@ DEFAULT_SLICED_LADDER_MAX_DEPTH = 8
 #: splats (≈ 460 M at c=14 k) — far beyond realistic leaves. On hitting the cap
 #: the last cut jumps straight to N.
 DEFAULT_STREAM_MAX_LEVELS = 16
+
+#: Assumed stored bytes per scalar for (centers, amplitudes, cholesky) under
+#: each encoding mode. AUTO and MEMORY use u16/u16/u8; PRECISION uses float32.
+_ENCODING_ARRAY_BYTES = {
+    "auto": (2.0, 2.0, 1.0),
+    "precision": (4.0, 4.0, 4.0),
+    "memory": (2.0, 2.0, 1.0),
+}
+
+
+def estimate_bytes_per_splat(
+    ndim: int, has_colors: bool = False, encoding: str = "auto"
+) -> float:
+    """Analytic on-wire bytes/splat estimate for an encoding mode.
+
+    Models centers, amplitude and split-Cholesky storage plus measured
+    zarr/blosc/chunk-bound overhead. Colors add about 4 bytes in quantized
+    modes and 18 bytes in precision mode. Use a measured store when encoding
+    escalation makes this pre-fit estimate insufficient.
+    """
+    n_cholesky = ndim * (ndim + 1) // 2
+    center_bytes, amplitude_bytes, cholesky_bytes = _ENCODING_ARRAY_BYTES.get(
+        encoding, (2.0, 2.0, 1.0)
+    )
+    color_bytes = 18.0 if encoding == "precision" else 4.0
+    return round(
+        1.5 * (center_bytes * ndim + amplitude_bytes + cholesky_bytes * n_cholesky)
+        + (color_bytes if has_colors else 0.0),
+        1,
+    )
 
 
 def streaming_chunk_splats(
@@ -216,47 +249,35 @@ def parse_equi_energy_rungs(spec: str) -> int:
     return n
 
 
-def _cumulative_energy(energy_in_order: Sequence[float]) -> List[float] | None:
+def _cumulative_energy(
+    energy_in_order: Sequence[float] | np.ndarray[Any, Any],
+) -> NDArray[np.float64] | None:
     """Cumulative non-negative energy, or ``None`` when degenerate (non-finite
     or summing to nothing) so the caller falls back to equal-count cuts."""
-    cum = 0.0
-    out: List[float] = []
-    for e in energy_in_order:
-        v = float(e)
-        if not math.isfinite(v):
-            return None
-        cum += max(v, 0.0)
-        out.append(cum)
-    if not out or out[-1] <= 0.0:
+    energy = np.asarray(energy_in_order, dtype=np.float64)
+    if energy.ndim != 1 or not np.all(np.isfinite(energy)):
         return None
-    return out
+    cumulative = np.cumsum(np.maximum(energy, 0.0), dtype=np.float64)
+    if cumulative.size == 0 or cumulative[-1] <= 0.0:
+        return None
+    return cumulative
 
 
-def _first_index_reaching(cum: Sequence[float], target: float) -> int:
-    """Smallest index whose cumulative value reaches ``target`` (binary search)."""
-    lo, hi = 0, len(cum) - 1
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if cum[mid] >= target:
-            hi = mid
-        else:
-            lo = mid + 1
-    return lo
-
-
-def _equal_energy_cuts(cum_energy: Sequence[float], n_rungs: int) -> List[int]:
+def _equal_energy_cuts(cum_energy: NDArray[np.float64], n_rungs: int) -> List[int]:
     """Cumulative counts at which the cumulative energy first reaches ``k/n``.
 
     Cuts that coincide (one element carrying several shares) collapse, so the
     result can be shorter than ``n_rungs``; it always ends at ``len(cum)``.
     """
     n = len(cum_energy)
-    total = cum_energy[-1]
-    cuts: List[int] = []
-    for k in range(1, n_rungs + 1):
-        cut = _first_index_reaching(cum_energy, total * k / n_rungs) + 1
-        if not cuts or cut > cuts[-1]:
-            cuts.append(cut)
+    cumulative = np.asarray(cum_energy, dtype=np.float64)
+    targets = np.linspace(
+        cumulative[-1] / n_rungs, cumulative[-1], n_rungs, dtype=np.float64
+    )
+    cuts = [
+        int(cut)
+        for cut in np.unique(np.searchsorted(cumulative, targets, side="left") + 1)
+    ]
     if cuts[-1] < n:
         cuts.append(n)
     return cuts
@@ -279,16 +300,27 @@ def _split_by_commit_cap(
     weighs at most ``max_commit`` — except an element that alone outweighs the
     cap, which becomes a rung of its own (it cannot be split).
     """
+    payload = np.ones(len(weights) if weights is not None else cuts[-1], dtype=np.int64)
+    if weights is not None:
+        payload = np.asarray(weights, dtype=np.int64)
+    cumulative = np.concatenate(([0], np.cumsum(payload, dtype=np.int64)))
     out: List[int] = []
     prev = 0
     for end in cuts:
-        acc = 0
-        for i in range(prev, end):
-            w = 1 if weights is None else int(weights[i])
-            if acc > 0 and acc + w > max_commit:
-                out.append(i)
-                acc = 0
-            acc += w
+        cursor = prev
+        while cursor < end:
+            next_cut = int(
+                np.searchsorted(
+                    cumulative,
+                    cumulative[cursor] + max_commit,
+                    side="right",
+                )
+                - 1
+            )
+            next_cut = min(end, max(cursor + 1, next_cut))
+            if next_cut < end:
+                out.append(next_cut)
+            cursor = next_cut
         if not out or end > out[-1]:
             out.append(end)
         prev = end
@@ -296,7 +328,7 @@ def _split_by_commit_cap(
 
 
 def equi_energy_cuts(
-    energy_in_order: Sequence[float],
+    energy_in_order: Sequence[float] | np.ndarray[Any, Any],
     n_rungs: int,
     *,
     weights: Sequence[int] | None = None,

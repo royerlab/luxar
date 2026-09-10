@@ -147,9 +147,6 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import AnimationConfig, ViewerConfig
-
-#: One turntable revolution, in seconds (Navigation popover value, 2026-09-10).
-AUTO_ROTATE_PERIOD_S = 240.0
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._particle_collision_tracks import generate_helix_points
 
@@ -174,6 +171,8 @@ from luxar.demos.demo_particle_collision import (
 from luxar.utils.paths import get_demos_output_dir
 
 ANIMATED_TRACK_TRANSVERSE_STEP = 0.01
+#: One turntable revolution, in seconds (Navigation popover value, 2026-09-10).
+AUTO_ROTATE_PERIOD_S = 240.0
 
 
 def generate_helix_track_with_times(

@@ -269,9 +269,6 @@ NORMALIZE_INTENSITY = 1.0
 EXPECTED_RUNGS = 8
 
 # ---- Appearance, shared by both channels -----------------------------------
-#: Volumetric optical depth shared by both layers (set by eye with the windows
-#: in CHANNELS): low enough that neither channel hides the other.
-ABSORPTION = 0.02
 #: Scene exposure in log2 stops (Rendering Controls > HDR > Exposure).
 EXPOSURE_STOPS = -3.4
 

@@ -144,12 +144,12 @@ def test_scene_grafts_time_parts_with_the_reviewed_layer_settings(
 
 
 def test_time_part_ladders_start_at_the_download_budget_and_stay_capped() -> None:
-    assert _demo.FIRST_RUNG_SPLATS == 39_062
+    assert _demo.FIRST_RUNG_SPLATS == 20_833
     ladders = _demo.time_part_ladders([2_400_000, 20_000, 3])
     big, small, tiny = ladders
-    assert big[0] == 39_062
+    assert big[0] == 20_833
     assert big[-1] == 2_400_000
-    increments = [b - a for a, b in zip([0, *big[:-1]], big)]
+    increments = [b - a for a, b in zip([0, *big[:-1]], big, strict=True)]
     assert max(increments) <= _demo.DEFAULT_MAX_ADDITIVE_COMMIT
     assert small == [20_000]
     assert tiny == [3]
@@ -176,6 +176,20 @@ def test_time_parts_cache_key_tracks_the_recipe(tmp_path) -> None:
     a = _demo.time_parts_cache_dir(source)
     assert a.parent == source.parent
     assert f"_v{_demo.TIME_PARTS_VERSION}_" in a.name
+
+
+def test_resolve_time_parts_prunes_old_versioned_builds(tmp_path, monkeypatch) -> None:
+    source = _write_source(tmp_path / "source.gsplats.zarr")
+    current = _demo.time_parts_cache_dir(source)
+    stale = tmp_path / "51tp_timeparts_v0_deadbeef00"
+    stale.mkdir()
+    (stale / "orphan").write_text("old")
+    monkeypatch.setattr(_demo, "build_time_parts", lambda _src, out: out)
+
+    _demo.resolve_time_parts(source)
+
+    assert not stale.exists()
+    assert current.exists()
 
 
 def test_scene_rejects_an_archive_with_a_different_source_stride(tmp_path) -> None:

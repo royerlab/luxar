@@ -135,14 +135,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-
-# The first-paint budget every demo ladder is sized to (~200 ms at 25 Mbps and
-# 16 B/splat = 39,062 splats), spelled with the same constants the composed
-# Points/Lines ladders use so the two cannot drift.
-from luxar.core.group.lod.group import (
-    DEFAULT_LADDER_BYTES_PER_ELEMENT,
-    DEFAULT_LADDER_TARGET_MS,
-)
+from luxar.core.group.lod.group import DEFAULT_LADDER_TARGET_MS
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
@@ -163,6 +156,7 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.lod_breakpoints import (
     DEFAULT_BANDWIDTH_MBPS,
     capped_stream_cuts,
+    estimate_bytes_per_splat,
     streaming_chunk_splats,
 )
 from luxar.utils.paths import get_demos_output_dir
@@ -173,9 +167,11 @@ from luxar.utils.paths import get_demos_output_dir
 #: parts loading at once, first paint was ~7.3M splats (2026-09-10 review:
 #: "takes a long time to load — are additive LODs not doing their job?"). They
 #: were there; they were sized wrong. Re-laddering at scene build brings first
-#: paint to 12 x 39K ≈ 470K splats without touching the published archives.
+#: paint to 12 x 46K ≈ 556K splats without touching the published archives.
 FIRST_RUNG_SPLATS: int = streaming_chunk_splats(
-    DEFAULT_LADDER_TARGET_MS, DEFAULT_BANDWIDTH_MBPS, DEFAULT_LADDER_BYTES_PER_ELEMENT
+    DEFAULT_LADDER_TARGET_MS,
+    DEFAULT_BANDWIDTH_MBPS,
+    estimate_bytes_per_splat(ndim=2, has_colors=False),
 )
 
 
@@ -193,8 +189,9 @@ def part_ladder_spec(cache_path: Path) -> dict:
     capped cuts respect. ``recompute=True`` replaces the stored equal-count
     ladder rather than keeping it.
 
-    Reads the tree from METADATA only (no array data), so the archive is
-    scanned once cheaply here and once for real by the graft.
+    Reads only tree metadata after resolving the store. Compressed published
+    archives are extracted here and again by the later graft; array payloads
+    are not loaded during this sizing pass.
     """
     from luxar._zarr_compat import open_group as zc_open_group
     from luxar.gsplats.io._archive import resolve_store_path

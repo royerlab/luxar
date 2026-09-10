@@ -17,6 +17,7 @@ from luxar.utils.lod_breakpoints import (
     DEFAULT_STREAM_MAX_LEVELS,
     capped_stream_cuts,
     equi_energy_cuts,
+    estimate_bytes_per_splat,
     hidden_coordinate_count,
     parse_equi_energy_rungs,
     parse_stream_chunk,
@@ -106,7 +107,7 @@ class TestStreamCuts:
         for n in (37, 1000, 9_751_955):
             cuts = stream_cuts(n, 40_000)
             assert cuts[-1] == n
-            assert all(a < b for a, b in zip(cuts, cuts[1:]))
+            assert all(a < b for a, b in zip(cuts, cuts[1:], strict=False))
 
 
 class TestCappedStreamCuts:
@@ -118,7 +119,7 @@ class TestCappedStreamCuts:
         # increment is always n/2, whatever the first chunk is.
         for n in (10_000, 1_153_506, 3_000_000, 6_248_730, 9_751_955, 82_000_000):
             cuts = capped_stream_cuts(n)
-            increments = [b - a for a, b in zip([0, *cuts], cuts)]
+            increments = [b - a for a, b in zip([0, *cuts], cuts, strict=False)]
             assert max(increments) <= DEFAULT_MAX_ADDITIVE_COMMIT, (
                 f"n={n} largest increment {max(increments):,}"
             )
@@ -129,10 +130,10 @@ class TestCappedStreamCuts:
         # pure doubling ladder, twice the 1,000,000 check_demo_ladders fails at.
         n = 6_248_730
         plain = stream_cuts(n, DEFAULT_CAPPED_FIRST_CHUNK)
-        plain_max = max(b - a for a, b in zip([0, *plain], plain))
+        plain_max = max(b - a for a, b in zip([0, *plain], plain, strict=False))
         assert plain_max == 2_152_730
         capped = capped_stream_cuts(n)
-        capped_max = max(b - a for a, b in zip([0, *capped], capped))
+        capped_max = max(b - a for a, b in zip([0, *capped], capped, strict=False))
         assert capped_max <= DEFAULT_MAX_ADDITIVE_COMMIT
         assert capped_max * 2 < plain_max
 
@@ -146,13 +147,14 @@ class TestCappedStreamCuts:
                     for a, b in zip(
                         [0, *stream_cuts(20_000_000, chunk)],
                         stream_cuts(20_000_000, chunk),
+                        strict=False,
                     )
                 )
                 > DEFAULT_MAX_ADDITIVE_COMMIT
             )
             capped = capped_stream_cuts(20_000_000, chunk=chunk)
             assert (
-                max(b - a for a, b in zip([0, *capped], capped))
+                max(b - a for a, b in zip([0, *capped], capped, strict=False))
                 <= DEFAULT_MAX_ADDITIVE_COMMIT
             )
 
@@ -169,7 +171,7 @@ class TestCappedStreamCuts:
         for n in (1, 1_999, 2_000, 2_001, 500_000, 9_751_955):
             cuts = capped_stream_cuts(n)
             assert cuts[-1] == n
-            assert all(a < b for a, b in zip(cuts, cuts[1:]))
+            assert all(a < b for a, b in zip(cuts, cuts[1:], strict=False))
 
     def test_n_at_or_below_chunk_is_a_single_level(self) -> None:
         assert capped_stream_cuts(2_000) == [2_000]
@@ -177,7 +179,7 @@ class TestCappedStreamCuts:
 
     def test_first_chunk_is_clamped_to_the_commit_ceiling(self) -> None:
         cuts = capped_stream_cuts(10_000_000, chunk=1_500_000, max_commit=900_000)
-        increments = [b - a for a, b in zip([0, *cuts], cuts)]
+        increments = [b - a for a, b in zip([0, *cuts], cuts, strict=False)]
         assert cuts[0] == 900_000
         assert max(increments) <= 900_000
 
@@ -263,6 +265,11 @@ class TestValidateElementBreakpoints:
 
 
 class TestStreamingChunkSplats:
+    def test_gsplat_payload_estimates_match_the_streaming_budgets(self) -> None:
+        assert estimate_bytes_per_splat(4, has_colors=False) == 30.0
+        assert estimate_bytes_per_splat(2, has_colors=False) == 13.5
+        assert estimate_bytes_per_splat(4, has_colors=True) == 34.0
+
     def test_known_sizing(self) -> None:
         # 200 ms @ 25 Mbps @ 45 B/splat -> ~13.9 k splats (the gsplat default).
         assert streaming_chunk_splats(200.0, DEFAULT_BANDWIDTH_MBPS, 45.0) == 13889

@@ -231,7 +231,7 @@ class TestLodStreamlineCounts:
         for n in range(1, 200):
             counts = _demo.lod_streamline_counts(n)
             assert counts[-1] == n
-            assert all(a < b for a, b in zip(counts, counts[1:]))
+            assert all(a < b for a, b in zip(counts, counts[1:], strict=False))
 
     def test_rejects_an_empty_bundle(self) -> None:
         with pytest.raises(ValueError, match="positive"):
@@ -685,11 +685,13 @@ class TestBuildScene:
 
         finest = rows(levels[-1])
         assert len(finest) == self.PER_BUNDLE * self.POINTS
-        for node in levels[:-1]:
-            coarse = rows(node)
+        level_rows = [rows(node) for node in levels]
+        for node, coarse in zip(levels[:-1], level_rows[:-1], strict=True):
             assert len(coarse) == int(node.attrs["n_vertices"]), "duplicate vertex"
             assert len(coarse) % self.POINTS == 0, "partial streamline"
             assert coarse <= finest, "coarse vertex not in the bundle"
+        for coarse, finer in zip(level_rows, level_rows[1:], strict=False):
+            assert coarse <= finer, "a finer level replaced rather than added fibres"
 
     def test_the_ladder_is_screen_area_halving(self, tmp_path: Path) -> None:
         # The derived ladder uses selector="screen-area" with the finest level

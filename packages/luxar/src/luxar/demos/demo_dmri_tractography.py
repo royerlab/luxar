@@ -1093,8 +1093,11 @@ def _add_tract(
         intensity=LINE_INTENSITY,
         layer=True,
     )
-    for level, (count, cover) in enumerate(zip(counts, coverage_fractions(counts))):
-        kept = subsample_indices(n_paths, count, seed=seed + level)
+    permutation = subsample_indices(n_paths, n_paths, seed=seed)
+    for level, (count, cover) in enumerate(
+        zip(counts, coverage_fractions(counts), strict=True)
+    ):
+        kept = np.sort(permutation[:count])
         verts, width, cols, idx, n_verts = level_arrays(kept)
         # `indexed`, NOT `segments`: interior joints must share a vertex index
         # or thick lines render as chains of beads. Lines labels are PER VERTEX
@@ -1167,7 +1170,7 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
             total_segments = 0
 
             for bundle_idx, (name, division, xyz, rgb) in enumerate(
-                zip(names, divisions, positions, colors)
+                zip(names, divisions, positions, colors, strict=True)
             ):
                 n_paths = len(xyz) // points
                 total_segments += n_paths * (points - 1)

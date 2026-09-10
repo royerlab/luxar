@@ -17,7 +17,7 @@ STRUCTURE:
     progressive ladder. The SCENE does not graft that leaf as-is: at build time
     it is re-authored (no refit — the splats are untouched) into a
     ``kind=partition`` of **one part per timepoint**, 51 parts, each carrying
-    its own capped progressive (stream) ladder: a 39,062-splat first rung
+    its own capped progressive (stream) ladder: a 20,833-splat first rung
     (~200 ms at 25 Mbps), doubling, increments capped at 900,000. No
     substitutive levels anywhere.
 
@@ -35,9 +35,9 @@ STRUCTURE:
         per-node element cap wants; only one of them is ever resident.
 
     The re-authored partition is cached next to the download
-    (``~/.cache/luxar/h2afva/51tp_timeparts_v<N>/``) and rebuilt when the
-    archive or the recipe changes. Building it holds the whole leaf in memory
-    once (~8 GB at 121M splats) and takes ~10 minutes of CPU.
+    (``~/.cache/luxar/h2afva/51tp_timeparts_v<N>_<digest>/``) and rebuilt when
+    the archive or the recipe changes. Building it peaks around 30 GB RSS at
+    121M splats and takes about 30 minutes of CPU.
 
     HISTORY: this archive USED to be a ``kind=partition`` of 44 SPATIAL parts,
     each an LOD group of four substitutive levels; both were dropped
@@ -146,10 +146,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import read_node_attrs
-from luxar.core.group.lod.group import (
-    DEFAULT_LADDER_BYTES_PER_ELEMENT,
-    DEFAULT_LADDER_TARGET_MS,
-)
+from luxar.core.group.lod.group import DEFAULT_LADDER_TARGET_MS
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
@@ -159,6 +156,7 @@ from luxar.demos import (
     parse_path_arg,
     run_luxar_cli,
     stamp_input_digests,
+    window_attrs,
 )
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io._archive import read_archive_root_attrs
@@ -177,6 +175,7 @@ from luxar.utils.lod_breakpoints import (
     DEFAULT_BANDWIDTH_MBPS,
     DEFAULT_MAX_ADDITIVE_COMMIT,
     capped_stream_cuts,
+    estimate_bytes_per_splat,
     streaming_chunk_splats,
 )
 from luxar.utils.paths import get_demos_output_dir
@@ -242,10 +241,12 @@ ARCHIVE_ABSORPTION = 1.34
 #: the cache directory name carries it, so an old build is never reused.
 TIME_PARTS_VERSION = 1
 #: First rung of every part's ladder: the shared ~200 ms download budget
-#: (39,062 splats at 25 Mbps and 16 B/splat). A time part is ONE frame, not a
+#: (20,833 splats at 25 Mbps and 30 B/splat). A time part is ONE frame, not a
 #: sliced node, so the budget rule applies rather than the sliced share floor.
 FIRST_RUNG_SPLATS = streaming_chunk_splats(
-    DEFAULT_LADDER_TARGET_MS, DEFAULT_BANDWIDTH_MBPS, DEFAULT_LADDER_BYTES_PER_ELEMENT
+    DEFAULT_LADDER_TARGET_MS,
+    DEFAULT_BANDWIDTH_MBPS,
+    estimate_bytes_per_splat(ndim=4, has_colors=False),
 )
 #: Contribution ordering inside each part's ladder: the brightest nuclei first,
 #: so the 1/e(k) brightening of an incomplete ladder shows a dimmer version of
@@ -432,12 +433,6 @@ def resolve_data() -> Path:
         return paths[0]
 
 
-def window_attrs(window: tuple[float, float]) -> dict[str, float]:
-    """The intensity/offset pair a colormapped Layers-panel window is stored as."""
-    lo, hi = window
-    return {"intensity": 1.0 / (hi - lo), "offset": -lo / (hi - lo)}
-
-
 def _finest_data(node: Any) -> list[GSplatData]:
     """Finest-level content of every matrix-shaped subtree, as flat data.
 
@@ -464,7 +459,7 @@ def time_part_ladders(n_per_part: list[int]) -> list[list[int]]:
 
 
 def time_parts_cache_dir(data_path: Path) -> Path:
-    """Where the re-authored partition lives, keyed on the archive it came from."""
+    """Where the re-authored partition lives, keyed on source metadata and recipe."""
     stat = data_path.stat()
     key = hashlib.sha1(
         f"{data_path.name}|{stat.st_size}|{int(stat.st_mtime)}|"
@@ -483,17 +478,23 @@ def build_time_parts(data_path: Path, out_path: Path) -> Path:
     with asection("Re-authoring into time parts"):
         node, _ = load_gsplat_node(str(data_path))
         finest = _finest_data(node)
-        centers = np.concatenate([np.asarray(d.centers) for d in finest], axis=0)
-        amplitudes = np.concatenate([np.asarray(d.amplitudes) for d in finest])
-        cholesky = np.concatenate(
-            [np.asarray(d.cholesky_factors) for d in finest], axis=0
-        )
+        if len(finest) == 1:
+            centers = np.asarray(finest[0].centers)
+            amplitudes = np.asarray(finest[0].amplitudes)
+            cholesky = np.asarray(finest[0].cholesky_factors)
+        else:
+            centers = np.concatenate([np.asarray(d.centers) for d in finest], axis=0)
+            amplitudes = np.concatenate([np.asarray(d.amplitudes) for d in finest])
+            cholesky = np.concatenate(
+                [np.asarray(d.cholesky_factors) for d in finest], axis=0
+            )
         has_colors = all(d.colors is not None for d in finest)
-        colors = (
-            np.concatenate([np.asarray(d.colors) for d in finest], axis=0)
-            if has_colors
-            else None
-        )
+        if not has_colors:
+            colors = None
+        elif len(finest) == 1:
+            colors = np.asarray(finest[0].colors)
+        else:
+            colors = np.concatenate([np.asarray(d.colors) for d in finest], axis=0)
         truncation = float(finest[0].truncation_radius)
         total = int(centers.shape[0])
         del finest
@@ -518,6 +519,7 @@ def build_time_parts(data_path: Path, out_path: Path) -> Path:
                 breakpoints=time_part_ladders([part.n_splats])[0],
             )
             parts.append(laddered.tree)
+        del centers, amplitudes, cholesky, colors
         if sum(counts) != total:
             raise RuntimeError(
                 f"time parts hold {sum(counts):,} splats, source {total:,}"
@@ -551,6 +553,10 @@ def build_time_parts(data_path: Path, out_path: Path) -> Path:
 def resolve_time_parts(data_path: Path, cache_dir: Path | None = None) -> Path:
     """Return the cached time-part partition for ``data_path``, building it once."""
     cache = time_parts_cache_dir(data_path) if cache_dir is None else cache_dir
+    if cache_dir is None:
+        for stale in data_path.parent.glob("51tp_timeparts_v*_*"):
+            if stale != cache and stale.is_dir():
+                shutil.rmtree(stale, ignore_errors=True)
     out = cache / "h2afva_51tp_timeparts.gsplats.zarr"
     if out.exists() and not RECOMPUTE:
         aprint(f"time parts cached: {out}")

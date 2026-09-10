@@ -1269,7 +1269,7 @@ def _cuts_for_kind(
     """
     if kind == "equi-energy":
         return equi_energy_cuts(
-            energy_ordered.tolist(), parse_equi_energy_rungs(str(breakpoints))
+            energy_ordered, parse_equi_energy_rungs(str(breakpoints))
         )
     if kind == "energy-fractions":
         fracs = [float(x) for x in cuts_or_fracs]

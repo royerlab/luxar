@@ -530,7 +530,7 @@ def _energy_string_polyline_cuts(
 
         poly_lengths = [int(polylines[int(i)].shape[0]) for i in perm]
         return equi_energy_cuts(
-            np.asarray(energy, dtype=np.float64)[perm].tolist(),
+            np.asarray(energy, dtype=np.float64)[perm],
             parse_equi_energy_rungs(counts),
             weights=poly_lengths,
         )

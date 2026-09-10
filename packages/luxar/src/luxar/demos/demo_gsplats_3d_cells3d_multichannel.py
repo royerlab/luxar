@@ -103,6 +103,7 @@ from luxar.demos import (
     require_module,
     stamp_input_digests,
     warn_if_no_cuda_gpu,
+    window_attrs,
 )
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
@@ -136,12 +137,6 @@ CHANNELS = [
     },
     {"index": 1, "name": "Nuclei", "colormap": "bop_blue", "window": (0.009, 0.114)},
 ]
-
-
-def window_attrs(window: tuple[float, float]) -> dict[str, float]:
-    """The intensity/offset pair a Layers-panel window ``[lo, hi]`` is stored as."""
-    lo, hi = window
-    return {"intensity": 1.0 / (hi - lo), "offset": -lo / (hi - lo)}
 
 
 # Per-channel brightness multiplier applied before writing. Kept conservative

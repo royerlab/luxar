@@ -82,6 +82,7 @@ Options:
     --serve-only:      Just serve a previously generated scene (skips rebuild)
     --max-elements=N:  Per-part BSP cap for tiles/overview/adaptive (default 50000)
     --factor=K:        Coarse-cap compression for overview/levels (default 4)
+    Adaptive/levels use the fixed demo depth LEVELS=2.
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_recipes_tribolium.luxar.zarr
@@ -382,7 +383,11 @@ def _cli_for(recipe: str) -> str:
     if recipe == "overview":
         return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
     if recipe == "adaptive":
-        return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
+        return (
+            base
+            + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
+            + f" --levels {LEVELS}"
+        )
     return base
 
 

@@ -47,7 +47,7 @@ def test_coverage_follows_the_seasonal_thresholds(clouds: dict) -> None:
     order = np.argsort(demo.CLOUD_THRESHOLDS)  # most covered first
     covered = [counts[i] for i in order]
     # Monotone unless the cap flattens the top of the ranking.
-    for heavier, lighter in zip(covered, covered[1:]):
+    for heavier, lighter in zip(covered, covered[1:], strict=False):
         assert heavier >= lighter or heavier == demo.CLOUD_MAX_POINTS
     assert counts[demo.WINTER] > counts[demo.SUMMER]
 
