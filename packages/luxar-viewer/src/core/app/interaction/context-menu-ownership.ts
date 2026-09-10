@@ -28,11 +28,11 @@
  *     the container defaults to `document.body`, which an embedder may share
  *     with their own UI (see `utils/viewer-container`).
  *   - **Text entry.** A typing surface keeps its native menu, which is the only
- *     way to paste — while range, checkbox and radio inputs remain viewer
- *     controls whose menu should be suppressed.
- *   - **Selected overlay text.** An interactive overlay with a live selection
- *     keeps the native Copy action. Its pointer events already prevent a
- *     right-drag from reaching the camera controls.
+ *     way to paste — while range, checkbox, radio and select controls remain
+ *     viewer controls whose menu should be suppressed.
+ *   - **Interactive overlay actions.** A live selection keeps Copy, and a link
+ *     keeps its native link actions. The overlay's pointer events already
+ *     prevent a right-drag from reaching the camera controls.
  *
  * Capture phase, so an inner handler that calls `stopPropagation` (the
  * dimension sliders' play-button menu does) cannot leave the native menu
@@ -53,7 +53,11 @@ import { getViewerContainer } from '../../../utils/viewer-container';
  */
 const VIEWER_OWNED = '[class^="luxar-"], [class*=" luxar-"]';
 
-/** Candidate fields classified by the canonical typing-surface predicate. */
+/**
+ * Candidate fields classified by the canonical typing-surface predicate.
+ * Selects have no clipboard action, so they remain viewer controls even though
+ * `isTypingInInput` treats them as keyboard-input surfaces.
+ */
 const FIELD = 'input, textarea, [contenteditable]';
 
 function isTextEntry(target: Element): boolean {
@@ -61,7 +65,8 @@ function isTextEntry(target: Element): boolean {
   return !!field && (isTypingInInput(field) || field.getAttribute('contenteditable') === '');
 }
 
-function hasSelectedInteractiveOverlay(target: Element): boolean {
+function hasInteractiveOverlayNativeMenu(target: Element): boolean {
+  if (target.closest('.luxar-overlay--interactive a[href]') !== null) return true;
   return (
     target.closest('.luxar-overlay--interactive') !== null &&
     window.getSelection()?.isCollapsed === false
@@ -107,7 +112,7 @@ export function installContextMenuOwnership(
       if (!(target instanceof Element)) return;
       if (
         !isTextEntry(target) &&
-        !hasSelectedInteractiveOverlay(target) &&
+        !hasInteractiveOverlayNativeMenu(target) &&
         isViewerOwned(target, canvas, container)
       ) {
         event.preventDefault();

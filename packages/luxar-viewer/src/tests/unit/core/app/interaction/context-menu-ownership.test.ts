@@ -117,6 +117,18 @@ describe('installContextMenuOwnership', () => {
     expect(rightClick(caption)).toBe(false);
   });
 
+  it('keeps native link actions in an interactive overlay', () => {
+    const overlay = appendTo(document.body, 'div', 'luxar-overlay luxar-overlay--interactive');
+    const link = appendTo(overlay, 'a') as HTMLAnchorElement;
+    link.href = 'https://doi.org/10.1234/luxar';
+    const label = appendTo(link, 'span');
+
+    expect(rightClick(link)).toBe(false);
+    expect(rightClick(label)).toBe(false);
+    expect(rightClick(appendTo(overlay, 'a'))).toBe(true);
+    expect(rightClick(overlay)).toBe(true);
+  });
+
   it('still fires when an inner handler stops propagation', () => {
     // The dimension sliders' play button calls stopPropagation on its own
     // menu; a bubble-phase listener would never see it.
