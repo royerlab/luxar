@@ -168,5 +168,5 @@ def test_legend_sits_in_the_lower_left_corner() -> None:
     src = inspect.getsource(demo.write_scene)
     i = src.index("build_legend_html(data.anatomy_categories")
     block = src[i : i + 200]
-    assert "position=(0.02, 0.98)" in block
+    assert "position=(0.06, 0.98)" in block
     assert 'anchor="bottom-left"' in block

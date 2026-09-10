@@ -1042,10 +1042,11 @@ def write_scene(
                 line_height=1.35,
             )
             # Colour key in the lower-left corner (2026-09-10 review), clear of
-            # the caption at bottom-right and the hover label at centre-left.
+            # the caption at bottom-right and the hover label at centre-left;
+            # x = 0.06 keeps it right of the control rail on a laptop window.
             scene.add_html(
                 build_legend_html(data.anatomy_categories, palette, counts),
-                position=(0.02, 0.98),
+                position=(0.06, 0.98),
                 anchor="bottom-left",
                 opacity=0.92,
             )
