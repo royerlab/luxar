@@ -43,6 +43,19 @@ class TestCudaBasic:
         result = denoise_nlm(noisy.cuda(), h=0.05, backend="cuda")
         assert result.device.type == "cuda"
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Need multiple GPUs")
+    @pytest.mark.parametrize("shape", [(16, 16), (16, 16, 16)])
+    def test_non_default_cuda_device(self, shape):
+        """NLM should launch on the input device and restore the caller's device."""
+        input_tensor = torch.full(shape, 0.5, device="cuda:1")
+
+        with torch.cuda.device(0):
+            result = denoise_nlm(input_tensor, h=0.05, backend="cuda")
+            assert torch.cuda.current_device() == 0
+
+        assert result.device == input_tensor.device
+        torch.testing.assert_close(result, input_tensor, rtol=0, atol=1e-5)
+
 
 class TestCudaEffectiveness:
     """Denoising should reduce noise."""

@@ -170,9 +170,9 @@ def add_gsplats_impl(
         scene._validate_dimension_count(ctr_arr, name, data_type="centers")
 
         # Node-attrs gate (#1534) — the GSplats peer of the Points/Lines hoist
-        # (#1529). ``partition=`` is this adder's only split path (this module
-        # has no substitutive_lod=/additive_lod=/lod_group= door — those live
-        # on ``add_gsplats_from_data``, a different adder), and it forwards the
+        # (#1529). ``partition=`` is this leaf implementation's only split path;
+        # the public array adder resolves its LOD controls before reaching here.
+        # This function forwards the
         # non-compositing remainder of ``**attrs`` to each synthesised
         # ``part_i`` — so a bad attr used to be refused only from inside the
         # first part, by which point the wrapper's childless ``kind=partition``

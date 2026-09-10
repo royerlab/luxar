@@ -185,6 +185,15 @@ EXEMPT: dict[str, Exemption] = {
         "one kind=lod group per tract carries layer=True; its subsampled-"
         "streamline levels are the siblings it covers",
     ),
+    "demo_esm_protein_universe.py": Exemption(
+        frozenset({"f'child_{level}'"}),
+        frozenset({"'Backdrop'"}),
+        "LOD levels of the per-tile kind=lod ladders under the `Backdrop` "
+        "kind=partition wrapper, which is the layer=True node and the only one "
+        "carrying the compositing attrs (they compose multiplicatively, so a "
+        "copy on a level would square them). Only one level of a ladder is "
+        "ever visible, so a level is not a layer.",
+    ),
     "demo_ocean_currents_earth.py": Exemption(
         frozenset({"f'child_{level}'"}),
         frozenset({"'currents'"}),

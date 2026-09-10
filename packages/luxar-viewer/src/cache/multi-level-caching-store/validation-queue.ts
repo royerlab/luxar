@@ -173,6 +173,7 @@ export async function getRemoteContentHash(
           timeoutMsOverride:
             budget === undefined ? undefined : Math.max(1, budget - (Date.now() - startedAt)),
           signal: options.signal,
+          lane: 'metadata',
         },
         async ({ response, readBody }) => (response.ok ? readBody() : null)
       );

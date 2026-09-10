@@ -7,7 +7,7 @@
 .PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest sync-demo-counts \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity check-lint-ratchet check-native \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
-        test-e2e test-e2e-smoke test-perf-e2e \
+        test-e2e test-e2e-browsers test-e2e-mobile test-e2e-smoke test-e2e-smoke-strict test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-cold-fetch check-typescript check-rust check-knip check-gallery-staleness check-gallery-media check-wasm-deps setup-dev \
         check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
@@ -2714,12 +2714,33 @@ test-e2e: run-examples ensure-viewer-fixtures  ## Run the full Playwright E2E su
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e
 
-test-e2e-smoke: run-examples  ## Run the E2E smoke subset (what CI would run)
+test-e2e-browsers: run-examples ensure-viewer-fixtures  ## Run the cross-browser Playwright subset
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:browsers
+
+test-e2e-mobile: run-examples ensure-viewer-fixtures  ## Run the mobile/touch Playwright suite used by PR CI
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:mobile
+
+test-e2e-smoke: run-examples  ## Run the E2E smoke subset
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e:smoke
+
+test-e2e-smoke-strict: run-examples  ## Run smoke with strict browser-console handling
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:smoke:strict
 
 test-perf-e2e: run-examples  ## Run the opt-in Playwright performance suite
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \

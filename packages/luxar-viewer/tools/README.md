@@ -21,7 +21,7 @@ tools/
 ├── e2e-server-identity.ts   # Checkout identity + Playwright preflight helpers
 ├── e2e-workers.ts           # Local Playwright parallelism sized to the machine
 ├── make-zip-bench-fixtures.py # Build directory/STORED/DEFLATE benchmark fixtures
-└── range-http-server.py     # Static server with strict HTTP Range support
+└── range-http-server.py     # Range server + hermetic slow-body test endpoint
 ```
 
 ## `e2e-server-identity.ts`

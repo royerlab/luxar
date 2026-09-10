@@ -46,7 +46,7 @@
  * shared SliceCache under content-keyed entries — it cannot stall or corrupt
  * a foreground tick. `prefetch()` is fire-and-forget (never awaited; every
  * rejection, including expected AbortErrors, is swallowed); its fetches share
- * the global 64-wide fetch gate and are bounded by the budget + abort.
+ * the global 24-slot data fetch lane and are bounded by the budget + abort.
  * `abortInFlight()` / `releaseShadows()` (playback end) / `dispose()` tear it
  * down.
  *

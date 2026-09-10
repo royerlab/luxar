@@ -590,9 +590,9 @@ def test_a_costly_recipe_is_only_chosen_where_the_scene_can_carry_it() -> None:
     silent one. A demo can read its archive back perfectly and still throw the
     topology away at the next step, by rebuilding the scene from loose
     ``centers=``/``amplitudes=`` arrays — every one of which is a view of the
-    finest level. ``add_gsplats`` then writes a flat leaf and the extra bytes
-    (+38% for ``levels`` on a real fit) buy nothing. Nothing raises; the demo
-    simply pays for a ladder no viewer will ever be offered.
+    finest level. Unless the call explicitly re-authors a topology, the extra
+    bytes (+38% for ``levels`` on a real fit) buy nothing. Nothing raises; the
+    demo simply pays for a ladder no viewer will ever be offered.
     """
     for name, src in sorted(_fitting_demos().items()):
         costly = set(_chosen_recipes(name, src)) & SCENE_TOPOLOGY_RECIPES

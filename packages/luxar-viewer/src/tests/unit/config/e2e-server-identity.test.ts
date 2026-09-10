@@ -135,8 +135,8 @@ describe('E2E server identity', () => {
   // The plugin's middleware is exercised on a plain `node:http` server, not a
   // real Vite dev server: loading Vite plus its optimizer/watcher startup is
   // load-sensitive and can overrun the 15s per-test budget under coverage and
-  // whole-suite contention. Real Vite is exercised only by a local Playwright run
-  // (CI declares `e2e-tests` with `if: false`), and only for the matching-path GET
+  // whole-suite contention. Real Vite is exercised by Playwright, including the
+  // mobile-only PR job, and only for the matching-path GET
   // that both `playwright.config.ts`'s `webServer[0].url` readiness probe and
   // `src/tests/e2e/global-setup.ts` request; HEAD, the foreign-identity 404, and
   // the pass-through are covered here alone.

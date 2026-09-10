@@ -257,7 +257,10 @@ MIN_NODE_MINOR := 22
 | `make test-fixtures` | Generate test fixtures for TypeScript tests |
 | `make test-viewer-fixtures` | Generate fixtures + run TypeScript tests |
 | `make test-e2e` | Run the full Playwright E2E suite (~17 min) |
-| `make test-e2e-smoke` | Run the E2E smoke subset (the interaction-focused specs CI would run) |
+| `make test-e2e-browsers` | Run the cross-browser Playwright subset |
+| `make test-e2e-mobile` | Run the mobile/touch Playwright suite used by PR CI |
+| `make test-e2e-smoke` | Run the E2E smoke subset |
+| `make test-e2e-smoke-strict` | Run the smoke subset with strict browser-console handling |
 | `make test-perf-e2e` | Run the opt-in Playwright performance suite |
 | `make lint-python` | Run ruff linting on Python |
 | `make check-complexity` | Ratchet cyclomatic complexity (ruff C901) against `scripts/complexity_baseline.json` |

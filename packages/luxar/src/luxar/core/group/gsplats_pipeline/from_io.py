@@ -13,7 +13,7 @@ import numpy as np
 
 from luxar.validation.writing import validate_image_labels_for_writing
 
-from ..compositing import reject_mesh_only_appearance, strip_absent_attr_kwargs
+from ..compositing import strip_absent_attr_kwargs
 from .amplitude_norm import (
     NormalizeSpec,
     normalize_node_in_place,
@@ -35,6 +35,7 @@ from .from_data import (
     partition_beside_a_ladder_reason,
     reject_bad_partition_spec,
     reject_data_owned_channels,
+    reject_invalid_gsplat_compositing_attrs,
 )
 
 if TYPE_CHECKING:
@@ -84,6 +85,10 @@ def add_gsplats_from_file_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    partition: Any = None,
+    lod_group: Any = None,
+    additive_lod: Any = None,
+    flatten: bool = False,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -111,7 +116,11 @@ def add_gsplats_from_file_impl(
     # a missing file is not an attrs question at all.
     strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
-    reject_mesh_only_appearance("gsplats", name, attrs)
+    reject_invalid_gsplat_compositing_attrs(group, name, parent, attrs)
+    if partition is not None:
+        attrs["partition"] = partition
+    if additive_lod is not None:
+        attrs["additive_lod"] = additive_lod
 
     # Classical (photogrammetric) splat files — INRIA/SuperSplat .ply,
     # antimatter15 .splat, Niantic .spz — are imported on the fly and embedded
@@ -130,6 +139,7 @@ def add_gsplats_from_file_impl(
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
+            lod_group=lod_group,
             **attrs,
         )
 
@@ -139,7 +149,23 @@ def add_gsplats_from_file_impl(
     # tree (kind=partition root, or lod with non-leaf children) has no flat
     # GSplatData equivalent, so it is GRAFTED node-for-node, reusing the scene's
     # own builders — the same subtree the file already holds.
-    node, _stats = load_gsplat_node(path)
+    node, stats = load_gsplat_node(path)
+
+    if flatten:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        return add_gsplats_from_data_impl(
+            group,
+            name=name,
+            result=GSplatData.from_default_selection(node, stats=stats).flattened(),
+            parent=parent,
+            extend_to_all=extend_to_all,
+            dim_order=dim_order,
+            fill=fill,
+            fill_sigma=fill_sigma,
+            lod_group=lod_group,
+            **attrs,
+        )
 
     if is_matrix_shaped(node):
         from luxar.gsplats.gsplat_data import GSplatData
@@ -162,6 +188,7 @@ def add_gsplats_from_file_impl(
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
+            lod_group=lod_group,
             **attrs,
         )
 
@@ -170,7 +197,14 @@ def add_gsplats_from_file_impl(
             "dim_order / fill / fill_sigma are not supported when grafting a "
             "partition / nested .gsplats.zarr (the file is already a full node "
             "subtree). Re-author the file in the target scene dims, or embed a "
-            "matrix-shaped (leaf / additive / kind=lod) file instead."
+            "matrix-shaped (leaf / additive / kind=lod) file instead, or pass "
+            "flatten=True to materialize the default finest selection first."
+        )
+
+    if lod_group is not None and lod_group is not False:
+        raise ValueError(
+            "flatten=True is required to apply substitutive_lod= to a "
+            "partition / nested .gsplats.zarr"
         )
 
     # Scene-dimension COUNT check on the STORED tree, before the graft creates
@@ -324,7 +358,8 @@ def _reject_a_partition_beside_a_stored_ladder(
     ``add_gsplats_from_file(..., lod_group="bogus", partition={…},
     additive_lod={"n_lods": 2})`` answers the conflict (``ValueError``) where
     ``add_gsplats_from_data`` with the same effective arguments answers
-    ``TypeError: lod_group must be None, bool, or dict; got str``. Both refuse and
+    ``TypeError: substitutive_lod (or lod_group alias) must be None, bool, or
+    dict; got str``. Both refuse and
     both write nothing, so the divergence is in naming only — the same sanctioned
     class this module already documents for "a NaN position, an unknown attr".
     For the same reason a fault the COUNT cannot see (a bad ``method``, a stray
@@ -777,7 +812,7 @@ def graft_gsplat_node(
     # depends on it; if you delete it, nothing observable changes.
     strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
-    reject_mesh_only_appearance("gsplats", name, attrs)
+    reject_invalid_gsplat_compositing_attrs(group, name, parent, attrs)
     _reject_a_partition_beside_a_stored_ladder(name, node, attrs)
     _reject_a_bad_partition_spec_on_a_graft(name, node, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)

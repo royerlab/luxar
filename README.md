@@ -93,7 +93,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 91 bundled demos
+luxar demo              # Browse the 92 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -107,7 +107,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 91 Luxar demos  ·  75 built  ·  8 cached  ·  8 not generated yet
+🎬 92 Luxar demos  ·  75 built  ·  8 cached  ·  9 not generated yet
 
  ASTRONOMY ──────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
@@ -116,13 +116,13 @@ geometry, what it needs, and whether you have already built it:
 
  MEDICAL ────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB
- • 28  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
+ • 29  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
 
  SYNTHETIC ─────────────────────────────────────────────────────────── 20 demos
  ✓ 10  cloud                                   points
    11  collision                               points
  ...
- ✓ 21  exotic_surfaces                         points
+ ✓ 22  exotic_surfaces                         points
 
  ✓ built   • inputs cached   (blank) not generated yet
  GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply
@@ -337,9 +337,11 @@ the render continuously:
 | small | attenuated projection — near structure pops, occluded structure dims | depth cueing in dense timelapses |
 | large | dense smoke- or ink-like medium | opaque tissue, anatomy |
 
-Because fitted amplitudes *are* densities (fluorophore concentration) rather than
-learned opacities, κ is interpretable as the turbidity of the sample instead of
-being an arbitrary rendering constant. Absorption is also orientation-consistent —
+Because fitted amplitudes are background-relative image intensities — proportional
+to the detected fluorescence after floor subtraction and normalisation, not a
+calibrated fluorophore concentration — rather than learned opacities, κ is still
+interpretable as an effective turbidity of the sample instead of being an arbitrary
+rendering constant. Absorption is also orientation-consistent —
 an elongated splat seen end-on absorbs more than the same splat seen side-on, which
 a stored per-splat opacity cannot express. All three geometry types render the same
 physics, on both the WebGL/GLSL and WebGPU/TSL backends.

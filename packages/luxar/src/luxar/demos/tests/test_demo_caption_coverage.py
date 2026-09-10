@@ -24,7 +24,12 @@ _INTEROP_DEMOS = {
 # This kiosk intentionally reserves bottom-right for its bundled Biohub mark and
 # renders the dataset/model/license credit as the closing line of its Overview
 # panel (guarded in test_demo_esm3_protein_stories.py).
-_CUSTOM_CAPTION_DEMOS = {"demo_esm3_protein_stories.py"}
+_CUSTOM_CAPTION_DEMOS = {
+    "demo_esm3_protein_stories.py",
+    # Its big-map sibling: same kiosk layout, credit in its own Overview panel
+    # (guarded in test_demo_esm_protein_universe.py).
+    "demo_esm_protein_universe.py",
+}
 
 
 def _name_calls(tree: ast.AST, name: str) -> list[ast.Call]:
