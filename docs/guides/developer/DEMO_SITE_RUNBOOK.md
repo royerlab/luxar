@@ -1315,14 +1315,14 @@ change what the earlier sections tell you to do.
 
 ### 8.1 Where the site stands right now
 
-- Data prefix: **`data/2026-09-02`**, 88 stores. **This is the only prefix.**
+- Data prefix: **`data/2026-09-02`**, 90 stores. **This is the only prefix.**
 - **There is no rollback prefix.** `2026-09-01` was purged after verification.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
-- Gallery: 88 tiles, 93 stills, 91 videos. Two demos are deliberately
+- Gallery: 90 tiles, 90 stills, 88 videos. Two demos are deliberately
   still-only (§8.2).
-- 96 stable `/d/` routes (§8.1.1).
+- 98 stable `/d/` routes (§8.1.1).
 
 #### 8.1.1 Stable per-demo routes — `/d/<demo-key>`
 
@@ -1473,8 +1473,8 @@ To change what the site serves:
 1. Verify the archives (§8.3), then verify `~/.cache/luxar` against them.
 2. Rebuild the affected demos; confirm the logs show hosted-digest reads and no
    stale warnings.
-3. Re-chunk each store with **its published profile**, read per store — 81 are
-   `archive` (1 MB), 5 are `local` (64 KB). Do not apply one profile to all.
+3. Re-chunk each store with **its published profile**, read per store — 86 are
+   `archive` (1 MB), 4 are `local` (64 KB). Do not apply one profile to all.
 4. Publish to a **new dated prefix**; server-side copy the unchanged stores from
    the current one rather than re-uploading them.
 5. Rebuild the page, **regenerate `_redirects`** (§8.1.1), deploy.
