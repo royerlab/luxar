@@ -22,13 +22,13 @@ import zarr
 from luxar.demos import demo_cellxgene_census_umap as _demo
 from luxar.demos.demo_cellxgene_census_umap import build_scene
 
-#: The appearance baked in `scene.add_points("cells", ...)` after #1375.
-EXPECTED_OPACITY = 0.39
-EXPECTED_INTENSITY = 4.52
-# Retuned from 6.5: at that kappa a cell absorbed 0.92 of what was behind
-# it and its own self-screening S(tau)=0.36 ate most of its emission, so
-# the cloud read as a screened shell rather than depth-ordered structure.
-EXPECTED_ABSORPTION = 2.12
+#: The appearance baked in `scene.add_points("cells", ...)`: hand-tuned in the
+#: hosted viewer's Layers panel on 2026-09-10 (colour range 0 – 0.213, gamma
+#: 1.05, opacity 0.06, absorption 10.0). The window still brightens (#1375).
+EXPECTED_OPACITY = 0.06
+EXPECTED_INTENSITY = 1.0 / 0.213
+EXPECTED_GAMMA = 1.05
+EXPECTED_ABSORPTION = 10.0
 
 
 def test_default_cache_uses_the_manifest_resolved_path(
@@ -253,6 +253,7 @@ class TestBakedAppearance:
         assert cells_attrs["intensity"] == pytest.approx(EXPECTED_INTENSITY)
         assert cells_attrs["absorption"] == pytest.approx(EXPECTED_ABSORPTION)
         assert cells_attrs["opacity"] == pytest.approx(EXPECTED_OPACITY)
+        assert cells_attrs["gamma"] == pytest.approx(EXPECTED_GAMMA)
 
     def test_blending_is_volumetric(self, cells_attrs: dict) -> None:
         # Absorption only means anything under emission-absorption compositing.
