@@ -507,7 +507,9 @@ def recompute_archive(work_dir: Path) -> Path:
 
         work_dir.mkdir(parents=True, exist_ok=True)
         fit = work_dir / "fit"
-        culled = work_dir / "culled.gsplats.zarr"
+        culled = (
+            work_dir / "culled.gsplats.zarr"
+        )  # legacy intermediate, removed if present
         scaled = work_dir / "um.gsplats.zarr"
         final = work_dir / REBUILT_FILENAME
         for derived in (culled, scaled, final):
@@ -553,18 +555,13 @@ def recompute_archive(work_dir: Path) -> Path:
         fitted_node, _ = load_gsplat_node(merged)
         _validate_fitted_splat_count(fitted_node)
         del fitted_node
-        run_luxar_cli(
-            "gsplat",
-            "filter",
-            str(merged),
-            str(culled),
-            "--amplitude-min",
-            f"{AMPLITUDE_MIN:.8f}",
-        )
+        # No post-fit amplitude cull (2026-09): the shipped 2026-08 archive was the
+        # fit filtered at AMPLITUDE_MIN (65 % of the splats removed) and scored 5-8 dB
+        # below a fresh fit of the same frames; the uncelled merge IS the recipe.
         run_luxar_cli(
             "gsplat",
             "transform",
-            str(culled),
+            str(merged),
             str(scaled),
             "--scale",
             ",".join(f"{value:g}" for value in VOXEL_SCALE),
@@ -578,7 +575,10 @@ def recompute_archive(work_dir: Path) -> Path:
         )
 
         node, _ = load_gsplat_node(str(final))
-        _validate_splat_count(_validate_rebuilt_archive(node))
+        got = _validate_rebuilt_archive(node)
+        aprint(
+            f"rebuilt {got:,} splats (uncelled recipe; nominal {NOMINAL_FITTED_SPLATS:,})"
+        )
         aprint(f"rebuilt: {final}")
         return final
 

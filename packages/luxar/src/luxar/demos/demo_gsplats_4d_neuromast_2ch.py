@@ -47,13 +47,13 @@ PIPELINE — reproducible per channel with ``--recompute``:
        Recorded, not re-run: the sweep is hours and its answer is stable.
     4. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
        64k seeds, ``--floor auto``, no fit-time cull.
-    5. Redundancy-cull every per-timepoint tile
-       (``-m redundancy --redundancy-threshold 0.20``) → ~11% lighter at
-       SSIM-flat quality. Per TILE, before the merge: culling the merged
-       timelapse would need the whole 4D reconstruction in memory at once.
-    6. ``batch-fit merge --recipe stream`` over the culled tiles → ONE leaf with
-       an 8-rung progressive ladder. The stacked time axis is a hard coarsening
-       barrier, so no rung blends two timepoints.
+    5. (Removed 2026-09.) The 2026-08 build redundancy-culled every tile at
+       threshold 0.20, validated by SSIM. Per-frame PSNR against the raw frame
+       showed the cull removing bright nuclear splats as "redundant" with the
+       pedestal splats beneath them, at a 17-26 dB foreground cost; SSIM is
+       blind to that (an empty render scores 0.82). No post-fit cull now.
+    6. ``batch-fit run --merge-recipe stream`` merges the (uncelled) tiles into
+       ONE leaf with a progressive ladder (the run's own merge).
     7. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
        → isotropic Z, amplitudes on a 0-1 scale.
 
@@ -210,7 +210,9 @@ CHANNELS = [
         "background_floor": 105.9911880493164,
         #: What the recipe must reproduce, from the merge that built the shipped
         #: archive ("Wrote single stream lod: 5,864,440 splats, 4D").
-        "expected_splats": 5_864_440,
+        # Recorded count of the 2026-08 (redundancy-culled) build was 5_864_440; the
+        # uncelled rebuild sets a new value once it lands.
+        "expected_splats": None,
     },
     {
         "name": "nuclei",
@@ -225,7 +227,8 @@ CHANNELS = [
         "source_flag": "source-nuclei",
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
         "background_floor": 103.88801574707031,
-        "expected_splats": 5_530_300,
+        # Recorded count of the 2026-08 (redundancy-culled) build was 5_530_300; see above.
+        "expected_splats": None,
     },
 ]
 
@@ -258,8 +261,12 @@ TILE_SIZE = 640
 JOBS_PER_GPU = 12
 #: Redundancy cull threshold, chosen from a measured 0.02/0.05/0.10/0.20/0.35
 #: sweep as the most aggressive setting still SSIM-flat.
-REDUNDANCY_THRESHOLD = 0.20
-#: Voxel anisotropy: z is 2.5x the lateral pitch on this instrument.
+REDUNDANCY_THRESHOLD = (
+    0.20  # historical (2026-08 build only); no longer applied, see docstring step 5
+)
+#: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give 0.25 um z-step
+#: and 0.1083 um pixels (2.31x); the shipped scenes were built with 2.5 and this value is kept
+#: until the demo scene is rebuilt on the measured pitch (paper registry: voxel_um=(0.25, 0.1083, 0.1083)).
 VOXEL_SCALE = (2.5, 1.0, 1.0, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
@@ -340,13 +347,44 @@ def _subtract_background(src: Path, out: Path, floor: float) -> Path:
                 chunks=(1,) + SOURCE_SHAPE[1:],
                 compressor=None,
             )
+            src_max = -np.inf
+            dst_max = -np.inf
+            dst_min = np.inf
             for t in range(SOURCE_SHAPE[0]):
                 frame = np.asarray(array[t], dtype=np.float32)
+                src_max = max(src_max, float(frame.max()))
                 np.subtract(frame, np.float32(floor), out=frame)
                 np.clip(frame, 0.0, None, out=frame)
+                dst_max = max(dst_max, float(frame.max()))
+                dst_min = min(dst_min, float(frame.min()))
                 dest[t] = frame
+            # Assert the subtraction numerically. The 2026-08 archive was fitted from
+            # a store whose attrs claimed this floor while its values were the RAW
+            # recording (max(bgsub) == max(raw)); the scorer then subtracted the floor
+            # a second time and the shipped frames read ~21 dB low. Never trust the
+            # attr alone: the written maximum must sit exactly one floor below the
+            # source maximum, and the written minimum must be the clip value.
+            expected_max = src_max - float(floor)
+            if (
+                abs(dst_max - expected_max) > 1e-3 * max(1.0, abs(expected_max))
+                or dst_min != 0.0
+            ):
+                raise RuntimeError(
+                    f"{out.name}: floor subtraction not applied as recorded: max(src)={src_max:.4f}, "
+                    f"floor={floor:.4f}, max(bgsub)={dst_max:.4f} (expected {expected_max:.4f}), "
+                    f"min(bgsub)={dst_min:.4f} (expected 0)."
+                )
+            aprint(
+                f"floor assertion OK: max(src)={src_max:.3f} -> max(bgsub)={dst_max:.3f} "
+                f"= max(src) - {floor:.4f}; min(bgsub)={dst_min:.1f}"
+            )
             dest.attrs["axes"] = SOURCE_AXES
             dest.attrs["background_floor"] = float(floor)
+            dest.attrs["background_floor_asserted"] = {
+                "source_max": src_max,
+                "bgsub_max": dst_max,
+                "bgsub_min": dst_min,
+            }
             dest.attrs["source"] = str(src)
     return out
 
@@ -406,7 +444,6 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
     with asection(f"Recomputing the {name} channel"):
         bgsub = work_dir / f"{name}_bgsub.zarr"
         fit_dir = work_dir / f"{name}_fit"
-        culled_dir = work_dir / f"{name}_fit_culled"
         final = work_dir / str(channel["file"])
 
         _subtract_background(source, bgsub, float(channel["background_floor"]))
@@ -438,21 +475,12 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
             "0.0",
             "--jobs-per-gpu",
             str(JOBS_PER_GPU),
-        )
-        n_tiles = _cull_tiles(fit_dir, culled_dir)
-        aprint(f"culled {n_tiles} tiles")
-
-        # `batch-fit run` above already merged the UNCULLED tiles; that result is
-        # discarded. Merging here is what produces the shipped ladder.
-        run_luxar_cli(
-            "gsplat",
-            "batch-fit",
-            "merge",
-            str(culled_dir),
-            "--recipe",
+            # The streaming ladder is built by the run's own merge; there is no
+            # post-fit cull any more (see REDUNDANCY_THRESHOLD).
+            "--merge-recipe",
             "stream",
         )
-        merged = culled_dir / "merged" / "final.gsplats.zarr"
+        merged = fit_dir / "merged" / "final.gsplats.zarr"
         if not merged.exists():
             raise SystemExit(f"merge produced no {merged}")
 
@@ -472,18 +500,26 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
 
         node, _ = load_gsplat_node(str(final))
         got = _validate_rebuilt_channel(channel, list(iter_leaves(node)))
-        expected = int(channel["expected_splats"])
-        drift = abs(got - expected) / expected
-        aprint(f"{name}: rebuilt {got:,} splats (recorded {expected:,}, {drift:.3%})")
-        # A tolerance, not equality: nothing pins the reduction order of a
-        # 12-worker parallel fit, so exact reproduction is not achievable. 1% is
-        # far tighter than any recipe change and far looser than float noise.
-        if drift >= 0.01:
-            raise RuntimeError(
-                f"{name}: rebuilt {got:,} splats against a recorded {expected:,} "
-                f"({drift:.2%} drift). Over 1% means the recipe changed, not "
-                f"float noise -- check the source array and the cull threshold."
+        expected = channel.get("expected_splats")
+        if expected is None:
+            aprint(
+                f"{name}: rebuilt {got:,} splats (no recorded count yet for the uncelled recipe)"
             )
+        else:
+            expected = int(expected)
+            drift = abs(got - expected) / expected
+            aprint(
+                f"{name}: rebuilt {got:,} splats (recorded {expected:,}, {drift:.3%})"
+            )
+            # A tolerance, not equality: nothing pins the reduction order of a
+            # 12-worker parallel fit, so exact reproduction is not achievable. 1% is
+            # far tighter than any recipe change and far looser than float noise.
+            if drift >= 0.01:
+                raise RuntimeError(
+                    f"{name}: rebuilt {got:,} splats against a recorded {expected:,} "
+                    f"({drift:.2%} drift). Over 1% means the recipe changed, not "
+                    f"float noise -- check the source array."
+                )
         return final
 
 
