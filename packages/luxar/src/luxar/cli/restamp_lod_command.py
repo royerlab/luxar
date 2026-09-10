@@ -38,6 +38,15 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
                 "the kind=lod group"
             ),
         ),
+        anchor: Optional[float] = typer.Option(
+            None,
+            "--anchor",
+            help=(
+                "Re-derive whole-object ladders at this finest-level screen-area "
+                "fraction (0 < anchor <= 1), including ladders already stamped "
+                "screen-area; partition-bound ladders stay anchored at 1"
+            ),
+        ),
     ) -> None:
         """Re-derive legacy LOD thresholds under the screen-area selector.
 
@@ -46,8 +55,10 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
         diagonal metric (or carrying no ``selector`` at all, which means the
         same) gets its per-child ``coverage_fraction`` thresholds re-derived by
         screen-occupancy halving and its group stamped ``screen-area``. A group
-        already on ``screen-area`` is skipped, so a second run changes nothing —
-        not even the ``content_hash``.
+        already on ``screen-area`` is skipped by default, so a second run changes
+        nothing — not even the ``content_hash``. ``--anchor`` explicitly
+        re-derives whole-object ladders already on ``screen-area`` at a requested
+        finest-level area fraction; partition-bound ladders remain at ``1.0``.
 
         **This is an explicit opt-in, and it may override a deliberate choice.**
         An authored ``coverage_fractions=[...]`` list and a legacy derived ladder
@@ -91,7 +102,10 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
 
         try:
             report = restamp_lod_store(
-                store, dry_run=dry_run, groups=group if group else None
+                store,
+                dry_run=dry_run,
+                groups=group if group else None,
+                finest_anchor=anchor,
             )
         except ValueError as e:
             aprint(f"❌ {e}")

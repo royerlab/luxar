@@ -176,6 +176,7 @@ luxar restamp-lod                          # Re-derive every legacy ladder in ST
 luxar restamp-lod --dry-run                # Report the old→new ladders; write nothing
 luxar restamp-lod --group tiled/part_0     # Restrict to one ladder (repeatable)
 luxar restamp-lod --group /                # The store ROOT's own ladder
+luxar restamp-lod --anchor 0.25            # Re-anchor whole-object screen-area ladders
 ```
 
 Every `kind=lod` group carries per-child `coverage_fraction` thresholds plus a
@@ -184,8 +185,11 @@ screen-area metric existed sit on the legacy `coverage` diagonal one (or carry
 no `selector` at all, which means the same). This command re-derives those
 thresholds by screen-occupancy halving — the whole-object anchor for a plain
 ladder, the fills-screen anchor for a **tile-bound** one — and stamps the group
-`screen-area`. A group already on `screen-area` is skipped, so a second run
-changes nothing at all, down to the `content_hash`.
+`screen-area`. A group already on `screen-area` is skipped by default, so a
+second run changes nothing at all, down to the `content_hash`. `--anchor`
+explicitly re-derives those groups too: whole-object ladders use the requested
+finest-level screen-area fraction, while partition-bound ladders remain pinned
+to fills-screen `1.0`. Repeating the same anchor is still a no-op.
 
 Tile-bound is the tree writers' own two-clause rule, so a restamped store
 matches a freshly written one: a ladder is tile-anchored when a REAL multi-part

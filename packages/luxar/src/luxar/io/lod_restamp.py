@@ -84,6 +84,7 @@ The public entry point is :func:`restamp_lod_store`; the CLI wrapper is
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -99,7 +100,11 @@ from .._zarr_compat import (
     open_group,
     read_consolidated_attrs,
 )
-from ..core.group.lod.group import coverage_fractions, partitioned_coverage_fractions
+from ..core.group.lod.group import (
+    WHOLE_OBJECT_FINEST_ANCHOR,
+    coverage_fractions,
+    partitioned_coverage_fractions,
+)
 from ..typing_utils.constants import (
     DERIVED_LOD_SELECTOR,
     ENVIRONMENT_GROUP,
@@ -450,6 +455,7 @@ def _plan_lod(
     attrs: Dict[str, Any],
     *,
     partition_bound: bool,
+    finest_anchor: Optional[float],
     report: RestampReport,
 ) -> Optional[_PlannedRestamp]:
     """Classify one ``kind=lod`` group and, when it is legacy, plan its rewrite.
@@ -468,7 +474,7 @@ def _plan_lod(
     path = group.path or "/"
     selector = attrs.get("selector")
 
-    if selector == DERIVED_LOD_SELECTOR:
+    if selector == DERIVED_LOD_SELECTOR and finest_anchor is None:
         report.already_current.append(
             SkippedGroup(path, "already-current", f"selector={DERIVED_LOD_SELECTOR!r}")
         )
@@ -537,13 +543,34 @@ def _plan_lod(
     # count the store never recorded is passed as 0 rather than blocking a
     # re-derivation it cannot affect. The report keeps the honest `None`.
     new = derive([0 if c is None else c for c in counts])
+    resolved_anchor = 1.0 if partition_bound else WHOLE_OBJECT_FINEST_ANCHOR
+    if finest_anchor is not None and not partition_bound:
+        resolved_anchor = finest_anchor
+        scale = finest_anchor / WHOLE_OBJECT_FINEST_ANCHOR
+        new = [value * scale for value in new]
+        if any(right <= left for left, right in zip(new, new[1:])):
+            raise ValueError(
+                f"finest_anchor={finest_anchor!r} is too small to represent a "
+                f"strictly increasing {len(new)}-level ladder at {path}"
+            )
+
+    new_thresholds = [float(value) for value in new]
+    if selector == DERIVED_LOD_SELECTOR and old == new_thresholds:
+        report.already_current.append(
+            SkippedGroup(
+                path,
+                "already-current",
+                f"stored ladder already matches anchor {resolved_anchor:g}",
+            )
+        )
+        return None
 
     entry = RestampedGroup(
         path=path,
         partition_bound=partition_bound,
         old_selector=None if selector is None else str(selector),
         old_thresholds=old,
-        new_thresholds=[float(v) for v in new],
+        new_thresholds=new_thresholds,
         element_counts=counts,
     )
     report.restamped.append(entry)
@@ -582,6 +609,7 @@ def _walk(
     *,
     under_partition: bool,
     selected: Optional[Set[str]],
+    finest_anchor: Optional[float],
     report: RestampReport,
     plans: List[_PlannedRestamp],
 ) -> None:
@@ -618,6 +646,7 @@ def _walk(
                 group,
                 attrs,
                 partition_bound=child_under,
+                finest_anchor=finest_anchor,
                 report=report,
             )
             if planned is not None:
@@ -629,6 +658,7 @@ def _walk(
             group[str(name)],
             under_partition=child_under,
             selected=selected,
+            finest_anchor=finest_anchor,
             report=report,
             plans=plans,
         )
@@ -1074,6 +1104,7 @@ def restamp_lod_store(
     *,
     dry_run: bool = False,
     groups: Optional[Sequence[str]] = None,
+    finest_anchor: Optional[float] = None,
 ) -> RestampReport:
     """Re-derive every legacy ``kind=lod`` ladder in a store, in place.
 
@@ -1085,8 +1116,11 @@ def restamp_lod_store(
     ``kind=partition`` among its own ladder children — the ``overview`` cap),
     :func:`~luxar.core.group.lod.group.coverage_fractions` otherwise — and the
     group is stamped :data:`~luxar.typing_utils.constants.DERIVED_LOD_SELECTOR`.
-    A group already on that selector is skipped, so a second run is a no-op down
-    to the ``content_hash``.
+    A group already on that selector is skipped unless ``finest_anchor`` is
+    supplied. That explicit override re-derives whole-object ladders at the
+    requested screen-area fraction; partition-bound ladders remain anchored at
+    fills-screen ``1.0``. A requested ladder that already matches is still a
+    no-op down to the ``content_hash``.
 
     The ladder rewrite moves no chunk and opens no array. When anything changed,
     the store's ``content_hash`` is restamped and the metadata re-consolidated,
@@ -1126,6 +1160,10 @@ def restamp_lod_store(
         Restrict the pass to these group paths, in the store's own spelling
         (``"tiled/part_0"``; the root is ``"/"``). A path that matches no
         ``kind=lod`` group is an error, not a silent no-op.
+    finest_anchor
+        Optional whole-object finest-level screen-area fraction in ``(0, 1]``.
+        Supplying it explicitly re-derives already-``screen-area`` ladders as
+        well as legacy ones. Partition-bound ladders remain at ``1.0``.
 
     Returns
     -------
@@ -1147,6 +1185,13 @@ def restamp_lod_store(
             f"restamp-lod requires an uncompressed .zarr directory; got "
             f"{store_path} (unpack a .zip/.tar.gz store first — an attrs rewrite "
             f"of a compressed archive cannot happen in place)"
+        )
+    if finest_anchor is not None and not (
+        math.isfinite(finest_anchor) and 0.0 < finest_anchor <= 1.0
+    ):
+        raise ValueError(
+            "finest_anchor must be finite and in the screen-area interval (0, 1]; "
+            f"got {finest_anchor!r}"
         )
 
     root = open_group(store_path, mode="r" if dry_run else "r+")
@@ -1191,6 +1236,7 @@ def restamp_lod_store(
                 root,
                 under_partition=False,
                 selected=selected,
+                finest_anchor=finest_anchor,
                 report=report,
                 plans=plans,
             )

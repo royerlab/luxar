@@ -208,6 +208,7 @@ ladder rewrite moves no chunk data and opens no array.
 luxar restamp-lod scene.luxar.zarr                      # every legacy ladder
 luxar restamp-lod scene.luxar.zarr --dry-run            # report only
 luxar restamp-lod scene.luxar.zarr --group tiled/part_0 # one ladder (repeatable)
+luxar restamp-lod scene.luxar.zarr --anchor 0.25        # re-anchor whole-object ladders
 luxar restamp-lod fit.gsplats.zarr --group /            # the gsplats root ladder
 ```
 
@@ -219,8 +220,12 @@ tile-bound — and its group stamped `screen-area`. Tile-bound is the tree
 writers' full rule: a real multi-part `kind=partition` above the ladder, OR a
 `kind=partition` among the ladder's own children (the `overview` recipe's coarse
 cap, which is pinned at fills-screen on purpose). A group already on
-`screen-area` is skipped, so a second run changes nothing, `content_hash`
-included.
+`screen-area` is skipped by default, so a second run changes nothing,
+`content_hash` included. `--anchor` is the explicit re-derive mode for an anchor
+change: it also inspects already-`screen-area` groups and rebuilds each
+whole-object ladder from its stored level count at the requested finest area.
+Partition-bound ladders keep their fills-screen `1.0` anchor. A ladder already
+matching the requested anchor remains a no-op, including its `content_hash`.
 
 It is never automatic: an authored `coverage_fractions=[...]` list and a legacy
 derived one are indistinguishable on disk, so running the command IS the opt-in

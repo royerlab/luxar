@@ -620,6 +620,101 @@ def test_a_screen_area_group_is_skipped_in_a_mixed_store(tmp_path: Path) -> None
     assert report.clean
 
 
+def test_anchor_rederives_an_already_current_whole_object_ladder(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "current.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        _add_derived_ladder(scene, "pts", 0)
+
+    report = restamp_lod_store(store, finest_anchor=0.25)
+
+    assert [g.path for g in report.restamped] == ["pts"]
+    assert not report.already_current
+    assert _ladder(store, "pts") == [0.0, 0.25]
+    assert report.clean
+
+
+def test_repeating_the_same_anchor_changes_nothing(tmp_path: Path) -> None:
+    store = tmp_path / "current.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        _add_derived_ladder(scene, "pts", 0)
+    restamp_lod_store(store, finest_anchor=0.25)
+    after_first = _attrs(store)
+
+    report = restamp_lod_store(store, finest_anchor=0.25)
+
+    assert not report.restamped
+    assert [g.path for g in report.already_current] == ["pts"]
+    assert report.content_hash_status == HASH_UNCHANGED
+    assert _attrs(store) == after_first
+
+
+def test_anchor_keeps_partition_bound_ladders_at_the_fills_screen_anchor(
+    legacy_scene: Path,
+) -> None:
+    restamp_lod_store(legacy_scene)
+    before_hash = _attrs(legacy_scene)["/"]["content_hash"]
+
+    report = restamp_lod_store(legacy_scene, finest_anchor=0.25)
+
+    assert {g.path for g in report.restamped} == {
+        "pts",
+        "curves",
+        "surf",
+        "lonely/part_0",
+    }
+    assert {g.path for g in report.already_current} == {
+        "tiled/part_0",
+        "tiled/part_1",
+    }
+    assert _ladder(legacy_scene, "pts") == [0.0, 0.25]
+    assert _ladder(legacy_scene, "tiled/part_0") == [0.0, PARTITION_FINEST_AREA]
+    assert _attrs(legacy_scene)["/"]["content_hash"] != before_hash
+
+
+def test_anchor_must_be_a_finite_screen_area_fraction(tmp_path: Path) -> None:
+    store = tmp_path / "current.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        _add_derived_ladder(scene, "pts", 0)
+    before = _attrs(store)
+
+    for anchor in (0.0, -0.25, 1.01, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="finest_anchor must be finite and in"):
+            restamp_lod_store(store, finest_anchor=anchor)
+
+    assert _attrs(store) == before
+
+
+def test_anchor_that_underflows_the_ladder_is_refused_before_writing(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "current.luxar.zarr"
+    root = _synthetic_scene(store)
+    _synthetic_ladder(
+        root,
+        "pts",
+        [
+            {"coverage_fraction": 0.0, "n_points": 25},
+            {"coverage_fraction": 0.125, "n_points": 100},
+            {"coverage_fraction": 0.25, "n_points": 200},
+            {"coverage_fraction": 0.5, "n_points": 400},
+        ],
+        selector=DERIVED_LOD_SELECTOR,
+    )
+    consolidate(root)
+    close(root)
+    before = _attrs(store)
+
+    with pytest.raises(ValueError, match="too small to represent"):
+        restamp_lod_store(store, finest_anchor=float.fromhex("0x0.0000000000001p-1022"))
+
+    assert _attrs(store) == before
+
+
 def test_an_unsupported_selector_is_reported_and_left_alone(tmp_path: Path) -> None:
     """``pixel_size`` (the pre-v3.2 gsplats spelling) is not convertible here."""
     store = tmp_path / "legacy_selector.luxar.zarr"
