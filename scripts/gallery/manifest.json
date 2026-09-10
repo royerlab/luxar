@@ -934,7 +934,7 @@
       "dataset": "datasets/demos/esm3_protein_stories.luxar.zarr",
       "citation": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
       "fillTarget": 0.85,
-      "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=82.8%, final lit=50.3%, dropped=0. Border-lit fell from 54.1% to 8.1%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85."
+      "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=82.8%, final lit=50.3%, dropped=0. Border-lit fell from 54.1% to 8.1%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85. The follow-on advisory suggested 0.75; that is the standing over-suggestion for residual border contact and was not followed."
     },
     {
       "id": "esm_protein_universe",
@@ -945,7 +945,7 @@
       "dataset": "datasets/demos/esm_protein_universe.luxar.zarr",
       "citation": "ESM Atlas cluster map (Candido et al. 2026)",
       "fillTarget": 0.85,
-      "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=88.5%, final lit=69.4%, dropped=0. Border-lit fell from 36.6% to 14.9%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85."
+      "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=88.5%, final lit=69.4%, dropped=0. Border-lit fell from 36.6% to 14.9%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85. The follow-on advisory suggested 0.75; that is the standing over-suggestion for residual border contact and was not followed."
     }
   ]
 }
