@@ -292,14 +292,17 @@ SCENE_NAME = "gsplats_4d_drosophila_embryogenesis.luxar.zarr"
 #: See the docstring: an off-grid timepoint renders nothing, silently.
 FRAME_INTERVAL_MIN = 0.5
 
-#: Appearance, tuned live in the Layers panel on the normalised render.
-#: The non-zero window floor lifts residual haze and buys contrast. Absorption
-#: is below the single-frame demo's 0.57 because this fit puts more splats on
-#: each ray. The window is stored as an intensity/offset PAIR, not a gain:
-#: ``intensity = 1/(hi-lo)``, ``offset = -lo/(hi-lo)``.
-DISPLAY_WINDOW = (0.059, 1.153)
+#: Appearance, tuned live in the Layers panel on the hosted render
+#: (2026-09-10). The non-zero window floor lifts residual haze and buys
+#: contrast; the window top came down from 1.153 to 0.868 (brighter nuclei) and
+#: absorption went UP from 0.33 to 1.19 so the near nuclei screen the far ones
+#: and the embryo reads as a solid rather than a haze — the two move together
+#: (a higher kappa dims, the tighter window compensates). The window is stored
+#: as an intensity/offset PAIR, not a gain: ``intensity = 1/(hi-lo)``,
+#: ``offset = -lo/(hi-lo)``.
+DISPLAY_WINDOW = (0.059, 0.868)
 GSPLAT_OPACITY = 0.20
-GSPLAT_ABSORPTION = 0.33
+GSPLAT_ABSORPTION = 1.19
 
 #: Share of the half-frame the embryo's long axis subtends at the opening pose.
 CAMERA_FRAME_FILL = 0.62

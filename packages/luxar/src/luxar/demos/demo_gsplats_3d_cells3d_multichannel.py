@@ -124,9 +124,25 @@ VOXEL_SIZE_ZYX = (0.29, 0.26, 0.26)
 # toggleable layer coloured by a BOP (Blue-Orange-Purple) microscopy LUT.
 # The viewer applies the colormap at display time (interactive switching).
 CHANNELS = [
-    {"index": 0, "name": "Membranes", "colormap": "bop_orange"},
-    {"index": 1, "name": "Nuclei", "colormap": "bop_blue"},
+    # `window` is the Layers panel's DISPLAY RANGE, hand-tuned on the hosted
+    # scene (2026-09-10) on top of LAYER_INTENSITY; authored as
+    # intensity = 1/(hi-lo), offset = -lo/(hi-lo) (see `window_attrs`). The
+    # non-zero floors drop the residual haze under each channel.
+    {
+        "index": 0,
+        "name": "Membranes",
+        "colormap": "bop_orange",
+        "window": (0.006, 0.053),
+    },
+    {"index": 1, "name": "Nuclei", "colormap": "bop_blue", "window": (0.009, 0.114)},
 ]
+
+
+def window_attrs(window: tuple[float, float]) -> dict[str, float]:
+    """The intensity/offset pair a Layers-panel window ``[lo, hi]`` is stored as."""
+    lo, hi = window
+    return {"intensity": 1.0 / (hi - lo), "offset": -lo / (hi - lo)}
+
 
 # Per-channel brightness multiplier applied before writing. Kept conservative
 # because the two channels are emitters whose contributions should sum. Their
@@ -393,8 +409,12 @@ Controls:
                         blending_mode="additive",
                         layer=True,
                         colormap=colormap,
+                        **window_attrs(ch_config["window"]),
                     )
-                    aprint(f"  Added {n_splats:,} splats with colormap='{colormap}'")
+                    aprint(
+                        f"  Added {n_splats:,} splats with colormap='{colormap}' "
+                        f"window={ch_config['window']}"
+                    )
 
             # --- Overlays ---
             scene.add_text(
