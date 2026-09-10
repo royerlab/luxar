@@ -16,7 +16,9 @@ from luxar.utils.lod_breakpoints import (
     DEFAULT_MAX_ADDITIVE_COMMIT,
     DEFAULT_STREAM_MAX_LEVELS,
     capped_stream_cuts,
+    equi_energy_cuts,
     hidden_coordinate_count,
+    parse_equi_energy_rungs,
     parse_stream_chunk,
     sibling_aware_stream_breakpoints,
     sliced_ladder_first_chunk,
@@ -315,3 +317,87 @@ class TestSiblingAwareStreamBreakpoints:
 
     def test_default_level_cap_is_exposed(self) -> None:
         assert DEFAULT_STREAM_MAX_LEVELS >= 8
+
+
+class TestEquiEnergyCuts:
+    """Equal shares of cumulative energy, commit-capped."""
+
+    @staticmethod
+    def _heavy_tail(n: int = 10_000) -> list[float]:
+        # Descending log-normal-ish energies: a few very heavy elements, a long
+        # dim tail — the shape a contribution-first ordering produces.
+        import math
+
+        return [math.exp(-0.002 * i) for i in range(n)]
+
+    def test_cuts_land_at_equal_energy_shares(self) -> None:
+        energy = self._heavy_tail()
+        total = sum(energy)
+        cuts = equi_energy_cuts(energy, 4)
+        assert cuts[-1] == len(energy)
+        assert cuts == sorted(set(cuts))
+        prefix = 0.0
+        cum = []
+        for e in energy:
+            prefix += e
+            cum.append(prefix)
+        for k, cut in enumerate(cuts[:-1], start=1):
+            assert cum[cut - 1] >= total * k / 4
+            assert cum[cut - 2] < total * k / 4
+
+    def test_first_rung_is_small_and_late_rungs_are_fat(self) -> None:
+        cuts = equi_energy_cuts(self._heavy_tail(), 4)
+        increments = [b - a for a, b in zip([0, *cuts[:-1]], cuts)]
+        assert increments[0] < increments[-1]
+        assert increments == sorted(increments), "rungs fatten monotonically"
+
+    def test_commit_cap_splits_fat_rungs(self) -> None:
+        energy = self._heavy_tail(50_000)
+        cuts = equi_energy_cuts(energy, 3, max_commit=4_000)
+        increments = [b - a for a, b in zip([0, *cuts[:-1]], cuts)]
+        assert max(increments) <= 4_000
+        assert cuts[-1] == 50_000
+        assert cuts == sorted(set(cuts))
+
+    def test_weights_measure_the_cap_in_payload_units(self) -> None:
+        # Ten elements of weight 100 each, flat energy: equal energy gives 2
+        # rungs of 5; a cap of 250 payload units forces at least 4 rungs.
+        cuts = equi_energy_cuts([1.0] * 10, 2, weights=[100] * 10, max_commit=250)
+        assert cuts[-1] == 10
+        increments = [b - a for a, b in zip([0, *cuts[:-1]], cuts)]
+        assert all(inc * 100 <= 250 for inc in increments)
+
+    def test_degenerate_energy_falls_back_to_equal_count(self) -> None:
+        assert equi_energy_cuts([0.0] * 8, 4) == [2, 4, 6, 8]
+        assert equi_energy_cuts([float("nan")] * 8, 2) == [4, 8]
+
+    def test_tiny_inputs(self) -> None:
+        assert equi_energy_cuts([], 3) == [0]
+        assert equi_energy_cuts([5.0], 3) == [1]
+        # One element carrying all the energy: the first cut takes it, the
+        # rest dedup; the ladder still ends at n.
+        assert equi_energy_cuts([1.0, 0.0, 0.0], 3) == [1, 3]
+
+    def test_rejects_bad_arguments(self) -> None:
+        with pytest.raises(ValueError, match="n_rungs"):
+            equi_energy_cuts([1.0, 2.0], 0)
+        with pytest.raises(ValueError, match="max_commit"):
+            equi_energy_cuts([1.0, 2.0], 2, max_commit=0)
+        with pytest.raises(ValueError, match="weights"):
+            equi_energy_cuts([1.0, 2.0], 2, weights=[1])
+
+
+class TestParseEquiEnergyRungs:
+    def test_parses(self) -> None:
+        assert parse_equi_energy_rungs("equi-energy:4") == 4
+
+    def test_rejects(self) -> None:
+        with pytest.raises(ValueError, match="equi-energy:<n>"):
+            parse_equi_energy_rungs("equi-energy:four")
+        with pytest.raises(ValueError, match=">= 1"):
+            parse_equi_energy_rungs("equi-energy:0")
+
+    def test_validate_element_breakpoints_accepts_and_rejects(self) -> None:
+        validate_element_breakpoints("equi-energy:3")
+        with pytest.raises(ValueError, match=">= 1"):
+            validate_element_breakpoints("equi-energy:0")

@@ -1707,3 +1707,70 @@ def test_a_malformed_order_is_refused(order: np.ndarray, match: str) -> None:
 # `interleave_order_across_slices` does NOT reject `[0, 0, 1, …]` would be a
 # change detector — it would go red for the correct future change of adding
 # duplicate detection. The reasoning lives in `_validate_interleave_order`.
+
+
+# ── equi-energy breakpoints ────────────────────────────────────────────
+
+
+def _make_heavy_tailed_gsplat(n: int = 4_000, seed: int = 3) -> GSplatData:
+    """Log-normal amplitudes: a few heavy splats and a long dim tail."""
+    rng = np.random.default_rng(seed)
+    centers = (rng.random((n, 3)) * 100).astype(np.float32)
+    amplitudes = rng.lognormal(mean=0.0, sigma=1.6, size=n).astype(np.float32)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    return GSplatData(centers=centers, amplitudes=amplitudes, cholesky_factors=chol)
+
+
+def test_make_additive_lod_equi_energy_rungs_share_the_energy() -> None:
+    data = _make_heavy_tailed_gsplat()
+    out = make_additive_lod(data, method="self_energy", breakpoints="equi-energy:4")
+    subs = out.additive_sublods
+    assert len(subs) == 4
+    counts = [int(s.n_splats) for s in subs]
+    assert sum(counts) == data.n_splats
+    # Heaviest first: the first rung is a handful, the last is the dim majority.
+    assert counts[0] < counts[-1]
+    assert counts == sorted(counts)
+    # The e(k) stamps read ~k/4 at the cuts: each rung's cumulative energy
+    # reaches its share, and the previous rung sat below it.
+    e_cum = [float(s.stats["energy_fraction_cum"]) for s in subs]
+    for k, e in enumerate(e_cum, start=1):
+        assert e >= k / 4 - 1e-6
+    for k in range(1, 4):
+        assert e_cum[k - 1] < (k + 1) / 4
+    assert e_cum[-1] == pytest.approx(1.0)
+    for s in subs:
+        assert s.stats["lod_breakpoints_kind"] == "equi-energy"
+        assert s.stats["lod_equi_energy_rungs"] == 4
+
+
+def test_make_additive_lod_equi_energy_splits_at_the_commit_cap(monkeypatch) -> None:
+    import luxar.utils.lod_breakpoints as lb
+
+    # Force a tiny cap so the fat dim tail must be split.
+    monkeypatch.setattr(lb, "DEFAULT_MAX_ADDITIVE_COMMIT", 500)
+    import luxar.gsplats.lod.additive as additive_mod
+
+    # The gsplat builder calls equi_energy_cuts with the default cap bound at
+    # import time; call the helper the way the builder does to pin the shape.
+    data = _make_heavy_tailed_gsplat(n=3_000)
+    energy = additive_mod._self_energy_score(data)
+    order = np.argsort(-energy, kind="stable")
+    cuts = lb.equi_energy_cuts(energy[order].tolist(), 3, max_commit=500)
+    increments = [b - a for a, b in zip([0, *cuts[:-1]], cuts)]
+    assert max(increments) <= 500
+    assert cuts[-1] == 3_000
+
+
+def test_equi_energy_rung_count_is_unknown_without_the_energy_curve() -> None:
+    from luxar.gsplats.lod.additive import additive_rung_count
+
+    assert additive_rung_count(10_000, breakpoints="equi-energy:4") is None
+
+
+@pytest.mark.parametrize("bad", ["equi-energy:", "equi-energy:zero", "equi-energy:0"])
+def test_equi_energy_invalid_payloads_raise(bad: str) -> None:
+    data = _make_random_gsplat(64)
+    with pytest.raises(ValueError, match="equi-energy"):
+        make_additive_lod(data, breakpoints=bad)

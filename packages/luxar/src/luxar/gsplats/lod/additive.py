@@ -69,8 +69,14 @@ from luxar.utils.lod_breakpoints import DEFAULT_BANDWIDTH_MBPS as DEFAULT_BANDWI
 from luxar.utils.lod_breakpoints import (
     DEFAULT_STREAM_MAX_LEVELS as DEFAULT_STREAM_MAX_LEVELS,
 )
+from luxar.utils.lod_breakpoints import (
+    EQUI_ENERGY_PREFIX,
+    equi_energy_cuts,
+    parse_equi_energy_rungs,
+    parse_stream_chunk,
+    stream_cuts,
+)
 from luxar.utils.lod_breakpoints import BreakpointSpec as _BreakpointSpec
-from luxar.utils.lod_breakpoints import parse_stream_chunk, stream_cuts
 from luxar.utils.lod_breakpoints import (
     sibling_aware_stream_breakpoints as sibling_aware_stream_breakpoints,
 )
@@ -1001,6 +1007,32 @@ def _order_from_gram(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _prefixed_string_breakpoints(
+    n: int, breakpoints: str
+) -> tuple[list[int], str] | None:
+    """The two size-adaptive string specs, or ``None`` for any other string.
+
+    ``stream:<c>``: bandwidth-derived streaming ladder — geometric cumulative
+    cuts ``[c, 2c, 4c, …]`` (increments ``[c, c, 2c, …]``: first paint = c
+    splats, then doubling), resolved against THIS ``n`` so the same spec adapts
+    to every part/level size. Silently clamped, never raises on small ``n``
+    (unlike explicit counts — deliberate: per-part N is unknowable to the user).
+    Capped at ``DEFAULT_STREAM_MAX_LEVELS``; a final increment smaller than
+    ``c/2`` folds into the previous cut (no sliver levels).
+
+    ``equi-energy:<n>``: equal shares of cumulative energy — returned as the
+    FRACTIONS ``k/n``; :func:`make_additive_lod` resolves them against the
+    ladder's own self-energy cumulative and commit-caps the result.
+    """
+    if breakpoints.startswith(EQUI_ENERGY_PREFIX):
+        n_rungs = parse_equi_energy_rungs(breakpoints)
+        shares = [k / n_rungs for k in range(1, n_rungs + 1)]
+        return shares, "equi-energy"  # type: ignore[return-value]
+    if breakpoints.startswith("stream:"):
+        return stream_cuts(n, parse_stream_chunk(breakpoints)), "stream"
+    return None
+
+
 def _resolve_breakpoints(
     n: int,
     n_lods: int,
@@ -1009,22 +1041,19 @@ def _resolve_breakpoints(
     """Resolve ``breakpoints`` to a list of cumulative cutpoints ending at $N$.
 
     Returns ``(cumulative_counts, kind)`` where ``kind`` is one of
-    ``equal-count``, ``stream``, ``explicit-counts``, ``energy-fractions``.
+    ``equal-count``, ``stream``, ``explicit-counts``, ``energy-fractions``,
+    ``equi-energy``. The two energy kinds return FRACTIONS, not counts: they
+    need the ordering and the energy curve, which only :func:`make_additive_lod`
+    holds.
     """
     if isinstance(breakpoints, str):
-        if breakpoints.startswith("stream:"):
-            # Bandwidth-derived streaming ladder: geometric cumulative cuts
-            # [c, 2c, 4c, …] (increments [c, c, 2c, …] — first paint = c splats,
-            # then doubling), resolved against THIS n so the same spec adapts to
-            # every part/level size. Silently clamped, never raises on small n
-            # (unlike explicit counts — deliberate: per-part N is unknowable to
-            # the user). Capped at DEFAULT_STREAM_MAX_LEVELS; a final increment
-            # smaller than c/2 folds into the previous cut (no sliver levels).
-            return stream_cuts(n, parse_stream_chunk(breakpoints)), "stream"
+        prefixed = _prefixed_string_breakpoints(n, breakpoints)
+        if prefixed is not None:
+            return prefixed
         if breakpoints != "equal-count":
             raise ValueError(
                 f"unknown breakpoints string {breakpoints!r}; "
-                "expected 'equal-count', 'stream:<c>', or a list."
+                "expected 'equal-count', 'stream:<c>', 'equi-energy:<n>', or a list."
             )
         if n_lods <= 0:
             raise ValueError("n_lods must be positive")
@@ -1039,8 +1068,8 @@ def _resolve_breakpoints(
 
     if not isinstance(breakpoints, (list, tuple)):
         raise TypeError(
-            "breakpoints must be 'equal-count', 'stream:<c>', a list of ints "
-            "(cumulative counts), or a list of floats in (0, 1] "
+            "breakpoints must be 'equal-count', 'stream:<c>', 'equi-energy:<n>', "
+            "a list of ints (cumulative counts), or a list of floats in (0, 1] "
             f"(cumulative energy fractions); got {type(breakpoints).__name__}"
         )
     if len(breakpoints) == 0:
@@ -1122,8 +1151,9 @@ def additive_rung_count(
 
     Returns ``None`` for UNKNOWN, never raises:
 
-    * ``kind == "energy-fractions"`` — those cuts need the ordering and the
-      energy curve, i.e. exactly the expensive half this query exists to avoid.
+    * ``kind == "energy-fractions"`` or ``"equi-energy"`` — those cuts need the
+      ordering and the energy curve, i.e. exactly the expensive half this query
+      exists to avoid.
     * anything :func:`_resolve_breakpoints` would reject (a non-positive
       ``n_lods``, an unknown breakpoints string, a mixed list, a counts list
       exceeding ``n``, …). Swallowing the fault is deliberate: this is a QUERY,
@@ -1148,7 +1178,7 @@ def additive_rung_count(
         cuts_or_fracs, kind = _resolve_breakpoints(n, n_lods, breakpoints)
     except (ValueError, TypeError):
         return None
-    if kind == "energy-fractions":
+    if kind in ("energy-fractions", "equi-energy"):
         return None
     rungs = 0
     prev = 0
@@ -1210,6 +1240,45 @@ def _energy_fraction_cuts_from_cumulative(
     return cuts
 
 
+def _cuts_for_kind(
+    kind: str,
+    cuts_or_fracs: Sequence[float],
+    *,
+    breakpoints: BreakpointSpec,
+    gram_csr: sparse.csr_matrix | None,
+    order: np.ndarray,
+    energy_ordered: np.ndarray,
+    energy_cum: np.ndarray,
+) -> list[int]:
+    """Turn a resolved breakpoint spec into cumulative cuts for THIS ordering.
+
+    Count kinds pass through. The two energy kinds need the curve:
+
+    * ``equi-energy`` — equal shares of the SELF-energy cumulative for every
+      ordering (the same curve the ``e(k)`` stamps read, so the stamps land at
+      ~``k/n`` by construction), then split at the shared commit cap. The Gram
+      residual curve is deliberately not used even when greedy built one:
+      equi-energy is a first-paint sizing rule, and the stamp-consistent curve is
+      the one the viewer will act on.
+    * ``energy-fractions`` — when greedy/spectral already built the Gram for the
+      ORDERING, reuse its residual-energy curve (behaviour unchanged); for score
+      orderings (self_energy/mass/amplitude/random) resolve against the O(N)
+      self-energy cumulative and never build the Gram — coarse lifted children
+      are maximally-overlapping merged blobs, the worst case for the sparse
+      residual-curve build.
+    """
+    if kind == "equi-energy":
+        return equi_energy_cuts(
+            energy_ordered.tolist(), parse_equi_energy_rungs(str(breakpoints))
+        )
+    if kind == "energy-fractions":
+        fracs = [float(x) for x in cuts_or_fracs]
+        if gram_csr is not None:
+            return _energy_fraction_cuts(fracs, gram_csr, order)
+        return _energy_fraction_cuts_from_cumulative(fracs, energy_cum)
+    return [int(x) for x in cuts_or_fracs]
+
+
 def _sublod_stats(
     *,
     method: str,
@@ -1259,6 +1328,10 @@ def _sublod_stats(
         # Provenance: the bandwidth-derived first-chunk size, otherwise only
         # recoverable by re-parsing the breakpoints string.
         stats["lod_stream_chunk_splats"] = int(str(breakpoints)[len("stream:") :])
+    if kind == "equi-energy":
+        # Provenance: the requested equal-energy rung count; the emitted rung
+        # count can be higher (commit-cap splits) or lower (dedup on tiny N).
+        stats["lod_equi_energy_rungs"] = parse_equi_energy_rungs(str(breakpoints))
     return stats
 
 
@@ -1347,6 +1420,14 @@ def make_additive_lod(
           substitutive level), silently clamped for small N (never raises,
           unlike explicit counts), capped at
           :data:`DEFAULT_STREAM_MAX_LEVELS` levels.
+        - ``'equi-energy:<n>'``: ``n`` rungs at EQUAL shares of cumulative
+          self-energy along the ordering — the first rung is the few heaviest
+          splats, later rungs are fatter in count for the same light — with
+          any increment above :data:`DEFAULT_MAX_ADDITIVE_COMMIT` split into
+          capped steps (:func:`luxar.utils.lod_breakpoints.equi_energy_cuts`).
+          Pair with a contribution-first ``method`` (``self_energy``, the
+          large-N default) — under ``random`` the rungs are still equal in
+          energy but there is no ordering to front-load.
         - list[int]: explicit cumulative splat counts per level.
         - list[float] in $(0, 1]$: cumulative energy fractions; the
           smallest $k$ at which the cumulative-utility curve crosses
@@ -1506,28 +1587,20 @@ def make_additive_lod(
         # absolute reference_energy weight w (partition aggregation). Computed
         # ONCE here (before cut resolution) so score-ordered energy-fraction
         # breakpoints resolve against it in O(N) — never the O(N²) sparse Gram.
-        energy_cum = np.cumsum(_self_energy_score(target_view)[order])
+        energy_ordered = _self_energy_score(target_view)[order]
+        energy_cum = np.cumsum(energy_ordered)
         energy_total = float(energy_cum[-1]) if energy_cum.size else 0.0
 
         cuts_or_fracs, kind = _resolve_breakpoints(n, n_lods, breakpoints)
-
-        if kind == "energy-fractions":
-            if gram_csr is not None:
-                # greedy/spectral already built the Gram for the ORDERING —
-                # reuse its residual-energy curve (behaviour unchanged).
-                cuts = _energy_fraction_cuts(
-                    [float(x) for x in cuts_or_fracs], gram_csr, order
-                )
-            else:
-                # Score ordering (self_energy/mass/amplitude/random): resolve
-                # against the O(N) self-energy cumulative, never build the Gram —
-                # coarse lifted children are maximally-overlapping merged blobs,
-                # the worst case for the sparse residual-curve build.
-                cuts = _energy_fraction_cuts_from_cumulative(
-                    [float(x) for x in cuts_or_fracs], energy_cum
-                )
-        else:
-            cuts = [int(x) for x in cuts_or_fracs]
+        cuts = _cuts_for_kind(
+            kind,
+            cuts_or_fracs,
+            breakpoints=breakpoints,
+            gram_csr=gram_csr,
+            order=order,
+            energy_ordered=energy_ordered,
+            energy_cum=energy_cum,
+        )
 
         centers_full = np.asarray(target_view.centers)[order]
         amps_full = np.asarray(target_view.amplitudes)[order]

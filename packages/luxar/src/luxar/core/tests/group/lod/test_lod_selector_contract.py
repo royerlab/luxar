@@ -598,6 +598,13 @@ _EXEMPT_LOD_GROUP_CALLERS = {
         "hand-built demo ladder; thresholds are always derived and its anchor "
         "depends on the realized BSP part count"
     ),
+    # One whole-object ladder per tract of subsampled STREAMLINES (the interim
+    # form of #2679's `coarse="lines"`); thresholds always derived through
+    # `coverage_fractions`, no user-supplied explicit-threshold branch.
+    "demos/demo_dmri_tractography.py": (
+        "hand-built demo ladder of subsampled streamlines; thresholds are "
+        "always derived (whole-object anchor) via coverage_fractions"
+    ),
 }
 
 #: The full expected set of production ``add_lod_group(...)`` call sites.

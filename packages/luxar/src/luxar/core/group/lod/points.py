@@ -25,6 +25,10 @@ the gsplats-only ``energy:`` variant:
 * ``n_lods: int`` — equal-count split into this many LODs.
 * ``counts: list[int]`` — cumulative element-count breakpoints (sized for
   HTTP-range-streaming the coarsest levels first).
+* ``counts: "equi-energy:<n>"`` — ``n`` rungs at equal shares of cumulative
+  perceptual energy (``luminance × radius³``) along the ordering, commit-capped;
+  pair with ``method="salience", salience_kind="energy"`` for a heaviest-first
+  ladder whose first rung is small and whose late rungs are fat.
 
 If both are passed, ``counts`` wins. If the dataset has fewer elements
 than the requested ``n_lods``, the writer emits ``min(n_lods, n)``
@@ -300,6 +304,10 @@ def _parse_breakpoints_spec(
     - ``List[int]`` → cumulative counts (legacy ``counts=`` shape).
     - ``"energy:0.5,0.9,0.99,1.0"`` → cumulative energy fractions. Needs
       both ``energy`` and ``perm`` to be supplied by the caller.
+    - ``"equi-energy:4"`` → 4 rungs at EQUAL shares of cumulative energy along
+      ``perm`` (few heavy elements first, fatter rungs later), commit-capped
+      (:func:`luxar.utils.lod_breakpoints.equi_energy_cuts`). Needs ``energy``
+      and ``perm`` too.
     - ``"stream:40000"`` → bandwidth-derived geometric ladder
       ``[c, 2c, 4c, …, total]``, resolved against THIS ``total`` so one spec
       adapts to every level/part. Identical cut geometry to the GSplats ladder
@@ -315,10 +323,26 @@ def _parse_breakpoints_spec(
             from ....utils.lod_breakpoints import parse_stream_chunk, stream_cuts
 
             return stream_cuts(total, parse_stream_chunk(spec))
+        if spec.startswith("equi-energy:"):
+            from ....utils.lod_breakpoints import (
+                equi_energy_cuts,
+                parse_equi_energy_rungs,
+            )
+
+            if energy is None or perm is None:
+                raise ValueError(
+                    "equi-energy: breakpoints require both energy and perm; "
+                    "internal error"
+                )
+            return equi_energy_cuts(
+                np.asarray(energy, dtype=np.float64)[perm].tolist(),
+                parse_equi_energy_rungs(spec),
+            )
         if not spec.startswith("energy:"):
             raise ValueError(
                 f"unrecognized breakpoints string {spec!r}; expected "
-                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0') or "
+                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0'), "
+                "'equi-energy:<n>' (e.g. 'equi-energy:4') or "
                 "'stream:<c>' (e.g. 'stream:40000')"
             )
         if energy is None or perm is None:
@@ -375,6 +399,12 @@ def make_additive_lod_points(
               the shape that makes a large leaf paint progressively —
               prefer it over ``n_lods`` on anything big, since an
               equal-count split still ends in an N/n_lods-sized commit.
+            * ``"equi-energy:4"`` → 4 rungs at EQUAL shares of cumulative
+              perceptual energy along the ordering, any increment above
+              the shared commit cap split into capped steps. Under an
+              energy-first ordering the first rung is few heavy elements
+              and the late rungs fat — fast first paint, slow rungs that
+              matter least. Uses the same energy as ``energy:``.
         seed: For ``random``; ignored otherwise.
         colors: Optional ``(N, 3)`` or ``(N, 4)`` per-point colors —
             used for the luminance term of ``salience_kind='energy'``
@@ -436,8 +466,12 @@ def make_additive_lod_points(
         return out
 
     # For random / salience, slice the permutation by breakpoints.
-    if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
-        # Compute energy on demand for energy: breakpoints under any
+    if (
+        isinstance(counts, str)
+        and counts.startswith(("energy:", "equi-energy:"))
+        and energy is None
+    ):
+        # Compute energy on demand for energy-based breakpoints under any
         # ordering method.
         energy = compute_points_energy(n, radii, colors, scalars)
 

@@ -1326,6 +1326,8 @@ def breakpoints_kind_of(counts: Any) -> str:
     if isinstance(counts, str):
         if counts.startswith("stream:"):
             return "stream"
+        if counts.startswith("equi-energy:"):
+            return "equi-energy"
         if counts.startswith("energy:"):
             return "energy-fractions"
         return counts

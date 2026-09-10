@@ -661,6 +661,12 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     --breakpoints energy:0.5,0.9,0.99,1.0                                    # cumulative energy fractions
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
+    -m self_energy -b equi-energy:4        # EQUAL-ENERGY rungs: few heavy splats first, fat dim rungs last
+# `equi-energy:<n>` cuts at equal shares of cumulative self-energy along the
+# ordering (commit-capped at 900K), so first paint is the perceptually heaviest
+# handful and the slow late rungs are the ones whose absence shows least. Also a
+# Points/Lines `counts=` value (pair with `method="salience", salience_kind="energy"`).
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     -m mass -b counts:500,2000,10000                                         # mass order, explicit counts
 # additive default method `auto`: greedy (provably (1-1/e)-optimal at every
 # prefix) at N <= 5000, else `self_energy` (cheap O(N log N)); override with -m.

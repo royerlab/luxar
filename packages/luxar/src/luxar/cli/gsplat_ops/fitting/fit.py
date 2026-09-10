@@ -306,7 +306,7 @@ def run_fit_volume(
         "--breakpoints",
         help="[--recipe stream] additive ladder breakpoints: 'equal-count' "
         "(default), 'stream:C' (geometric streaming ladder, sized per part), "
-        "'counts:500,2000,...' or 'energy:0.5,0.9,...'.",
+        "'counts:500,2000,...', 'equi-energy:<n>' or 'energy:0.5,0.9,...'.",
         rich_help_panel="Per-part LOD",
     ),
     recipe_compression_factor: Optional[int] = typer.Option(

@@ -20,6 +20,17 @@ budget via :func:`streaming_chunk_splats`. Cumulative cuts then double —
 doubles the resident set. Because the spec is resolved against *this* ``n``, the
 same string adapts to every level, part and leaf of a tree.
 
+The ``equi-energy:<n>`` spec
+----------------------------
+Cuts at equal shares of cumulative ENERGY along the ladder's own ordering rather
+than at counts: on a contribution-first ordering the first rung is the few
+heaviest elements and each later rung is fatter in count for the same light, so
+first paint is fast and the slow rungs are the ones that matter least. Fat late
+rungs are split at :data:`DEFAULT_MAX_ADDITIVE_COMMIT` (see
+:func:`equi_energy_cuts`). Every geometry consumes it: GSplats against their
+self-energy, Points against ``luminance × radius³``, Lines against
+``luminance × Σ length·width²`` (per polyline, capped in vertices).
+
 Doubling has one failure mode, and it is size-driven rather than spec-driven: the
 FINAL increment of a pure doubling ladder is ``N`` minus the largest doubling
 below it, so it grows with ``N`` and approaches ``N/2`` in the worst case however
@@ -34,9 +45,13 @@ import math
 from typing import Any, List, Sequence, Union
 
 #: Breakpoint specification for an additive ladder. Either a string form
-#: (``"equal-count"``, ``"stream:<c>"``, ``"energy:<fractions>"`` for
-#: Points/Lines) or an explicit cumulative count / fraction sequence.
+#: (``"equal-count"``, ``"stream:<c>"``, ``"equi-energy:<n>"``,
+#: ``"energy:<fractions>"`` for Points/Lines) or an explicit cumulative count /
+#: fraction sequence.
 BreakpointSpec = Union[str, Sequence[int], Sequence[float]]
+
+#: Prefix of the equal-energy rung spec (see :func:`equi_energy_cuts`).
+EQUI_ENERGY_PREFIX = "equi-energy:"
 
 #: Assumed downlink for streaming-breakpoint sizing when the caller gives none —
 #: a conservative "typical broadband" figure that also covers good 4G.
@@ -186,14 +201,178 @@ def parse_stream_chunk(spec: str) -> int:
     return c
 
 
+def parse_equi_energy_rungs(spec: str) -> int:
+    """Extract ``n`` from an ``"equi-energy:<n>"`` spec, validating it is >= 1."""
+    body = spec[len(EQUI_ENERGY_PREFIX) :]
+    try:
+        n = int(body)
+    except ValueError as e:
+        raise ValueError(
+            "equi-energy breakpoints must be 'equi-energy:<n>' with integer "
+            f"n >= 1; got {spec!r}"
+        ) from e
+    if n < 1:
+        raise ValueError(f"equi-energy rung count must be >= 1; got {n}")
+    return n
+
+
+def _cumulative_energy(energy_in_order: Sequence[float]) -> List[float] | None:
+    """Cumulative non-negative energy, or ``None`` when degenerate (non-finite
+    or summing to nothing) so the caller falls back to equal-count cuts."""
+    cum = 0.0
+    out: List[float] = []
+    for e in energy_in_order:
+        v = float(e)
+        if not math.isfinite(v):
+            return None
+        cum += max(v, 0.0)
+        out.append(cum)
+    if not out or out[-1] <= 0.0:
+        return None
+    return out
+
+
+def _first_index_reaching(cum: Sequence[float], target: float) -> int:
+    """Smallest index whose cumulative value reaches ``target`` (binary search)."""
+    lo, hi = 0, len(cum) - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if cum[mid] >= target:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def _equal_energy_cuts(cum_energy: Sequence[float], n_rungs: int) -> List[int]:
+    """Cumulative counts at which the cumulative energy first reaches ``k/n``.
+
+    Cuts that coincide (one element carrying several shares) collapse, so the
+    result can be shorter than ``n_rungs``; it always ends at ``len(cum)``.
+    """
+    n = len(cum_energy)
+    total = cum_energy[-1]
+    cuts: List[int] = []
+    for k in range(1, n_rungs + 1):
+        cut = _first_index_reaching(cum_energy, total * k / n_rungs) + 1
+        if not cuts or cut > cuts[-1]:
+            cuts.append(cut)
+    if cuts[-1] < n:
+        cuts.append(n)
+    return cuts
+
+
+def _equal_count_cuts(n: int, n_rungs: int) -> List[int]:
+    raw = sorted({round((k + 1) * n / n_rungs) for k in range(n_rungs)})
+    cuts = [c for c in raw if 0 < c < n]
+    cuts.append(n)
+    return cuts
+
+
+def _split_by_commit_cap(
+    cuts: Sequence[int], weights: Sequence[int] | None, max_commit: int
+) -> List[int]:
+    """Split every increment whose payload exceeds ``max_commit``.
+
+    A greedy walk: elements are accumulated until adding the next one would
+    exceed the cap, then a cut is placed. Every emitted increment therefore
+    weighs at most ``max_commit`` — except an element that alone outweighs the
+    cap, which becomes a rung of its own (it cannot be split).
+    """
+    out: List[int] = []
+    prev = 0
+    for end in cuts:
+        acc = 0
+        for i in range(prev, end):
+            w = 1 if weights is None else int(weights[i])
+            if acc > 0 and acc + w > max_commit:
+                out.append(i)
+                acc = 0
+            acc += w
+        if not out or end > out[-1]:
+            out.append(end)
+        prev = end
+    return out
+
+
+def equi_energy_cuts(
+    energy_in_order: Sequence[float],
+    n_rungs: int,
+    *,
+    weights: Sequence[int] | None = None,
+    max_commit: int = DEFAULT_MAX_ADDITIVE_COMMIT,
+) -> List[int]:
+    """Cumulative cuts at equal shares of cumulative ENERGY, then commit-capped.
+
+    The rung boundary ``k`` (``k = 1..n_rungs``) is the first element at which
+    the cumulative energy along the ladder's OWN ordering reaches ``k/n_rungs``
+    of the total. On a contribution-first ordering (``self_energy`` for splats,
+    ``salience_kind="energy"`` for points/lines) this makes the first rungs FEW
+    elements but the perceptually heaviest ones, and the late rungs progressively
+    fatter in count — each carries the same light, so the elements that take
+    longest to arrive are exactly the ones whose absence is least visible. An
+    equal-count ladder does the opposite: its first rung is ``N/n`` elements
+    whatever they are worth.
+
+    The equal-energy tail is exactly where a heavy-tailed dataset puts most of
+    its ELEMENTS, so a late rung can be millions of them. Any increment whose
+    payload exceeds ``max_commit`` is therefore split into capped steps —
+    the same ceiling :func:`capped_stream_cuts` respects, so no single commit
+    blocks the main thread. ``weights`` is the per-element payload used for that
+    cap (default 1 each; Lines pass vertices-per-polyline so the cap is in the
+    vertex currency, as for ``stream:``). The split rungs share one energy
+    band, so their ``e(k)`` stamps rise less per rung than the equal-energy
+    ones — expected, and honest.
+
+    Shares that coincide on one element collapse into one cut (a single element
+    carrying half the energy yields no empty rung between), and degenerate
+    energy (all zero, non-finite) falls back to equal-count cuts — the same
+    fallback the ``energy:`` fraction resolvers use — so a ladder is always
+    produced.
+
+    Args:
+        energy_in_order: Per-element non-negative energy, ALREADY permuted into
+            the ladder order (element 0 paints first).
+        n_rungs: Number of equal-energy rungs requested (before cap splitting).
+        weights: Optional per-element payload sizes, same order, for the cap.
+        max_commit: Ceiling on any single increment, in ``weights`` units.
+
+    Returns:
+        Strictly increasing cumulative cuts ending at ``len(energy_in_order)``.
+
+    Raises:
+        ValueError: ``n_rungs`` or ``max_commit`` is not positive, or ``weights``
+            has the wrong length.
+    """
+    n = len(energy_in_order)
+    if n_rungs < 1:
+        raise ValueError(f"n_rungs must be >= 1; got {n_rungs}")
+    if max_commit < 1:
+        raise ValueError(f"max_commit must be >= 1; got {max_commit}")
+    if weights is not None and len(weights) != n:
+        raise ValueError(
+            f"weights has {len(weights)} entries but energy has {n}; they must match"
+        )
+    if n <= 1:
+        return [n]
+    cum = _cumulative_energy(energy_in_order)
+    cuts = (
+        _equal_count_cuts(n, n_rungs)
+        if cum is None
+        else _equal_energy_cuts(cum, n_rungs)
+    )
+    return _split_by_commit_cap(cuts, weights, max_commit)
+
+
 def validate_element_breakpoints(spec: BreakpointSpec) -> None:
     """Size-independent validation of a Points/Lines ``counts``/``breakpoints``
     value, meant for RESOLVE time — before any group is written to disk.
 
     Checks exactly the properties that doom the spec for EVERY element count
     ``n`` (the write path still validates against the actual ``n``): the string
-    vocabulary (``stream:<c>`` / ``energy:<fractions>``), the stream first-chunk
-    size, the energy fractions parsing and non-emptiness, and list
+    vocabulary (``stream:<c>`` / ``equi-energy:<n>`` / ``energy:<fractions>``),
+    the stream first-chunk size, the equi-energy rung count, the energy
+    fractions parsing and non-emptiness, and list
     non-emptiness. Raises :class:`ValueError`, reusing the write path's messages
     where it has one, so failing earlier never changes what a caller must catch.
     """
@@ -201,10 +380,14 @@ def validate_element_breakpoints(spec: BreakpointSpec) -> None:
         if spec.startswith("stream:"):
             parse_stream_chunk(spec)
             return
+        if spec.startswith(EQUI_ENERGY_PREFIX):
+            parse_equi_energy_rungs(spec)
+            return
         if not spec.startswith("energy:"):
             raise ValueError(
                 f"unrecognized breakpoints string {spec!r}; expected "
-                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0') or "
+                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0'), "
+                "'equi-energy:<n>' (e.g. 'equi-energy:4') or "
                 "'stream:<c>' (e.g. 'stream:40000')"
             )
         try:
