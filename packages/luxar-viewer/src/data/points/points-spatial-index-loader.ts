@@ -594,7 +594,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // All five attribute arrays load CONCURRENTLY: distinct zarr arrays,
     // distinct freshly-allocated output buffers. The unified request queue
     // this used to wait for exists now — every chunk fetch funnels through
-    // the global fetch gate (utils/fetch-concurrency.ts, 64-wide, HTTP/2) —
+    // the global data fetch lane (utils/fetch-concurrency.ts, 24 slots, HTTP/2) —
     // so parallel attributes overlap network + decode latency instead of
     // saturating the connection pool.
     type ArrayType = Float32Array | Uint8Array | Uint16Array | Float16Array;
