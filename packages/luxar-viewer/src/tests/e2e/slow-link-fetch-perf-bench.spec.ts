@@ -2,7 +2,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { applyNetworkProfile, type NetworkProfile } from './perf-audit-helpers';
-import { PERF_DATA_BASE } from './perf-data-base';
+import { PERF_SLOW_DATA_BASE } from './perf-data-base';
 
 const HOSTED_STORE =
   process.env.LUXAR_SLOW_LINK_STORE ??
@@ -13,7 +13,7 @@ const HOSTED_CHUNKS = [
   'visible_human_head/cholesky_factors_offdiag/c/19/0',
   'visible_human_head/amplitudes/c/1',
 ] as const;
-const LOCAL_TARGET = `${PERF_DATA_BASE}/__luxar_slow_wave__`;
+const LOCAL_TARGET = `${PERF_SLOW_DATA_BASE}/__luxar_slow_wave__`;
 const HOSTED_REQUESTS = 24;
 const LOCAL_REQUESTS = 6;
 const DEFAULT_PROFILES: NetworkProfile[] = ['slow100k', 'slow1m', 'slow3m'];

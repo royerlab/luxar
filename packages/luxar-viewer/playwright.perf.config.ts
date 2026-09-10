@@ -24,7 +24,7 @@ import { defineConfig, devices } from '@playwright/test';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { createE2EServerMetadata, ensureCheckoutIdentity } from './tools/e2e-server-identity';
-import { resolvePerfDataPort } from './src/tests/e2e/perf-data-base';
+import { resolvePerfDataPort, resolvePerfSlowDataPort } from './src/tests/e2e/perf-data-base';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '../..');
@@ -37,10 +37,13 @@ const viewerPort = Number(process.env.LUXAR_PERF_PORT ?? 5173);
 // Shared with the perf-bench specs (src/tests/e2e/perf-data-base.ts) so the
 // port the server boots on and the origin the specs fetch from can't drift.
 const dataPort = resolvePerfDataPort();
+const slowDataPort = resolvePerfSlowDataPort();
 const viewerBaseURL = `http://127.0.0.1:${viewerPort}`;
 const dataBaseURL = `http://127.0.0.1:${dataPort}`;
+const slowDataBaseURL = `http://127.0.0.1:${slowDataPort}`;
 const checkoutIdentity = ensureCheckoutIdentity(projectRoot, __dirname);
 const serverMetadata = createE2EServerMetadata(checkoutIdentity, viewerBaseURL, dataBaseURL);
+const slowDataIdentityURL = serverMetadata.dataIdentityURL.replace(dataBaseURL, slowDataBaseURL);
 // Extra Chromium switches, comma-separated. Example: on a Linux/NVIDIA box
 // where `--use-gl=egl` yields NO GL context and default headless falls back
 // to SwiftShader, pass LUXAR_PERF_CHROME_ARGS=--use-angle=vulkan to get the
@@ -145,8 +148,17 @@ export default defineConfig({
       },
     },
     {
-      command: `python3 packages/luxar-viewer/tools/range-http-server.py ${dataPort} --bind 127.0.0.1`,
+      command: `python3 -m http.server ${dataPort} --bind 127.0.0.1`,
       url: serverMetadata.dataIdentityURL,
+      cwd: projectRoot,
+      reuseExistingServer: !process.env.CI,
+      timeout: 15000,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+    {
+      command: `python3 packages/luxar-viewer/tools/range-http-server.py ${slowDataPort} --bind 127.0.0.1`,
+      url: slowDataIdentityURL,
       cwd: projectRoot,
       reuseExistingServer: !process.env.CI,
       timeout: 15000,
