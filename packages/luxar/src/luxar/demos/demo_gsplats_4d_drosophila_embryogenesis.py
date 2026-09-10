@@ -157,7 +157,7 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
         --tiling uniform --tile-size 1400 --overlap 0 \
         --preset standard --iters 1500 --seeds 256000 --floor 8 \
         --gpus 0 --jobs-per-gpu 2 \
-        --merge-recipe stream --merge-target-ms 200
+        --merge-recipe stream --merge-n-lods 4
 
     # 2. Physical microns, straight from the uncelled merge (no amplitude cull,
     #    see CULLING above). Time is left as an INTEGER FRAME INDEX on purpose —
@@ -184,14 +184,14 @@ ONCE across all 500 frames rather than per timepoint. That is what keeps the
 exposure from drifting as the embryo brightens, and it is why the appearance
 constants below are portable across the whole recording.
 
-``--merge-target-ms 200`` is sized per DISPLAYED TIME SLICE since #2374/#2376:
-the merge multiplies the download budget by the 500 slices it observes, so rung 0
-holds ~10.4 M splats (~20,800 per timepoint, ~200 ms of the visible frame) and
-the geometric ladder has 5 rungs. The 2026-08 archive was laddered before that
-fix: the same flag sized the budget against the whole node, its first rung held a
-median 45 splats per timepoint (p05 7; one timepoint empty) and the ladder had 14
-rungs. ``EXPECTED_RUNGS`` pins the corrected 5-rung ladder; a 14-rung result
-means the old, starved sizing came back.
+``--merge-n-lods 4`` (equal-count) gives a 4-rung ladder whose first rung is a
+quarter of the node, 64,000 splats per timepoint, which is what
+``check-demo-ladders`` wants on a sliced node (rung 0 at or above 10 % of the
+node, or playback re-pays a thin rung 0 every tick). The two ``--merge-target-ms
+200`` ladders this archive carried before both fail that gate: the 2026-08
+archive's 14 rungs were sized against the whole node and its rung 0 held a
+median 45 splats per timepoint (#2374/#2376); the per-slice sizing that replaced
+it gives 5 rungs with rung 0 at 8.14 % of the node. ``EXPECTED_RUNGS`` pins 4.
 
 The fit directory is preserved across recompute attempts so ``batch-fit run`` can
 resume completed timepoints. Only the derived filter, transform, and archive
@@ -330,17 +330,17 @@ FLOOR = 8
 #: Recorded acquisition-box scheduling; two workers kept the GPU occupied.
 GPUS = "0"
 JOBS_PER_GPU = 2
-#: Progressive first-paint ladder produced during the streaming merge (sized
-#: per time slice, see the docstring; 5 rungs on this recording).
+#: Progressive first-paint ladder produced during the streaming merge: four
+#: equal-count rungs (see the docstring for why not a target-ms ladder).
 MERGE_RECIPE = "stream"
-MERGE_TARGET_MS = 200
+MERGE_N_LODS = 4
 #: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
 #: One-megabyte chunks measured at 0-2.3 MB in 0-4 requests per timepoint step.
 CHUNK_PROFILE = "archive"
 #: Nominal whole-recording seed budget; a refit may drift as dynamic ops run.
 NOMINAL_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
-EXPECTED_RUNGS = 5
+EXPECTED_RUNGS = 4
 #: Parallel fit reductions can move a threshold count, but not by recipe scale.
 SPLAT_COUNT_TOLERANCE = 0.01
 
@@ -520,8 +520,8 @@ def recompute_archive(work_dir: Path) -> Path:
             str(JOBS_PER_GPU),
             "--merge-recipe",
             MERGE_RECIPE,
-            "--merge-target-ms",
-            str(MERGE_TARGET_MS),
+            "--merge-n-lods",
+            str(MERGE_N_LODS),
         )
         merged = fit / "merged" / "final.gsplats.zarr"
         fitted_node, _ = load_gsplat_node(merged)

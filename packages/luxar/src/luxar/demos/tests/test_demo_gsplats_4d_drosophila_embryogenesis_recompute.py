@@ -61,7 +61,9 @@ def test_recorded_recipe_constants_match_the_source_and_published_run() -> None:
     # is gone: the uncelled merge is the recipe.
     assert not hasattr(demo, "AMPLITUDE_MIN")
     assert not hasattr(demo, "EXPECTED_SPLATS")
-    assert demo.EXPECTED_RUNGS == 5  # per-slice --merge-target-ms sizing (#2374/#2376)
+    assert (
+        demo.EXPECTED_RUNGS == 4
+    )  # equal-count --merge-n-lods 4 (check-demo-ladders floor)
 
 
 def test_docstring_records_the_measured_streaming_tradeoffs() -> None:
@@ -315,8 +317,8 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
             "2",
             "--merge-recipe",
             "stream",
-            "--merge-target-ms",
-            "200",
+            "--merge-n-lods",
+            "4",
         ),
         (
             "gsplat",
