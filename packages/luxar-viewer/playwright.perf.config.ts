@@ -145,7 +145,7 @@ export default defineConfig({
       },
     },
     {
-      command: `python3 -m http.server ${dataPort} --bind 127.0.0.1`,
+      command: `python3 packages/luxar-viewer/tools/range-http-server.py ${dataPort} --bind 127.0.0.1`,
       url: serverMetadata.dataIdentityURL,
       cwd: projectRoot,
       reuseExistingServer: !process.env.CI,

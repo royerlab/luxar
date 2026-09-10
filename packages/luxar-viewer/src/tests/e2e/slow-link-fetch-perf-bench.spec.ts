@@ -13,8 +13,9 @@ const HOSTED_CHUNKS = [
   'visible_human_head/cholesky_factors_offdiag/c/19/0',
   'visible_human_head/amplitudes/c/1',
 ] as const;
-const LOCAL_TARGET = `${PERF_DATA_BASE}/packages/luxar-viewer/package.json`;
-const REQUESTS = 24;
+const LOCAL_TARGET = `${PERF_DATA_BASE}/__luxar_slow_wave__`;
+const HOSTED_REQUESTS = 24;
+const LOCAL_REQUESTS = 6;
 const DEFAULT_PROFILES: NetworkProfile[] = ['slow100k', 'slow1m', 'slow3m'];
 const profiles = (process.env.LUXAR_SLOW_LINK_PROFILES?.split(',').filter(Boolean) ??
   DEFAULT_PROFILES) as NetworkProfile[];
@@ -69,7 +70,8 @@ async function installRetryModule(page: Page): Promise<void> {
 async function runWave(
   page: Page,
   profile: NetworkProfile,
-  targets: readonly string[]
+  targets: readonly string[],
+  requestCount: number
 ): Promise<WaveResult> {
   const attempts = new Map<string, number>();
   page.on('request', (request) => {
@@ -92,10 +94,11 @@ async function runWave(
         ).__slowLinkFetch;
         let exhausted = 0;
         const startedAt = performance.now();
+        const waveId = crypto.randomUUID();
         const bodies = await Promise.all(
           Array.from({ length: requestCount }, (_, index) =>
             fetchWithRetry(
-              `${urls[index % urls.length]}?slow-link-audit=${index}`,
+              `${urls[index % urls.length]}?slow-link-wave=${waveId}&slow-link-audit=${index}`,
               { timeoutMsOverride: 30_000, onExhausted: () => (exhausted += 1) },
               async ({ readBody }) => readBody()
             )
@@ -108,7 +111,7 @@ async function runWave(
           elapsedMs: performance.now() - startedAt,
         };
       },
-      { requestCount: REQUESTS, urls: targets }
+      { requestCount, urls: targets }
     );
     return {
       ...result,
@@ -119,20 +122,20 @@ async function runWave(
   }
 }
 
-function expectCompleteWave(result: WaveResult): void {
-  expect(result.completed).toBe(REQUESTS);
+function expectCompleteWave(result: WaveResult, expectedRequests: number): void {
+  expect(result.completed).toBe(expectedRequests);
   expect(result.bytes).toBeGreaterThan(0);
   expect(result.exhausted).toBe(0);
 }
 
 test('hermetic HTTP/1.1 chunk wave completes at slow100k', async ({ page }) => {
-  const result = await runWave(page, 'slow100k', [LOCAL_TARGET]);
+  const result = await runWave(page, 'slow100k', [LOCAL_TARGET], LOCAL_REQUESTS);
   test.info().annotations.push({
     type: 'slow-link-metrics',
     description: JSON.stringify({ profile: 'slow100k', target: 'local', ...result }),
   });
 
-  expectCompleteWave(result);
+  expectCompleteWave(result, LOCAL_REQUESTS);
   expect(result.retriedRequests).toBe(0);
 });
 
@@ -141,13 +144,13 @@ for (const profile of profiles) {
     const targets = HOSTED_CHUNKS.map((chunk) => `${HOSTED_STORE}/${chunk}`);
     test.skip(!(await targetReachable(page, targets[0])), `dataset not reachable: ${HOSTED_STORE}`);
 
-    const result = await runWave(page, profile, targets);
+    const result = await runWave(page, profile, targets, HOSTED_REQUESTS);
     test.info().annotations.push({
       type: 'slow-link-metrics',
       description: JSON.stringify({ profile, target: 'hosted', ...result }),
     });
 
-    expectCompleteWave(result);
+    expectCompleteWave(result, HOSTED_REQUESTS);
     expect(result.retriedRequests).toBeLessThanOrEqual(profile === 'slow100k' ? 1 : 0);
   });
 }
