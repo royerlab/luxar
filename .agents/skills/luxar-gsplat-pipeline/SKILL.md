@@ -448,7 +448,7 @@ re-streams that ladder from its bottom on every slice and leaves **3-27%** of
 the frame resident while a step loads; 44 spatial parts keep 68-85% resident
 but pay ~30 MB per step because every part is still sliced by time; **one part
 per timepoint** with its own capped stream ladder fetches exactly one part per
-step (~27 MB, nothing from other timepoints), paints its 39 K-splat first rung
+step (~27 MB, nothing from other timepoints), paints its 20.8 K-splat first rung
 at once, and can never starve a slice because the ladder is sized against that
 frame alone. Its cost is the full part per step with no reuse across
 timepoints, and one live GPU buffer per part (51 here) — pair it with
