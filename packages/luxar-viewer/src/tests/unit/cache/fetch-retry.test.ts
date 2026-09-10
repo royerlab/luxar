@@ -735,6 +735,60 @@ describe('fetchWithRetry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('does not abort a quiet multiplexed body while another fetch is making progress', async () => {
+    vi.useFakeTimers();
+    const calls = new Map<string, number>();
+    const fetchMock = vi.fn(async (url: string) => {
+      calls.set(url, (calls.get(url) ?? 0) + 1);
+      if (url.endsWith('/active')) {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let index = 1; index <= 12; index++) {
+                setTimeout(() => controller.enqueue(new Uint8Array([index])), index * 75);
+              }
+              setTimeout(() => controller.close(), 950);
+            },
+          }),
+          { headers: { 'Content-Length': String(32 * 1024) } }
+        );
+      }
+      let timer: ReturnType<typeof setTimeout>;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            setTimeout(() => controller.enqueue(new Uint8Array([8])), 50);
+            timer = setTimeout(() => {
+              controller.enqueue(new Uint8Array([9]));
+              controller.close();
+            }, 900);
+          },
+          cancel() {
+            clearTimeout(timer);
+          },
+        })
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const active = fetchWithRetryScoped(
+      'https://example.com/active',
+      { timeoutMsOverride: 400 },
+      async ({ readBody }) => readBody()
+    );
+    const quiet = fetchWithRetryScoped(
+      'https://example.com/quiet',
+      { timeoutMsOverride: 400 },
+      async ({ readBody }) => readBody()
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect((await active)?.byteLength).toBe(12);
+    expect(Array.from((await quiet) ?? [])).toEqual([8, 9]);
+    expect(calls.get('https://example.com/quiet')).toBe(1);
+  });
+
   it('stops a body read immediately when the caller aborts', async () => {
     const caller = new AbortController();
     const fetchMock = vi.fn(
