@@ -61,6 +61,7 @@ describe('installContextMenuOwnership', () => {
     ['turntable video', 'video', 'luxar-overlay__matte-source'],
     ['data monitor', 'div', 'luxar-data-monitor'],
     ['dimension sliders', 'div', 'luxar-dimension-sliders'],
+    ['dimension dropdown', 'select', 'luxar-dimension-dropdown__select'],
     ['gui panel', 'div', 'luxar-gui'],
   ])('suppresses the menu on the %s', (_label, tag, className) => {
     expect(rightClick(appendTo(document.body, tag, className))).toBe(true);
@@ -89,7 +90,6 @@ describe('installContextMenuOwnership', () => {
     input.type = 'text';
     expect(rightClick(input)).toBe(false);
     expect(rightClick(appendTo(panel, 'textarea'))).toBe(false);
-    expect(rightClick(appendTo(panel, 'select'))).toBe(false);
     const editable = appendTo(panel, 'div');
     editable.setAttribute('contenteditable', 'true');
     expect(rightClick(editable)).toBe(false);

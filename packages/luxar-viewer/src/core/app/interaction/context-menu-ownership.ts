@@ -54,7 +54,7 @@ import { getViewerContainer } from '../../../utils/viewer-container';
 const VIEWER_OWNED = '[class^="luxar-"], [class*=" luxar-"]';
 
 /** Candidate fields classified by the canonical typing-surface predicate. */
-const FIELD = 'input, textarea, select, [contenteditable]';
+const FIELD = 'input, textarea, [contenteditable]';
 
 function isTextEntry(target: Element): boolean {
   const field = target.closest(FIELD);
