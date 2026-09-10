@@ -202,8 +202,6 @@ def hidden_coordinate_count(positions: Any, hidden_cols: Sequence[int]) -> int:
 
     Returns at least 1, so the result is always safe as a divisor or multiplier.
     """
-    import numpy as np
-
     cols = [int(c) for c in hidden_cols]
     if not cols:
         return 1
@@ -300,9 +298,11 @@ def _split_by_commit_cap(
     weighs at most ``max_commit`` — except an element that alone outweighs the
     cap, which becomes a rung of its own (it cannot be split).
     """
-    payload = np.ones(len(weights) if weights is not None else cuts[-1], dtype=np.int64)
-    if weights is not None:
-        payload = np.asarray(weights, dtype=np.int64)
+    payload = (
+        np.asarray(weights, dtype=np.int64)
+        if weights is not None
+        else np.ones(cuts[-1], dtype=np.int64)
+    )
     cumulative = np.concatenate(([0], np.cumsum(payload, dtype=np.int64)))
     out: List[int] = []
     prev = 0

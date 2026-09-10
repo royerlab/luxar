@@ -163,8 +163,8 @@ def parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
             )
         return values_flt
     raise typer.BadParameter(
-        f"breakpoints must be 'equal-count', 'stream:<c>', 'counts:...', or "
-        f"'energy:...'; got {spec!r}"
+        f"breakpoints must be 'equal-count', 'stream:<c>', 'equi-energy:<n>', "
+        f"'counts:...', or 'energy:...'; got {spec!r}"
     )
 
 
