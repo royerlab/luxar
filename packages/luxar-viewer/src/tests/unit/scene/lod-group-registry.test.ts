@@ -1587,6 +1587,37 @@ describe('LODGroupRegistry — auto evaluation', () => {
     expect(children[1].object.visible).toBe(true);
   });
 
+  it("selector='screen-area': sub-neutral bias cannot reach thresholds above its finite metric ceiling", () => {
+    function evaluateThreshold(threshold: number, lodBias: number): boolean {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getLodBias: () => lodBias,
+      });
+      const bounds = { min: [-2, -2, -0.1], max: [2, 2, 0.1] };
+      const children = [0, threshold].map((coverageFraction) => ({
+        ...makeChild(coverageFraction),
+        positionBounds: bounds,
+      }));
+      const entry = makeEntry(children, 0, `/biased-ceiling-${threshold}-${lodBias}`);
+      entry.selector = 'screen-area';
+      reg.register(entry);
+
+      reg.evaluatePerFrame();
+
+      return children[1].object.visible;
+    }
+
+    expect(evaluateThreshold(1, 1)).toBe(true);
+    expect(evaluateThreshold(1, 0.99)).toBe(false);
+    expect(evaluateThreshold(0.5, 0.5)).toBe(true);
+    expect(evaluateThreshold(0.5, 0.49)).toBe(false);
+  });
+
   it('defines lod bias in area units for legacy coverage by applying its square root', () => {
     function evaluateAtBias(lodBias: number): boolean {
       const camera = new THREE.Camera();
@@ -1624,7 +1655,7 @@ describe('LODGroupRegistry — auto evaluation', () => {
         getLodBias: () => lodBias,
       });
       const bounds = { min: [-0.5, -0.25, -0.1], max: [0.5, 0.25, 0.1] };
-      const children = [0, 0.2].map((threshold) => ({
+      const children = [0, 0.125].map((threshold) => ({
         ...makeChild(threshold),
         positionBounds: bounds,
       }));
@@ -1634,7 +1665,7 @@ describe('LODGroupRegistry — auto evaluation', () => {
 
       reg.evaluatePerFrame();
 
-      expect(children[0].object.visible, `neutral fallback for ${lodBias}`).toBe(true);
+      expect(children[1].object.visible, `neutral fallback for ${lodBias}`).toBe(true);
     }
   });
 

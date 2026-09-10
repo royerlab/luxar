@@ -873,7 +873,10 @@ export interface LODGroupRegistryDeps {
   /**
    * Replacement-LOD bias in screen-area units. `2` advances one level on an
    * occupancy-halved ladder. Legacy diagonal coverage receives `sqrt(bias)`
-   * so both selectors shift by the same area factor. Invalid values are neutral.
+   * so both selectors shift by the same area factor. Since finite screen-area
+   * coverage is at most `1`, bias below `1` makes a partition-anchored finest
+   * level unreachable and bias below `0.5` does the same for a whole-object
+   * finest level. Invalid values are neutral.
    */
   getLodBias?: () => number | undefined;
   /**
