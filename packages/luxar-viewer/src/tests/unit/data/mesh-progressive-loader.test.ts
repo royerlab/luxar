@@ -357,33 +357,43 @@ describe('MeshProgressiveLoader', () => {
   });
 
   it('retains one cumulative payload after concatenation', async () => {
-    const { loader, subs } = makeLadder([
-      level(4, [0, 1, 2]),
-      level(3, [0, 1, 2]),
-      level(3, [0, 1, 2]),
-    ]);
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+    try {
+      const { loader, subs } = makeLadder([
+        level(4, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+      ]);
 
-    const result = await loader.updateView(VIEW);
-    const retained = (loader as unknown as { loadedLODs: LoadedMeshData[] }).loadedLODs;
+      const result = await loader.updateView(VIEW);
+      const retained = (loader as unknown as { loadedLODs: LoadedMeshData[] }).loadedLODs;
 
-    expect(loader.loadedLODCount).toBe(3);
-    expect(retained).toEqual([result]);
-    for (const sub of subs) expect(sub.releaseData).toHaveBeenCalledOnce();
+      expect(loader.loadedLODCount).toBe(3);
+      expect(retained).toEqual([result]);
+      for (const sub of subs) expect(sub.releaseData).toHaveBeenCalledOnce();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('unwinds intact rung payloads when concatenation fails before folding', async () => {
-    const { loader } = makeLadder([
-      level(4, [0, 1, 2]),
-      level(3, [0, 1, 2], { ndim: 4 }),
-      level(3, [0, 1, 2]),
-    ]);
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+    try {
+      const { loader } = makeLadder([
+        level(4, [0, 1, 2]),
+        level(3, [0, 1, 2], { ndim: 4 }),
+        level(3, [0, 1, 2]),
+      ]);
 
-    await expect(loader.updateView(VIEW)).rejects.toThrow('mixed dimensionality');
-    expect(loader.loadedLODCount).toBe(3);
+      await expect(loader.updateView(VIEW)).rejects.toThrow('mixed dimensionality');
+      expect(loader.loadedLODCount).toBe(3);
 
-    expect(loader.rollbackToPassStart()).toBe(3);
-    expect(loader.loadedLODCount).toBe(0);
-    expect(loader.hasMoreLODs).toBe(true);
+      expect(loader.rollbackToPassStart()).toBe(3);
+      expect(loader.loadedLODCount).toBe(0);
+      expect(loader.hasMoreLODs).toBe(true);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('replays a failed pass without duplicating levels behind a folded prefix', async () => {
