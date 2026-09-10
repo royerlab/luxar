@@ -209,6 +209,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py checks its section numbering and archive digest pins",
     ),
     (
+        "docs/index.rst",
+        "py",
+        "test_readme_demo_docs.py drift-guards the published demo count",
+    ),
+    (
         "docs/api/gsplats.rst",
         "py",
         "test_format_contract.py checks its current gsplats format claim",
@@ -489,10 +494,9 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
 ]
 
 #: Paths that belong to no LANGUAGE domain (they do select the docs gate, which is
-#: a separate axis — ``docs/index.rst`` matches ``docs_pattern`` by design). Without
-#: these the table above proves nothing: a pattern that matched everything would
-#: satisfy every positive row.
-NON_DOMAIN_PATHS: list[str] = ["CHANGELOG.md", "docs/index.rst"]
+#: a separate axis). Without these the table above proves nothing: a pattern that
+#: matched everything would satisfy every positive row.
+NON_DOMAIN_PATHS: list[str] = ["CHANGELOG.md"]
 
 #: Inputs with no Python consumer. These must remain outside ``dom_py`` so adding
 #: a few contract inputs cannot silently widen ownership to whole subtrees and
