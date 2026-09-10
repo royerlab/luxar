@@ -310,16 +310,31 @@ GROUP_COLORS = {
 }
 
 # Toggle-able Layers-panel groups: (name, member tissue groups, opacity,
-# amplitude_boost). Order sets the Layers-panel order. Muscle has low CT
-# amplitude (soft tissue) so it needs an amplitude boost to be visible — the
-# boost multiplies the splat amplitudes at build (a true intensity gain, not
-# capped at opacity=1); it stays semi-transparent so organs still read through.
-SUPERGROUPS: list[tuple[str, tuple[str, ...], float, float]] = [
-    ("Skeleton", ("bone",), 1.0, 1.0),
-    ("Organs", ("lung", "gi", "abdominal_organ", "urinary", "misc_organ"), 1.0, 1.0),
-    ("Vessels & heart", ("vessel", "heart"), 1.0, 1.0),
-    ("Nervous system", ("brain", "spinal"), 1.0, 1.0),
-    ("Muscles", ("muscle",), 0.55, 3.0),
+# amplitude_boost, colour_range_max). Order sets the Layers-panel order.
+#
+# Every layer was too dim at the identity window (2026-09-10 review of the
+# hosted demo), so each one now bakes the COLOUR RANGE Loic dialled in the
+# Layers panel: on these direct-colour nodes the window ``[0, max]`` is stored as
+# ``intensity = 1/max`` (a plain colour gain). Two gains multiply into the
+# emitted light: the amplitude boost (applied to the splats at build, uncapped)
+# and the colour gain (capped at ``INTENSITY_MAX`` = 100 by the writer). Muscle
+# keeps its x3 boost — low CT amplitude (soft tissue) — and stays
+# semi-transparent so organs still read through. The nervous system was dialled
+# to a 0 - 0.002 window, a x500 gain the colour gain alone cannot carry, so x5
+# of it rides on the amplitude boost and the panel will read 0 - 0.010 for the
+# same light.
+SUPERGROUPS: list[tuple[str, tuple[str, ...], float, float, float]] = [
+    ("Skeleton", ("bone",), 1.0, 1.0, 0.532),
+    (
+        "Organs",
+        ("lung", "gi", "abdominal_organ", "urinary", "misc_organ"),
+        0.58,
+        1.0,
+        0.015,
+    ),
+    ("Vessels & heart", ("vessel", "heart"), 1.0, 1.0, 0.027),
+    ("Nervous system", ("brain", "spinal"), 1.0, 5.0, 0.010),
+    ("Muscles", ("muscle",), 0.55, 3.0, 0.047),
 ]
 
 FLAGS = parse_demo_flags()
@@ -928,7 +943,9 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
             centers = centered.centers
             amps = centered.amplitudes
             chol = centered.cholesky_factors
-            for i, (layer_name, _groups, opacity, amp_boost) in enumerate(SUPERGROUPS):
+            for i, (layer_name, _groups, opacity, amp_boost, range_max) in enumerate(
+                SUPERGROUPS
+            ):
                 mask = layer_idx == i
                 n = int(mask.sum())
                 if n == 0:
@@ -954,6 +971,10 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                     ),
                     copy="{hover_label}",
                     opacity=float(opacity),
+                    # The Layers panel's COLOUR RANGE [0, range_max], stored as
+                    # its reciprocal gain (offset stays 0: the window starts at
+                    # zero). See the SUPERGROUPS note.
+                    intensity=1.0 / range_max,
                     # One global order slot per node cannot interleave these
                     # co-located volumes; additive is order-independent.
                     blending_mode="additive",
@@ -961,7 +982,8 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                 )
                 aprint(
                     f"Layer '{layer_name}': {n:,} splats "
-                    f"(opacity {opacity}, ×{amp_boost} amplitude)"
+                    f"(opacity {opacity}, ×{amp_boost} amplitude, "
+                    f"colour range 0-{range_max})"
                 )
             scene.add_text(
                 "CT Anatomical Atlas — organs in color",
