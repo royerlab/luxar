@@ -76,31 +76,23 @@ forced the zebrafish demo to round. And the build asserts every stored timepoint
 lands on the grid rather than trusting that it does.
 
 ================================================================================
-CULLING: WHY THE SHIPPED ARCHIVE USES A FIXED AMPLITUDE CUTOFF
+CULLING: WHY THE 2026-08 ARCHIVE'S AMPLITUDE CUTOFF WAS DROPPED (2026-09)
 ================================================================================
 
 The fit uses a nominal seed budget of 256,000 splats per frame — a ceiling of
-128 million in total — and this run's ``merged/final.gsplats.zarr`` measured
-exactly 128,000,000. The shipped archive contains 83,221,420 splats and was
-filtered at the recorded raw-amplitude cutoff **33.40462112**.
+128 million in total — and the merge measured exactly 128,000,000. The 2026-08
+archive then kept only 83,221,420 of them: a hard raw-amplitude floor at
+33.40462112 (originally intended as cumulative-amplitude retention 0.960; the
+pre-#2260 float32 accumulator kept 12.4 %, the corrected float64 one 55.3 %,
+and the shipped root stats record the fixed cutoff instead). It was validated
+by flicker test on the companion ``gsplats_3d_culling_study`` demo.
 
-That is not a quality compromise so much as a haze removal. Amplitude in a
-fitted light-sheet stack is heavily right-skewed: a minority of splats sit on
-nuclei and carry most of the signal, while a long tail of dim, diffuse splats
-models background and out-of-focus glow. Removing that tail in amplitude order
-is very nearly "least visible first". The operating point was chosen by flicker
-test on the companion ``gsplats_3d_culling_study`` demo, which puts ten retention
-levels of this same specimen on one selector at a fixed camera — the only way
-differences this subtle are actually visible.
-
-The original operation was intended as cumulative-amplitude retention 0.960.
-The pre-#2260 float32 accumulator silently kept only 12.4% at the 128M scale;
-the corrected float64 implementation keeps 55.3% on the same fit. The shipped
-archive's root stats instead record ``n_splats = 83,221,420`` and
-``amplitude_range.min = 33.40462112426758`` — a hard floor at the fixed cutoff
-above. Rerunning the current cumulative cull therefore does not reproduce this
-artifact. Keep the distinction: the cutoff reproduces the archive; cumulative
-retention expresses the original quality choice.
+That validation was blind to what the cull cost. Scored per frame against the
+raw recording (manuscript SD14, five frames), the culled archive sat 5-8 dB
+below a fresh fit of the same frames, and an uncelled tile of the batch fit
+scored identically to the fresh fit (39.45 vs 39.46 dB): the WHOLE gap was the
+cull. The dim tail is haze in a flicker test but signal in a PSNR, so the
+recipe now ships the uncelled merge. The archive is correspondingly larger.
 
 WHERE THE DATA COMES FROM
 ================================================================================
@@ -167,18 +159,14 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
         --gpus 0 --jobs-per-gpu 2 \
         --merge-recipe stream --merge-target-ms 200
 
-    # 2. Apply the amplitude cutoff recorded for the corrected rebuild:
-    #    nominal 128,000,000-seed budget -> 83,221,420 shipped splats.
-    luxar gsplat filter out/merged/final.gsplats.zarr culled.gsplats.zarr \
-        --amplitude-min 33.40462112
-
-    # 3. Physical microns. Time is left as an INTEGER FRAME INDEX on purpose —
+    # 2. Physical microns, straight from the uncelled merge (no amplitude cull,
+    #    see CULLING above). Time is left as an INTEGER FRAME INDEX on purpose —
     #    see `normalise_time_axis` below for why a scaled axis does not survive
     #    the centres encoder.
-    luxar gsplat transform culled.gsplats.zarr um.gsplats.zarr \
+    luxar gsplat transform out/merged/final.gsplats.zarr um.gsplats.zarr \
         --scale 1.93,0.40625,0.40625,1
 
-    # 4. Re-chunk for streaming. Measured on this store: 173 -> about 3 requests
+    # 3. Re-chunk for streaming. Measured on this store: 173 -> about 3 requests
     #    per timepoint step, and a 7.7% smaller zip. The tradeoff at 500 frames
     #    is 47 MB / 115 requests for first paint; `--profile hosting` measures
     #    18 MB / 68 requests instead, but about 12 requests per timepoint step.
@@ -347,15 +335,12 @@ JOBS_PER_GPU = 2
 #: Progressive first-paint ladder produced during the streaming merge.
 MERGE_RECIPE = "stream"
 MERGE_TARGET_MS = 200
-#: The shipped root stats record 83,221,420 splats with this exact hard floor.
-AMPLITUDE_MIN = 33.40462112
 #: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
 #: One-megabyte chunks measured at 0-2.3 MB in 0-4 requests per timepoint step.
 CHUNK_PROFILE = "archive"
 #: Nominal whole-recording seed budget; a refit may drift as dynamic ops run.
 NOMINAL_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
-EXPECTED_SPLATS = 83_221_420
 EXPECTED_RUNGS = 14
 #: Parallel fit reductions can move a threshold count, but not by recipe scale.
 SPLAT_COUNT_TOLERANCE = 0.01
@@ -464,7 +449,7 @@ def _validate_rebuilt_archive(node: Any) -> int:
 
 
 def _validate_fitted_splat_count(node: Any) -> None:
-    """Reject an incomplete or misconfigured merged fit before filtering it."""
+    """Reject an incomplete or misconfigured merged fit before transforming it."""
     got = int(_only_leaf(node, "fitted merge").n_splats)
     drift = abs(got - NOMINAL_FITTED_SPLATS) / NOMINAL_FITTED_SPLATS
     if drift >= SPLAT_COUNT_TOLERANCE:
@@ -478,18 +463,6 @@ def _validate_fitted_splat_count(node: Any) -> None:
         f"fitted merge validated: {got:,} splats "
         f"(nominal {NOMINAL_FITTED_SPLATS:,}, {drift:.3%} drift)"
     )
-
-
-def _validate_splat_count(got: int) -> None:
-    """Reject count drift large enough to indicate a changed recipe."""
-    drift = abs(got - EXPECTED_SPLATS) / EXPECTED_SPLATS
-    aprint(f"rebuilt {got:,} splats (recorded {EXPECTED_SPLATS:,}, {drift:.3%} drift)")
-    if drift >= SPLAT_COUNT_TOLERANCE:
-        raise RuntimeError(
-            f"rebuilt {got:,} splats against a recorded {EXPECTED_SPLATS:,} "
-            f"({drift:.2%} drift). Over 1% means the recipe changed -- check "
-            f"the source, fit settings, and recorded amplitude cutoff."
-        )
 
 
 def recompute_archive(work_dir: Path) -> Path:

@@ -173,6 +173,20 @@ class TestTheBackgroundSubtractionIsClippedAtZero:
         assert dict(out.attrs)["background_floor"] == pytest.approx(7.25)
         assert dict(out.attrs)["axes"] == demo.SOURCE_AXES
 
+    def test_the_floor_assertion_is_recorded_on_the_output(self, tmp_path):
+        """The 2026-08 archive was fitted from a store whose attrs claimed a floor
+        that its values never had. The rebuild checks max(bgsub) == max(src) - floor
+        numerically and writes the three numbers it checked beside the floor."""
+        values = np.full(SMALL, 5.0, dtype=np.float32)
+        values[1, 2, 3, 4] = 105.0
+        src = _source(tmp_path, values=values)
+        demo._subtract_background(src, tmp_path / "out.zarr", floor=10.0)
+        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
+        asserted = dict(out.attrs)["background_floor_asserted"]
+        assert asserted["source_max"] == pytest.approx(105.0)
+        assert asserted["bgsub_max"] == pytest.approx(95.0)
+        assert asserted["bgsub_min"] == 0.0
+
     def test_every_timepoint_is_written_not_just_the_first(self, tmp_path):
         """The loop writes per timepoint; an off-by-one leaves the tail at zero,
         which looks like a dark stretch of the movie rather than an error."""
@@ -239,8 +253,12 @@ class TestBothChannelsNeedTheirOwnSource:
         assert len(set(floors.values())) == 2
 
     def test_the_two_channels_carry_different_expected_counts(self):
-        counts = {ch["name"]: ch["expected_splats"] for ch in demo.CHANNELS}
-        assert len(set(counts.values())) == 2
+        """None means the uncelled rebuild has not recorded a count yet; once
+        both are recorded they must differ, or one channel was fitted twice."""
+        counts = [ch["expected_splats"] for ch in demo.CHANNELS]
+        recorded = [c for c in counts if c is not None]
+        assert all(isinstance(c, int) and c > 0 for c in recorded)
+        assert len(set(recorded)) == len(recorded)
 
     def test_every_channel_carries_a_layer_order(self):
         """``create_luxar_scene`` reads ``ch["layer_order"]`` per channel.
@@ -316,26 +334,6 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
         assert attrs["offset"] == pytest.approx(-lo / (hi - lo))
 
     assert dict(root.attrs)["viewer_config"]["exposure"] == pytest.approx(-3.4)
-
-
-class TestEmptyFitTilesSurviveTheCullStage:
-    def test_empty_markers_are_copied_beside_culled_tiles(self, monkeypatch, tmp_path):
-        fit_dir = tmp_path / "fit"
-        tiles = fit_dir / "tiles"
-        tiles.mkdir(parents=True)
-        (fit_dir / "manifest.json").write_text("{}")
-        (tiles / "tile_00000.gsplats.zarr").mkdir()
-        (tiles / "tile_00001.gsplats.zarr.empty").write_text("")
-        calls = []
-        monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
-
-        count = demo._cull_tiles(fit_dir, tmp_path / "culled")
-
-        assert count == 1
-        assert len(calls) == 1
-        assert (
-            tmp_path / "culled" / "tiles" / "tile_00001.gsplats.zarr.empty"
-        ).exists()
 
 
 class TestTheRecipeConstantsMatchTheRecordedRun:
@@ -429,10 +427,35 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert demo.VOXEL_SCALE[0] == 2.5
         assert demo.VOXEL_SCALE[1:] == (1.0, 1.0, 1.0)
 
-    def test_the_cull_threshold_is_the_measured_one(self):
-        """Chosen from a 0.02/0.05/0.10/0.20/0.35 sweep as the most aggressive
-        setting still SSIM-flat."""
-        assert demo.REDUNDANCY_THRESHOLD == 0.20
+    def test_the_recipe_has_no_cull_at_all(self, monkeypatch, tmp_path):
+        """The 2026-08 build redundancy-culled every tile at 0.20 and lost 17-26 dB
+        of foreground; the recipe now keeps every splat the fit produces. Pin both
+        halves: no `gsplat cull` invocation anywhere, and the batch fit itself
+        told to keep everything (`--cull-retention 0.0`) while building the
+        streaming ladder in its own merge."""
+        calls: list[tuple[str, ...]] = []
+
+        def fake_cli(*args):
+            calls.append(tuple(args))
+            if args[:3] == ("gsplat", "batch-fit", "run"):
+                (Path(args[4]) / "merged" / "final.gsplats.zarr").mkdir(parents=True)
+
+        monkeypatch.setattr(demo, "run_luxar_cli", fake_cli)
+        monkeypatch.setattr(demo, "_subtract_background", lambda *a, **k: None)
+        monkeypatch.setattr(demo, "load_gsplat_node", lambda *a, **k: (None, None))
+        monkeypatch.setattr(demo, "iter_leaves", lambda node: [])
+        monkeypatch.setattr(demo, "_validate_rebuilt_channel", lambda ch, leaves: 7)
+
+        demo.recompute_channel(demo.CHANNELS[0], tmp_path / "src.zarr", tmp_path)
+
+        assert [c[:2] for c in calls] == [
+            ("gsplat", "batch-fit"),
+            ("gsplat", "transform"),
+        ], "a cull step crept back into the recipe"
+        fit = calls[0]
+        assert fit[fit.index("--cull-retention") + 1] == "0.0"
+        assert fit[fit.index("--merge-recipe") + 1] == "stream"
+        assert not hasattr(demo, "REDUNDANCY_THRESHOLD")
 
     def test_the_seed_budget_is_the_calibrated_k_star(self):
         assert demo.SEEDS == 64_000

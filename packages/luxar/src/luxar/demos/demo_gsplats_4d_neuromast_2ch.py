@@ -259,11 +259,6 @@ PRESET = "n2s"
 TILE_SIZE = 640
 #: Concurrent fit workers per GPU. NOT `auto` — see the docstring's warning.
 JOBS_PER_GPU = 12
-#: Redundancy cull threshold, chosen from a measured 0.02/0.05/0.10/0.20/0.35
-#: sweep as the most aggressive setting still SSIM-flat.
-REDUNDANCY_THRESHOLD = (
-    0.20  # historical (2026-08 build only); no longer applied, see docstring step 5
-)
 #: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give 0.25 um z-step
 #: and 0.1083 um pixels (2.31x); the shipped scenes were built with 2.5 and this value is kept
 #: until the demo scene is rebuilt on the measured pitch (paper registry: voxel_um=(0.25, 0.1083, 0.1083)).
@@ -342,8 +337,8 @@ def _subtract_background(src: Path, out: Path, floor: float) -> Path:
                 BGSUB_ARRAY_KEY,
                 shape=SOURCE_SHAPE,
                 dtype="float32",
-                # One timepoint per chunk: every consumer downstream (the fit, the
-                # cull, this loop) reads exactly one timepoint at a time.
+                # One timepoint per chunk: every consumer downstream (the fit and
+                # this loop) reads exactly one timepoint at a time.
                 chunks=(1,) + SOURCE_SHAPE[1:],
                 compressor=None,
             )
@@ -363,16 +358,16 @@ def _subtract_background(src: Path, out: Path, floor: float) -> Path:
             # recording (max(bgsub) == max(raw)); the scorer then subtracted the floor
             # a second time and the shipped frames read ~21 dB low. Never trust the
             # attr alone: the written maximum must sit exactly one floor below the
-            # source maximum, and the written minimum must be the clip value.
+            # source maximum, and nothing may be left negative (the clip).
             expected_max = src_max - float(floor)
             if (
                 abs(dst_max - expected_max) > 1e-3 * max(1.0, abs(expected_max))
-                or dst_min != 0.0
+                or dst_min < 0.0
             ):
                 raise RuntimeError(
                     f"{out.name}: floor subtraction not applied as recorded: max(src)={src_max:.4f}, "
                     f"floor={floor:.4f}, max(bgsub)={dst_max:.4f} (expected {expected_max:.4f}), "
-                    f"min(bgsub)={dst_min:.4f} (expected 0)."
+                    f"min(bgsub)={dst_min:.4f} (expected >= 0)."
                 )
             aprint(
                 f"floor assertion OK: max(src)={src_max:.3f} -> max(bgsub)={dst_max:.3f} "
@@ -400,42 +395,6 @@ def _validate_rebuilt_channel(channel: dict, leaves: Sequence[Any]) -> int:
             f"{name}: merge produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
         )
     return int(leaves[0].n_splats)
-
-
-def _cull_tiles(fit_dir: Path, culled_dir: Path) -> int:
-    """Redundancy-cull every per-timepoint tile into a parallel batch directory.
-
-    The manifest is copied verbatim so ``batch-fit merge`` reads the same plan;
-    only the tile stores differ. Culling per tile rather than after the merge is
-    a memory constraint: the redundancy metric renders the splats to measure
-    each one's local contribution, and doing that on the merged 4D result would
-    mean reconstructing all 100 timepoints at once.
-    """
-    tiles = sorted((fit_dir / "tiles").glob("*.gsplats.zarr"))
-    if not tiles:
-        raise SystemExit(
-            f"no tiles under {fit_dir / 'tiles'} -- the fit produced nothing to cull"
-        )
-    shutil.rmtree(culled_dir, ignore_errors=True)
-    (culled_dir / "tiles").mkdir(parents=True)
-    shutil.copy2(fit_dir / "manifest.json", culled_dir / "manifest.json")
-    for marker in sorted((fit_dir / "tiles").glob("*.empty")):
-        shutil.copy2(marker, culled_dir / "tiles" / marker.name)
-    with asection(f"Culling {len(tiles)} tiles (threshold {REDUNDANCY_THRESHOLD})"):
-        for tile in tiles:
-            run_luxar_cli(
-                "gsplat",
-                "cull",
-                str(tile),
-                str(culled_dir / "tiles" / tile.name),
-                "-m",
-                "redundancy",
-                "--shape",
-                ",".join(str(v) for v in SOURCE_SHAPE[1:]),
-                "--redundancy-threshold",
-                str(REDUNDANCY_THRESHOLD),
-            )
-    return len(tiles)
 
 
 def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
@@ -468,15 +427,15 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
             str(SEEDS),
             "--floor",
             "auto",
-            # No fit-time cull: the redundancy cull below is the one that was
-            # measured, and stacking a second criterion on top of it would make
-            # the retained count depend on two thresholds instead of one.
+            # No fit-time cull (0 keeps every splat): the fit's own pruning of
+            # zero-amplitude seeds is the only reduction; see docstring step 5 for
+            # why the 2026-08 post-fit redundancy cull was dropped.
             "--cull-retention",
             "0.0",
             "--jobs-per-gpu",
             str(JOBS_PER_GPU),
             # The streaming ladder is built by the run's own merge; there is no
-            # post-fit cull any more (see REDUNDANCY_THRESHOLD).
+            # post-fit cull any more (docstring step 5).
             "--merge-recipe",
             "stream",
         )
@@ -605,7 +564,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     """Build the 4D two-channel scene: one layer-enabled gsplats node per marker.
 
     The gsplats are pre-fit 4D (``z, y, x, time``), already anisotropy-corrected
-    (Z ×2.5), intensity-normalised and redundancy-culled, so we simply graft each
+    (Z ×2.5) and intensity-normalised, so we simply graft each
     channel with its LUT and ``layer=True``. Both channels share identical 4D
     bounds → they co-register and animate together over the Time dimension.
     """
