@@ -179,6 +179,12 @@ EXEMPT: dict[str, Exemption] = {
         "BSP tiles of a kind=partition wrapper that is itself layer=True — the "
         "wrapper is where the compositing attrs live (see the comment there).",
     ),
+    "demo_dmri_tractography.py": Exemption(
+        frozenset({"f'child_{level}'"}),
+        frozenset({"name"}),  # add_lod_group(name, ..., layer=True)
+        "one kind=lod group per tract carries layer=True; its subsampled-"
+        "streamline levels are the siblings it covers",
+    ),
     "demo_ocean_currents_earth.py": Exemption(
         frozenset({"f'child_{level}'"}),
         frozenset({"'currents'"}),

@@ -44,8 +44,8 @@ Lines geometry applied to data that is natively made of curves. Each of the 87
 bundles becomes its own Lines node with ``layer=True``, so the Layers panel
 (press **L**) gives per-tract visibility, display range, gamma and blending.
 
-HOVER LABELS — AND THE LOD CAVEAT
----------------------------------
+HOVER LABELS, ON EVERY LEVEL
+----------------------------
 The atlas names its bundles with terse codes (`AF_L`, `IFOF_R`, `DRTT_L`), which
 are what the Layers panel shows. Hovering a streamline expands the code into the
 full anatomical name plus a one-line gloss of what the tract does, e.g.
@@ -53,50 +53,48 @@ full anatomical name plus a one-line gloss of what the tract does, e.g.
     AF_L — Arcuate fasciculus (left) · association · frontal (Broca) and
     temporal (Wernicke) language areas
 
-Two honest caveats, and the first is the big one:
+Every LOD level carries the labels. The coarse levels are SUBSAMPLED STREAMLINES
+of the same bundle (see LEVEL OF DETAIL below), so a fibre on a coarse level is
+still a fibre of that tract and gets the same string — hover works from the
+whole-brain opening pose, not only after zooming a bundle to half the screen.
 
-* **Get close before hover says anything.** Labels ride the *finest* level of
-  the substitutive ladder only — the real Lines node; the synthesised coarse
-  gsplat levels carry none. Levels are selected on `coverage_fraction` under
-  `selector="screen-area"`: the fraction of the screen AREA the node's
-  projected bounds occupy, with each group's finest level anchored at 0.5 —
-  a bundle must occupy at least half the screen before its labelled Lines
-  level shows. At the whole-brain opening pose no individual bundle comes
-  close to that (each is a fraction of the brain), so everything sits on its
-  unlabelled coarse level.
+Lines labels are stored *per vertex*, so a bundle holds one copy of its string
+per vertex — 168,000 copies on the finest level at the defaults, plus a quarter
+and a sixteenth of that on the two coarse levels. Labels here run ~124 bytes on
+average (AF_L's is 107, the longest, C_PHP_L's, ~148), so a finest-level blob is
+~18-25 MB raw. That is cheap in two of the three places it could hurt and
+unavoidable in the third: 168,000 identical strings compress to tens of KB on
+disk, and the viewer's label loader collapses a consecutive run of equal
+labels to a single decoded string, so the tract name is retained once rather
+than 168,000 times. The cost is the *fetch*: `write_labels_csr` chunks
+`label_bytes` at 65,536 bytes, so one bundle is ~280-380 chunks (its ~18-25 MB
+over 64 KiB, plus 3 for `label_offsets`) and its first hover issues that many
+small requests, together a few tens of KB over the wire once compressed.
+Round-trip count, not decode and not memory, is what you wait for — and across
+87 bundles it is also ~30,000 extra files in the store, which is worth knowing
+before `luxar export` writes them all to an offline folder or you put the
+scene on static hosting.
 
-  The route that works is to **fly the camera into the tractogram**. When the
-  camera is inside or straddling a group's bounding box the selector returns
-  `+Infinity` and saturates to the finest level (`projectBoxAreaFraction` in
-  `scene/lod-selector-math.ts`), so every bundle enclosing the camera becomes
-  labelled at once — a cranial nerve needs proximity, not magnification.
-  Zooming from outside works too: a big tract (the corpus callosum) reaches
-  half-screen occupancy after a modest zoom, while a small one (a cranial
-  nerve) needs substantially more, plus a pan.
+LEVEL OF DETAIL — SUBSAMPLED STREAMLINES, NOT LIFTED SPLATS
+-----------------------------------------------------------
+Each tract is a `kind=lod` group of three Lines levels, selected on screen
+occupancy (`selector="screen-area"`, finest anchored at half the screen, one
+level coarser per halving of occupied area). A coarse level keeps a seeded
+1-in-K subset of the bundle's STREAMLINES with their widths multiplied by K, so
+the summed line width along every view ray — what `additive` blending
+integrates — is the same at every level, and a coarse level looks like fewer
+fibres of the same anatomy rather than like something else.
 
-  This is a threshold, not a law: `substitutive_lod` takes an explicit
-  `coverage_fractions=[...]` (validated in `core/group/lod/group.py`, consumed
-  in `core/group/adders/lines.py`; an explicit list keeps the legacy
-  `selector="coverage"` diagonal units), so the labelled step could be made
-  reachable earlier. It is left at the default on purpose — lowering it
-  selects every tract's full fine level in the default whole-brain view,
-  which is precisely the cost the ladder exists to avoid.
-
-* Lines labels are stored *per vertex*, so a bundle holds one copy of its string
-  per vertex — 168,000 copies at the defaults. Labels here run ~124 bytes on
-  average (AF_L's is 107, the longest, C_PHP_L's, ~148), so a node's blob is
-  ~18-25 MB raw. That is cheap in two of the three places it could hurt and
-  unavoidable in the third: 168,000 identical strings compress to tens of KB on
-  disk, and the viewer's label loader collapses a consecutive run of equal
-  labels to a single decoded string, so the tract name is retained once rather
-  than 168,000 times. The cost is the *fetch*: `write_labels_csr` chunks
-  `label_bytes` at 65,536 bytes, so one bundle is ~280-380 chunks (its ~18-25 MB
-  over 64 KiB, plus 3 for `label_offsets`) and its first hover issues that many
-  small requests, together a few tens of KB over the wire once compressed.
-  Round-trip count, not decode and not memory, is what you wait for — and across
-  87 bundles it is also ~30,000 extra files in the store, which is worth knowing
-  before `luxar export` writes them all to an offline folder or you put the
-  scene on static hosting.
+This replaces the `substitutive_lod=` default for Lines, which lifts every
+segment to Gaussian "beads" and merges those into fewer, fatter splats. On the
+hosted demo that coarse representation rendered the whole-brain opening pose as
+a blown-out pastel blob with no fibre structure (2026-09-10): a merged
+Gaussian's sigma follows the merged spread so it is fattest where the bundle is
+sparse, the lift's bead count is set by arc length rather than segment count
+(K had to be 256 before a coarse level was even smaller than the fine one), and
+the sum-projection light rescale does not survive the 75x display attenuation
+tuned for thin lines. Fewer fibres are the right coarse level for fibres; the
+API version of this recipe is #2679 (the Lines twin of #2660 for Points).
 
 RENDERING NOTE — `additive`, AND WHY NOT `normal`
 -------------------------------------------------
@@ -164,9 +162,8 @@ Usage:
 
 Controls:
     - Press 'L' to open the Layers panel: one row per tract, 87 in total
-    - Fly the camera into the tractogram (or zoom a bundle to fill the view),
-      then hover a tract for its full name and what it does — only the finest
-      LOD level carries labels, and no tract selects it at the opening pose
+    - Hover a tract for its full name and what it does — every LOD level
+      carries the labels, so this works from the whole-brain opening pose
     - Ctrl+C to stop and cleanup
 """
 
@@ -201,13 +198,14 @@ import io
 import json
 import zipfile
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import is_consolidated
+from luxar.core.group.lod.group import coverage_fractions
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     add_demo_caption,
@@ -217,7 +215,6 @@ from luxar.demos import (
     parse_demo_flags,
     parse_int_arg,
     require_module,
-    substitutive_lod_or_flat,
 )
 from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
@@ -512,44 +509,29 @@ LINE_OPACITY: Final = 0.24
 #: then be recovered at runtime.
 LINE_INTENSITY: Final = 1.0 / 74.976
 
-#: Substitutive LOD: each level replaces the finer one with fewer, larger
-#: elements, so zooming out costs less instead of drawing every fibre. Coarse
-#: levels are gsplat "beads" lifted off the segments (`luxar.gsplats.lift`);
-#: the original Lines node stays as the finest level.
+#: Substitutive LOD: each level replaces the finer one with FEWER STREAMLINES of
+#: the same bundle, so zooming out costs less instead of drawing every fibre.
+#: Three levels, 1-in-4 per step: a 6,000-streamline bundle ships 375 / 1,500 /
+#: 6,000 streamlines. Coarse levels keep a seeded uniform subset of whole
+#: streamlines (never a subset of vertices — that would break the joints) with
+#: widths multiplied by the subsampling factor, so the summed width along any
+#: ray is conserved and the additive integral matches across the LOD seam.
 #:
-#: ``compression_factor`` has to be MUCH larger than the K=4 default here, and
-#: the reason is specific to thin lines. The lift spaces beads every
-#: ``sigma_perp = 2w/T`` **along arc length**, so the bead count is
-#: ``total_fibre_length / sigma_perp`` — it does not care how many segments the
-#: fibre was cut into. At w=0.32 mm this bundle's 162K segments lift to ~3.8M
-#: beads, so a K=4 "coarse" level is 912K splats: 5.6x *heavier* than the
-#: 162K-segment level it is supposed to replace. Measured on AF_L:
-#:
-#:     K=4,   L=3  ->  65.0 MB   levels 54K / 221K / 912K   (worse than useless)
-#:     K=64,  L=2  ->   5.3 MB   levels 930 / 59,457
-#:     K=256, L=2  ->   3.2 MB   levels 59 / 14,865         <- chosen
-#:
-#: K=256 puts the first coarse level at ~9% of the fine level's element count,
-#: which is what a substitutive level is for. Across all 87 nodes this is the
-#: difference between a 2.1 GB scene and a ~200 MB one.
-SUBSTITUTIVE_LOD: Final = dict(compression_factor=256, levels=2)
+#: Hand-built rather than `substitutive_lod=` (whose Lines coarse levels are
+#: lifted Gaussian beads) — see LEVEL OF DETAIL in the module docstring for
+#: why, and #2679 for the API that should eventually replace this recipe.
+LOD_LEVELS: Final = 3
+LOD_COMPRESSION: Final = 4
 
-# NOTE — `additive_lod=False` is deliberate. This indexed layout now qualifies
-# for a composed ladder (every streamline is an ascending simple path, so the
-# writer's fabricated per-component chain is faithful — see
+# NOTE — `additive_lod=False` on every level is deliberate. This indexed layout
+# qualifies for a composed ladder (every streamline is an ascending simple path,
+# so the writer's fabricated per-component chain is faithful — see
 # `indexed_components_are_chains`), but the shipped sizing would add three rungs
-# to each of 87 already-small nodes (about 261 groups). Every bundle stays below
+# to each of 87 already-small nodes (about 261 groups). Every level stays below
 # the 200K-vertex un-laddered-leaf gate and the nodes already stream
-# independently, so that metadata and traversal cost buys little. Keeping the
-# finest Lines level single-shot also leaves its per-vertex hover-label CSR
-# directly on the substitutive child rather than moving it to an additive rung
-# parent.
-#
-# `False` opts the synthesized coarse gsplat children out too (it short-circuits
-# before any per-child policy), which costs nothing here: at compression factor
-# 256 the coarse levels are two orders of magnitude smaller than the fine one
-# (59 / 14,865 beads on AF_L, measured above), far under the default
-# 39,062-element first chunk, so a ladder there would collapse to one commit.
+# independently, so that metadata and traversal cost buys little. Keeping each
+# level single-shot also leaves its per-vertex hover-label CSR directly on the
+# level rather than moving it to an additive rung parent.
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -849,6 +831,28 @@ def subsample_indices(n_available: int, n_keep: int, *, seed: int) -> np.ndarray
     return np.sort(rng.choice(n_available, size=n_keep, replace=False))
 
 
+def lod_streamline_counts(
+    n_paths: int, *, levels: int = LOD_LEVELS, compression: int = LOD_COMPRESSION
+) -> list[int]:
+    """Streamlines kept per LOD level, coarsest first, finishing at ``n_paths``.
+
+    ``n / K**(L-1), …, n / K, n`` with every entry at least 1; a level that would
+    repeat its coarser neighbour (tiny bundles) is dropped, so the result is
+    strictly increasing and may be shorter than ``levels``. A single-entry result
+    means the bundle is too small to ladder at all.
+    """
+    if n_paths <= 0:
+        raise ValueError(f"n_paths must be positive, got {n_paths}")
+    counts: list[int] = []
+    for level in range(levels):
+        count = max(1, n_paths // compression ** (levels - 1 - level))
+        if level == levels - 1:
+            count = n_paths
+        if not counts or count > counts[-1]:
+            counts.append(count)
+    return counts
+
+
 def brain_camera(radius: float) -> CameraConfig:
     """Left-lateral opening pose, the conventional view of a tractogram.
 
@@ -1007,6 +1011,85 @@ def load_or_build_bundles(*, per_bundle: int, points: int) -> dict:
 # =============================================================================
 
 
+def _add_tract(
+    group: Any,
+    name: str,
+    division: str,
+    xyz: np.ndarray,
+    rgb: np.ndarray,
+    *,
+    points: int,
+    seed: int,
+) -> None:
+    """Write one tract as a ``kind=lod`` group of subsampled-streamline levels.
+
+    Coarsest first. Every level is an indexed Lines node of WHOLE streamlines
+    drawn without replacement (``subsample_indices``), widths scaled by the
+    subsampling factor so the additive integral is conserved across the seam,
+    and every level carries the tract's label/key so hover works at any zoom.
+    A bundle too small to ladder is written as one flat Lines node with the
+    same compositing.
+    """
+    n_paths = len(xyz) // points
+    label = tract_label(name, division)
+    key = tract_key(name)
+    link = "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}"
+    compositing = dict(
+        # `additive` — see the module docstring's RENDERING NOTE.
+        # Order-independent, so 87 mutually-overlapping nodes never pop as the
+        # camera moves. Rides on the lod wrapper so the Layers panel gets one
+        # row per tract and every level inherits the same look.
+        blending_mode="additive",
+        opacity=LINE_OPACITY,
+        intensity=LINE_INTENSITY,
+    )
+    counts = lod_streamline_counts(n_paths)
+
+    def level_kwargs(kept: np.ndarray) -> dict:
+        keep = (kept[:, None] * points + np.arange(points)[None, :]).ravel()
+        return dict(
+            vertices=xyz[keep],
+            # Width x subsampling factor: sum(width) along a ray is what
+            # additive blending integrates, so the coarse level emits the
+            # light of the fibres it stands in for.
+            widths=LINE_WIDTH * (n_paths / kept.size),
+            colors=rgb[keep],
+            # `indexed`, NOT `segments`: interior joints must share a vertex
+            # index or thick lines render as chains of beads.
+            indices=polyline_segment_indices(int(kept.size), points),
+            line_type="indexed",
+            # Lines labels are PER VERTEX, and every vertex of a bundle belongs
+            # to the same tract — so the one tract string is broadcast across
+            # the level. That broadcast is also what makes the lookup safe: the
+            # line picker reports a SEGMENT slot, which is fed unremapped into
+            # this per-vertex, vertex-sorted array; every entry holds the same
+            # string (and a segment index is always < the vertex count), so the
+            # tooltip is right regardless. Click a tract to read about it,
+            # right-click to copy its name (#1917) — per vertex for the same
+            # reason.
+            labels=[label] * len(keep),
+            keys=[key] * len(keep),
+            link=link,
+            copy="{hover_key}",
+            additive_lod=False,
+        )
+
+    if len(counts) == 1:
+        group.add_lines(
+            name, **level_kwargs(np.arange(n_paths)), **compositing, layer=True
+        )
+        return
+
+    # `layer=True` on the wrapper, not the levels: one Layers-panel row per
+    # tract, and every level inherits the same look from here.
+    tract = group.add_lod_group(name, selector="screen-area", **compositing, layer=True)
+    for level, (count, cover) in enumerate(zip(counts, coverage_fractions(counts))):
+        kept = subsample_indices(n_paths, count, seed=seed + level)
+        tract.add_lines(
+            f"child_{level}", coverage_fraction=float(cover), **level_kwargs(kept)
+        )
+
+
 def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
     """Write the 87-node tractography scene."""
     names = bundles["names"]
@@ -1054,51 +1137,19 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
             groups = {d: scene.add_group(d.replace(" ", "_")) for d in DIVISIONS}
             total_segments = 0
 
-            # Resolved ONCE outside the loop: without torch/scipy the ladder is
-            # dropped for every bundle, and one notice covers all 87 nodes.
-            lod = substitutive_lod_or_flat(SUBSTITUTIVE_LOD, geometry="Lines")
-
-            for name, division, xyz, rgb in zip(names, divisions, positions, colors):
+            for bundle_idx, (name, division, xyz, rgb) in enumerate(
+                zip(names, divisions, positions, colors)
+            ):
                 n_paths = len(xyz) // points
-                indices = polyline_segment_indices(n_paths, points)
-                total_segments += len(indices) // 2
-                groups[division].add_lines(
+                total_segments += n_paths * (points - 1)
+                _add_tract(
+                    groups[division],
                     name,
-                    vertices=xyz,
-                    widths=LINE_WIDTH,
-                    colors=rgb,
-                    indices=indices,
-                    # Lines labels are PER VERTEX, and every vertex of a
-                    # bundle belongs to the same tract — so the one tract
-                    # string is broadcast across the node. That broadcast is
-                    # also what makes the lookup safe: the line picker reports
-                    # a SEGMENT slot, which is fed unremapped into this
-                    # per-vertex, vertex-sorted array. The index is therefore
-                    # not the vertex that was hit — but every entry holds the
-                    # same string (and a segment index is always < the vertex
-                    # count), so the tooltip is right regardless.
-                    labels=[tract_label(name, division)] * len(xyz),
-                    # Click a tract to read about it, right-click to copy
-                    # its name (#1917). Per-vertex like the labels, and for
-                    # the same reason: every entry is the same string, so
-                    # whichever vertex the segment resolves to is right.
-                    keys=[tract_key(name)] * len(xyz),
-                    link=(
-                        "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}"
-                    ),
-                    copy="{hover_key}",
-                    # `indexed`, NOT `segments`: interior joints must share a
-                    # vertex index or thick lines render as chains of beads.
-                    line_type="indexed",
-                    # `additive` — see the module docstring's RENDERING NOTE.
-                    # Order-independent, so 87 mutually-overlapping nodes never
-                    # pop as the camera moves.
-                    blending_mode="additive",
-                    opacity=LINE_OPACITY,
-                    intensity=LINE_INTENSITY,
-                    substitutive_lod=lod,
-                    additive_lod=False,
-                    layer=True,
+                    division,
+                    xyz,
+                    rgb,
+                    points=points,
+                    seed=1_000 * bundle_idx,
                 )
 
             scene.add_text(
@@ -1114,13 +1165,12 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                 "HCP-1065 atlas (CC BY-SA 4.0) — 87 tracts",
                 DEMO_META.get("citation"),
             )
-            # The one user-visible statement of the LOD caveat. Without it the
-            # first contact with this scene is "hover does nothing", which is
-            # the complaint the labels were added to answer. Bottom-left is the
+            # Tells the viewer that hover does something — labels ride every
+            # LOD level, so it does from the opening pose. Bottom-left is the
             # only free corner: title top-left, credit bottom-right, and the
             # auto-injected hover box top-right.
             scene.add_text(
-                "Fly in or zoom a tract, then hover to identify it",
+                "Hover a tract to identify it",
                 position=(0.02, 0.97),
                 font_size=0.015,
                 anchor="bottom-left",
