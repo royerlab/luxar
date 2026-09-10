@@ -337,7 +337,7 @@
       "script": "demo_nuclear_pore_complex.py",
       "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr",
       "citation": "Mosalaganti et al. 2022",
-      "fillTarget": 0.70,
+      "fillTarget": 0.7,
       "note": "fillTarget 0.70, re-derived after #2262 replaced one Nup107-160 Y-complex ring (41,288 elements) with the whole pore (9,874,128) \u2014 a 239x change, so the previous 0.75 was metered on a different object. Three arms, final coverage / final lit / border-lit: 0.75 -> 85.8% / 73.9% / 504 of 4316 (11.7%); 0.70 -> 77.8% / 62.3% / 70 (1.6%); 0.65 -> 71.3% / 53.1% / 1 (0.0%). CHOSEN ON THE RENDER, not on the warning clearing. The still is well framed at ALL THREE values \u2014 the crop metric spans all 10 orbit poses, so a clean still can carry a real warning from a pose nobody sees in isolation. Pulling orbit frames with ffmpeg settled it: at 0.75 the outer lilac ring is cut flat against the frame edge, at 0.70 every frame is complete with margin. 0.65 removes the last graze but shrinks the subject visibly for no gain the eye can see. Note the harness suggested 0.65 -> 0.55 for a SINGLE lit pixel: it recommends lower whenever a dense silhouette grazes an edge, which a rotating disc always eventually will, so do not follow it mechanically."
     },
     {
@@ -860,7 +860,7 @@
         "framePoint": 0.9
       },
       "citation": "Royer et al. 2016",
-      "fillTarget": 0.80,
+      "fillTarget": 0.8,
       "note": "fillTarget 0.80, not the 0.9 inherited from the h2afva timelapse: this embryo is a ~2.5:1 prolate ellipsoid, so at 0.9 it is cut flat at BOTH poles \u2014 and for an embryogenesis timelapse the anterior/posterior ends are the subject, not spare margin. Border-lit fell 737/4316 (17.1%) to 16/4316 (0.4%), a 46x reduction, and the render shows the whole embryo with margin at 0.80. The harness then suggested 0.7 for those 16 remaining pixels; that is its standing over-suggestion on any subject whose silhouette grazes an edge and was not followed. framePoint 0.9 KEPT: late in the 500-timepoint series the nuclei are individually resolved and the ventral furrow is legible, which is the point of the demo. Store needs no LOD work \u2014 the hosted archive is already flat with 14 additive rungs and no substitutive levels. Its largest node reads 37,930,613 (9x the 4,194,304 floor) but Time is display=false over [0.0, 249.5] step 0.5, so the resident slice is 166,443, i.e. 25x UNDER; this is the store _lod_policy.py cites for exactly that point."
     },
     {
@@ -924,6 +924,28 @@
       },
       "fillTarget": 0.8,
       "note": "TIMELAPSE, not dimensionNav: the hidden axis is UV chroma (10 deciles), and timelapse resolves the FIRST non-displayed dim, which here is unambiguously it. The traverse IS the finding - decile 1 is a yellow/orange carotenoid spray, decile 10 is almost entirely structural blues and violets. framePoint 0.95 frames the still on decile 10, chosen by measurement rather than taste: per-decile chroma-weighted hue-sector occupancy and mean chroma are 3 sectors / 28.8 at decile 1, falling to 5 sectors / 5.2 at decile 9, then rising to 6 sectors / 10.0 at decile 10. So the conventional 0.85 would land on decile 9 - the SHORTEST spikes of all ten and a stubby frame - while decile 10 has both the widest hue coverage and long spikes, because that bin spans 24.2-74.8% UV and catches the strongly structural colours. THE CROP WARNING ON THIS TILE IS EXPECTED OUTPUT, NOT A DEFECT: chroma is violently right-skewed (median 8.4, p99 63.8, max 117.9), so framing the true extent puts the whole corpus in the middle fifth of the frame. fillTarget 0.8 frames the p99.5 chroma quantile (70.8) and roughly 1,800 spikes overshoot the frame edge BY DESIGN. Do not tighten fillTarget to drive border-lit pixels to zero - border contact here is composition. No viewAngle: the baked pose (distance 267.7 CIELAB units, 16.3 deg elevation, 24.2 deg off the L* axis) is deliberate - looking straight down L* collapses the hedgehog into a flat rainbow star and hides the third axis, tilting further stops the hue circle reading as a circle. Judge exposure on whether the SHORT central spikes keep their hue, not on overall brightness: additive blending over 360,432 readings makes the neutral core bright on purpose, and opacity 0.33 / intensity 0.40 were tuned against exactly that after 0.55/0.55 turned the core into a flat white wedge"
+    },
+    {
+      "id": "esm3_protein_stories",
+      "title": "ESM Protein Stories \u2014 ten guided tours of the Swiss-Prot landscape",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_esm3_protein_stories.py",
+      "dataset": "datasets/demos/esm3_protein_stories.luxar.zarr",
+      "citation": "UniProt / EvolutionaryScale 2024 \u00b7 CC BY 4.0",
+      "fillTarget": 0.85,
+      "note": "Captured at fillTarget 0.85, not the 0.95 default: the first capture put 54.1% (stories) / 36.6% (universe) of the frame perimeter alight, i.e. the point cloud ran off every edge. Unlike bird_plumage_colorspace, where border contact is deliberate composition, here the subject is a roughly isotropic blob and the overflow just crops it \u2014 the capture's own advisory suggested this value."
+    },
+    {
+      "id": "esm_protein_universe",
+      "title": "ESM Protein Universe \u2014 twelve stories across 7.7 million protein clusters",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_esm_protein_universe.py",
+      "dataset": "datasets/demos/esm_protein_universe.luxar.zarr",
+      "citation": "ESM Atlas, Candido et al. 2026 \u00b7 3D map shown with permission",
+      "fillTarget": 0.85,
+      "note": "Captured at fillTarget 0.85, not the 0.95 default: the first capture put 54.1% (stories) / 36.6% (universe) of the frame perimeter alight, i.e. the point cloud ran off every edge. Unlike bird_plumage_colorspace, where border contact is deliberate composition, here the subject is a roughly isotropic blob and the overflow just crops it \u2014 the capture's own advisory suggested this value."
     }
   ]
 }
