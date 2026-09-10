@@ -16,6 +16,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DimensionSliders } from '../../../ui/dimension-sliders';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SimpleDims } from '../../../types/dims';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../utils/input-capabilities';
 
 // Mock scene dims manager
 vi.mock('../../../scene/scene-dims-manager', () => ({
@@ -784,6 +788,43 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
+  it.each([
+    { pressY: 270, expectedTop: 10 },
+    { pressY: 50, expectedTop: 60 },
+  ])('keeps the animation context menu away from a press at $pressY', ({ pressY, expectedTop }) => {
+    const heightSpy = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(291);
+    const widthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(248);
+    const innerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 320 });
+    let sliders: DimensionSliders | undefined;
+
+    try {
+      sliders = buildSliders();
+      sliders.setAnimationManager(makeAnimationManagerStub() as never);
+      document.querySelector('.luxar-dimension-slider__play-btn')!.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 100,
+          clientY: pressY,
+        })
+      );
+
+      const menu = document.querySelector<HTMLElement>('.luxar-dimension-slider__context-menu')!;
+      const menuTop = parseFloat(menu.style.top);
+      const menuHeight = parseFloat(menu.style.maxHeight);
+      expect(menuTop).toBe(expectedTop);
+      expect(menuHeight).toBe(250);
+      expect(menuTop + menuHeight).toBeLessThanOrEqual(310);
+      expect(pressY < menuTop || pressY > menuTop + menuHeight).toBe(true);
+    } finally {
+      sliders?.dispose();
+      heightSpy.mockRestore();
+      widthSpy.mockRestore();
+      if (innerHeight) Object.defineProperty(window, 'innerHeight', innerHeight);
+    }
+  });
+
   it('does not own document Escape while the animation context menu is open', () => {
     const sliders = buildSliders();
     sliders.setAnimationManager(makeAnimationManagerStub() as never);
@@ -1055,6 +1096,150 @@ describe('DimensionSliders — glass-root scroll delegation and visibility (#148
     expect(root().style.display).toBe('none');
     expect(sliders.getIsVisible()).toBe(false);
 
+    sliders.dispose();
+  });
+});
+
+describe('DimensionSliders - coarse pointer affordances', () => {
+  const dims: SimpleDims = {
+    ndim: 5,
+    displayed: [0, 1, 2],
+    currentStep: [0, 0, 0, 7, 1],
+    metadata: [
+      { name: 'X', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Y', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Z', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Frame', unit: '', scale: 1, discrete: true, step: 1 },
+      { name: 'Depth', unit: 'um', scale: 1, discrete: false, step: 0.5 },
+    ],
+  };
+  const build = (onSelectDimension?: (i: number) => void): DimensionSliders =>
+    new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 15],
+        [0, 10],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'Frame', 'Depth'],
+      selectedDimension: 0,
+      onSelectDimension,
+    });
+
+  afterEach(() => resetInputProfileForTests());
+
+  it('adds ‹ › step buttons that move the dimension by one base step', () => {
+    setInputProfileOverride('touch');
+    const sliders = build();
+    const frameSteps = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.luxar-dimension-slider__step')
+    ).filter((b) => b.getAttribute('aria-label')?.endsWith('Frame'));
+    expect(frameSteps.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Previous Frame',
+      'Next Frame',
+    ]);
+    expect(frameSteps.map((b) => b.textContent)).toEqual(['‹', '›']);
+    frameSteps[1].click();
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenLastCalledWith(3, 8);
+    frameSteps[0].click();
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenLastCalledWith(3, 6);
+    sliders.dispose();
+  });
+
+  it('uses the animation Step override and cyclic wrap used by [ / ]', () => {
+    setInputProfileOverride('touch');
+    dims.currentStep[3] = 15;
+    dims.metadata![3].cyclic = true;
+    const sliders = build();
+    sliders.setAnimationManager({
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getState: vi.fn(() => undefined),
+      isAnimating: vi.fn(() => false),
+      getStepSize: vi.fn(() => 2),
+      play: vi.fn(),
+      pause: vi.fn(),
+    } as never);
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+
+    const nextFrame = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.luxar-dimension-slider__step')
+    ).find((button) => button.getAttribute('aria-label') === 'Next Frame')!;
+    nextFrame.click();
+
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 1);
+    dims.currentStep[3] = 7;
+    dims.metadata![3].cyclic = false;
+    sliders.dispose();
+  });
+
+  it('adds a distinct play control after the coarse step controls', () => {
+    setInputProfileOverride('touch');
+    const sliders = build();
+    sliders.setAnimationManager({
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getState: vi.fn(() => undefined),
+      isAnimating: vi.fn(() => false),
+      getStepSize: vi.fn(() => null),
+      play: vi.fn(),
+      pause: vi.fn(),
+    } as never);
+
+    const frameWrapper = document
+      .querySelector<HTMLInputElement>('#luxar-dim-slider-3')!
+      .closest('.luxar-dimension-slider__controls-wrapper')!;
+    expect(Array.from(frameWrapper.children).map((child) => child.className)).toEqual([
+      'luxar-dimension-slider__step',
+      'luxar-dimension-slider__track',
+      'luxar-dimension-slider__step',
+      'luxar-dimension-slider__play-btn',
+    ]);
+    expect(frameWrapper.lastElementChild?.textContent).toBe('▶');
+    sliders.dispose();
+  });
+
+  it('positions the thumb using its rendered coarse-pointer width', () => {
+    setInputProfileOverride('touch');
+    const sliders = build();
+    const thumb = document.getElementById('luxar-dim-thumb-3')!;
+    Object.defineProperty(thumb.parentElement!, 'offsetWidth', { value: 304 });
+    Object.defineProperty(thumb, 'offsetWidth', { value: 22 });
+
+    dims.currentStep[3] = 15;
+    sliders.update();
+
+    expect(thumb.style.left).toBe('282px');
+    dims.currentStep[3] = 7;
+    sliders.dispose();
+  });
+
+  it('makes the dimension name a chip that selects the [ / ] target', () => {
+    setInputProfileOverride('touch');
+    const onSelect = vi.fn();
+    const sliders = build(onSelect);
+    const depthName = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-dimension-slider__name')
+    ).find((el) => el.textContent === 'Depth')!;
+    expect(depthName.classList.contains('luxar-dimension-slider__name--chip')).toBe(true);
+    expect(depthName.getAttribute('role')).toBe('button');
+    depthName.click();
+    // Depth is the second non-displayed dimension (Frame, Depth) → index 1.
+    expect(onSelect).toHaveBeenCalledWith(1);
+    expect(document.querySelector('.luxar-dimension-sliders__status')?.textContent ?? '').toContain(
+      '[/]: 2'
+    );
+    sliders.dispose();
+  });
+
+  it('adds neither on a mouse machine', () => {
+    setInputProfileOverride('mouse');
+    const sliders = build();
+    expect(document.querySelectorAll('.luxar-dimension-slider__step').length).toBe(0);
+    expect(document.querySelectorAll('.luxar-dimension-slider__name--chip').length).toBe(0);
     sliders.dispose();
   });
 });

@@ -4,6 +4,7 @@
  */
 
 .luxar-control-rail {
+  -webkit-touch-callout: none;
   position: absolute;
   top: 50%;
   left: 12px;
@@ -82,6 +83,12 @@
   height: 1px;
   margin: 3px 6px;
   background: var(--luxar-border-default);
+}
+
+/* An item whose `hidden` predicate is true is not rendered at all (e.g. the
+   Sound button on a scene without sound nodes). */
+.luxar-control-rail__btn[hidden] {
+  display: none;
 }
 
 .luxar-control-rail__btn {

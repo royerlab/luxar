@@ -18,6 +18,7 @@ through a writer would mean asserting against a fiction anyway.
 from __future__ import annotations
 
 import shutil
+import warnings
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -237,6 +238,22 @@ def _synthetic_scene(path: Path) -> zarr.Group:
     root = create_root_group(zarr.storage.LocalStore(str(path)))
     root.attrs["type"] = "scene"
     return root
+
+
+def test_payload_files_do_not_warn_during_the_scene_walk(tmp_path: Path) -> None:
+    path = tmp_path / "payload.luxar.zarr"
+    root = _synthetic_scene(path)
+    sound = root.create_group("sound")
+    sound.attrs.update({"type": "sound", "audio_file": "audio.mp3"})
+    (path / "sound" / "audio.mp3").write_bytes(b"ID3payload")
+    close(root)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        report = restamp_lod_store(path, dry_run=True)
+
+    assert report.clean
+    assert report.restamped == []
 
 
 def _synthetic_ladder(

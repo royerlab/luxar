@@ -29,6 +29,60 @@ pnpm test:e2e:report
 New specs import from `./fixtures`, not from `@playwright/test`
 directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 
+### Mobile / touch suite
+
+```bash
+make test-e2e-mobile          # from the repository root; refreshes fixtures
+pnpm test:e2e:mobile          # direct playwright.mobile.config.ts invocation
+```
+
+`src/tests/e2e/mobile/` runs under real device emulation (iPhone 14 portrait +
+landscape, iPad Pro 11 and Pixel 7), all on **Chromium**: both the GPU promotion
+runner and the hosted PR job use Chromium, and the gestures are synthesised through CDP
+`Input.dispatchTouchEvent` (`mobile/touch-helpers.ts`: pinch, twist, one-finger
+drag, 2→1 release, long-press, double-tap), which WebKit does not expose. The
+main config ignores this folder; the mobile config only matches it. The suite
+runs in PR CI for TypeScript changes.
+
+What it covers: the media queries actually match under emulation, pinch dollies
+the camera while `visualViewport.scale` stays 1, twist rolls, a finger lifting
+out of a pinch continues as a rotate, double-tap re-frames, tap picks + shows
+the tooltip, long-press opens the element / rail menus, fly mode looks and flies
+by touch, the rail / help / monitor / layers geometry stays inside a phone
+viewport, and the DPR cap and GPU budget resolve to the mobile values. Real iOS
+Safari behaviour (no `contextmenu` on long-press, no Fullscreen on iPhone,
+dynamic toolbar) is the manual device checklist's job, not this suite's.
+
+This suite is the integration check for the touch series planned in #2582, not
+a standalone test of this branch. `gestures.spec.ts` and `fly.spec.ts` require
+parts A and C (gesture ownership and touch controls), and the double-tap case in
+`gestures.spec.ts` also requires B. `pick.spec.ts` requires B,
+`layout.spec.ts` requires D1, and `runtime.spec.ts` requires E. The complete
+suite is validated with #2595 present so held pointer gestures keep the render
+loop awake. Run it against the complete series; expected failures on an earlier
+stack are not harness flakiness.
+
+Two helper rules keep the gesture specs honest under load (a shared Mac at a
+1-minute load of 26 ran a 16-step CDP drag in 5 s):
+
+- **Read the camera after two animation frames** (`cameraPose`). Controls apply
+  input inside their per-frame `update()`, so a pose read straight after the
+  last touch event can predate the frame that applies it — under software GL
+  with two workers a frame can take a second or more, and every gesture then
+  "fails" with the camera exactly at its home pose.
+- **Queue a double-tap's four touch events without awaiting** (`doubleTap`).
+  Awaited CDP round trips put 300–700 ms between the two lifts, past the
+  viewer's 300 ms double-tap window, so the gesture read as two single taps.
+  Queued on one session they land milliseconds apart whatever the box is doing.
+
+The worker count is the desktop plan's, capped at two — the phone viewports
+are cheap but the gesture timing is not, and the load-sizing in
+`tools/e2e-workers.ts` is what stops a busy box from inventing failures here.
+
+Under load the first touch move can arrive seconds after the press; before
+#2595 the loop had idle-paused by then and the whole drag moved nothing — on
+`dev` with a mouse too.
+
 ### Parallelism is sized to the machine
 
 The local worker count is not a constant. `playwright.config.ts` asks
@@ -83,24 +137,26 @@ unconditionally serial.
 
 ### Which script runs which specs
 
-| Script                 | Selection                                                                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm test:e2e`        | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
-| `pnpm test:e2e:ci`     | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
-| `pnpm test:e2e:visual` | Local run of tests tagged `@visual`; snapshot assertions are active on Linux                                                                     |
-| `pnpm test:e2e:smoke`  | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
-| `pnpm test:perf:e2e`   | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
+| Script                       | Selection                                                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm test:e2e`              | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` and `src/tests/e2e/mobile/` (`testIgnore`)                                        |
+| `pnpm test:e2e:ci`           | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
+| `pnpm test:e2e:visual`       | Local run of tests tagged `@visual`; snapshot assertions are active on Linux                                                                     |
+| `pnpm test:e2e:smoke`        | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
+| `pnpm test:e2e:smoke:strict` | The smoke allowlist with strict browser-console handling                                                                                         |
+| `pnpm test:e2e:browsers`     | Three fixture-backed specs under Chromium, Firefox and WebKit                                                                                    |
+| `pnpm test:e2e:mobile`       | Only `src/tests/e2e/mobile/`, under `playwright.mobile.config.ts`                                                                                |
+| `pnpm test:perf:e2e`         | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
 
-The smoke subset is deliberately narrow: its CI job generates datasets at
-runtime via `make run-examples` and pulls no Git LFS. **Do not add a spec that
+The smoke subset is deliberately narrow and pulls no Git LFS. **Do not add a spec that
 reads `tests/fixtures/` to it** — that would make the job depend on the Python
 fixture generator, and would newly expose `test:e2e:smoke:strict` (which drops
 the 4xx/5xx allow-list) to fixture-server 404s.
 
 `mesh-rendering.spec.ts` is therefore in `test:e2e` / `test:e2e:ci` but **not**
-in smoke. Note that the GitHub `e2e-tests` job is `if: false` by standing
-decision — software WebGL on standard runners is too slow for rendering specs —
-so E2E runs locally (`make test-e2e`) or on the GPU box.
+in smoke. The GitHub `e2e-tests` job runs only the mobile suite; software WebGL
+on standard runners remains too slow for the full rendering-heavy corpus, which
+runs locally (`make test-e2e`) or on the GPU promotion runner.
 
 ### Generated zarr fixtures are a hard dependency
 
@@ -116,7 +172,7 @@ through
 `LUXAR_E2E_NO_FIXTURES=1` to skip the check:
 
 - **smoke** — its five specs are chosen precisely so none of them touches
-  `tests/fixtures/`, and its CI job generates datasets at runtime with no LFS;
+  `tests/fixtures/`;
 - **perf** (`pnpm test:perf:e2e`) — a different config, but the same global
   setup, and none of its `*perf-bench.spec.ts` files reads `tests/fixtures/`.
 
@@ -136,6 +192,7 @@ e2e/
 ├── render-ticks.ts      # Confirmed render-tick flushing for detector specs
 ├── harnesses/
 │   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
+├── mobile/              # touch-helpers.ts + five device-emulated specs
 ├── *.spec.ts            # Playwright specs (one per feature area)
 └── *.spec.ts-snapshots/ # Visual-regression baselines (auto-managed)
 ```
@@ -418,9 +475,10 @@ then runs five preflight checks:
    runnable while one example producer is stale or unavailable.
    This warning path is for package-level Playwright commands run directly,
    including `pnpm test:e2e`. The repository `make test-e2e`,
-   `make test-e2e-smoke`, and `make test-perf-e2e` targets regenerate examples
-   first, and the CI E2E job also runs `make run-examples`, so CI coverage is
-   not weakened by the warning behavior.
+   `make test-e2e-browsers`, `make test-e2e-mobile`, `make test-e2e-smoke`,
+   `make test-e2e-smoke-strict`, and `make test-perf-e2e` targets regenerate
+   examples first. The CI mobile job also runs `make run-examples`, so CI
+   coverage is not weakened by the warning behavior.
 
 3. **Required datasets** — checks for the eight required `*.zarr`
    directories and then issues an HTTP `HEAD` request for each one
@@ -553,10 +611,10 @@ centre so FXAA's edge-detection path actually triggers.
 
 Folders named `<spec>.spec.ts-snapshots/` hold per-spec PNG
 baselines used by `expect(...).toHaveScreenshot(...)`. They are a
-**local developer aid, not a CI contract**: GitHub CI does not run
-Playwright, and `test:e2e:ci` deliberately excludes every `@visual`
-test. A green pull request therefore says nothing about whether these
-pixels still match.
+**local developer aid, not a CI contract**: GitHub CI runs only non-visual
+Playwright subsets, and `test:e2e:ci` deliberately excludes every `@visual`
+test. A green pull request therefore says nothing about whether these pixels
+still match.
 
 The checked-in corpus is Linux Chromium only. This is the one platform
 the project can reproduce consistently; do not add Darwin or Windows
@@ -575,7 +633,7 @@ examples are rebuilt, refresh and inspect the affected baselines too.
 
 Keeping one reproducible Linux corpus leaves room for a future CI job
 covering the DOM/CSS-only `@visual` specs without the WebGL rasterizer
-variability that currently keeps the full E2E job disabled.
+variability that keeps the full desktop E2E corpus on the GPU promotion runner.
 
 ## Conventions for New Specs
 

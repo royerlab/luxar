@@ -139,6 +139,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
 )
 from luxar.gsplats.io._archive import read_archive_root_attrs
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -439,6 +440,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: Zebrafish Embryogenesis (h2afva timelapse)"
             scene.attrs["description"] = (
                 f"Zebrafish embryo nuclei (histone H2A variant label) across "

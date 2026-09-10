@@ -108,22 +108,23 @@ Key behaviours:
 - **`hashUrl(url)`** — SHA-256-truncated dataset identifier of the form
   `zarr-cache-<16 hex>`. Used as the OPFS root directory name and the
   validation-queue key.
-- **`fetchWithRetry(url, options?)`** — retry-budget fetch keyed off
+- **`fetchWithRetry(url, options, consume)`** — retry-budget fetch keyed off
   `config.dataLoading.network.retryAttempts` and `.timeoutMs`. 4xx
   responses return immediately (no retry can fix a missing key). 429,
   5xx, network errors, and per-attempt timeouts are retried with
   exponential backoff bounded by ±25% jitter and a 500ms ceiling. The
-  total timeout is split across attempts so retries do not multiply
-  worst-case load time. A caller-aborted signal exits immediately
-  without consuming retry budget. Accepts `timeoutMsOverride` for
-  validation probes that want a shorter budget than data fetches. A
-  terminal response is returned with an idempotent `dispose()` callback;
-  consumers hold that scope through body consumption and release it in
-  `finally`, preserving body cancellation without retaining fallback
-  listeners for the dataset lifetime. `dispose()` also cancels a body
-  the consumer never read (retryable 429/5xx, terminal non-OK, or a
-  post-fetch abort), so an ignored response stops streaming instead of
-  holding bandwidth and a connection slot until GC.
+  configured timeout is split across attempts and applied separately to
+  time-to-headers and aggregate body-progress stalls. A quiet multiplexed
+  stream stays alive while another live lease receives bytes. Its absolute
+  deadline starts when body reading begins and is derived from `Content-Length`
+  at a 16 KiB/s aggregate floor shared across at most eight active leases, or
+  eight stall windows shared across at most four leases when the length is
+  unavailable. Metadata probes use a separate four-slot lane from the 24
+  data-body slots; this prevents lane-level starvation on multiplexed transports,
+  while HTTP/1.1 can still queue both lanes on the browser's per-origin socket
+  pool. A caller-aborted signal exits immediately without consuming retry budget.
+  The consumer runs inside its fetch-gate lease and may call `readBody()` once;
+  returning without reading cancels the body before release.
 
 ### `bandwidth-window.ts` — sliding-window throughput
 
@@ -173,9 +174,10 @@ than the full data-fetch timeout.
 
 ## Invariants
 
-- **`fetchWithRetry` never throws.** Network errors and exhausted retry
-  budgets log a warning and return `undefined`; callers treat that as
-  "miss" and fall back to the next tier (or surface a load error).
+- **`fetchWithRetry` does not throw transport failures.** Network errors and
+  exhausted retry budgets log a warning and return `undefined`; a consumer's
+  own error propagates unchanged so status and archive validation failures
+  keep their domain-specific type.
 - **Metadata segment never starves.** `SegmentedLRUCache` enforces a
   10MB floor on the metadata segment regardless of `totalSize` — small
   L1 budgets only shrink the chunks segment.

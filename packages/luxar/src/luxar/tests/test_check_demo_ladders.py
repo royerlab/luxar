@@ -785,7 +785,7 @@ def test_require_scenes_turns_an_empty_inventory_into_a_failure(
 ) -> None:
     """The opt-in for callers that KNOW scenes should be there.
 
-    Release prep and a demo-build pipeline both run this AFTER building, where
+    Gallery generation and the pre-upload audit run this AFTER building, where
     an empty inventory means the build produced nothing — the one situation in
     which silence is the bug rather than the normal case.
     """

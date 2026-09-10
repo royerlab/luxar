@@ -1015,8 +1015,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // stages hand luxarLineJoin each END its own segment-constant width` in
     // `tests/unit/rendering/materials/line/material-glsl.test.ts`, the
     // checked-in codegen snapshot `tests/__codegen__/line.vertex.glsl.txt`
-    // (generated FROM the TSL graph, so it is what pins the TSL twin — though
-    // only in this `if: false` CI job), the always-running TSL-source lock
+    // (generated FROM the TSL graph, so it pins the TSL twin in local full-suite
+    // runs), the always-running TSL-source lock
     // `tests/unit/rendering/materials/line/join-width-tsl.test.ts`, and the
     // CPU-mirror cases in `tests/unit/rendering/line-join-math.test.ts`.
     const glslMiter = await runGLSL(page, 'line-join-taper-miter');
@@ -2836,7 +2836,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     //
     // Those pixel counts were taken before this branch merged main's #1495
     // width-gate escape and #1494 partner-radius plumbing, and NOT re-taken
-    // after (this job is `if: false` in `ci.yml` and needs a real GPU). Every
+    // after. CI runs this fixture under llvmpipe rather than a real GPU. Every
     // radius in this fixture sits above the 1.5 px AA floor, so the widthScale
     // factor #1495 added is 1 throughout and the gate still opens on width
     // alone — but treat the exact counts as indicative, not as pins.

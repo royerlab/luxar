@@ -22,6 +22,7 @@ function deps(overrides: Partial<LoadActivityDeps> = {}): LoadActivityDeps {
     isUpdateInProgress: () => false,
     isAnyLoadPassInProgress: () => false,
     isAnyLodLevelLoading: () => false,
+    hasVisiblePendingPartitionResync: () => false,
     isRefinementComplete: () => true,
     ...overrides,
   };
@@ -36,6 +37,7 @@ describe('isLoadActivity', () => {
     ['update lock held', { isUpdateInProgress: () => true }],
     ['a load pass in flight', { isAnyLoadPassInProgress: () => true }],
     ['a lazy LOD level loading', { isAnyLodLevelLoading: () => true }],
+    ['a visible partition resync is pending', { hasVisiblePendingPartitionResync: () => true }],
     ['the refinement drain still running', { isRefinementComplete: () => false }],
   ])('suppresses while %s', (_label, overrides) => {
     expect(isLoadActivity(deps(overrides))).toBe(true);
@@ -49,7 +51,10 @@ describe('buildLoadActivityPredicate', () => {
     noteRefinementComplete();
     let loader: {
       isUpdateInProgress(): boolean;
-      lodGroupRegistry?: { isAnyLevelLoading(): boolean } | null;
+      lodGroupRegistry?: {
+        isAnyLevelLoading(): boolean;
+        hasVisiblePendingPartitionResync(): boolean;
+      } | null;
     } | null = null;
     let loadPass = false;
     const predicate = buildLoadActivityPredicate({
@@ -61,7 +66,18 @@ describe('buildLoadActivityPredicate', () => {
     expect(predicate()).toBe(true);
     loader = {
       isUpdateInProgress: () => false,
-      lodGroupRegistry: { isAnyLevelLoading: () => true },
+      lodGroupRegistry: {
+        isAnyLevelLoading: () => true,
+        hasVisiblePendingPartitionResync: () => false,
+      },
+    };
+    expect(predicate()).toBe(true);
+    loader = {
+      isUpdateInProgress: () => false,
+      lodGroupRegistry: {
+        isAnyLevelLoading: () => false,
+        hasVisiblePendingPartitionResync: () => true,
+      },
     };
     expect(predicate()).toBe(true);
     loader = { isUpdateInProgress: () => false, lodGroupRegistry: null };

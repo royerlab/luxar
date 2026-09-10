@@ -42,6 +42,7 @@ def test_named_node_type_constants_match_contract() -> None:
         constants.NODE_TYPE_LINES,
         constants.NODE_TYPE_GSPLATS,
         constants.NODE_TYPE_MESH,
+        constants.NODE_TYPE_SOUND,
     }
     assert named == set(fc.NODE_TYPES)
 

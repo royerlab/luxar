@@ -1,8 +1,12 @@
+import type * as THREE from 'three';
 import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
 import { PerformanceMonitor } from '../../../ui/performance-monitor';
 import { DebugConsole } from '../../../ui/debug-console';
-import { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
+import {
+  AdaptiveDPRManager,
+  mobileAdaptiveDprOverrides,
+} from '../../../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../../../ui/resolution-indicator';
 import { InputHandler } from '../../../input';
 import { DimensionSliders } from '../../../ui/dimension-sliders';
@@ -11,6 +15,9 @@ import { RecordingPanel } from '../../../ui/recording-panel';
 import { LayersPanel } from '../../../ui/layers';
 import { ControlRail } from '../../../ui/control-rail';
 import { buildRailItems } from './build-rail-items';
+import { AudioEngine } from '../../../audio/audio-engine';
+import { resolveTargetNodeCenter } from '../../../scene/scene-manager/camera/camera-setup';
+import { getViewerContainer } from '../../../utils/viewer-container';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
@@ -18,7 +25,7 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
-import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
+import { getGpuByteBudget, initializeGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { getMaxPixelRatio, setHighDPRAllowed } from '../../../rendering/pixel-ratio-cap';
 import {
   configureDepthSort,
@@ -34,6 +41,7 @@ import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { wireDensityGuard } from './density-guard-wiring';
 import { buildLoadActivityPredicate } from './load-activity';
 import { wireSceneEnvironment } from './environment-wiring';
+import { getInputProfile } from '../../../utils/input-capabilities';
 
 /**
  * Everything `LuxarApp.init()` constructs is returned in this result.
@@ -52,6 +60,8 @@ export interface InitPipelineResult {
   recordingPanel: RecordingPanel;
   layersPanel: LayersPanel;
   controlRail: ControlRail;
+  /** The sound layer (nodes attach per scene in `LuxarApp.installAudio`). */
+  audioEngine: AudioEngine;
   /** Resolved dataset URL — orchestrator routes to browser or load. */
   sceneSrc: string;
 }
@@ -75,6 +85,8 @@ export interface InitPipelinePorts {
   events: EventGroup;
   getPanelVisibilityStates: () => Map<string, boolean>;
   restorePanelVisibilityStates: (states: Map<string, boolean>) => void;
+  /** Emit a public embedder event (the audio engine's `sound-started` / `sound-ended`). */
+  emitEmbedderEvent: (event: 'sound-started' | 'sound-ended', payload: { name: string }) => void;
 }
 
 /**
@@ -99,6 +111,8 @@ export async function runInitPipeline(
   ports: InitPipelinePorts,
   partial: Partial<InitPipelineResult>
 ): Promise<InitPipelineResult> {
+  initializeGpuByteBudget(ports.options.gpuPoolMaxBytes);
+
   // Inform users about expected console messages. The browser logs a
   // `GET … 404` line (with a JS stack trace) for every failed network
   // request; these cannot be suppressed from JS — only avoided by not
@@ -136,7 +150,11 @@ export async function runInitPipeline(
     renderer: ports.options.renderer,
     webgpuForceWebGL: ports.options.webgpuForceWebGL,
     perfTimestamp: ports.options.perfTimestamp,
-    blendWarmup: ports.options.blendWarmup,
+    // Mobile GPUs can spend 50-300 ms linking each blend variant, and Safari
+    // before 18.2 has no requestIdleCallback to hide that work. Resolve the
+    // device default here so direct LuxarApp embedders get the same protection
+    // as the standalone bootstrap; an explicit false remains the opt-out.
+    blendWarmup: ports.options.blendWarmup !== false && getInputProfile().deviceClass !== 'mobile',
   });
 
   // Initialize animation controller with HDR post-processing.
@@ -222,8 +240,11 @@ export async function runInitPipeline(
       // skips evaluation in this state.
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
       hasArchiveFault: () => owner.archiveFault !== null,
-      requestReprocess: () => owner.requestReprocess(),
-      isUpdateInProgress: () => owner.isUpdateInProgress(),
+      hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
+      requestReprocess: (paths) => owner.requestReprocess(paths),
+      // A view PASS in flight or queued — not a refinement hold, which the
+      // loader parks a resync through (see `LODGroupRegistryOwner`).
+      isUpdateInProgress: () => owner.isLoadPassInProgress(),
       // Resident-byte budget for loaded LOD geometry = the single,
       // adaptive GPU-geometry budget shared with the buffer pool (one VRAM
       // authority). Read dynamically so context-loss backoff applies live.
@@ -376,7 +397,10 @@ export async function runInitPipeline(
   setHighDPRAllowed(config.renderingControls.defaults.allowHighDPR);
 
   // Initialize adaptive DPR manager for dynamic resolution scaling
-  const adaptiveDPRManager = new AdaptiveDPRManager();
+  // On a phone/tablet: a legible floor and a 60 Hz threshold ceiling (a
+  // ProMotion iPad's learned 120 Hz mark would otherwise read a healthy
+  // 60 fps as distress). `undefined` on a laptop/desktop — unchanged.
+  const adaptiveDPRManager = new AdaptiveDPRManager(mobileAdaptiveDprOverrides());
   partial.adaptiveDPRManager = adaptiveDPRManager;
   adaptiveDPRManager.setRenderer(sceneManager);
   animationController.setAdaptiveDPRManager(adaptiveDPRManager);
@@ -390,11 +414,12 @@ export async function runInitPipeline(
   }
 
   // While the viewer is not SETTLED — an updateView sweep, any loader's load
-  // pass, a lazy LOD level load, or the post-load refinement drain (each
-  // rung is fetch + decode + commit with the lock released between passes)
-  // — frame jank reflects that work, not steady-state render cost, and the
-  // manager suppresses probe/estimator learning for those samples. Same
-  // predicate the perf probes read as `getPerf().isSettled`, inverted.
+  // pass, a lazy LOD level load, a held partition rising-edge resync, or the
+  // post-load refinement drain (each rung is fetch + decode + commit with the
+  // lock released between passes) — frame jank reflects that work, not
+  // steady-state render cost, and the manager suppresses probe/estimator
+  // learning for those samples. Same predicate the perf probes read as
+  // `getPerf().isSettled`, inverted.
   // TRUE while load activity is in flight (the adaptive-DPR manager's sense).
   const isLoadActive = buildLoadActivityPredicate({
     getDefaultLoader: () => getSceneLoader('default'),
@@ -617,13 +642,13 @@ export async function runInitPipeline(
   // unconditionally, so on a plain points/lines scene the capture would
   // otherwise spend its mandatory selector-catch-up rAF on every exported
   // frame waiting for a selector that does not exist. `null` = "no lod_group
-  // to wait for" and skips the drain outright; only a scene with at least one
-  // registered lod_group gets the boolean. Narrow on purpose, and narrower
-  // than "nothing here can be mid-load" — a `--recipe stream` leaf has no
-  // lod_group but does have a progressive ladder still streaming.
+  // or partition to wait for" and skips the drain outright; partitions need
+  // the catch-up tick because a frustum rising edge starts a targeted resync.
+  // This remains narrower than "nothing here can be mid-load": a laddered leaf
+  // outside both group kinds still has no capture-visible registry entry.
   recordingPanel.setLODSettledProvider(() => {
     const registry = getSceneLoader('default')?.lodGroupRegistry;
-    if (!registry || registry.size() === 0) return null;
+    if (!registry || registry.captureSize() === 0) return null;
     return registry.isCaptureQuiescent();
   });
 
@@ -633,8 +658,52 @@ export async function runInitPipeline(
   inputHandler.setLayersPanel(layersPanel);
 
   // Left activity rail — the always-visible, discoverable entry point to the
-  // otherwise keyboard-only panels. Each button fires the SAME command as its
-  // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
+  // otherwise keyboard-only panels. Buttons dispatch through the same command
+  // surface as keyboard shortcuts (via inputHandler.getUiActions()).
+  // The sound layer. Constructs no AudioContext until a scene with sound nodes
+  // attaches; every viewer piece it needs arrives as a port so `audio/` stays
+  // below `scene/` in the layer order (see src/audio/README.md).
+  const audioEngine = new AudioEngine({
+    getCamera: () => sceneManager.camera,
+    onCameraReplaced: (cb) => {
+      const handler = (): void => cb();
+      sceneManager.addEventListener('camera-changed', handler);
+      return () => sceneManager.removeEventListener('camera-changed', handler);
+    },
+    getDims: () => sceneDimsManager.getDims(),
+    onDimsChanged: (cb) => {
+      const listener = (): void => cb();
+      sceneDimsManager.addListener(listener);
+      return () => sceneDimsManager.removeListener(listener);
+    },
+    getSceneGraph: () => getSceneLoader('default')?.sceneGraph ?? null,
+    getSceneScale: () => sceneManager.getSceneScale(),
+    container: getViewerContainer,
+    emit: (event, payload) => ports.emitEmbedderEvent(event, payload),
+    resolveNodeCenter: (name) => {
+      const root = sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
+      return root ? resolveTargetNodeCenter(root as THREE.Group, name) : null;
+    },
+    notifyUiChanged: () => {
+      // The rail refreshes on this. Guarded like a unit test's bare window stub
+      // expects: no dispatcher, no event (the layers panel's own event is the model).
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('luxar-audio-changed'));
+      }
+    },
+  });
+  partial.audioEngine = audioEngine;
+  // Real-time recordings carry the mix the listener hears (SOUND_SPEC §6, Phase 3).
+  recordingPanel.setAudioCapture({
+    acquire: () => audioEngine.acquireCaptureStream(),
+    release: (stream) => audioEngine.releaseCaptureStream(stream),
+  });
+  // Sound rows in the Layers panel: eye = mute, slider = gain (SOUND_SPEC §4.2).
+  layersPanel.setAudioPort({
+    setNodeMuted: (path, muted) => audioEngine.setNodeMuted(path, muted),
+    setNodeGain: (path, gain) => audioEngine.setNodeGain(path, gain),
+  });
+
   const ui = inputHandler.getUiActions();
   const railItems = buildRailItems({
     ui,
@@ -649,6 +718,7 @@ export async function runInitPipeline(
     layersPanel,
     debugConsole,
     recordingPanel,
+    audioEngine,
   });
   // Dock the perf readout as the rail's footer; the gauge above toggles it.
   const controlRail = new ControlRail(railItems, performanceMonitor.element);

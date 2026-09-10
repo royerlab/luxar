@@ -587,6 +587,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
   }
 
+  /** Stop residual user-input damping without changing the current pose. */
+  public settleDamping(): void {
+    this.currentControls?.settleDamping();
+  }
+
   public setFlyLookSpeed(speed: number): void {
     this.config.flyLookSpeed = speed;
     if (this.currentControls instanceof LuxarFlyControls) {

@@ -125,6 +125,20 @@ describe('buildHomePopover', () => {
       expect(caption(host).label).toBe('Center on origin');
       host.remove();
     });
+
+    it("shows a chip's label + hint when a touch press begins", () => {
+      const host = document.createElement('div');
+      buildHomePopover(host, makeCtx());
+      const press = new PointerEvent('pointerdown', { bubbles: true });
+      Object.defineProperty(press, 'pointerType', { value: 'touch' });
+
+      chips(host)[3].dispatchEvent(press);
+
+      expect(caption(host)).toEqual({
+        label: 'Reset rendering',
+        hint: 'Restore default rendering settings',
+      });
+    });
   });
 
   describe('disabled states', () => {

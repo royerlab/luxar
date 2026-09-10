@@ -114,6 +114,33 @@ describe('LuxarOrbitControls', () => {
 
       expect(handler).toHaveBeenCalled();
     });
+
+    it('settleDamping discards residual motion without changing the current pose', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.update();
+      const internals = controls as unknown as {
+        rotationDelta: THREE.Quaternion;
+        panDelta: THREE.Vector3;
+        zoomDelta: number;
+        rollDelta: number;
+      };
+      internals.rotationDelta.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.1);
+      internals.panDelta.set(1, 2, 3);
+      internals.zoomDelta = 0.5;
+      internals.rollDelta = 0.25;
+      const position = camera.position.clone();
+      const quaternion = camera.quaternion.clone();
+
+      controls.settleDamping();
+
+      expect(internals.rotationDelta.equals(new THREE.Quaternion())).toBe(true);
+      expect(internals.panDelta.equals(new THREE.Vector3())).toBe(true);
+      expect(internals.zoomDelta).toBe(0);
+      expect(internals.rollDelta).toBe(0);
+      expect(camera.position.equals(position)).toBe(true);
+      expect(camera.quaternion.equals(quaternion)).toBe(true);
+      expect(controls.update()).toBe(false);
+    });
   });
 
   describe('quaternion rotation', () => {
@@ -603,6 +630,52 @@ describe('LuxarOrbitControls', () => {
 
       expect(roll(0.2, 2)).toBeCloseTo(120 * 0.0005, 12);
       expect(roll(0.2, 2)).not.toBeCloseTo(160 * 0.0005, 6);
+    });
+
+    it('#2565 reads deltaX when Shift+wheel arrives on the horizontal axis', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.enableViewAxisRotation();
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 0,
+          deltaX: 100,
+          shiftKey: true,
+          cancelable: true,
+        })
+      );
+      expect((controls as any).rollDelta).toBeCloseTo(100 * 0.0005, 12);
+    });
+
+    it('#2565 normalizes a line-mode deltaX fallback at the orbit call site', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.enableViewAxisRotation();
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 0,
+          deltaX: 3,
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          shiftKey: true,
+          cancelable: true,
+        })
+      );
+      expect((controls as any).rollDelta).toBeCloseTo(48 * 0.0005, 12);
+    });
+
+    it('#2565 does not dispatch change when both wheel axes are zero', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.enableViewAxisRotation();
+      const changeSpy = vi.fn();
+      controls.addEventListener('change', changeSpy);
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 0,
+          deltaX: 0,
+          shiftKey: true,
+          cancelable: true,
+        })
+      );
+      expect((controls as any).rollDelta).toBe(0);
+      expect(changeSpy).not.toHaveBeenCalled();
     });
   });
 

@@ -116,7 +116,8 @@ scene.add_sound(
   (`inverse` default, `linear`, `exponential`), `ref_distance`, `max_distance`,
   `rolloff`, optional `cone_inner_deg` / `cone_outer_deg` / `cone_outer_gain`
   and an `orientation` vector. Defaults derive from the scene scale like the fly
-  speed does (`ref_distance = scale/20`, `max_distance = scale`).
+  speed does (`ref_distance = scale/20`, `max_distance = scale`); the viewer
+  clamps its resolved `max_distance` to at least `ref_distance`.
 
 ### 3.2 On disk
 
@@ -235,14 +236,15 @@ waypoint events above.
   warm and unobtrusive under the narration, and a clip is judged by listening
   to the WHOLE loop, since many start gently and turn harsh.
 - **Cluster sounds** (Phase 2): one spatial source per story at the cluster
-  centre, `ref_distance` from the blob radius, live only at that story.
+  centre, distance falloff tuned from the story's waypoint camera, live only at
+  that story.
 
 ## 6. Phases
 
 | Phase | Scope |
 | --- | --- |
 | 1 | `sound` node type (Python writer + validation, viewer loader, `AudioEngine`, `SoundNode`, listener), non-spatial and spatial playback, slab audibility, `continuous`/`once`, buses and ducking, autoplay gate + kiosk flag docs, rail mute, `viewer_config.audio`, remote `setAudio`/`playSound`; demo narration + ambient bed |
-| 2 | `on_depart`/`on_arrive` via waypoint events, `attach_to`, cluster sounds in the demo (a pentatonic hum per story attached to the highlight node), Layers-panel rows (eye = mute, group eye mutes the subtree, inline gain slider, provenance tooltip; `LayerSummary`/`LayerPatch` gain) |
+| 2 | `on_depart`/`on_arrive` via waypoint events, `attach_to` (exercised by the stories demo's per-cluster hums, since removed from the demo as a distracting drone; the mechanism stays), Layers-panel rows (eye = mute, group eye mutes the subtree, inline gain slider, provenance tooltip; `LayerSummary`/`LayerPatch` gain) |
 | 3 | Recording panel "Include Audio": the master-gain tap into real-time WebM (Opus mime first; the offline path stays silent) |
 | 4 | Ambisonic beds (`ambisonic: "foa"`, AmbiX ACN/SN3D, four-channel AAC — Chrome decodes it to four channels) rotating with the camera through the native decoder, no Omnitone |
 

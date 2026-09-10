@@ -109,6 +109,28 @@ export interface ZarrWaypoint {
   easing?: 'linear' | 'ease-in-out';
   /** Rendering overrides (snake_case ViewerConfig keys) applied on arrival. */
   rendering?: Record<string, unknown>;
+  /**
+   * When this waypoint's dimension-bound overlays appear. `immediate` (the
+   * default) shows them as the dimension changes, while the camera is still
+   * flying; `on_arrival` holds overlays that would newly appear until the
+   * flight resolves — a snap or a camera-less waypoint arrives at once, a
+   * flight the visitor cancels counts as arrival, a flight a newer waypoint
+   * supersedes never reveals. Departing overlays hide immediately either way.
+   */
+  reveal?: 'immediate' | 'on_arrival';
+}
+
+/**
+ * Scene-wide audio defaults (Python `AudioConfig`, `viewer_config.audio`).
+ * Validated and clamped by `config/zarr-bridge/audio-config.ts`.
+ */
+export interface ZarrAudioConfig {
+  enabled?: boolean;
+  master_gain?: number;
+  panning_model?: 'equalpower' | 'HRTF' | string;
+  buses?: Partial<Record<'ambient' | 'voice' | 'effects', number>>;
+  /** Ambient attenuation while anything on the voice bus plays (dB, <= 0). */
+  duck_db?: number;
 }
 
 /**
@@ -253,6 +275,9 @@ export interface ZarrViewerConfig {
 
   // Story waypoints: camera poses bound to hidden-dimension positions.
   waypoints?: ZarrWaypoint[];
+
+  // Sound layer defaults (master gain, buses, ducking, panning).
+  audio?: ZarrAudioConfig;
 }
 
 /**
@@ -343,6 +368,15 @@ export interface ZarrNodeAttrs {
 
   /** Dimensions to extend visibility across (points visible at all values of these dimensions) */
   extend_to_all?: string[];
+
+  /**
+   * Sound node attrs (`type: "sound"`, heard not drawn) — the plain store key
+   * holding the clip and whether a `positions` array exists. The playback and
+   * panner knobs are read through `audio/sound-attrs.ts::parseSoundNodeAttrs`.
+   */
+  audio_file?: string;
+  has_positions?: boolean;
+  n_positions?: number;
 
   /** Arrays in this group */
   arrays?: string[];

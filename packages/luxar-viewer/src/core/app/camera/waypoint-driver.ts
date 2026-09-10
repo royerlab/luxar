@@ -22,6 +22,13 @@
  * optional `rendering` block rides the same override path an authored
  * `viewer_config` takes.
  *
+ * A waypoint authored `reveal: "on_arrival"` also gates the story's overlays
+ * on the flight: `inTransit` is true from the moment such a waypoint is
+ * matched with a flight until that flight resolves (cancelled by the visitor
+ * counts as arrived; superseded by a newer match hands over to it), and the
+ * overlay manager holds newly matching overlays while it is. The text and the
+ * turntable then appear when the camera has arrived, not while it travels.
+ *
  * Pure functions (`matchWaypoint`, `resolveWaypointPose`) carry the logic;
  * the class only sequences them against injected ports, so `LuxarApp` wires
  * it with the pieces it already owns (dims manager, camera flight, rendering
@@ -160,7 +167,28 @@ export interface WaypointPorts {
   autoRotateActive: () => boolean;
   /** Snake_case rendering overrides — the authored `viewer_config` path. */
   applyRendering: (rendering: Record<string, unknown>) => void;
+  /**
+   * The two story events (`SOUND_SPEC.md` §4.3): `waypoint-departed` fires the
+   * moment the matched waypoint changes away from one; `waypoint-arrived`
+   * fires after the new waypoint's flight resolves (or immediately after a
+   * snap, or immediately when it has no camera block). A flight the visitor
+   * cancels still resolves and still arrives (`completed: false`); a flight a
+   * NEWER waypoint superseded does not arrive at all — the visitor has moved
+   * on, and its narration must not overlap the new story's.
+   */
+  emit?: (event: WaypointEvent['event'], payload: WaypointEvent['payload']) => void;
 }
+
+/** The waypoint driver's events on the embedder bus. */
+export interface WaypointEventMap {
+  'waypoint-departed': { index: number };
+  'waypoint-arrived': { index: number; completed: boolean };
+}
+export type WaypointEventName = keyof WaypointEventMap;
+/** One emitted event as a discriminated pair, for the port's non-generic signature. */
+export type WaypointEvent = {
+  [K in WaypointEventName]: { event: K; payload: WaypointEventMap[K] };
+}[WaypointEventName];
 
 /** How a newly matched waypoint is reached. */
 export type WaypointArrival = 'snap' | 'fly';
@@ -172,6 +200,12 @@ export type WaypointArrival = 'snap' | 'fly';
  */
 export class WaypointDriver {
   private current = -1;
+  private transit = false;
+  /**
+   * Identity of the live flight; an index can be revisited before its stale
+   * flight resolves.
+   */
+  private activeFlight: Promise<FlightResult> | null = null;
 
   constructor(
     private readonly waypoints: readonly ZarrWaypoint[],
@@ -184,6 +218,16 @@ export class WaypointDriver {
   }
 
   /**
+   * True while the current waypoint asked for `reveal: "on_arrival"` and its
+   * flight has not resolved yet — the window in which the overlay manager
+   * holds the story's captions back. False after a snap, for a waypoint
+   * without a camera block, and for `reveal: "immediate"` (the default).
+   */
+  get inTransit(): boolean {
+    return this.transit;
+  }
+
+  /**
    * Re-match against the live dims and, if the matched waypoint changed,
    * reach it. `'snap'` is the load-time call; dimension changes use `'fly'`.
    * Returns the new index (or -1).
@@ -193,31 +237,81 @@ export class WaypointDriver {
     if (!dims) return this.current;
     const idx = matchWaypoint(this.waypoints, dims);
     if (idx === this.current) return idx;
+    const previous = this.current;
     this.current = idx;
-    if (idx < 0) return idx;
+    if (previous >= 0) this.ports.emit?.('waypoint-departed', { index: previous });
+    if (idx < 0) {
+      this.activeFlight = null;
+      this.transit = false;
+      return idx;
+    }
 
     const wp = this.waypoints[idx];
-    if (wp.camera && typeof wp.camera === 'object') {
-      this.reach(wp, wp.camera, arrival);
-    }
-    if (wp.rendering && typeof wp.rendering === 'object') {
-      this.ports.applyRendering(wp.rendering);
-    }
+    const flight = this.applyWaypoint(wp, arrival);
+    this.activeFlight = flight;
+    // The gate is per DESTINATION: a newer match re-decides it, so a superseded
+    // flight cannot leave the overlays held open or closed on its behalf.
+    this.transit = flight !== null && wp.reveal === 'on_arrival';
     log.info(Modules.APP, `Waypoint ${idx} reached (${arrival})`);
+    this.announceArrival(idx, flight);
     return idx;
   }
 
-  /** Apply a waypoint's camera: verbatim at load, as a flight on a story step. */
-  private reach(wp: ZarrWaypoint, camera: ZarrCameraConfig, arrival: WaypointArrival): void {
+  /** Camera (a flight on a story step) and rendering overrides of a matched waypoint. */
+  private applyWaypoint(wp: ZarrWaypoint, arrival: WaypointArrival): Promise<FlightResult> | null {
+    const flight =
+      wp.camera && typeof wp.camera === 'object' ? this.reach(wp, wp.camera, arrival) : null;
+    if (wp.rendering && typeof wp.rendering === 'object') {
+      this.ports.applyRendering(wp.rendering);
+    }
+    return flight;
+  }
+
+  /**
+   * `waypoint-arrived`: right away for a snap or a camera-less waypoint, else
+   * when the flight resolves — unless a newer match superseded it meanwhile
+   * (see the port docs).
+   */
+  private announceArrival(idx: number, flight: Promise<FlightResult> | null): void {
+    if (!flight) {
+      this.ports.emit?.('waypoint-arrived', { index: idx, completed: true });
+      return;
+    }
+    void flight.then((result) => {
+      // Leaving and re-entering one waypoint reuses its index, so only the
+      // current flight may open the gate or announce arrival.
+      if (this.activeFlight !== flight) return;
+      this.activeFlight = null;
+      // Cleared BEFORE the event, so an arrival listener that re-runs the
+      // overlay visibility pass already sees the gate open.
+      this.transit = false;
+      this.ports.emit?.('waypoint-arrived', { index: idx, completed: result.completed });
+    });
+  }
+
+  /** The waypoint at `index`, for a listener that needs its `when` clause. */
+  getWaypoint(index: number): ZarrWaypoint | undefined {
+    return this.waypoints[index];
+  }
+
+  /**
+   * Apply a waypoint's camera: verbatim at load (returns null), as a flight on
+   * a story step (returns the flight, for the arrival event).
+   */
+  private reach(
+    wp: ZarrWaypoint,
+    camera: ZarrCameraConfig,
+    arrival: WaypointArrival
+  ): Promise<FlightResult> | null {
     const pose = this.ports.resolvePose(camera, this.ports.getLivePose());
     if (arrival === 'snap') {
       // Load-time framing: the authored pose verbatim.
       this.ports.snapTo(pose);
-      return;
+      return null;
     }
     // A story step. `duration_ms: 0` is still a flight of zero length so the
     // turntable rule applies to it too.
-    void this.ports.flyTo(pose, this.flightOptions(wp));
+    return this.ports.flyTo(pose, this.flightOptions(wp));
   }
 
   private flightOptions(wp: ZarrWaypoint): FlyToOptions {
@@ -231,5 +325,7 @@ export class WaypointDriver {
   /** Forget the current match so the next `evaluate` re-applies it. */
   reset(): void {
     this.current = -1;
+    this.activeFlight = null;
+    this.transit = false;
   }
 }

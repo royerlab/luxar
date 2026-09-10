@@ -45,12 +45,13 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
+COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
 #: ``(path, domain, why)`` — the reason is quoted back in the failure message.
-#: Viewer-source readers name their paths through ``viewer_source()``; the static
-#: scan below checks those literal calls against this declaration.
+#: Static scans cover ``viewer_source()`` calls, whole-path Python literals,
+#: repo-rooted Python reads, and repo-rooted TypeScript ``readFileSync`` calls.
 #:
 #: Not every row is load-bearing to the same degree: some are matched by a broad
 #: alternative that could not plausibly be removed (``Cargo.lock`` via the whole
@@ -92,9 +93,20 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py derives the published LFS candidate set from it",
     ),
     (
+        ".gitignore",
+        "py",
+        "test_wheel_source_completeness.py guards package sources against broad "
+        "ignore rules",
+    ),
+    (
         ".github/workflows/docs.yml",
         "py",
         "test_docs_workflow.py guards the Pages workflow itself",
+    ),
+    (
+        ".github/workflows/coverage.yml",
+        "py",
+        "this module parses it to pin the coverage split",
     ),
     (
         ".github/workflows/external-reference-audits.yml",
@@ -121,6 +133,27 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "and test_demo_commands.py grades the `clean-*` recipes and cache root",
     ),
     (
+        "Makefile",
+        "ts",
+        "generated-fixture-freshness.test.ts pins the ensure-viewer-fixtures E2E "
+        "wiring",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/unit/gallery-selection.test.ts",
+        "py",
+        "the classifier scans it for repo-rooted readFileSync inputs",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/unit/config/generated-fixture-freshness.test.ts",
+        "py",
+        "the classifier scans it for repo-rooted readFileSync inputs",
+    ),
+    (
+        "scripts/generate_builtin_colormaps.py",
+        "ts",
+        "the viewer's third-party notices test scrapes its colormap tables",
+    ),
+    (
         "scripts/gallery/manifest.json",
         "py",
         "test_demo_meta.py cross-validates it against the demo registry",
@@ -129,6 +162,16 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "scripts/gallery/manifest.json",
         "ts",
         "gallery-selection.test.ts validates README capture ids against it",
+    ),
+    (
+        "scripts/gallery/media-manifest.json",
+        "py",
+        "test_verify_media.py checks the committed media inventory against README.md",
+    ),
+    (
+        "scripts/gallery/media-manifest.json",
+        "ts",
+        "gallery-selection.test.ts validates README media keys against it",
     ),
     (
         "scripts/benchmarks/benchmark_bisect.sh",
@@ -149,10 +192,81 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "otherwise run zero tests",
     ),
     (
+        "scripts/zenodo_record_text/records.json",
+        "py",
+        "test_zenodo_record_text.py checks the committed snapshot index and HTML "
+        "digests",
+    ),
+    (
         "docs/guides/user/CLI_REFERENCE.md",
         "py",
         "test_docs_command_coverage.py drift-guards it against the live Typer app; "
         "its .md only selects docs-quality, which runs no pytest",
+    ),
+    (
+        "docs/guides/developer/DEMO_SITE_RUNBOOK.md",
+        "py",
+        "test_docs_workflow.py checks its section numbering and archive digest pins",
+    ),
+    (
+        "docs/api/gsplats.rst",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "docs/guides/user/FORMAT_AND_MIGRATION.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claims",
+    ),
+    (
+        "docs/guides/user/LUXAR_ZARR_FORMAT.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claims",
+    ),
+    (
+        "docs/specs/GSPLATS_ZARR_FORMAT.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/cli/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claims",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/lod/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/lod/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/gsplats_pipeline/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar-viewer/src/data/codecs/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts",
+        "py",
+        "test_format_contract.py checks its readable gsplats format range",
     ),
     (
         ".agents/skills/luxar-gsplat-pipeline/SKILL.md",
@@ -190,6 +304,16 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "README.md",
         "ts",
         "gallery-selection.test.ts derives the README capture set from it",
+    ),
+    (
+        "packages/luxar/README.md",
+        "py",
+        "test_readme_demo_docs.py drift-guards the published demo count",
+    ),
+    (
+        "packages/luxar-viewer/README.md",
+        "py",
+        "test_readme_demo_docs.py drift-guards the published demo count",
     ),
     (
         "packages/luxar/src/luxar/demos/README.md",
@@ -399,13 +523,33 @@ _PYTHON_SOURCE_ROOTS = (
     REPO / "stats",
 )
 
+_TYPESCRIPT_TEST_READER_INPUTS = frozenset(
+    {
+        "packages/luxar-viewer/src/tests/unit/gallery-selection.test.ts",
+        "packages/luxar-viewer/src/tests/unit/config/generated-fixture-freshness.test.ts",
+    }
+)
+
 _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     "packages/luxar-viewer/package.json": "read by check_version_consistency.py",
+    "packages/luxar-viewer/README.md": "read by test_readme_demo_docs.py",
+    "packages/luxar-viewer/src/data/codecs/README.md": (
+        "read by test_format_contract.py through CURRENT_VERSION_CLAIMS"
+    ),
+    "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts": (
+        "read by test_format_contract.py through CURRENT_VERSION_CLAIMS"
+    ),
     "packages/luxar-viewer/src/types/format-contract.ts": (
         "generated and checked by scripts/gen_format_contract.py"
     ),
     "packages/luxar-viewer/src/tests/global-setup.ts": (
         "matched by test_fixture_environment.py through git grep"
+    ),
+    "packages/luxar-viewer/src/tests/unit/gallery-selection.test.ts": (
+        "scanned for repo-rooted readFileSync inputs by this module"
+    ),
+    "packages/luxar-viewer/src/tests/unit/config/generated-fixture-freshness.test.ts": (
+        "scanned for repo-rooted readFileSync inputs by this module"
     ),
     "packages/luxar-viewer/src/tests/README.md": (
         "matched by test_fixture_environment.py through git grep"
@@ -413,6 +557,39 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     "packages/luxar-viewer/tests/fixtures/README.md": (
         "matched by test_fixture_environment.py through git grep"
     ),
+}
+
+_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS = {
+    ".github/workflows/ci.yml": "owned by the explicit all-domains workflow block",
+    ".github/workflows/publish.yml": (
+        "test_set_version.py writes a fixture workflow at this path"
+    ),
+    ".github/workflows/publish-npm.yml": (
+        "test_set_version.py writes a fixture workflow at this path"
+    ),
+    "CHANGELOG.md": "read by a whole-tree prose vocabulary scan",
+    "packages/luxar-viewer/playwright.gallery.config.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar-viewer/src/tests/screenshots/gallery-media-reporting.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar-viewer/src/tests/screenshots/gallery-timelapse-settle.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar/src/luxar/shading/README.md": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+}
+
+_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS = {
+    ".github/workflows/ci.yml": "owned by the explicit all-domains workflow block",
 }
 
 #: The rule that puts the workflow itself in every domain. Extracted as text so a
@@ -555,6 +732,612 @@ def test_inputs_without_python_readers_do_not_claim_the_python_domain(
         f"{path} sets dom_py even though no Python gate reads it; narrow the "
         "cross-language viewer pattern"
     )
+
+
+def _tracked_paths(repo: Path) -> set[str]:
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return set(proc.stdout.split("\0")) - {""}
+
+
+def _is_python_test_source(source_root: Path, source_path: Path) -> bool:
+    relative_parts = source_path.relative_to(source_root).parts
+    return (
+        source_path.name.startswith("test_")
+        or source_path.name == "conftest.py"
+        or source_root.name == "tests"
+        or "tests" in relative_parts[:-1]
+    )
+
+
+def _tracked_non_python_test_path_literals(
+    source_roots: tuple[Path, ...] = _PYTHON_SOURCE_ROOTS,
+    *,
+    repo: Path = REPO,
+    tracked_paths: set[str] | None = None,
+) -> set[str]:
+    """Find whole tracked non-``.py`` path literals in pytest test modules.
+
+    Test modules, ``conftest.py`` files, and helper modules below ``tests/``
+    directories are scanned; other modules commonly name generated outputs rather
+    than committed inputs. This file is excluded because its control tables name
+    paths with every ownership shape. This literal-only pass cannot derive joined
+    paths or f-strings; ``_tracked_python_test_path_reads`` separately resolves
+    repo-rooted ``Path`` joins that flow into file reads.
+    """
+    tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
+    paths: set[str] = set()
+    this_file = Path(__file__).resolve()
+    for source_root in source_roots:
+        for source_path in source_root.rglob("*.py"):
+            if not _is_python_test_source(source_root, source_path):
+                continue
+            if source_path.resolve() == this_file:
+                continue
+            tree = ast.parse(
+                source_path.read_text(encoding="utf-8"), filename=str(source_path)
+            )
+            paths.update(
+                node.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in tracked_paths
+                and not node.value.endswith(".py")
+            )
+    return paths
+
+
+def _static_python_path(
+    node: ast.expr,
+    bindings: dict[str, Path],
+    source_path: Path,
+) -> Path | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return Path(node.value)
+    if isinstance(node, ast.Name):
+        if node.id == "__file__":
+            return source_path
+        return bindings.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        left = _static_python_path(node.left, bindings, source_path)
+        right = _static_python_path(node.right, bindings, source_path)
+        return left / right if left is not None and right is not None else None
+    if isinstance(node, ast.Attribute) and node.attr == "parent":
+        value = _static_python_path(node.value, bindings, source_path)
+        return value.parent if value is not None else None
+    if isinstance(node, ast.Subscript):
+        return _static_python_parent(node, bindings, source_path)
+    if isinstance(node, ast.Call):
+        return _static_python_path_call(node, bindings, source_path)
+    return None
+
+
+def _static_python_parent(
+    node: ast.Subscript,
+    bindings: dict[str, Path],
+    source_path: Path,
+) -> Path | None:
+    if (
+        isinstance(node.value, ast.Attribute)
+        and node.value.attr == "parents"
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, int)
+    ):
+        value = _static_python_path(node.value.value, bindings, source_path)
+        if value is None:
+            return None
+        try:
+            return value.parents[node.slice.value]
+        except IndexError:
+            return None
+    return None
+
+
+def _static_python_path_call(
+    node: ast.Call,
+    bindings: dict[str, Path],
+    source_path: Path,
+) -> Path | None:
+    if len(node.args) == 1 and not node.keywords:
+        if isinstance(node.func, ast.Name) and node.func.id == "Path":
+            return _static_python_path(node.args[0], bindings, source_path)
+    if (
+        not node.args
+        and not node.keywords
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "resolve"
+    ):
+        value = _static_python_path(node.func.value, bindings, source_path)
+        return value.resolve() if value is not None else None
+    return None
+
+
+def _python_path_bindings(tree: ast.Module, source_path: Path) -> dict[str, Path]:
+    bindings: dict[str, Path] = {}
+    for statement in tree.body:
+        targets: list[ast.expr]
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+            value_node = statement.value
+        elif isinstance(statement, ast.AnnAssign):
+            targets = [statement.target]
+            value_node = statement.value
+        else:
+            continue
+        if value_node is None:
+            continue
+        value = _static_python_path(value_node, bindings, source_path)
+        if value is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                bindings[target.id] = value
+    return bindings
+
+
+def _python_open_is_read(call: ast.Call, mode_index: int) -> bool:
+    mode_node: ast.expr | None = None
+    if len(call.args) > mode_index:
+        mode_node = call.args[mode_index]
+    else:
+        mode_node = next(
+            (keyword.value for keyword in call.keywords if keyword.arg == "mode"), None
+        )
+    if mode_node is None:
+        return True
+    return (
+        isinstance(mode_node, ast.Constant)
+        and isinstance(mode_node.value, str)
+        and not set(mode_node.value) & set("wax+")
+    )
+
+
+def _python_read_path(
+    call: ast.Call,
+    bindings: dict[str, Path],
+    source_path: Path,
+) -> Path | None:
+    if isinstance(call.func, ast.Attribute):
+        if call.func.attr in {"read_text", "read_bytes"}:
+            return _static_python_path(call.func.value, bindings, source_path)
+        if call.func.attr == "open" and _python_open_is_read(call, 0):
+            return _static_python_path(call.func.value, bindings, source_path)
+    if (
+        isinstance(call.func, ast.Name)
+        and call.func.id == "open"
+        and call.args
+        and _python_open_is_read(call, 1)
+    ):
+        return _static_python_path(call.args[0], bindings, source_path)
+    return None
+
+
+def _tracked_python_test_path_reads(
+    source_roots: tuple[Path, ...] = _PYTHON_SOURCE_ROOTS,
+    *,
+    repo: Path = REPO,
+    tracked_paths: set[str] | None = None,
+) -> set[str]:
+    """Find committed-file reads through statically resolvable ``Path`` chains.
+
+    Module-level bindings may derive from ``__file__`` through ``Path``, ``resolve``,
+    ``parent``/``parents``, and ``/``. Only ``read_text``, ``read_bytes``, and
+    read-only ``open`` calls whose final path stays below ``repo``, names a tracked
+    file, and does not name Python source are retained.
+    """
+    tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
+    repo_resolved = repo.resolve()
+    paths: set[str] = set()
+    this_file = Path(__file__).resolve()
+    for source_root in source_roots:
+        for source_path in source_root.rglob("*.py"):
+            if not _is_python_test_source(source_root, source_path):
+                continue
+            source_path_resolved = source_path.resolve()
+            if source_path_resolved == this_file:
+                continue
+            tree = ast.parse(
+                source_path.read_text(encoding="utf-8"), filename=str(source_path)
+            )
+            bindings = _python_path_bindings(tree, source_path_resolved)
+            for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+                path = _python_read_path(call, bindings, source_path_resolved)
+                if path is None:
+                    continue
+                try:
+                    relative = path.resolve().relative_to(repo_resolved).as_posix()
+                except ValueError:
+                    continue
+                if relative in tracked_paths and not relative.endswith(".py"):
+                    paths.add(relative)
+    return paths
+
+
+_TYPESCRIPT_REPO_READ_RE = re.compile(
+    r"""\breadFileSync\(\s*
+    (?:(?:path\.)?(?:join|resolve))\(\s*REPO_ROOT
+    (?P<arguments>(?:\s*,\s*(?:'[^'\r\n]*'|"[^"\r\n]*"))+)
+    \s*\)""",
+    re.VERBOSE,
+)
+_TYPESCRIPT_PATH_PART_RE = re.compile(r"'([^'\r\n]*)'|\"([^\"\r\n]*)\"")
+
+
+def _tracked_typescript_test_path_reads(
+    source_roots: tuple[Path, ...] = (REPO / "packages/luxar-viewer/src",),
+    *,
+    repo: Path = REPO,
+    tracked_paths: set[str] | None = None,
+) -> tuple[set[str], set[str]]:
+    """Find literal ``readFileSync(join|resolve(REPO_ROOT, ...))`` test inputs.
+
+    This intentionally scans only ``src/**/*.test.ts`` calls rooted at the literal
+    ``REPO_ROOT`` identifier. It does not cover ``import.meta``-rooted reads,
+    ``*.spec.ts`` files, or ``scripts/*.test.mjs``. Existing matched reader files
+    therefore need explicit ``dom_py`` ownership so edits to the guard run pytest.
+    A brand-new reader is reported the next time another Python-relevant change runs
+    this repository-wide check.
+    """
+    tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
+    paths: set[str] = set()
+    reader_paths: set[str] = set()
+    for source_root in source_roots:
+        for source_path in source_root.rglob("*.test.ts"):
+            source = source_path.read_text(encoding="utf-8")
+            matches = list(_TYPESCRIPT_REPO_READ_RE.finditer(source))
+            if matches:
+                reader_paths.add(source_path.relative_to(repo).as_posix())
+            for match in matches:
+                parts = [
+                    single or double
+                    for single, double in _TYPESCRIPT_PATH_PART_RE.findall(
+                        match.group("arguments")
+                    )
+                ]
+                relative = Path(*parts).as_posix()
+                if relative in tracked_paths:
+                    paths.add(relative)
+    return paths, reader_paths
+
+
+def _assert_unclassified_test_paths_are_owned(
+    literal_paths: set[str], read_paths: set[str]
+) -> None:
+    python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
+    literal_exceptions = set(_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS)
+    read_exceptions = set(_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS)
+    missing = sorted(
+        (literal_paths - python_gate_inputs - literal_exceptions)
+        | (read_paths - python_gate_inputs - read_exceptions)
+    )
+    stale_literal_exceptions = sorted(literal_exceptions - literal_paths)
+    stale_read_exceptions = sorted(read_exceptions - read_paths)
+    assert not missing and not stale_literal_exceptions and not stale_read_exceptions, (
+        "tracked non-Python paths named by pytest tests must have dom_py "
+        f"GATE_INPUTS rows or justified exclusions: {missing}; Python test "
+        "literal exclusions no longer describe unclassified literal results; "
+        f"remove or update them: {stale_literal_exceptions}; Python test read "
+        "exclusions no longer describe unclassified read results; remove or "
+        f"update them: {stale_read_exceptions}"
+    )
+
+
+def _assert_typescript_test_paths_are_owned(paths: set[str], pattern: str) -> None:
+    unclassified = {path for path in paths if not _classifies(pattern, path)}
+    typescript_gate_inputs = {
+        path for path, domain, _why in GATE_INPUTS if domain == "ts"
+    }
+    missing = sorted(unclassified - typescript_gate_inputs)
+    assert not missing, (
+        "tracked paths read by TypeScript tests must have dom_ts GATE_INPUTS rows: "
+        f"{missing}"
+    )
+
+
+def _assert_typescript_test_reader_paths_are_owned(
+    reader_paths: set[str],
+    declared_reader_paths: set[str] | frozenset[str] = _TYPESCRIPT_TEST_READER_INPUTS,
+) -> None:
+    python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
+    missing = sorted(reader_paths - python_gate_inputs)
+    undeclared = sorted(reader_paths - declared_reader_paths)
+    stale = sorted(declared_reader_paths - reader_paths)
+    assert not missing and not undeclared and not stale, (
+        "TypeScript test reader sources must have dom_py GATE_INPUTS rows: "
+        f"{missing}; update the declared reader set for new sources: {undeclared}; "
+        f"remove stale reader declarations: {stale}"
+    )
+
+
+def test_python_gate_input_scan_uses_only_whole_tracked_test_source_literals(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "test_reader.py").write_text(
+        'INPUT = "tracked.json"\nSOURCE = "tracked.py"\nMISSING = "missing.json"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "conftest.py").write_text('INPUT = "fixture.json"\n', encoding="utf-8")
+    (tmp_path / "tests" / "_gate_helpers.py").write_text(
+        'INPUT = "helper.json"\n', encoding="utf-8"
+    )
+    (tmp_path / "generator.py").write_text(
+        'OUTPUT = "generated.json"\n', encoding="utf-8"
+    )
+
+    paths = _tracked_non_python_test_path_literals(
+        (tmp_path,),
+        repo=tmp_path,
+        tracked_paths={
+            "tracked.json",
+            "tracked.py",
+            "generated.json",
+            "fixture.json",
+            "helper.json",
+        },
+    )
+
+    assert paths == {"tracked.json", "fixture.json", "helper.json"}
+
+
+def test_python_gate_input_scan_includes_helpers_when_source_root_is_tests(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "tests"
+    source_root.mkdir()
+    (source_root / "_gate_helpers.py").write_text(
+        'INPUT = "helper.json"\n', encoding="utf-8"
+    )
+
+    paths = _tracked_non_python_test_path_literals(
+        (source_root,),
+        repo=tmp_path,
+        tracked_paths={"helper.json"},
+    )
+
+    assert paths == {"helper.json"}
+
+
+def test_python_gate_input_scan_resolves_only_repo_rooted_reads(tmp_path: Path) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_reader.py").write_text(
+        """\
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+CAPTURE = REPO / "scripts" / "capture.py"
+SNAPSHOTS = CAPTURE.parent
+
+(SNAPSHOTS / "records.json").read_text()
+(REPO / "bytes.bin").read_bytes()
+(REPO / "opened.json").open("rb")
+open(REPO / "builtin.json", encoding="utf-8")
+(REPO.parent / "outside.json").read_text()
+(REPO / "untracked.json").read_text()
+(REPO / "tracked.py").read_text()
+(REPO / "written.json").write_text("generated")
+(REPO / "appended.json").open("a")
+(REPO / "keyword-written.json").open(mode="w")
+(REPO / "exclusive.json").open("x")
+(REPO / "update.json").open("r+")
+(REPO / dynamic_name).read_text()
+""",
+        encoding="utf-8",
+    )
+
+    paths = _tracked_python_test_path_reads(
+        (tmp_path,),
+        repo=tmp_path,
+        tracked_paths={
+            "scripts/records.json",
+            "bytes.bin",
+            "opened.json",
+            "builtin.json",
+            "written.json",
+            "appended.json",
+            "keyword-written.json",
+            "tracked.py",
+            "exclusive.json",
+            "update.json",
+        },
+    )
+
+    assert paths == {
+        "scripts/records.json",
+        "bytes.bin",
+        "opened.json",
+        "builtin.json",
+    }
+
+
+def test_typescript_gate_input_scan_resolves_only_repo_rooted_reads(
+    tmp_path: Path,
+) -> None:
+    tests = tmp_path / "src/tests/unit"
+    tests.mkdir(parents=True)
+    (tests / "reader.test.ts").write_text(
+        """\
+readFileSync(path.join(REPO_ROOT, 'scripts', 'manifest.json'), 'utf-8');
+readFileSync(resolve(REPO_ROOT, "Makefile"), "utf8");
+readFileSync(path.resolve(REPO_ROOT, 'README.md'));
+readFileSync(path.join(REPO_ROOT, 'untracked.json'), 'utf-8');
+writeFileSync(path.join(REPO_ROOT, 'written.json'), 'generated');
+readFileSync(path.join(REPO_ROOT, dynamicName), 'utf-8');
+""",
+        encoding="utf-8",
+    )
+    (tests / "ignored.spec.ts").write_text(
+        "readFileSync(resolve(REPO_ROOT, 'ignored.json'), 'utf8');\n",
+        encoding="utf-8",
+    )
+
+    paths, reader_paths = _tracked_typescript_test_path_reads(
+        (tmp_path / "src",),
+        repo=tmp_path,
+        tracked_paths={
+            "scripts/manifest.json",
+            "Makefile",
+            "README.md",
+            "written.json",
+            "ignored.json",
+        },
+    )
+
+    assert paths == {"scripts/manifest.json", "Makefile", "README.md"}
+    assert reader_paths == {"src/tests/unit/reader.test.ts"}
+
+
+def test_python_gate_input_scan_rejects_missing_ownership() -> None:
+    with pytest.raises(AssertionError, match="must have dom_py GATE_INPUTS rows"):
+        _assert_unclassified_test_paths_are_owned(
+            set(_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS) | {"unowned.json"},
+            set(_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS),
+        )
+
+
+def test_typescript_gate_input_scan_rejects_missing_ownership() -> None:
+    with pytest.raises(AssertionError, match="must have dom_ts GATE_INPUTS rows"):
+        _assert_typescript_test_paths_are_owned({"unowned.json"}, "^owned\\.json$")
+
+
+def test_typescript_gate_input_reader_scan_rejects_missing_python_ownership() -> None:
+    reader = "packages/luxar-viewer/src/tests/unit/unowned-reader.test.ts"
+    with pytest.raises(AssertionError, match="must have dom_py GATE_INPUTS rows"):
+        _assert_typescript_test_reader_paths_are_owned({reader}, {reader})
+
+
+def test_typescript_gate_input_reader_scan_rejects_stale_declarations() -> None:
+    with pytest.raises(AssertionError, match="remove stale reader declarations"):
+        _assert_typescript_test_reader_paths_are_owned(
+            set(),
+            {"packages/luxar-viewer/src/tests/unit/removed-reader.test.ts"},
+        )
+
+
+def test_python_gate_input_scan_rejects_stale_exclusions() -> None:
+    with pytest.raises(AssertionError, match="exclusions no longer describe"):
+        _assert_unclassified_test_paths_are_owned(set(), set())
+
+
+def test_python_gate_input_scan_reports_missing_and_stale_together() -> None:
+    with pytest.raises(AssertionError) as error:
+        _assert_unclassified_test_paths_are_owned({"unowned.json"}, set())
+    assert "must have dom_py GATE_INPUTS rows" in str(error.value)
+    assert "exclusions no longer describe" in str(error.value)
+
+
+def test_python_gate_input_scan_literal_exclusion_cannot_excuse_read() -> None:
+    fixture_path = "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts"
+    with pytest.raises(AssertionError, match=re.escape(fixture_path)):
+        _assert_unclassified_test_paths_are_owned(
+            set(_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS),
+            set(_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS) | {fixture_path},
+        )
+
+
+def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
+    assert all(
+        reason and "\n" not in reason
+        for reason in (
+            *_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS.values(),
+            *_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS.values(),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".gitignore.bak",
+        "scripts/gallery/media-manifest.json.bak",
+        "docs/api/gsplats.rst.bak",
+        "docs/guides/developer/archive/DEMO_SITE_RUNBOOK.md",
+        "docs/guides/user/archive/FORMAT_AND_MIGRATION.md",
+        "docs/specs/GSPLATS_ZARR_FORMAT.md.bak",
+        "packages/luxar/subdir/README.md",
+        "packages/luxar-viewer/docs/README.md",
+        "packages/luxar/src/luxar/gsplats/archive/README.md",
+        "packages/luxar-viewer/src/data/codecs/archive/README.md",
+        "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts.bak",
+        "packages/luxar-viewer/src/tests/unit/whatever-new.test.ts",
+        "scripts/zenodo_record_text_backup/records.json",
+        "scripts/zenodo_record_text.md",
+    ],
+)
+def test_derived_python_gate_input_patterns_are_exact(workflow: str, path: str) -> None:
+    assert not _classifies(_domain_patterns(workflow)["py"], path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "subdir/Makefile",
+        "docs/Makefile.md",
+        "scripts/generate_builtin_colormaps_extra.py",
+        "scripts/gallery/media-manifest.json.bak",
+    ],
+)
+def test_derived_typescript_gate_input_patterns_are_exact(
+    workflow: str, path: str
+) -> None:
+    assert not _classifies(_domain_patterns(workflow)["ts"], path)
+
+
+def test_python_test_inputs_are_statically_owned_by_the_python_gate(
+    workflow: str,
+) -> None:
+    """Every discovered Python test input is owned or explained."""
+    literal_paths = _tracked_non_python_test_path_literals()
+    read_paths = _tracked_python_test_path_reads()
+    assert literal_paths, (
+        "no Python test path literals found; the ownership guard is vacuous"
+    )
+    assert read_paths, "no Python test path reads found; the ownership guard is vacuous"
+    assert {
+        "docs/guides/developer/DEMO_SITE_RUNBOOK.md",
+        "scripts/zenodo_record_text/records.json",
+    } <= read_paths, (
+        "these paths pin the Python read scan against going vacuous; if a genuine "
+        "reader was removed, replace its path with a current committed-file canary"
+    )
+    python_pattern = _domain_patterns(workflow)["py"]
+    unclassified_literals = {
+        path for path in literal_paths if not _classifies(python_pattern, path)
+    }
+    unclassified_reads = {
+        path for path in read_paths if not _classifies(python_pattern, path)
+    }
+    _assert_unclassified_test_paths_are_owned(unclassified_literals, unclassified_reads)
+
+
+def test_typescript_test_path_reads_are_statically_owned_by_the_typescript_gate(
+    workflow: str,
+) -> None:
+    paths, reader_paths = _tracked_typescript_test_path_reads()
+    assert paths, "no TypeScript test path reads found; the ownership guard is vacuous"
+    assert reader_paths, (
+        "no TypeScript test reader sources found; the ownership guard is vacuous"
+    )
+    assert {
+        "Makefile",
+        "README.md",
+        "scripts/gallery/manifest.json",
+        "scripts/gallery/media-manifest.json",
+    } <= paths, (
+        "these paths pin the TypeScript read scan against going vacuous; if a "
+        "genuine reader was removed, replace its path with a current committed-file "
+        "canary"
+    )
+    _assert_typescript_test_reader_paths_are_owned(reader_paths)
+    typescript_pattern = _domain_patterns(workflow)["ts"]
+    _assert_typescript_test_paths_are_owned(paths, typescript_pattern)
 
 
 def _viewer_source_calls(
@@ -735,6 +1518,44 @@ def test_the_workflow_itself_selects_every_language_domain(workflow: str) -> Non
             f"a ci.yml-only diff no longer sets dom_{domain}, so that suite would "
             f"not run for the edit that changed how it is invoked — body: {body!r}"
         )
+
+
+def test_mobile_e2e_suite_is_enabled_in_ci(workflow: str) -> None:
+    """The mobile suite must remain live, correctly gated, and diagnosable."""
+    jobs = yaml.safe_load(workflow)["jobs"]
+    job = jobs["e2e-tests"]
+
+    assert set(job["needs"]) == {"changes", "python-tests", "typescript-tests"}
+    assert job["if"] == (
+        "${{ !cancelled() && needs.python-tests.result != 'failure' && "
+        "needs.typescript-tests.result != 'failure' && "
+        "needs.changes.outputs.dom_ts != 'false' }}"
+    )
+    reclaim_step = job["steps"][0]
+    assert reclaim_step == jobs["typescript-tests"]["steps"][0]
+    assert (reclaim_step["name"], reclaim_step["if"]) == (
+        "Free disk space on hosted runners",
+        "runner.environment == 'github-hosted'",
+    )
+    mobile_step = next(
+        step for step in job["steps"] if step.get("run") == "make test-e2e-mobile"
+    )
+    assert mobile_step["timeout-minutes"] == 45
+    assert job["timeout-minutes"] == 75
+
+    mobile_config = (
+        REPO / "packages/luxar-viewer/playwright.mobile.config.ts"
+    ).read_text(encoding="utf-8")
+    output_dir = re.search(r"outputDir:\s*['\"]([^'\"]+)['\"]", mobile_config)
+    assert output_dir, "mobile Playwright config must declare outputDir"
+    upload_step = next(
+        step
+        for step in job["steps"]
+        if "actions/upload-artifact" in step.get("uses", "")
+    )
+    assert upload_step["with"]["path"] == (
+        f"packages/luxar-viewer/{output_dir.group(1)}"
+    )
 
 
 def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> None:
@@ -938,6 +1759,9 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     assert claude_command is not None
 
     ci_steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
+    lint_steps = [step for step in ci_steps if step.get("run") == "hatch run lint"]
+    assert len(lint_steps) == 1
+
     commands = {
         "pyproject.toml": next(
             command for command in lint_commands if command.startswith("mypy ")
@@ -947,9 +1771,6 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
             hook["entry"] for hook in precommit_hooks if hook.get("id") == "mypy"
         ),
         "CLAUDE.md": claude_command.group(0).removesuffix("  # Type check"),
-        ".github/workflows/ci.yml": next(
-            step["run"] for step in ci_steps if step.get("name") == "Type check (mypy)"
-        ),
     }
 
     targets = {}
@@ -1013,6 +1834,61 @@ def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
     )
     assert "--ref dev" in guard["run"]
     assert "exit 1" in guard["run"]
+
+
+def test_pull_requests_skip_coverage_while_dev_paths_enforce_and_observe_it(
+    workflow: str,
+) -> None:
+    """Pin the coverage split so the 89% gate cannot be lost silently.
+
+    Coverage instrumentation is the dominant cost of ``python-tests``, so PRs run
+    the ``-m 'not slow'`` suite plain (``test-nocov``). Pushes to ``dev`` retain
+    ``test-cov`` under the protected ``python-tests (3.12)`` context, while the
+    separate ``coverage.yml`` workflow records the same result without cancellation.
+    Its context is advisory until repository protection requires it. Without this
+    test either path could be lost silently -- the fail-open class this module exists
+    to catch.
+    """
+    # (a) ci.yml's test step and hatch scripts: test-nocov on pull_request,
+    # test-cov otherwise, with identical target defaults and coverage only in cov.
+    steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
+    run = next(step["run"] for step in steps if "test-nocov" in step.get("run", ""))
+    assert '"${{ github.event_name }}" = "pull_request"' in run
+    assert "hatch run test-nocov" in run
+    assert "hatch run test-cov" in run
+    # test-nocov only on the pull_request branch, test-cov only on the else branch.
+    assert run.index("test-nocov") < run.index("else") < run.index("hatch run test-cov")
+    with (REPO / "pyproject.toml").open("rb") as stream:
+        scripts = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"]["scripts"]
+    test_cov = scripts["test-cov"]
+    test_nocov = scripts["test-nocov"]
+    args_pattern = re.compile(r"\{args:([^}]*)\}")
+    assert args_pattern.search(test_cov).group(1) == args_pattern.search(
+        test_nocov
+    ).group(1)
+    assert "--cov" in test_cov
+    assert "--cov" not in test_nocov
+
+    # (b) the dedicated workflow starts coverage on every push to dev.
+    assert COVERAGE_WORKFLOW.exists(), "the dedicated coverage workflow is missing"
+    coverage_text = COVERAGE_WORKFLOW.read_text(encoding="utf-8")
+    coverage = yaml.safe_load(coverage_text)
+    triggers = yaml.load(coverage_text, Loader=yaml.BaseLoader)["on"]
+    assert triggers["push"]["branches"] == ["dev"]
+    # A schedule trigger would attach its verdict to the default branch, not dev.
+    assert "schedule" not in triggers
+    # Per-COMMIT group, so a newer dev push cannot cancel an older run.
+    assert coverage["concurrency"]["group"] == "coverage-${{ github.sha }}"
+    assert coverage["concurrency"]["cancel-in-progress"] is False
+    coverage_job = coverage["jobs"]["coverage"]
+    assert coverage_job["runs-on"] == (
+        "${{ vars.LUXAR_CI_FORCE_HOSTED == '1' && 'ubuntu-latest' || 'obsidian' }}"
+    )
+    assert coverage_job["env"]["PYTEST_ADDOPTS"] == (
+        "${{ vars.LUXAR_CI_FORCE_HOSTED != '1' && '-n 2 --dist loadfile' || '' }}"
+    )
+    coverage_runs = "\n".join(step.get("run", "") for step in coverage_job["steps"])
+    assert "hatch run test-cov" in coverage_runs
 
 
 def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:

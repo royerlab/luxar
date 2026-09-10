@@ -120,7 +120,18 @@ export class RefreshRateEstimator {
   // MIN_THROTTLE_PLATEAU); latched here until the manager consumes it.
   private distressSignal = false;
 
-  constructor(private readonly fallback: number) {}
+  /**
+   * @param fallback - Cap assumed until the display proves a higher rate.
+   * @param ceiling - Upper bound on the REPORTED cap (`0` = none). The learned
+   *   mark itself is never clamped — throttle detection still compares
+   *   against what the display actually demonstrated — only what the
+   *   thresholds derive from is. A 120 Hz ProMotion tablet with a 60 Hz
+   *   ceiling scales down below 45 fps rather than below 90.
+   */
+  constructor(
+    private readonly fallback: number,
+    private readonly ceiling: number = 0
+  ) {}
 
   /**
    * Feed one window-FPS sample (callers should only feed full-span,
@@ -151,9 +162,10 @@ export class RefreshRateEstimator {
     this.detectThrottle(timestamp);
   }
 
-  /** Current cap estimate for threshold derivation. */
+  /** Current cap estimate for threshold derivation (bounded by `ceiling` when set). */
   getCap(): number {
-    return this.throttled ? this.mark : Math.max(this.mark, this.fallback);
+    const cap = this.throttled ? this.mark : Math.max(this.mark, this.fallback);
+    return this.ceiling > 0 ? Math.min(cap, this.ceiling) : cap;
   }
 
   /**

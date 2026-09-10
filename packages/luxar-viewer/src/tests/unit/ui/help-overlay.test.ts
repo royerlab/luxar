@@ -4,6 +4,10 @@
 // helpers (`ui/error-overlay`) live in `error-overlay.test.ts`.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../utils/input-capabilities';
 import { isTypingInInput } from '../../../utils/dom/focus';
 import { InputContext, InputContextManager } from '../../../input/input-handler/context-manager';
 import { registerAllKeyBindings } from '../../../input/input-handler/key-bindings/register-all';
@@ -105,6 +109,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
         cycleDataMonitor: vi.fn(),
         recenterCamera: vi.fn(),
         exportViewerState: vi.fn(),
+        closeAllPanels: vi.fn(),
         handleEscape: vi.fn(),
         shouldHandleSpaceKey: () => true,
       },
@@ -612,5 +617,53 @@ describe('hideHelpOverlay', () => {
 
   it('should be safe to call when no overlay exists', () => {
     expect(() => hideHelpOverlay()).not.toThrow();
+  });
+});
+
+describe('help overlay — Touch section', () => {
+  afterEach(() => {
+    hideHelpOverlay();
+    resetInputProfileForTests();
+  });
+
+  it('is absent on a mouse-and-keyboard machine (desktop help text unchanged)', () => {
+    resetInputProfileForTests();
+    showHelpOverlay(new Map());
+    const titles = Array.from(
+      document.querySelectorAll('.luxar-help-overlay__section-title span')
+    ).map((el) => el.textContent);
+    expect(titles).not.toContain('Touch');
+  });
+
+  it('is shown on a device with touch points', () => {
+    setInputProfileOverride('touch');
+    showHelpOverlay(new Map());
+    const touchSection = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__section')
+    ).find(
+      (section) =>
+        section.querySelector('.luxar-help-overlay__section-title span')?.textContent === 'Touch'
+    );
+
+    expect(touchSection).toBeDefined();
+    expect(touchSection?.querySelector('.luxar-help-overlay__section-note')?.textContent).toBe(
+      'Phones and tablets — in ortho mode one finger pans and twist does not roll'
+    );
+    const rows = Array.from(
+      touchSection?.querySelectorAll<HTMLElement>('.luxar-help-overlay__row') ?? []
+    ).map((row) => ({
+      keys: Array.from(row.querySelectorAll('kbd')).map((key) => key.textContent),
+      label: row.querySelector('.luxar-help-overlay__desc')?.textContent,
+    }));
+
+    expect(rows).toEqual([
+      { keys: ['1 finger'], label: 'Rotate (fly mode: look around)' },
+      { keys: ['2 fingers'], label: 'Pan (fly mode: strafe)' },
+      { keys: ['Pinch'], label: 'Zoom (fly mode: move forward / back)' },
+      { keys: ['Twist'], label: 'Roll around the view axis' },
+      { keys: ['Tap'], label: 'Pick the element — and open its link, if it has one' },
+      { keys: ['Press and hold'], label: 'Actions menu — the touch equivalent of right click' },
+      { keys: ['Double tap'], label: 'Recenter camera on scene' },
+    ]);
   });
 });

@@ -15,11 +15,11 @@
  *
  * Two deliberate shapes:
  *
- * - **The source returns materialized bytes, not a `Response`.** The old L3
- *   block held a `FetchResponseScope` and had to `dispose()` it in a `finally`
- *   to cancel bodies it never read. A zip member has no `Response` at all, so
- *   that could not survive as a shared contract. Ownership of the response
- *   lifetime moves INTO the HTTP source, where it belongs.
+ * - **The source returns materialized bytes, not a `Response`.** A zip member
+ *   has no `Response`, so response lifetime cannot survive as a shared source
+ *   contract. The HTTP source delegates that lifetime to `fetchWithRetry`,
+ *   whose consumer runs inside the shared fetch-gate lease and cancels unread
+ *   bodies before release.
  * - **`bytesOverWire` is separate from `data.byteLength`.** They are equal for
  *   plain HTTP, but a compressed archive member transfers fewer bytes than it
  *   yields. Collapsing the two would make the bandwidth meter over-report a
@@ -43,16 +43,15 @@ export type ChunkFetchOutcome =
   | { kind: 'missing' }
   /** A caller signal, a store disposal, or an invalidation cancelled the read. */
   | { kind: 'aborted' }
-  /** Transient failure after the source exhausted its own retries. */
+  /** A non-missing HTTP failure or transient failure after retries. */
   | { kind: 'error'; cause: Error }
   /**
    * The CONTAINER is unreadable — not this one key.
    *
    * Distinct from `error` because the store's handling of the two must differ:
-   * a failed chunk degrades to a fill-valued read, which is right for one
-   * chunk and catastrophic for the whole store (a misconfigured server would
-   * render an empty scene instead of saying what is wrong). The store rethrows
-   * this so the loader surfaces `cause`.
+   * an ordinary source error is retryable by the loader, while a container
+   * fault needs its authored recovery path. The store rethrows both rather than
+   * allowing zarrita to fabricate fill values.
    */
   | { kind: 'fatal'; cause: Error };
 

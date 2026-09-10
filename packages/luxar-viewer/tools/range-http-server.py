@@ -12,6 +12,10 @@ a browser. It speaks exactly as much of RFC 9110 §14 as a zip reader needs: a
 single ``bytes=`` range, answered ``206`` with ``Content-Range``; ``416`` when
 unsatisfiable; plain ``200`` otherwise.
 
+The private ``/__luxar_slow_wave__`` endpoint supports the hermetic slow-link
+Playwright regression: it sends every response's headers immediately, streams
+the first body for 8.5 seconds, then releases the remaining bodies.
+
 CORS is wide open and ``Accept-Ranges``/``Content-Range`` are exposed, because
 the viewer runs on the Vite port and the data on this one.
 
@@ -25,12 +29,19 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from threading import Lock
 from typing import BinaryIO
+from urllib.parse import parse_qs, urlsplit
 
 #: ``bytes=<start>-<end>`` / ``bytes=<start>-`` / ``bytes=-<suffix>``
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
+_SLOW_WAVE_PATH = "/__luxar_slow_wave__"
+_SLOW_WAVE_CHUNK = b"x" * 256
+_SLOW_WAVE_CHUNKS = 17
+_SLOW_WAVE_INTERVAL_SECONDS = 0.5
 
 
 def parse_byte_range(header: str, size: int) -> tuple[int, int] | None:
@@ -88,6 +99,8 @@ class RangeHTTPRequestHandler(SimpleHTTPRequestHandler):
     """``SimpleHTTPRequestHandler`` plus single-range support and CORS."""
 
     protocol_version = "HTTP/1.1"
+    _slow_wave_lock = Lock()
+    _slow_wave_leaders: set[str] = set()
 
     def end_headers(self) -> None:
         self.send_header("Accept-Ranges", "bytes")
@@ -104,6 +117,37 @@ class RangeHTTPRequestHandler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Range")
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib naming
+        parsed = urlsplit(self.path)
+        if parsed.path != _SLOW_WAVE_PATH:
+            super().do_GET()
+            return
+
+        wave_id = parse_qs(parsed.query).get("slow-link-wave", ["default"])[0]
+        with self._slow_wave_lock:
+            is_leader = wave_id not in self._slow_wave_leaders
+            if is_leader:
+                self._slow_wave_leaders.add(wave_id)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header(
+            "Content-Length", str(len(_SLOW_WAVE_CHUNK) * _SLOW_WAVE_CHUNKS)
+        )
+        self.end_headers()
+        self.wfile.flush()
+        try:
+            if is_leader:
+                for _ in range(_SLOW_WAVE_CHUNKS):
+                    self.wfile.write(_SLOW_WAVE_CHUNK)
+                    self.wfile.flush()
+                    time.sleep(_SLOW_WAVE_INTERVAL_SECONDS)
+            else:
+                time.sleep(_SLOW_WAVE_CHUNKS * _SLOW_WAVE_INTERVAL_SECONDS)
+                self.wfile.write(_SLOW_WAVE_CHUNK * _SLOW_WAVE_CHUNKS)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def send_head(self):  # type: ignore[override]
         header = self.headers.get("Range")

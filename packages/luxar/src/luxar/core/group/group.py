@@ -14,10 +14,12 @@ from typing import (
     Callable,
     Dict,
     List,
+    Mapping,
     Optional,
     Sequence,
     TypeVar,
     Union,
+    cast,
 )
 
 import numpy as np
@@ -28,6 +30,7 @@ from ..lines import Lines
 from ..mesh import Mesh
 from ..node import Node
 from ..points import Points
+from ..sound import Sound
 
 if TYPE_CHECKING:
     from ...gsplats.gsplat_data import GSplatData
@@ -36,6 +39,7 @@ if TYPE_CHECKING:
 
 TNode = TypeVar("TNode")
 _DEFAULT_NORMALIZE_AMPLITUDES = object()
+_UNSET_LOD = object()
 
 
 def _resolve_normalize_amplitudes_default(
@@ -44,6 +48,87 @@ def _resolve_normalize_amplitudes_default(
     if normalize_amplitudes is not _DEFAULT_NORMALIZE_AMPLITUDES:
         return normalize_amplitudes
     return parent.attrs.get("kind") not in ("lod", "partition")
+
+
+def _resolve_gsplat_substitutive_lod_alias(
+    substitutive_lod: Any, lod_group: Any
+) -> Any:
+    substitutive_requested = (
+        substitutive_lod is not _UNSET_LOD and substitutive_lod is not None
+    )
+    alias_requested = lod_group is not _UNSET_LOD and lod_group is not None
+    if substitutive_requested and alias_requested:
+        raise ValueError("Pass only one of substitutive_lod= and lod_group=")
+    if substitutive_requested:
+        return substitutive_lod
+    if alias_requested:
+        return lod_group
+    return None
+
+
+def _gsplat_data_from_arrays(
+    centers: Any,
+    amplitudes: Any,
+    cholesky_factors: Any,
+    colors: Any,
+    label_ids: Any,
+    label_vocabulary: Optional[Dict[int, str]],
+) -> GSplatData:
+    from ...gsplats.gsplat_data import GSplatData
+    from ...validation.writing import validate_gsplat_inputs
+
+    centers_array = np.asarray(centers)
+    if centers_array.ndim != 2:
+        raise ValueError(
+            f"Centers must have shape (N, D), got shape {centers_array.shape}"
+        )
+    amplitudes_value: Any = (
+        amplitudes if np.isscalar(amplitudes) else np.asarray(amplitudes)
+    )
+    cholesky_array = np.asarray(cholesky_factors)
+    (
+        centers_array,
+        amplitudes_value,
+        cholesky_array,
+        colors_value,
+        n_splats,
+        _n_dims,
+        cholesky_is_uniform,
+    ) = validate_gsplat_inputs(
+        centers_array,
+        amplitudes_value,
+        cholesky_array,
+        colors,
+    )
+    amplitudes_array = cast(
+        np.ndarray[Any, Any],
+        np.full(n_splats, amplitudes_value, dtype=np.asarray(amplitudes_value).dtype)
+        if np.isscalar(amplitudes_value)
+        else amplitudes_value,
+    )
+    if cholesky_is_uniform:
+        cholesky_array = np.broadcast_to(
+            cholesky_array, (n_splats, cholesky_array.shape[1])
+        ).copy()
+    colors_array = None
+    if colors_value is not None:
+        colors_array = np.asarray(colors_value)
+        if colors_array.ndim == 1:
+            colors_array = np.broadcast_to(
+                colors_array.astype(np.float32), (n_splats, colors_array.shape[0])
+            )
+        elif colors_array.shape[0] == 1 and n_splats != 1:
+            colors_array = np.broadcast_to(
+                colors_array, (n_splats, colors_array.shape[1])
+            )
+    return GSplatData(
+        centers=centers_array,
+        amplitudes=amplitudes_array,
+        cholesky_factors=cholesky_array,
+        colors=colors_array,
+        label_ids=None if label_ids is None else np.asarray(label_ids),
+        label_vocabulary=label_vocabulary,
+    )
 
 
 class Group(Node):
@@ -409,6 +494,137 @@ class Group(Node):
             ),
         )
 
+    def add_sound(
+        self,
+        name: str,
+        clip: Union[bytes, bytearray, str, Path],
+        *,
+        positions: Optional["np.ndarray"] = None,
+        hidden: Optional[Mapping[str, float]] = None,
+        spatial: Optional[bool] = None,
+        trigger: str = "continuous",
+        delay_ms: float = 0.0,
+        gain: float = 1.0,
+        bus: str = "ambient",
+        fade_in_ms: float = 0.0,
+        fade_out_ms: float = 0.0,
+        distance_model: str = "inverse",
+        ref_distance: Optional[float] = None,
+        max_distance: Optional[float] = None,
+        rolloff: Optional[float] = None,
+        cone_inner_deg: Optional[float] = None,
+        cone_outer_deg: Optional[float] = None,
+        cone_outer_gain: Optional[float] = None,
+        orientation: Optional[Sequence[float]] = None,
+        attach_to: Optional[str] = None,
+        ambisonic: Optional[str] = None,
+        license: str = "",
+        attribution: str = "",
+        source_url: str = "",
+        parent: Optional["Node"] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
+        **attrs: Any,
+    ) -> "Sound":
+        """Add a sound node — an MP3/AAC clip that plays in the viewer.
+
+        The one node type that is *heard* rather than drawn
+        (``docs/guides/specs/SOUND_SPEC.md``). Four placements:
+
+        * **Everywhere** — ``positions=None, hidden=None``: an ambient bed that
+          plays whatever the sliders say.
+        * **Bound to a hidden-dimension value** — ``hidden={"story": 3}``: sugar
+          for one ``(1, ndim)`` row at ``story=3``, extended over every other
+          non-displayed dimension, so the slab rule that decides which points
+          are visible decides when this clip is live. Non-spatial.
+        * **Spatial** — ``positions=[[3, 7.3, -7.4, -0.3]]``: one nD row per
+          place the source exists; the clip plays through a panner there and
+          gets louder as the camera approaches. ``spatial`` defaults to True.
+        * **Attached** — ``attach_to="cluster_hsp70"``: the source follows the
+          bounding-box centre of the named node ("the cluster hums" without
+          authoring coordinates). Spatial by default; combine with ``hidden=``
+          to make it live at one hidden-dimension value only.
+
+        Args:
+            name: Node name (no ``/``).
+            clip: Encoded MP3 or AAC (``.m4a``) bytes, or a path to such a file.
+                Ogg/Opus is refused (Safari cannot decode it); WAV/FLAC are
+                refused (wrong size class for a hosted store).
+            positions: ``(K, ndim)`` source positions, or ``None``.
+            hidden: ``{dimension_name: value}`` binding for a non-spatial clip.
+                Mutually exclusive with ``positions``.
+            spatial: Route through a panner (needs ``positions`` or
+                ``attach_to``). Defaults to ``positions is not None or
+                attach_to is not None``.
+            trigger: ``"continuous"`` (looped while audible, fades on the slab
+                edge), ``"once"`` (plays once each time the node becomes
+                audible), ``"on_depart"`` / ``"on_arrive"`` (plays once when a
+                story flight leaves / lands on the ``viewer_config.waypoints``
+                entry whose ``when`` clause this node's row satisfies — a node
+                without rows belongs to every waypoint).
+            attach_to: Name of the node whose bounding-box centre the source
+                follows. Mutually exclusive with ``positions``.
+            ambisonic: ``"foa"`` for a first-order ambisonic FIELD — a
+                4-channel AmbiX clip (AAC only) the viewer rotates against the
+                camera so the field stays fixed to the world. Non-spatial and
+                position-free by nature; ``hidden=`` still decides when it is
+                live.
+            delay_ms: Delay after the trigger fires, ``>= 0``.
+            gain: Per-node linear gain, ``>= 0``.
+            bus: ``"ambient"`` (default) / ``"voice"`` / ``"effects"``. The
+                voice bus ducks ambient while it plays.
+            fade_in_ms, fade_out_ms: Ramp lengths on the audible edge, ``>= 0``.
+            distance_model, ref_distance, max_distance, rolloff, cone_inner_deg,
+                cone_outer_deg, cone_outer_gain, orientation: ``PannerNode``
+                knobs (spatial only). Distances left ``None`` default in the
+                viewer from the scene scale (``scale/20`` and ``scale``).
+            license, attribution, source_url: REQUIRED provenance for the clip
+                (e.g. ``"CC0"``, the author, the URL it came from).
+            parent: Parent node (default: this group).
+            extend_to_all: As for ``add_points``; with ``hidden=`` it defaults
+                to every non-displayed dimension not named there.
+            **attrs: ``layer`` / ``visible`` / ``transform`` / ``nd_transform``
+                only — a sound has no appearance attrs.
+
+        Returns:
+            The created Sound node.
+        """
+        from .adders.sound import add_sound_impl
+
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_sound_impl(
+                self,
+                name=name,
+                clip=clip,
+                positions=positions,
+                hidden=hidden,
+                spatial=spatial,
+                trigger=trigger,
+                delay_ms=delay_ms,
+                gain=gain,
+                bus=bus,
+                fade_in_ms=fade_in_ms,
+                fade_out_ms=fade_out_ms,
+                distance_model=distance_model,
+                ref_distance=ref_distance,
+                max_distance=max_distance,
+                rolloff=rolloff,
+                cone_inner_deg=cone_inner_deg,
+                cone_outer_deg=cone_outer_deg,
+                cone_outer_gain=cone_outer_gain,
+                orientation=orientation,
+                attach_to=attach_to,
+                ambisonic=ambisonic,
+                license=license,
+                attribution=attribution,
+                source_url=source_url,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                attrs=attrs,
+            ),
+        )
+
     def add_mesh(
         self,
         name: str,
@@ -669,6 +885,8 @@ class Group(Node):
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
         partition: Any = None,
+        substitutive_lod: Any = _UNSET_LOD,
+        additive_lod: Any = _UNSET_LOD,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add a Gaussian splats node.
@@ -710,6 +928,18 @@ class Group(Node):
                 "gsplats"``; the wrapper's children are ``part_<i>``
                 GSplats nodes. ``image_labels`` is not supported alongside
                 ``partition=``.
+            substitutive_lod: Substitutive-LOD control. The value vocabulary is
+                the same as :meth:`add_gsplats_from_data`'s historical
+                ``lod_group=``. When combined with ``partition=``, every
+                substitutive level is partitioned independently.
+            additive_lod: Additive-LOD control. The value vocabulary matches
+                :meth:`add_gsplats_from_data`. Requesting an additive ladder
+                opts this node out of compiler auto-partitioning; explicit
+                ``partition=`` beside the ladder remains unsupported. On a
+                stacked or hidden-dimension node, an authored ladder is inert
+                when one already exists unless ``recompute=True``, and
+                ``slice_dims=`` is the only way to give every slice the same
+                absolute budget.
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
@@ -734,6 +964,51 @@ class Group(Node):
             The created ``GSplats`` node, or a kind=partition ``Group``
             wrapper when ``partition=`` produced more than one part.
         """
+        resolved_substitutive_lod = (
+            None if substitutive_lod is _UNSET_LOD else substitutive_lod
+        )
+        resolved_additive_lod = None if additive_lod is _UNSET_LOD else additive_lod
+        if (
+            resolved_substitutive_lod is not None
+            and resolved_substitutive_lod is not False
+        ) or (resolved_additive_lod is not None and resolved_additive_lod is not False):
+            from ...validation.writing import (
+                GSPLATS_RESERVED_ATTRS,
+                validate_render_attrs,
+            )
+            from .compositing import funnel_add_error
+
+            try:
+                validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
+                result = _gsplat_data_from_arrays(
+                    centers,
+                    amplitudes,
+                    cholesky_factors,
+                    colors,
+                    label_ids,
+                    label_vocabulary,
+                )
+            except (ValueError, TypeError) as error:
+                raise ValueError(funnel_add_error("gsplats", name, error)) from error
+            return self.add_gsplats_from_data(
+                name,
+                result,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                substitutive_lod=resolved_substitutive_lod,
+                additive_lod=resolved_additive_lod,
+                # The array adder has always preserved caller amplitudes.
+                normalize_amplitudes=False,
+                partition=partition,
+                labels=labels,
+                image_labels=image_labels,
+                keys=keys,
+                **attrs,
+            )
+
         from .adders.gsplats import add_gsplats_impl
 
         return self._transactional_add(
@@ -770,9 +1045,10 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
-        lod_group: Any = None,
+        lod_group: Any = _UNSET_LOD,
         additive_lod: Any = None,
         normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
+        substitutive_lod: Any = _UNSET_LOD,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats from a GSplatData object.
@@ -783,9 +1059,11 @@ class Group(Node):
         for progressive (prefix-sum) loading. Single-LOD data uses the
         flat layout (arrays at the node path).
 
-        ``lod_group`` and ``additive_lod`` control the two LOD axes (see
+        ``substitutive_lod`` and ``additive_lod`` control the two LOD axes (see
         ``luxar.core.group.lod.gsplats.resolve_substitutive_axis_gsplats`` /
-        ``resolve_additive_axis_gsplats`` for the full value vocabulary). When
+        ``resolve_additive_axis_gsplats`` for the full value vocabulary).
+        ``lod_group=`` remains supported as an alias for
+        ``substitutive_lod=``; passing both is refused. When
         the resolved data has multiple substitutive levels, this method
         builds a ``kind="lod"`` ``Group`` containing one gsplats child
         per level (in coarsest→finest order, named ``child_<i>``) and
@@ -794,9 +1072,10 @@ class Group(Node):
         ``labels`` / ``image_labels`` may not be passed when the resolved result
         is multi-substitutive: every level is its own set of merged
         representative splats with its own count, so no single list has a
-        per-element correspondence to carry. Pass ``lod_group=False`` to label
-        the collapsed finest level, or build the ``kind="lod"`` group yourself
-        with :meth:`add_lod_group` and give each child its own labels.
+        per-element correspondence to carry. Pass ``substitutive_lod=False``
+        (or its ``lod_group=False`` alias) to label the collapsed finest level,
+        or build the ``kind="lod"`` group yourself with :meth:`add_lod_group`
+        and give each child its own labels.
 
         **An explicit ``None`` in ``**attrs`` means "absent".** For ``labels``,
         ``image_labels``, ``partition``, ``colors``, ``truncation_radius``,
@@ -819,9 +1098,10 @@ class Group(Node):
         result is single-substitutive AND the parent is itself a
         ``kind="lod"`` ``Group`` (the child is a leaf of an enclosing
         LOD group). Passing it on a multi-substitutive path raises
-        ``ValueError`` — use ``lod_group=dict(coverage_fractions=[...])`` to
-        override the auto-derived thresholds. (``coverage_fraction=None`` is
-        "absent" per the rule above, so it is accepted on any path.)
+        ``ValueError`` — use
+        ``substitutive_lod=dict(coverage_fractions=[...])`` to override the
+        auto-derived thresholds. (``coverage_fraction=None`` is "absent" per
+        the rule above, so it is accepted on any path.)
 
         Args:
             name: Name of the gsplats (or kind=lod group) node.
@@ -831,16 +1111,18 @@ class Group(Node):
             dim_order: Map data columns to scene dimensions by name.
             fill: Fixed coordinate values for unmapped dimensions.
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding.
-            lod_group: Substitutive-axis control. ``None`` (default; auto-lower
-                a multi-substitutive pyramid into a ``kind=lod`` Group),
-                ``True`` (require stored levels), ``False`` (collapse to
-                finest), ``dict(...)`` (compute
-                via :func:`make_substitutive_lod`), or ``dict(..., recompute=
-                True)``. Optional ``coverage_fractions=[...]`` inside the dict
-                overrides the auto-derived thresholds.
+            substitutive_lod: Substitutive-axis control. ``None`` (default;
+                auto-lower a multi-substitutive pyramid into a ``kind=lod``
+                Group), ``True`` (require stored levels), ``False`` (collapse
+                to finest), ``dict(...)`` (compute via
+                :func:`make_substitutive_lod`), or ``dict(..., recompute=True)``.
+                Optional ``coverage_fractions=[...]`` inside the dict overrides
+                the auto-derived thresholds.
+            lod_group: Backward-compatible alias for ``substitutive_lod``.
+                Passing both is refused.
             additive_lod: Additive-axis control, uniform across substitutive
-                levels. Same value vocabulary as ``lod_group``; ``dict(...)``
-                routes to :func:`make_additive_lod`.
+                levels. Same value vocabulary as ``substitutive_lod``;
+                ``dict(...)`` routes to :func:`make_additive_lod`.
             normalize_amplitudes: Scale amplitudes so a robust upper
                 reference (the 99.9th percentile) lands at 1.0, applied as ONE
                 factor across every substitutive level and additive rung.
@@ -879,12 +1161,13 @@ class Group(Node):
             >>> # additive ladder per level, computed from a flat input.
             >>> scene.add_gsplats_from_data(
             ...     "multires", flat_result,
-            ...     lod_group=dict(compression_factor=4, levels=2),
+            ...     substitutive_lod=dict(compression_factor=4, levels=2),
             ...     additive_lod=dict(n_lods=4),
             ... )
         """
         from .gsplats_pipeline.from_data import add_gsplats_from_data_impl
 
+        lod_group = _resolve_gsplat_substitutive_lod_alias(substitutive_lod, lod_group)
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
@@ -917,15 +1200,27 @@ class Group(Node):
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
         normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
+        partition: Any = None,
+        substitutive_lod: Any = _UNSET_LOD,
+        lod_group: Any = _UNSET_LOD,
+        additive_lod: Any = None,
+        flatten: bool = False,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
 
         If the source file carries multiple substitutive levels, the
         pyramid is auto-lowered into a ``kind=lod`` Group (one gsplats
-        child per substitutive level); pass ``lod_group=False`` to
-        collapse to the finest level instead (see
-        ``add_gsplats_from_data`` for the convention).
+        child per substitutive level); pass ``substitutive_lod=False`` to
+        collapse to the finest level instead. ``lod_group=False`` remains
+        the backward-compatible alias.
+
+        Set ``flatten=True`` to materialize the source tree's default finest
+        selection as one leaf before applying ``partition=``,
+        ``substitutive_lod=``, or ``additive_lod=``. Without it, ``partition=``
+        and ``additive_lod=`` retain a nested source tree and apply to each leaf;
+        ``substitutive_lod=`` requires flattening that tree first. ``lod_group=``
+        is retained as an alias for ``substitutive_lod=``.
 
         ``labels`` / ``image_labels`` / ``keys`` are accepted only when the file is a single
         leaf with NO additive ladder. Any multi-LEAF result — an auto-lowered
@@ -974,6 +1269,15 @@ class Group(Node):
                 and volumetric optical depth are both LINEAR in the raw stored
                 amplitude and nothing windows them. See
                 :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
+            partition: Spatial partition control applied to the loaded matrix,
+                or to each leaf of a retained nested tree.
+            substitutive_lod: Substitutive-LOD control applied after loading;
+                nested trees require ``flatten=True``.
+            lod_group: Backward-compatible alias for ``substitutive_lod``.
+            additive_lod: Additive-LOD control applied to the loaded matrix, or
+                independently to each leaf of a retained nested tree.
+            flatten: Collapse stored structure to the default finest selection
+                before applying the requested structure.
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 the file supplies, which are refused; see the rules above. On a
@@ -987,6 +1291,7 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
+        lod_group = _resolve_gsplat_substitutive_lod_alias(substitutive_lod, lod_group)
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
@@ -1003,6 +1308,10 @@ class Group(Node):
                 fill=fill,
                 fill_sigma=fill_sigma,
                 normalize_amplitudes=normalize_amplitudes,
+                partition=partition,
+                lod_group=lod_group,
+                additive_lod=additive_lod,
+                flatten=flatten,
                 **attrs,
             ),
         )

@@ -36,8 +36,8 @@ check``; on a checkout without built demos it remains a read-only no-op, since
 the output directory is gitignored and an empty inventory is the normal state
 of a fresh clone and of CI. That run now reports INSPECTED NOTHING instead of
 wording that reads like a pass (audit A9-04), and ``--require-scenes`` makes it
-a failure for callers that know scenes should be there — release prep, or a
-demo-build pipeline running this after the build.
+a failure for callers that know scenes should be there — the gallery generator
+or the pre-upload inventory audit.
 
 A SECOND, independent pass lives behind ``--screen`` (``--screen-only`` to skip
 the ladder gate above): the LOD **opening-shot screen** from
@@ -532,7 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "fail instead of passing when no scene was inspected (use wherever "
-            "demos ARE expected to be built: release prep, a demo-build pipeline)"
+            "demos ARE expected: gallery generation, the pre-upload audit)"
         ),
     )
     parser.add_argument("--min-elements", type=int, default=DEFAULT_MIN_ELEMENTS)

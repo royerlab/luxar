@@ -163,8 +163,10 @@ vi.mock('../../../rendering/renderer-capabilities', () => ({
   isWebGLRenderer: (renderer: { isWebGLRenderer?: boolean }) => renderer.isWebGLRenderer === true,
 }));
 const reduceGpuByteBudgetForContextLoss = vi.fn();
+const initializeGpuByteBudget = vi.fn();
 vi.mock('../../../rendering/gpu-byte-budget', () => ({
   getGpuByteBudget: () => 1024,
+  initializeGpuByteBudget: (...args: unknown[]) => initializeGpuByteBudget(...args),
   reduceGpuByteBudgetForContextLoss: () => reduceGpuByteBudgetForContextLoss(),
 }));
 
@@ -175,6 +177,13 @@ vi.mock('../../../rendering/webgl-blend-warmup', () => ({
   configureBlendModeProgramWarmup: (...a: unknown[]) => configureBlendModeProgramWarmup(...a),
   warmSceneBlendModePrograms: (root: THREE.Object3D) => warmSceneBlendModePrograms(root),
   clearBlendModeProgramWarmup: () => clearBlendModeProgramWarmup(),
+}));
+
+const inputProfile = vi.hoisted(() => ({
+  deviceClass: 'laptop' as 'mobile' | 'laptop' | 'desktop',
+}));
+vi.mock('../../../utils/input-capabilities', () => ({
+  getInputProfile: () => inputProfile,
 }));
 
 const configureDepthSort = vi.fn();
@@ -220,6 +229,7 @@ function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOpti
 describe('LuxarLayer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    inputProfile.deviceClass = 'laptop';
     onPhysicalMaterialCreated.mockReturnValue(() => {});
     isEnvironmentReady.mockReturnValue(false);
     sceneLoaderStub.resetArchiveFault();
@@ -232,6 +242,24 @@ describe('LuxarLayer', () => {
   });
 
   describe('construction', () => {
+    it('uses the configured default when gpuPoolMaxBytes is omitted', () => {
+      new LuxarLayer(makeOptions());
+
+      expect(initializeGpuByteBudget).toHaveBeenCalledWith(undefined);
+    });
+
+    it.each([0, 640_000_000])(
+      'configures GPU byte budget %s before installing the LOD registry',
+      (gpuPoolMaxBytes) => {
+        new LuxarLayer(makeOptions({ gpuPoolMaxBytes }));
+
+        expect(initializeGpuByteBudget).toHaveBeenCalledWith(gpuPoolMaxBytes);
+        expect(initializeGpuByteBudget.mock.invocationCallOrder[0]).toBeLessThan(
+          setLODGroupRegistryFactory.mock.invocationCallOrder[0]
+        );
+      }
+    );
+
     it('pushes renderer capabilities into materials before any node can be built', () => {
       new LuxarLayer(makeOptions());
       expect(setCaps).toHaveBeenCalledTimes(1);
@@ -283,6 +311,20 @@ describe('LuxarLayer', () => {
       });
     });
 
+    it('disables WebGL blend-program warm-up on mobile', async () => {
+      inputProfile.deviceClass = 'mobile';
+      const options = makeOptions();
+      const layer = new LuxarLayer(options);
+      await layer.load('http://example.test/scene.zarr');
+
+      expect(configureBlendModeProgramWarmup).toHaveBeenCalledWith({
+        enabled: false,
+        renderer: options.renderer,
+        camera: expect.any(THREE.Camera),
+        targetScene: options.scene,
+      });
+    });
+
     it('disables WebGL blend-program warm-up for a WebGPU renderer', async () => {
       const options = makeOptions({
         renderer: {
@@ -325,13 +367,18 @@ describe('LuxarLayer', () => {
         deps: Record<string, unknown>;
       };
       const requestReprocess = vi.fn();
-      const isUpdateInProgress = vi.fn(() => true);
+      // The registry's `isUpdateInProgress` dep is wired to the PASS-level
+      // predicate, not the lock-level one: a refinement hold must not defer a
+      // partition resync.
+      const isUpdateInProgress = vi.fn(() => false);
+      const isLoadPassInProgress = vi.fn(() => true);
       const { deps } = factory({
         currentViewVersion: 1,
         gpuBufferPool: undefined,
         archiveFault: null,
         requestReprocess,
         isUpdateInProgress,
+        isLoadPassInProgress,
       });
 
       expect(Object.keys(deps).sort()).toEqual(
@@ -342,6 +389,7 @@ describe('LuxarLayer', () => {
           'getEnergyCompEnabled',
           'getForceFinestLOD',
           'hasArchiveFault',
+          'hasNetworkFailureUnder',
           'isUpdateInProgress',
           'getResidentByteBudget',
           'getResidentBytes',
@@ -352,10 +400,14 @@ describe('LuxarLayer', () => {
           'requestReprocess',
         ].sort()
       );
-      (deps.requestReprocess as () => void)();
+      (deps.requestReprocess as (paths: readonly string[]) => void)(['/p']);
       expect(requestReprocess).toHaveBeenCalledOnce();
+      // The re-entering part paths pass straight through to the owner so the
+      // resync stays targeted (and bump-free) in layer mode too.
+      expect(requestReprocess).toHaveBeenCalledWith(['/p']);
       expect((deps.isUpdateInProgress as () => boolean)()).toBe(true);
-      expect(isUpdateInProgress).toHaveBeenCalledOnce();
+      expect(isLoadPassInProgress).toHaveBeenCalledOnce();
+      expect(isUpdateInProgress).not.toHaveBeenCalled();
     });
 
     it('reports no resident bytes rather than throwing when the pool is absent', () => {

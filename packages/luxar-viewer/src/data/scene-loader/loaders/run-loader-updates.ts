@@ -1,5 +1,5 @@
 /**
- * Partition visibility helpers and per-geometry update-loop scaffolding.
+ * Loader eligibility helpers and per-geometry update-loop scaffolding.
  *
  * Points / Lines / GSplats branches differ only in the type-specific
  * work (deriveNodeViewState, call loader.updateView, post-process,
@@ -24,28 +24,59 @@ const NOOP_SESSION: UpdateSession = {
   markSkipped: () => {},
 };
 
-/** Whether a loader path and every ancestor partition part are frustum-visible. */
-export function isPartitionPathVisible(root: THREE.Object3D | null, path: string): boolean {
-  let object: THREE.Object3D | null | undefined = root?.getObjectByName(path);
+/** Whether an object is eligible for foreground or background loading. */
+export function isObjectLoadEligible(object: THREE.Object3D | null | undefined): boolean {
   while (object) {
     if (object.userData.partitionFrustumVisible === false) return false;
+    if (object.userData.layerVisible === false) return false;
     object = object.parent;
   }
   return true;
 }
 
-/** Copy loaders whose paths are not nested below a culled partition part. */
-export function filterPartitionVisibleLoaders<TLoader>(
+/** Resolve a loader path and test its foreground/background load eligibility. */
+export function isLoaderPathEligible(root: THREE.Object3D | null, path: string): boolean {
+  return isObjectLoadEligible(root?.getObjectByName(path));
+}
+
+/**
+ * Whether ``path`` is one of ``targets`` or nested under one. Node paths are
+ * ``/``-separated, so ``/a/b`` is under ``/a`` but ``/a/bc`` is not.
+ */
+export function isUnderAny(path: string, targets: ReadonlySet<string>): boolean {
+  if (targets.has(path)) return true;
+  for (const target of targets) {
+    const prefix = target.endsWith('/') ? target : `${target}/`;
+    if (path.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+/** Resolve loader objects once and copy paths eligible for background loading. */
+export function resolveLoadEligibleLoaders<TLoader>(
   root: THREE.Object3D | null,
   loaders: Map<string, TLoader>
-): Map<string, TLoader> {
-  return new Map([...loaders].filter(([path]) => isPartitionPathVisible(root, path)));
+): {
+  loaders: Map<string, TLoader>;
+  objects: Map<string, THREE.Object3D | undefined>;
+} {
+  const eligibleLoaders = new Map<string, TLoader>();
+  const objects = new Map<string, THREE.Object3D | undefined>();
+  for (const [path, loader] of loaders) {
+    const object = root?.getObjectByName(path);
+    if (!isObjectLoadEligible(object)) continue;
+    eligibleLoaders.set(path, loader);
+    objects.set(path, object);
+  }
+  return { loaders: eligibleLoaders, objects };
 }
 
 /**
  * Run a per-loader update task for every entry in `loaders`, recording
  * failures into `failedLoaders` and forgetting the predictive-prefetch
- * baseline for failed or frustum-skipped paths. Archive faults are excluded
+ * baseline for failed, culled, or hidden paths. Loaders outside a targeted
+ * partition resync (`isResyncTarget`) are skipped WITHOUT forgetting their
+ * baseline — nothing about their view changed. Archive faults are excluded
  * from that bookkeeping and reported once after every task has settled.
  */
 export async function runLoaderUpdates<TLoader, TStaged>(
@@ -57,6 +88,13 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     viewStateQueue: ViewStateQueue;
     registry: Pick<LoaderRegistry, 'failedLoaders' | 'recordFailure'>;
     shouldUpdatePath?: (path: string) => boolean;
+    /**
+     * Targeted partition resync: `false` ⇒ this loader is not under any
+     * re-entering part, skip it without dropping its prefetch baseline —
+     * checked BEFORE the culled check, so a culled non-target keeps its
+     * baseline too.
+     */
+    isResyncTarget?: (path: string) => boolean;
     /** Called at most once per sweep, after Promise.all, with the first archive fault. */
     onArchiveFault: (fault: ArchiveFaultError) => void;
   }
@@ -70,8 +108,16 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     const session = ctx.profiler
       ? ctx.profiler.beginTopLevel(`${loaderType} (${path})`)
       : NOOP_SESSION;
+    // Resync-target check FIRST: a targeted resync must leave every non-target
+    // loader untouched, culled or not. Rising edges fire precisely when many
+    // parts are culled, and running the culled check first would drop those
+    // parts' prefetch baselines on every rising edge.
+    if (ctx.isResyncTarget?.(path) === false) {
+      session.markSkipped('outside partition resync targets');
+      return { staged: null, session };
+    }
     if (ctx.shouldUpdatePath?.(path) === false) {
-      session.markSkipped('partition part outside camera frustum');
+      session.markSkipped('loader path culled or under a hidden layer');
       ctx.viewStateQueue.forgetPath(path);
       return { staged: null, session };
     }

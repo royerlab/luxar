@@ -21,7 +21,7 @@ scripts/
 | `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
 | `check_layer_order.py` | Assert the `Subpackage layering` order is still the measured minimum and that its dated debt list has not grown |
 | `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, nothing over PyPI's per-file limit, viewer dist bundled |
-| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`) plus `RUF012` (fails only on newly-broken rules) |
+| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`), flake8-blind-except (`BLE`), and `RUF012` (fails only on newly-broken rules) |
 | `ruff_ratchet.py` | Shared fail-closed Ruff settings, nested-config, and scan-coverage guards used by both baseline ratchets |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
@@ -227,10 +227,11 @@ above a function never churns the baseline. Because a move
 pairs on the function name alone, a genuinely new function can in principle be
 absorbed by a same-named one vanishing in the same run; what the ratchet always
 guarantees is the bound, not the identity — a pair can never increase total
-debt. The checker runs as part of `hatch run lint` and `hatch run check`, and the
-Python test suite
-(`packages/luxar/src/luxar/tests/test_check_complexity.py`) asserts the real
-tree is regression-free and is what gates every PR in CI.
+debt. The checker runs as part of `hatch run lint` and `hatch run check`; CI runs
+`hatch run lint` on its Python 3.12 leg. The Python test suite independently
+asserts the real tree is regression-free through
+`test_check_complexity.py::test_repository_has_no_complexity_regressions`, so
+both paths gate PRs.
 
 ---
 
@@ -238,21 +239,23 @@ tree is regression-free and is what gates every PR in CI.
 
 ### `check_lint_ratchet.py`
 
-Enforces ruff's `flake8-bugbear` (`B`) family plus `RUF012` as a baseline-driven
-ratchet — the same shape as the complexity ratchet above, applied to the
-*defect-bearing* rules rather than the cosmetic ones.
+Enforces ruff's `flake8-bugbear` (`B`) and `flake8-blind-except` (`BLE`) families
+plus `RUF012` as a baseline-driven ratchet — the same shape as the complexity
+ratchet above, applied to the *defect-bearing* rules rather than the cosmetic
+ones.
 
 Each ratcheted rule describes a way working-looking code is silently wrong:
 mutable defaults shared across calls (`B006`, `RUF012`), a closure capturing a
 loop variable by reference (`B023`), `warnings.warn` blaming the wrong line
 (`B028`), positional `maxsplit`/`count` (`B034`, also a `DeprecationWarning`
 from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
-`zip()` silently truncating to its shortest input (`B905`).
+`zip()` silently truncating to its shortest input (`B905`). Broad exception
+handlers (`BLE001`) can hide unrelated defects.
 
 **Purpose:**
-- Run `ruff check --select B,RUF012` over the same paths as `hatch run lint`
+- Run `ruff check --select B,BLE,RUF012` over the same paths as `hatch run lint`
 - Tolerate the pre-existing violations recorded in `scripts/lint_baseline.json`
-  (473 across 235 file/rule keys at the time of writing, 290 of them `B905`)
+  (651 across 338 file/rule keys at the time of writing, 289 of them `B905`)
 - Fail (exit 1) when a file newly breaks a rule, or gains another violation of
   a rule it already breaks
 - Report paid-down debt as advisory (exit 0) so the baseline can be tightened
@@ -271,7 +274,7 @@ from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
 These rules are deliberately not in `[tool.ruff.lint] select` for the same
 reason as `C901` — ruff has no baseline mechanism, and here the sweep would also
 be *behaviour-changing*: `zip(..., strict=True)` **raises** on mismatched
-lengths, so each of the 290 `B905` sites is a decision, not a mechanical edit.
+lengths, so each of the 289 `B905` sites is a decision, not a mechanical edit.
 
 `B008` is absent from the baseline on purpose. All 83 findings were
 `typer.Option(...)` / `typer.Argument(...)` in a parameter default — the
@@ -309,15 +312,12 @@ baseline where a rule is a false positive at that specific site — prefer it to
 `--update-baseline`, which should be reserved for moves and deliberate
 re-baselining.
 
-**What actually enforces this in CI.** The checker runs as part of
-`hatch run lint` and `hatch run check`, which is what a developer and
-`make check-all` reach — but CI does *not* run either. Its `Lint (ruff)` step
-invokes `ruff check packages/luxar/src/luxar/` directly, which both skips the
-ratchet scripts and covers a narrower path set than they do. The gate that fires
-on a PR is therefore the pytest one,
-`test_check_lint_ratchet.py::test_repository_has_no_lint_regressions`, inside
-`python-tests` — exactly as for the complexity ratchet above. That test fails
-closed (a missing baseline reports every violation as new), and
+**What actually enforces this in CI.** The Python 3.12 leg runs
+`hatch run lint`, which reaches this checker through the same aggregate used by
+developers and `make check-all`. The test suite independently runs
+`test_check_lint_ratchet.py::test_repository_has_no_lint_regressions` against
+the live tree through `test-cov`. That test fails closed (a missing baseline
+reports every violation as new), and
 `scripts/lint_baseline.json` is in the `dom_py` change filter so editing the
 baseline cannot skip the test that re-derives it.
 
@@ -614,8 +614,8 @@ fitting script (`floor="auto"` is a valid answer — the gate wants a stated bas
 not a particular value).
 
 Two shapes stay outside the gate's reach, so pin them by hand. *The class API*:
-`GaussianSplatFitter().fit(V)` is a Python-function fit the guard cannot see, as
-an AST call-name check would have to flag every `.fit(` to catch it. *Argv-driven
+`GaussianSplatFitter().fit(FitParameters(V))` is a Python-function fit the guard
+cannot see, as an AST call-name check would have to flag every `.fit(` to catch it. *Argv-driven
 fits*: `calibrate_gsplat_demos.py` runs many fits by subprocessing `luxar gsplat
 cal` with no `--floor`, and that one needs no pin because `cal` is
 self-consistent — it subtracts the floor from the volume once up front and pins

@@ -869,4 +869,4 @@ def run_fit_volume(
         import traceback
 
         traceback.print_exc()
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e

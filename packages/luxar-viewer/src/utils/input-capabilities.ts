@@ -7,7 +7,7 @@
  * the decision is made once, from the same signals, and so a test can stub
  * one module instead of `navigator` and `matchMedia` in a dozen places. CSS
  * adaptations do NOT go through here: they use the `(pointer: coarse)` /
- * `(hover: none)` media features directly, which is why the `?input=` override
+ * `(any-hover: none)` media features directly, which is why the `?input=` override
  * below is documented as JS-only.
  *
  * Deliberately import-free: `rendering/pixel-ratio-cap.ts` and other
@@ -219,7 +219,7 @@ function armInvalidation(): void {
 /**
  * Force the pointer half of the profile for the session (`?input=touch|mouse`)
  * or clear it (`null`). A testing and support aid, JS-only: stylesheets keep
- * following the real `(pointer: coarse)` / `(hover: none)` media features, so
+ * following the real `(pointer: coarse)` / `(any-hover: none)` media features, so
  * a faithful end-to-end check still needs device emulation or a real device.
  */
 export function setInputProfileOverride(mode: InputProfileOverride | null): void {

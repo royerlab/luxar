@@ -499,4 +499,54 @@ describe('post-grow reclaim (#2426 pool retention)', () => {
 
     pool.dispose();
   });
+
+  // Contrast gpu-buffer-pool.test.ts's "Grow-path OOM re-claim window":
+  // those throws occur inside the grow try and must restore the released buffer.
+  it.each([
+    ['points', 100, 5000], // 66,764 → 453,164 B
+    ['lines', 100, 5000], // 66,716 → 780,236 B
+    ['gsplats', 100, 10_000], // 66,780 → 1,103,084 B
+  ] as const)(
+    '%s: a throwing post-grow sweep preserves the grown active buffer',
+    (type, initialCount, grownCount) => {
+      const pool = new GPUBufferPool(20, 300, 5, () => BUDGET_IN_REGIME);
+      const acquire = (count: number): THREE.InstancedBufferGeometry => {
+        switch (type) {
+          case 'points':
+            return pool.acquirePointsGeometry('n1', count);
+          case 'lines':
+            return pool.acquireLinesGeometry('n1', count);
+          case 'gsplats':
+            return pool.acquireGSplatsGeometry('n1', count);
+        }
+      };
+      const freeBuckets =
+        type === 'points'
+          ? pool.points.pointBuffers
+          : type === 'lines'
+            ? pool.lines.lineBuffers
+            : pool.gsplats.gsplatBuffers;
+
+      const oldGeometry = acquire(initialCount);
+      expect(pool.getStats().activeBytes).toBeLessThan(BUDGET_IN_REGIME);
+      oldGeometry.addEventListener('dispose', () => {
+        throw new Error('synthetic post-grow dispose failure');
+      });
+
+      expect(() => acquire(grownCount)).toThrow('synthetic post-grow dispose failure');
+
+      const active = pool.activeBuffers.get('n1');
+      expect(active).toBeDefined();
+      expect(active!.geometry).not.toBe(oldGeometry);
+      expect(active!.inUse).toBe(true);
+      expect(active!.geometry.userData.luxarInvalidated).not.toBe(true);
+      for (const buffers of freeBuckets.values()) {
+        for (const buffer of buffers) {
+          expect(buffer.geometry).not.toBe(active!.geometry);
+        }
+      }
+
+      pool.dispose();
+    }
+  );
 });

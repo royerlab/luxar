@@ -156,6 +156,7 @@ import { LuxarApp } from '../../../core/app';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { setDocumentTitle } from '../../../core/document-title';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
+import type { ZarrWaypoint } from '../../../types/zarr';
 
 describe('LuxarApp', () => {
   let app: LuxarApp;
@@ -1446,6 +1447,67 @@ describe('LuxarApp', () => {
       expect(() => app.getLayers()).toThrow(/getLayers called before init/);
       expect(() => app.setLayer('/x', { opacity: 1 })).toThrow(/setLayer called before init/);
       expect(() => app.getViewerState()).toThrow(/getViewerState called before init/);
+      expect(() => app.getAudioState()).toThrow(/getAudioState called before init/);
+      expect(() => app.setAudio({ muted: true })).toThrow(/setAudio called before init/);
+      expect(() => app.playSound('narration')).toThrow(/playSound called before init/);
+      expect(() => app.stopSound('narration')).toThrow(/stopSound called before init/);
+    });
+
+    it('forwards the public audio controls to the engine', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const state = {
+        state: 'running',
+        muted: false,
+        masterGain: 0.8,
+        panningModel: 'equalpower',
+        buses: { ambient: 0.6, voice: 1, effects: 0.8 },
+        playing: [],
+        hasSoundNodes: true,
+      } as const;
+      const audio = {
+        getState: vi.fn(() => state),
+        setAudio: vi.fn(),
+        play: vi.fn(() => true),
+        stop: vi.fn(() => false),
+      };
+      (app as unknown as { audioEngine: typeof audio }).audioEngine = audio;
+
+      expect(app.getAudioState()).toBe(state);
+      app.setAudio({ masterGain: 0.5 });
+      expect(audio.setAudio).toHaveBeenCalledWith({ masterGain: 0.5 });
+      expect(app.playSound('narration')).toBe(true);
+      expect(app.stopSound('narration')).toBe(false);
+    });
+
+    it('replays layer mutes after attaching audio and before the opening waypoint', () => {
+      const order: string[] = [];
+      const root = { name: 'LuxarScene' };
+      const audioEngine = {
+        detachScene: vi.fn(() => order.push('detach')),
+        applySceneConfig: vi.fn(() => order.push('config')),
+        attachScene: vi.fn(() => order.push('attach')),
+        notifyWaypoint: vi.fn(() => order.push('waypoint')),
+        dispose: vi.fn(),
+      };
+      const layersPanel = {
+        pushAudioMutes: vi.fn(() => order.push('mutes')),
+        dispose: vi.fn(),
+      };
+      const waypointDriver = {
+        currentIndex: 0,
+        getWaypoint: vi.fn(() => ({ when: { story: 0 } })),
+      };
+      mockSceneManager.scene = { children: [root] };
+      Object.assign(app as unknown as Record<string, unknown>, {
+        audioEngine,
+        layersPanel,
+        sceneManager: mockSceneManager,
+        waypointDriver,
+      });
+
+      (app as unknown as { installAudio(audio: unknown): void }).installAudio(undefined);
+
+      expect(order).toEqual(['detach', 'config', 'attach', 'mutes', 'waypoint']);
     });
 
     it('subscribes to the controls change stream and re-emits it as camera-changed', async () => {
@@ -1573,6 +1635,105 @@ describe('LuxarApp', () => {
         mockAnimationController.addPerFrameCallback.mockClear();
         sceneDimsManager.setDimensionValue(3, 0);
         expect(flightsStarted()).toBe(0);
+      } finally {
+        sceneDimsManager.reset();
+      }
+    });
+
+    it('re-runs overlay visibility when a dimension change opens the arrival gate', () => {
+      mockSceneManager.camera = {
+        position: { x: 0, y: 0, z: 10, set: vi.fn() },
+        up: { x: 0, y: 1, z: 0, set: vi.fn() },
+        near: 0.1,
+        far: 100,
+        updateProjectionMatrix: vi.fn(),
+      };
+      const dimensions = ['x', 'y', 'z', 'story'].map((name, index) => ({
+        name,
+        unit: '',
+        range: [0, 3] as [number, number],
+        step: 1,
+        display: index < 3,
+      }));
+      const fakeScene = {
+        userData: { sceneDimensions: { dimensions } },
+        children: [],
+        getObjectByName: () => undefined,
+      } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
+      sceneDimsManager.initFromScene(fakeScene);
+      const updateVisibility = vi.fn();
+      const pendingFlight = new Promise<{ completed: boolean }>(() => {});
+      const internals = app as unknown as {
+        sceneManager: typeof mockSceneManager;
+        renderingControls: typeof mockRenderingControls;
+        overlayManager: { updateVisibility: () => void; dispose: () => void };
+        cameraFlight: {
+          flyTo: () => Promise<{ completed: boolean }>;
+          cancel: () => void;
+          dispose: () => void;
+        };
+        installWaypoints: (waypoints: ZarrWaypoint[]) => void;
+      };
+      internals.sceneManager = mockSceneManager;
+      internals.renderingControls = mockRenderingControls;
+      internals.overlayManager = { updateVisibility, dispose: vi.fn() };
+      internals.cameraFlight = {
+        flyTo: () => pendingFlight,
+        cancel: vi.fn(),
+        dispose: vi.fn(),
+      };
+      const waypoints: ZarrWaypoint[] = [
+        { when: { story: 0 }, camera: { position: [0, 0, 5] }, reveal: 'on_arrival' },
+        { when: { story: 1 }, camera: { position: [5, 0, 0] }, reveal: 'on_arrival' },
+      ];
+
+      try {
+        internals.installWaypoints(waypoints);
+        updateVisibility.mockClear();
+        sceneDimsManager.setDimensionValue(3, 1);
+        updateVisibility.mockClear();
+
+        sceneDimsManager.setDimensionValue(3, 2);
+
+        expect(updateVisibility).toHaveBeenCalledTimes(1);
+      } finally {
+        sceneDimsManager.reset();
+      }
+    });
+
+    it('refreshes overlay visibility after installing waypoints with no initial match', () => {
+      const dimensions = ['x', 'y', 'z', 'story'].map((name, index) => ({
+        name,
+        unit: '',
+        range: [0, 3] as [number, number],
+        step: 1,
+        display: index < 3,
+      }));
+      const fakeScene = {
+        userData: { sceneDimensions: { dimensions } },
+        children: [],
+        getObjectByName: () => undefined,
+      } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
+      sceneDimsManager.initFromScene(fakeScene);
+      sceneDimsManager.setDimensionValue(3, 0);
+      const updateVisibility = vi.fn();
+      const internals = app as unknown as {
+        overlayManager: { updateVisibility: () => void; dispose: () => void };
+        installWaypoints: (waypoints: ZarrWaypoint[] | undefined) => void;
+      };
+      internals.overlayManager = { updateVisibility, dispose: vi.fn() };
+
+      try {
+        internals.installWaypoints([
+          { when: { story: 1 }, camera: { position: [5, 0, 0] }, reveal: 'on_arrival' },
+        ]);
+
+        expect(updateVisibility).toHaveBeenCalledTimes(1);
+        updateVisibility.mockClear();
+
+        internals.installWaypoints(undefined);
+
+        expect(updateVisibility).toHaveBeenCalledTimes(1);
       } finally {
         sceneDimsManager.reset();
       }

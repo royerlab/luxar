@@ -28,19 +28,18 @@ import { scheduleFrame } from '../../../utils/schedule-frame';
 import { noteRefinementPass } from '../../../profiling/load-timeline';
 
 /**
- * Consecutive per-loader failures a refinement run tolerates before giving
- * up on that loader for the rest of the run. Without a cap, a persistently
+ * Consecutive failures tolerated before giving up on one loader. Without a
+ * cap, a persistently
  * failing LOD level (e.g. a hard 404 / decode error) kept `hasMoreLODs`
  * true forever and the loop retried at frame rate indefinitely — a network
- * retry storm with the update lock held. Scope is per refinement run: the
- * next view change starts a fresh run and retries the loader from scratch.
+ * retry storm with the update lock held. Scope is per loader instance, so a
+ * partition resync cannot reset the cap; replacing the loader starts fresh.
  */
 export const MAX_CONSECUTIVE_REFINEMENT_FAILURES = 3;
 
 /**
- * Per-run failure bookkeeping shared by the four per-geometry refinement
- * wrappers (Points / Lines / GSplats / Mesh). Each
- * wrapper instantiates one tracker per run and:
+ * Consecutive-failure bookkeeping shared by the four per-geometry refinement
+ * wrappers (Points / Lines / GSplats / Mesh). Each loader owns one tracker and:
  *
  *   - skips loaders whose path {@link isExhausted},
  *   - calls {@link recordSuccess} after a loader's step completes,
@@ -61,9 +60,18 @@ export class RefinementFailureTracker {
     return this.exhaustedPaths.has(path);
   }
 
-  /** Reset the consecutive-failure count for `path` (a step succeeded). */
+  /** Reset the failure state for `path` (a step succeeded). */
   recordSuccess(path: string): void {
     this.failCounts.delete(path);
+    this.exhaustedPaths.delete(path);
+  }
+
+  /** Clear every exhausted/counted path. Returns whether any state changed. */
+  reset(): boolean {
+    const hadFailures = this.failCounts.size > 0 || this.exhaustedPaths.size > 0;
+    this.failCounts.clear();
+    this.exhaustedPaths.clear();
+    return hadFailures;
   }
 
   /**

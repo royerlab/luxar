@@ -26,9 +26,11 @@
 
 import { getViewerContainer } from '../utils/viewer-container';
 import { isDocumentFullscreen } from '../utils/fullscreen';
+import { getInputProfile } from '../utils/input-capabilities';
 import { RailOverlay } from './control-rail/rail-overlay';
 import { isPanelVisible, escapeHtml } from './control-rail/dom-helpers';
 import type { ControlRailItem } from './control-rail/types';
+import { attachLongPress } from '../utils/long-press';
 
 /**
  * Rail item descriptors, re-exported so callers configuring a rail need only
@@ -71,6 +73,8 @@ export class ControlRail {
   private readonly buttons = new Map<string, HTMLButtonElement>();
   /** Flyout + panel-popover lifecycle (only one open at a time). */
   private readonly overlay: RailOverlay;
+  /** Long-press → the same context popovers right-click opens (touch). */
+  private readonly disposeLongPress: () => void;
   private hint?: HTMLDivElement;
   private hintAutoHideTimer?: number;
   private hintFadeTimer?: number;
@@ -184,14 +188,14 @@ export class ControlRail {
     // here (not per-button) so EVERY right-click on the rail is captured.
     this.root.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const btnEl = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>(
-        '.luxar-control-rail__btn'
-      );
-      const item = btnEl ? this.items.find((it) => it.id === btnEl.dataset.railId) : undefined;
-      if (item?.popover?.trigger === 'context' && !btnEl?.disabled) {
-        this.dismissHint();
-        this.overlay.togglePopover(item, btnEl!);
-      }
+      this.openContextPopoverFor(e.target as HTMLElement | null);
+    });
+    // A finger has no right button: a long press on a button that owns a
+    // 'context' popover opens it (iOS never synthesises `contextmenu` for a
+    // long press; the helper is the single opener on Android too, and
+    // swallows the release click so `activate()` does not also fire).
+    this.disposeLongPress = attachLongPress(this.root, {
+      onLongPress: (_x, _y, ev) => this.openContextPopoverFor(ev.target as HTMLElement | null),
     });
 
     this.container.appendChild(this.root);
@@ -228,6 +232,8 @@ export class ControlRail {
     // (Navigation icon/tooltip).
     window.addEventListener('luxar-layers-changed', this.onExternalStateChange);
     window.addEventListener('luxar-control-mode-changed', this.onExternalStateChange);
+    // The Sound button appears only when the scene has sound nodes and mirrors mute.
+    window.addEventListener('luxar-audio-changed', this.onExternalStateChange);
     this.syncFullscreen();
     this.scheduleSleep();
 
@@ -299,6 +305,7 @@ export class ControlRail {
       btn.setAttribute('aria-expanded', 'false');
     }
     btn.innerHTML = item.icon;
+    btn.hidden = this.isHidden(item);
 
     const tip = document.createElement('span');
     tip.className = 'luxar-control-rail__tip';
@@ -396,12 +403,29 @@ export class ControlRail {
     });
   }
 
+  /** Fail-soft `hidden` predicate: a throwing predicate leaves the button shown. */
+  private isHidden(item: ControlRailItem): boolean {
+    if (!item.hidden) return false;
+    try {
+      return item.hidden();
+    } catch {
+      return false;
+    }
+  }
+
   /** Re-read every item's active/disabled state and repaint the buttons. */
   private refresh(): void {
     if (this.disposed) return;
     for (const item of this.items) {
       const btn = this.buttons.get(item.id);
       if (!btn) continue;
+      // Hidden first: a hidden button renders nothing and is skipped entirely.
+      const isHidden = this.isHidden(item);
+      btn.hidden = isHidden;
+      if (isHidden) {
+        btn.classList.remove('is-active');
+        continue;
+      }
       // Sync any dynamic icon/label (e.g. Navigation mode) before active-state.
       this.safeRender(item, btn);
       // Disabled state (e.g. Layers with no layers): native `disabled` so the
@@ -466,9 +490,14 @@ export class ControlRail {
     // Announce the one-time hint to assistive tech. It's injected once and never
     // updated, so role=status (a polite live region) reads it once without spam.
     hint.setAttribute('role', 'status');
+    // "Hover" is a lie to a finger: without a hovering pointer the hint names
+    // the tap and the press-and-hold instead (the popovers open on hold).
+    const verb = getInputProfile().hoverCapable
+      ? 'Hover these controls'
+      : 'Tap these controls (hold for options)';
     hint.innerHTML =
       '<button class="luxar-control-rail-hint__close" type="button" aria-label="Dismiss">&times;</button>' +
-      '<b>New here?</b><br>Hover these controls, or press <kbd>H</kbd> — dimensions, rendering, layers &amp; more.';
+      `<b>New here?</b><br>${verb}, or press <kbd>H</kbd> — dimensions, rendering, layers &amp; more.`;
     hint
       .querySelector('.luxar-control-rail-hint__close')
       ?.addEventListener('click', () => this.dismissHint());
@@ -503,6 +532,23 @@ export class ControlRail {
     this.hint = undefined;
   }
 
+  /**
+   * Open the 'context'-trigger popover of the rail button under `target`, if
+   * any — the shared body of the right-click delegate and the touch
+   * long-press. A disabled button or a button without such a popover is a
+   * no-op (the native menu is still suppressed by the caller).
+   */
+  private openContextPopoverFor(target: HTMLElement | null): boolean {
+    const btnEl = target?.closest<HTMLButtonElement>('.luxar-control-rail__btn');
+    const item = btnEl ? this.items.find((it) => it.id === btnEl.dataset.railId) : undefined;
+    if (item?.popover?.trigger === 'context' && btnEl && !btnEl.disabled) {
+      this.dismissHint();
+      this.overlay.togglePopover(item, btnEl);
+      return true;
+    }
+    return false;
+  }
+
   /** Apply side effects for a keydown handled by the official input router. */
   handleRoutedKeyDown(): void {
     this.dismissHint();
@@ -523,6 +569,7 @@ export class ControlRail {
     if (this.hintFadeTimer) window.clearTimeout(this.hintFadeTimer);
     if (this.refreshRaf !== undefined) cancelAnimationFrame(this.refreshRaf);
     this.overlay.dispose();
+    this.disposeLongPress();
     this.container.removeEventListener('pointermove', this.onContainerMove);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);
@@ -530,6 +577,7 @@ export class ControlRail {
     document.removeEventListener('click', this.onDocClick);
     window.removeEventListener('luxar-layers-changed', this.onExternalStateChange);
     window.removeEventListener('luxar-control-mode-changed', this.onExternalStateChange);
+    window.removeEventListener('luxar-audio-changed', this.onExternalStateChange);
     bodyMarkerRefs = Math.max(0, bodyMarkerRefs - 1);
     if (bodyMarkerRefs === 0) document.body.classList.remove(BODY_MARKER_CLASS);
     // Null the field, not just the DOM: a post-dispose handleRoutedKeyDown()

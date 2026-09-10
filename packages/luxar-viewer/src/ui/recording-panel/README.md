@@ -39,29 +39,30 @@ reference to Session for the shared scaffolding.
 
 ## Files
 
-| File                            | Role                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------------------ |
-| `session.ts`                    | `RecordingSession` — shared state save/restore, dialog, indicator, mutex                   |
-| `capture-strategy.ts`           | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union                    |
-| `screenshot-strategy.ts`        | `ScreenshotStrategy` — single-frame capture with optional transparent BG                   |
-| `video-recording-strategy.ts`   | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                            |
-| `offline-capture-strategy.ts`   | `OfflineCaptureStrategy` — sequences the six collaborators below into one capture          |
-| `offline-capture-preflight.ts`  | Confirmation dialog, session ownership, capture resolution, turntable rotation/dolly plan  |
-| `offline-capture-context.ts`    | `createCaptureDriver` (mode → driver) + `buildCaptureContext` (the driver's dependencies)  |
-| `offline-capture-overlay.ts`    | The modal progress overlay: ARIA, focus trap, Escape/Cancel, live preview, frame counter   |
-| `offline-capture-frame-loop.ts` | The per-frame loop: orbit → settle → grab, with the consecutive-failure bail               |
-| `offline-lod-settle.ts`         | `LodSettleDrain` — the per-frame LOD quiescence wait, its latch/re-arm, and its report     |
-| `offline-capture-teardown.ts`   | The one safe teardown order (flags, driver abort, callbacks, overlay, state restore)       |
-| `screenshot-exporter.ts`        | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob` |
-| `video-codec-selection.ts`      | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path            |
-| `media-utilities.ts`            | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `anchorOffset`          |
-| `ffmpeg-script.ts`              | `generateFfmpegScript` — the bundled `encode_video.sh`, incl. the EXR display transform    |
-| `overlay-compositor.ts`         | `compositeOverlays` + text / image / HTML overlay rasterization                            |
-| `live-overlay-compositor.ts`    | `LiveOverlayCompositor` — mirror canvas that puts overlays into REAL-TIME WebM capture     |
-| `animation-sync.ts`             | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`              |
-| `gui-builder.ts`                | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)        |
-| `zip-sequence-capture.ts`       | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                      |
-| `types.ts`                      | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                       |
+| File                            | Role                                                                                                                                                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session.ts`                    | `RecordingSession` — shared state save/restore, dialog, indicator, mutex                                                                                                                                 |
+| `capture-strategy.ts`           | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union                                                                                                                                  |
+| `screenshot-strategy.ts`        | `ScreenshotStrategy` — single-frame capture with optional transparent BG                                                                                                                                 |
+| `video-recording-strategy.ts`   | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                                                                                                                                          |
+| `offline-capture-strategy.ts`   | `OfflineCaptureStrategy` — sequences the six collaborators below into one capture                                                                                                                        |
+| `offline-capture-preflight.ts`  | Confirmation dialog, session ownership, capture resolution, turntable rotation/dolly plan                                                                                                                |
+| `offline-capture-context.ts`    | `createCaptureDriver` (mode → driver) + `buildCaptureContext` (the driver's dependencies)                                                                                                                |
+| `offline-capture-overlay.ts`    | The modal progress overlay: ARIA, focus trap, Escape/Cancel, live preview, frame counter                                                                                                                 |
+| `offline-capture-frame-loop.ts` | The per-frame loop: orbit → settle → grab, with the consecutive-failure bail                                                                                                                             |
+| `offline-lod-settle.ts`         | `LodSettleDrain` — the per-frame LOD quiescence wait, its latch/re-arm, and its report                                                                                                                   |
+| `offline-capture-teardown.ts`   | The one safe teardown order (flags, driver abort, callbacks, overlay, state restore)                                                                                                                     |
+| `screenshot-exporter.ts`        | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob`                                                                                                               |
+| `video-codec-selection.ts`      | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path                                                                                                                          |
+| `media-utilities.ts`            | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `anchorOffset`                                                                                                                        |
+| `ffmpeg-script.ts`              | `generateFfmpegScript` — the bundled `encode_video.sh`, incl. the EXR display transform                                                                                                                  |
+| `overlay-compositor.ts`         | `compositeOverlays` + text / image / HTML overlay rasterization                                                                                                                                          |
+| `live-overlay-compositor.ts`    | `LiveOverlayCompositor` — mirror canvas that puts overlays into REAL-TIME WebM capture                                                                                                                   |
+| (`types.ts` `AudioCapturePort`) | The sound layer's tap ("Include Audio"): the real-time strategy adds its tracks to the canvas capture and asks for an Opus-capable WebM; released with the capture stream. Offline captures stay silent. |
+| `animation-sync.ts`             | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`                                                                                                                            |
+| `gui-builder.ts`                | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)                                                                                                                      |
+| `zip-sequence-capture.ts`       | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                                                                                                                                    |
+| `types.ts`                      | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                                                                                                                                     |
 
 ## Subpackages
 
@@ -208,15 +209,16 @@ land. Draining before it would keep advancing the turntable while waiting
 and smear the sweep.
 
 The hook is **tri-state** — `true` / `false` / `null` — and the third
-state is what keeps scenes without LOD free. The pipeline wires the
-provider unconditionally, so "a hook is present" says nothing about
-whether this scene has anything to wait for; `null` says there is no
-`lod_group` to wait for (no scene loader, no registry, or a registry with
-zero registered lod\_groups) and makes the loop skip the drain
-**entirely, including the mandatory catch-up rAF below**. A `true` does
-not: it means the LOD tree exists and is settled, which the loop can only
-know one tick late. An absent hook is identical to `null`, which is what
-the unit tests that don't supply it get. The hook is also called through a `try`/`catch`
+state is what keeps scenes without LOD or partitions free. The
+pipeline wires the provider unconditionally, so "a hook is present"
+says nothing about whether this scene has anything to wait for; `null`
+says there is no `lod_group` or `kind=partition` to wait for (no scene
+loader, no registry, or a registry with zero capture-relevant groups)
+and makes the loop skip the drain **entirely, including the mandatory
+catch-up rAF below**. A `true` does not: it means capture-relevant groups
+exist and are settled, which the loop can only know one tick late. An
+absent hook is identical to `null`, which is what the unit tests that
+don't supply it get. The hook is also called through a `try`/`catch`
 (the same treatment `AnimationController.pacingSuspended()` gives its
 injected predicate) — a throw degrades to `null`, i.e. "do not wait",
 rather than being caught by the loop's outer handler and discarding the

@@ -51,12 +51,13 @@ pnpm typecheck    # Type check
 pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
                   # no-misused-promises, await-thenable, no-base-to-string).
                   # Also caps production functions at complexity 10, 120 code
-                  # lines, depth 4, and 5 parameters. The 721 pre-existing
+                  # lines, depth 4, and 5 parameters. The 683 pre-existing
                   # findings are recorded in
                   # eslint-suppressions.json — ESLint's own baseline, so a NEW
-                  # violation fails, including an increase inside a suppressed
-                  # file (the suppression is a COUNT, not a file exemption).
-                  # Fixed some? `pnpm lint --prune-suppressions` tightens it.
+                  # violation or an over-declared count fails, including an
+                  # increase inside a suppressed file (the suppression is a
+                  # COUNT, not a file exemption). After reducing a count, run
+                  # `pnpm lint:prune` and commit the baseline.
                   # Moved/renamed a baselined file? Re-key with `pnpm exec
                   # eslint . --suppress-rule <rule>`, then
                   # prune; verify the suppressions diff only moves that path.
@@ -88,7 +89,10 @@ make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go l
 make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
 make test-e2e     # Full Playwright E2E suite (~17 min)
-make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
+make test-e2e-browsers  # Cross-browser Playwright subset
+make test-e2e-mobile  # Mobile/touch Playwright suite used by PR CI
+make test-e2e-smoke  # E2E smoke subset
+make test-e2e-smoke-strict  # Smoke subset with strict console handling
 make test-perf-e2e   # Opt-in Playwright performance suite
 # check-all is NOT read-only: `check-static` begins with `format`, so it
 # REWRITES packages/luxar/src and scripts. When other agents/people are editing
@@ -97,10 +101,14 @@ make test-perf-e2e   # Opt-in Playwright performance suite
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
-make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+                  # CI enforces this both through `hatch run lint` and the
+                  # live-tree `test_repository_has_no_complexity_regressions`.
+make check-lint-ratchet # read-only: ruff's DEFECT rules (bugbear + blind-except + RUF012)
                   # ratcheted against scripts/lint_baseline.json. Existing debt is
                   # tolerated; a file that newly breaks one of these rules — or
                   # gains another violation of one it already breaks — fails.
+                  # CI also runs the live-tree
+                  # `test_repository_has_no_lint_regressions` fail-closed check.
                   # B905 (`zip` without `strict=`) is the bulk of the baseline and
                   # its fix CHANGES BEHAVIOUR (`strict=True` raises), so pay it
                   # down per call site rather than sweeping. B008 is gated at zero:
@@ -153,10 +161,10 @@ make clean-launchers  # Clean built launcher binaries
 #   4.0 runtime installed, or a separate browser-only build. See #998.
 # Runtime override: LUXAR_CACHE_BUDGET_MB=<N> ./luxar-launcher
 #   Total in-memory cache pool (L0+L1+S-cache) the launcher passes to the
-#   viewer via ?cacheBudgetMB=. One third also becomes the auto GPU-geometry
-#   residency signal. WKWebView has neither performance.memory nor deviceMemory,
-#   so the launcher default (2048) raises that budget from 512 to 716 MB; lower
-#   it on a constrained machine.
+#   viewer via ?cacheBudgetMB=. Its implied non-cache remainder also becomes the
+#   auto GPU-geometry residency signal. WKWebView has neither performance.memory
+#   nor deviceMemory, so the launcher default (2048) raises that budget from 512
+#   to 1432 MB; lower it on a constrained machine.
 
 # CUDA (Gaussian Splatting)
 make setup-cuda       # Install CUDA deps + build extension (may need sudo)
@@ -187,7 +195,7 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 - **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
 **What `make setup-dev` installs (no sudo needed):**
-- **Node.js 22.22+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). The floor is jsdom 30 (dev/test only), whose undici 8 dependency crashes on Node older than 22.16; Vite 8 alone only needs 20.19. `engines.node` in `packages/luxar-viewer/package.json` deliberately stays at the library's runtime floor (`>=20.19.0`) — that manifest is published to npm, and a dev-only jsdom constraint there would break installs for consumers.
+- **Node.js 22.22+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). The floor is jsdom 30 (dev/test only), whose undici 8 dependency crashes on Node older than 22.16; Vite 8 alone supports `^20.19.0 || >=22.12.0`. `engines.node` in `packages/luxar-viewer/package.json` deliberately mirrors that library runtime range, excluding unsupported Node 22.0–22.11 without imposing the higher contributor-only jsdom floor on npm consumers.
 - **pnpm**: TypeScript package manager (via npm global or `--prefix ~/.local` fallback on HPC)
 - **Hatch**: Python environment manager (via pipx, or venv fallback on HPC)
 - **Pre-commit hooks**: ruff (lint + format), bandit, and mypy — see `.pre-commit-config.yaml`
@@ -285,7 +293,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 91 bundled demos (table)
+luxar demo                       # List the 92 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -705,6 +713,11 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:1400
 # `hatch run check-demo-ladders` fails a built store whose SPARSEST slices fall
 # below the floor — it measures the 5th percentile, since a ladder starves at its
 # sparsest slice and one busy coordinate masks hundreds of starved ones.
+# It is intentionally not a checkout-only CI step: generated demo stores are
+# gitignored and absent there, so that would audit nothing. The gallery generator
+# runs it with `--require-scenes` against newly built stores (credits gate, ladders
+# report-only); the pre-upload inventory audit checks the whole corpus, and
+# `check-scene-credits` has the same artifact-only contract.
 
 # Give every leaf of an EXISTING tree an additive ladder, structure-preservingly
 # (substitutive kind=lod levels, partition parts, adaptive groups all keep their

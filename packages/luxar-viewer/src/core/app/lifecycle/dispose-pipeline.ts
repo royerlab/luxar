@@ -38,6 +38,8 @@ export interface DisposePipelinePorts {
   // Subsystems (heavy)
   sceneManager: SceneManager | undefined;
   animationController: AnimationController | undefined;
+  /** The sound layer (a child of the camera; torn down before the scene manager). */
+  audioEngine: { dispose(): void } | undefined;
   performanceMonitor: PerformanceMonitor | undefined;
   adaptiveDPRManager: AdaptiveDPRManager | undefined;
   resolutionIndicator: ResolutionIndicator | undefined;
@@ -100,6 +102,9 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
 
   // Stop animation first.
   safeDispose('animationController', () => ports.animationController?.dispose());
+  // The audio listener is a child of the camera and its voices children of scene
+  // nodes: stop and detach them before the scene manager disposes the graph.
+  safeDispose('audioEngine', () => ports.audioEngine?.dispose());
   // Then the perf readout — it subscribes to the animation loop's
   // frame-start/frame-end bus events, so tear it down right after the loop
   // stops emitting them (otherwise a visible monitor leaks its bus

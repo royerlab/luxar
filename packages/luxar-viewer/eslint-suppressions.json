@@ -4,11 +4,6 @@
       "count": 2
     }
   },
-  "src/cache/chunk-source/http-chunk-source.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/cache/chunk-source/zip-chunk-source.ts": {
     "complexity": {
       "count": 1
@@ -34,11 +29,6 @@
       "count": 4
     }
   },
-  "src/cache/multi-level-caching-store/fetch-retry.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/cache/multi-level-caching-store/opfs-store.ts": {
     "complexity": {
       "count": 5
@@ -50,11 +40,6 @@
   "src/cache/multi-level-caching-store/opfs-store/metadata.ts": {
     "complexity": {
       "count": 2
-    }
-  },
-  "src/cache/multi-level-caching-store/validation-queue.ts": {
-    "complexity": {
-      "count": 1
     }
   },
   "src/config/sections/adaptive-dpr/validate.ts": {
@@ -164,9 +149,6 @@
     }
   },
   "src/core/app/interaction/canvas-actions.ts": {
-    "complexity": {
-      "count": 1
-    },
     "max-lines-per-function": {
       "count": 1
     }
@@ -177,9 +159,6 @@
     }
   },
   "src/core/app/picking/init-picking.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
     "complexity": {
       "count": 2
     },
@@ -326,9 +305,6 @@
     }
   },
   "src/data/loaders/overlays/overlay-loader.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
     "complexity": {
       "count": 2
     }
@@ -593,11 +569,6 @@
     },
     "max-params": {
       "count": 1
-    }
-  },
-  "src/data/scene-loader/nodes/load-mesh-node.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 2
     }
   },
   "src/data/scene-loader/nodes/load-partition-group-node.ts": {
@@ -1116,11 +1087,6 @@
       "count": 1
     }
   },
-  "src/scene/scene-manager/render-pipeline/webgl-context-recovery.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    }
-  },
   "src/scene/synthetic-scene.ts": {
     "complexity": {
       "count": 1
@@ -1267,9 +1233,6 @@
     }
   },
   "src/ui/data-loading-monitor.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
     "complexity": {
       "count": 3
     }
@@ -1348,24 +1311,11 @@
     }
   },
   "src/ui/dataset-browser.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    },
     "complexity": {
       "count": 2
     },
     "max-lines-per-function": {
       "count": 1
-    }
-  },
-  "src/ui/debug-console.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 2
-    }
-  },
-  "src/ui/debug-console/formatters.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 2
     }
   },
   "src/ui/dimension-sliders.ts": {
@@ -1423,9 +1373,6 @@
     }
   },
   "src/ui/layers/layers-panel.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
     "complexity": {
       "count": 4
     }
@@ -1454,9 +1401,6 @@
     }
   },
   "src/ui/recording-panel.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 2
-    },
     "complexity": {
       "count": 1
     }

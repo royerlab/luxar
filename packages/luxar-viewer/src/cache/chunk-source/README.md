@@ -20,10 +20,10 @@ through it — the cache declares the port and the data layer supplies the adapt
 
 ## Two shapes worth knowing before adding a source
 
-**Return materialized bytes, not a `Response`.** The store used to hold a
-`FetchResponseScope` and cancel unread bodies in a `finally`. A non-HTTP container has
-no response to cancel, so that could not survive as a shared contract; response
-lifetime is now each source's own business.
+**Return materialized bytes, not a `Response`.** A non-HTTP container has no response
+to cancel, so response lifetime cannot be part of the shared source contract. The HTTP
+source delegates that lifetime to `fetchWithRetry`, whose consumer runs inside the
+shared fetch-gate lease and cancels any unread body before release.
 
 **`bytesOverWire` is separate from `data.byteLength`.** They are equal over plain
 HTTP. They are not for a container whose transport compresses, and collapsing them
@@ -32,9 +32,9 @@ would make the bandwidth meter over-report by the compression ratio.
 ## The contract that is easy to break
 
 `get()` **must not throw.** Failures come back as a `ChunkFetchOutcome`. A throw
-escapes into `getResult`, is flattened to `NetworkError`, becomes `undefined`, and
-zarrita decodes the chunk as _fill values_ — silently wrong geometry rather than an
-error. Aborts are the sharp edge here: check the signal before reading a body, and map
-a rejecting body read to `aborted` rather than letting it propagate. A fault that
-makes the whole archive unreadable is the exception: return `fatal`, which the caching
-store rethrows instead of degrading to fill values.
+escapes into `getResult` and is flattened to `NetworkError`, losing the source's
+classification and diagnostic. Aborts are the sharp edge here: check the signal before
+reading a body, and map a rejecting body read to `aborted` rather than letting it
+propagate. The caching store rethrows both network and fatal failures so zarrita cannot
+silently replace them with fill values; `fatal` preserves the more actionable diagnostic
+for a container that is wholly unreadable.

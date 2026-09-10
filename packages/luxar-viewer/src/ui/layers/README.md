@@ -6,7 +6,8 @@ Napari-inspired per-layer control panel for Luxar scenes.
 
 The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Data nodes (`points`, `lines`, `gsplats`, `mesh`) and container `group` nodes may both be exposed as layers; for groups, controls apply to every data descendant. Specialized groups (`kind: 'lod'`, `kind: 'partition'`) appear under their resolved `display_type` rather than as `group`, and carry an extra badge (and, for LOD groups, an inline level selector). Each layer provides:
 
-- **Visibility toggle** (eye icon) — initial state taken from the node's `visible` attr (default `true`)
+- **Visibility toggle** (eye icon) — initial state taken from the node's `visible` attr (default `true`). On a `sound` layer the eye MUTES the node, and a group's eye also mutes every sound node under it (through the late-bound `LayersAudioPort`).
+- **Sound rows** — a `sound` node with `layer=True` is listed with a `sound` badge, an inline gain slider (`[0, 2]`, the row IS the control; the appearance section below the list hides for it) and a name tooltip carrying the clip's licence, author and source URL. `LayerSummary.gain` / `LayerPatch.gain` expose it to the embedder API.
 - **Display range** / **Colour range** [min, max] — windows scalar data across the colormap or maps direct RGB input to the full output range, respectively
 - **Gamma** correction
 - **Opacity**

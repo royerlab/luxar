@@ -81,14 +81,121 @@ function authoredFiles(root = PKG) {
 
 const FILES = authoredFiles();
 
-/** Root files selected by a TypeScript project, relative to the package. */
-function typecheckedFiles(configName) {
+/** One ESLint pass from a package script. */
+function lintPass(command) {
+  const target = /^\s*eslint\s+("[^"]+"|\S+)/.exec(command)?.[1]?.replaceAll('"', '');
+  expect(target, `could not read eslint target from: ${command}`).toBeDefined();
+  const ignores = [...command.matchAll(/--ignore-pattern\s+"([^"]+)"/g)].map((match) => match[1]);
+  const ignoreFlags = [...command.matchAll(/--ignore-pattern\b/g)];
+  if (ignores.length !== ignoreFlags.length) {
+    throw new Error(`unsupported --ignore-pattern syntax in: ${command}`);
+  }
+  return { command, target, ignores };
+}
+
+/** ESLint passes named by a package script. */
+function lintPasses(scriptName) {
+  const scripts = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8')).scripts;
+  expect(scripts[scriptName]).toBeTypeOf('string');
+  return scripts[scriptName].split('&&').map(lintPass);
+}
+
+/** Whether a directory target or recursive ignore pattern includes a file. */
+function matchesTree(file, pattern) {
+  if (pattern === '.') return true;
+  if (!/^\/?(?:[\w.-]+\/)*[\w.-]+(?:\/\*\*)?$/.test(pattern)) {
+    throw new Error(`unsupported lint tree pattern: ${pattern}`);
+  }
+  const root = pattern.replace(/\/\*\*$/, '');
+  return file === root || file.startsWith(`${root}/`);
+}
+
+/** Authored files not claimed by any pass in a lint script. */
+function filesOutsideLintScript(scriptName) {
+  const passes = lintPasses(scriptName);
+  return FILES.filter(
+    (file) =>
+      !passes.some(
+        ({ target, ignores }) =>
+          matchesTree(file, target) && !ignores.some((pattern) => matchesTree(file, pattern))
+      )
+  );
+}
+
+/** Parsed TypeScript project configuration. */
+function parsedTypeScriptConfig(configName) {
   const configPath = join(PKG, configName);
   const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
   expect(loaded.error).toBeUndefined();
   const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, PKG, undefined, configPath);
   expect(parsed.errors).toEqual([]);
+  return parsed;
+}
+
+/** Declaration roots supplied by the type packages selected by a project. */
+function selectedTypeDeclarations(parsed) {
+  const declarations = [];
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === 'node_modules') continue;
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) visit(full);
+      else if (DECLARATIONS.some((ext) => entry.name.endsWith(ext))) declarations.push(full);
+    }
+  };
+
+  for (const typeName of parsed.options.types ?? []) {
+    const resolved = ts.resolveTypeReferenceDirective(
+      typeName,
+      parsed.options.configFilePath,
+      parsed.options,
+      ts.sys
+    ).resolvedTypeReferenceDirective?.resolvedFileName;
+    expect(resolved, `could not resolve TypeScript type package: ${typeName}`).toBeDefined();
+    visit(dirname(resolved));
+  }
+  return declarations;
+}
+
+/** Root files selected by a TypeScript project, relative to the package. */
+function typecheckedFiles(configName) {
+  const parsed = parsedTypeScriptConfig(configName);
   return new Set(parsed.fileNames.map((file) => relative(PKG, file)));
+}
+
+/** Diagnostics for one synthetic source under a project's compiler options. */
+function sourceDiagnostics(configName, relativePath, sourceText) {
+  const parsed = parsedTypeScriptConfig(configName);
+  const sourcePath = join(PKG, relativePath);
+  const options = { ...parsed.options, noLib: true, noResolve: true };
+  const host = ts.createCompilerHost(options);
+  const originalFileExists = host.fileExists;
+  const originalGetSourceFile = host.getSourceFile;
+  const originalReadFile = host.readFile;
+
+  host.fileExists = (file) => file === sourcePath || originalFileExists(file);
+  host.readFile = (file) => (file === sourcePath ? sourceText : originalReadFile(file));
+  host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) =>
+    file === sourcePath
+      ? ts.createSourceFile(file, sourceText, languageVersion, true)
+      : originalGetSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
+
+  const declarationFiles = parsed.fileNames.filter(
+    (file) =>
+      DECLARATIONS.some((ext) => file.endsWith(ext)) ||
+      /\bdeclare\b/.test(readFileSync(file, 'utf8'))
+  );
+  const program = ts.createProgram(
+    [...declarationFiles, ...selectedTypeDeclarations(parsed), sourcePath],
+    options,
+    host
+  );
+  const sourceFile = program.getSourceFile(sourcePath);
+  expect(sourceFile).toBeDefined();
+  return [
+    ...program.getSyntacticDiagnostics(sourceFile),
+    ...program.getSemanticDiagnostics(sourceFile),
+  ];
 }
 
 describe('authored file discovery', () => {
@@ -146,6 +253,47 @@ describe('lint scope', () => {
     ).toEqual([]);
   });
 
+  it('claims every authored file across the sequential lint passes', () => {
+    const unreached = filesOutsideLintScript('lint');
+    expect(unreached, `add these to a lint pass:\n${unreached.join('\n')}`).toEqual([]);
+  });
+
+  it('fails closed on unsupported lint tree patterns', () => {
+    for (const pattern of [
+      '**/*.mjs',
+      'src/rendering/**/tsl/**',
+      'src/data/',
+      'src/*',
+      'src/**/*',
+      '**/src/**',
+    ]) {
+      expect(() => matchesTree('src/rendering/probe.ts', pattern)).toThrowError(
+        `unsupported lint tree pattern: ${pattern}`
+      );
+    }
+  });
+
+  it('fails closed on unsupported ignore pattern syntax', () => {
+    for (const syntax of [
+      "--ignore-pattern 'src/**'",
+      '--ignore-pattern src/**',
+      '--ignore-pattern="src/**"',
+    ]) {
+      const command = `eslint . ${syntax}`;
+      expect(() => lintPass(command)).toThrowError(
+        `unsupported --ignore-pattern syntax in: ${command}`
+      );
+    }
+  });
+
+  it('prunes suppressions across every lint pass', () => {
+    const passes = lintPasses('lint:prune');
+    expect(passes.every(({ command }) => command.includes('--prune-suppressions'))).toBe(true);
+
+    const unreached = filesOutsideLintScript('lint:prune');
+    expect(unreached, `add these to a pruning pass:\n${unreached.join('\n')}`).toEqual([]);
+  });
+
   it('fails closed on unsupported source module extensions', async () => {
     const eslint = new ESLint({ cwd: PKG });
     for (const extension of ['mts', 'cts']) {
@@ -166,6 +314,58 @@ describe('typecheck scope', () => {
     );
 
     expect(unreached, `add these to a TypeScript project:\n${unreached.join('\n')}`).toEqual([]);
+  });
+
+  it('keeps Node globals out of browser sources and available to Node-side code', () => {
+    const source = 'Buffer.from(process.cwd());\n';
+    const browserDiagnostics = sourceDiagnostics(
+      'tsconfig.json',
+      'src/node-global-probe.ts',
+      source
+    );
+    const browserMessages = browserDiagnostics.map((diagnostic) =>
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
+    );
+    const toolingDiagnostics = sourceDiagnostics(
+      'tsconfig.tooling.json',
+      'scripts/node-global-probe.ts',
+      source
+    );
+
+    expect(browserMessages).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Cannot find name 'Buffer'"),
+        expect.stringContaining("Cannot find name 'process'"),
+      ])
+    );
+    expect(toolingDiagnostics).toEqual([]);
+  }, 30_000);
+
+  it('includes project ambient declarations when probing browser globals', () => {
+    const declarations = [
+      ['d.ts', 'declare global { var browserScopeProbe: string; }\nexport {};\n'],
+      ['ts', 'declare global { var browserScopeProbe: string; }\nexport {};\n'],
+      ['ts', 'declare var browserScopeProbe: string;\n'],
+    ];
+    for (const [extension, declaration] of declarations) {
+      const declarationPath = join(PKG, `src/types/node-global-probe.test-only.${extension}`);
+      writeFileSync(declarationPath, declaration);
+
+      try {
+        expect(
+          sourceDiagnostics('tsconfig.json', 'src/browser-scope-probe.ts', 'browserScopeProbe;\n')
+        ).toEqual([]);
+      } finally {
+        rmSync(declarationPath, { force: true });
+      }
+    }
+  });
+});
+
+describe('lint contract', () => {
+  it('fails on unpruned suppressions', () => {
+    const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
+    expect(pkg.scripts.lint).not.toContain('--pass-on-unpruned-suppressions');
   });
 });
 

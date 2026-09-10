@@ -213,11 +213,10 @@ describe('capsule constants', () => {
   it('the packet branch of all four vertex surfaces assigns the FULL disc once (#1488)', () => {
     // WHAT THIS GUARANTEES, exactly: inside each `needPacket<end>` branch
     // there is exactly ONE write to `ext<end>` and it is the full-disc form.
-    // Worth having because the two TSL factories are pinned by nothing else
-    // that runs in CI — `.github/workflows/ci.yml` sets `e2e-tests` to
-    // `if: false`, so the codegen snapshots and the parity suite are not
-    // merge-gating and a TSL-only revert to the half-disc reach would ship
-    // green, chopping the deficit rule's light on WebGPU alone.
+    // Worth having because the codegen snapshots do not run in CI and the
+    // parity suite cannot distinguish this TSL-only width-source regression;
+    // a revert to the half-disc reach could otherwise ship green, chopping
+    // the deficit rule's light on WebGPU alone.
     //
     // WHAT IS MATCHED AGAINST WHAT. The reach-form literals run on
     // {@link squash}ed text — comment-stripped AND whitespace-free on both
@@ -424,10 +423,9 @@ describe('capsule constants', () => {
     // `pick-capsule.tsl.ts`, read from disk below). This reads the TSL pair
     // the same "regression lock" way `join-width-tsl.test.ts` pins TSL
     // builder source: those two modules build a graph at runtime instead of
-    // exporting text, and their ONLY other coverage is the checked-in
-    // codegen snapshots, which live in the `e2e-tests` job —
-    // `.github/workflows/ci.yml` sets that whole job to `if: false`, so a
-    // TSL-only deletion of this gate is invisible to CI.
+    // exporting text, and their ONLY other direct coverage is the checked-in
+    // codegen snapshots, which do not run in CI, so a TSL-only deletion of
+    // this gate is invisible to CI.
     //
     // Pinning a single clause substring has three holes: (a) swapping the
     // chain's `||` for `&&` keeps every substring intact and evades the pin
@@ -956,9 +954,8 @@ describe('cut-normal precision regression lock (#1502)', () => {
   // local (u, v) basis — and since the cut spans the full stencil the
   // disagreement grows with distance from the joint, banding near-hairpin
   // joints along the whole rod. The composition sweep above only sees a snap
-  // re-added to the CPU model; unit CI pins the four SHADER surfaces with
-  // nothing at all (the TSL pair only through the codegen snapshots, and
-  // `e2e-tests` in `ci.yml` is `if: false`), hence a source-text lock in the
+  // re-added to the CPU model; unit CI otherwise pins the TSL pair only through
+  // codegen snapshots that do not run in CI, hence a source-text lock in the
   // spirit of `line/join-width-tsl.test.ts` — whose two small helpers are
   // copied rather than exported, to leave that file alone; they now sit at
   // this file's top, shared with the packet-gate lock (#1497). Every match

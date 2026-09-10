@@ -20,26 +20,26 @@ import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedLinesCommit } from '../scene-loader/process/data-processor-lines';
 import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
-import {
-  RefinementFailureTracker,
-  runProgressiveRefinement,
-} from '../scene-loader/progressive/refinement';
+import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
 import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
+  failureTrackerFor,
   handleRefinementError,
   makeRefinementProgressCallbacks,
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
+import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'Lines';
 
 export interface LinesRefinementCtx {
-  rootGroup: THREE.Group | null;
+  /** Scene objects already resolved by the phase eligibility sweep. */
+  objects: ReadonlyMap<string, THREE.Object3D | undefined>;
   viewStateQueue: ViewStateQueue;
-  linesLoaders: Map<string, LinesDataLoader>;
+  loaders: Map<string, LinesDataLoader>;
   deriveNodeViewState(
     path: string,
     attrs: LinesMetadata | undefined,
@@ -80,12 +80,10 @@ export interface LinesRefinementCtx {
 }
 
 export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void> {
-  // Per-run failure backoff: a loader that fails MAX_CONSECUTIVE times is
-  // excluded for the rest of this run (and from anyHasMoreLODs, so the loop
-  // can terminate) instead of retrying at frame rate forever.
-  const failures = new RefinementFailureTracker();
+  const objects = ctx.objects;
+  const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
-    loaders: ctx.linesLoaders,
+    loaders: ctx.loaders,
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
@@ -96,12 +94,12 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
       const admission = admitRefinementCandidate(
         path,
         progressiveLoader,
-        failures,
-        ctx.residencyBudget
+        ctx.residencyBudget,
+        isPathVisible
       );
       if (!admission.admitted) return false;
       try {
-        const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const mesh = objects.get(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as LinesMetadata | undefined;
         // Lines segment bounds already encode the extent, matching the
         // load-lines-node.ts convention.
@@ -145,19 +143,19 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
           session?.end();
           pass?.end();
         }
-        failures.recordSuccess(path);
+        failureTrackerFor(progressiveLoader).recordSuccess(path);
         return true;
       } catch (error) {
-        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader, failures);
+        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader);
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
     },
     ...makeRefinementProgressCallbacks(
       LABEL,
-      ctx.linesLoaders as Map<string, LinesDataLoader & RefinableLoader>,
-      failures,
-      ctx.residencyBudget
+      ctx.loaders as Map<string, LinesDataLoader & RefinableLoader>,
+      ctx.residencyBudget,
+      isPathVisible
     ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),

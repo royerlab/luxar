@@ -80,6 +80,10 @@ export type {
   FlightEasing,
   DimensionMetadata,
   Unsubscribe,
+  AudioState,
+  AudioPatch,
+  AudioBusName,
+  PanningModel,
 } from './core/app/embedder/events';
 /**
  * JSON-serializable snapshot of viewer state (camera placement + per-dimension

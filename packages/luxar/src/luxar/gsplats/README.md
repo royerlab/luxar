@@ -550,7 +550,7 @@ optimizer, scheduler = create_optimizer_and_scheduler(
 For detailed control and statistics, use the class interface:
 
 ```python
-from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+from luxar.gsplats import FitParameters, GaussianSplatFitter
 
 # Initialize fitter with specific device and options
 fitter = GaussianSplatFitter(
@@ -560,12 +560,16 @@ fitter = GaussianSplatFitter(
 
 # Fit with detailed statistics
 result = fitter.fit(
-    image,
-    seeds=candidates,
-    n_iters=500,
-    early_stop_patience=200,  # iterations without improvement before stopping
-    sigma_min_diag=[0.5, 0.5],  # Minimum splat size
-    sigma_max_diag=[10.0, 10.0],  # Maximum splat size
+    FitParameters(
+        V=image,
+        seeds=8000,
+        seed_method="decomposition",
+        n_iters=500,
+        early_stop_patience=200,  # iterations without improvement before stopping
+        sigma_min_diag=[0.5, 0.5],  # Minimum splat size
+        sigma_max_diag=[10.0, 10.0],  # Maximum splat size
+        seed_kwargs={"num_scales": 3},  # Extra seed-generator options
+    )
 )
 
 # Access optimization statistics from result.stats
@@ -695,7 +699,7 @@ After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.za
 ### Functions
 
 - `cv_mask(shape, fraction=0.05, seed=42)` — deterministic Bernoulli held-out mask.
-- `donut_median_fill(V, mask, radius=1)` — replace masked voxels with median of `(2r+1)^D` donut neighbourhood (centre excluded). Operates on arrays of any dimensionality.
+- `donut_median_fill(V, mask, radius=1)` — replace masked voxels with the median of their *unmasked* `(2r+1)^D` donut neighbours (centre and other held-out voxels excluded), expanding the radius when a clustered mask hides every local donor. The filled volume depends on unmasked voxels only; an all-`True` mask raises `ValueError`. Operates on arrays of any dimensionality.
 - `held_out_psnr(V_hat, V_original, mask, data_range=None)` — PSNR at masked positions against the *original* (pre-fill) values.
 - `estimate_noise_floor(V) -> NoiseFloor` — ensemble of Laplacian MAD (Immerkaer 1996), Haar HH-subband MAD (Donoho & Johnstone 1994), and background-region MAD; the median across estimators is robust to one outlier on the low side (typical when the dark tail is quantised).
 - `build_k_grid(explicit=None, n_points=10, k_min=1_000, k_max=512_000, progression="exp", power=2)` — exponential (geometric/log-spaced) or polynomial K grid; `explicit` takes precedence when given.
@@ -1194,7 +1198,7 @@ gsplats/
 │   └── utils.py                   # Seeding helper utilities
 │
 ├── fitting/                       # Modular fitting pipeline
-│   ├── config.py                  # Configuration dataclasses (FitConfig, PreprocessedData, etc.)
+│   ├── config.py                  # Configuration dataclasses (FitParameters, FitConfig, etc.)
 │   ├── validation.py              # Input validation and parameter checking
 │   ├── preprocessing.py           # Data normalization and candidate generation
 │   ├── initialization.py          # Model and optimizer initialization
@@ -1314,7 +1318,7 @@ The fitting pipeline uses a modular architecture with focused, maintainable modu
 - **fitting/ modules**: Each handles a specific aspect of the fitting process
   - Individual components are independently testable
   - Clear separation of concerns across six pipeline stages
-  - Type-safe configuration via dataclasses (FitConfig, PreprocessedData, etc.)
+  - Type-safe configuration via dataclasses (FitParameters, FitConfig, etc.)
   - See `fitting/README.md` for the full pipeline architecture diagram
 
 ## Running Demos

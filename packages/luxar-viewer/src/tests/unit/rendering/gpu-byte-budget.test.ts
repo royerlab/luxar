@@ -2,9 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   configureGpuByteBudget,
   getGpuByteBudget,
+  initializeGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../../rendering/gpu-byte-budget';
+import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
+
+const profile = { deviceClass: 'laptop' as 'mobile' | 'laptop' | 'desktop' };
+vi.mock('../../../utils/input-capabilities', () => ({
+  getInputProfile: () => profile,
+}));
 
 /** Temporarily set navigator.deviceMemory (GB) for a test. */
 function withDeviceMemory(gb: number | undefined, fn: () => void): void {
@@ -36,6 +43,7 @@ function withHeapLimit(bytes: number | undefined, fn: () => void): void {
 
 const MB = 1_000_000;
 const MiB = 1024 * 1024;
+const targetHeapUsage = config.dataLoading.memory.targetHeapUsage;
 
 afterEach(() => {
   // Reset to a known state so tests don't leak the singleton budget.
@@ -43,11 +51,87 @@ afterEach(() => {
 });
 
 describe('gpu-byte-budget', () => {
+  it('initializes a fresh embed budget from the independent mobile cap', async () => {
+    vi.resetModules();
+    profile.deviceClass = 'mobile';
+    try {
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      withDeviceMemory(undefined, () => {
+        withHeapLimit(undefined, () => {
+          freshBudget.initializeGpuByteBudget(null);
+          expect(freshBudget.getGpuByteBudget()).toBe(128 * MiB);
+        });
+      });
+    } finally {
+      profile.deviceClass = 'laptop';
+    }
+  });
+
+  it('resolves an omitted embed override from config', async () => {
+    vi.resetModules();
+    const { config: freshConfig } = await import('../../../config');
+    const previous = freshConfig.dataLoading.performance.gpuPoolMaxBytes;
+    try {
+      freshConfig.dataLoading.performance.gpuPoolMaxBytes = 321 * MB;
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      freshBudget.initializeGpuByteBudget();
+      expect(freshBudget.getGpuByteBudget()).toBe(321 * MB);
+    } finally {
+      freshConfig.dataLoading.performance.gpuPoolMaxBytes = previous;
+    }
+  });
+
+  it('auto-sizes an invalid NaN embed override instead of poisoning the budget', async () => {
+    vi.resetModules();
+    const { log: freshLog, Modules: freshModules } = await import('../../../utils/log');
+    const warning = vi.spyOn(freshLog, 'warning').mockImplementation(() => {});
+    try {
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      withDeviceMemory(4, () => {
+        freshBudget.initializeGpuByteBudget(Number.NaN);
+        expect(freshBudget.getGpuByteBudget()).toBe(1000 * MB);
+      });
+      expect(warning).toHaveBeenCalledWith(
+        freshModules.PERFORMANCE,
+        'Ignoring NaN GPU byte budget override; using auto-sizing'
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it('honors an explicit override and skips the heuristic', () => {
     withDeviceMemory(8, () => {
       configureGpuByteBudget(1536 * MB);
       expect(getGpuByteBudget()).toBe(1536 * MB);
     });
+  });
+
+  it('keeps the first startup configuration when a shared embed path configures again', () => {
+    withDeviceMemory(1, () => {
+      configureGpuByteBudget(777 * MB);
+      initializeGpuByteBudget();
+      expect(getGpuByteBudget()).toBe(777 * MB);
+    });
+  });
+
+  it.each([
+    [null, 'auto-sizing'],
+    [0, 'disabling eviction'],
+    [123 * MB, '123 MB'],
+  ] as const)('warns when a later entry point requests explicit %s', (overrideBytes, requested) => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      configureGpuByteBudget(777 * MB);
+      initializeGpuByteBudget(overrideBytes);
+      expect(getGpuByteBudget()).toBe(777 * MB);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.PERFORMANCE,
+        `GPU byte budget is already configured; ignoring later request for ${requested}`
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it('auto-sizes from deviceMemory at 25%, capped at 2GB with NO floor', () => {
@@ -100,14 +184,20 @@ describe('gpu-byte-budget', () => {
     // eviction path is unreachable. The override is the ONLY way to reproduce
     // constrained-device behaviour — without it the fix is untestable on the
     // hardware that would verify it.
-    it('is what makes eviction reachable: budget lands under a few hundred MB', () => {
-      // The stranded superseded pairs measured on a 2M-splat 16-rung node are
-      // ~285 MB. For the pool LRU to fire at all, the budget must land below
-      // active + pooled. This pins that the 1024 MiB test point actually binds
-      // — the whole acceptance criterion (evictions > 0) depends on it.
+    it('uses the non-cache remainder implied by the explicit pool', () => {
       withDeviceMemory(32, () => {
         configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MiB });
-        expect(getGpuByteBudget()).toBe(Math.floor((1024 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(Math.floor((1024 * MiB * 2) / 3));
+      });
+    });
+
+    it('can still bind below stranded superseded growth buffers', () => {
+      // The stranded superseded pairs measured on a 2M-splat 16-rung node are
+      // ~285 MB. The pool LRU can fire only when the budget lands below active
+      // + pooled bytes, so this pins an override that keeps eviction reachable.
+      withDeviceMemory(32, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 384 * MiB });
+        expect(getGpuByteBudget()).toBe(256 * MiB);
       });
     });
 
@@ -118,17 +208,26 @@ describe('gpu-byte-budget', () => {
       });
     });
 
-    it('keeps large cache overrides proportional instead of applying the eager-loader cap', () => {
+    it('caps large cache overrides at the GPU budget ceiling, not the eager-loader ceiling', () => {
       withDeviceMemory(32, () => {
         configureGpuByteBudget(null, { cachePoolOverrideBytes: 4096 * MiB });
-        expect(getGpuByteBudget()).toBe(Math.floor((4096 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(2_000 * MB);
       });
     });
 
     it('uses the cache override when deviceMemory is unavailable', () => {
       withDeviceMemory(undefined, () => {
         configureGpuByteBudget(null, { cachePoolOverrideBytes: 2048 * MiB });
-        expect(getGpuByteBudget()).toBe(Math.floor((2048 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(Math.floor((2048 * MiB * 2) / 3));
+      });
+    });
+
+    it('lets an explicit cache pool replace the measured-heap remainder', () => {
+      withDeviceMemory(32, () => {
+        withHeapLimit(1024 * MiB, () => {
+          configureGpuByteBudget(null, { cachePoolOverrideBytes: 2048 * MiB });
+          expect(getGpuByteBudget()).toBe(Math.floor((2048 * MiB * 2) / 3));
+        });
       });
     });
 
@@ -154,14 +253,16 @@ describe('gpu-byte-budget', () => {
       // Settled by measurement, not argument (host-demos, `jsHeapSizeLimit`
       // spoofed with real used/total passing through): WITHOUT the heap term
       // the auto budget stayed at 2000 MB even at a spoofed 256 MB heap and
-      // reclaimed nothing — zero movement. WITH it the budget tracks the spoof
-      // at 43 / 86 / 172 MB for 256 / 512 / 1024 MiB, and multi6 returns to
-      // evict=5 on the real heap.
+      // reclaimed nothing — zero movement. The measured pre-#2439 half-share
+      // tracked the spoof at 43 / 86 / 172 MB for 256 / 512 / 1024 MiB and
+      // returned multi6 to evict=5; the full remainder now resolves those heap
+      // limits to 86 / 172 / 344 MB.
       withDeviceMemory(32, () => {
         withHeapLimit(4 * 1024 * 1024 * 1024, () => {
           configureGpuByteBudget();
-          expect(getGpuByteBudget()).toBeLessThan(2_000 * MB);
-          expect(getGpuByteBudget()).toBeGreaterThan(0);
+          expect(getGpuByteBudget()).toBe(
+            Math.floor(4 * 1024 * 1024 * 1024 * targetHeapUsage * 0.4)
+          );
         });
       });
     });
@@ -186,6 +287,25 @@ describe('gpu-byte-budget', () => {
       expect(atOneGB).toBeLessThan(atFourGB);
     });
 
+    it('tracks roomy heaps upward beyond the eager-loader 512 MiB ceiling', () => {
+      let atFourGB = 0;
+      let atEightGB = 0;
+      withDeviceMemory(32, () => {
+        withHeapLimit(4 * 1024 * 1024 * 1024, () => {
+          configureGpuByteBudget();
+          atFourGB = getGpuByteBudget();
+        });
+        withHeapLimit(8 * 1024 * 1024 * 1024, () => {
+          configureGpuByteBudget();
+          atEightGB = getGpuByteBudget();
+        });
+      });
+
+      expect(atFourGB).toBe(Math.floor(4 * 1024 * 1024 * 1024 * targetHeapUsage * 0.4));
+      expect(atEightGB).toBe(2_000 * MB);
+      expect(atEightGB).toBeGreaterThan(atFourGB);
+    });
+
     it('logs the cache override in the MiB units supplied by the user', () => {
       const info = vi.spyOn(log, 'info').mockImplementation(() => {});
       withDeviceMemory(32, () => {
@@ -193,7 +313,7 @@ describe('gpu-byte-budget', () => {
       });
       expect(info).toHaveBeenCalledWith(
         Modules.PERFORMANCE,
-        'GPU byte budget: 358 MB (auto: deviceMemory=32 GB -> 2000 MB, cacheBudgetMB=1024 -> 358 MB; min=358 MB)'
+        'GPU byte budget: 716 MB (auto: deviceMemory=32 GB -> 2000 MB, cacheBudgetMB=1024 -> 716 MB; min=716 MB)'
       );
       info.mockRestore();
     });
@@ -209,5 +329,70 @@ describe('gpu-byte-budget', () => {
     expect(getGpuByteBudget()).toBe(256 * MB);
     reduceGpuByteBudgetForContextLoss(); // already at floor → unchanged
     expect(getGpuByteBudget()).toBe(256 * MB);
+  });
+});
+
+describe('gpu-byte-budget — mobile device class', () => {
+  afterEach(() => {
+    profile.deviceClass = 'laptop';
+  });
+
+  it('a phone/tablet with NO other signal (WebKit) retains the 128 MiB safety cap', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(undefined, () => {
+        configureGpuByteBudget();
+        expect(getGpuByteBudget()).toBe(128 * MiB);
+      });
+    });
+  });
+
+  it('the mobile candidate is a peer in the minimum: it binds under a generous deviceMemory', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(8, () => {
+      withHeapLimit(undefined, () => {
+        configureGpuByteBudget(); // 8 GB × 0.25 = 2 GB would otherwise win
+        expect(getGpuByteBudget()).toBe(128 * MiB);
+      });
+    });
+  });
+
+  it('a small measurable mobile heap can bind below the 128 MiB safety cap', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(256 * MiB, () => {
+        configureGpuByteBudget();
+        expect(getGpuByteBudget()).toBe(Math.floor(256 * MiB * targetHeapUsage * 0.4));
+      });
+    });
+  });
+
+  it('the 128 MiB mobile safety cap binds above the small-heap boundary', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(512 * MiB, () => {
+        configureGpuByteBudget();
+        expect(getGpuByteBudget()).toBe(128 * MiB);
+      });
+    });
+  });
+
+  it('a cache override cannot raise the mobile safety cap', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(undefined, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 2048 * MiB });
+        expect(getGpuByteBudget()).toBe(128 * MiB);
+      });
+    });
+  });
+
+  it('a laptop/desktop contributes no device-class candidate (unchanged resolution)', () => {
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(undefined, () => {
+        configureGpuByteBudget();
+        expect(getGpuByteBudget()).toBe(512 * MB);
+      });
+    });
   });
 });

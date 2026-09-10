@@ -36,6 +36,13 @@ export interface LuxarAppOptions {
   /** Cache and prefetch flags forwarded to the data loader. */
   loaderConfig?: LoaderConfig;
   /**
+   * Session-wide GPU geometry budget in bytes. `null` auto-sizes from device
+   * memory, measured heap, and device class; `0` disables byte-budget eviction,
+   * and a positive value pins the budget. Defaults to
+   * `config.dataLoading.performance.gpuPoolMaxBytes`.
+   */
+  gpuPoolMaxBytes?: number | null;
+  /**
    * Reflect the loaded dataset URL in the browser address bar via
    * `history.replaceState` so the page can be reloaded or shared.
    *
@@ -169,9 +176,9 @@ export interface LuxarAppOptions {
   /**
    * WebGL-only blend warm-up (pre-compile each DISTINCT reachable
    * blend-mode program variant, one compile per macrotask). Default:
-   * true. Mirrors `UrlParams.blendWarmup` (`?no-blend-warmup`
-   * disables) — the standalone bootstrap threads it here; embedders
-   * set it directly.
+   * true on laptops/desktops and false on phones/tablets. Mirrors
+   * `UrlParams.blendWarmup` (`?no-blend-warmup` disables) — the
+   * standalone bootstrap threads it here; embedders can disable it directly.
    */
   blendWarmup?: boolean;
 

@@ -51,6 +51,13 @@ export interface DimensionSlidersConfig {
   dimensionNames: string[];
   dimensionUnits?: string[];
   selectedDimension?: number;
+  /**
+   * Fired when the panel itself selects the dimension the global [ / ] keys
+   * target (a tap on a dimension's name chip under a coarse pointer), so the
+   * input layer's own selection stays in step. Position in the non-displayed
+   * dimension list, as `selectedDimension`.
+   */
+  onSelectDimension?: (navigableIndex: number) => void;
 }
 
 /** Dimension sliders surface used by navigation lifecycle and shortcuts. */

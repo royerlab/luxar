@@ -1,0 +1,3 @@
+#### Blind-spot fill excludes held-out neighbours
+
+`donut_median_fill` now takes the median over the *unmasked* donut neighbours only. Previously every neighbour's original value entered the median, so at a 5 % Bernoulli mask about 74 % of held-out voxels leaked their value into a neighbour's fill, and the fitted volume was not strictly independent of the held-out set the blind-spot cross-validation scores against. The filled volume is now invariant to the values at masked positions (tested); voxels whose donors are all held out expand one Chebyshev shell at a time until a local unmasked donor is found. `gsplat cal` inherits the change; K* estimates may shift marginally.

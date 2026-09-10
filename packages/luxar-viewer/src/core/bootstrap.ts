@@ -133,7 +133,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // the GPU byte budget below, the cache pool's device class, gesture routing
   // and the touch UI all derive from `getInputProfile()`, and it memoises on
   // first use.
-  setInputProfileOverride(urlParams.input);
+  setInputProfileOverride(urlParams.input ?? null);
 
   // Size the single GPU-geometry byte budget before any pool / LOD
   // registry is constructed. Precedence: `?gpuBudgetMB=` URL param >
@@ -142,12 +142,19 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // path: `navigator.deviceMemory` is Chromium-only and spec-capped at 8 GB, so
   // on a large machine it pins the budget at its ceiling and the pool's
   // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
-  // the only way to reproduce constrained-device behaviour on a roomy box. In
-  // WebKit it is the sole signal and may raise or lower the 512 MB fallback.
+  // the only way to reproduce constrained-device behaviour on a roomy box;
+  // values around 384 MiB keep the byte-budget eviction path binding. In
+  // desktop WebKit it is the sole signal and may raise or lower the 512 MB
+  // fallback. On mobile WebKit it replaces the device-class pool in the shared
+  // remainder, but the independent 128 MiB mobile safety cap remains a peer
+  // minimum, so the override can only lower it.
   // The persisted Settings budget remains cache-only by design; the regression
-  // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
-  // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
-  // measurement.
+  // guard is "threads stored cache preferences into loaderConfig when no URL
+  // params are set". The ambient JS heap limit is folded in because pooled
+  // geometry retains CPU-side ArrayBuffers; unlike the eager loader, the GPU
+  // term uses the full non-cache remainder with its own 2 GB ceiling. A MOBILE
+  // device class is folded in (inside `computeAutoBudget`): on WebKit it is the
+  // only memory signal a phone has.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
@@ -336,6 +343,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityCap: urlParams.densityCap ?? undefined,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
+    // The shared init pipeline applies the mobile default so direct LuxarApp
+    // embedders and the standalone app behave identically.
     blendWarmup: urlParams.blendWarmup,
     // `?bake-env[&probe=…][&env-resolution=…]` — the `luxar env bake` driver.
     bakeEnvironment: urlParams.bakeEnv

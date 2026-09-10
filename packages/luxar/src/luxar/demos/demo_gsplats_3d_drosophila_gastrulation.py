@@ -114,6 +114,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
 )
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
 from luxar.gsplats.gsplat_data import GSplatData
@@ -528,6 +529,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 ),
                 citation=DEMO_META["citation"],
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: Drosophila Gastrulation (SiMView)"
             scene.attrs["description"] = (
                 "Drosophila melanogaster embryo (His2Av::mRFP1) at gastrulation, "

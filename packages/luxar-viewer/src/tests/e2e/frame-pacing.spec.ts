@@ -21,7 +21,7 @@
  *    0.5 ms in-page but measured 111 s across the bridge in the wedge).
  *
  * Neither this spec nor the un-parked `performance_benchmark_example` case in
- * `all-examples-smoke-test.spec.ts` is in the CI smoke subset
+ * `all-examples-smoke-test.spec.ts` is in the smoke subset
  * (`pnpm test:e2e:smoke`), so both run only in the full E2E suite.
  */
 

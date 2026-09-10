@@ -58,8 +58,8 @@ is a documented reason not to.
 
 Production functions are limited to complexity 10, 120 code lines, nesting
 depth 4, and 5 parameters. Existing debt is count-baselined in
-`eslint-suppressions.json`; use `pnpm lint --prune-suppressions` after paying
-any of it down. After moving or renaming a baselined file, re-key it with
+`eslint-suppressions.json`; reducing a count fails lint until `pnpm lint:prune`
+updates the baseline. After moving or renaming a baselined file, re-key it with
 `pnpm exec eslint . --suppress-rule <rule>`, then prune and
 verify the suppressions diff only moves that path.
 
@@ -109,16 +109,16 @@ through `log.custom(emoji, module, message)`.
 
 ## 5. Error handling
 
-| Mechanism    | Use when                                                | Example                                                |
-| ------------ | ------------------------------------------------------- | ------------------------------------------------------ |
-| `throw`      | Unrecoverable invariant violation at JS boundary       | `validateNDArrays` rejecting a malformed buffer        |
-| `Result<T,E>`| Recoverable with a typed error code                    | Cache miss vs network error vs corrupt vs aborted      |
-| `log.warning`| Degraded behaviour, app continues                      | localStorage quota exceeded                            |
-| `log.error`  | Unexpected failure, app continues but UX impacted      | WebGL context lost (with rebuild scheduled)           |
+| Mechanism     | Use when                                          | Example                                           |
+| ------------- | ------------------------------------------------- | ------------------------------------------------- |
+| `throw`       | Unrecoverable invariant violation at JS boundary  | `validateNDArrays` rejecting a malformed buffer   |
+| `Result<T,E>` | Recoverable with a typed error code               | Cache miss vs network error vs corrupt vs aborted |
+| `log.warning` | Degraded behaviour, app continues                 | localStorage quota exceeded                       |
+| `log.error`   | Unexpected failure, app continues but UX impacted | WebGL context lost (with rebuild scheduled)       |
 
 Avoid `throw` for "the network was slow" — that is a `Result<…>`.
 Avoid `Result<…>` for "the input is structurally invalid" — that is a
-`throw`. The boundary is whether the caller can plausibly *recover*.
+`throw`. The boundary is whether the caller can plausibly _recover_.
 
 ## 6. Resource lifecycle
 
@@ -143,7 +143,9 @@ class FooManager {
     FooManager.instance = undefined;
   }
 
-  dispose(): void { /* ... idempotent ... */ }
+  dispose(): void {
+    /* ... idempotent ... */
+  }
 }
 ```
 
@@ -234,17 +236,21 @@ thread. Conventions:
   makes the intent obvious.
 - **Layer order** (see `.dependency-cruiser.cjs`):
 
-      types → config → cache → rendering → data → scene → input → ui → core
+      types → config → cache → rendering → data → audio → scene → input → ui → core
 
   Each layer may import from layers to its **left**. Cross-cutting
   helpers (`utils/`, `themes/`, `wasm/`, `workers/`, `profiling/`,
   `controls/`) may be imported anywhere. Type-only imports are exempt
   — they're erased at compile time.
 
-  Note: `rendering` sits *below* `data` because rendering primitives
+  Note: `rendering` sits _below_ `data` because rendering primitives
   (materials, geometries, GPU buffer pools) are foundational
   building blocks that the data layer assembles into meshes. This
   order matches the actual dependency direction in the codebase.
+
+  `audio` (the sound layer) sits between `data` and `scene`: it reuses the
+  data layer's pure slab / view-state helpers and takes the camera, the dims
+  manager and the embedder emitter as ports, so it never imports upward.
 
   Run `pnpm check:layers` to surface violations. **All layer rules
   are at severity `error`** — any new crossing fails the build. The
@@ -264,7 +270,7 @@ thread. Conventions:
 ## 11. Types
 
 - `any` is allowed only with an inline `// eslint-disable-next-line
-  @typescript-eslint/no-explicit-any` and a justification comment.
+@typescript-eslint/no-explicit-any` and a justification comment.
   See `eslint.config.js` for which directories enforce the rule.
 - Promises must be awaited, returned, explicitly ignored with `void`, or given
   a rejection handler. Async callbacks must only be passed where the caller

@@ -32,6 +32,8 @@ export const StorageKeys = Object.freeze({
   debug: 'luxar.debug',
   /** Global viewer preferences (Settings popover) — see config/user-settings.ts. */
   settings: 'luxar.settings',
+  /** Listener audio preferences (rail mute + master gain) — see audio/audio-prefs.ts. */
+  audio: 'luxar.audio',
   /** Per-scene rendering settings (bloom, HDR, lens, etc). */
   rendering(sceneId: string): string {
     return `luxar.rendering.${sanitizeKeySegment(sceneId)}`;

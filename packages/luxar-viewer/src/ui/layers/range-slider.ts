@@ -10,6 +10,7 @@
  */
 
 import { clamp } from '../gui/format/value-formatting';
+import { normalizeWheelDeltaWithAxisFallback } from '../../utils/wheel-delta';
 
 export interface RangeSliderOptions {
   container: HTMLElement;
@@ -315,10 +316,8 @@ export class RangeSlider {
     const curMin = parseFloat(this.lowInput.min);
     const curMax = parseFloat(this.lowInput.max);
     const step = computeWheelStep(curMin, curMax, e.shiftKey);
-    // Scroll up → increase, scroll down → decrease. Shift+wheel on a
-    // standard mouse arrives as a HORIZONTAL scroll (the browser swaps the
-    // axis, leaving deltaY = 0), so read whichever axis carries the motion.
-    const wheelDelta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    // Scroll up → increase, scroll down → decrease.
+    const wheelDelta = normalizeWheelDeltaWithAxisFallback(e);
     if (wheelDelta === 0) return;
     const direction = wheelDelta < 0 ? 1 : -1;
     const delta = step * direction;

@@ -24,26 +24,26 @@ import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profi
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
-import {
-  RefinementFailureTracker,
-  runProgressiveRefinement,
-} from '../scene-loader/progressive/refinement';
+import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
 import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
+  failureTrackerFor,
   handleRefinementError,
   makeRefinementProgressCallbacks,
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
+import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'Mesh';
 
 export interface MeshRefinementCtx {
-  rootGroup: THREE.Group | null;
+  /** Scene objects already resolved by the phase eligibility sweep. */
+  objects: ReadonlyMap<string, THREE.Object3D | undefined>;
   viewStateQueue: ViewStateQueue;
-  meshLoaders: Map<string, MeshDataLoader>;
+  loaders: Map<string, MeshDataLoader>;
   deriveNodeViewState(
     path: string,
     attrs: MeshMetadata | undefined,
@@ -84,12 +84,10 @@ export interface MeshRefinementCtx {
 }
 
 export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
-  // Per-run failure backoff: a loader that fails MAX_CONSECUTIVE times is
-  // excluded for the rest of this run (and from anyHasMoreLODs, so the loop can
-  // terminate) instead of retrying at frame rate forever.
-  const failures = new RefinementFailureTracker();
+  const objects = ctx.objects;
+  const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
-    loaders: ctx.meshLoaders,
+    loaders: ctx.loaders,
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
@@ -100,12 +98,12 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
       const admission = admitRefinementCandidate(
         path,
         progressiveLoader,
-        failures,
-        ctx.residencyBudget
+        ctx.residencyBudget,
+        isPathVisible
       );
       if (!admission.admitted) return false;
       try {
-        const object = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const object = objects.get(path) as THREE.Mesh | undefined;
         const nodeAttrs = object?.userData?.attrs as MeshMetadata | undefined;
         // Mesh takes the partial-extend tolerance (only Lines opts out — its
         // segment bounds already encode the non-displayed extent). Matches
@@ -144,15 +142,14 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
           session?.end();
           pass?.end();
         }
-        failures.recordSuccess(path);
+        failureTrackerFor(progressiveLoader).recordSuccess(path);
         return true;
       } catch (error) {
         return handleRefinementError(
           { label: LABEL, degradedState: 'showing a partial surface' },
           path,
           error,
-          progressiveLoader,
-          failures
+          progressiveLoader
         );
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
@@ -160,9 +157,9 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
     },
     ...makeRefinementProgressCallbacks(
       LABEL,
-      ctx.meshLoaders as Map<string, MeshDataLoader & RefinableLoader>,
-      failures,
-      ctx.residencyBudget
+      ctx.loaders as Map<string, MeshDataLoader & RefinableLoader>,
+      ctx.residencyBudget,
+      isPathVisible
     ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),

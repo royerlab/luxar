@@ -52,7 +52,7 @@ from collections.abc import Collection, Sequence
 from functools import lru_cache
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Optional
+from typing import Any, Generic, Optional, TypeVar
 
 from arbol import aprint, asection
 
@@ -75,6 +75,19 @@ MANIFEST_PATH = Path(__file__).resolve().parents[2] / "data_manifest.json"
 #: spec, a Zenodo record, or a single file entry. The values are heterogeneous
 #: JSON (str / int / list / nested object), so ``Any`` is the honest element type.
 Manifest = dict[str, Any]
+_T = TypeVar("_T")
+
+
+class ResolvedDataset(list[_T], Generic[_T]):
+    """List-compatible resolved values plus their verified input digests.
+
+    Derived list operations return plain lists and discard ``input_digests``.
+    """
+
+    def __init__(self, values: list[_T], input_digests: dict[str, str]) -> None:
+        super().__init__(values)
+        self.input_digests = dict(sorted(input_digests.items()))
+
 
 # Buckets that this module does NOT fetch (caller builds them locally).
 _LOCAL_BUCKETS = {"local-compute", "regenerate"}
@@ -306,7 +319,7 @@ def ensure_dataset(
     cache_root: Optional[Path] = None,
     manifest: Optional[Manifest] = None,
     verbose: bool = True,
-) -> list[Path]:
+) -> ResolvedDataset[Path]:
     """Ensure a ``zenodo`` dataset's files are present locally; return their paths.
 
     Args:
@@ -327,7 +340,7 @@ def ensure_dataset(
         manifest: Pre-loaded manifest (tests); defaults to the packaged one.
 
     Returns:
-        Cache paths of the dataset files, in manifest order.
+        Cache paths in manifest order, with a canonical ``input_digests`` map.
 
     Raises:
         DatasetNotFound: unknown dataset.
@@ -356,7 +369,7 @@ def ensure_dataset(
     files, variant_name = resolve_variant(name, spec, variant)
     files = _select_files(name, files, file_names, variant_name)
     if file_names is not None and not files:
-        return []
+        return ResolvedDataset([], {})
     if not files:
         detail = f" variant {variant_name!r}" if variant_name else ""
         raise DatasetUnavailable(
@@ -383,13 +396,13 @@ def ensure_dataset(
         files, cache_dir, lfs_dir, record, dataset_label=label
     )
 
-    resolved: list[Path] = []
+    resolved: list[tuple[Path, str]] = []
     with asection(f"Ensuring dataset ({label})") if verbose else _null_ctx():
         for entry in files:
             fname = entry["name"]
             dest = cache_dir / fname
             if fname in positional_fallbacks:
-                resolved.append(dest)
+                resolved.append((dest, positional_fallbacks[fname]))
                 continue
             resolved.append(
                 _ensure_one(
@@ -403,7 +416,14 @@ def ensure_dataset(
                     superseded=tuple(entry.get("superseded_sha256") or ()),
                 )
             )
-    return resolved
+    result = ResolvedDataset(
+        [path for path, _ in resolved],
+        {path.name: digest for path, digest in resolved},
+    )
+    from ..runtime.provenance import _record_input_digests
+
+    _record_input_digests(result.input_digests)
+    return result
 
 
 def _matches(path: Path, expected: Optional[str], verbose: bool) -> bool:
@@ -454,8 +474,8 @@ def _accepted_contract(
     hosted_sha: Optional[str],
     verbose: bool,
     superseded: Sequence[str] = (),
-) -> Optional[str]:
-    """Which contract *path* satisfies: hosted, local, superseded, or None.
+) -> Optional[tuple[str, str]]:
+    """Which contract *path* satisfies as ``(kind, digest)``, or None.
 
     Hosted is tried first so the canonical answer is the one reported when both
     would match — which is every case where the two pins agree.
@@ -474,7 +494,7 @@ def _accepted_contract(
         return None
     if len(candidates) == 1:
         digest, kind = candidates[0]
-        return kind if _matches(path, digest, verbose) else None
+        return (kind, digest) if _matches(path, digest, verbose) else None
     if not path.is_file():
         return None
 
@@ -500,6 +520,11 @@ def _source_remedy(lfs_dir: Path, fname: str) -> str:
     return "This archive is hosted-only and has no in-repo Git LFS copy."
 
 
+def _verdict_kind(verdict: Optional[tuple[str, str]]) -> Optional[str]:
+    """Return the kind carried by an accepted-contract verdict."""
+    return verdict[0] if verdict is not None else None
+
+
 def _positional_superseded_fallbacks(
     files: list[Manifest],
     cache_dir: Path,
@@ -507,7 +532,7 @@ def _positional_superseded_fallbacks(
     record: Manifest,
     *,
     dataset_label: str,
-) -> set[str]:
+) -> dict[str, str]:
     """Return members that may reuse one complete superseded generation.
 
     The ordinary resolver decides fallback eligibility per file. Positionally
@@ -524,11 +549,11 @@ def _positional_superseded_fallbacks(
         if group:
             groups.setdefault(group, []).append(entry)
 
-    fallbacks: set[str] = set()
+    fallbacks: dict[str, str] = {}
     for group, entries in groups.items():
-        verdicts: dict[str, Optional[str]] = {}
+        verdicts: dict[str, Optional[tuple[str, str]]] = {}
 
-        def cached_verdict(entry: Manifest) -> Optional[str]:
+        def cached_verdict(entry: Manifest) -> Optional[tuple[str, str]]:
             fname = entry["name"]
             if fname not in verdicts:
                 verdicts[fname] = _accepted_contract(
@@ -544,7 +569,7 @@ def _positional_superseded_fallbacks(
         # cached superseded payload that the ordinary resolver will refresh.
         forced = any(
             not _has_current_source(lfs_dir, record, entry["name"])
-            and cached_verdict(entry) == "superseded"
+            and _verdict_kind(cached_verdict(entry)) == "superseded"
             for entry in entries
         )
         if not forced:
@@ -553,14 +578,17 @@ def _positional_superseded_fallbacks(
         history_lengths = {
             len(entry.get("superseded_sha256") or ()) for entry in entries
         }
-        all_superseded = all(cached_verdict(entry) == "superseded" for entry in entries)
+        all_superseded = all(
+            _verdict_kind(cached_verdict(entry)) == "superseded" for entry in entries
+        )
         source_remedies = " ".join(
             f"{entry['name']}: {_source_remedy(lfs_dir, entry['name'])}"
             for entry in entries
         )
         if not all_superseded or len(history_lengths) != 1:
             states = ", ".join(
-                f"{entry['name']}={cached_verdict(entry) or 'missing/corrupt'}"
+                f"{entry['name']}="
+                f"{_verdict_kind(cached_verdict(entry)) or 'missing/corrupt'}"
                 for entry in entries
             )
             raise DatasetUnavailable(
@@ -571,8 +599,11 @@ def _positional_superseded_fallbacks(
                 f"Source remedies: {source_remedies}"
             )
 
-        names = {entry["name"] for entry in entries}
-        fallbacks.update(names)
+        for entry in entries:
+            verdict = verdicts[entry["name"]]
+            if verdict is None:
+                raise AssertionError("all_superseded requires a cached verdict")
+            fallbacks[entry["name"]] = verdict[1]
         aprint(
             f"⚠️  Using SUPERSEDED positional pair {group!r} for dataset "
             f"{dataset_label!r}: every member matches the same previously pinned "
@@ -584,7 +615,7 @@ def _positional_superseded_fallbacks(
 
 def _verdict_from_one_pass(
     path: Path, candidates: list[tuple[str, str]], verbose: bool
-) -> Optional[str]:
+) -> Optional[tuple[str, str]]:
     """Hash *path* ONCE and report which candidate it matches, if any.
 
     Used when more than one digest is acceptable, so the file is not read once
@@ -593,17 +624,13 @@ def _verdict_from_one_pass(
     with asection(f"Verifying {path.name}") if verbose else _null_ctx():
         if verbose:
             aprint("Computing SHA256...")
-        state = hashlib.sha256()
-        with open(path, "rb") as file:
-            for chunk in iter(lambda: file.read(8192 * 128), b""):
-                state.update(chunk)
-        actual = state.hexdigest()
+        actual = _file_sha256(path)
 
         for digest, kind in candidates:
             if actual == digest:
                 if verbose:
                     aprint(f"✓ SHA256 verified ({kind}): {actual}")
-                return kind
+                return kind, actual
 
         if verbose:
             local_label = (
@@ -633,7 +660,7 @@ def _resolve_from_cache(
     superseded: Sequence[str] = (),
     irreplaceable: bool = False,
     source_remedy: str = "",
-) -> Optional[Path]:
+) -> Optional[tuple[Path, str]]:
     """Step 1: reuse the cached copy, or quarantine it and return None.
 
     Returning None carries the invariant the rest of ``_ensure_one`` depends on:
@@ -654,9 +681,9 @@ def _resolve_from_cache(
         # checksum. Reuse it — but say so. Silence is how corruption lives.
         if verbose:
             aprint(f"✓ Cached (UNVERIFIED — no sha256 in manifest): {fname}")
-        return dest
+        return dest, _file_sha256(dest)
     accepted = _accepted_contract(dest, sha, hosted_sha, verbose, superseded)
-    if accepted == "superseded":
+    if accepted is not None and accepted[0] == "superseded":
         # Known-good bytes from an earlier generation. Keep them ONLY when there
         # is nothing better to be had: quarantining here would destroy the last
         # copy in existence and leave the dataset unobtainable, which is how a
@@ -669,14 +696,14 @@ def _resolve_from_cache(
                 f"available. {source_remedy} The record is not published. It is "
                 "out of date, not corrupt."
             )
-            return dest
+            return dest, accepted[1]
         if verbose:
             aprint(f"↻ Cached copy of {fname} is superseded; fetching the current one")
-    elif accepted:
+    elif accepted is not None:
         _report_contract(
-            accepted, "✓ Cached (sha256 verified):", fname, sha, hosted_sha, verbose
+            accepted[0], "✓ Cached (sha256 verified):", fname, sha, hosted_sha, verbose
         )
-        return dest
+        return dest, accepted[1]
     quarantine_file(
         dest,
         reason=(
@@ -720,6 +747,15 @@ def _report_contract(
         aprint(f"{prefix} {fname}")
 
 
+def _file_sha256(path: Path) -> str:
+    """Return the sha256 of ``path``."""
+    state = hashlib.sha256()
+    with open(path, "rb") as file:
+        for chunk in iter(lambda: file.read(8192 * 128), b""):
+            state.update(chunk)
+    return state.hexdigest()
+
+
 def _ensure_one(
     dest: Path,
     fname: str,
@@ -729,7 +765,7 @@ def _ensure_one(
     verbose: bool,
     hosted_sha: Optional[str] = None,
     superseded: Sequence[str] = (),
-) -> Path:
+) -> tuple[Path, str]:
     """Resolve one file: cache → in-repo LFS → Zenodo, checksum-authoritative.
 
     Current manifests use one contract: ``sha`` (manifest ``sha256``) describes
@@ -819,18 +855,18 @@ def _ensure_one(
         # canonical name for the next run to quarantine and re-fetch.
         atomic_copy_file(lfs_file, dest)
         if unverifiable:
-            return dest
+            return dest, _file_sha256(dest)
         accepted = _accepted_contract(dest, sha, hosted_sha, verbose)
-        if accepted:
+        if accepted is not None:
             _report_contract(
-                accepted,
+                accepted[0],
                 "✓ Copied from packaged data:",
                 fname,
                 sha,
                 hosted_sha,
                 verbose,
             )
-            return dest
+            return dest, accepted[1]
         # The copy is wrong. Hash the SOURCE to apportion blame — this second
         # pass only ever runs on this failure path.
         source_ok = _accepted_contract(lfs_file, sha, hosted_sha, verbose) is not None
@@ -861,7 +897,8 @@ def _ensure_one(
         # byte 0 instead of resuming onto (appending to) a stale file.
         # Strictly the hosted digest: bytes from the record must be the
         # record's bytes, whatever the in-repo copy happens to be.
-        return download_with_checksum(url, dest, expected_sha256=download_sha)
+        downloaded = download_with_checksum(url, dest, expected_sha256=download_sha)
+        return downloaded, download_sha or _file_sha256(downloaded)
 
     if inrepo_is_bad:
         # Deliberately NOT `DatasetUnavailable`: the bytes are RIGHT THERE and
@@ -1110,7 +1147,7 @@ def load_dataset_gsplats(
     cache_root: Optional[Path] = None,
     manifest: Optional[Manifest] = None,
     verbose: bool = True,
-) -> Optional[list[Any]]:
+) -> Optional[ResolvedDataset[Any]]:
     """Manifest-driven stand-in for :func:`luxar.demos.load_precomputed_gsplats`.
 
     Same contract as the helper it is meant to replace — a list of ``GSplatData``
@@ -1144,7 +1181,10 @@ def load_dataset_gsplats(
         verbose: Print progress.
 
     Returns:
-        ``list[GSplatData]``, or ``None`` when the caller should build the data.
+        Loaded GSplat data with a canonical ``input_digests`` map for the
+        selected files, or ``None`` when the caller should build the data. The
+        result behaves as a list, but list operations return plain lists and do
+        not preserve the map.
 
     Deliberately NOT supported:
         * **Bundle datasets.** ``gsplats_celegans`` ships one outer zip holding
@@ -1215,6 +1255,7 @@ def load_dataset_gsplats(
             )
 
     results: list[Any] = []
+    input_digests = {path.name: paths.input_digests[path.name] for path in selected}
     with asection(f"Loading gsplats ({name})") if verbose else _null_ctx():
         for path in selected:
             try:
@@ -1238,4 +1279,4 @@ def load_dataset_gsplats(
             if verbose:
                 aprint(f"Loaded {path.name}: {len(gsplats.amplitudes):,} splats")
             results.append(gsplats)
-    return results
+    return ResolvedDataset(results, input_digests)

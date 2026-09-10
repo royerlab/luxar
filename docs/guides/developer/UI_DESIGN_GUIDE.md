@@ -936,14 +936,14 @@ The viewer is used on phones and tablets (iPhone and iPad included) as well as
 desktops. The rule that keeps the two from fighting: **touch adaptation is
 keyed on the pointer, never on viewport width**, and it lives in **one file** —
 `styles/components/coarse-pointer.css`, whose top level contains only `@media`
-blocks on `(pointer: coarse)`, `(hover: none)` and `(any-hover: hover)`. A
+blocks on `(pointer: coarse)`, `(any-hover: none)` and `(any-hover: hover)`. A
 narrow desktop window is not a touch device and a landscape tablet is not
 narrow. `tests/unit/styles/coarse-pointer-css.test.ts` enforces the contract:
 nothing outside media blocks, pointer-feature preludes only, no pointer/hover
 media features in any other stylesheet, and the load-bearing clamps present.
 
 - **Two features, two meanings.** `(pointer: coarse)` = the primary pointer is a
-  finger: viewport clamps, safe areas, tap-friendly targets. `(hover: none)` =
+  finger: viewport clamps, safe areas, tap-friendly targets. `(any-hover: none)` =
   no pointer can hover: hover-revealed affordances are dead, so the rail does
   not idle-dim (`opacity: 1`) and fullscreen keeps it findable (`0.35`). An
   iPad with a trackpad matches the first and not the second and keeps its
@@ -965,16 +965,42 @@ media features in any other stylesheet, and the load-bearing clamps present.
   landscape phone without horizontal panning. Its children and the root's
   collapse/footer controls do not shrink. Item tooltips are suppressed there
   because they cannot escape the scroll clip; the collapse handle remains
-  outside the wrapper and keeps its label. D2 supplies the coarse-pointer item
-  label route. `RailOverlay` anchors popovers with a root-relative rect, not
+  outside the wrapper and keeps its label. Under `(any-hover: none)` a tip shows on
+  keyboard focus only (`:focus-visible`), and the first-run hint names the tap
+  and the press-and-hold instead of "Hover". `RailOverlay` anchors popovers with a root-relative rect, not
   `offsetTop`, so a scrolled wrapper still points the arrow at its button; the
   unit test stubs both rects to guard that distinction.
 - **Buttons are `touch-action: manipulation`** (no 300 ms double-tap delay,
   no page zoom on a double-tap over UI). Canvas `touch-action: none` and gesture
   ownership are planned separately.
-- **Hit sizes, input sizes and press states** for coarse pointers (44px
-  targets, 16px inputs against iOS focus-zoom, `:active` fills where `:hover`
-  cannot fire) follow the same media gates and belong in the same file.
+- **Hit sizes.** Under `(pointer: coarse)` the primary controls (rail buttons,
+  chips, panel close) are 44px through a LOCAL `--luxar-hit-min` custom property
+  set on the component roots — not a theme token, because the tokens are
+  TS-generated across four theme files and a touch-only size is not a theme
+  decision. Dense secondary controls (layer eye, play and step buttons) are
+  36px; range thumbs use a matching hit band (24px normally, 28px for the
+  two-thumb range slider) while the drawn track stays thin; checkboxes 24px.
+- **16px inputs.** Every text/number/select inside a panel is `font-size: 16px`
+  under a coarse pointer: below that iOS Safari zooms the page into a focused
+  field and never zooms back. Numeric inputs use `inputmode="decimal"` only when
+  their minimum is non-negative; a signed or unbounded range carries no
+  `inputmode`, so the platform number keyboard keeps its minus key. Filter fields
+  use `inputmode="search"` (inert on desktop, so ungated in JS).
+- **Press, not hover.** Under `(any-hover: none)` a tap leaves an element in a
+  sticky `:hover` until the next tap elsewhere, so the hover styling is put
+  back to the rest state and `:active` carries the response (a translucent
+  highlight fill). The reset covers rail buttons, collapse/chips, layer rows
+  and dimension play buttons. Each rule must restate the element's own rest
+  state, so keep this list short and exact.
+- **Coarse-only affordances are gated in JS on `getInputProfile()`**, never on
+  width: a momentary **Hide panels** rail item that always closes open surfaces, the help
+  and monitor joining the docked panels' one-surface exclusivity, `‹ ›` step
+  buttons and a tappable name chip on each dimension slider (the finger's `[ ]`
+  and `1–9` keys), and the Home popover captioning on `pointerdown` for
+  touch-like pointers. Elements that only exist on coarse pointers may take
+  their base styling in `coarse-pointer.css`. The Fullscreen chip is gated on
+  the real capability (`document.fullscreenEnabled`, absent on iPhone Safari),
+  not on the device.
 
 ---
 

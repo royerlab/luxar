@@ -14,6 +14,7 @@
 /* ========== Main Container ========== */
 
 .luxar-layers-panel {
+  -webkit-touch-callout: none;
   /* Positioning — matches .luxar-gui (20px from viewport edge) */
   position: fixed;
   top: 20px;
@@ -45,6 +46,12 @@
 
   /* NO overflow: hidden — allows pseudo-elements for glass themes */
   overflow: visible;
+}
+
+.luxar-layers-panel input[type='text'],
+.luxar-layers-panel input[type='number'],
+.luxar-layers-panel textarea {
+  -webkit-touch-callout: default;
 }
 
 /* ========== Header ========== */
@@ -176,6 +183,16 @@
   white-space: nowrap;
   color: var(--luxar-text-primary);
   font-size: var(--luxar-text-base);
+}
+
+/* ========== Sound Gain (sound rows only) ========== */
+
+.luxar-layer-row__gain {
+  width: 64px;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--luxar-info);
+  cursor: pointer;
 }
 
 /* ========== Type Badge ========== */

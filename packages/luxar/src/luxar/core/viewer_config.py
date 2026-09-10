@@ -333,6 +333,7 @@ class AnimationConfig:
 
 
 VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out")
+VALID_WAYPOINT_REVEALS = ("immediate", "on_arrival")
 
 # A `when` clause: dimension NAME -> exact value, or an inclusive (min, max)
 # range. Deliberately the same syntax as an overlay's `visible_range`, so one
@@ -373,6 +374,16 @@ class Waypoint:
             ``bloom_strength``, ``tone_mapping``, ...). Validated against that
             key list; values are validated by the viewer exactly as authored
             defaults are.
+        reveal: When the waypoint's dimension-bound overlays (``visible_range``)
+            appear. ``"immediate"`` (the default, also when ``None``) shows them
+            as the dimension changes, while the camera is still flying;
+            ``"on_arrival"`` holds overlays that would newly appear until the
+            flight resolves, so the caption and the turntable show up when the
+            camera has arrived. A snap, a waypoint without a camera block and a
+            flight the visitor cancels all count as arrival; a flight a newer
+            waypoint supersedes never reveals. Departing overlays hide at once
+            either way, and overlays without a ``visible_range`` are untouched.
+            The sound layer's ``on_arrive`` narration keys on the same event.
     """
 
     when: WaypointCondition
@@ -380,6 +391,7 @@ class Waypoint:
     duration_ms: Optional[float] = None
     easing: Optional[str] = None
     rendering: Optional[Dict[str, Any]] = None
+    reveal: Optional[str] = None
 
     def __post_init__(self) -> None:
         self._validate_when()
@@ -399,6 +411,11 @@ class Waypoint:
         if self.easing is not None and self.easing not in VALID_WAYPOINT_EASINGS:
             raise ValueError(
                 f"easing must be one of {VALID_WAYPOINT_EASINGS}, got '{self.easing}'"
+            )
+
+        if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
+            raise ValueError(
+                f"reveal must be one of {VALID_WAYPOINT_REVEALS}, got '{self.reveal}'"
             )
 
         if self.rendering is not None:
@@ -458,6 +475,8 @@ class Waypoint:
             result["easing"] = self.easing
         if self.rendering:
             result["rendering"] = dict(self.rendering)
+        if self.reveal is not None:
+            result["reveal"] = self.reveal
         return result
 
     @classmethod
@@ -474,6 +493,7 @@ class Waypoint:
             duration_ms=data.get("duration_ms"),
             easing=data.get("easing"),
             rendering=data.get("rendering"),
+            reveal=data.get("reveal"),
         )
 
 
@@ -624,12 +644,101 @@ class EnvironmentConfig:
         )
 
 
+#: The mixer buses a scene's audio config may set a gain for. Mirrors
+#: ``luxar.validation.sound.VALID_SOUND_BUSES``; repeated here so this module
+#: stays free of the writer-side validators.
+AUDIO_BUSES: Tuple[str, ...] = ("ambient", "voice", "effects")
+VALID_PANNING_MODELS: Tuple[str, ...] = ("equalpower", "HRTF")
+
+
+@dataclass
+class AudioConfig:
+    """Scene-wide audio defaults for the viewer's sound layer.
+
+    All fields are optional — unset fields use the viewer's built-in defaults
+    (``enabled=True`` when the scene has sound nodes, ``master_gain=0.8``,
+    equal-power panning for room speakers, buses ``ambient 0.6 / voice 1.0 /
+    effects 0.8``, ``duck_db=-9``). Unknown bus names are refused loudly, like
+    unknown ``rendering`` keys on a :class:`Waypoint`: a typo here would
+    silently leave a bus at its default. See ``SOUND_SPEC.md`` §3.3.
+    """
+
+    enabled: Optional[bool] = None
+    master_gain: Optional[float] = None
+    panning_model: Optional[str] = None
+    buses: Optional[Dict[str, float]] = None
+    duck_db: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        """Validate every field that is set."""
+        if self.enabled is not None and not isinstance(self.enabled, bool):
+            raise ValueError(f"audio.enabled must be a bool, got {self.enabled!r}")
+        if self.master_gain is not None:
+            _validate_finite_number(self.master_gain, "audio.master_gain", 0.0, 2.0)
+        if self.panning_model is not None and self.panning_model not in (
+            VALID_PANNING_MODELS
+        ):
+            raise ValueError(
+                f"audio.panning_model must be one of {VALID_PANNING_MODELS}, "
+                f"got {self.panning_model!r}"
+            )
+        if self.buses is not None:
+            self._validate_buses(self.buses)
+        if self.duck_db is not None:
+            _validate_finite_number(self.duck_db, "audio.duck_db", -60.0, 0.0)
+
+    @staticmethod
+    def _validate_buses(buses: Any) -> None:
+        if not isinstance(buses, dict):
+            raise ValueError("audio.buses must be a dict of bus name -> gain")
+        unknown = sorted(k for k in buses if k not in AUDIO_BUSES)
+        if unknown:
+            raise ValueError(
+                f"audio.buses has unknown bus(es) {unknown}; valid buses are "
+                f"{list(AUDIO_BUSES)}"
+            )
+        for bus, gain in buses.items():
+            _validate_finite_number(gain, f"audio.buses[{bus!r}]", 0.0, 2.0)
+
+    _FIELDS = ("enabled", "master_gain", "panning_model", "buses", "duck_db")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        result: Dict[str, Any] = {}
+        for field_name in self._FIELDS:
+            value = getattr(self, field_name)
+            if value is not None:
+                result[field_name] = dict(value) if isinstance(value, dict) else value
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> AudioConfig:
+        """Create from dictionary. Unknown keys are ignored (forward compatibility)."""
+        buses = data.get("buses")
+        return cls(
+            enabled=data.get("enabled"),
+            master_gain=data.get("master_gain"),
+            panning_model=data.get("panning_model"),
+            buses=dict(buses) if isinstance(buses, dict) else None,
+            duck_db=data.get("duck_db"),
+        )
+
+
 def _validate_hex_color(color: str) -> None:
     """Validate a hex color string like '#rrggbb'."""
     if not re.match(r"^#[0-9a-fA-F]{6}$", color):
         raise ValueError(
             f"Invalid hex color '{color}'. Expected format: '#rrggbb' (e.g., '#1a1a2e')"
         )
+
+
+def _validate_finite_number(value: Any, label: str, lo: float, hi: float) -> None:
+    """``value`` must be a real (non-bool) finite number inside ``[lo, hi]``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number, got {value!r}")
+    if not math.isfinite(value):
+        raise ValueError(f"{label} must be finite")
+    _validate_range(value, label, lo, hi)
 
 
 def _validate_range(
@@ -790,7 +899,7 @@ class ViewerConfig:
 
     # Anti-aliasing. SMAA is unsupported because its 3-pass blend does
     # not fit Luxar's single-pass post-processing model. FXAA / MSAA /
-    # SSAA remain.
+    # SSAA remain; configured MSAA is suspended while SSAA is above 1x.
     fxaa_enabled: Optional[bool] = None
     msaa_enabled: Optional[bool] = None
     msaa_samples: Optional[int] = None
@@ -866,6 +975,9 @@ class ViewerConfig:
     # `Waypoint`. First match in list order wins.
     waypoints: Optional[List[Waypoint]] = None
 
+    # Sound layer defaults (master gain, buses, ducking, panning). See `AudioConfig`.
+    audio: Optional[AudioConfig] = None
+
     def __post_init__(self) -> None:
         """Validate all configuration values."""
         self.validate()
@@ -875,6 +987,7 @@ class ViewerConfig:
         # Camera validation is handled by CameraConfig.__post_init__
 
         self._validate_waypoints()
+        self._validate_audio()
 
         if self.title is not None:
             if not isinstance(self.title, str) or not self.title.strip():
@@ -1050,7 +1163,16 @@ class ViewerConfig:
 
         result.update(self._waypoints_to_dict())
 
+        if self.audio is not None:
+            audio_dict = self.audio.to_dict()
+            if audio_dict:
+                result["audio"] = audio_dict
+
         return result
+
+    def _validate_audio(self) -> None:
+        if self.audio is not None and not isinstance(self.audio, AudioConfig):
+            raise ValueError("audio must be an AudioConfig")
 
     def _waypoints_to_dict(self) -> Dict[str, Any]:
         if not self.waypoints:
@@ -1093,6 +1215,10 @@ class ViewerConfig:
                 Waypoint.from_dict(w) for w in data["waypoints"] if isinstance(w, dict)
             ]
 
+        audio = None
+        if "audio" in data and isinstance(data["audio"], dict):
+            audio = AudioConfig.from_dict(data["audio"])
+
         kwargs: Dict[str, Any] = {
             "camera": camera,
             "environment": environment,
@@ -1100,6 +1226,7 @@ class ViewerConfig:
             "dimensions": dimensions,
             "animation": animation,
             "waypoints": waypoints,
+            "audio": audio,
         }
 
         # Populate simple fields from data

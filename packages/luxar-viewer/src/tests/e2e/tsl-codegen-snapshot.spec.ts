@@ -16,11 +16,9 @@
  *      branch or duplicates a `pow()`), the diff is the alarm. Note
  *      WHERE that alarm rings: this spec belongs to the FULL E2E suite
  *      (`pnpm test:e2e` / `make test-e2e`), not to CI's PR checks — the
- *      `e2e-tests` job in `.github/workflows/ci.yml` is disabled
- *      (`if: false`), and even re-enabled it runs only the five
- *      interaction specs of `pnpm test:e2e:smoke`, which do not include
- *      this file. So a TSL change is gated by whoever runs the full
- *      suite before merging, not by the commit itself.
+ *      `e2e-tests` job in `.github/workflows/ci.yml` runs only the mobile
+ *      suite, which does not include this file. So a TSL change is gated by
+ *      whoever runs the full suite before merging, not by the commit itself.
  *   2. **Optimization evidence.** Commits that intentionally change
  *      generated code update the snapshot and the diff goes into the
  *      commit body — concrete proof that, e.g., `forceSinglePass` or

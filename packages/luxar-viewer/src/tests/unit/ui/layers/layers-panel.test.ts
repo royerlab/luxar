@@ -185,6 +185,165 @@ function makeLayeredSceneGraph(
   } as unknown as SceneNode;
 }
 
+function makeSoundSceneGraph(soundLayer = true, storyVisible = true): SceneNode {
+  return {
+    name: 'root',
+    path: '/',
+    type: 'group',
+    attrs: {},
+    children: [
+      {
+        name: 'story',
+        path: '/story',
+        type: 'group',
+        attrs: { layer: true, visible: storyVisible },
+        children: [
+          {
+            name: 'hum',
+            path: '/story/hum',
+            type: 'sound',
+            attrs: {
+              ...(soundLayer ? { layer: true } : {}),
+              gain: 0.5,
+              license: 'CC0',
+              attribution: 'someone',
+              source_url: 'https://example.org/hum',
+            },
+            children: [],
+          },
+        ],
+      },
+    ],
+  } as unknown as SceneNode;
+}
+
+describe('LayersPanel — sound rows', () => {
+  let container: HTMLElement;
+  let panel: LayersPanel;
+  let port: {
+    setNodeMuted: ReturnType<typeof vi.fn<(path: string, muted: boolean) => void>>;
+    setNodeGain: ReturnType<typeof vi.fn<(path: string, gain: number) => void>>;
+  };
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    panel = new LayersPanel(container, makeAnimationController());
+    port = {
+      setNodeMuted: vi.fn<(path: string, muted: boolean) => void>(),
+      setNodeGain: vi.fn<(path: string, gain: number) => void>(),
+    };
+    panel.setAudioPort(port);
+    const root = new THREE.Group();
+    root.name = 'LuxarScene';
+    const story = new THREE.Group();
+    story.name = '/story';
+    const hum = new THREE.Group();
+    hum.name = '/story/hum';
+    story.add(hum);
+    root.add(story);
+    panel.initFromScene(root, makeSoundSceneGraph());
+  });
+
+  it('renders a sound badge, a gain slider and the provenance tooltip', () => {
+    const row = container.querySelector('[data-layer-path="/story/hum"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.querySelector('.luxar-layer-row__badge')?.textContent).toBe('sound');
+    const gain = row.querySelector('.luxar-layer-row__gain') as HTMLInputElement;
+    expect(gain.value).toBe('0.5');
+    expect(row.querySelector('.luxar-layer-row__name')?.getAttribute('title')).toContain(
+      'CC0 — someone'
+    );
+    expect(row.querySelector('.luxar-layer-row__eye')?.getAttribute('title')).toBe('Mute sound');
+    // Geometry rows keep their slider-free shape.
+    const groupRow = container.querySelector('[data-layer-path="/story"]') as HTMLElement;
+    expect(groupRow.querySelector('.luxar-layer-row__gain')).toBeNull();
+  });
+
+  it('the eye mutes the node through the port; a parent group eye mutes the subtree', () => {
+    const row = container.querySelector('[data-layer-path="/story/hum"]') as HTMLElement;
+    (row.querySelector('.luxar-layer-row__eye') as HTMLButtonElement).click();
+    expect(port.setNodeMuted).toHaveBeenLastCalledWith('/story/hum', true);
+    expect(row.querySelector('.luxar-layer-row__eye')?.getAttribute('title')).toBe('Unmute sound');
+    const groupRow = container.querySelector('[data-layer-path="/story"]') as HTMLElement;
+    (groupRow.querySelector('.luxar-layer-row__eye') as HTMLButtonElement).click();
+    expect(port.setNodeMuted).toHaveBeenLastCalledWith('/story', true);
+  });
+
+  it('a parent group eye mutes sound descendants that are not layer rows', () => {
+    panel.dispose();
+    container.replaceChildren();
+    panel = new LayersPanel(container, makeAnimationController());
+    panel.setAudioPort(port);
+    const root = new THREE.Group();
+    root.name = 'LuxarScene';
+    const story = new THREE.Group();
+    story.name = '/story';
+    root.add(story);
+    panel.initFromScene(root, makeSoundSceneGraph(false));
+    port.setNodeMuted.mockClear();
+
+    const groupRow = container.querySelector('[data-layer-path="/story"]') as HTMLElement;
+    (groupRow.querySelector('.luxar-layer-row__eye') as HTMLButtonElement).click();
+
+    expect(port.setNodeMuted).toHaveBeenCalledOnce();
+    expect(port.setNodeMuted).toHaveBeenCalledWith('/story', true);
+  });
+
+  it('replays authored visibility to audio after sound nodes attach', () => {
+    panel.dispose();
+    container.replaceChildren();
+    panel = new LayersPanel(container, makeAnimationController());
+    panel.setAudioPort(port);
+    const root = new THREE.Group();
+    root.name = 'LuxarScene';
+    panel.initFromScene(root, makeSoundSceneGraph(true, false));
+    port.setNodeMuted.mockClear();
+
+    panel.pushAudioMutes();
+
+    expect(port.setNodeMuted.mock.calls).toEqual([
+      ['/story', true],
+      ['/story/hum', false],
+    ]);
+  });
+
+  it('the gain slider and setLayer({gain}) drive the port and the summary', () => {
+    const row = container.querySelector('[data-layer-path="/story/hum"]') as HTMLElement;
+    const gain = row.querySelector('.luxar-layer-row__gain') as HTMLInputElement;
+    gain.value = '1.25';
+    gain.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(port.setNodeGain).toHaveBeenLastCalledWith('/story/hum', 1.25);
+    port.setNodeGain.mockClear();
+    panel.setLayer('/story/hum', { gain: 9 });
+    expect(port.setNodeGain).toHaveBeenCalledOnce();
+    expect(port.setNodeGain).toHaveBeenCalledWith('/story/hum', 2);
+    expect(gain.value).toBe('2');
+    const summary = panel.getLayerSummaries().find((l) => l.path === '/story/hum')!;
+    expect(summary.type).toBe('sound');
+    expect(summary.gain).toBe(2);
+    expect(panel.getLayerSummaries().find((l) => l.path === '/story')!.gain).toBeUndefined();
+  });
+
+  it('a slider click does not select the row', () => {
+    const row = container.querySelector('[data-layer-path="/story/hum"]') as HTMLElement;
+    const gain = row.querySelector('.luxar-layer-row__gain') as HTMLInputElement;
+    panel.layerState.select('/story', 'single');
+    gain.click();
+    expect(panel.layerState.getPrimarySelected()?.path).toBe('/story');
+  });
+
+  it('right-clicking the gain slider does not open the row menu', () => {
+    const gain = container.querySelector<HTMLInputElement>('.luxar-layer-row__gain')!;
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+    gain.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
+  });
+});
+
 describe('LayersPanel — construction', () => {
   let container: HTMLElement;
   let animationController: AnimationController;
@@ -4216,6 +4375,19 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     row.dispatchEvent(rowEv);
     expect(rowEv.defaultPrevented).toBe(true);
     expect(document.querySelector('.luxar-context-menu')).not.toBeNull();
+    panel.dispose();
+  });
+
+  it('right-clicking the layer-order number field leaves the native menu alone', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('alpha'));
+
+    const input = container.querySelector<HTMLInputElement>('.luxar-layers-panel__number')!;
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    input.dispatchEvent(ev);
+
+    expect(ev.defaultPrevented).toBe(false);
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
     panel.dispose();
   });
 

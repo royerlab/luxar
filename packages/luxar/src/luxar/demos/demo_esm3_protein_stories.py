@@ -33,6 +33,14 @@ Usage:
     python -m luxar.demos.demo_esm3_protein_stories
     python -m luxar.demos.demo_esm3_protein_stories --no-serve
     python -m luxar.demos.demo_esm3_protein_stories --no-auto-rotate
+    python -m luxar.demos.demo_esm3_protein_stories --no-audio
+
+Sound (``docs/guides/specs/SOUND_SPEC.md``): a CC0 ambient bed plays under the
+whole tour and each story is narrated on arrival. Narration is synthesised when
+the scene is BUILT — OpenAI TTS when ``OPENAI_API_KEY`` is set, the macOS
+system voice otherwise, silence (with a warning) on a box with neither — and
+cached under ``~/.cache/luxar/esm3_protein_stories/narration``. ``--no-audio``
+skips the whole layer (no download, no synthesis).
 
 Requires the base demo's cache (``~/.cache/luxar/esm3_swissprot``: the UMAP
 positions and the metadata). Run ``luxar demo run esm3_protein_landscape``
@@ -52,13 +60,16 @@ DEMO_META = {
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
-        "download_mb": 0,
+        # The CC0 ambient bed (OpenGameArt "Calm Ambient 1", ~6 MiB); narration
+        # is synthesised locally, never downloaded.
+        "download_mb": 7,
         "compute": "light",
         "gpu": "none",
         "local_data": None,
     },
-    # Reads the base demo's cache; adds its own for the PDB turntables.
-    "caches": ["esm3_swissprot", "pdb_turntables"],
+    # Reads the base demo's cache; adds its own for the PDB turntables and
+    # for the sound layer (the cached ambient bed + synthesised narration).
+    "caches": ["esm3_swissprot", "pdb_turntables", "esm3_protein_stories"],
     "outputs": ["esm3_protein_stories"],
     "citation": {
         "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
@@ -72,6 +83,7 @@ import math
 import re
 import sys
 import tempfile
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -80,15 +92,22 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import (
+    AudioConfig,
     CameraConfig,
     EnvironmentConfig,
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import launch_viewer
+from luxar.demos import cached_download, launch_viewer
+from luxar.demos._audio_synth import synthesise_foa_from_clip
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
-from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
+from luxar.demos._narration import resolve_engine, synthesise
+from luxar.demos._pdb_turntable import (
+    TurntableAssets,
+    load_environment_faces,
+    render_turntables,
+)
 from luxar.demos.demo_esm3_protein_landscape import (
     TAXON_COLORS,
     _linkable_accessions,
@@ -211,10 +230,13 @@ STORIES: tuple[Story, ...] = (
             # D1 turns over fastest of all thylakoid proteins; half-life ~2 h in
             # growth light, faster in high light (Aro et al. 1993; Photosynth.
             # Res. reviews).
+            # Half-life ~90 min at a moderate 125 umol/m2/s; 30-60 min under
+            # intense illumination (pulse-chase measurements). D1 is the
+            # fastest-turning-over subunit of photosystem II in the light.
             "Splitting water has a price: D1 is damaged by its own chemistry "
-            "and is the fastest-replaced protein in the photosynthetic "
-            "membrane — a half-life of about two hours in ordinary light, "
-            "shorter in full sun. A leaf rebuilds this protein all day long.",
+            "and is replaced faster than any other protein of photosystem II "
+            "— a half-life of about ninety minutes in ordinary light, half "
+            "that in full sun. A leaf rebuilds this protein all day long.",
             # Purple-bacteria reaction centre L/M chains are homologous to
             # D1/D2 (Deisenhofer, Huber & Michel; Nobel 1988).
             "Its neighbours in this map are the L and M chains of "
@@ -236,8 +258,8 @@ STORIES: tuple[Story, ...] = (
             "subunit sits at the heart of the only enzyme known that splits "
             "water. Cyanobacteria running this machine filled Earth's air with "
             "oxygen, two and a half billion years ago. The chemistry is so "
-            "violent that D1 wrecks itself every couple of hours; a leaf "
-            "rebuilds it all day long. Molecular clocks say water-splitting is "
+            "violent that D1 wrecks itself within the hour in bright sun; a "
+            "leaf rebuilds it all day long. Molecular clocks say water-splitting is "
             "far older than the rise of oxygen. So why did the planet wait so "
             "long to change?"
         ),
@@ -252,7 +274,9 @@ STORIES: tuple[Story, ...] = (
         facts=(
             "Hsp70 — DnaK in bacteria — is a chaperone: it holds unfolded "
             "proteins, refolds the damaged ones and hands the hopeless ones to "
-            "the shredder. Every cell type in every domain of life has it.",
+            "the shredder. Every bacterium and every eukaryote carries one, "
+            "with no known exception; archaea are the odd ones out, and those "
+            "that have it borrowed it from bacteria.",
             # Human Hsp70 vs E. coli DnaK: ~47–48% identity (Brocchieri et al.
             # 2008; Frontiers Mol. Biosci. 2021).
             "After some three billion years of separate evolution, human Hsp70 "
@@ -279,7 +303,8 @@ STORIES: tuple[Story, ...] = (
         narration=(
             "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
             "refolds the damaged ones, and hands the hopeless ones to the "
-            "shredder. After three billion years apart, the human and E. coli "
+            "shredder. Every bacterium and every eukaryote has one. After "
+            "three billion years apart, the human and E. coli "
             "versions are still nearly half identical, letter for letter. That "
             "is why this cluster mixes bacteria, plants and animals. Cancer "
             "cells over-produce it to survive their own chaos, and drugs against "
@@ -310,12 +335,15 @@ STORIES: tuple[Story, ...] = (
             "the same trick: class I fusion proteins that snap into a "
             "six-helix bundle, dragging virus and cell membranes together.",
             "Haemagglutinin gives influenza its “H” (H1N1, H5N1...). "
-            # 50–100 million: Johnson & Mueller 2002; CDC EID 2006.
-            "The 1918 pandemic, an H1N1 virus, killed an estimated 50 million "
-            "people — more than the war it followed.",
-            "The coronavirus spike grips the human ACE2 receptor to open a "
+            # Johnson & Mueller, Bull. Hist. Med. 76:105 (2002): 50 million,
+            # possibly 100 million; Spreeuwenberg et al., Am. J. Epidemiol.
+            # 187:2561 (2018): 17.4 million. No single figure is settled.
+            "The 1918 pandemic, an H1N1 virus, killed tens of millions of "
+            "people — estimates run from 17 to 100 million.",
+            "The SARS-CoV-2 spike grips the human ACE2 receptor to open a "
             "cell; its receptor-binding domain is what most COVID-19 vaccines "
-            "teach the immune system to recognise.",
+            "teach the immune system to recognise. Its cousins pick other "
+            "locks — MERS uses DPP4, not ACE2.",
             "Here they gather into one continent although they share no "
             "common ancestor. The language model groups them by how they are "
             "built and what they do — a hint of convergent design, visible "
@@ -332,7 +360,8 @@ STORIES: tuple[Story, ...] = (
             "The intruders' continent. Influenza's haemagglutinin, the "
             "coronavirus spike, HIV's envelope: unrelated viruses, one trick. "
             "Each snaps into a bundle that drags virus and cell together. The "
-            "1918 flu killed fifty million people with a protein like this one. "
+            "1918 flu killed tens of millions of people with a protein like this "
+            "one. "
             "They gather here although they share no ancestor; the model groups "
             "them by how they are built and what they do. Most viral proteins "
             "have no known relatives at all. Where would that dark matter land "
@@ -416,7 +445,9 @@ STORIES: tuple[Story, ...] = (
             "lost as heat. How a protein manages that is still debated."
         ),
         tags=("energy", "structure"),
-        pdb_id="1BMF",
+        # The WHOLE machine — F1 head, stalk and Fo rotor in the membrane —
+        # not the F1 head alone (1BMF): a visitor should recognise a turbine.
+        pdb_id="6N2Y",
         narration=(
             "ATP synthase, the turbine in every cell. Protons flowing through "
             "it turn an axle, and each turn presses out three molecules of "
@@ -584,7 +615,9 @@ STORIES: tuple[Story, ...] = (
             "One of them, a 25-amino-acid peptide from Conus magus, is now a "
             "drug: ziconotide (Prialt), approved in 2004 for severe chronic "
             "pain. It blocks the calcium channels that carry pain signals in "
-            "the spinal cord — the first medicine ever taken from the sea.",
+            "the spinal cord — the first medicine ever made from a venom of "
+            "the sea. (The first from the sea at all came earlier: "
+            "cytarabine, in 1969, from a Caribbean sponge.)",
             "Swiss-Prot holds over 1,200 conotoxins. This knot is one "
             "superfamily of them; the others are strewn across the whole map, "
             "because venom evolves faster than almost anything else.",
@@ -600,7 +633,7 @@ STORIES: tuple[Story, ...] = (
             "Conotoxins, venom that became medicine. Cone snails hunt with a "
             "harpoon and a cocktail of hundreds of peptides, each a precise key "
             "for one ion channel. One of them is now a drug for severe pain, "
-            "the first medicine ever taken from the sea. This knot is a single "
+            "the first ever made from a venom of the sea. This knot is a single "
             "superfamily; the rest are scattered across the whole map, because "
             "venom evolves faster than almost anything else. Why so fast is "
             "still being worked out."
@@ -643,6 +676,54 @@ STORY_DIM = "story"
 UNIPROT_LINK = "https://www.uniprot.org/uniprotkb?query={hover_key}"
 PANEL_WIDTH = 0.32
 
+# =============================================================================
+# Sound layer (SOUND_SPEC.md §5): an ambient bed plus one narration per story
+# =============================================================================
+
+# A CC0 ambient pad — "Calm Ambient 1 (Synthwave 4k)" by The Cynic Project
+# (cynicmusic.com), published on OpenGameArt: soft evolving pads and slow
+# chords, no percussion, ~2.6 min. Chosen over a Freesound field-recording
+# drone the owner found too industrial. The file is a stable direct download
+# (no login), pinned by checksum so a silent swap upstream is caught.
+AMBIENT_BED_URL = "https://opengameart.org/sites/default/files/001_Synthwave_4k_0.mp3"
+AMBIENT_BED_FILENAME = "calm_ambient_1_cynicmusic.mp3"
+AMBIENT_BED_SHA256 = "56b31f997020da1abd4092f5e82457592323717a23e4d560c5f8135d26c3b8be"
+AMBIENT_BED_SOURCE_URL = "https://opengameart.org/content/calm-ambient-1-synthwave-4k"
+AMBIENT_BED_ATTRIBUTION = (
+    "The Cynic Project / cynicmusic.com — 'Calm Ambient 1 (Synthwave 4k)' "
+    "(OpenGameArt, CC0)"
+)
+AMBIENT_BED_GAIN = 0.35
+# Sound layer Phase 4: when a decoder + AAC encoder are on the build box, the
+# stereo bed is re-encoded as a first-order ambisonic FIELD (left channel at
+# +50°, right at -50°) the viewer rotates against the camera, so the music stays
+# fixed to the world as the turntable spins. Otherwise the stereo MP3 plays as is.
+AMBISONIC_BED_CACHE_DIR = (
+    Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "ambisonic"
+)
+AMBISONIC_BED_SPREAD_DEG = 50.0
+# The bed ends quieter than it starts, so a bare loop pops at the seam; its last
+# 15 s are blended into its first (equal-power crossfade) at build time, for the
+# ambisonic field and for the stereo fallback alike. Needs a decoder + encoder;
+# without one the original MP3 plays as is.
+AMBIENT_BED_LOOP_CROSSFADE_S = 15.0
+
+# Narration is synthesised at BUILD time (OpenAI TTS when a key is present, the
+# macOS system voice otherwise; a Linux box without a key builds silently) and
+# cached under this demo's own cache dir, keyed by (engine, voice, text).
+NARRATION_CACHE_DIR = (
+    Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "narration"
+)
+NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
+NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
+# Narration is `on_arrive`: it starts when the story's flight lands (the waypoint
+# driver's arrival event), plus a beat so the picture settles first.
+NARRATION_AFTER_FLIGHT_MS = 600
+# The sound layer's third family — a spatial "cluster hum" per story on the
+# `effects` bus, pitched up a pentatonic ladder — was tried and removed: a
+# low drone under the narration read as noise rather than place (the owner
+# muted the bus). The bed and the narration are the demo's whole soundtrack.
+
 # The Biohub mark shown bottom-right: a white glyph on transparency, bundled
 # inside the package (not under demos/data, which the wheel excludes) so the
 # built store is self-contained. Width is a fraction of the viewport width; the
@@ -665,18 +746,47 @@ SPARSE_TAIL_RATIO = 2.5
 BUBBLE_CAMERA_CLEARANCE = 1.2
 
 
-def bubble_radius(cluster: StoryCluster) -> float:
-    """World radius of the story's soap bubble."""
-    return max(SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * cluster.r95)
+#: The bubble encloses the farthest member with this much room to spare.
+BUBBLE_ENCLOSE_MARGIN = 1.05
 
 
-def framing_radius(cluster: StoryCluster) -> float:
+def bubble_radius(
+    cluster: StoryCluster, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
+    """World radius of the story's soap bubble.
+
+    The larger of the r95 rule and the enclosing radius (every member inside,
+    :data:`BUBBLE_ENCLOSE_MARGIN` to spare), floored at ``min_radius`` — the
+    floor a small cluster is padded up to; the protein-universe variant, whose
+    knots are a few tenths of a unit across, passes a smaller one.
+    """
+    return max(
+        min_radius,
+        SPHERE_RADIUS_SCALE * cluster.r95,
+        BUBBLE_ENCLOSE_MARGIN * cluster.r_max,
+    )
+
+
+def framing_radius(
+    cluster: StoryCluster, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
     """The radius the camera frames: the bubble, or the dense core when sparse."""
     if cluster.r50 > 0 and cluster.r95 > SPARSE_TAIL_RATIO * cluster.r50:
-        return max(
-            SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50
-        )
-    return bubble_radius(cluster)
+        return max(min_radius, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50)
+    return bubble_radius(cluster, min_radius=min_radius)
+
+
+def story_camera_distance(
+    cluster: StoryCluster, story: Story, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
+    """Distance from the story camera to its cluster centre."""
+    half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
+    return max(
+        story.min_distance,
+        framing_radius(cluster, min_radius=min_radius)
+        / (story.frame_fraction * half_height_per_unit),
+        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster, min_radius=min_radius),
+    )
 
 
 # The shell is a SOAP BUBBLE: `material="physical"` (MESH_PHYSICAL_MATERIALS_SPEC
@@ -732,6 +842,9 @@ class StoryCluster:
     #: whose r95 is far beyond its r50 is a big bubble around a small core, and
     #: the camera frames the core instead (``0`` = unknown, never sparse).
     r50: float = 0.0
+    #: Distance of the farthest member from the centre: the bubble encloses it
+    #: (``0`` = unknown, the bubble falls back to the r95 rule alone).
+    r_max: float = 0.0
 
 
 def _densest_member(family_pos: np.ndarray, radius: float) -> np.ndarray:
@@ -789,15 +902,28 @@ def select_story_members(
     indices = np.flatnonzero(members)
     if len(indices) == 0:
         raise ValueError(f"story {story.key!r}: no member within radius {story.radius}")
-    # Re-centre on the blob itself (the family median can be pulled by
-    # stragglers) and measure its framing radius.
-    centre = np.median(positions[indices], axis=0)
-    radial = np.linalg.norm(positions[indices] - centre, axis=1)
-    r95 = float(np.percentile(radial, 95))
-    r50 = float(np.percentile(radial, 50))
+    # Centre on the members' bounding box, not their median: a median sits in
+    # the dense half of an asymmetric blob and the bubble then hangs off to
+    # one side of what it is supposed to hold (checked on the kiosk). The
+    # framing radii are measured from that same centre.
+    centre, radial = cluster_geometry(positions[indices])
     return StoryCluster(
-        indices=indices, centre=centre, r95=r95, n_named=n_named, r50=r50
+        indices=indices,
+        centre=centre,
+        r95=float(np.percentile(radial, 95)),
+        n_named=n_named,
+        r50=float(np.percentile(radial, 50)),
+        r_max=float(radial.max()),
     )
+
+
+def cluster_geometry(member_pos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Bounding-box centre of a member set and each member's distance to it."""
+    lo = member_pos.min(axis=0)
+    hi = member_pos.max(axis=0)
+    centre = ((lo + hi) / 2.0).astype(np.float64)
+    radial = np.linalg.norm(member_pos.astype(np.float64) - centre, axis=1)
+    return centre, radial
 
 
 def _midpoint_vertex(
@@ -863,6 +989,8 @@ def story_camera(
     cluster: StoryCluster,
     story: Story,
     global_centre: np.ndarray,
+    *,
+    min_radius: float = SPHERE_MIN_RADIUS,
 ) -> CameraConfig:
     """Compose the waypoint pose for a cluster.
 
@@ -871,7 +999,8 @@ def story_camera(
     so the shot is not dead level), at a distance proportional to the blob's
     framing radius. Under auto-rotate only the target and distance are used —
     the turntable keeps its own direction — so the direction here matters
-    exactly when the visitor has stopped the spin.
+    exactly when the visitor has stopped the spin. ``min_radius`` is the
+    bubble's floor (see :func:`bubble_radius`).
     """
     outward = cluster.centre - global_centre
     norm = float(np.linalg.norm(outward))
@@ -886,12 +1015,7 @@ def story_camera(
     # `frame_fraction` of the frame height under a 63° vertical field of view.
     # A sphere of radius R at distance d spans 2R of the frame's 2·d·tan(fov/2)
     # height, so R / (d·tan) is its fraction of the height.
-    half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
-    distance = max(
-        story.min_distance,
-        framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
-        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster),
-    )
+    distance = story_camera_distance(cluster, story, min_radius=min_radius)
     position = cluster.centre + outward * distance
     return CameraConfig(
         position=tuple(float(v) for v in position),
@@ -918,8 +1042,14 @@ def story_narration(story: Story) -> str:
     return f"{story.title}. {story.mystery}"
 
 
-def story_panel_html(story: Story, n_members: int, index: int, total: int) -> str:
-    """The right-hand story panel: title, subtitle, facts, open question."""
+def story_panel_html(
+    story: Story, n_members: int, index: int, total: int, *, unit: str = "proteins"
+) -> str:
+    """The right-hand story panel: title, subtitle, facts, open question.
+
+    ``unit`` names what the highlight count counts (``proteins`` here; the
+    protein-universe variant highlights ``clusters``).
+    """
     r, g, b = (int(round(v * 255)) for v in story.color)
     colour = f"#{r:02x}{g:02x}{b:02x}"
     items = "".join(
@@ -943,7 +1073,7 @@ def story_panel_html(story: Story, n_members: int, index: int, total: int) -> st
         f'rgba(255,255,255,0.15);padding-top:0.8vh">'
         f"Open question: {html.escape(story.mystery)}</div>"
         f'<div style="font-size:1.0vh;color:#888;margin-top:0.8vh">'
-        f"{n_members:,} proteins highlighted</div>"
+        f"{n_members:,} {html.escape(unit)} highlighted</div>"
         "</div>"
     )
 
@@ -966,6 +1096,97 @@ def overview_panel_html(n_proteins: int) -> str:
 # =============================================================================
 # Scene construction
 # =============================================================================
+
+
+def add_story_sounds(
+    scene: object,
+    stories: tuple[Story, ...],
+    *,
+    narration_dir: Path = NARRATION_CACHE_DIR,
+    engine: str | None = None,
+    ambisonic_dir: Path = AMBISONIC_BED_CACHE_DIR,
+    overview_narration: str = OVERVIEW_NARRATION,
+) -> int:
+    """Add the ambient bed and one narration per story slot.
+
+    Returns the node count. The bed is a cached CC0 download; a network failure
+    skips it with a warning rather than failing the build. Narration is
+    synthesised through :func:`luxar.demos._narration.synthesise`; when no
+    engine is available the stories stay silent (the helper has already warned).
+    ``overview_narration`` is what slot 0 says (a sibling demo passes its own).
+    """
+    added = 0
+    try:
+        bed = cached_download(
+            AMBIENT_BED_URL,
+            "esm3_protein_stories",
+            AMBIENT_BED_FILENAME,
+            sha256=AMBIENT_BED_SHA256,
+        )
+    except Exception as e:  # noqa: BLE001 - offline build must still produce the scene
+        aprint(f"⚠️ Ambient bed unavailable ({e}); building without it")
+        bed = None
+    if bed is not None:
+        # The field version when the box can make one; the original stereo clip otherwise.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            field = synthesise_foa_from_clip(
+                bed,
+                ambisonic_dir,
+                spread_deg=AMBISONIC_BED_SPREAD_DEG,
+                loop_crossfade_s=AMBIENT_BED_LOOP_CROSSFADE_S,
+            )
+        if field is None:
+            aprint("🔈 No audio decoder/encoder: the bed stays stereo")
+        scene.add_sound(  # type: ignore[attr-defined]
+            "bed_ambient",
+            field if field is not None else bed,
+            ambisonic="foa" if field is not None else None,
+            trigger="continuous",
+            gain=AMBIENT_BED_GAIN,
+            fade_in_ms=1500,
+            fade_out_ms=1500,
+            bus="ambient",
+            license="CC0",
+            attribution=AMBIENT_BED_ATTRIBUTION,
+            source_url=AMBIENT_BED_SOURCE_URL,
+            # A Layers-panel row: eye = mute the bed, slider = its gain.
+            layer=True,
+        )
+        added += 1
+
+    chosen = resolve_engine(engine)
+    voice = NARRATION_VOICES.get(chosen or "", "")
+    # The spoken scripts are authored with the stories (`Story.narration`,
+    # `OVERVIEW_NARRATION`): short and punchy, not the panel read aloud.
+    slots: list[tuple[int, str, str]] = [(0, "Overview", overview_narration)]
+    slots += [(k, s.key, story_narration(s)) for k, s in enumerate(stories, start=1)]
+    for k, key, text in slots:
+        clip = synthesise(text, voice, narration_dir, engine=chosen or "none")
+        if clip is None:
+            break
+        scene.add_sound(  # type: ignore[attr-defined]
+            f"narration_{key}",
+            clip,
+            hidden={STORY_DIM: k},
+            # Starts when the story's flight lands (waypoint arrival), a beat later.
+            trigger="on_arrive",
+            delay_ms=NARRATION_AFTER_FLIGHT_MS,
+            bus="voice",
+            license="CC0",
+            attribution=f"Narration synthesised at build time ({chosen}, voice {voice})",
+            source_url=NARRATION_SOURCE_URL,
+        )
+        added += 1
+
+    bed_kind = "no" if bed is None else ("ambisonic" if field is not None else "stereo")
+    aprint(f"🔈 {added} sound node(s): bed {bed_kind}, narration engine {chosen}")
+    return added
+
+
+def story_node_name(story_index: int, story: Story) -> str:
+    """Name of a story's highlight points node."""
+    return f"Story {story_index}: {story.key}"
 
 
 def load_landscape_cache(cache_dir: Path) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -996,6 +1217,18 @@ def load_landscape_cache(cache_dir: Path) -> tuple[np.ndarray, dict[str, np.ndar
     return positions, fields
 
 
+def _turntable_environment(output_path: Path) -> np.ndarray | None:
+    """Load a durable build's baked environment, or explain how to create it."""
+    environment = load_environment_faces(output_path)
+    if environment is None and output_path.is_dir():
+        aprint(
+            "ℹ️  No baked environment in the output store yet: turntables use "
+            "the studio lights only. Keep the store with `--no-serve`, run "
+            f"`luxar env bake {output_path}`, and rebuild to light them with the map."
+        )
+    return environment
+
+
 def build_stories_scene(
     output_path: Path,
     positions: np.ndarray,
@@ -1005,8 +1238,13 @@ def build_stories_scene(
     auto_rotate: bool = True,
     turntables: bool = True,
     turntable_cache: Path | None = None,
+    audio: bool = True,
 ) -> int:
-    """Write the stories scene. Returns the number of proteins in the backdrop."""
+    """Write the stories scene. Returns the number of proteins in the backdrop.
+
+    ``audio=False`` skips the sound layer (no bed download, no narration
+    synthesis) — the ``--no-audio`` flag, for an offline or headless build.
+    """
     n = len(positions)
     names = meta["names"]
     organisms = meta["organisms"]
@@ -1022,10 +1260,17 @@ def build_stories_scene(
             cache = turntable_cache or (
                 Path.home() / ".cache" / "luxar" / TURNTABLE_CACHE
             )
+            # The structures are lit by the scene's own baked environment — the
+            # map the bubbles reflect — when a previous build of this store has
+            # been through `luxar env bake`; a first build renders under the
+            # studio lights alone (the environment digest is in the cache key,
+            # so the next build after a bake re-renders them lit).
+            environment = _turntable_environment(output_path)
             assets = render_turntables(
                 [s.pdb_id for s in stories if s.pdb_id],
                 cache,
                 colors={s.pdb_id: s.color for s in stories if s.pdb_id},
+                environment=environment,
             )
             aprint(
                 f"{len(assets)} of {sum(1 for s in stories if s.pdb_id)} turntables ready"
@@ -1064,6 +1309,10 @@ def build_stories_scene(
         overview_position = pull_in(
             (overview_distance, overview_distance * 0.55, overview_distance)
         )
+        # `reveal="on_arrival"`: the panel, the caption and the turntable appear
+        # when the camera has landed, not while it is still flying — the same
+        # arrival event that starts the narration, so text and voice land
+        # together. Departing a story hides its overlays at once.
         waypoints = [
             Waypoint(
                 when={STORY_DIM: 0},
@@ -1071,6 +1320,7 @@ def build_stories_scene(
                     position=overview_position, target=(0.0, 0.0, 0.0), up=(0, 1, 0)
                 ),
                 duration_ms=3000,
+                reveal="on_arrival",
             )
         ]
         for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
@@ -1079,6 +1329,7 @@ def build_stories_scene(
                     when={STORY_DIM: k},
                     camera=story_camera(c, s, global_centre),
                     duration_ms=s.flight_ms,
+                    reveal="on_arrival",
                 )
             )
 
@@ -1106,6 +1357,17 @@ def build_stories_scene(
             # when the slice or appearance changes; `luxar env bake` pre-bakes it.
             environment=EnvironmentConfig(source="scene", probe="auto"),
             waypoints=waypoints,
+            # Sound layer defaults: room speakers (equal-power), the bed under the
+            # voice by 9 dB while a narration plays.
+            audio=AudioConfig(
+                enabled=True,
+                master_gain=0.8,
+                panning_model="equalpower",
+                buses={"ambient": 0.6, "voice": 1.0, "effects": 0.8},
+                duck_db=-9.0,
+            )
+            if audio
+            else None,
         )
 
     dims = Dimensions(
@@ -1157,7 +1419,7 @@ def build_stories_scene(
                     [np.full(m, float(k), dtype=np.float32), positions[idx]]
                 ).astype(np.float32)
                 scene.add_points(
-                    f"Story {k}: {s.key}",
+                    story_node_name(k, s),
                     highlight_positions,
                     colors=np.broadcast_to(
                         np.asarray(s.color, dtype=np.float32), (m, 3)
@@ -1284,6 +1546,9 @@ def build_stories_scene(
                     anchor="center-left",
                     size=(TURNTABLE_WIDTH, None),
                     poster=a.poster,
+                    # Colour over a grey alpha matte: transparent in every
+                    # browser, WKWebView included (a VP9 alpha plane is not).
+                    alpha_matte="stacked",
                     visible_range={STORY_DIM: k},
                     transition="fade",
                     transition_duration=0.35,
@@ -1326,6 +1591,10 @@ def build_stories_scene(
                 blend_mode="difference",
             )
 
+            if audio:
+                with asection("Sound layer"):
+                    add_story_sounds(scene, stories)
+
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")
     return n
 
@@ -1343,6 +1612,7 @@ def main() -> None:
 
     auto_rotate = "--no-auto-rotate" not in sys.argv
     turntables = "--no-turntables" not in sys.argv
+    audio = "--no-audio" not in sys.argv
     cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
     try:
         positions, meta = load_landscape_cache(cache_dir)
@@ -1354,7 +1624,12 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm3_protein_stories.luxar.zarr"
         n = build_stories_scene(
-            output_path, positions, meta, auto_rotate=auto_rotate, turntables=turntables
+            output_path,
+            positions,
+            meta,
+            auto_rotate=auto_rotate,
+            turntables=turntables,
+            audio=audio,
         )
         aprint(f"Dataset generated at {output_path} ({n:,} proteins)")
         return
@@ -1362,7 +1637,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_esm3_stories_") as tmpdir:
         output_path = Path(tmpdir) / "esm3_protein_stories.luxar.zarr"
         n = build_stories_scene(
-            output_path, positions, meta, auto_rotate=auto_rotate, turntables=turntables
+            output_path,
+            positions,
+            meta,
+            auto_rotate=auto_rotate,
+            turntables=turntables,
+            audio=audio,
         )
 
         aprint("")

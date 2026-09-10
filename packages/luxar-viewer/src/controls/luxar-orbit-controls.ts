@@ -22,7 +22,7 @@ import { autoRotateAxisVector } from './luxar-orbit-controls/math/auto-rotate';
 import { dollyAmplitudeChangeScale, dollyScale } from './luxar-orbit-controls/math/auto-dolly';
 import { applyZoomScale } from './luxar-orbit-controls/math/zoom';
 import { clamp } from '../utils/clamp';
-import { normalizeWheelDelta } from '../utils/wheel-delta';
+import { normalizeWheelDeltaWithAxisFallback } from '../utils/wheel-delta';
 import {
   type AutoRotateAxis,
   DEFAULT_AUTO_DOLLY_AMPLITUDE,
@@ -468,6 +468,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.dollyPhase = 0;
   }
 
+  /** Keep the current pose but discard residual user-input damping. */
+  public settleDamping(): void {
+    this.rotationDelta.identity();
+    this.panDelta.set(0, 0, 0);
+    this.zoomDelta = 0;
+    this.rollDelta = 0;
+  }
+
   private applyDollyScale(scale: number): void {
     if (scale === 1) return;
     this.distance = applyZoomScale(this.camera, this.distance, scale, this.minZoom, this.maxZoom);
@@ -488,12 +496,15 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       event.preventDefault();
       event.stopImmediatePropagation();
 
+      // Shift+wheel may arrive on deltaX; normalize whichever axis carries it.
+      // A Firefox 3-line notch becomes 48 px, yielding 0.024 rad at the
+      // default speed versus Chromium's 0.050 rad for 100 px, rather than the
+      // near-dead 0.0015 rad produced by treating the raw line count as pixels.
+      const delta = normalizeWheelDeltaWithAxisFallback(event, this.domElement);
+      if (delta === 0) return;
+
       // Accumulate into rollDelta — damping is applied in update().
-      // The delta is normalized to pixel-mode equivalent first, which puts a
-      // line-mode browser (Firefox reports 3 lines where Chromium reports
-      // 100 px) in the same ballpark per notch: 0.024 rad against 0.050,
-      // instead of 0.0015 against 0.050.
-      this.rollDelta += normalizeWheelDelta(event, this.domElement) * speed;
+      this.rollDelta += delta * speed;
 
       // Wake up animation loop (rollDelta is applied in update())
       this.dispatchEvent({ type: 'change' });

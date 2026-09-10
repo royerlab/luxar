@@ -389,9 +389,6 @@
     "packages/luxar/src/luxar/gsplats/fitting/results.py::finalize_results": [
       19
     ],
-    "packages/luxar/src/luxar/gsplats/fitting/validation.py::prepare_fit_config": [
-      56
-    ],
     "packages/luxar/src/luxar/gsplats/gpu_profile.py::get_gpu_summary": [
       11
     ],

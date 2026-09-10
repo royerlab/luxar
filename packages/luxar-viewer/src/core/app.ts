@@ -21,6 +21,9 @@ import type {
 import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
 import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-driver';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
+import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
+import type { AudioEngine } from '../audio/audio-engine';
+import type { AudioPatch, AudioState } from '../types/audio';
 import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
 import { config, type RenderingSettings } from '../config';
 import type * as THREE from 'three';
@@ -49,6 +52,7 @@ import type { PickingSystem } from '../rendering/picking/picking-system';
 import type { LabelLoader, ImageLabelLoader } from '../data/loaders';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import { installCanvasGestureOwnership } from './app/interaction/canvas-gesture-ownership';
+import { installContextMenuOwnership } from './app/interaction/context-menu-ownership';
 import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
@@ -63,6 +67,7 @@ import {
   initPicking as initPickingImpl,
   disposePickingSession as disposePickingSessionImpl,
 } from './app/picking/init-picking';
+import { installDoubleTapToFit } from './app/interaction/double-tap-to-fit';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
@@ -76,7 +81,7 @@ import { initColormapLegend as initColormapLegendImpl } from './app/overlays/ini
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
-import { getSceneLoader } from '../data/scene-loader-manager';
+import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
 import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
@@ -98,6 +103,8 @@ export class LuxarApp {
   private recordingPanel?: RecordingPanel;
   private layersPanel?: LayersPanel;
   private controlRail?: ControlRail;
+  /** The sound layer; created by the init pipeline, nodes attach per scene. */
+  private audioEngine?: AudioEngine;
   private overlayManager?: OverlayManager;
   private pickingSystem?: PickingSystem;
   private labelLoader?: LabelLoader;
@@ -160,6 +167,7 @@ export class LuxarApp {
    * (`viewer_config.waypoints`); the driver itself lives in its closure.
    */
   private waypointListener?: () => void;
+  private waypointDriver?: WaypointDriver;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -241,6 +249,14 @@ export class LuxarApp {
       installCanvasGestureOwnership(options.canvas, this.events);
     }
 
+    // The same claim for the secondary click, across every surface the viewer
+    // mounts — WebKit resolves the context-menu target to the overlay above
+    // the canvas, not to the canvas the controls listen on.
+    installContextMenuOwnership(
+      options.canvas instanceof HTMLCanvasElement ? options.canvas : null,
+      this.events
+    );
+
     // Mutable accumulator: pipeline writes each subsystem here as it
     // constructs it, so even if init() throws partway through, the
     // already-constructed pieces are visible to dispose().
@@ -256,6 +272,7 @@ export class LuxarApp {
       if (partial.recordingPanel) this.recordingPanel = partial.recordingPanel;
       if (partial.layersPanel) this.layersPanel = partial.layersPanel;
       if (partial.controlRail) this.controlRail = partial.controlRail;
+      if (partial.audioEngine) this.audioEngine = partial.audioEngine;
     };
 
     this.isInitializing = true;
@@ -266,6 +283,7 @@ export class LuxarApp {
           events: this.events,
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
+          emitEmbedderEvent: (event, payload) => this.embedderEvents.emit(event, payload),
         },
         partial
       );
@@ -284,6 +302,9 @@ export class LuxarApp {
       // Install this before routing so O / the rail control can open the
       // browser while a slow initial dataset load is still in progress.
       this.setupDatasetBrowserShortcut();
+      // Install before the initial load so its first recorded transient
+      // failure can arm the bounded retry backoff immediately.
+      this.setupOnlineRetry();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -300,9 +321,14 @@ export class LuxarApp {
 
       this.setupDisposeOnUnload();
       this.setupFocusHandling();
-      this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
+      // Touch double-tap re-frames on EVERY scene — not only the ones the
+      // picking session (and with it canvas-actions) gets provisioned for.
+      // (Unit tests hand `init` a stub canvas with no event surface.)
+      if (options.canvas instanceof HTMLElement) {
+        installDoubleTapToFit(options.canvas, this.events, () => this.recenterCamera());
+      }
 
       this.isInitialized = true;
     } catch (error) {
@@ -370,6 +396,8 @@ export class LuxarApp {
     this.currentDatasetSrc = undefined;
     // The outgoing scene's waypoints must not fire on the incoming scene's dims.
     this.disposeWaypoints();
+    // ...and its sounds must stop before the new store loads.
+    this.audioEngine?.detachScene();
     try {
       await loadDatasetImpl(src, {
         inputHandler: this.inputHandler,
@@ -493,6 +521,32 @@ export class LuxarApp {
     // AFTER the core pass: `dimensions.current_step` has been applied, so the
     // load-time match sees the authored opening position and snaps to it.
     this.installWaypoints(viewerConfig?.waypoints);
+    // AFTER the waypoints: the opening slice is final, so the first slab
+    // evaluation starts exactly the sounds the opening story owns.
+    this.installAudio(viewerConfig?.audio);
+  }
+
+  /**
+   * Bind the sound layer to the loaded scene: apply the authored
+   * `viewer_config.audio` defaults (the listener's persisted mute / master gain
+   * win), then hand the engine the scene root so it finds the sound-node
+   * placeholders `loadSoundNode` attached and starts decoding their clips.
+   */
+  private installAudio(audio: unknown): void {
+    if (!this.audioEngine) return;
+    this.audioEngine.detachScene();
+    this.audioEngine.applySceneConfig(extractAudioConfig(audio));
+    const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
+    if (root) {
+      this.audioEngine.attachScene(root);
+      this.layersPanel?.pushAudioMutes();
+    }
+    // The waypoints install first and snap to the opening waypoint before any
+    // sound node exists, so the load-time arrival is replayed here — otherwise
+    // the opening story's `on_arrive` narration would never fire.
+    const driver = this.waypointDriver;
+    const opening = driver ? driver.getWaypoint(driver.currentIndex) : undefined;
+    if (opening?.when) this.audioEngine.notifyWaypoint('arrive', opening.when);
   }
 
   /**
@@ -503,7 +557,10 @@ export class LuxarApp {
    */
   private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
     this.disposeWaypoints();
-    if (!Array.isArray(waypoints) || waypoints.length === 0) return;
+    if (!Array.isArray(waypoints) || waypoints.length === 0) {
+      this.overlayManager?.updateVisibility();
+      return;
+    }
 
     const driver = new WaypointDriver(waypoints, {
       getDims: () => sceneDimsManager.getDims(),
@@ -532,13 +589,42 @@ export class LuxarApp {
           extractRenderingOverrides(rendering as ZarrViewerConfig),
           'Applied waypoint rendering overrides'
         ),
+      // The two story events: onto the embedder bus for controllers, and to the
+      // sound layer for its `on_depart` / `on_arrive` nodes.
+      emit: (event, payload) => {
+        if (event === 'waypoint-departed') {
+          this.embedderEvents.emit(event, { index: payload.index });
+        } else {
+          this.embedderEvents.emit(event, {
+            index: payload.index,
+            completed: 'completed' in payload ? payload.completed : true,
+          });
+          // The flight resolved and the driver's gate is open: reveal the
+          // overlays a `reveal: "on_arrival"` waypoint held back.
+          this.overlayManager?.updateVisibility();
+        }
+        const when = waypoints[payload.index]?.when;
+        if (when && this.audioEngine) {
+          this.audioEngine.notifyWaypoint(
+            event === 'waypoint-departed' ? 'depart' : 'arrive',
+            when
+          );
+        }
+      },
     });
     const listener = (): void => {
       driver.evaluate('fly');
+      // The overlay manager listens to the same dims manager and may have run
+      // first with the previous gate state. Re-run its pass now whether the
+      // new match closes OR opens the gate — same task, so nothing paints in
+      // between.
+      this.overlayManager?.updateVisibility();
     };
     sceneDimsManager.addListener(listener);
     this.waypointListener = listener;
+    this.waypointDriver = driver;
     driver.evaluate('snap');
+    this.overlayManager?.updateVisibility();
   }
 
   private disposeWaypoints(): void {
@@ -546,6 +632,7 @@ export class LuxarApp {
       sceneDimsManager.removeListener(this.waypointListener);
       this.waypointListener = undefined;
     }
+    this.waypointDriver = undefined;
   }
 
   private applyViewerConfigStateCore(viewerConfig: ZarrViewerConfig | undefined): void {
@@ -634,6 +721,10 @@ export class LuxarApp {
       inputHandler: this.inputHandler,
       recordingPanel: this.recordingPanel,
     });
+    // Story captions wait for the camera when a waypoint asks for it: the gate
+    // reads the LIVE driver, so it holds whichever scene's waypoints are
+    // installed, before or after the overlays themselves were created.
+    this.overlayManager.setTransitGate(() => this.waypointDriver?.inTransit === true);
   }
 
   /**
@@ -730,10 +821,15 @@ export class LuxarApp {
    * the manager so dataset switches keep pointing at the current loader.
    */
   private setupOnlineRetry(): void {
+    const manager = SceneLoaderManager.getInstance();
     installOnlineRetry({
       events: this.events,
       getLoader: () => getSceneLoader(),
       toast: (message, durationMs) => notifier.toast(message, durationMs),
+      subscribeAutoRetryableFailure: (listener) => {
+        manager.setAutoRetryableFailureCallback(listener);
+        return () => manager.setAutoRetryableFailureCallback(null);
+      },
     });
   }
 
@@ -1149,7 +1245,62 @@ export class LuxarApp {
       dimensions: this.getDimensions(),
       rendering: this.getRenderingSettings(),
       layers: this.getLayers(),
+      audio: this.getAudioState(),
     };
+  }
+
+  /**
+   * The sound layer's state: `AudioContext` state (`suspended` = the display
+   * still needs its tap), mute, master gain, panning model, bus gains, the
+   * names of the nodes playing, and whether the scene has sound nodes at all.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  getAudioState(): AudioState {
+    if (!this.isInitialized || !this.audioEngine) {
+      throw new Error('LuxarApp.getAudioState called before init()');
+    }
+    return this.audioEngine.getState();
+  }
+
+  /**
+   * Live mixer patch: master gain and mute (both persisted like the rail's own
+   * controls), per-bus gains, panning model. Fields left out are untouched.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  setAudio(patch: AudioPatch): void {
+    if (!this.isInitialized || !this.audioEngine) {
+      throw new Error('LuxarApp.setAudio called before init()');
+    }
+    this.audioEngine.setAudio(patch);
+  }
+
+  /**
+   * Start one sound node by name (its last path segment, or the full path)
+   * regardless of its slab audibility. Returns `false` for an unknown name or
+   * a clip that has not decoded yet.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  playSound(name: string): boolean {
+    if (!this.isInitialized || !this.audioEngine) {
+      throw new Error('LuxarApp.playSound called before init()');
+    }
+    return this.audioEngine.play(name);
+  }
+
+  /**
+   * Stop one sound node by name with its own fade-out. Returns `false` when
+   * nothing by that name was playing.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  stopSound(name: string): boolean {
+    if (!this.isInitialized || !this.audioEngine) {
+      throw new Error('LuxarApp.stopSound called before init()');
+    }
+    return this.audioEngine.stop(name);
   }
 
   /**
@@ -1221,6 +1372,7 @@ export class LuxarApp {
       pickingEvents: this.pickingEvents,
       sceneManager: this.sceneManager,
       animationController: this.animationController,
+      audioEngine: this.audioEngine,
       performanceMonitor: this.performanceMonitor,
       adaptiveDPRManager: this.adaptiveDPRManager,
       resolutionIndicator: this.resolutionIndicator,

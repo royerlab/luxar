@@ -529,7 +529,7 @@ class TestLodGroupAxis:
         data = _make_flat_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="lod_group=True requires"):
+            with pytest.raises(ValueError, match="substitutive_lod=True .* requires"):
                 scene.add_gsplats_from_data("splats", data, lod_group=True)
 
     def test_true_uses_stored_levels(self, tmp_path) -> None:
@@ -709,7 +709,7 @@ class TestLodGroupAxis:
         data = _make_flat_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(TypeError, match="lod_group must be"):
+            with pytest.raises(TypeError, match="substitutive_lod .* must be"):
                 scene.add_gsplats_from_data("splats", data, lod_group="auto")  # type: ignore[arg-type]
 
 

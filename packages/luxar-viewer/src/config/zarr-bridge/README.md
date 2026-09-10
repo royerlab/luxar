@@ -15,6 +15,8 @@ Unlike the `sections/<name>/` slices, this folder does not contribute a section 
   - `extractCameraOverrides(zarrConfig)` — pulls `camera.position`/`target`/`up`/`target_node` from the zarr blob.
   - `extractBackgroundColor(zarrConfig)` — returns the hex `background_color` string or `undefined`.
 
+- `audio-config.ts` — `extractAudioConfig(raw)` validates the `viewer_config.audio` block (Python `AudioConfig`) into the audio engine's `AudioConfigOverrides`: only set fields come through, gains clamp to `[0, 2]`, `duck_db` to `[-60, 0]`, an unknown `panning_model` or bus name is dropped with a `Config` warning. Consumed by `LuxarApp.installAudio` after the waypoints install.
+
 - `viewer-state-capture.ts` — `captureViewerState(sceneManager, renderingControls, sceneDimsManager, animationManager?, themeManager?)`. Snapshots the live viewer as a `ZarrViewerConfig` JSON object compatible with Python's `ViewerConfig.from_json()`. Emits `camera` (position/target/up + fov/fov_preset, plus `near`/`far` **only when dynamic clipping is off** — while it is on those two settings hold transient live-camera readouts, not authored values, so capturing them would export a zoomed-in pose's planes as if they had been chosen), `background_color` (read from `scene.background` via a duck-typed `isColor`/`getHexString` narrowing to avoid importing Three's full `Color` type), snake_case rendering settings via `REVERSE_SETTINGS_MAP`, the current theme id (falls back silently if `ThemeManager` is not initialized — used in tests), `dimensions.current_step`, and a per-dimension `animation` array (only included when at least one dimension has a recorded animation state).
 
 ## Public API

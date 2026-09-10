@@ -167,9 +167,10 @@ TREE_RECIPES: frozenset[str] = frozenset({"adaptive"})
 #: ``add_gsplats_from_data`` is handed the whole ``GSplatData``, whose matrix form
 #: holds the substitutive levels, and re-emits them as a ``kind=lod`` group;
 #: ``add_gsplats_from_file`` grafts the stored subtree node-for-node. The third
-#: adder, plain ``add_gsplats(centers=…, amplitudes=…)``, is handed loose arrays
-#: — every one of which is a view of the FINEST level only — so it writes a flat
-#: leaf. Measured on a 4,000-splat fit: the same archive added via
+#: adder, ``add_gsplats(centers=…, amplitudes=…)``, is handed loose arrays that
+#: are a view of the FINEST archived level only. It can author a new LOD through
+#: its explicit structure kwargs, but it cannot preserve the archive's existing
+#: topology. Measured on a 4,000-splat fit: the same archive added via
 #: ``add_gsplats`` gives a node with no ``kind`` and no child groups whether it
 #: was written ``stream`` or ``levels``, while the ``levels`` archive is 4.1x the
 #: bytes on disk (the small-fit figure — +38% on a real one, above).

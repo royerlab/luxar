@@ -28,19 +28,25 @@ pnpm run test:coverage
 # Quality gates
 pnpm run check                # Fast dev-loop: typecheck + lint + unit tests
 pnpm run check:static         # check:ci minus the tests — what `make check-all` runs
-pnpm run check:ci             # Merge gate: check:static + coverage thresholds/slack
+pnpm run check:ci             # Merge gate: all static + coverage checks, aggregated
+pnpm run check:ci -- --bail   # Local fail-fast variant
 ```
 
-`check` keeps the iteration fast. `check:ci` is what CI runs — it adds
-the `check:overrides` pnpm
-security-pin guard, the dependency-cruiser
-layer rule check, the `check:knip:ci` unused-export/unused-file gate,
-and enforces the ratcheted coverage thresholds and slack budget
-declared in `coverage-thresholds.mjs`. A PR can pass `check` while
-violating layers, leaving dead exports, or dropping coverage; that
-cannot happen with `check:ci`. `check:static` is that same set minus
-`test:coverage` and its slack check, so `make check-all` no longer re-runs a suite
-`make test-all` has already run.
+`check` keeps the iteration fast. `check:ci` is what CI runs: it executes every
+command in `check:static`, then `test:coverage` and `check:coverage-slack`, and
+reports all ordinary failures together instead of stopping at the first one.
+A killed check still stops immediately. If a failed coverage run produced no
+summary, the dependent slack check is reported as skipped instead of adding a
+misleading second failure. Local runs can request fail-fast behavior with
+`--bail`. The static checks include the `check:overrides` pnpm security-pin
+guard, dependency-cruiser layer rules, and the `check:knip:ci`
+unused-export/unused-file gate. Coverage thresholds and their last accepted
+measurements live together in `coverage-thresholds.mjs`; after coverage moves,
+run `pnpm check:coverage-slack -- --print`, update floors when required, and
+refresh the recorded measurements when accepting the new state. A downward
+refresh resets the erosion baseline and should be called out in the PR.
+`check:static` omits the coverage test and slack check, so `make check-all` does
+not re-run a suite that `make test-all` already ran.
 
 ### Test environment: `node` by default, jsdom on request
 
@@ -898,10 +904,9 @@ Tests run automatically on:
 - No linting errors
 
 **E2E in CI**: the GitHub Actions `e2e-tests` job is intentionally
-disabled (`if: false` in `.github/workflows/ci.yml`) — a dormant
-smoke subset (`pnpm test:e2e:smoke`) is defined and re-enabling is a
-one-line change. Until then, run E2E locally (`pnpm test:e2e`)
-before PR/merge.
+limited to the mobile/touch suite in `.github/workflows/ci.yml`. Run the full
+desktop corpus locally with `pnpm test:e2e`; use `pnpm test:e2e:smoke` or
+`pnpm test:e2e:smoke:strict` for faster interaction-focused checks.
 
 **Pre-commit Checklist**:
 

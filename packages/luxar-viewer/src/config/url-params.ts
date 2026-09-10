@@ -254,9 +254,10 @@ export interface UrlParams {
    * (`?cacheBudgetMB=1536`). Used where `performance.memory` is unavailable —
    * WKWebView (the native app) and Safari — so heap-aware sizing has a real
    * budget to split instead of the tiny fixed fallback. The native launcher
-   * injects it automatically. One third also replaces the no-signal GPU-
-   * geometry fallback, in either direction. Null/invalid ⇒ fall back to the
-   * measured heap, then to the fixed config sizes. See `cache/heap-budget.ts`.
+   * injects it automatically. Its implied non-cache remainder also replaces
+   * the heap-derived GPU-geometry signal in either direction. Null/invalid ⇒
+   * fall back to the measured heap, then to the fixed config sizes. See
+   * `cache/heap-budget.ts`.
    */
   cacheBudgetMB: number | null;
   /**
@@ -273,12 +274,16 @@ export interface UrlParams {
   /**
    * Force the session's JS input profile (`?input=touch|mouse`): pointer flags,
    * hover capability, touch points, and device tier. This changes device-class
-   * fallback budgets, primary-tip pen routing, and the Safari gesture-canceller
-   * gate; long-press menus and tap-oriented copy land in follow-up touch work.
-   * Stylesheets and per-event gesture routing keep following the real media
-   * features and `PointerEvent.pointerType`, so a faithful check still needs
-   * device emulation or a real device. `null` (missing or unrecognised) ⇒ detect
-   * from the browser. See `utils/input-capabilities.ts`.
+   * fallback budgets (`touch` only — `mouse` keeps the detected tier),
+   * primary-tip pen routing, the Safari gesture-canceller gate, and whether the
+   * help overlay lists its Touch section; `touch` additionally applies the
+   * mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR
+   * cap, GPU-byte and element-texture ceilings, data-worker count) and skips
+   * the blend-variant program warm-up. Stylesheets and non-pen gesture routing
+   * keep following the real media features and `PointerEvent.pointerType`, so a
+   * faithful check still needs device emulation or a real device. `null`
+   * (missing or unrecognised) ⇒ detect from the browser. See
+   * `utils/input-capabilities.ts`.
    */
   input: InputProfileOverride | null;
 

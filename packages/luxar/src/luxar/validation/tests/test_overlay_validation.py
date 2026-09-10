@@ -174,6 +174,48 @@ class TestValidateImageInput:
             validate_image_input(b"not an image")
         assert str(exc.value).endswith("PNG, JPEG, or WebP payload.")
 
+    def test_array_conversion_failure_preserves_exception_details(self):
+        class BrokenArray:
+            def __array__(self, *_args, **_kwargs):
+                raise RuntimeError("decoder exploded")
+
+        with pytest.raises(
+            ValueError,
+            match="array conversion failed with RuntimeError: decoder exploded",
+        ) as exc:
+            validate_image_input(BrokenArray())
+
+        assert isinstance(exc.value.__cause__, RuntimeError)
+        assert "Supported: str/Path, bytes" in str(exc.value)
+
+    def test_imageio_failure_preserves_exception_details(self, monkeypatch):
+        imageio = pytest.importorskip("imageio.v3")
+
+        class ReadableImage:
+            def read(self):
+                return b""
+
+        def fail_decode(_image):
+            raise RuntimeError("decoder exploded")
+
+        monkeypatch.setattr(imageio, "imread", fail_decode)
+
+        with pytest.raises(
+            ValueError,
+            match="imageio failed with RuntimeError: decoder exploded",
+        ) as exc:
+            validate_image_input(ReadableImage())
+
+        assert isinstance(exc.value.__cause__, RuntimeError)
+        assert "Supported: str/Path, bytes" in str(exc.value)
+
+    @pytest.mark.parametrize("image", [{}, [[{}, {}], [{}, {}]]])
+    def test_plain_wrong_type_lists_supported_inputs(self, image):
+        with pytest.raises(ValueError, match="Supported: str/Path, bytes") as exc:
+            validate_image_input(image)
+
+        assert "imageio failed" not in str(exc.value)
+
     def test_numpy_rgb(self):
         arr = np.zeros((4, 4, 3), dtype=np.uint8)
         data, fmt = validate_image_input(arr)

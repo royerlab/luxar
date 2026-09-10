@@ -78,6 +78,13 @@ export interface OverlayConfig {
   video_file?: string;
   /** Optional still (PNG/JPEG/WebP) shown before play and where the video cannot decode. */
   poster_file?: string;
+  /**
+   * `'stacked'`: the frame is the colour on top and its alpha as a grey matte of
+   * the same size below (an opaque clip twice as tall). The manager recombines
+   * the halves in a shader (`ui/video-matte.ts`) — transparency that survives
+   * Safari / WKWebView, which decode a VP9 alpha plane and drop the alpha.
+   */
+  alpha_matte?: 'stacked';
   loop?: boolean;
   autoplay?: boolean;
   muted?: boolean;
@@ -118,7 +125,7 @@ export async function loadOverlayConfigs(
         const childGroup = await zarr.open(childLoc, { kind: 'group' });
         const attrs = childGroup.attrs as Record<string, unknown>;
 
-        if (!attrs?.type || !String(attrs.type).startsWith('overlay_')) {
+        if (typeof attrs?.type !== 'string' || !attrs.type.startsWith('overlay_')) {
           continue;
         }
 
@@ -154,6 +161,7 @@ export async function loadOverlayConfigs(
           html: attrs.html as string | undefined,
           video_file: attrs.video_file as string | undefined,
           poster_file: attrs.poster_file as string | undefined,
+          alpha_matte: attrs.alpha_matte === 'stacked' ? 'stacked' : undefined,
           loop: attrs.loop as boolean | undefined,
           autoplay: attrs.autoplay as boolean | undefined,
           muted: attrs.muted as boolean | undefined,

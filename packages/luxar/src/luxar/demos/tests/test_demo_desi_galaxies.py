@@ -9,8 +9,11 @@ test_demo_ppi_flow_field).
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import sys
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +23,7 @@ from luxar._zarr_compat import consolidate, create_array, open_group
 from luxar.typing_utils.constants import MAX_POINTS_PER_POINTS_NODE
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_desi_galaxies.py"
+_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
 
 
 def _load_demo_module():
@@ -44,6 +48,44 @@ load_derived = _demo.load_derived
 sample_scene_catalog = _demo.sample_scene_catalog
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _cached_record_scene(
+    cache_dir: Path = _demo.CACHE_DIR,
+    manifest_path: Path = _MANIFEST_PATH,
+) -> Path:
+    manifest = json.loads(manifest_path.read_text())
+    entries = manifest["datasets"][_demo.DEMO_NAME]["files"]
+    entry = next(
+        (item for item in entries if item["name"] == _demo.SCENE_ZIP_FILE), None
+    )
+    if entry is None:
+        pytest.fail(
+            f"{manifest_path} does not contain the expected DESI record archive "
+            f"{_demo.SCENE_ZIP_FILE!r}"
+        )
+    scene_zip = cache_dir / entry["name"]
+    if not scene_zip.is_file():
+        pytest.skip("DESI record scene is not present in the local cache")
+
+    actual_bytes = scene_zip.stat().st_size
+    actual_digest = _sha256(scene_zip) if actual_bytes == entry["bytes"] else "not read"
+    if actual_bytes != entry["bytes"] or actual_digest != entry["sha256"]:
+        pytest.fail(
+            f"Cached DESI record scene does not match data_manifest.json: {scene_zip} "
+            f"has bytes={actual_bytes}, sha256={actual_digest}; expected "
+            f"bytes={entry['bytes']}, sha256={entry['sha256']}. Rebuild or "
+            "re-download the demo cache."
+        )
+    return scene_zip
+
+
 def test_per_node_budget_stays_under_the_point_texture_bound() -> None:
     assert _demo.SCENE_MAX_POINTS_PER_NODE <= MAX_POINTS_PER_POINTS_NODE
 
@@ -54,6 +96,99 @@ def test_create_scene_requires_scalars_when_colours_are_not_supplied(
     positions = np.zeros((2, 3), dtype=np.float32)
     with pytest.raises(ValueError, match="redshift and tracer_ids"):
         _demo.create_scene(positions, None, None, tmp_path / "scene.luxar.zarr")
+
+
+def _write_record_fixture(
+    tmp_path: Path,
+    payload: bytes,
+    *,
+    manifest_payload: bytes | None = None,
+) -> tuple[Path, Path, Path]:
+    cache_dir = tmp_path / "cache" / _demo.DEMO_NAME
+    scene_zip = cache_dir / _demo.SCENE_ZIP_FILE
+    cache_dir.mkdir(parents=True)
+    scene_zip.write_bytes(payload)
+    expected = payload if manifest_payload is None else manifest_payload
+    manifest_path = tmp_path / "data_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "datasets": {
+                    _demo.DEMO_NAME: {
+                        "files": [
+                            {
+                                "name": _demo.SCENE_ZIP_FILE,
+                                "sha256": hashlib.sha256(expected).hexdigest(),
+                                "bytes": len(expected),
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+    )
+    return cache_dir, manifest_path, scene_zip
+
+
+def test_cached_record_scene_accepts_the_manifest_pinned_archive(
+    tmp_path: Path,
+) -> None:
+    cache_dir, manifest_path, scene_zip = _write_record_fixture(
+        tmp_path, b"current record bytes"
+    )
+
+    assert _cached_record_scene(cache_dir, manifest_path) == scene_zip
+
+
+def test_cached_record_scene_skips_when_the_archive_is_absent(tmp_path: Path) -> None:
+    _cache_dir, manifest_path, _scene_zip = _write_record_fixture(
+        tmp_path, b"current record bytes"
+    )
+    empty_cache = tmp_path / "empty-cache"
+
+    with pytest.raises(pytest.skip.Exception, match="not present in the local cache"):
+        _cached_record_scene(empty_cache, manifest_path)
+
+
+@pytest.mark.parametrize(
+    ("cached_payload", "expected_digest"),
+    [
+        (
+            b"stale record bytes!!",
+            hashlib.sha256(b"stale record bytes!!").hexdigest(),
+        ),
+        (b"wrong size", "not read"),
+    ],
+    ids=["wrong-digest", "wrong-size"],
+)
+def test_cached_record_scene_rejects_an_unpinned_archive(
+    tmp_path: Path, cached_payload: bytes, expected_digest: str
+) -> None:
+    cache_dir, manifest_path, _scene_zip = _write_record_fixture(
+        tmp_path,
+        cached_payload,
+        manifest_payload=b"current record bytes",
+    )
+
+    with pytest.raises(
+        pytest.fail.Exception,
+        match=rf"sha256={expected_digest}.*Rebuild or re-download the demo cache",
+    ):
+        _cached_record_scene(cache_dir, manifest_path)
+
+
+def test_cached_record_scene_rejects_a_missing_manifest_entry(tmp_path: Path) -> None:
+    cache_dir, manifest_path, _scene_zip = _write_record_fixture(
+        tmp_path, b"current record bytes"
+    )
+    manifest = json.loads(manifest_path.read_text())
+    manifest["datasets"][_demo.DEMO_NAME]["files"] = []
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(
+        pytest.fail.Exception, match="does not contain the expected DESI record archive"
+    ):
+        _cached_record_scene(cache_dir, manifest_path)
 
 
 class TestRadecToXyz:
@@ -770,13 +905,8 @@ class TestRestructureFetchedScene:
         sentinel.write_text("keep me")
         monkeypatch.setattr(
             _demo,
-            "_finest_level_cloud",
-            lambda root, layer: (positions, colors),
-        )
-        monkeypatch.setattr(
-            _demo,
-            "_finest_level_colors",
-            lambda root, layer: (len(positions), colors),
+            "_read_restructure_arrays",
+            lambda path: (positions, colors, colors),
         )
 
         def fail_build(*args, **kwargs):
@@ -808,13 +938,8 @@ class TestRestructureFetchedScene:
         (scene / "original").write_text("old")
         monkeypatch.setattr(
             _demo,
-            "_finest_level_cloud",
-            lambda root, layer: (positions, colors),
-        )
-        monkeypatch.setattr(
-            _demo,
-            "_finest_level_colors",
-            lambda root, layer: (len(positions), colors),
+            "_read_restructure_arrays",
+            lambda path: (positions, colors, colors),
         )
 
         def build_scene(*args, **kwargs) -> None:
@@ -958,7 +1083,6 @@ class TestSceneRowBudget:
         redshift = np.linspace(0.01, 3.0, len(positions), dtype=np.float32)
         tracer_ids = (np.arange(len(positions)) % 4).astype(np.uint8)
         monkeypatch.setattr(_demo, "SCENE_MAX_POINTS_PER_NODE", 40, raising=False)
-        monkeypatch.setattr(_demo, "substitutive_lod_or_flat", lambda spec: None)
 
         out = tmp_path / "desi_partitioned.luxar.zarr"
         _demo.create_scene(positions, redshift, tracer_ids, out)
@@ -978,35 +1102,44 @@ class TestSceneRowBudget:
         expected_intensity = _demo.SCENE_INTENSITY
         tracer_layer = root["By tracer type"]
         redshift_layer = root["By redshift"]
-        assert tracer_layer.attrs["kind"] == "partition"
-        assert redshift_layer.attrs["kind"] == "partition"
-        assert tracer_layer.attrs["intensity"] == pytest.approx(expected_intensity)
-        assert redshift_layer.attrs["intensity"] == pytest.approx(expected_intensity)
+        for layer in (tracer_layer, redshift_layer):
+            assert layer.attrs["kind"] == "lod"
+            assert layer.attrs["selector"] == "screen-area"
+            assert layer.attrs["intensity"] == pytest.approx(expected_intensity)
+            child_names = sorted(
+                layer.group_keys(), key=lambda name: int(name.rsplit("_", 1)[1])
+            )
+            assert child_names == ["child_0", "child_1", "child_2"]
+            assert [layer[name].attrs["coverage_fraction"] for name in child_names] == [
+                0.0,
+                0.5,
+                1.0,
+            ]
+            finest = layer[child_names[-1]]
+            assert finest.attrs["kind"] == "partition"
+            assert finest.attrs["max_elements"] == 40
+            assert sorted(
+                finest.group_keys(), key=lambda name: int(name.rsplit("_", 1)[1])
+            ) == ["part_0", "part_1", "part_2", "part_3"]
 
-        tracer_positions = position_arrays(tracer_layer)
-        redshift_positions = position_arrays(redshift_layer)
+        tracer_positions = position_arrays(tracer_layer["child_2"])
+        redshift_positions = position_arrays(redshift_layer["child_2"])
         assert len(tracer_positions) == len(redshift_positions) > 1
         assert sum(array.shape[0] for array in tracer_positions) == len(positions)
         assert all(array.shape[0] <= 40 for array in tracer_positions)
         assert all(
             array.attrs["encoding"]["name"] != "array_ref" for array in tracer_positions
         )
+        redshift_encodings = [array.attrs["encoding"] for array in redshift_positions]
+        assert all(encoding["name"] == "array_ref" for encoding in redshift_encodings)
+        redshift_targets = [encoding["target"] for encoding in redshift_encodings]
         assert all(
-            array.attrs["encoding"]["name"] == "array_ref"
-            and array.attrs["encoding"]["target"].startswith("By tracer type/")
-            for array in redshift_positions
+            target.startswith("By tracer type/child_2/") for target in redshift_targets
         )
+        assert len(set(redshift_targets)) == len(redshift_targets)
 
     def test_cached_record_scene_carries_the_full_catalog(self) -> None:
-        import json
-        import zipfile
-
-        scene_zip = (
-            Path.home() / ".cache" / "luxar" / _demo.DEMO_NAME / _demo.SCENE_ZIP_FILE
-        )
-        if not scene_zip.exists():
-            pytest.skip("DESI record scene is not present in the local cache")
-
+        scene_zip = _cached_record_scene()
         with zipfile.ZipFile(scene_zip) as archive:
             names = set(archive.namelist())
 
@@ -1014,65 +1147,69 @@ class TestSceneRowBudget:
                 document = json.loads(archive.read(f"{path}/zarr.json").decode("utf-8"))
                 return document.get("attributes", document)
 
+            finest_paths = {}
+            point_paths = {}
             for layer_name in ("By tracer type", "By redshift"):
                 layer_attrs = read_attrs(layer_name)
-                child_names = sorted(
-                    name.removeprefix(f"{layer_name}/").removesuffix("/zarr.json")
-                    for name in names
-                    if name.startswith(f"{layer_name}/child_")
-                    and name.count("/") == 2
-                    and name.endswith("/zarr.json")
+                child_paths = sorted(
+                    (
+                        name.removesuffix("/zarr.json")
+                        for name in names
+                        if name.startswith(f"{layer_name}/child_")
+                        and name.count("/") == 2
+                        and name.endswith("/zarr.json")
+                    ),
+                    key=lambda path: int(path.rsplit("_", 1)[1]),
                 )
-                assert child_names == ["child_0", "child_1", "child_2"]
-                child_attrs = [
-                    read_attrs(f"{layer_name}/{child_name}")
-                    for child_name in child_names
+                assert child_paths == [
+                    f"{layer_name}/child_0",
+                    f"{layer_name}/child_1",
+                    f"{layer_name}/child_2",
                 ]
                 assert layer_attrs["selector"] == "screen-area"
-                assert [attrs["coverage_fraction"] for attrs in child_attrs] == [
-                    0.0,
-                    0.5,
-                    1.0,
-                ]
-
-                # The finest child partitions the WHOLE catalog under the
-                # conservative per-node Points capacity: no row cap, and no
-                # viewer-side tail clamp on a 4096-class GPU.
-                finest_path = f"{layer_name}/{child_names[-1]}"
-                finest = child_attrs[-1]
-                assert finest["kind"] == "partition"
-                assert finest["max_elements"] == _demo.SCENE_MAX_POINTS_PER_NODE
-                part_names = sorted(
-                    name.removeprefix(f"{finest_path}/").removesuffix("/zarr.json")
-                    for name in names
-                    if name.startswith(f"{finest_path}/part_")
-                    and name.count("/") == 3
-                    and name.endswith("/zarr.json")
-                )
-                assert part_names == ["part_0", "part_1", "part_2", "part_3"]
-                part_attrs = [
-                    read_attrs(f"{finest_path}/{part_name}") for part_name in part_names
+                coverage_fractions = [
+                    read_attrs(path)["coverage_fraction"] for path in child_paths
                 ]
                 assert all(
-                    attrs["n_points"] <= _demo.SCENE_MAX_POINTS_PER_NODE
-                    for attrs in part_attrs
+                    coverage_fractions[index] < coverage_fractions[index + 1]
+                    for index in range(len(coverage_fractions) - 1)
                 )
-                n_finest = sum(attrs["n_points"] for attrs in part_attrs)
+
+                finest_path = child_paths[-1]
+                finest_paths[layer_name] = finest_path
+                finest_attrs = read_attrs(finest_path)
+                if finest_attrs.get("kind") == "partition":
+                    layer_point_paths = sorted(
+                        (
+                            name.removesuffix("/zarr.json")
+                            for name in names
+                            if name.startswith(f"{finest_path}/part_")
+                            and name.count("/") == 3
+                            and name.endswith("/zarr.json")
+                        ),
+                        key=lambda path: int(path.rsplit("_", 1)[1]),
+                    )
+                else:
+                    layer_point_paths = [finest_path]
+                point_paths[layer_name] = layer_point_paths
+
+                # The manifest digest anchors the published structure. Its finest
+                # level may be flat now or partitioned after a future republish;
+                # either way it must carry every catalog row in streamable rungs.
+                node_attrs = [read_attrs(path) for path in layer_point_paths]
+                n_finest = sum(attrs["n_points"] for attrs in node_attrs)
                 assert n_finest == 9_751_955
 
                 # And no single additive rung may exceed the commit ceiling —
                 # the invariant that makes the full catalog streamable at all.
                 increments = []
-                position_encodings = []
-                for part_name, attrs in zip(part_names, part_attrs):
-                    part_path = f"{finest_path}/{part_name}"
+                for point_path, attrs in zip(
+                    layer_point_paths, node_attrs, strict=True
+                ):
                     part_increments = []
                     for index in range(attrs["n_additive_sublods"]):
-                        rung_path = f"{part_path}/additive_{index}"
+                        rung_path = f"{point_path}/additive_{index}"
                         part_increments.append(read_attrs(rung_path)["n_points"])
-                        position_encodings.append(
-                            read_attrs(f"{rung_path}/positions")["encoding"]
-                        )
                     assert sum(part_increments) == attrs["n_points"]
                     increments.extend(part_increments)
                 assert sum(increments) == n_finest
@@ -1080,17 +1217,29 @@ class TestSceneRowBudget:
                     f"largest rung {max(increments):,} exceeds the "
                     f"{_demo.SCENE_MAX_COMMIT:,} ceiling"
                 )
-                if layer_name == "By tracer type":
-                    assert all(
-                        encoding["name"] != "array_ref"
-                        for encoding in position_encodings
+
+            tracer_position_paths = set()
+            for point_path in point_paths["By tracer type"]:
+                point_attrs = read_attrs(point_path)
+                for index in range(point_attrs["n_additive_sublods"]):
+                    positions_path = f"{point_path}/additive_{index}/positions"
+                    assert read_attrs(positions_path)["encoding"]["name"] == (
+                        "linear_perchannel_u16"
                     )
-                else:
-                    assert all(
-                        encoding["name"] == "array_ref"
-                        and encoding["target"].startswith("By tracer type/child_2/")
-                        for encoding in position_encodings
-                    )
+                    tracer_position_paths.add(positions_path)
+
+            tracer_prefix = f"{finest_paths['By tracer type']}/"
+            redshift_targets = []
+            for point_path in point_paths["By redshift"]:
+                point_attrs = read_attrs(point_path)
+                for index in range(point_attrs["n_additive_sublods"]):
+                    positions_path = f"{point_path}/additive_{index}/positions"
+                    encoding = read_attrs(positions_path)["encoding"]
+                    assert encoding["name"] == "array_ref"
+                    assert encoding["target"].startswith(tracer_prefix)
+                    assert encoding["target"] in tracer_position_paths
+                    redshift_targets.append(encoding["target"])
+            assert len(set(redshift_targets)) == len(redshift_targets)
 
 
 class TestEnsureOriginFraming:

@@ -25,6 +25,10 @@ import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 import type { DimensionSlidersConfig } from '../../../../../input/input-handler/panel-capabilities';
 import type { SliderConfig } from '../../../../../ui/dimension-sliders';
 
+const inputProfile = vi.hoisted(() => ({
+  deviceClass: 'laptop' as 'mobile' | 'laptop' | 'desktop',
+}));
+
 // Stub every heavy constructor at module level. Each one returns a
 // minimal object that satisfies the pipeline's subsequent member access.
 function makeSceneStub(opts: { initThrows?: boolean } = {}) {
@@ -38,6 +42,7 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     scene: { kind: 'scene' },
+    getSceneScale: vi.fn(() => 1),
     // The scene-environment wiring (`environment-wiring.ts`) attaches its capture
     // runtime here; `environment` stays null so the per-frame tick is a no-op.
     attachEnvironmentRuntime: vi.fn(),
@@ -72,6 +77,8 @@ function makeRecordingPanelStub() {
     // too, since reaching `getSceneLoader` from the panel itself would pull
     // the whole data/cache stack into its module graph.
     setLODSettledProvider: vi.fn(),
+    // The sound layer's capture tap ("Include Audio").
+    setAudioCapture: vi.fn(),
     // The two capture flags the pipeline's injected predicates read.
     // `isCurrentlyRecording()` covers BOTH capture kinds; only the
     // narrower `isLoopRenderSuppressed()` may gate the render skip.
@@ -80,7 +87,8 @@ function makeRecordingPanelStub() {
   };
 }
 function makeLayersPanelStub() {
-  return { kind: 'layers' };
+  // `setAudioPort` is the sound layer's late-bound port for the sound rows.
+  return { kind: 'layers', setAudioPort: vi.fn() };
 }
 function makeInputHandlerStub() {
   return {
@@ -122,6 +130,7 @@ vi.mock('../../../../../ui/debug-console', () => ({
   DebugConsole: vi.fn().mockImplementation(() => ({ kind: 'debug-console' })),
 }));
 vi.mock('../../../../../rendering/adaptive-dpr-manager', () => ({
+  mobileAdaptiveDprOverrides: vi.fn(() => undefined),
   AdaptiveDPRManager: vi.fn().mockImplementation(() => ({
     setRenderer: vi.fn(),
     setOnDPRChangeCallback: vi.fn(),
@@ -194,6 +203,15 @@ vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
   warmUpDepthSortWorker: vi.fn(),
   evaluateDepthSortPerFrame: vi.fn(),
 }));
+vi.mock('../../../../../utils/input-capabilities', () => ({
+  getInputProfile: () => inputProfile,
+}));
+
+const initializeGpuByteBudget = vi.hoisted(() => vi.fn());
+vi.mock('../../../../../rendering/gpu-byte-budget', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../../rendering/gpu-byte-budget')>()),
+  initializeGpuByteBudget,
+}));
 
 import { InputHandler, KeyAction } from '../../../../../input';
 import { ControlRail } from '../../../../../ui/control-rail';
@@ -220,6 +238,7 @@ function makePorts(): InitPipelinePorts {
     events: new EventGroup(),
     getPanelVisibilityStates: vi.fn().mockReturnValue(new Map()),
     restorePanelVisibilityStates: vi.fn(),
+    emitEmbedderEvent: vi.fn(),
   };
 }
 
@@ -244,9 +263,31 @@ describe('runInitPipeline', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    inputProfile.deviceClass = 'laptop';
     (InputHandler as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
       makeInputHandlerStub()
     );
+  });
+
+  it('configures the GPU byte budget for direct LuxarApp embeds', async () => {
+    const ports = makePorts();
+    const { factories } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+    ports.options.gpuPoolMaxBytes = 640_000_000;
+
+    await runInitPipeline(ports, {});
+
+    expect(initializeGpuByteBudget).toHaveBeenCalledWith(640_000_000);
+  });
+
+  it('uses the config default when a direct embed omits gpuPoolMaxBytes', async () => {
+    const ports = makePorts();
+    const { factories } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+
+    await runInitPipeline(ports, {});
+
+    expect(initializeGpuByteBudget).toHaveBeenCalledWith(undefined);
   });
 
   describe('partial-accumulator contract (load-bearing)', () => {
@@ -361,6 +402,45 @@ describe('runInitPipeline', () => {
       // The pipeline returns `partial as InitPipelineResult` — same ref.
       expect(result).toBe(partial as InitPipelineResult);
     });
+
+    it('wires every audio port to the live viewer dependencies', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const result = await runInitPipeline(ports, {});
+      const audio = result.audioEngine as unknown as {
+        deps: Record<string, (...args: any[]) => any>;
+      };
+
+      expect(audio.deps.getCamera()).toBeUndefined();
+      expect(audio.deps.getSceneGraph()).toBeNull();
+      expect(audio.deps.getSceneScale()).toBe(1);
+      expect(audio.deps.resolveNodeCenter('missing')).toBeNull();
+      expect(audio.deps.container()).toBeInstanceOf(HTMLElement);
+      audio.deps.emit('sound-started', { name: 'narration' });
+      expect(ports.emitEmbedderEvent).toHaveBeenCalledWith('sound-started', {
+        name: 'narration',
+      });
+
+      const cameraChanged = vi.fn();
+      const unsubscribe = audio.deps.onCameraReplaced(cameraChanged);
+      const handler = sceneStub.addEventListener.mock.calls.find(
+        ([event]) => event === 'camera-changed'
+      )?.[1];
+      handler();
+      expect(cameraChanged).toHaveBeenCalledOnce();
+      unsubscribe();
+      expect(sceneStub.removeEventListener).toHaveBeenCalledWith('camera-changed', handler);
+
+      const recording = factories.recordingPanel.mock.results[0].value;
+      const capture = recording.setAudioCapture.mock.calls[0][0];
+      expect(capture.acquire()).toBeNull();
+      capture.release({} as MediaStream);
+      const layers = factories.layersPanel.mock.results[0].value;
+      const layerAudio = layers.setAudioPort.mock.calls[0][0];
+      layerAudio.setNodeMuted('/missing', true);
+      layerAudio.setNodeGain('/missing', 0.5);
+    });
   });
 
   describe('factory dispatch', () => {
@@ -407,6 +487,7 @@ describe('runInitPipeline', () => {
         events: new EventGroup(),
         getPanelVisibilityStates: vi.fn().mockReturnValue(new Map()),
         restorePanelVisibilityStates: vi.fn(),
+        emitEmbedderEvent: vi.fn(),
       };
 
       await runInitPipeline(ports, {});
@@ -419,6 +500,39 @@ describe('runInitPipeline', () => {
         perfTimestamp: true,
         blendWarmup: false,
       });
+    });
+
+    it('disables blend warm-up for direct LuxarApp embeds on mobile', async () => {
+      inputProfile.deviceClass = 'mobile';
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.blendWarmup = true;
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(sceneStub.init).toHaveBeenCalledWith(expect.objectContaining({ blendWarmup: false }));
+    });
+
+    it('keeps the explicit blend warm-up opt-out on desktop', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.blendWarmup = false;
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(sceneStub.init).toHaveBeenCalledWith(expect.objectContaining({ blendWarmup: false }));
+    });
+
+    it('keeps blend warm-up enabled by default on desktop', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(sceneStub.init).toHaveBeenCalledWith(expect.objectContaining({ blendWarmup: true }));
     });
   });
 
@@ -587,9 +701,9 @@ describe('runInitPipeline', () => {
         expect(provider()).toBeNull();
 
         const isCaptureQuiescent = vi.fn(() => false);
-        const size = vi.fn(() => 0);
+        const captureSize = vi.fn(() => 0);
         vi.mocked(getSceneLoader).mockReturnValue({
-          lodGroupRegistry: { size, isCaptureQuiescent },
+          lodGroupRegistry: { captureSize, isCaptureQuiescent },
         } as never);
 
         // A registry with no lod_group registered — a plain points/lines scene
@@ -597,8 +711,9 @@ describe('runInitPipeline', () => {
         expect(provider()).toBeNull();
         expect(isCaptureQuiescent).not.toHaveBeenCalled();
 
-        // With entries registered the answer is the registry's own, both ways.
-        size.mockReturnValue(2);
+        // Partitions need the same catch-up tick and drain as lod_groups: their
+        // frustum rising edges launch asynchronous targeted resync passes.
+        captureSize.mockReturnValue(1);
         expect(provider()).toBe(false);
         isCaptureQuiescent.mockReturnValue(true);
         expect(provider()).toBe(true);

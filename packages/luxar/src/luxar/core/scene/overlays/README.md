@@ -64,8 +64,11 @@ without a user gesture. The viewer renders a muted looping `<video>` and pauses
 it while its `visible_range` does not match, so many clips cost one decode at a
 time. With `autoplay=False`, it shows native controls and captures pointer
 events regardless of `interactive`, so the controls remain usable but camera
-drags do not pass through the clip. A VP9 WebM with an alpha channel plays
-transparent in Chrome/Firefox and Safari falls back to the poster. Offline
+drags do not pass through the clip. Transparency is authored as a stacked alpha
+matte (`alpha_matte="stacked"`: colour on top, the alpha as a grey matte below,
+one opaque frame twice as tall; `validate_video_alpha_matte` refuses any other
+layout) that the viewer recombines in a shader — a VP9 alpha plane plays
+transparent only in Chrome/Firefox, Safari and WKWebView drop it. Offline
 capture does not synchronize the video's wall-clock playback to its synthetic
 frame clock, so recorded playback speed is not preserved. Both payloads go
 through `write_overlay`'s `files=` mapping.

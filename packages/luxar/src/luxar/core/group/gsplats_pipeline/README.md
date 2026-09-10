@@ -268,12 +268,12 @@ ONLY fault is this conflict: this gate runs above the data door's `lod_group=`
 resolution, so
 `add_gsplats_from_file(..., lod_group="bogus", partition={…}, additive_lod={"n_lods": 2})`
 answers the conflict where `add_gsplats_from_data` with the same effective
-arguments answers `TypeError: lod_group must be …`. Both refuse and write
-nothing, so it is naming only — the same sanctioned divergence this package
-documents for "a NaN position, an unknown attr". And a fault the COUNT cannot
-see (a bad `method`, a stray `substitutive_level` key) is now masked by the
-refusal rather than reported by the builder: the same trade, the conflict being
-the more fundamental fault.
+arguments answers `TypeError: substitutive_lod (or lod_group alias) must be …`.
+Both refuse and write nothing, so it is naming only — the same sanctioned
+divergence this package documents for "a NaN position, an unknown attr". And a
+fault the COUNT cannot see (a bad `method`, a stray `substitutive_level` key) is
+now masked by the refusal rather than reported by the builder: the same trade,
+the conflict being the more fundamental fault.
 
 ### `from_io.py` — load/fit then delegate
 

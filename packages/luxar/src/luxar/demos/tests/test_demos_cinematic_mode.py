@@ -136,6 +136,7 @@ HIGH_DPR_DEMOS = frozenset(
         # high-DPI kiosk display with a GPU to spare, where the owner asked for
         # full device resolution (a laptop's DPR cap is the wrong default there).
         "demo_esm3_protein_stories.py",
+        "demo_esm_protein_universe.py",  # same kiosk display as the stories tour
         "demo_flywire_connectome.py",
         "demo_global_rivers_earth.py",
         "demo_hilbert_curve_3d.py",

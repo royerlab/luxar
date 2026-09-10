@@ -56,4 +56,19 @@ export interface RecordingOptions {
   // General
   showPanels: boolean;
   includeOverlays: boolean;
+  /**
+   * Record the sound layer into real-time videos (what the listener hears,
+   * post master gain). The frame-by-frame offline path has no clock to record
+   * audio against and stays silent whatever this says.
+   */
+  includeAudio: boolean;
+}
+
+/**
+ * The sound layer's capture surface, injected late (the panel is built before
+ * the audio engine). `acquire` returns null when the scene has no sound.
+ */
+export interface AudioCapturePort {
+  acquire(): MediaStream | null;
+  release(stream: MediaStream): void;
 }
