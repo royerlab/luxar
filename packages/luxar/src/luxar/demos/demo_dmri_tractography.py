@@ -1093,7 +1093,7 @@ def _add_tract(
         intensity=LINE_INTENSITY,
         layer=True,
     )
-    permutation = subsample_indices(n_paths, n_paths, seed=seed)
+    permutation = np.random.default_rng(seed).permutation(n_paths)
     for level, (count, cover) in enumerate(
         zip(counts, coverage_fractions(counts), strict=True)
     ):

@@ -672,8 +672,9 @@ class TestBuildScene:
         # level holds complete streamlines (a multiple of POINTS vertices). The
         # writer spatially re-sorts each node's vertices, so compare as row
         # SETS rather than by reshaping into streamlines.
+        bundles = self._bundles()
         output = tmp_path / "tractography.luxar.zarr"
-        _demo.build_scene(self._bundles(), output, points=self.POINTS)
+        _demo.build_scene(bundles, output, points=self.POINTS)
 
         root = zarr.open_group(output, mode="r")
         tract = root[f"{_demo.DIVISIONS[0].replace(' ', '_')}/{self.NAMES[0]}"]
@@ -692,6 +693,21 @@ class TestBuildScene:
             assert coarse <= finest, "coarse vertex not in the bundle"
         for coarse, finer in zip(level_rows, level_rows[1:], strict=False):
             assert coarse <= finer, "a finer level replaced rather than added fibres"
+
+        source_paths = np.asarray(bundles["positions"][0]).reshape(
+            self.PER_BUNDLE, self.POINTS, 3
+        )
+        source_rows = [
+            {tuple(np.round(row, 4)) for row in path} for path in source_paths
+        ]
+        coarsest_ids = [
+            path_id
+            for path_id, path_rows in enumerate(source_rows)
+            if path_rows <= level_rows[0]
+        ]
+        assert len(coarsest_ids) == 2
+        assert coarsest_ids != list(range(len(coarsest_ids)))
+        assert max(coarsest_ids) >= 4 * len(coarsest_ids)
 
     def test_the_ladder_is_screen_area_halving(self, tmp_path: Path) -> None:
         # The derived ladder uses selector="screen-area" with the finest level
