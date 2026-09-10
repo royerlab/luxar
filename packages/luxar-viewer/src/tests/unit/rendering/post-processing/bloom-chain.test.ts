@@ -265,3 +265,141 @@ describe('bloom TSL factories — primitive uniform propagation', () => {
     vi.doUnmock('three/tsl');
   });
 });
+
+describe('bloom TSL factories — live input-texture binding', () => {
+  // #2584. BloomChain re-points `uniforms.uInput.value` at a different mip
+  // between passes, and that swap must happen in `updateBefore`, NOT in
+  // `update` (`.onUpdate(…, 'render')`). Every `sample()` tap is a clone of
+  // the bound node that derives its own render-target Y-flip uniform from
+  // whatever texture is bound when the clone's own `update()` runs; node
+  // updates run in graph order with the bound node not guaranteed first, so
+  // swapping in `update` left some taps flipped against the PREVIOUS texture
+  // and halved the composed pyramid's vertical gradient.
+  //
+  // Only the E2E parity harness renders this, so a three.js upgrade that
+  // reverted the ordering guarantee — or a refactor back to `.onUpdate` —
+  // would go unnoticed in unit tests. Pin the two observable halves of the
+  // contract: the node's `updateBeforeType`, and that invoking
+  // `updateBefore()` pulls the CURRENT `IUniform.value`.
+
+  type LiveTextureNode = {
+    updateBeforeType: string;
+    updateBefore?: (frame?: unknown) => void;
+    value: unknown;
+  };
+
+  type BloomTslModule = typeof import('../../../../rendering/post-processing/bloom/bloom.tsl');
+
+  /**
+   * Arm the `three/tsl` `texture()` spy for the NEXT dynamic import. The spy
+   * is module-agnostic — every factory that live-binds an input texture is
+   * observable through it, whichever module it lives in.
+   */
+  async function installTextureSpy(): Promise<LiveTextureNode[]> {
+    // Same hook-the-TSL-factory trick as the block above: the TextureNode is
+    // closed over by the `Fn` body and unreachable from the returned
+    // NodeMaterial, so observe it where it is created.
+    vi.resetModules();
+    const capturedTextures: LiveTextureNode[] = [];
+    const tsl = (await import('three/tsl')) as typeof import('three/tsl');
+    const realTexture = tsl.texture;
+    vi.doMock('three/tsl', () => ({
+      ...tsl,
+      texture: ((...args: unknown[]) => {
+        const node = (realTexture as unknown as (...a: unknown[]) => unknown)(...args);
+        capturedTextures.push(node as LiveTextureNode);
+        return node;
+      }) as unknown as typeof tsl.texture,
+    }));
+    return capturedTextures;
+  }
+
+  async function loadFactoriesWithTextureSpy(): Promise<{
+    mod: BloomTslModule;
+    capturedTextures: LiveTextureNode[];
+  }> {
+    const capturedTextures = await installTextureSpy();
+    const mod =
+      (await import('../../../../rendering/post-processing/bloom/bloom.tsl')) as BloomTslModule;
+    return { mod, capturedTextures };
+  }
+
+  /**
+   * Assert the whole live-binding contract on one captured texture node.
+   * Returns the throwaway texture so the caller can dispose it.
+   */
+  function expectLiveBinding(
+    capturedTextures: LiveTextureNode[],
+    slot: THREE.IUniform
+  ): THREE.Texture {
+    // Exactly one texture node per factory — the live-bound input.
+    expect(capturedTextures).toHaveLength(1);
+    const node = capturedTextures[0];
+    expect(node.updateBeforeType).toBe('object');
+
+    // The host swaps the input; the next `updateBefore` must pick it up.
+    const swapped = new THREE.Texture();
+    slot.value = swapped;
+    node.updateBefore?.({});
+    expect(node.value).toBe(swapped);
+
+    // A null slot falls back to the stable build-time placeholder rather
+    // than handing the sampler a null texture.
+    slot.value = null;
+    node.updateBefore?.({});
+    expect(node.value).not.toBeNull();
+    expect(node.value).not.toBe(swapped);
+
+    return swapped;
+  }
+
+  const FACTORIES = [
+    ['threshold', 'bloomThresholdWebGPUFactory', { uThreshold: 0.2, uSmoothing: 0.05 }],
+    ['downsample', 'bloomDownsampleWebGPUFactory', {}],
+    ['upsample', 'bloomUpsampleWebGPUFactory', { uRadius: 1.0 }],
+  ] as const;
+
+  for (const [label, exportName, extraUniforms] of FACTORIES) {
+    it(`${label} factory binds uInput through updateBefore, not update`, async () => {
+      const { mod, capturedTextures } = await loadFactoriesWithTextureSpy();
+      const initial = new THREE.Texture();
+      const uniforms: Record<string, THREE.IUniform> = {
+        uInput: { value: initial },
+        uTexelSize: { value: new THREE.Vector2(1 / 64, 1 / 64) },
+        ...Object.fromEntries(Object.entries(extraUniforms).map(([k, v]) => [k, { value: v }])),
+      };
+      const mat = mod[exportName](uniforms);
+
+      const swapped = expectLiveBinding(capturedTextures, uniforms.uInput);
+
+      mat.dispose();
+      initial.dispose();
+      swapped.dispose();
+      vi.doUnmock('three/tsl');
+    });
+  }
+
+  // FXAA carries the identical binding, and nothing else can see it: its
+  // parity-harness entry (`harnesses/tsl-harness/post-processing.ts`) supplies
+  // a real texture at build time, so the null-placeholder → render-target swap
+  // that #2584 was about never happens under E2E. `FxaaPass` in production
+  // builds with `uInput.value === null` and assigns `ldrTarget.texture` per
+  // render, so this case is the only gate on that behaviour change.
+  it('fxaa factory binds uInput through updateBefore, not update', async () => {
+    const capturedTextures = await installTextureSpy();
+    const { fxaaWebGPUFactory } =
+      await import('../../../../rendering/post-processing/fxaa/fxaa.tsl');
+    // Mirrors FxaaPass: the material is built against a null input slot.
+    const uniforms: Record<string, THREE.IUniform> = {
+      uInput: { value: null },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+    };
+    const mat = fxaaWebGPUFactory(uniforms);
+
+    const swapped = expectLiveBinding(capturedTextures, uniforms.uInput);
+
+    mat.dispose();
+    swapped.dispose();
+    vi.doUnmock('three/tsl');
+  });
+});

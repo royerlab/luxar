@@ -34,10 +34,30 @@ export interface BloomChainRenderResult {
   mipCount: number;
 }
 
+/**
+ * Which input pattern the composed bloom-pyramid parity case feeds the chain.
+ *
+ * - `radial` — a centred, radially symmetric Gaussian. Mirror-invariant, so it
+ *   pins magnitude and blend state but is structurally blind to a Y-orientation
+ *   fault.
+ * - `ramp-y` — a monotone vertical ramp, the Y-asymmetric counterpart that
+ *   catches an orientation or per-tap flip regression (#2584).
+ */
+export type BloomChainFixture = 'radial' | 'ramp-y';
+
 function copyReadback(readback: ArrayBufferView): Uint8Array {
   return new Uint8Array(readback.buffer, readback.byteOffset, readback.byteLength).slice();
 }
 
+/**
+ * Reverse the row order of an RGBA8 readback in place.
+ *
+ * Only the real-WebGPU (`native`) single-pass path needs this: its raw
+ * readback is Y-flipped relative to the WebGL paths'. The composed bloom
+ * executor no longer normalises rows at all — it stages its fixture into a
+ * render target so both backends agree outright (see
+ * {@link stageFixtureIntoTarget}).
+ */
 function flipRowsInPlace(pixels: Uint8Array, width: number, height: number): void {
   const rowBytes = width * 4;
   const temporaryRow = new Uint8Array(rowBytes);
@@ -50,15 +70,60 @@ function flipRowsInPlace(pixels: Uint8Array, width: number, height: number): voi
   }
 }
 
-function buildBloomChainTexture(): THREE.DataTexture {
-  // A vertical ramp makes row-order and V-range errors visible. The
-  // composed parity case is currently fixme while #2584 establishes
-  // whether its DataTexture input should emulate a render-target source.
+/**
+ * Per-fixture recipe: the red-channel value at a pixel, plus the threshold
+ * knee that keeps the composed pyramid inside the 8-bit readback range.
+ *
+ * The three-level chain adds roughly one copy of the thresholded content per
+ * level, so a fixture bright enough to clear a high knee also clips once
+ * composed. `ramp-y` therefore pairs a dim ramp with a low knee: its whole
+ * point is that the composed output stays a MEASURABLE monotone gradient,
+ * which a clipped one is not.
+ */
+interface BloomFixtureSpec {
+  redAt: (x: number, y: number) => number;
+  threshold: number;
+  smoothing: number;
+}
+
+const BLOOM_FIXTURES: Record<BloomChainFixture, BloomFixtureSpec> = {
+  radial: {
+    // Broad halo + tight core: a SUM of two Gaussians with amplitudes 144
+    // and 80. No pixel sits at r² = 0 — the centre is c = 63/2 = 31.5, so
+    // the brightest STORED pixel is (31,31) at r² = 0.5, giving red 221
+    // (green 166, blue 111); 224 is the analytic amplitude sum, which the
+    // grid never samples. The original composed-bloom
+    // fixture, kept verbatim across the #2584 render-target staging change —
+    // the blit is 1:1 and fixture-agnostic, so nothing about the staging
+    // needed a new profile. The fixture itself never clips; what clips is the
+    // composed three-level sum around the core, and there the diff metric is
+    // structurally blind — which is why the `ramp-y` companion below pairs a
+    // dim ramp with a low knee instead.
+    redAt: (x, y) => {
+      const c = (HARNESS_SIZE - 1) / 2;
+      const r2 = (x - c) ** 2 + (y - c) ** 2;
+      return Math.round(144 * Math.exp(-r2 / 180) + 80 * Math.exp(-r2 / 18));
+    },
+    threshold: 0.25,
+    smoothing: 0.15,
+  },
+  'ramp-y': {
+    // 20..74: above the 0.02/0.03 knee at every row (Rec.709 luma of
+    // (v, 0.75v, 0.5v) is v·0.786/255, so v = 20 already sits at 0.062),
+    // and low enough that the composed three-level sum stays under 255.
+    redAt: (_x, y) => Math.round(20 + 0.85 * y),
+    threshold: 0.02,
+    smoothing: 0.03,
+  },
+};
+
+function buildBloomChainTexture(fixture: BloomChainFixture): THREE.DataTexture {
+  const spec = BLOOM_FIXTURES[fixture];
   const data = new Uint8Array(HARNESS_SIZE * HARNESS_SIZE * 4);
   for (let y = 0; y < HARNESS_SIZE; y++) {
     for (let x = 0; x < HARNESS_SIZE; x++) {
       const offset = (y * HARNESS_SIZE + x) * 4;
-      const value = 40 + 3 * y;
+      const value = spec.redAt(x, y);
       data[offset] = value;
       data[offset + 1] = Math.round(value * 0.75);
       data[offset + 2] = Math.round(value * 0.5);
@@ -80,75 +145,165 @@ function buildBloomChainTexture(): THREE.DataTexture {
   return texture;
 }
 
-async function renderBloomChain(
+/**
+ * Blit a CPU-authored fixture into a render target, and hand the target's
+ * texture to the chain.
+ *
+ * Production never feeds BloomChain anything but a render-target texture (the
+ * HDR scene target), and that is the only input for which the two backends
+ * agree on Y. Three's `TextureNode` flips V when a render-target texture is
+ * sampled on the WebGL fallback backend — that flip is how `WebGPURenderer`
+ * presents WebGPU's top-down framebuffer convention on both of its backends,
+ * and it is what the caps-aware fullscreen-triangle UVs are chosen against. A
+ * raw `DataTexture` gets no such normalisation, so feeding one straight into
+ * the caps-aware triangle makes the WebGPU arm read the fixture upside down —
+ * the row reversal #2584 opened on.
+ *
+ * The blit deliberately uses a plain `PlaneGeometry`, i.e. the straight WebGL
+ * UVs the single-pass `renderGLSL`/`renderTSL` cases already compare under,
+ * rather than the caps-aware triangle. That lands the fixture in the target
+ * with the same screen orientation on both backends; from there every texture
+ * in the pyramid is a render target and the arms agree pixel-for-pixel with no
+ * row normalisation, so a genuine mirror regression FAILS the parity case
+ * instead of being normalised away.
+ */
+function stageFixtureIntoTarget(
   renderer: Renderer,
-  caps: RendererCapabilities
-): Promise<BloomChainRenderResult> {
-  const input = buildBloomChainTexture();
-  const chain = new BloomChain({
-    width: HARNESS_SIZE,
-    height: HARNESS_SIZE,
-    levels: 3,
-    threshold: 0.25,
-    smoothing: 0.15,
-    radius: 1,
-    caps,
-  });
-  const outputSize = chain.outputSize;
-  const copyMaterial = new THREE.MeshBasicMaterial({
-    map: chain.outputTexture,
-    depthTest: false,
-    depthWrite: false,
-    toneMapped: false,
-  });
-  const copyPass = new FullscreenPass(copyMaterial, caps);
-  const target = new THREE.WebGLRenderTarget(outputSize.width, outputSize.height, {
+  fixture: THREE.DataTexture
+): THREE.WebGLRenderTarget {
+  const target = new THREE.WebGLRenderTarget(HARNESS_SIZE, HARNESS_SIZE, {
     type: THREE.UnsignedByteType,
     format: THREE.RGBAFormat,
-    minFilter: THREE.NearestFilter,
-    magFilter: THREE.NearestFilter,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    wrapS: THREE.ClampToEdgeWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
     depthBuffer: false,
   });
+  // Everything after `target` is constructed INSIDE the try: the caller only
+  // learns about `target` through a successful return, so a throw from any of
+  // these — the material and geometry constructors included — must still take
+  // the catch below.
+  let material: THREE.MeshBasicMaterial | null = null;
+  let geometry: THREE.PlaneGeometry | null = null;
+  try {
+    material = new THREE.MeshBasicMaterial({
+      map: fixture,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    geometry = new THREE.PlaneGeometry(2, 2);
+    const scene = new THREE.Scene();
+    scene.add(new THREE.Mesh(geometry, material));
 
-  chain.render(renderer, input);
-  renderer.setRenderTarget(target);
-  copyPass.render(renderer);
-  renderer.setRenderTarget(null);
-
-  let pixels: Uint8Array;
-  if (caps.apiSurface === 'webgl2') {
-    pixels = new Uint8Array(outputSize.width * outputSize.height * 4);
-    (renderer as THREE.WebGLRenderer).readRenderTargetPixels(
-      target,
-      0,
-      0,
-      outputSize.width,
-      outputSize.height,
-      pixels
-    );
-  } else {
-    const readback = await (
-      renderer as import('three/webgpu').WebGPURenderer
-    ).readRenderTargetPixelsAsync(target, 0, 0, outputSize.width, outputSize.height);
-    pixels = copyReadback(readback);
-    // At levels=1 the composed WebGPU readback is the exact row reversal of
-    // WebGL (0.0000 against its mirror), so normalize before comparison.
-    // renderTSL's force-WebGL path needs no flip; #2584 tracks why forcing
-    // framebufferYDown alone does not remove the reversal here.
-    flipRowsInPlace(pixels, outputSize.width, outputSize.height);
+    renderer.setRenderTarget(target);
+    renderer.render(scene, buildDefaultCamera());
+  } catch (error) {
+    // Browsers cap live WebGL contexts and the composed cases now build two
+    // renderers per fixture — one real failure leaking targets turns into a
+    // cascade of context-loss failures.
+    target.dispose();
+    throw error;
+  } finally {
+    // Unbind on BOTH paths: the throw path skipped the `setRenderTarget(null)`
+    // that used to sit after the render, leaving the renderer bound to a
+    // target this function then disposes. Harmless today (every caller
+    // disposes the renderer in its own `finally`), but not for a future caller
+    // that reuses one.
+    renderer.setRenderTarget(null);
+    geometry?.dispose();
+    material?.dispose();
   }
-  const mipCount = chain.mipCount;
+  return target;
+}
 
-  target.dispose();
-  copyPass.dispose();
-  copyMaterial.dispose();
-  chain.dispose();
-  input.dispose();
-  return { pixels, mipCount };
+async function renderBloomChain(
+  renderer: Renderer,
+  caps: RendererCapabilities,
+  fixture: BloomChainFixture
+): Promise<BloomChainRenderResult> {
+  const spec = BLOOM_FIXTURES[fixture];
+  // Every GPU resource is released in the `finally` below: a throw out of
+  // `chain.render` or the readback would otherwise strand two render
+  // targets, the DataTexture and (via the callers' own `finally`) the
+  // renderer, and a browser that has run out of WebGL contexts reports one
+  // real failure as a cascade of unrelated ones.
+  let source: THREE.DataTexture | null = null;
+  let staged: THREE.WebGLRenderTarget | null = null;
+  let chain: BloomChain | null = null;
+  let copyMaterial: THREE.MeshBasicMaterial | null = null;
+  let copyPass: FullscreenPass | null = null;
+  let target: THREE.WebGLRenderTarget | null = null;
+  try {
+    source = buildBloomChainTexture(fixture);
+    staged = stageFixtureIntoTarget(renderer, source);
+    chain = new BloomChain({
+      width: HARNESS_SIZE,
+      height: HARNESS_SIZE,
+      levels: 3,
+      threshold: spec.threshold,
+      smoothing: spec.smoothing,
+      radius: 1,
+      caps,
+    });
+    const outputSize = chain.outputSize;
+    copyMaterial = new THREE.MeshBasicMaterial({
+      map: chain.outputTexture,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    copyPass = new FullscreenPass(copyMaterial, caps);
+    target = new THREE.WebGLRenderTarget(outputSize.width, outputSize.height, {
+      type: THREE.UnsignedByteType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: false,
+    });
+
+    chain.render(renderer, staged.texture);
+    renderer.setRenderTarget(target);
+    copyPass.render(renderer);
+    renderer.setRenderTarget(null);
+
+    let pixels: Uint8Array;
+    if (caps.apiSurface === 'webgl2') {
+      pixels = new Uint8Array(outputSize.width * outputSize.height * 4);
+      (renderer as THREE.WebGLRenderer).readRenderTargetPixels(
+        target,
+        0,
+        0,
+        outputSize.width,
+        outputSize.height,
+        pixels
+      );
+    } else {
+      const readback = await (
+        renderer as import('three/webgpu').WebGPURenderer
+      ).readRenderTargetPixelsAsync(target, 0, 0, outputSize.width, outputSize.height);
+      // No row normalisation: `readRenderTargetPixelsAsync` returns rows in the
+      // same bottom-up order as `gl.readPixels`, and the staged render-target
+      // input (see `stageFixtureIntoTarget`) puts both backends on the same
+      // screen orientation, so the two buffers are directly comparable.
+      pixels = copyReadback(readback);
+    }
+    return { pixels, mipCount: chain.mipCount };
+  } finally {
+    target?.dispose();
+    copyPass?.dispose();
+    copyMaterial?.dispose();
+    chain?.dispose();
+    staged?.dispose();
+    source?.dispose();
+  }
 }
 
 /** Render the production bloom pyramid through WebGL ShaderMaterials. */
-export async function renderBloomChainGLSL(): Promise<BloomChainRenderResult> {
+export async function renderBloomChainGLSL(
+  fixture: BloomChainFixture = 'radial'
+): Promise<BloomChainRenderResult> {
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
@@ -156,13 +311,17 @@ export async function renderBloomChainGLSL(): Promise<BloomChainRenderResult> {
     apiSurface: 'webgl2',
     framebufferYDown: false,
   } as RendererCapabilities;
-  const result = await renderBloomChain(renderer, caps);
-  renderer.dispose();
-  return result;
+  try {
+    return await renderBloomChain(renderer, caps, fixture);
+  } finally {
+    renderer.dispose();
+  }
 }
 
 /** Render the production bloom pyramid through NodeMaterials on WebGL fallback. */
-export async function renderBloomChainTSL(): Promise<BloomChainRenderResult> {
+export async function renderBloomChainTSL(
+  fixture: BloomChainFixture = 'radial'
+): Promise<BloomChainRenderResult> {
   await loadTslMaterials();
   const { WebGPURenderer } = await import('three/webgpu');
   const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: true });
@@ -173,9 +332,11 @@ export async function renderBloomChainTSL(): Promise<BloomChainRenderResult> {
     apiSurface: 'webgpu',
     framebufferYDown: true,
   } as RendererCapabilities;
-  const result = await renderBloomChain(renderer, caps);
-  renderer.dispose();
-  return result;
+  try {
+    return await renderBloomChain(renderer, caps, fixture);
+  } finally {
+    renderer.dispose();
+  }
 }
 
 /**
