@@ -1,10 +1,16 @@
 name: CUDA native cadence
 
 # Dispatched by the off-peak timer in royerlab/luxar-ci with `--ref dev`.
+# workflow_dispatch is not registered until this file reaches the default branch
+# (main) through promotion; after that, `--ref dev` tests and attests the dev SHA.
 # Keeping this out of `schedule:` is load-bearing: scheduled workflows follow
 # the repository default branch, while this check must attest the dev commit.
 on:
   workflow_dispatch:
+
+concurrency:
+  group: cuda-native-${{ github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -15,9 +21,11 @@ jobs:
     runs-on: [self-hosted, obsidian-cuda]
     permissions:
       contents: read
-    timeout-minutes: 180
+      issues: write
+    timeout-minutes: 60
     env:
-      MAX_JOBS: "4"
+      LUXAR_REQUIRE_CUDA: "1"
+      MAX_JOBS: "2"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
     steps:
@@ -29,6 +37,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Hatch
+        timeout-minutes: 10
         run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
       - name: Require the two-GPU CUDA runner
@@ -36,19 +45,39 @@ jobs:
           hatch run python -c "import torch; assert torch.cuda.is_available(); assert torch.cuda.device_count() >= 2, torch.cuda.device_count()"
 
       - name: Compile-check CUDA translation units
+        timeout-minutes: 10
         run: hatch run check-native --only nvcc --require nvcc
 
       - name: Build CUDA extensions
+        timeout-minutes: 30
         run: |
           make build-cuda
           make build-nlm-cuda
 
       - name: Run CUDA parity suites
+        timeout-minutes: 20
         run: |
           make test-cuda
           make test-nlm-cuda
 
-      - name: Name the failure owner
+      - name: Report cadence failure
         if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "::error::CUDA cadence failed; owner: @royerloic"
+          title="CUDA native cadence failure"
+          body="Run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed for commit \`$GITHUB_SHA\`."
+          issue_number="$(
+            gh issue list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state open \
+              --search "\"$title\" in:title" \
+              --json number,title \
+              --jq '.[] | select(.title == "CUDA native cadence failure") | .number' \
+              | head -n 1
+          )"
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body" --assignee royerloic
+          fi

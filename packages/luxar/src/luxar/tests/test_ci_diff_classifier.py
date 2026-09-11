@@ -46,7 +46,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
 COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
-CUDA_WORKFLOW = REPO / ".github/workflows/cuda-nightly.yml"
+CUDA_WORKFLOW = REPO / ".github/workflows/cuda-native.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -61,7 +61,7 @@ CUDA_WORKFLOW = REPO / ".github/workflows/cuda-nightly.yml"
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
     (
-        ".github/workflows/cuda-nightly.yml",
+        ".github/workflows/cuda-native.yml",
         "py",
         "test_cuda_cadence_is_dispatch_only_and_requires_two_gpus parses it",
     ),
@@ -1697,15 +1697,31 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
 
 def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
     """CUDA parity must run only on its dedicated, two-GPU obsidian slot."""
-    parsed = yaml.safe_load(CUDA_WORKFLOW.read_text(encoding="utf-8"))
-    assert parsed[True] == {"workflow_dispatch": None}
+    # BaseLoader keeps YAML 1.1 from coercing the key ``on`` to boolean True.
+    parsed = yaml.load(
+        CUDA_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+    )
+    assert parsed["on"] == {"workflow_dispatch": ""}
+    assert parsed["concurrency"] == {
+        "group": "cuda-native-${{ github.sha }}",
+        "cancel-in-progress": "false",
+    }
 
     assert set(parsed["jobs"]) == {"cuda-native"}
     job = parsed["jobs"]["cuda-native"]
     assert job["runs-on"] == ["self-hosted", "obsidian-cuda"]
-    assert job["permissions"] == {"contents": "read"}
+    assert job["permissions"] == {"contents": "read", "issues": "write"}
+    assert job["timeout-minutes"] == "60"
+    assert job["env"]["MAX_JOBS"] == "2"
+    assert job["env"]["LUXAR_REQUIRE_CUDA"] == "1"
 
-    run_steps = [step["run"] for step in job["steps"] if "run" in step]
+    steps = {step["name"]: step for step in job["steps"] if "name" in step}
+    assert steps["Install Hatch"]["timeout-minutes"] == "10"
+    assert steps["Compile-check CUDA translation units"]["timeout-minutes"] == "10"
+    assert steps["Build CUDA extensions"]["timeout-minutes"] == "30"
+    assert steps["Run CUDA parity suites"]["timeout-minutes"] == "20"
+
+    run_steps = [step["run"] for step in steps.values() if "run" in step]
     commands = "\n".join(run_steps)
     assert "torch.cuda.device_count() >= 2" in commands
     assert "hatch run check-native --only nvcc --require nvcc" in commands
@@ -1713,7 +1729,28 @@ def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
     assert "make build-nlm-cuda" in commands
     assert "make test-cuda" in commands
     assert "make test-nlm-cuda" in commands
-    assert "owner: @royerloic" in commands
+    assert "CUDA native cadence failure" in commands
+    assert "--assignee royerloic" in commands
+    assert "gh issue comment" in commands
+    assert steps["Report cadence failure"]["if"] == "${{ failure() }}"
+
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    assert "pytest $(CUDA_EXT_DIR)/tests/ -v -rs" in makefile
+    assert (
+        "pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v -rs"
+        in makefile
+    )
+
+    cuda_conftest = (
+        REPO / "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/conftest.py"
+    ).read_text(encoding="utf-8")
+    nlm_conftest = (
+        REPO / "packages/luxar/src/luxar/gsplats/preprocessing/tests/conftest.py"
+    ).read_text(encoding="utf-8")
+    assert 'os.environ.get("LUXAR_REQUIRE_CUDA") == "1"' in cuda_conftest
+    assert "CUDA_BACKEND_AVAILABLE" in cuda_conftest
+    assert 'os.environ.get("LUXAR_REQUIRE_CUDA") != "1"' in nlm_conftest
+    assert "NLM_CUDA_AVAILABLE" in nlm_conftest
 
 
 def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:

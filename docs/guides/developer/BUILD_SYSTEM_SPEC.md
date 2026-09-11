@@ -396,10 +396,16 @@ command fails during pytest configuration if the Metal backend or MPS interop is
 unavailable, so a release check cannot pass with the Metal tests silently
 skipped.
 
-CUDA compile and parity coverage will run on a separate low-priority cadence
-rather than in pull-request CI, because the device compile takes minutes and the
-workstation GPUs are shared with interactive work. That runner work is tracked
-in #2544 and is not in place yet.
+CUDA compile and parity coverage runs on a separate low-priority, dispatch-only
+cadence rather than in pull-request CI, because the device compile takes minutes
+and the workstation GPUs are shared with interactive work. The systemd timer in
+`royerlab/luxar-ci` dispatches `.github/workflows/cuda-native.yml` with
+`--ref dev`; a newly added dispatch workflow is unavailable until promotion
+first carries it to the default branch (`main`). The two-GPU job compile-checks
+both `nvcc` translation units, builds the splatting and NLM extensions, and runs
+both parity suites with `LUXAR_REQUIRE_CUDA=1`, so a missing backend fails during
+pytest configuration instead of silently skipping. A failure opens or updates
+the `CUDA native cadence failure` issue assigned to @royerloic.
 
 ## Dependency Management
 

@@ -152,8 +152,8 @@ answer is "less than you would assume":
 
 | | status |
 |---|---|
-| **Compiles** | Partially gated. `make check-native` / `hatch run check-native` checks every translation unit when its toolchain is present, using the standards shipped by the build. CI's Linux `python-tests` requires the host-C++ arm, which always checks the preprocessing binding and also checks the gsplat binding when CUDA headers are available; the Metal and `nvcc` arms remain tracked in #2544. No GPU is required. |
-| **Numeric parity vs the torch reference** | Tests EXIST and are substantial — 138 test functions here, 59 on the Metal side, including `test_cuda_comparison.py` ("ensure numerical correctness of the CUDA backend against the authoritative PyTorch reference implementation") and `test_cuda_numerical.py`. They are `skipif(not torch.cuda.is_available())`, so **they never run in CI**, which has no GPU. Nothing verifies this backend on any automated basis; it is verified only when someone runs `make test-cuda` on a GPU box. |
+| **Compiles** | Gated on two paths. `make check-native` / `hatch run check-native` checks every translation unit when its toolchain is present, using the standards shipped by the build. Pull-request CI requires the host-C++ arm; the dispatch-only CUDA cadence also requires the `nvcc` arm and builds both native CUDA extensions on the dedicated runner. |
+| **Numeric parity vs the torch reference** | Tests EXIST and are substantial — 138 test functions here, 59 on the Metal side, including `test_cuda_comparison.py` ("ensure numerical correctness of the CUDA backend against the authoritative PyTorch reference implementation") and `test_cuda_numerical.py`. The dispatch-only CUDA cadence runs the splatting and NLM parity suites on a two-GPU runner with `LUXAR_REQUIRE_CUDA=1`, which fails during pytest configuration if either compiled backend is unavailable instead of accepting backend skips. Metal parity remains a manual pre-release check. |
 | **Formatting / static analysis** | None. No `.clang-format`, no `clang-tidy`, no CI arm. Deliberately deferred: introducing a format would rewrite ~3,900 lines of code whose only behavioural check is the GPU-gated suite above, so the reformat could not be verified. |
 
 The compile gate exists because the build was, in fact, broken: both native
@@ -165,8 +165,8 @@ landed on users rather than in a build.
 This is a second and third independent implementation of the same
 splat-rasterization maths as the torch reference — the same 1:1-sync hazard the
 project gates for the Rust/TS pair — and a silent divergence produces slightly
-wrong splats rather than a crash. The remaining gap is a *runner*, not a test:
-giving the existing parity suites a GPU on some cadence is what would close it.
+wrong splats rather than a crash. The dedicated CUDA cadence gives those parity
+suites real hardware without putting shared GPUs on the pull-request path.
 
 ## File Structure
 
