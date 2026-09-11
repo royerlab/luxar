@@ -896,7 +896,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       await this.prefetchChunks(predicted);
       return;
     }
-    const segmentRanges = await this.queryVisibleSegmentRanges(current);
     const segmentArrays = [this.arrays.segments];
     const vertexArrays = [
       this.arrays.vertices,
@@ -904,21 +903,28 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.arrays.colors,
       this.arrays.sharpness,
     ].filter((array): array is zarr.Array<zarr.DataType, zarr.Readable> => array != null);
-    const views = planChunkBoundaryViewStates(
-      current,
-      predicted,
-      segmentRanges,
-      this.chunkIndex.segmentIndex,
-      segmentArrays
-    );
-
-    const attrs = this.node.attrs as unknown as LinesMetadata;
-    if (attrs.vertex_ordering) {
-      const vertexIndex = this.vertexSpatialIndex(attrs);
-      const vertexRanges = await this.queryVisibleVertexRanges(current);
-      views.push(
-        ...planChunkBoundaryViewStates(current, predicted, vertexRanges, vertexIndex, vertexArrays)
+    let views: LinesViewState[];
+    try {
+      const segmentRanges = await this.queryVisibleSegmentRanges(current);
+      views = planChunkBoundaryViewStates(
+        current,
+        predicted,
+        segmentRanges,
+        this.chunkIndex.segmentIndex,
+        segmentArrays
       );
+
+      const attrs = this.node.attrs as unknown as LinesMetadata;
+      if (attrs.vertex_ordering) {
+        const vertexIndex = this.vertexSpatialIndex(attrs);
+        const vertexRanges = await this.queryVisibleVertexRanges(current);
+        views.push(
+          ...planChunkBoundaryViewStates(current, predicted, vertexRanges, vertexIndex, vertexArrays)
+        );
+      }
+    } catch {
+      await this.prefetchChunks(predicted);
+      return;
     }
 
     const uniqueViews = new Map(views.map((view) => [view.slicePosition.join(','), view]));

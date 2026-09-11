@@ -1810,6 +1810,30 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(mockExecute).not.toHaveBeenCalled();
       });
 
+      it('falls back to predicted-slice warming when boundary planning fails', async () => {
+        const current: ViewState = {
+          displayDims: [0, 1],
+          slicePosition: [0, 0, 1],
+          tolerance: [0, 0, 0],
+        };
+        const predicted = { ...current, slicePosition: [0, 0, 2] };
+        mockExecute.mockRejectedValueOnce(new Error('malformed current view'));
+        mockExecute.mockResolvedValueOnce([{ start: 100, end: 200 }]);
+
+        await expect(
+          bodyLoader.prefetchChunkBoundary(current, predicted)
+        ).resolves.toBeUndefined();
+
+        const queriedPositions = (
+          SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls.map((call) => (call[1] as ViewState).slicePosition);
+        expect(queriedPositions).toEqual([
+          [0, 0, 1],
+          [0, 0, 2],
+        ]);
+        expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(6);
+      });
+
       it('estimates the visible sliced working set from stored chunk dtypes', async () => {
         bodyLoader.dispose();
         mockArrays.centers.shape = [5_000_000, 3];

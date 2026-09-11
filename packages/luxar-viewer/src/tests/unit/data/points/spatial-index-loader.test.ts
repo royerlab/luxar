@@ -917,6 +917,25 @@ describe('PointsSpatialIndexLoader', () => {
       expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(8);
     });
 
+    it('falls back to predicted-slice warming when boundary planning fails', async () => {
+      const current: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      const predicted = { ...current, slicePosition: [0, 0, 0, 2] };
+      mockExecute.mockRejectedValueOnce(new Error('malformed current view'));
+      mockExecute.mockResolvedValueOnce([{ start: 100, end: 200 }]);
+
+      await expect(loader.prefetchChunkBoundary(current, predicted)).resolves.toBeUndefined();
+
+      const queriedTimes = (
+        SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.map((call) => (call[1] as ViewState).slicePosition[3]);
+      expect(queriedTimes).toEqual([1, 2]);
+      expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(5);
+    });
+
     it('skips fetches when the spatial query returns no ranges', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],

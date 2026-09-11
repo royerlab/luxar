@@ -1281,7 +1281,13 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       await this.prefetchChunks(predicted);
       return;
     }
-    const ranges = await this.queryVisibleSplatRanges(current);
+    let ranges: readonly SplatRange[];
+    try {
+      ranges = await this.queryVisibleSplatRanges(current);
+    } catch {
+      await this.prefetchChunks(predicted);
+      return;
+    }
     const arrays = this.prefetchArrays();
     const views = planChunkBoundaryViewStates(current, predicted, ranges, this.chunkIndex, arrays);
     await Promise.all(views.map((view) => this.prefetchChunks(view)));

@@ -867,7 +867,13 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       await this.prefetchChunks(predicted);
       return;
     }
-    const ranges = await this.queryVisiblePointRanges(current);
+    let ranges: PointRange[];
+    try {
+      ranges = await this.queryVisiblePointRanges(current);
+    } catch {
+      await this.prefetchChunks(predicted);
+      return;
+    }
     const arrays = [
       this.arrays.positions,
       this.arrays.colors,
