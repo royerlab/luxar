@@ -54,8 +54,9 @@ PIPELINE — reproducible per channel with ``--recompute``:
     6. ``batch-fit merge --recipe stream`` over the culled tiles → ONE leaf with
        an 8-rung progressive ladder. The stacked time axis is a hard coarsening
        barrier, so no rung blends two timepoints.
-    7. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
-       → isotropic Z, amplitudes on a 0-1 scale.
+    7. ``gsplat transform --scale 2.308402585410896,1,1,1
+       --normalize-intensity 1.0`` → physical Z from the measured 0.25 um step
+       and 0.1083 um lateral pitch, amplitudes on a 0-1 scale.
 
     Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
@@ -259,8 +260,8 @@ JOBS_PER_GPU = 12
 #: Redundancy cull threshold, chosen from a measured 0.02/0.05/0.10/0.20/0.35
 #: sweep as the most aggressive setting still SSIM-flat.
 REDUNDANCY_THRESHOLD = 0.20
-#: Voxel anisotropy: z is 2.5x the lateral pitch on this instrument.
-VOXEL_SCALE = (2.5, 1.0, 1.0, 1.0)
+#: Voxel anisotropy from the MetaMorph headers: 0.25 um / 0.1083 um.
+VOXEL_SCALE = (0.25 / 0.1083, 1.0, 1.0, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
 NORMALIZE_INTENSITY = 1.0

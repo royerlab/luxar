@@ -426,7 +426,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         """The source is time-FIRST; the fit emits spatial-first, stacked-last.
         The Z scale therefore applies to index 0, not index 1."""
         assert demo.SOURCE_AXES.startswith("time")
-        assert demo.VOXEL_SCALE[0] == 2.5
+        assert demo.VOXEL_SCALE[0] == 0.25 / 0.1083
         assert demo.VOXEL_SCALE[1:] == (1.0, 1.0, 1.0)
 
     def test_the_cull_threshold_is_the_measured_one(self):
