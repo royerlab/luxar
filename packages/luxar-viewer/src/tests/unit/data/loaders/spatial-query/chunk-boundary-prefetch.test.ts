@@ -27,7 +27,7 @@ function index() {
 }
 
 describe('planChunkBoundaryViewStates', () => {
-  it('adds the future slice that first enters each next zarr chunk', () => {
+  it('adds only the nearest future slice that enters a next zarr chunk', () => {
     const views = planChunkBoundaryViewStates(
       view(1),
       view(2),
@@ -39,7 +39,7 @@ describe('planChunkBoundaryViewStates', () => {
       ]
     );
 
-    expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([2, 4, 6]);
+    expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([2, 4]);
   });
 
   it('finds previous chunk boundaries during reverse playback', () => {
@@ -52,6 +52,22 @@ describe('planChunkBoundaryViewStates', () => {
     );
 
     expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([5, 3]);
+  });
+
+  it('searches beyond the predicted slice after a multi-step scrub', () => {
+    const views = planChunkBoundaryViewStates(view(0), view(5), [{ start: 0, end: 100 }], index(), [
+      { shape: [800], chunks: [200] },
+    ]);
+
+    expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([5, 6]);
+  });
+
+  it('deduplicates a chunk boundary that equals the predicted slice', () => {
+    const views = planChunkBoundaryViewStates(view(0), view(2), [{ start: 0, end: 100 }], index(), [
+      { shape: [800], chunks: [200] },
+    ]);
+
+    expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([2]);
   });
 
   it('keeps one-step prefetch when several hidden axes move', () => {

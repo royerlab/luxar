@@ -179,6 +179,8 @@ describe('LinesSpatialIndexLoader', () => {
     };
     let vertexBoundsArray: { shape: number[]; dtype: string; attrs: object };
     let segmentBoundsArray: { shape: number[]; dtype: string; attrs: object };
+    let vertexChunkBounds: Float32Array;
+    let segmentChunkBounds: Float32Array;
 
     beforeEach(() => {
       vi.clearAllMocks();
@@ -196,6 +198,8 @@ describe('LinesSpatialIndexLoader', () => {
 
       vertexBoundsArray = { shape: [10, 3, 2], dtype: 'float32', attrs: {} };
       segmentBoundsArray = { shape: [10, 3, 2], dtype: 'float32', attrs: {} };
+      vertexChunkBounds = new Float32Array(10 * 3 * 2);
+      segmentChunkBounds = new Float32Array(10 * 3 * 2);
 
       // Default builder behaviour: return two ranges so range-merge logic exists.
       mockExecute.mockResolvedValue([
@@ -218,10 +222,10 @@ describe('LinesSpatialIndexLoader', () => {
       (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation(
         (array: unknown, slices?: unknown) => {
           if (array === vertexBoundsArray) {
-            return Promise.resolve({ data: new Float32Array(10 * 3 * 2) });
+            return Promise.resolve({ data: vertexChunkBounds });
           }
           if (array === segmentBoundsArray) {
-            return Promise.resolve({ data: new Float32Array(10 * 3 * 2) });
+            return Promise.resolve({ data: segmentChunkBounds });
           }
           if (array === mockArrays.segments) {
             // Return ascending vertex pairs so the unique-index set is contiguous.
@@ -1091,11 +1095,33 @@ describe('LinesSpatialIndexLoader', () => {
           tolerance: [0, 0, 0],
         };
         await bodyLoader.loadLines(viewState);
-        const callsBefore = (zarr.get as any).mock.calls.length;
+        vi.clearAllMocks();
+        const segmentRanges = [{ start: 10, end: 20 }];
+        const vertexRanges = [{ start: 100, end: 120 }];
+        mockExecute.mockResolvedValueOnce(segmentRanges).mockResolvedValueOnce(vertexRanges);
+
         await bodyLoader.prefetchChunks(viewState);
-        const callsAfter = (zarr.get as any).mock.calls.length;
-        expect(callsAfter).toBeGreaterThan(callsBefore);
-        expect(SpatialQueryBuilder).toHaveBeenCalledTimes(3);
+
+        const builderCalls = (SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>).mock
+          .calls;
+        expect(builderCalls).toHaveLength(2);
+        expect(builderCalls[0][0]).toMatchObject({
+          chunkBounds: segmentChunkBounds,
+          metadata: { chunk_size: 100 },
+        });
+        expect(builderCalls[1][0]).toMatchObject({
+          chunkBounds: vertexChunkBounds,
+          metadata: { chunk_size: 100 },
+        });
+
+        const reads = (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        const segmentRead = reads.find((call) => call[0] === mockArrays.segments);
+        const vertexReads = reads.filter((call) => call[0] !== mockArrays.segments);
+        expect(segmentRead?.[1][0]).toEqual({ start: 10, end: 20 });
+        expect(vertexReads).toHaveLength(4);
+        expect(
+          vertexReads.every((call) => call[1][0].start === 100 && call[1][0].end === 120)
+        ).toBe(true);
       });
 
       it('skips fetches when the spatial query returns no ranges', async () => {

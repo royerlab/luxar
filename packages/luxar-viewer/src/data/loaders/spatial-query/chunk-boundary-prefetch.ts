@@ -52,14 +52,17 @@ function rangeEdge(ranges: readonly LoadRange[], forward: boolean): number {
 
 /** Validate and return the row count and first-axis chunk size. */
 function usableFirstAxisLayout(array: FirstAxisChunkLayout): [number, number] | null {
+  // `chunks[0]` is the zarr chunk-grid shape. For zarr-3 sharded arrays it is
+  // the shard size, not the byte-range-readable inner chunk size, so this
+  // planner must not be reused for sharded stores without inner-grid metadata.
   const rowCount = array.shape[0] ?? 0;
   const chunkRows = array.chunks[0] ?? 0;
   return rowCount > 0 && chunkRows > 0 && chunkRows < rowCount ? [rowCount, chunkRows] : null;
 }
 
-/** Test whether a candidate hidden-axis coordinate lies ahead of the playhead. */
-function isAhead(position: number, currentPosition: number, forward: boolean): boolean {
-  return forward ? position > currentPosition : position < currentPosition;
+/** Test whether a candidate coordinate reaches or passes the predicted slice. */
+function reachesPrediction(position: number, predictedPosition: number, forward: boolean): boolean {
+  return forward ? position >= predictedPosition : position <= predictedPosition;
 }
 
 /** Inputs for one array's next-boundary search. */
@@ -68,7 +71,7 @@ interface BoundarySearch {
   index: ChunkSpatialIndex;
   edge: number;
   dimension: number;
-  currentPosition: number;
+  predictedPosition: number;
   forward: boolean;
 }
 
@@ -81,7 +84,10 @@ function nextArrayBoundaryPosition(search: BoundarySearch): number | null {
   let row = nextBoundaryRow(search.edge, chunkRows, search.forward);
   while (row >= 0 && row < rowCount) {
     const position = boundaryPosition(search.index, row, search.dimension, search.forward);
-    if (position !== null && isAhead(position, search.currentPosition, search.forward)) {
+    if (
+      position !== null &&
+      reachesPrediction(position, search.predictedPosition, search.forward)
+    ) {
       return position;
     }
     row += search.forward ? chunkRows : -chunkRows;
@@ -90,7 +96,7 @@ function nextArrayBoundaryPosition(search: BoundarySearch): number | null {
 }
 
 /**
- * Plan the one-step predicted slice plus the next zarr chunk boundary for each array.
+ * Plan the predicted slice plus the nearest next zarr chunk boundary across all arrays.
  *
  * The index atom bounds translate first-axis row boundaries back into hidden-axis
  * coordinates. Multi-axis motion and unusable metadata retain the one-step plan.
@@ -109,8 +115,8 @@ export function planChunkBoundaryViewStates(
   if (!Number.isFinite(delta) || delta === 0) return [predicted];
   const forward = delta > 0;
   const edge = rangeEdge(ranges, forward);
-  const currentPosition = current.slicePosition[dimension];
-  const positions = new Set<number>([predicted.slicePosition[dimension]]);
+  const predictedPosition = predicted.slicePosition[dimension];
+  let nearestBoundary: number | null = null;
 
   for (const array of arrays) {
     const position = nextArrayBoundaryPosition({
@@ -118,17 +124,23 @@ export function planChunkBoundaryViewStates(
       index,
       edge,
       dimension,
-      currentPosition,
+      predictedPosition,
       forward,
     });
-    if (position !== null) positions.add(position);
+    if (
+      position !== null &&
+      (nearestBoundary === null ||
+        Math.abs(position - predictedPosition) < Math.abs(nearestBoundary - predictedPosition))
+    ) {
+      nearestBoundary = position;
+    }
   }
 
-  return [...positions]
-    .sort((left, right) => Math.abs(left - currentPosition) - Math.abs(right - currentPosition))
-    .map((position) => {
-      const slicePosition = [...predicted.slicePosition];
-      slicePosition[dimension] = position;
-      return { ...predicted, slicePosition };
-    });
+  const boundaryPositions =
+    nearestBoundary === null || nearestBoundary === predictedPosition ? [] : [nearestBoundary];
+  return [predictedPosition, ...boundaryPositions].map((position) => {
+    const slicePosition = [...predicted.slicePosition];
+    slicePosition[dimension] = position;
+    return { ...predicted, slicePosition };
+  });
 }

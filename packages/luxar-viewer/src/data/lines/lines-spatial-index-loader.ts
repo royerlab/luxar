@@ -922,7 +922,20 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
 
     const uniqueViews = new Map(views.map((view) => [view.slicePosition.join(','), view]));
-    await Promise.all([...uniqueViews.values()].map((view) => this.prefetchChunks(view)));
+    const nearestViews = [...uniqueViews.values()]
+      .sort(
+        (left, right) => this.sliceDistance(left, predicted) - this.sliceDistance(right, predicted)
+      )
+      .slice(0, 2);
+    await Promise.all(nearestViews.map((view) => this.prefetchChunks(view)));
+  }
+
+  private sliceDistance(left: LinesViewState, right: LinesViewState): number {
+    return left.slicePosition.reduce(
+      (distance, position, dimension) =>
+        distance + Math.abs(position - (right.slicePosition[dimension] ?? position)),
+      0
+    );
   }
 
   /**
