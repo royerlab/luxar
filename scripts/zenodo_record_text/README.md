@@ -1,6 +1,6 @@
 # Zenodo record descriptions, as published
 
-The four Zenodo record descriptions, captured verbatim from the live drafts.
+The four Zenodo record descriptions, captured verbatim from the live records.
 
 **These files are the authoritative text, not `gen_zenodo_records.py`'s output.**
 The published descriptions are hand-maintained: they carry framing, provenance
@@ -12,7 +12,7 @@ They live here because they lived nowhere else. Until 2026-09-02 the only copy
 was on Zenodo, so an accidental overwrite — or a well-meaning regeneration —
 would have destroyed prose that took real work, with no diff to recover it from.
 `records.json` records the field values alongside a `description_sha256`, so
-drift between this directory and the live drafts is detectable rather than
+drift between this directory and the live records is detectable rather than
 invisible.
 
 ## Refreshing after an edit on Zenodo
