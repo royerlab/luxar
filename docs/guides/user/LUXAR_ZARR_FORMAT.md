@@ -450,6 +450,8 @@ default (the finest level the `.centers` accessor returns).
   independent of element counts) anchors its finest at `coverage_fraction:
   0.5` — full detail while the object occupies at least half the screen — with
   each coarser level halving the threshold (`…, 1/8, 1/4, 1/2`).
+  `luxar restamp-lod --anchor` may explicitly re-anchor a stored whole-object
+  ladder at any fraction in `(0, 1]`; partition-bound ladders remain at `1.0`.
   The `1.0` fills-screen ceiling (the tile alone occupying the whole screen)
   holds a level until the node is larger still.
   That fills-screen anchor is the right one whenever a **spatial partition** is
