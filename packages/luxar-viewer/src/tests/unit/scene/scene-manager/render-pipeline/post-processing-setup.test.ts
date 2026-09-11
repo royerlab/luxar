@@ -85,7 +85,7 @@ describe('createPostProcessing', () => {
         camera.aspect = physicalWidth / physicalHeight;
         camera.updateProjectionMatrix();
 
-        resizeCallback({ width, height });
+        resizeCallback({ width, height }, camera);
         camera.updateMatrixWorld(true);
 
         expect(controls.getFocusTarget()).toEqual(focusBefore);

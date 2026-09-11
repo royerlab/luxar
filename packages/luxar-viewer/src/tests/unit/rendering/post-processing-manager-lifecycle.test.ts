@@ -321,8 +321,10 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
       onResize
     );
 
+    const replacementCamera = new THREE.OrthographicCamera();
+    mgr.setCamera(replacementCamera);
     mgr.resize(96, 96);
-    expect(onResize).toHaveBeenCalledWith({ width: 96, height: 96 });
+    expect(onResize).toHaveBeenCalledWith({ width: 96, height: 96 }, replacementCamera);
 
     mgr.dispose();
   });

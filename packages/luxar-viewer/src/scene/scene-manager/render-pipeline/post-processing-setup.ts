@@ -48,8 +48,8 @@ export function createPostProcessing(options: CreatePostProcessingOptions): Post
     options.scene,
     options.camera,
     { width, height },
-    (displaySize) => {
-      updateCameraAspect(options.camera, displaySize.width, displaySize.height);
+    (displaySize, camera) => {
+      updateCameraAspect(camera, displaySize.width, displaySize.height);
       options.onResize();
     }
   );
