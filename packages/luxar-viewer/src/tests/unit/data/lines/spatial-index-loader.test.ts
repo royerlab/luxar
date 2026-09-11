@@ -1145,6 +1145,56 @@ describe('LinesSpatialIndexLoader', () => {
         const callsAfter = (zarr.get as any).mock.calls.length;
         expect(callsAfter).toBe(callsBefore);
       });
+
+      it('caps combined segment and vertex boundary plans to one extra slice', async () => {
+        bodyLoader.dispose();
+        const attrs = makeLinesNode().attrs as Record<string, any>;
+        attrs.ndim = 4;
+        attrs.vertex_ordering = {
+          ...attrs.vertex_ordering,
+          slice_dims: [3],
+        };
+        attrs.segment_ordering = {
+          ...attrs.segment_ordering,
+          slice_dims: [3],
+        };
+        vertexBoundsArray.shape = [10, 4, 2];
+        segmentBoundsArray.shape = [10, 4, 2];
+        vertexChunkBounds = new Float32Array(10 * 4 * 2);
+        segmentChunkBounds = new Float32Array(10 * 4 * 2);
+        for (let atom = 0; atom < 10; atom++) {
+          const timeOffset = atom * 8 + 6;
+          vertexChunkBounds[timeOffset] = atom;
+          vertexChunkBounds[timeOffset + 1] = atom;
+          segmentChunkBounds[timeOffset] = atom;
+          segmentChunkBounds[timeOffset + 1] = atom;
+        }
+        Object.assign(mockArrays.segments, { chunks: [400, 2] });
+        Object.assign(mockArrays.vertices, { shape: [1000, 4], chunks: [600, 4] });
+        Object.assign(mockArrays.widths, { chunks: [800] });
+        Object.assign(mockArrays.colors, { chunks: [1000, 3] });
+        Object.assign(mockArrays.sharpness, { chunks: [1000] });
+        bodyLoader = new LinesSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof LinesSpatialIndexLoader>[0],
+          makeLinesNode({ attrs })
+        );
+
+        const current: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 1],
+          tolerance: [0, 0, 0, 0.1],
+        };
+        const predicted = { ...current, slicePosition: [0, 0, 0, 2] };
+        mockExecute.mockResolvedValue([{ start: 100, end: 200 }]);
+
+        await bodyLoader.prefetchChunkBoundary(current, predicted);
+
+        const queriedTimes = (
+          SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls.map((call) => (call[1] as ViewState).slicePosition[3]);
+        expect(queriedTimes).toEqual([1, 1, 2, 2, 4, 4]);
+        expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(12);
+      });
     });
 
     describe('resource cleanup', () => {
