@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeControlSocketUrl, readUrlParams } from '../../../config/url-params';
+import {
+  normalizeControlSocketUrl,
+  normalizePanelModuleUrl,
+  readUrlParams,
+} from '../../../config/url-params';
 
 /** The page's own origin, as the control-socket validator sees it. */
 const INSECURE_PAGE = { protocol: 'http:', host: 'kiosk.local:5173' };
@@ -122,5 +126,52 @@ describe('readUrlParams control wiring', () => {
 
   it('leaves control off when the flag is absent, whatever else is present', () => {
     expect(readUrlParams('?controlToken=hunter2', INSECURE_PAGE).control).toBeNull();
+  });
+});
+
+describe('normalizePanelModuleUrl', () => {
+  it('is off when the parameter is absent', () => {
+    expect(normalizePanelModuleUrl(null, INSECURE_PAGE)).toBeNull();
+  });
+
+  it('resolves a same-origin relative path', () => {
+    expect(normalizePanelModuleUrl('/panels/exhibit.js', INSECURE_PAGE)).toBe(
+      'http://kiosk.local:5173/panels/exhibit.js'
+    );
+  });
+
+  it('accepts an explicit same-origin URL', () => {
+    expect(normalizePanelModuleUrl('http://kiosk.local:5173/p.js', INSECURE_PAGE)).toBe(
+      'http://kiosk.local:5173/p.js'
+    );
+  });
+
+  describe('rejections', () => {
+    it.each([
+      ['a cross-origin module', 'http://attacker.example/p.js', INSECURE_PAGE],
+      ['a scheme change', 'https://kiosk.local:5173/p.js', INSECURE_PAGE],
+      ['a protocol-relative URL', '//attacker.example/p.js', INSECURE_PAGE],
+      ['a data URL', 'data:text/javascript,alert(1)', INSECURE_PAGE],
+      ['a javascript URL', 'javascript:alert(1)', INSECURE_PAGE],
+      ['credentials', 'http://u:p@kiosk.local:5173/p.js', INSECURE_PAGE],
+      ['an empty value', '', INSECURE_PAGE],
+      ['an over-long value', `/${'x'.repeat(3000)}.js`, INSECURE_PAGE],
+    ])('refuses %s', (_label, raw, page) => {
+      // This module is IMPORTED, so it is executable code. A cross-origin
+      // panel would be arbitrary remote code on a kiosk; there is no opt-in.
+      expect(normalizePanelModuleUrl(raw, page)).toBeNull();
+    });
+  });
+
+  it('has no cross-origin opt-in, unlike the socket', () => {
+    expect(
+      readUrlParams('?panel=http://booth.local/p.js&controlAllowCrossOrigin', INSECURE_PAGE).panel
+    ).toBeNull();
+  });
+
+  it('is read by readUrlParams', () => {
+    expect(readUrlParams('?control&panel=/p.js', INSECURE_PAGE).panel).toBe(
+      'http://kiosk.local:5173/p.js'
+    );
   });
 });

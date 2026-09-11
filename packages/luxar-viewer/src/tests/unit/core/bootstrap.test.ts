@@ -98,6 +98,7 @@ const EMPTY_PARAMS: UrlParams = {
   control: null,
   controlToken: null,
   controlAllowCrossOrigin: false,
+  panel: null,
   debug: false,
   noCache: false,
   noSliceCache: false,

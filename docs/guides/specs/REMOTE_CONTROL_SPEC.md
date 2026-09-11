@@ -2,7 +2,8 @@
 
 **Status:** Phase A (viewer-side API), Phase B (the WebSocket hub, the viewer's
 control client and the Python controller) and Phase C §4.1 (authored waypoints)
-are implemented. Phase C §4.2 (kiosk permissions), the control-panel page, and
+are implemented, as is Phase C §4.2 (the control-panel page). Phase C §4.3
+(kiosk permissions), the authored `control_panel` block, and
 Phase D are design, not code.
 
 ## 1. Purpose
@@ -339,7 +340,65 @@ in one band the two z-fight and the backdrop hides it), a fact panel per story a
 a dimension-aware HTML overlay, one waypoint per story, and auto-rotate on. It is
 the scene to open when checking the flight, the turntable rule, or a controller.
 
-### 4.2 Kiosk permissions (design)
+### 4.2 The control panel page (implemented)
+
+`control.html` — a second HTML entry in the viewer bundle, served from the same
+origin as the viewer itself, so `luxar serve --control` prints both URLs and the
+panel needs no address of its own:
+
+```
+display: http://host:port/?src=...&control
+panel:   http://host:port/control.html?control
+```
+
+**It requires no authoring.** `Dimension(categories=[...])` already reaches the
+viewer as `DimensionMetadata.categories`, so the page calls `getDimensions()`
+and reads the stop names the scene already carries. Both ESM tours therefore get
+a working menu against their *existing built stores*, with no Python change —
+which is the test of whether this is generic machinery or demo furniture.
+Derivation order (`config/control-panel/derive-chapters.ts`): an authored
+dimension name; else the first non-displayed **categorical** dimension; else the
+first non-displayed discrete one with at most `MAX_DERIVED_CHAPTERS` (24) steps.
+The cap is why a 500-frame timelapse is not mistaken for a tour; an explicit
+authored name overrides it, because that is an author saying they mean it.
+
+A tap sends `setDimensionValue` as a **notification**, not a call: the display
+should move at once, and the authoritative position arrives as the
+`dimensions-changed` event that also marks the active tile. A scene with no
+chapter dimension, and a page with no hub, each say so in words rather than
+drawing an empty grid — the second is exactly what an exported folder shows
+until its launcher grows a relay.
+
+**Styling.** `src/styles/control-panel.css` is self-contained (it does *not*
+import `styles/index.css`, which pulls twenty component sheets and the GUI
+library) and every colour reads a `--luxar-*` token with a fallback. The page
+deliberately does not run `ThemeManager`: that singleton persists to
+`localStorage`, and the panel shares an origin with the display, so a panel
+theme would re-theme the big screen on its next reload.
+
+The class names, `data-*` state hooks and `--luxar-control-*` custom properties
+are the authored styling contract, pinned by a lock test from both the DOM and
+the stylesheet side. That contract is also the reason there is no presentational
+`layout` enum in §4.3: CSS is the general answer, and an enum beside it would
+accrete `font_size`, `aspect`, `padding` forever.
+
+**`?panel=<module>`** loads an alternative page module, which receives an
+already-connected socket (`CustomPanelContext`). Same-origin only, with **no**
+cross-origin opt-in — unlike `?control`, this value is `import()`ed, so it is
+executable code. It exists so the first exhibit that outgrows CSS has a
+supported path instead of forking `control.html` out of the package.
+
+**Build.** The page is a second entry in `vite.config.ts`'s
+`rolldownOptions.input`; declaring `input` at all removes Vite's implicit
+`index.html` default, so both must be named. It shares the viewer's build so it
+rides into `dist`, `luxar export` and the native bundles for free — all three
+copy the directory whole. `scripts/check-eager-chunks.mjs` now audits **per
+entry**: the viewer may ship `three` as long as the WebGPU cone stays lazy, and
+the panel may reach no renderer or codec at all. That is not a source-level
+property — the page imports viewer `config` and `ui` modules, and a shared chunk
+could drag a renderer in with no offending import in its own tree.
+
+### 4.3 Kiosk permissions (design)
 
 Extend the existing `ui` block:
 

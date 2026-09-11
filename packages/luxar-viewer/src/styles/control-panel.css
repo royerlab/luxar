@@ -1,0 +1,165 @@
+/**
+ * Control panel styles — the touch-panel page, and nothing else.
+ *
+ * Deliberately self-contained. It does NOT import `styles/index.css`: that
+ * pulls twenty component stylesheets plus the GUI library, none of which this
+ * page has any use for, and the page's whole value is being light enough to
+ * live on a tablet that also has to stay responsive to touch.
+ *
+ * Every colour reads a `--luxar-*` theme token **with a fallback**, so the page
+ * looks right with no `ThemeManager` running (which is how it ships: the
+ * manager persists its choice to `localStorage`, and the panel shares an origin
+ * with the display, so a panel theme would re-theme the big screen on its next
+ * reload). If a future version opts into theming, the tokens get set and the
+ * fallbacks simply stop being used.
+ *
+ * The class and custom-property names here are the authored styling contract —
+ * see `ui/control-panel/render-panel.ts`, and the lock test that pins them.
+ */
+
+.luxar-control-panel {
+  /* `--luxar-control-columns` is deliberately NOT given a value here. The grid
+     reads it as `var(--luxar-control-columns, auto-fill)`, so unset means
+     "fit as many as the viewport allows" and the renderer setting a number
+     pins it. Declaring a default would substitute that default into
+     `repeat()` and make the whole track list invalid. */
+  --luxar-control-gap: 1rem;
+  --luxar-control-radius: 14px;
+  --luxar-control-tile-min: 12rem;
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-control-gap);
+  min-height: 100dvh;
+  margin: 0;
+  /* Safe areas: a tablet in a case, or an iPad with a home indicator. */
+  padding: max(1.25rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right))
+    max(1.25rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+  background: var(--luxar-bg-primary, #101014);
+  color: var(--luxar-text-primary, #f4f4f5);
+  font-family: var(--luxar-font-family, system-ui, -apple-system, 'Segoe UI', sans-serif);
+  /* The panel never scrolls-to-zoom or rubber-bands: it is a fixed menu, and
+     an accidental pinch on a plinth tablet is pure confusion. */
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+
+.luxar-control-panel * {
+  box-sizing: inherit;
+}
+
+.luxar-control-title {
+  margin: 0;
+  font-size: clamp(1.25rem, 2.5vw, 2rem);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.luxar-control-subtitle {
+  margin: -0.5rem 0 0;
+  font-size: clamp(0.9rem, 1.4vw, 1.05rem);
+  color: var(--luxar-text-secondary, #a1a1aa);
+}
+
+.luxar-control-grid {
+  display: grid;
+  flex: 1;
+  gap: var(--luxar-control-gap);
+  /* Unset -> auto-fill, so the viewport decides. Set by the renderer -> that
+     many columns. One property covers both, which is what lets an author
+     override the layout without knowing which case they are in. */
+  grid-template-columns: repeat(
+    var(--luxar-control-columns, auto-fill),
+    minmax(var(--luxar-control-tile-min), 1fr)
+  );
+  align-content: start;
+}
+
+.luxar-control-tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  /* Generously tall: a chapter tile is the one thing on this page, and a
+     44px-minimum touch target is a floor, not a design. */
+  min-height: 7rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--luxar-border-subtle, rgb(255 255 255 / 12%));
+  border-radius: var(--luxar-control-radius);
+  background: var(--luxar-bg-secondary, #18181d);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+.luxar-control-tile:hover {
+  background: var(--luxar-interactive-hover, #232329);
+}
+
+/* A press state that survives a touch: :hover is unreliable on touch, and a
+   tile that gives no feedback gets tapped three times. */
+.luxar-control-tile:active {
+  transform: scale(0.985);
+  background: var(--luxar-interactive-active, #2b2b33);
+}
+
+.luxar-control-tile:focus-visible {
+  outline: 2px solid var(--luxar-interactive-focus, #6ea8fe);
+  outline-offset: 2px;
+}
+
+.luxar-control-tile[data-active='true'] {
+  border-color: var(--luxar-highlight, #6ea8fe);
+  background: var(--luxar-bg-tertiary, #202027);
+}
+
+.luxar-control-tile-label {
+  font-size: clamp(1rem, 1.6vw, 1.25rem);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.luxar-control-tile-sublabel {
+  font-size: clamp(0.8rem, 1.1vw, 0.95rem);
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--luxar-text-secondary, #a1a1aa);
+}
+
+/* A generated label is still a label, but it should not shout like a title
+   somebody wrote. */
+.luxar-control-tile[data-authored-label='false'] .luxar-control-tile-label {
+  font-weight: 500;
+  color: var(--luxar-text-secondary, #a1a1aa);
+}
+
+.luxar-control-message {
+  max-width: 42rem;
+  color: var(--luxar-text-secondary, #a1a1aa);
+  font-size: clamp(0.95rem, 1.4vw, 1.1rem);
+  line-height: 1.5;
+}
+
+.luxar-control-message code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--luxar-bg-secondary, #18181d);
+  font-family: var(--luxar-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.95em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxar-control-tile {
+    transition: none;
+  }
+
+  .luxar-control-tile:active {
+    transform: none;
+  }
+}

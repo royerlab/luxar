@@ -501,6 +501,14 @@ def _serve_viewer(
     aprint(f"🌐 Viewer available at: {viewer_url}")
     if control:
         aprint(f"🎛️  Control hub listening at: ws://{host}:{port}/control")
+        from urllib.parse import quote
+
+        # The touch panel is a second page in the same bundle, so it shares this
+        # origin and needs no address of its own — `?control` is a bare flag.
+        panel_url = f"http://{host}:{port}/control.html?control"
+        if control_token:
+            panel_url += f"&controlToken={quote(control_token, safe='')}"
+        aprint(f"📱 Control panel for a tablet: {panel_url}")
         if host.strip().lower() not in _LOOPBACK_HOSTS and not control_token:
             aprint(
                 "⚠️  The control hub is reachable from the network without a token. "

@@ -52,6 +52,21 @@ export default defineConfig(({ command }) => ({
     // lazy (that is the assertion with teeth — see scripts/check-eager-chunks.mjs).
     chunkSizeWarningLimit: 1700,
     rolldownOptions: {
+      // TWO html entries, and both must be named. Vite's implicit default is
+      // `index.html` alone; the moment `input` is set that default is gone, so
+      // omitting `index` here would silently build only the control panel.
+      //
+      // `control.html` is the kiosk touch panel. It shares this build (rather
+      // than living in its own package) so it rides into `dist`, `luxar export`
+      // and the native bundles for free — all three copy the directory whole —
+      // and so it can reuse the viewer's own modules. It must NOT pull `three`
+      // or the codecs in: `scripts/check-eager-chunks.mjs` asserts that per
+      // entry, because a shared chunk could drag them in without any import in
+      // this page's own source.
+      input: {
+        index: resolve(viewerRoot, 'index.html'),
+        control: resolve(viewerRoot, 'control.html'),
+      },
       output: {
         // Split the `three` package into core / tsl / webgpu so each
         // subsystem gets its own cacheable chunk. Without this, the

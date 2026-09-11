@@ -16,6 +16,7 @@ describe('readUrlParams', () => {
       control: null,
       controlToken: null,
       controlAllowCrossOrigin: false,
+      panel: null,
       debug: false,
       noCache: false,
       noSliceCache: false,
