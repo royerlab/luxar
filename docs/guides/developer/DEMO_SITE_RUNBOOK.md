@@ -1034,16 +1034,31 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   would be 28 frames/chunk on `archive` if that axis were ever played.
 - For a TIME-PARTED store (h2afva) the profile rationale is request count, not
   rung residency: each part is one frame loaded whole, so there is no
-  cross-timepoint rung to keep warm. Estimated at 30 B/splat: rung 0 (20,833
-  splats, 0.6 MB) is one `archive` chunk vs three on `hosting`; a coarse-rung
-  traverse over 51 parts is ~1,400 requests on `archive` vs ~5,400 on `hosting`
-  (the first measurement quoted for this store was taken on the writer-default
-  layout by mistake; re-measure on the optimised store before quoting a number).
+  cross-timepoint rung to keep warm. Measured on the published `archive` layout
+  (2026-09-11, `chunk_layout` read first): 127,192 chunks at the writer default
+  -> 3,793 on `archive` (33.5x fewer); a coarsest-rung traverse of all 51 parts
+  is **255 requests** (5 chunks per part), the finest rung 1,020. The 30 B/splat
+  one-array-per-rung estimate (~1,400) was 5.5x pessimistic — a rung carries
+  five arrays and `archive` packs them far better than a per-array byte
+  calculation predicts — so treat that estimate as a safe go/no-go upper bound,
+  never as the expected cost. (A first "measurement" of 1,326 on this store was
+  the writer default, not `archive`.)
 - Read `chunk_layout` BEFORE measuring chunk cost, and check it on EVERY store
   in a wave, not a sample: its absence is the only reliable sign that a scene
   was never optimised, and stores built on another machine by another operator
   are exactly the ones that slip through. A chunk-cost number without the
   layout it was measured on is not a number.
+- Demo ID vs STORE NAME, once and for all: `GALLERY_ONLY` and `DEMO_META["key"]`
+  are keyed on the demo id; the served store, `_redirects`, the rebuild lists
+  and the tile comparison are keyed on `DEMO_META["outputs"]` (the store name).
+  Seven demos differ (`volumetric_cloud`->`cloud`, `particle_collision`->
+  `collision`, `quasicrystal_3d`->`quasicrystal`, `bioluminescent_ocean`->
+  `ocean`, `lsystem_forest`->`forest`, `particle_collision_animated`->
+  `collision_animated`, `zebrahub_velocity_streamlines`->
+  `zebrahub_velocity_streamlines_standard`; the removed `network_performance`
+  served `performance_test`). A capture pass fed store names exits 0 with two
+  placeholder tiles, and a tile-count guard passes because a placeholder is a
+  tile — resolve every list through DEMO_META before use.
 
 ### 3.22 Guard the artefact you ship, not only the inputs you fed it
 
