@@ -501,14 +501,14 @@ Three refinements from applying the rule to a whole hosted wave (2026-09-11):
   boundary to cross, every frame is resident after one larger fetch. The stall
   needs MANY chunks holding several frames each, so the one-step lookahead
   cannot reach the next boundary.
-- *Read the atom's hidden-axis span from the bounds array, not the scene
+- *Read the atom's hidden-axis span from `chunk_bounds`, not the scene
   dimension's range.* A store that partitions NODES by the hidden axis (one
   node per Hilbert order) holds one coordinate per node; dividing the scene
   range by the node's chunk count reports frames-per-chunk that do not exist.
 
 Measured on the wave: `collision_animated` on `hosting` = 143 chunks over 250
 frames = 1.8 frames/chunk (target 1-2); ocean's tentacles sit at 28 frames per
-`archive` chunk (3.5 on `hosting`) — harmless while nothing plays that axis,
+`archive` chunk (~7 on `hosting`) — harmless while nothing plays that axis,
 but "make ocean play" is not a free change.
 
 ```bash
