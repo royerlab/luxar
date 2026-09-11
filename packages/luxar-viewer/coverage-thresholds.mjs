@@ -103,7 +103,9 @@ export const COVERAGE_THRESHOLDS = {
   // NOT excluded from coverage: that spec runs in CI as the non-required
   // `tsl-parity` job, and excluding code on the strength of a non-required gate
   // is how a metric starts lying. Revisit once the job is required.
-  'src/rendering/**': { lines: 74, functions: 77, branches: 72 },
+  // lines 74 -> 76 after the bloom live-texture binding tests moved measured
+  // line coverage to 77.18 and check-coverage-slack flagged the old floor.
+  'src/rendering/**': { lines: 76, functions: 77, branches: 72 },
 };
 
 /** Last accepted coverage measurements for each floor. */
@@ -124,5 +126,5 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 91.9, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 89.91, functions: 75.15, branches: 85.78 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 76.31, functions: 78.13, branches: 73.22 },
+  'src/rendering/**': { lines: 77.18, functions: 78.13, branches: 73.22 },
 };

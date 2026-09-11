@@ -49,6 +49,6 @@ export {
   renderGLSL,
   renderTSL,
 } from './render';
-export type { BloomChainRenderResult } from './render';
+export type { BloomChainFixture, BloomChainRenderResult } from './render';
 /** Re-export of the {@link RegistryEntry} type so harness consumers import it from the barrel. */
 export type { RegistryEntry } from './types';

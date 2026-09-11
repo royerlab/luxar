@@ -540,11 +540,11 @@ window.__tslHarness = {
     vertexShader: string;
     fragmentShader: string;
   }>,
-  renderBloomChainGLSL: () => Promise<{
+  renderBloomChainGLSL: (fixture?: 'radial' | 'ramp-y') => Promise<{
     pixels: Uint8Array;
     mipCount: number;
   }>,
-  renderBloomChainTSL: () => Promise<{
+  renderBloomChainTSL: (fixture?: 'radial' | 'ramp-y') => Promise<{
     pixels: Uint8Array;
     mipCount: number;
   }>,
@@ -554,6 +554,13 @@ window.__tslHarness = {
 
 The bloom methods render the production multi-pass pyramid rather than a
 shader-registry entry, including additive upsample accumulation onto existing mips.
+The `fixture` argument picks the input pattern: `radial` (default) is a centred
+Gaussian, and `ramp-y` a monotone vertical ramp. Both cases run — the radial one
+is mirror-invariant and so cannot see a Y-orientation fault, which is how #2584's
+per-tap flip stayed hidden. Either way the fixture is staged into a render target
+first, because that is the only input for which the two backends agree on Y
+(three's `TextureNode` normalises render-target sampling but not a raw
+`DataTexture`), so the two readbacks compare directly with no row flipping.
 
 `renderTSL` patches the renderer's internal
 `NodeManager._createNodeBuilderState` once per call to capture the

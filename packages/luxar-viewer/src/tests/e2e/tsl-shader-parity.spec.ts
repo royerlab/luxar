@@ -62,14 +62,56 @@ async function runTSL(page: Page, shaderName: string): Promise<TSLResult> {
   }, shaderName);
 }
 
-async function runBloomChain(page: Page, backend: 'glsl' | 'tsl'): Promise<BloomChainResult> {
-  return page.evaluate(async (selectedBackend) => {
-    const result =
-      selectedBackend === 'glsl'
-        ? await window.__tslHarness!.renderBloomChainGLSL()
-        : await window.__tslHarness!.renderBloomChainTSL();
-    return { pixels: Array.from(result.pixels), mipCount: result.mipCount };
-  }, backend);
+async function runBloomChain(
+  page: Page,
+  backend: 'glsl' | 'tsl',
+  fixture: 'radial' | 'ramp-y'
+): Promise<BloomChainResult> {
+  return page.evaluate(
+    async ([selectedBackend, selectedFixture]) => {
+      const result =
+        selectedBackend === 'glsl'
+          ? await window.__tslHarness!.renderBloomChainGLSL(selectedFixture as 'radial' | 'ramp-y')
+          : await window.__tslHarness!.renderBloomChainTSL(selectedFixture as 'radial' | 'ramp-y');
+      return { pixels: Array.from(result.pixels), mipCount: result.mipCount };
+    },
+    [backend, fixture] as const
+  );
+}
+
+/**
+ * Mean red-channel value of each row of a square RGBA8 buffer.
+ *
+ * The composed-bloom guard compares these row PROFILES rather than only an
+ * aggregate diff: a mean-abs-diff is a magnitude test and stays small for a
+ * fault that moves brightness around in Y without changing how much of it
+ * there is. #2584's per-tap flip did exactly that — one of the four box taps
+ * sampled the source un-mirrored while the other three sampled it mirrored,
+ * which halved the vertical gradient about its own mean and left the frame
+ * average almost untouched.
+ */
+function rowMeansRed(pixels: number[], size: number): number[] {
+  const means: number[] = [];
+  for (let y = 0; y < size; y++) {
+    let sum = 0;
+    for (let x = 0; x < size; x++) sum += pixels[(y * size + x) * 4];
+    means.push(sum / size);
+  }
+  return means;
+}
+
+/** Least-squares slope of a profile against its row index (units: level/row). */
+function profileSlope(profile: number[]): number {
+  const n = profile.length;
+  const meanX = (n - 1) / 2;
+  const meanY = profile.reduce((a, b) => a + b, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - meanX) * (profile[i] - meanY);
+    den += (i - meanX) ** 2;
+  }
+  return num / den;
 }
 
 /** Mean absolute per-channel difference on a 0-255 scale. */
@@ -114,14 +156,22 @@ function nonUniformPixelCount(pixels: number[]): number {
  * variants (const-rgb, mega, fxaa) are uniform by design and are
  * covered by their own solid-colour assertions.
  */
-function assertBothRendered(glsl: number[], tsl: number[], name: string): void {
+function assertNeitherFrameEmpty(glsl: number[], tsl: number[], name: string): void {
   const g = nonUniformPixelCount(glsl);
   const t = nonUniformPixelCount(tsl);
   expect(g, `${name}: GLSL side rendered ZERO pixels — vacuous parity`).toBeGreaterThan(0);
   expect(t, `${name}: TSL side rendered ZERO pixels — vacuous parity`).toBeGreaterThan(0);
+}
+
+function assertBothRendered(glsl: number[], tsl: number[], name: string): void {
+  assertNeitherFrameEmpty(glsl, tsl, name);
   // The per-covered metric treats each buffer's own first pixel as its
   // background, so a cross-backend BACKGROUND divergence (clear color /
   // output transform drift) would be invisible to it. Pin equality here.
+  // Only sound where pixel 0 IS background: an exact match on a RENDERED
+  // pixel would be a bit-exactness demand on two different shader
+  // compilers. The composed ramp has no background and uses
+  // `assertNeitherFrameEmpty` plus a tolerant compare instead.
   expect(glsl.slice(0, 4), `${name}: backgrounds differ between backends`).toEqual(tsl.slice(0, 4));
 }
 
@@ -365,11 +415,13 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  test('composed bloom pyramid renders identically through both backends', async ({ page }) => {
+  test('composed bloom pyramid (radial) renders identically through both backends', async ({
+    page,
+  }) => {
     await bootHarness(page);
 
-    const glslResult = await runBloomChain(page, 'glsl');
-    const tslResult = await runBloomChain(page, 'tsl');
+    const glslResult = await runBloomChain(page, 'glsl', 'radial');
+    const tslResult = await runBloomChain(page, 'tsl', 'radial');
 
     expect(glslResult.mipCount).toBeGreaterThanOrEqual(3);
     expect(tslResult.mipCount).toBe(glslResult.mipCount);
@@ -381,6 +433,141 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       `Composed bloom parity: covered-pixel mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
         `GLSL first 4 pixels:\n${previewPixels(glslResult.pixels)}\n` +
         `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+    ).toBeLessThan(2.0);
+  });
+
+  /**
+   * Y-asymmetric companion to the radial case, and the regression guard for
+   * #2584.
+   *
+   * The radial fixture is mirror-invariant, so it is STRUCTURALLY blind to a
+   * Y-orientation fault — WebGPU scored 0.000 against it while the composed
+   * pyramid was visibly wrong on a vertical gradient. This case feeds a
+   * monotone vertical ramp and checks the spatial MAPPING, not just the
+   * magnitude: the composed row profile must match row for row, its fitted
+   * slope must match WebGL's, and it must stay a real gradient (a collapsed
+   * or mirrored profile fails).
+   *
+   * There is deliberately no X-asymmetric counterpart: the flip uniform this
+   * guards is Y-only by construction (no X analogue exists), and folding an X
+   * term into the same fixture (e.g. `20 + 0.425(x + y)`) would halve the
+   * per-row Y signal, dropping the single-material-regression margin from ~4×
+   * to ~2× — the two axes would compete inside one fixture for no new coverage.
+   */
+  test('composed bloom pyramid (vertical ramp) preserves the Y mapping on both backends', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslResult = await runBloomChain(page, 'glsl', 'ramp-y');
+    const tslResult = await runBloomChain(page, 'tsl', 'ramp-y');
+
+    expect(glslResult.mipCount).toBeGreaterThanOrEqual(3);
+    expect(tslResult.mipCount).toBe(glslResult.mipCount);
+    expect(tslResult.pixels.length).toBe(glslResult.pixels.length);
+
+    // mip[0] is half-res, so a 64-px harness composes into a 32-px buffer.
+    const size = Math.round(Math.sqrt(glslResult.pixels.length / 4));
+    const glslProfile = rowMeansRed(glslResult.pixels, size);
+    const tslProfile = rowMeansRed(tslResult.pixels, size);
+    const glslSlope = profileSlope(glslProfile);
+    const tslSlope = profileSlope(tslProfile);
+    const report =
+      `slope GLSL ${glslSlope.toFixed(3)} vs TSL ${tslSlope.toFixed(3)} per row.\n` +
+      `GLSL row means: ${glslProfile.map((v) => v.toFixed(1)).join(', ')}\n` +
+      `TSL row means:  ${tslProfile.map((v) => v.toFixed(1)).join(', ')}`;
+
+    // Non-vacuousness, and the SIGN is part of it. The fixture ramps from dim
+    // at source row 0 to bright at row 63, and both readbacks are bottom-up
+    // (`readRenderTargetPixels` / `readRenderTargetPixelsAsync` agree), so row
+    // 0 of the profile is the dim end and the canonical slope is POSITIVE
+    // (measured +4.9459). Taking `Math.abs` here would discard exactly the
+    // quantity #2584 is about: a Y flip applied to BOTH arms — say a
+    // regression in `stageFixtureIntoTarget`, which nothing else covers —
+    // negates the slope on both sides and would sail through every
+    // cross-backend comparison below.
+    //
+    // The MAGNITUDE floor is there for the same reason: a common-mode
+    // gradient collapse (the both-arms sibling of #2584's own half-slope
+    // defect, or a `stageFixtureIntoTarget` blit change that resamples) is
+    // equally invisible to a cross-backend comparison, and halving the
+    // gradient would land at ≈2.47. The slope is set by the fixture and the
+    // filter math, not by GPU precision, so an absolute floor is safe: 3.0
+    // leaves 1.65× headroom below the canonical +4.946 while still catching
+    // any collapse to half or less.
+    expect(
+      glslSlope,
+      `Composed ramp is not a POSITIVE gradient of the expected magnitude on the WebGL (canonical) side — a negative slope means the whole fixture is upside down, a shrunken one means a common-mode gradient collapse.\n${report}`
+    ).toBeGreaterThan(3.0);
+    expect(
+      Math.max(...glslProfile),
+      `Composed ramp clips on the WebGL (canonical) side, so its slope is not measurable.\n${report}`
+    ).toBeLessThan(250);
+
+    // Spatial mapping: same gradient, same direction, same rows. A mirrored
+    // frame or #2584's half-slope pyramid fails here while the aggregate
+    // mean-abs diff below could still look small.
+    //
+    // The arms are bit-identical on the reference box (max per-pixel Δ = 0),
+    // so these tolerances exist only to absorb a 1-LSB systematic difference
+    // on another GPU/driver. Each profile entry is a mean of 32 red samples,
+    // so a UNIFORM 1-LSB bias moves a row mean by exactly 1.0 — a `< 1.0`
+    // bound would fail at precisely that worst case. 1.5 sits 1.5× above it.
+    //
+    // It still stays under every fault it guards: a sub-row Y sampling offset
+    // is the smallest class, and at the canonical 4.946 levels per row a
+    // half-texel one moves row means by 4.946 × 0.5 = 2.47, i.e. 1.65× over
+    // the bound (the trailing `meanAbsDiffPerCoveredPixel < 2.0` is no
+    // backstop for it either — a half-row shift only reaches ≈1.4 there). A
+    // quarter-texel offset lands at 1.24 and is below this bound, so it is
+    // not claimed. #2584's own half-slope defect moves row means by ≈54 (36×)
+    // and a pure Y mirror by up to ~146 (97×); they also move the slope by
+    // ≈3.7 and ≈9.9, so `RAMP_SLOPE_TOLERANCE` stays at 0.5, where both are
+    // still many multiples away.
+    //
+    // Written as an explicit `Math.abs(a - b) < tol` rather than a
+    // `toBeCloseTo` precision digit, whose "< 0.5 · 10^-digits" semantics are
+    // what made the original 0.05-on-a-slope-of-5 bound easy to write by
+    // accident.
+    const RAMP_SLOPE_TOLERANCE = 0.5;
+    const RAMP_ROW_MEAN_TOLERANCE = 1.5;
+    expect(
+      Math.abs(tslSlope - glslSlope),
+      `Composed bloom Y-gradient diverges between backends.\n${report}`
+    ).toBeLessThan(RAMP_SLOPE_TOLERANCE);
+    for (let y = 0; y < size; y++) {
+      expect(
+        Math.abs(tslProfile[y] - glslProfile[y]),
+        `Composed bloom row ${y} mean diverges between backends.\n${report}`
+      ).toBeLessThan(RAMP_ROW_MEAN_TOLERANCE);
+    }
+
+    // The ramp covers the WHOLE frame, so pixel 0 is rendered content — the
+    // dim end of the gradient — not background: `assertBothRendered`'s exact-RGBA
+    // background check would silently become a bit-exactness demand on two
+    // different shader compilers. Keep its non-vacuity teeth and compare
+    // pixel 0 under a tolerance.
+    //
+    // 2.0, not `RAMP_ROW_MEAN_TOLERANCE`: this is ONE channel of ONE pixel,
+    // which averages nothing, so a single 1-LSB codegen difference would sit
+    // right at a 1.0 bound — and the gate runs on llvmpipe, not the GPU box
+    // these numbers were measured on. 2.0 is what the sibling composed-radial
+    // and `bloom-threshold` cases already accept through this same pipeline.
+    // The spatial teeth are the row-mean and slope bounds above; this is only
+    // a non-vacuity check that both arms drew the same dim end.
+    const RAMP_PIXEL0_TOLERANCE = 2.0;
+    assertNeitherFrameEmpty(glslResult.pixels, tslResult.pixels, 'composed bloom ramp');
+    for (let c = 0; c < 4; c++) {
+      expect(
+        Math.abs(glslResult.pixels[c] - tslResult.pixels[c]),
+        `Composed bloom ramp: pixel 0 channel ${c} diverges between backends.\n${report}`
+      ).toBeLessThan(RAMP_PIXEL0_TOLERANCE);
+    }
+    const diff = meanAbsDiffPerCoveredPixel(glslResult.pixels, tslResult.pixels);
+    expect(
+      diff,
+      `Composed bloom ramp parity: covered-pixel mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+        report
     ).toBeLessThan(2.0);
   });
 
