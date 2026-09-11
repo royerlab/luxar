@@ -154,7 +154,16 @@ class ControlHub:
         )
         try:
             while True:
-                raw = await websocket.receive_text()
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    raise WebSocketDisconnect(message.get("code") or 1000)
+                raw = message.get("text")
+                if raw is None:
+                    if role == ROLE_CONTROLLER:
+                        await websocket.send_text(
+                            _error_frame(None, _INVALID_REQUEST, "text frames only")
+                        )
+                    continue
                 await self._relay(key, role, raw, websocket)
         except WebSocketDisconnect:
             pass

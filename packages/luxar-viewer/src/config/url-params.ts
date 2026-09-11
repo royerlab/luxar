@@ -118,8 +118,7 @@ export interface ControlSocketOrigin {
  *   same-origin address; `null` means the flag was absent.
  * @param origin The page's own protocol and host.
  * @param allowCrossOrigin Whether `?controlAllowCrossOrigin` was present.
- * @returns The socket URL, or `null` when control is off or the value is
- *   refused. Rejections are the caller's cue to warn.
+ * @returns The socket URL, or `null` when control is off or the value is refused.
  */
 export function normalizeControlSocketUrl(
   raw: string | null,
@@ -195,19 +194,19 @@ function controlSocketUrlCarriesNoise(url: URL): boolean {
  * node-environment unit test), so the validator's same-origin rule still has
  * something concrete to compare against instead of throwing.
  */
+function resolvePageOrigin(origin?: ControlSocketOrigin): ControlSocketOrigin {
+  if (origin !== undefined) return origin;
+  const location = typeof window !== 'undefined' ? window.location : undefined;
+  if (!location) return { protocol: 'http:', host: 'localhost' };
+  return { protocol: location.protocol, host: location.host };
+}
+
 /** A trimmed query value, or null when absent or blank. */
 function trimmedParam(params: URLSearchParams, key: string): string | null {
   const raw = params.get(key);
   if (raw === null) return null;
   const value = raw.trim();
   return value.length === 0 ? null : value;
-}
-
-function resolvePageOrigin(origin?: ControlSocketOrigin): ControlSocketOrigin {
-  if (origin !== undefined) return origin;
-  const location = typeof window !== 'undefined' ? window.location : undefined;
-  if (!location) return { protocol: 'http:', host: 'localhost' };
-  return { protocol: location.protocol, host: location.host };
 }
 
 /**

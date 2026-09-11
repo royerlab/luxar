@@ -47,6 +47,7 @@ from .restamp_lod_command import register_restamp_lod_command
 from .serving import (
     DirectoryListingStaticFiles,
     _add_cors,
+    _build_viewer_url,
     _is_sensitive_serve_path,
     _serve_data,
     _serve_viewer,
@@ -193,6 +194,16 @@ def _start_data_server_thread(
     return thread
 
 
+def _warn_control_flag_misuse(
+    *, control: bool, control_token: Optional[str], viewer: bool, viewer_only: bool
+) -> None:
+    """Explain control options that cannot affect the selected serve mode."""
+    if control and not (viewer or viewer_only):
+        aprint("⚠️  --control requires --viewer or --viewer-only. Ignoring --control.")
+    if control_token and not control:
+        aprint("⚠️  --control-token requires --control. Ignoring --control-token.")
+
+
 # ────────────────────────────── serve ────────────────────────────────────────
 @app.command()
 def serve(
@@ -256,6 +267,12 @@ def serve(
             aprint(
                 "⚠️  --viewer-only already includes the viewer; --viewer is redundant"
             )
+        _warn_control_flag_misuse(
+            control=control,
+            control_token=control_token,
+            viewer=viewer,
+            viewer_only=viewer_only,
+        )
         _warn_if_lan_exposed(host, cors_origin)
 
         # Handle viewer-only mode
@@ -371,9 +388,13 @@ def serve(
                 aprint("⚠️  Viewer not served; skipping --open.")
             else:
                 data_url = f"http://{host}:{actual_port}"
-                viewer_url = append_title_param(
-                    f"http://{host}:{actual_viewer_port}/?src={data_url}",
-                    dataset_title(serve_path),
+                viewer_url = _build_viewer_url(
+                    host,
+                    actual_viewer_port,
+                    data_url,
+                    title=dataset_title(serve_path),
+                    control=control,
+                    control_token=control_token,
                 )
                 open_browser_func(viewer_url)
 

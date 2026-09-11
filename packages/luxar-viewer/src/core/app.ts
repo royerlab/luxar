@@ -308,6 +308,9 @@ export class LuxarApp {
       // Install before the initial load so its first recorded transient
       // failure can arm the bounded retry backoff immediately.
       this.setupOnlineRetry();
+      // The control client eagerly attaches the selection / element event
+      // consumers that picking checks once, during dataset provisioning.
+      this.installControlClient();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -480,8 +483,6 @@ export class LuxarApp {
     });
     this.events.add(() => this.disposeWaypoints());
 
-    this.installControlClient();
-
     // Guard on a real Element: ResizeObserver may be absent (some test
     // environments) and observing a non-Element throws.
     if (typeof ResizeObserver !== 'undefined' && canvas instanceof Element) {
@@ -643,10 +644,9 @@ export class LuxarApp {
   /**
    * Attach the remote-control channel, when one was asked for.
    *
-   * Built here, in `setupEmbedderHooks`, for two reasons: `this.events` owns
-   * the teardown, and the client must exist BEFORE the first dataset load so
-   * its eager `selection` listener is in place when picking is provisioned
-   * (see `CONTROL_FORWARDED_EVENTS`).
+   * Built before initial dataset routing because its eager `selection` and
+   * element listeners must exist when picking is provisioned. `this.events`
+   * owns the teardown (see `CONTROL_FORWARDED_EVENTS`).
    *
    * `invoke` indexes the app by method name, which is safe precisely because
    * `isControlMethodAllowed` has already vetted the name against a list the

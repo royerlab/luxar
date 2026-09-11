@@ -53,9 +53,8 @@ export const CONTROL_WIRE_ONLY_METHODS: readonly string[] = [
 /**
  * Every `LuxarApp` method a controller may call.
  *
- * A `readonly string[]` rather than a `Record` on purpose: the Python side
- * locks itself against this list with `read_ts_string_literals`, which parses
- * array literals and unions, not object literals.
+ * A `readonly string[]` rather than a `Record` keeps the policy easy to audit
+ * and compare in lock tests.
  */
 export const CONTROL_ALLOWED_METHODS: readonly string[] = [
   'awaitDimensionUpdate',

@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from luxar.control import ControlError, Viewer
-from luxar.control.viewer import _with_query
+from luxar.control.viewer import _connect, _with_query
 
 
 class FakeSocket:
@@ -27,6 +27,7 @@ class FakeSocket:
         self.sent: List[Dict[str, Any]] = []
         self.replies = list(replies or [])
         self.closed = False
+        self.recv_timeouts: List[Optional[float]] = []
         #: Echo the request id onto each scripted reply, so a test does not
         #: have to predict the counter.
         self.echo_id = True
@@ -35,6 +36,7 @@ class FakeSocket:
         self.sent.append(json.loads(raw))
 
     def recv(self, timeout: Optional[float] = None) -> str:
+        self.recv_timeouts.append(timeout)
         reply = self.replies.pop(0)
         if self.echo_id and "id" not in reply:
             reply = {**reply, "id": self.sent[-1]["id"]}
@@ -129,6 +131,29 @@ class TestCall:
         viewer = make_viewer(monkeypatch, socket)
         assert viewer.call("getLayers") == "mine"
 
+    def test_events_do_not_reset_the_reply_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket(
+            [
+                {"method": "event", "params": ["camera-changed", {}], "id": None},
+                {"result": "mine", "id": 1},
+            ]
+        )
+        socket.echo_id = False
+        monkeypatch.setattr(
+            "luxar.control.viewer._connect", lambda url, timeout: socket
+        )
+        monotonic = iter([100.0, 100.0, 101.0])
+        monkeypatch.setattr(
+            "luxar.control.viewer.time.monotonic", lambda: next(monotonic)
+        )
+
+        viewer = Viewer("ws://host:5173/control", timeout_s=5.0)
+
+        assert viewer.call("getLayers") == "mine"
+        assert socket.recv_timeouts == [5.0, 4.0]
+
     def test_a_notification_asks_for_no_reply(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -171,6 +196,31 @@ class TestErrors:
         with pytest.raises(ControlError) as caught:
             viewer.call("getLayers")
         assert caught.value.no_viewer_attached is False
+
+
+class TestConnection:
+    def test_raises_the_frame_cap_for_screenshot_results(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: Dict[str, Any] = {}
+
+        class Connection:
+            def __enter__(self) -> "Connection":
+                return self
+
+        def fake_connect(url: str, **kwargs: Any) -> Connection:
+            captured.update(url=url, **kwargs)
+            return Connection()
+
+        monkeypatch.setattr("websockets.sync.client.connect", fake_connect)
+
+        _connect("ws://host:5173/control", 7.0)
+
+        assert captured == {
+            "url": "ws://host:5173/control",
+            "open_timeout": 7.0,
+            "max_size": 16 * 1024 * 1024,
+        }
 
 
 class TestNamedMethods:
@@ -282,6 +332,16 @@ def test_end_to_end_against_a_live_hub() -> None:
 
         url = f"ws://127.0.0.1:{port}/control"
         with connect(f"{url}?role=viewer", open_timeout=10) as fake_viewer:
+            with connect(f"{url}?role=controller", open_timeout=10) as primer:
+                primer.send(
+                    json.dumps({"jsonrpc": "2.0", "id": "prime", "method": "getLayers"})
+                )
+                primed = json.loads(fake_viewer.recv(timeout=10))
+                fake_viewer.send(
+                    json.dumps({"jsonrpc": "2.0", "id": primed["id"], "result": []})
+                )
+                assert json.loads(primer.recv(timeout=10))["id"] == "prime"
+
             with Viewer(url, timeout_s=10) as controller:
                 answers: List[Any] = []
 
@@ -303,6 +363,7 @@ def test_end_to_end_against_a_live_hub() -> None:
                 assert answers[0]["method"] == "getDimensions"
                 # ...and the controller's own numbering started at 1.
                 assert isinstance(answers[0]["id"], int)
+                assert answers[0]["id"] != 1
     finally:
         server.should_exit = True
         thread.join(timeout=10)

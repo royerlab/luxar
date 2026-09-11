@@ -207,6 +207,22 @@ class TestMalformedFrames:
                 controller.send_text(_request("getLayers", 5))
                 assert viewer.receive_json()["method"] == "getLayers"
 
+    def test_binary_frames_do_not_close_the_socket(self) -> None:
+        api, _ = _app()
+        client = TestClient(api)
+        with client.websocket_connect("/control?role=viewer") as viewer:
+            with client.websocket_connect("/control?role=controller") as controller:
+                controller.send_bytes(b"\x01\x02\x03")
+                answer = controller.receive_json()
+                assert answer["id"] is None
+                assert answer["error"]["code"] == -32600
+
+                controller.send_text(_request("getLayers", 5))
+                request = viewer.receive_json()
+                viewer.send_bytes(b"\x04\x05")
+                viewer.send_text(_reply(request["id"], "still attached"))
+                assert controller.receive_json()["result"] == "still attached"
+
 
 class TestAttachment:
     """Who may attach, and what happens when they leave."""
@@ -357,6 +373,22 @@ class TestViewerAppWiring:
             assert api.state.control_hub.controller_count == 1
         with client.websocket_connect("/control") as socket:
             assert socket.receive()["code"] == CLOSE_POLICY_VIOLATION
+
+    def test_network_control_without_a_token_warns(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.cli import serving
+
+        monkeypatch.setattr(serving, "get_viewer_dist_path", lambda: "viewer")
+        monkeypatch.setattr(
+            serving, "_build_viewer_app", lambda *args, **kwargs: object()
+        )
+        monkeypatch.setattr(serving.uvicorn, "run", lambda *args, **kwargs: None)
+
+        serving._serve_viewer("0.0.0.0", 5173, control=True, open_browser_flag=False)
+
+        output = capsys.readouterr().out
+        assert "reachable from the network without a token" in output
 
 
 class TestAuthorized:

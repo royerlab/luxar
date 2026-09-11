@@ -215,6 +215,18 @@ describe('ControlClient dispatch', () => {
     expect(context.socket.closed).toBe(false);
   });
 
+  it('echoes a readable id when a request has malformed params', () => {
+    const context = harness();
+    context.socket.receive(
+      '{"jsonrpc":"2.0","id":"tap-7","method":"setDimensionValue","params":{"index":0}}'
+    );
+
+    const frame = context.socket.lastFrame();
+    expect(frame.id).toBe('tap-7');
+    expect((frame.error as { code: number }).code).toBe(JSON_RPC_INVALID_PARAMS);
+    expect(context.socket.closed).toBe(false);
+  });
+
   it('says nothing back to a notification, but still performs it', async () => {
     const context = harness();
     context.socket.receive(notificationFrame('recenterCamera'));

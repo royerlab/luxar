@@ -12,8 +12,13 @@ import {
   controlRefusalReason,
   isControlMethodAllowed,
 } from '../../../../../core/app/control/method-policy';
+import { CONTROL_FORWARDED_EVENTS } from '../../../../../core/app/control/control-client';
 
 const APP_SOURCE = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../core/app.ts');
+const EVENTS_SOURCE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../../../core/app/embedder/events.ts'
+);
 
 /**
  * Public members declared on `LuxarApp`, read out of the source.
@@ -42,6 +47,16 @@ function publicMembersOfLuxarApp(): string[] {
     if (['if', 'for', 'while', 'switch', 'catch', 'return', 'constructor'].includes(name)) continue;
     found.add(name);
   }
+  return [...found].sort();
+}
+
+function embedderEventNames(): string[] {
+  const source = readFileSync(EVENTS_SOURCE, 'utf8');
+  const start = source.indexOf('export interface LuxarEmbedderEventMap');
+  const body = source.slice(start, source.indexOf('\n}', start));
+  const found = new Set<string>();
+  const declaration = /^ {2}(?:'([^']+)'|([A-Za-z_]\w*)):/gm;
+  for (const match of body.matchAll(declaration)) found.add(match[1] ?? match[2]);
   return [...found].sort();
 }
 
@@ -100,6 +115,12 @@ describe('control method policy', () => {
   it('sorts both lists, so a diff shows the change and not a reshuffle', () => {
     expect([...CONTROL_ALLOWED_METHODS]).toEqual([...CONTROL_ALLOWED_METHODS].sort());
     expect([...CONTROL_EXCLUDED_METHODS]).toEqual([...CONTROL_EXCLUDED_METHODS].sort());
+  });
+
+  it('forwards every public embedder event', () => {
+    const events = embedderEventNames();
+    expect(events.length).toBeGreaterThan(10);
+    expect([...CONTROL_FORWARDED_EVENTS].sort()).toEqual(events);
   });
 });
 

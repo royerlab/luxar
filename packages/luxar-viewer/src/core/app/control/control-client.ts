@@ -225,7 +225,7 @@ export class ControlClient {
   private handleFrame(raw: string): void {
     const frame = decodeFrame(raw);
     if (frame.kind === 'malformed') {
-      this.send(errorFrame(null, frame.code, frame.message));
+      this.send(errorFrame(frame.id, frame.code, frame.message));
       return;
     }
     // A controller never asks the viewer a question, so a response arriving

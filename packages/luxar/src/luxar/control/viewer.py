@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import time
 from types import TracebackType
 from typing import Any, Dict, List, Optional, Type
 
@@ -28,6 +29,9 @@ DEFAULT_TIMEOUT_S = 30.0
 
 #: JSON-RPC code the hub answers with when no viewer is attached.
 NO_VIEWER_CODE = -32001
+
+# Match uvicorn's control-hub frame ceiling while allowing display-sized PNGs.
+_MAX_FRAME_SIZE_BYTES = 16 * 1024 * 1024
 
 
 class ControlError(RuntimeError):
@@ -112,6 +116,7 @@ class Viewer:
         Raises:
             ControlError: the viewer or the hub refused the call.
             TimeoutError: no reply arrived within the configured timeout.
+            websockets.exceptions.ConnectionClosed: the hub connection closed.
         """
         request_id = next(self._ids)
         self._socket.send(
@@ -144,8 +149,10 @@ class Viewer:
         skipped. A controller that wants events should read them itself rather
         than rely on this method's leftovers.
         """
+        deadline = time.monotonic() + self._timeout_s
         while True:
-            frame = json.loads(self._socket.recv(timeout=self._timeout_s))
+            remaining_s = max(0.0, deadline - time.monotonic())
+            frame = json.loads(self._socket.recv(timeout=remaining_s))
             if not isinstance(frame, dict) or frame.get("id") != request_id:
                 continue
             if "error" in frame:
@@ -241,7 +248,8 @@ def _connect(url: str, timeout_s: float) -> Any:
             "luxar.control needs the `websockets` package (declared in "
             "pyproject.toml); install it with `pip install websockets`."
         ) from error
-    connection = connect(url, open_timeout=timeout_s)
+    # Screenshot replies routinely exceed websockets' 1 MiB default frame cap.
+    connection = connect(url, open_timeout=timeout_s, max_size=_MAX_FRAME_SIZE_BYTES)
     # websockets >= 14 warns on the first send unless the connection has been
     # entered as a context manager. A Viewer deliberately outlives any single
     # `with` block (that is the point of a REPL handle), so it enters the

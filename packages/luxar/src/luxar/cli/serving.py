@@ -183,6 +183,32 @@ def _warn_if_lan_exposed(host: str, cors_origin: str) -> None:
     )
 
 
+def _build_viewer_url(
+    host: str,
+    port: int,
+    data_url: Optional[str] = None,
+    *,
+    title: Optional[str] = None,
+    control: bool = False,
+    control_token: Optional[str] = None,
+) -> str:
+    """Build the browser URL shared by viewer serving and ``serve --open``."""
+    if data_url:
+        viewer_url = append_title_param(
+            f"http://{host}:{port}/?src={data_url.rstrip('/')}", title
+        )
+    else:
+        viewer_url = f"http://{host}:{port}/"
+
+    if control:
+        from urllib.parse import quote
+
+        viewer_url += "&control" if "?" in viewer_url else "?control"
+        if control_token:
+            viewer_url += f"&controlToken={quote(control_token, safe='')}"
+    return viewer_url
+
+
 def _path_is_within(path: Path, base: Path) -> bool:
     """Return True if ``path`` resolves inside ``base``."""
     try:
@@ -463,30 +489,23 @@ def _serve_viewer(
         control_token=control_token,
     )
 
-    # Construct viewer URL - ensure data_url has no trailing slash
-    if data_url:
-        # Strip trailing slash from data_url to prevent double-slash in viewer requests
-        data_url_clean = data_url.rstrip("/")
-        # The title names the browser tab (document.title) so several open
-        # viewer tabs are tellable apart; authored viewer_config.title wins.
-        viewer_url = append_title_param(
-            f"http://{host}:{port}/?src={data_url_clean}", title
-        )
-    else:
-        viewer_url = f"http://{host}:{port}/"
-
-    if control:
-        from urllib.parse import quote
-
-        # A bare flag, not a URL: the viewer derives ws://<same host>/control
-        # from its own location, so this survives a reverse proxy and an export.
-        viewer_url += "&control" if "?" in viewer_url else "?control"
-        if control_token:
-            viewer_url += f"&controlToken={quote(control_token, safe='')}"
+    viewer_url = _build_viewer_url(
+        host,
+        port,
+        data_url,
+        title=title,
+        control=control,
+        control_token=control_token,
+    )
 
     aprint(f"🌐 Viewer available at: {viewer_url}")
     if control:
         aprint(f"🎛️  Control hub listening at: ws://{host}:{port}/control")
+        if host.strip().lower() not in _LOOPBACK_HOSTS and not control_token:
+            aprint(
+                "⚠️  The control hub is reachable from the network without a token. "
+                "Pass --control-token if remote control should be restricted."
+            )
 
     if open_browser_flag:
         # uvicorn.run blocks THIS thread, so a same-thread open must fire

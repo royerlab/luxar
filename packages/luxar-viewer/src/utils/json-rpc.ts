@@ -58,8 +58,8 @@ export type DecodedFrame =
   | { kind: 'notification'; method: string; params: unknown[] }
   /** A reply to something we sent. Exactly one of `result` / `error` is set. */
   | { kind: 'response'; id: JsonRpcId; result?: unknown; error?: JsonRpcError }
-  /** Undecodable. `code` is the JSON-RPC code to answer with, if answering. */
-  | { kind: 'malformed'; code: number; message: string };
+  /** Undecodable. Echo `id` when the offending request identified itself. */
+  | { kind: 'malformed'; id: JsonRpcId | null; code: number; message: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -95,11 +95,12 @@ export function decodeFrame(raw: string): DecodedFrame {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { kind: 'malformed', code: JSON_RPC_PARSE_ERROR, message: 'parse error' };
+    return { kind: 'malformed', id: null, code: JSON_RPC_PARSE_ERROR, message: 'parse error' };
   }
   if (!isRecord(parsed)) {
     return {
       kind: 'malformed',
+      id: null,
       code: JSON_RPC_INVALID_REQUEST,
       message: 'frame must be an object',
     };
@@ -107,6 +108,7 @@ export function decodeFrame(raw: string): DecodedFrame {
   if (parsed.jsonrpc !== JSON_RPC_VERSION) {
     return {
       kind: 'malformed',
+      id: isId(parsed.id) ? parsed.id : null,
       code: JSON_RPC_INVALID_REQUEST,
       message: `frame must declare jsonrpc "${JSON_RPC_VERSION}"`,
     };
@@ -119,6 +121,7 @@ function decodeResponse(frame: Record<string, unknown>): DecodedFrame {
   if (!isId(frame.id)) {
     return {
       kind: 'malformed',
+      id: null,
       code: JSON_RPC_INVALID_REQUEST,
       message: 'response needs an id',
     };
@@ -128,6 +131,7 @@ function decodeResponse(frame: Record<string, unknown>): DecodedFrame {
     if (!isRecord(error) || typeof error.code !== 'number' || typeof error.message !== 'string') {
       return {
         kind: 'malformed',
+        id: frame.id,
         code: JSON_RPC_INVALID_REQUEST,
         message: 'error member must carry a numeric code and a message',
       };
@@ -145,6 +149,7 @@ function decodeCall(frame: Record<string, unknown>): DecodedFrame {
   if (typeof frame.method !== 'string' || frame.method.length === 0) {
     return {
       kind: 'malformed',
+      id: isId(frame.id) ? frame.id : null,
       code: JSON_RPC_INVALID_REQUEST,
       message: 'method must be a non-empty string',
     };
@@ -153,6 +158,7 @@ function decodeCall(frame: Record<string, unknown>): DecodedFrame {
   if (params === null) {
     return {
       kind: 'malformed',
+      id: isId(frame.id) ? frame.id : null,
       code: JSON_RPC_INVALID_PARAMS,
       message: 'params must be an array (positional)',
     };
@@ -164,6 +170,7 @@ function decodeCall(frame: Record<string, unknown>): DecodedFrame {
   if (!isId(frame.id)) {
     return {
       kind: 'malformed',
+      id: null,
       code: JSON_RPC_INVALID_REQUEST,
       message: 'id must be a string or an integer',
     };
