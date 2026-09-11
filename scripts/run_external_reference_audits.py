@@ -1,4 +1,4 @@
-"""Run every network-backed audit and write one summary.
+"""Run every network-backed reference audit and write one non-gating summary.
 
 The shared report vocabulary is deliberately small:
 
@@ -11,8 +11,8 @@ The shared report vocabulary is deliberately small:
 ``ERROR``
     The audit could not run because its command or configuration is broken.
 
-Third-party reference findings remain report-only. The repository cadence
-liveness audit is different: stale or broken scheduling fails the command.
+The command always exits zero. These checks observe third parties, so their
+findings belong in the report rather than in the required CI gate.
 """
 
 from __future__ import annotations
@@ -43,7 +43,6 @@ class Audit:
     command: tuple[str, ...]
     required_env: tuple[str, ...] = ()
     parse_levels: bool = False
-    gating: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,12 +62,6 @@ AUDITS = (
         required_env=("ZENODO_TOKEN",),
     ),
     Audit("Hosted gallery media", ("make", "check-gallery-media")),
-    Audit(
-        "Repository cadence liveness",
-        ("python", "scripts/check_cadence_liveness.py"),
-        parse_levels=True,
-        gating=True,
-    ),
 )
 MAX_SUMMARY_OUTPUT_CHARS = 20_000
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -181,7 +174,7 @@ def render_summary(results: Sequence[Result]) -> str:
     lines = [
         "# External reference audits",
         "",
-        "Third-party reference findings remain report-only; repository cadence liveness is gating.",
+        "These network-backed checks are report-only and never gate merges.",
         "",
         f"**Worst level: {worst_level.name}**",
         "",
@@ -233,9 +226,7 @@ def main() -> int:
                 summary_file.write(summary)
         except OSError as error:
             print(f"Could not write GitHub summary: {error}", file=sys.stderr)
-    return int(
-        any(result.audit.gating and result.level >= Level.WARNING for result in results)
-    )
+    return 0
 
 
 if __name__ == "__main__":

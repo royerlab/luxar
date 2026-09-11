@@ -28,9 +28,14 @@ def _opener(workflows: object, runs: object):
     def open_request(request, timeout):
         assert timeout == module.REQUEST_TIMEOUT_SECONDS
         assert request.headers["User-agent"] == "luxar-cadence-watchdog"
+        assert request.headers["Authorization"] == "Bearer test-token"
         if request.full_url.endswith("/actions/workflows?per_page=100"):
             return _response(workflows)
         if "/actions/workflows/42/runs?" in request.full_url:
+            assert "branch=dev" in request.full_url
+            assert "event=workflow_dispatch" in request.full_url
+            assert "status=success" in request.full_url
+            assert "per_page=1" in request.full_url
             return _response(runs)
         raise AssertionError(request.full_url)
 
@@ -42,6 +47,7 @@ def test_recent_success_is_current() -> None:
         module.CADENCES[0],
         repository="royerlab/luxar",
         now=NOW,
+        token="test-token",
         opener=_opener(
             {
                 "workflows": [
@@ -70,6 +76,7 @@ def test_old_success_is_stale() -> None:
         module.CADENCES[0],
         repository="royerlab/luxar",
         now=NOW,
+        token="test-token",
         opener=_opener(
             {
                 "workflows": [
@@ -99,6 +106,7 @@ def test_missing_workflow_is_bootstrap_not_failure() -> None:
         module.CADENCES[0],
         repository="royerlab/luxar",
         now=NOW,
+        token="test-token",
         opener=_opener({"workflows": []}, {}),
     )
 
@@ -106,11 +114,26 @@ def test_missing_workflow_is_bootstrap_not_failure() -> None:
     assert "not registered on the default branch yet" in result.detail
 
 
+def test_checked_in_workflow_missing_from_default_branch_fails_closed() -> None:
+    result = module.check_cadence(
+        module.CADENCES[0],
+        repository="royerlab/luxar",
+        now=NOW,
+        token="test-token",
+        opener=_opener({"workflows": []}, {}),
+        expected_present=True,
+    )
+
+    assert result.level == "CONFIG"
+    assert "present in this checkout" in result.detail
+
+
 def test_new_workflow_without_success_uses_bootstrap_grace() -> None:
     result = module.check_cadence(
         module.CADENCES[0],
         repository="royerlab/luxar",
         now=NOW,
+        token="test-token",
         opener=_opener(
             {
                 "workflows": [
@@ -135,6 +158,7 @@ def test_old_workflow_without_success_fails_closed() -> None:
         module.CADENCES[0],
         repository="royerlab/luxar",
         now=NOW,
+        token="test-token",
         opener=_opener(
             {
                 "workflows": [
@@ -159,6 +183,7 @@ def test_disabled_workflow_and_api_failure_are_configuration_errors() -> None:
         module.CADENCES[0],
         repository="royerlab/luxar",
         now=NOW,
+        token="test-token",
         opener=_opener(
             {
                 "workflows": [
@@ -178,7 +203,10 @@ def test_disabled_workflow_and_api_failure_are_configuration_errors() -> None:
         raise urllib.error.URLError("offline")
 
     failed = module.check_all(
-        repository="royerlab/luxar", now=NOW, opener=failing_opener
+        repository="royerlab/luxar",
+        now=NOW,
+        token="test-token",
+        opener=failing_opener,
     )
 
     assert disabled.level == "CONFIG"
@@ -202,5 +230,14 @@ def test_main_only_fails_for_stale_or_broken_cadences(
         ],
     )
 
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
     assert module.main([]) == expected
     assert f"[{levels[0]}] CUDA native cadence: detail" in capsys.readouterr().out
+
+
+def test_main_requires_an_actions_read_token(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    assert module.main([]) == 1
+    assert "actions:read is required" in capsys.readouterr().out
