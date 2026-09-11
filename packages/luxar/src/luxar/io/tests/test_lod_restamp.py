@@ -637,6 +637,29 @@ def test_anchor_rederives_an_already_current_whole_object_ladder(
     assert report.clean
 
 
+def test_anchor_rederives_every_rung_of_a_multilevel_ladder(tmp_path: Path) -> None:
+    store = tmp_path / "current.luxar.zarr"
+    root = _synthetic_scene(store)
+    _synthetic_ladder(
+        root,
+        "pts",
+        [
+            {"coverage_fraction": 0.0, "n_points": 25},
+            {"coverage_fraction": 0.125, "n_points": 100},
+            {"coverage_fraction": 0.25, "n_points": 200},
+            {"coverage_fraction": 0.5, "n_points": 400},
+        ],
+        selector=DERIVED_LOD_SELECTOR,
+    )
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(store, finest_anchor=0.25)
+
+    assert _ladder(store, "pts") == [0.0, 0.0625, 0.125, 0.25]
+    assert report.restamped[0].new_thresholds == [0.0, 0.0625, 0.125, 0.25]
+
+
 def test_anchor_migrates_and_reanchors_a_legacy_ladder(legacy_scene: Path) -> None:
     report = restamp_lod_store(legacy_scene, finest_anchor=0.25)
 

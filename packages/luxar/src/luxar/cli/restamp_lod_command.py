@@ -49,7 +49,7 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
             ),
         ),
     ) -> None:
-        """Re-derive legacy LOD thresholds under the screen-area selector.
+        """Re-derive LOD thresholds under the screen-area selector.
 
         An attrs-only pass, in place: the ladder rewrite moves no chunk data and
         opens no array. Every ``kind=lod`` group still on the legacy ``coverage``

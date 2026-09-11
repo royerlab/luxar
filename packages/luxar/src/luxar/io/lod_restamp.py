@@ -502,6 +502,8 @@ def _plan_lod(
         attrs: Its attrs, already read.
         partition_bound: The resolved anchor binding (see
             :func:`_is_partition_bound`).
+        finest_anchor: An explicit whole-object anchor, or ``None`` for the
+            default migration behavior.
         report: Collects the classification — restamped, or one of the three
             skip buckets.
 
@@ -1150,7 +1152,7 @@ def restamp_lod_store(
     groups: Optional[Sequence[str]] = None,
     finest_anchor: Optional[float] = None,
 ) -> RestampReport:
-    """Re-derive every legacy ``kind=lod`` ladder in a store, in place.
+    """Re-derive ``kind=lod`` ladders in a store, in place.
 
     An attrs-only pass: for each ``kind=lod`` group still on the legacy
     ``"coverage"`` selector (or carrying none, which means the same thing), the

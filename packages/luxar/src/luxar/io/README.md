@@ -345,7 +345,14 @@ from luxar.io.lod_restamp import restamp_lod_store
 
 report = restamp_lod_store("scene.luxar.zarr", dry_run=True, finest_anchor=0.25)
 for group in report.restamped:
-    print(group.path, group.anchor, group.old_thresholds, "→", group.new_thresholds)
+    print(
+        group.path,
+        group.anchor_name,
+        group.anchor,
+        group.old_thresholds,
+        "→",
+        group.new_thresholds,
+    )
 ```
 
 Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
