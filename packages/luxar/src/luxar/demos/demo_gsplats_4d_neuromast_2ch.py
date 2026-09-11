@@ -31,29 +31,30 @@ PIPELINE — reproducible per channel with ``--recompute``:
        was assembled this way; the membranes array in hand ships as a single
        zipped array. ``--source-*`` expects either assembled array, not the
        per-timepoint directory.
-    2. Measure one background floor per channel: on the ten zero-based frames
-       in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the centre of the peak bin
-       in a 512-bin histogram over values at or below that frame's 95th
-       percentile, then take the median of those ten modes. The per-frame step
-       matches ``estimate_floor(frame, method="mode")`` in
+    2. Measure (and only record) the camera pedestal per channel: on the ten
+       zero-based frames in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the centre
+       of the peak bin in a 512-bin histogram over values at or below that
+       frame's 95th percentile, then take the median of those ten modes. The
+       per-frame step matches ``estimate_floor(frame, method="mode")`` in
        ``luxar.gsplats.calibration.noise_floor``; that helper additionally
        excludes exact zeros and caps at the frame median, neither of which
        affected these frames. The recorded results are 105.991 (membranes) and
-       103.888 (nuclei); expect reproduction within one float32 ulp, while the
-       pinned literals are the values used for subtraction. ``--recompute``
-       subtracts each pinned value with a clip at zero; do not re-measure it
-       during a rebuild.
+       103.888 (nuclei), kept in ``CHANNELS[...]["camera_pedestal"]``.
+       The pedestal is NOT subtracted before the fit. Measured 2026-09-10 on
+       frames 50 and 99: a fit of the exactly pedestal-subtracted, zero-clipped
+       frame loses the low-contrast background modulation (actin ruffles at
+       0.2-1 % of the frame maximum: correlation 0.16 / 0.12 against the frame,
+       36 % / 65 % of the seeds dead), while the same fit of the raw frame keeps
+       it (0.55 / 0.43, under 2 % dead) -- seeds that land on exactly-zero
+       background have nothing to fit and die, and relaxing the amplitude
+       sparsity changes nothing. The pedestal costs a constant haze that the
+       display window removes; the recorded values are provenance, and the basis
+       for any fidelity score (compare a raw-frame render with the raw frame).
     3. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
        Recorded, not re-run: the sweep is hours and its answer is stable.
-    4. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
-       64k seeds, ``--floor none``, no fit-time cull. The pinned subtraction of
-       step 2 is the ONLY floor: on the corrected (numerically floor-subtracted)
-       input, ``--floor auto`` finds the mode of the remaining dim background
-       (0.198 / 0.259 of the unit-scale frame on the two channels, measured
-       2026-09-10) and removes the whole dim band -- background actin ruffles
-       and most of the membrane sheet -- before fitting. On the 2026-08 input,
-       which was numerically raw despite its attrs, the same flag found the
-       camera pedestal once and was harmless; that is why it was in the recipe.
+    4. ``batch-fit run`` on the RAW assembled array: 100 timepoints, one uniform
+       tile each, ``n2s`` preset, 64k seeds, ``--floor none`` (every frame's
+       minimum is 0, so nothing is subtracted; see step 2), no fit-time cull.
     5. (Removed 2026-09.) The 2026-08 build redundancy-culled every tile at
        threshold 0.20, validated by SSIM. Per-frame PSNR against the raw frame
        showed the cull removing bright nuclear splats as "redundant" with the
@@ -212,10 +213,10 @@ CHANNELS = [
         "source_flag": "source-membranes",
         #: Durable upstream TIFF tree.
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Membranes/Deconvolved",
-        #: Global background floor, measured ONCE on this channel and recorded.
-        #: Re-measuring would drift. It is subtracted before the fit, and the fit
-        #: itself runs with `--floor none` so nothing is subtracted twice.
-        "background_floor": 105.9911880493164,
+        #: Camera pedestal, measured ONCE on this channel and recorded (step 2).
+        #: Provenance and scoring basis only: it stays IN the data, because a fit
+        #: of the pedestal-subtracted frame loses the faint background structure.
+        "camera_pedestal": 105.9911880493164,
         #: What the recipe must reproduce. The uncelled 2026-09 rebuild keeps every
         #: seed (64,000 x 100 frames); the 2026-08 redundancy-culled build had
         #: 5,864,440 ("Wrote single stream lod: 5,864,440 splats, 4D").
@@ -233,7 +234,7 @@ CHANNELS = [
         "layer_order": 20,
         "source_flag": "source-nuclei",
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
-        "background_floor": 103.88801574707031,
+        "camera_pedestal": 103.88801574707031,
         # 2026-09 uncelled rebuild: every seed kept (2026-08 culled build: 5,530,300).
         "expected_splats": 6_400_000,
     },
@@ -288,9 +289,6 @@ EXPOSURE_STOPS = -3.4
 #: Array name inside the background-subtracted intermediate group. Named rather
 #: than left at the store root because the writer facade creates arrays UNDER a
 #: group, and rooting an array directly would mean bypassing it.
-BGSUB_ARRAY_KEY = "volume"
-
-
 @contextmanager
 def _open_source(path: Path) -> Iterator[Any]:
     """Yield a channel source's 4D array and close any zip store afterwards.
@@ -318,77 +316,22 @@ def _open_source(path: Path) -> Iterator[Any]:
             store.close()
 
 
-def _subtract_background(src: Path, out: Path, floor: float) -> Path:
-    """Write ``src - floor`` (clipped at 0) under ``out``, one timepoint at a time.
+def _validate_source(src: Path) -> tuple[int, ...]:
+    """Refuse a wrong-shaped or array-less source before the GPU is touched.
 
-    Streamed rather than vectorised over the whole array because a channel is
-    100 x 84 x 580 x 576 float32 = 11.2 GB, and one expression would hold the
-    input, the shifted copy and the clipped copy at once.
-
-    Returns the path of the written group; the array is ``out/<BGSUB_ARRAY_KEY>``.
+    The fit reads the RAW assembled array directly (docstring step 2: the camera
+    pedestal is kept), so this is the only step between the source and
+    ``batch-fit run`` and the only place a wrong file is caught cheaply.
     """
-    from luxar._zarr_compat import create_array, open_group
-
     with _open_source(src) as array:
         shape = tuple(getattr(array, "shape", ()) or ())
-        if shape != SOURCE_SHAPE:
-            raise SystemExit(
-                f"{src.name} has shape {shape or 'no array at its root'}, want "
-                f"{SOURCE_SHAPE}. Both channels of this recording share that extent, "
-                f"so a mismatch means the wrong file or a partial assembly."
-            )
-        with asection(f"Subtracting background floor {floor:.4f} -> {out.name}"):
-            group = open_group(out, mode="w")
-            dest = create_array(
-                group,
-                BGSUB_ARRAY_KEY,
-                shape=SOURCE_SHAPE,
-                dtype="float32",
-                # One timepoint per chunk: every consumer downstream (the fit and
-                # this loop) reads exactly one timepoint at a time.
-                chunks=(1,) + SOURCE_SHAPE[1:],
-                compressor=None,
-            )
-            src_max = -np.inf
-            dst_max = -np.inf
-            dst_min = np.inf
-            for t in range(SOURCE_SHAPE[0]):
-                frame = np.asarray(array[t], dtype=np.float32)
-                src_max = max(src_max, float(frame.max()))
-                np.subtract(frame, np.float32(floor), out=frame)
-                np.clip(frame, 0.0, None, out=frame)
-                dst_max = max(dst_max, float(frame.max()))
-                dst_min = min(dst_min, float(frame.min()))
-                dest[t] = frame
-            # Assert the subtraction numerically. The 2026-08 archive was fitted from
-            # a store whose attrs claimed this floor while its values were the RAW
-            # recording (max(bgsub) == max(raw)); the scorer then subtracted the floor
-            # a second time and the shipped frames read ~21 dB low. Never trust the
-            # attr alone: the written maximum must sit exactly one floor below the
-            # source maximum, and nothing may be left negative (the clip).
-            expected_max = src_max - float(floor)
-            if (
-                abs(dst_max - expected_max) > 1e-3 * max(1.0, abs(expected_max))
-                or dst_min < 0.0
-            ):
-                raise RuntimeError(
-                    f"{out.name}: floor subtraction not applied as recorded: max(src)={src_max:.4f}, "
-                    f"floor={floor:.4f}, max(bgsub)={dst_max:.4f} (expected {expected_max:.4f}), "
-                    f"min(bgsub)={dst_min:.4f} (expected >= 0)."
-                )
-            aprint(
-                f"floor assertion OK: max(src)={src_max:.3f} -> max(bgsub)={dst_max:.3f} "
-                f"= max(src) - {floor:.4f}; min(bgsub)={dst_min:.1f}"
-            )
-            dest.attrs["axes"] = SOURCE_AXES
-            dest.attrs["background_floor"] = float(floor)
-            dest.attrs["background_floor_asserted"] = {
-                "source_max": src_max,
-                "bgsub_max": dst_max,
-                "bgsub_min": dst_min,
-            }
-            dest.attrs["source"] = str(src)
-    return out
+    if shape != SOURCE_SHAPE:
+        raise SystemExit(
+            f"{src.name} has shape {shape or 'no array at its root'}, want "
+            f"{SOURCE_SHAPE}. Both channels of this recording share that extent, "
+            f"so a mismatch means the wrong file or a partial assembly."
+        )
+    return shape
 
 
 def _validate_rebuilt_channel(channel: dict, leaves: Sequence[Any]) -> int:
@@ -408,20 +351,18 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
     """Refit one channel end to end and return its finished archive."""
     name = str(channel["name"])
     with asection(f"Recomputing the {name} channel"):
-        bgsub = work_dir / f"{name}_bgsub.zarr"
         fit_dir = work_dir / f"{name}_fit"
         final = work_dir / str(channel["file"])
 
-        _subtract_background(source, bgsub, float(channel["background_floor"]))
+        _validate_source(source)
 
+        # The RAW array, root-level (no --array-key): the pedestal stays in.
         run_luxar_cli(
             "gsplat",
             "batch-fit",
             "run",
-            str(bgsub),
+            str(source),
             str(fit_dir),
-            "--array-key",
-            BGSUB_ARRAY_KEY,
             "--axes",
             SOURCE_AXES,
             "--tiling",
@@ -432,7 +373,7 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
             PRESET,
             "--seeds",
             str(SEEDS),
-            # The pinned subtraction above is the only floor (docstring step 4).
+            # Nothing is subtracted (docstring steps 2 and 4).
             "--floor",
             "none",
             # No fit-time cull (0 keeps every splat): the fit's own pruning of

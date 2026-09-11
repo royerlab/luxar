@@ -2,10 +2,9 @@
 
 Six things here are worth pinning, each with a quiet failure mode:
 
-1. **The background subtraction.** A single measured floor per channel,
-   subtracted with a clip at 0. Forgetting the clip leaves negative intensities,
-   which the fitter reads as signal; re-measuring the floor instead of using the
-   recorded one drifts the whole fit.
+1. **The source contract.** The fit reads the RAW assembled array (the camera
+   pedestal is kept, see the demo docstring's step 2), so the only thing between
+   the source and the GPU is the shape check; a wrong file must fail there.
 2. **Two sources, not one.** The channels were acquired and assembled
    separately, so the recompute needs a path per channel and the two floors are
    different. A single ``--source`` would fit one channel twice.
@@ -148,55 +147,20 @@ def _tiny_gsplat_store(path: Path) -> Path:
     return path
 
 
-class TestTheBackgroundSubtractionIsClippedAtZero:
-    def test_values_below_the_floor_become_zero_not_negative(self, tmp_path):
-        values = np.full(SMALL, 5.0, dtype=np.float32)
-        values[0, 0, 0, 0] = 100.0
-        src = _source(tmp_path, values=values)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=10.0)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        data = np.asarray(out[:])
-        assert data.min() == 0.0, "a negative intensity reads to the fitter as signal"
-        assert data[0, 0, 0, 0] == pytest.approx(90.0)
-
-    def test_the_floor_is_subtracted_not_divided_out(self, tmp_path):
-        values = np.full(SMALL, 30.0, dtype=np.float32)
-        src = _source(tmp_path, values=values)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=10.0)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        assert np.asarray(out[:]).max() == pytest.approx(20.0)
-
-    def test_the_floor_actually_used_is_recorded_on_the_output(self, tmp_path):
+class TestTheSourceIsValidatedBeforeTheGpu:
+    def test_the_full_recording_is_accepted(self, tmp_path):
         src = _source(tmp_path)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=7.25)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        assert dict(out.attrs)["background_floor"] == pytest.approx(7.25)
-        assert dict(out.attrs)["axes"] == demo.SOURCE_AXES
+        assert demo._validate_source(src) == SMALL
 
-    def test_the_floor_assertion_is_recorded_on_the_output(self, tmp_path):
-        """The 2026-08 archive was fitted from a store whose attrs claimed a floor
-        that its values never had. The rebuild checks max(bgsub) == max(src) - floor
-        numerically and writes the three numbers it checked beside the floor."""
-        values = np.full(SMALL, 5.0, dtype=np.float32)
-        values[1, 2, 3, 4] = 105.0
-        src = _source(tmp_path, values=values)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=10.0)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        asserted = dict(out.attrs)["background_floor_asserted"]
-        assert asserted["source_max"] == pytest.approx(105.0)
-        assert asserted["bgsub_max"] == pytest.approx(95.0)
-        assert asserted["bgsub_min"] == 0.0
+    def test_a_mismatched_extent_is_refused_before_the_gpu(self, tmp_path):
+        src = _source(tmp_path, shape=(SMALL[0], SMALL[1] + 1) + SMALL[2:])
+        with pytest.raises(SystemExit, match="has shape"):
+            demo._validate_source(src)
 
-    def test_every_timepoint_is_written_not_just_the_first(self, tmp_path):
-        """The loop writes per timepoint; an off-by-one leaves the tail at zero,
-        which looks like a dark stretch of the movie rather than an error."""
-        values = np.full(SMALL, 20.0, dtype=np.float32)
-        src = _source(tmp_path, values=values)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=5.0)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        data = np.asarray(out[:])
-        for t in range(SMALL[0]):
-            assert data[t].min() == pytest.approx(15.0), f"timepoint {t} not written"
+    def test_a_store_with_no_array_at_its_root_is_refused(self, tmp_path):
+        open_group(tmp_path / "empty.zarr", mode="w")
+        with pytest.raises(SystemExit, match="no array at its root"):
+            demo._validate_source(tmp_path / "empty.zarr")
 
     def test_a_zip_store_is_closed_after_the_streamed_read(self, tmp_path):
         import zarr
@@ -212,18 +176,6 @@ class TestTheBackgroundSubtractionIsClippedAtZero:
             opened_store = opened.store
             assert opened_store._is_open
         assert not opened_store._is_open
-
-
-class TestAWrongShapedSourceIsRefused:
-    def test_a_mismatched_extent_is_refused_before_the_gpu(self, tmp_path):
-        src = _source(tmp_path, shape=(4, 3, 5, 7))
-        with pytest.raises(SystemExit, match="want"):
-            demo._subtract_background(src, tmp_path / "out.zarr", floor=1.0)
-
-    def test_a_store_with_no_array_at_its_root_is_refused(self, tmp_path):
-        open_group(tmp_path / "empty.zarr", mode="w")
-        with pytest.raises(SystemExit, match="no array at its root"):
-            demo._subtract_background(tmp_path / "empty.zarr", tmp_path / "o.zarr", 1.0)
 
 
 class TestBothChannelsNeedTheirOwnSource:
@@ -246,11 +198,11 @@ class TestBothChannelsNeedTheirOwnSource:
         assert "--source-nuclei" in str(exc.value)
         assert "--source-membranes" not in str(exc.value)
 
-    def test_the_two_channels_carry_different_floors(self):
+    def test_the_two_channels_carry_different_pedestals(self):
         """They were assembled separately from different acquisitions, so a
-        shared floor would be wrong for at least one of them."""
-        floors = {ch["name"]: ch["background_floor"] for ch in demo.CHANNELS}
-        assert len(set(floors.values())) == 2
+        shared pedestal value would be wrong for at least one of them."""
+        pedestals = {ch["name"]: ch["camera_pedestal"] for ch in demo.CHANNELS}
+        assert len(set(pedestals.values())) == 2
 
     def test_the_expected_counts_are_the_uncelled_seed_budget(self):
         """With no cull anywhere (fit-time retention 0, no post-fit step) every
@@ -377,7 +329,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE == 95.0
         assert demo.BACKGROUND_FLOOR_HISTOGRAM_BINS == 512
         assert demo.BACKGROUND_FLOOR_REDUCTION == "median"
-        floors = {ch["name"]: ch["background_floor"] for ch in demo.CHANNELS}
+        floors = {ch["name"]: ch["camera_pedestal"] for ch in demo.CHANNELS}
         assert floors == {
             "membranes": 105.9911880493164,
             "nuclei": 103.88801574707031,
@@ -440,7 +392,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
                 (Path(args[4]) / "merged" / "final.gsplats.zarr").mkdir(parents=True)
 
         monkeypatch.setattr(demo, "run_luxar_cli", fake_cli)
-        monkeypatch.setattr(demo, "_subtract_background", lambda *a, **k: None)
+        monkeypatch.setattr(demo, "_validate_source", lambda src: None)
         monkeypatch.setattr(demo, "load_gsplat_node", lambda *a, **k: (None, None))
         monkeypatch.setattr(demo, "iter_leaves", lambda node: [])
         monkeypatch.setattr(
@@ -460,6 +412,9 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         # The pinned subtraction is the only floor; `auto` on the subtracted input
         # removed the dim band (floor 0.198 / 0.259 of the frame, 2026-09-10).
         assert fit[fit.index("--floor") + 1] == "none"
+        # The raw root-level array is the fit input; nothing is pre-subtracted.
+        assert fit[3] == str(tmp_path / "src.zarr")
+        assert "--array-key" not in fit
         assert not hasattr(demo, "REDUNDANCY_THRESHOLD")
 
     def test_the_seed_budget_is_the_calibrated_k_star(self):
