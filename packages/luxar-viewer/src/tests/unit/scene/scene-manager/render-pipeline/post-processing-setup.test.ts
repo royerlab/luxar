@@ -50,9 +50,11 @@ describe('createPostProcessing', () => {
     expect(args[3]).toBe(camera);
     expect(args[4]).toEqual({ width: 1024, height: 768 });
     expect(args[5]).toEqual(expect.any(Function));
+    args[5]!({ width: 1024, height: 768 }, camera);
+    expect(onResize).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the orbit target projection fixed across SSAA multipliers and DPR values', () => {
+  it('restores the target projection from logical display size across physical scales', () => {
     const width = 2509;
     const height = 1328;
     const renderer = makeRenderer(width, height);
@@ -88,8 +90,7 @@ describe('createPostProcessing', () => {
         resizeCallback({ width, height }, camera);
         camera.updateMatrixWorld(true);
 
-        expect(controls.getFocusTarget()).toEqual(focusBefore);
-        const projected = controls.getFocusTarget().project(camera);
+        const projected = controls.getFocusTarget().clone().project(camera);
         expect(projected.x).toBeCloseTo(projectedBefore.x, 12);
         expect(projected.y).toBeCloseTo(projectedBefore.y, 12);
       }

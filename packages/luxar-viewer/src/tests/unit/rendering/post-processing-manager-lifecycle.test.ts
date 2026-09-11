@@ -34,6 +34,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../../../rendering/material-manager';
+import { createPostProcessing } from '../../../scene/scene-manager/render-pipeline/post-processing-setup';
 import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import type { DataRefractionSplit } from '../../../rendering/post-processing/post-processing-manager/refraction-split';
 import { getGlassDepthTexture } from '../../../rendering/materials/_shared/glass-partition';
@@ -325,6 +326,42 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.setCamera(replacementCamera);
     mgr.resize(96, 96);
     expect(onResize).toHaveBeenCalledWith({ width: 96, height: 96 }, replacementCamera);
+
+    mgr.dispose();
+  });
+
+  it('keeps a projected pivot fixed when the SSAA multiplier changes', () => {
+    const width = 2509;
+    const height = 1328;
+    const renderer = makeMockRenderer({ pixelRatio: 2 });
+    Object.defineProperty(renderer.domElement, 'clientWidth', { value: width });
+    Object.defineProperty(renderer.domElement, 'clientHeight', { value: height });
+    const capabilities = mockCaps('webgl2', {
+      maxTextureSize: 32768,
+      maxRenderbufferSize: 32768,
+    });
+    materialManager.setCaps(capabilities);
+    const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+    camera.position.set(10, 5, 12);
+    camera.lookAt(new THREE.Vector3(1, 0, 0));
+    camera.updateMatrixWorld(true);
+    const pivot = new THREE.Vector3(4, -2, 1);
+    const projectedBefore = pivot.clone().project(camera);
+    const mgr = createPostProcessing({
+      renderer,
+      capabilities,
+      scene: new THREE.Scene(),
+      camera,
+      onResize: vi.fn(),
+    });
+
+    mgr.setSSAAEnabled(true);
+    mgr.setSSAAMultiplier(3);
+    camera.updateMatrixWorld(true);
+
+    const projectedAfter = pivot.clone().project(camera);
+    expect(projectedAfter.x).toBeCloseTo(projectedBefore.x, 12);
+    expect(projectedAfter.y).toBeCloseTo(projectedBefore.y, 12);
 
     mgr.dispose();
   });
