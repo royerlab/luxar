@@ -61,9 +61,8 @@ describe('createPostProcessing', () => {
     const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
     const controls = new ControlsManager(camera, renderer.domElement, scene);
     const target = new THREE.Vector3(4, -2, 1);
-    const projectedPoint = new THREE.Vector3(6, -1, 2);
     camera.position.set(10, 5, 12);
-    camera.lookAt(target);
+    camera.lookAt(new THREE.Vector3(1, 0, 0));
     camera.updateMatrixWorld(true);
     controls.setTarget(target);
 
@@ -76,7 +75,8 @@ describe('createPostProcessing', () => {
     });
     const resizeCallback = vi.mocked(PostProcessingManager).mock.calls.at(-1)![5]!;
     const focusBefore = controls.getFocusTarget();
-    const projectedBefore = projectedPoint.clone().project(camera);
+    const projectedBefore = focusBefore.clone().project(camera);
+    expect(Math.abs(projectedBefore.x) + Math.abs(projectedBefore.y)).toBeGreaterThan(0.1);
 
     for (const dpr of [1, 1.5, 2]) {
       for (const multiplier of [1, 1.5, 2, 3, 4]) {
@@ -89,7 +89,7 @@ describe('createPostProcessing', () => {
         camera.updateMatrixWorld(true);
 
         expect(controls.getFocusTarget()).toEqual(focusBefore);
-        const projected = projectedPoint.clone().project(camera);
+        const projected = controls.getFocusTarget().project(camera);
         expect(projected.x).toBeCloseTo(projectedBefore.x, 12);
         expect(projected.y).toBeCloseTo(projectedBefore.y, 12);
       }
