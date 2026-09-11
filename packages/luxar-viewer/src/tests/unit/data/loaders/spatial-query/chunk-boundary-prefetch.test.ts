@@ -70,6 +70,18 @@ describe('planChunkBoundaryViewStates', () => {
     expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([2]);
   });
 
+  it('searches behind the predicted slice after a reverse multi-step scrub', () => {
+    const views = planChunkBoundaryViewStates(
+      view(6),
+      view(2),
+      [{ start: 600, end: 700 }],
+      index(),
+      [{ shape: [800], chunks: [200] }]
+    );
+
+    expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([2, 1]);
+  });
+
   it('keeps one-step prefetch when several hidden axes move', () => {
     const current = { ...view(1), displayDims: [0, 1], slicePosition: [0, 0, 1, 1] };
     const predicted = { ...view(2), displayDims: [0, 1], slicePosition: [0, 0, 2, 2] };
