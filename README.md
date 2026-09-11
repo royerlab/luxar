@@ -27,7 +27,7 @@ Three ideas carry most of the design:
   Gaussians instead of shipped as voxel grids — which is what lets a 3.3 GB
   light-sheet stack, or a 400-timepoint timelapse, travel over a network at all.
 
-**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 86 live demos, no
+**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 90 live demos, no
 install. Or open your own data in the hosted viewer:
 [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
@@ -914,7 +914,7 @@ layout and how to add a new skill.
 | Document | Description |
 |----------|-------------|
 | **[Documentation site](https://royerlab.github.io/luxar/)** | Tutorials, guides, format specs, and the generated Python + TypeScript API reference |
-| **[Live demo gallery](https://demos.luxarviewer.dev)** | 86 demos as interactive scenes in the browser |
+| **[Live demo gallery](https://demos.luxarviewer.dev)** | 90 demos as interactive scenes in the browser |
 | **[Hosted viewer](https://luxarviewer.dev)** | Open any reachable scene: `luxarviewer.dev/?src=<url>` |
 | [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md) | How the two sites above are hosted and published |
 | [Python Package README](packages/luxar/README.md) | Full Python API documentation |

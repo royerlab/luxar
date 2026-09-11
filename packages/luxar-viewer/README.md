@@ -2,7 +2,7 @@
 
 A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific datasets stored in Zarr format. Delivers maximum visualization performance limited only by your graphics hardware, display resolution, and network bandwidth—not by software constraints. Features advanced HDR rendering, real-time effects, and intuitive navigation controls.
 
-**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 86 live demos as interactive scenes, no install. To open your own compiled archive, the viewer is deployed on its own at [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
+**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 90 live demos as interactive scenes, no install. To open your own compiled archive, the viewer is deployed on its own at [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
 ## ✨ Features
 
