@@ -750,6 +750,8 @@ to counts.
   selects the coarsest level at or below 1.5 px. If any child lacks a valid
   stamp, the whole ladder keeps the occupancy selector unchanged. `lod-bias`
   remains an area factor, so the accepted footprint scales by `1/sqrt(b)`.
+  Content-changing rewrites drop this measured stamp rather than carrying a
+  stale value; rebuilding the ladder restores it.
 
 The viewer's recursive quality algebra: a leaf currently shows the estimate
 `q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its

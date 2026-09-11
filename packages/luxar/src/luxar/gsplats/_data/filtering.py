@@ -89,6 +89,7 @@ if TYPE_CHECKING:
 #: ``_data`` so this module can mirror ``refresh_reduction_lod_stats``' guard
 #: without importing the optional LOD package.
 _REDUCTION_LOD_LEVEL_STATS_KEYS = (
+    "median_footprint",
     "quality",
     "reference_energy",
     "n_splats_total",

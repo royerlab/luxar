@@ -258,6 +258,7 @@ def _refreshed_level_stats(
 ) -> dict:
     """Refresh authored structural level stamps before energy restamping."""
     stats = dict(level.stats)
+    stats.pop("median_footprint", None)
     stats.pop("quality", None)
     stats.pop("refine_stats", None)
     if "lod_n_lods" in authored.stats:
@@ -451,6 +452,7 @@ def _refresh_lod_group(result: "GSplatNode", source: "GSplatNode") -> "GSplatNod
             stamped_children.append(child)
             continue
         stats = dict(child.meta.get("stats") or {})
+        stats.pop("median_footprint", None)
         stats.pop("quality", None)
         stats.pop("refine_stats", None)
         if total_count_authored or reference_authored:
