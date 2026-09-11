@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """Capture the live Zenodo record descriptions into this directory.
 
-Read-only against Zenodo: GETs each deposition and writes what it finds. There
-is deliberately no code here that writes to Zenodo, and none that publishes.
+Read-only against Zenodo: capture mode GETs each deposition and writes what it
+finds locally; check mode compares those snapshots with public records. There is
+deliberately no code here that writes to Zenodo, and none that publishes.
 
 Usage:
     ZENODO_TOKEN=... python3 scripts/zenodo_record_text/capture.py
+    python3 scripts/zenodo_record_text/capture.py --check
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
 import pathlib
+import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from typing import Any
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -49,11 +54,15 @@ def records() -> dict[str, dict[str, Any]]:
     return manifest["records"]
 
 
-def fetch(dep: int, token: str) -> dict:
-    """GET one deposition, retrying transient Zenodo 5xx and rate limits."""
+def fetch(
+    dep: int, token: str | None = None, *, published_record: bool = False
+) -> dict[str, Any]:
+    """GET one Zenodo object, retrying transient 5xx and rate limits."""
+    endpoint = "records" if published_record else "deposit/depositions"
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     request = urllib.request.Request(
-        f"https://zenodo.org/api/deposit/depositions/{dep}",
-        headers={"Authorization": f"Bearer {token}"},
+        f"https://zenodo.org/api/{endpoint}/{dep}",
+        headers=headers,
     )
     last: Exception | None = None
     for attempt in range(6):
@@ -71,7 +80,49 @@ def fetch(dep: int, token: str) -> dict:
     raise SystemExit(f"zenodo unreachable for {dep}: {last}")
 
 
-def main() -> int:
+def check_snapshots() -> int:
+    """Compare captured record state with Zenodo's public record endpoint."""
+    index = json.loads((HERE / "records.json").read_text(encoding="utf-8"))
+    drift = False
+    for key, record in records().items():
+        dep = int(record["zenodo_record"])
+        published = fetch(dep, published_record=True)
+        description = published["metadata"]["description"]
+        expected = index.get(key, {})
+        actual = {
+            "description_sha256": hashlib.sha256(
+                description.encode("utf-8")
+            ).hexdigest(),
+            "description_chars": len(description),
+            "submitted": published.get("submitted"),
+            "zenodo_modified": published.get("modified"),
+        }
+        mismatches = [
+            field for field, value in actual.items() if expected.get(field) != value
+        ]
+        if not mismatches:
+            print(f"{key:16s} OK")
+            continue
+        drift = True
+        for field in mismatches:
+            print(f"{key} {field}: {expected.get(field)!r} != {actual[field]!r}")
+    return int(drift)
+
+
+def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="compare snapshots with public Zenodo records without writing",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] = ()) -> int:
+    args = _parse_args(argv)
+    if args.check:
+        return check_snapshots()
     token = os.environ.get("ZENODO_TOKEN")
     if not token:
         raise SystemExit("set ZENODO_TOKEN")
@@ -109,4 +160,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

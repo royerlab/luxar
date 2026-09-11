@@ -1,6 +1,8 @@
 # Zenodo record descriptions, as published
 
 The four Zenodo record descriptions, captured verbatim from the live records.
+They are stored byte-for-byte as the API returns them, including markup and line
+wrapping; never reformat these files, only re-capture them.
 
 **These files are the authoritative text, not `gen_zenodo_records.py`'s output.**
 The published descriptions are hand-maintained: they carry framing, provenance
@@ -21,6 +23,10 @@ Descriptions are edited on Zenodo by the maintainer, so this directory follows
 rather than leads. Re-capture with a token in `ZENODO_TOKEN`:
 
     python3 scripts/zenodo_record_text/capture.py
+
+Check for drift without a token or modifying the snapshots:
+
+    python3 scripts/zenodo_record_text/capture.py --check
 
 Commit the result. A changed `description_sha256` with no accompanying commit
 means someone edited a record and the repo has not caught up.

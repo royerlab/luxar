@@ -56,6 +56,7 @@ class Result:
 AUDITS = (
     Audit("Documentation links", ("make", "check-docs-external-links")),
     Audit("Demo click-throughs", ("make", "check-demo-links"), parse_levels=True),
+    Audit("Zenodo record snapshots", ("make", "check-zenodo-snapshots")),
     Audit(
         "Zenodo manifest pins",
         ("make", "check-zenodo-live"),
