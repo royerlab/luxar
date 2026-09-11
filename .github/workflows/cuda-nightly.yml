@@ -1,0 +1,55 @@
+name: CUDA native cadence
+
+# Dispatched by the off-peak timer in royerlab/luxar-ci with `--ref dev`.
+# Keeping this out of `schedule:` is load-bearing: scheduled workflows follow
+# the repository default branch, while this check must attest the dev commit.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cuda-native:
+    name: CUDA compile and parity (two GPUs)
+    runs-on: [self-hosted, obsidian-cuda]
+    permissions:
+      contents: read
+    timeout-minutes: 180
+    env:
+      MAX_JOBS: "4"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      TORCH_CUDA_ARCH_LIST: "8.6;12.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: setup-python
+        with:
+          python-version: "3.12"
+
+      - name: Install Hatch
+        run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
+
+      - name: Require the two-GPU CUDA runner
+        run: |
+          hatch run python -c "import torch; assert torch.cuda.is_available(); assert torch.cuda.device_count() >= 2, torch.cuda.device_count()"
+
+      - name: Compile-check CUDA translation units
+        run: hatch run check-native --only nvcc --require nvcc
+
+      - name: Build CUDA extensions
+        run: |
+          make build-cuda
+          make build-nlm-cuda
+
+      - name: Run CUDA parity suites
+        run: |
+          make test-cuda
+          make test-nlm-cuda
+
+      - name: Name the failure owner
+        if: ${{ failure() }}
+        run: |
+          echo "::error::CUDA cadence failed; owner: @royerloic"

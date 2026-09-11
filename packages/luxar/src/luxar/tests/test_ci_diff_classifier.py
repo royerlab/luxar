@@ -46,6 +46,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
 COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
+CUDA_WORKFLOW = REPO / ".github/workflows/cuda-nightly.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -1687,6 +1688,27 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     }
     assert "not cancelling" in watchdog["steps"][1]["run"]
     assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
+
+
+def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
+    """CUDA parity must run only on its dedicated, two-GPU obsidian slot."""
+    parsed = yaml.safe_load(CUDA_WORKFLOW.read_text(encoding="utf-8"))
+    assert parsed[True] == {"workflow_dispatch": None}
+
+    assert set(parsed["jobs"]) == {"cuda-native"}
+    job = parsed["jobs"]["cuda-native"]
+    assert job["runs-on"] == ["self-hosted", "obsidian-cuda"]
+    assert job["permissions"] == {"contents": "read"}
+
+    run_steps = [step["run"] for step in job["steps"] if "run" in step]
+    commands = "\n".join(run_steps)
+    assert "torch.cuda.device_count() >= 2" in commands
+    assert "hatch run check-native --only nvcc --require nvcc" in commands
+    assert "make build-cuda" in commands
+    assert "make build-nlm-cuda" in commands
+    assert "make test-cuda" in commands
+    assert "make test-nlm-cuda" in commands
+    assert "owner: @royerloic" in commands
 
 
 def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:
