@@ -66,6 +66,7 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import zarr
 from arbol import aprint, asection
 
@@ -221,24 +222,34 @@ def _slice_ordering(level: Any) -> tuple[list[int], int, str] | None:
 
 
 def _busiest_slice_elements(level: Any) -> int | None:
-    """Exact largest resident-slice count from barrier-pure chunk bounds."""
+    """Exact largest resident-slice count from one-dimensional chunk bounds."""
     ordering = _slice_ordering(level)
     if ordering is None:
         return None
     dims, chunk_size, bounds_name = ordering
+    if len(dims) != 1:
+        return None
     total = _element_count(dict(level.attrs))
-    bounds = level[bounds_name]
+    bounds = np.asarray(level[bounds_name][:])
     expected_chunks = (total + chunk_size - 1) // chunk_size
     if total < 1 or bounds.shape[0] != expected_chunks:
         return None
-    counts: Counter[tuple[object, ...]] = Counter()
+    dim = dims[0]
+    events: list[tuple[float, int, int]] = []
     for index in range(expected_chunks):
         rows = min(chunk_size, total - index * chunk_size)
-        key = tuple(
-            (float(bounds[index, dim, 0]), float(bounds[index, dim, 1])) for dim in dims
-        )
-        counts[key] += rows
-    return max(counts.values(), default=0)
+        lo = float(bounds[index, dim, 0])
+        hi = float(bounds[index, dim, 1])
+        if not np.isfinite(lo) or not np.isfinite(hi) or lo > hi:
+            return None
+        events.append((lo, 0, rows))
+        events.append((hi, 1, -rows))
+    current = 0
+    busiest = 0
+    for _, _, delta in sorted(events):
+        current += delta
+        busiest = max(busiest, current)
+    return busiest
 
 
 def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:

@@ -72,16 +72,14 @@ def _add_slice_bounds(
     level: zarr.Group,
     *,
     chunk_size: int,
-    coordinates: list[int],
-    extend_to_all: bool = False,
+    coordinates: list[int | tuple[int, int]],
 ) -> None:
-    """Stamp one barrier-pure chunk per coordinate on a synthetic level."""
+    """Stamp synthetic one-axis chunk bounds, including mixed boundary chunks."""
     level.attrs.update({"slice_dims": [3], "chunk_size": chunk_size})
-    if extend_to_all:
-        level.attrs["extend_to_all"] = ["time"]
     bounds = np.zeros((len(coordinates), 4, 2), dtype=np.float32)
     for index, coordinate in enumerate(coordinates):
-        bounds[index, 3] = (coordinate - 1e-5, coordinate + 1e-5)
+        lo, hi = coordinate if isinstance(coordinate, tuple) else (coordinate,) * 2
+        bounds[index, 3] = (lo - 1e-5, hi + 1e-5)
     level.create_array("chunk_bounds", data=bounds)
 
 
@@ -135,7 +133,9 @@ def test_absolute_level_cap_uses_the_busiest_barrier_ordered_slice(
     leaf = _make_leaf(tmp_path / "sliced.zarr", [120, 120, 120])
     for index in range(3):
         _add_slice_bounds(
-            leaf[f"additive_{index}"], chunk_size=40, coordinates=[0, 1, 1]
+            leaf[f"additive_{index}"],
+            chunk_size=40,
+            coordinates=[0, (0, 1), 1],
         )
 
     status, message = _check(leaf, max_level_elements=70)
