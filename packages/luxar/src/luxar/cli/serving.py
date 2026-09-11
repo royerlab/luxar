@@ -22,13 +22,14 @@ from typing import Any, Callable, Iterator, MutableMapping, Optional, Union, cas
 
 import uvicorn
 from arbol import aprint
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 from starlette.routing import Mount
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .control_hub import ROLE_CONTROLLER, ControlHub
 from .network_simulation import (
     NetworkSimulationMiddleware,
     has_network_simulation,
@@ -374,8 +375,35 @@ def create_server_app(
     return api
 
 
+def _add_control_hub(api: FastAPI, *, token: Optional[str] = None) -> ControlHub:
+    """Mount the remote-control WebSocket endpoint at ``/control``.
+
+    The hub rides on the VIEWER app because that app serves both the viewer and
+    the control panel, so the socket is same-origin with both pages and neither
+    needs a URL to find it. Returns the hub (also stashed on ``api.state``) so
+    a test can inspect its attachment counts.
+    """
+    hub = ControlHub(token=token)
+
+    @api.websocket("/control")
+    async def control_socket(
+        websocket: WebSocket,
+        role: str = ROLE_CONTROLLER,
+        token: Optional[str] = None,
+    ) -> None:
+        """Attach one party to the hub. Role and token arrive as query params."""
+        await hub.serve(websocket, role, token)
+
+    api.state.control_hub = hub
+    return hub
+
+
 def _build_viewer_app(
-    viewer_dist: Path, *, cors_origin: str = _DEFAULT_CORS_ORIGIN
+    viewer_dist: Path,
+    *,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
+    control: bool = False,
+    control_token: Optional[str] = None,
 ) -> FastAPI:
     """Build the viewer-server FastAPI app for ``viewer_dist``.
 
@@ -384,6 +412,13 @@ def _build_viewer_app(
     """
     api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
     _add_cors(api, cors_origin)
+    if control:
+        _add_control_hub(api, token=control_token)
+    # AFTER the control route, and that order is load-bearing: starlette matches
+    # routes in declaration order and a ``Mount`` at "/" swallows every path
+    # below it, WebSocket paths included. Registered the other way round,
+    # /control would 404 through the static handler — which
+    # TestViewerAppWiring pins, and that pin is verified to fire.
     api.mount("/", _ViewerStaticFiles(directory=str(viewer_dist), html=True))
     return api
 
@@ -395,6 +430,8 @@ def _serve_viewer(
     open_browser_flag: bool = True,
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
     title: Optional[str] = None,
+    control: bool = False,
+    control_token: Optional[str] = None,
 ) -> None:
     """Internal function to serve the viewer.
 
@@ -412,10 +449,19 @@ def _serve_viewer(
             commands derive it from the dataset file name
             (:func:`luxar.cli.utils.dataset_title`); a scene's authored
             ``viewer_config.title`` overrides it in the viewer.
+        control: If True, expose the remote-control hub at ``/control`` and
+            hand the viewer ``&control`` so the display attaches to it.
+        control_token: Shared secret every control socket must present as
+            ``?token=``. ``None`` leaves the hub open to the bound interface.
     """
     viewer_dist = get_viewer_dist_path()
 
-    api = _build_viewer_app(viewer_dist, cors_origin=cors_origin)
+    api = _build_viewer_app(
+        viewer_dist,
+        cors_origin=cors_origin,
+        control=control,
+        control_token=control_token,
+    )
 
     # Construct viewer URL - ensure data_url has no trailing slash
     if data_url:
@@ -429,7 +475,18 @@ def _serve_viewer(
     else:
         viewer_url = f"http://{host}:{port}/"
 
+    if control:
+        from urllib.parse import quote
+
+        # A bare flag, not a URL: the viewer derives ws://<same host>/control
+        # from its own location, so this survives a reverse proxy and an export.
+        viewer_url += "&control" if "?" in viewer_url else "?control"
+        if control_token:
+            viewer_url += f"&controlToken={quote(control_token, safe='')}"
+
     aprint(f"🌐 Viewer available at: {viewer_url}")
+    if control:
+        aprint(f"🎛️  Control hub listening at: ws://{host}:{port}/control")
 
     if open_browser_flag:
         # uvicorn.run blocks THIS thread, so a same-thread open must fire

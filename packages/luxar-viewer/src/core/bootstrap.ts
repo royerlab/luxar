@@ -336,6 +336,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // init pipeline reads options, never window.location.
     lodFade: urlParams.lodFade,
     allowLinks: urlParams.allowLinks,
+    // Already resolved and validated by `normalizeControlSocketUrl`; null when
+    // `?control` was absent or its value was refused.
+    control: urlParams.control,
+    controlToken: urlParams.controlToken,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
     densityGuard: urlParams.densityGuard,

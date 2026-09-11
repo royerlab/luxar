@@ -213,6 +213,16 @@ def serve(
     packet_loss: PacketLossOption = None,
     cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
     allow_sensitive_path: AllowSensitivePathOption = False,
+    control: bool = typer.Option(
+        False,
+        "--control",
+        help="Expose the remote-control hub at /control (kiosk touch panels, agents)",
+    ),
+    control_token: Optional[str] = typer.Option(
+        None,
+        "--control-token",
+        help="Require this shared secret as ?token= on every control socket",
+    ),
 ) -> None:
     """Serve a directory, Zarr dataset, or viewer via HTTP.
 
@@ -257,7 +267,15 @@ def serve(
             if actual_viewer_port is None:
                 raise typer.Exit(1)
 
-            _serve_viewer(host, actual_viewer_port, None, open_browser, cors_origin)
+            _serve_viewer(
+                host,
+                actual_viewer_port,
+                None,
+                open_browser,
+                cors_origin,
+                control=control,
+                control_token=control_token,
+            )
             return
 
         # Require path for data serving
@@ -326,7 +344,11 @@ def serve(
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
                     args=(host, actual_viewer_port, data_url, False, cors_origin),
-                    kwargs={"title": dataset_title(serve_path)},
+                    kwargs={
+                        "title": dataset_title(serve_path),
+                        "control": control,
+                        "control_token": control_token,
+                    },
                     daemon=True,
                 )
                 viewer_thread.start()

@@ -229,4 +229,22 @@ export interface LuxarAppOptions {
    * still fire, so a host can implement its own behaviour instead.
    */
   allowLinks?: boolean;
+
+  /**
+   * Attach to a remote-control hub at this WebSocket URL, letting an external
+   * controller (a kiosk touch panel, a script, an agent) drive this viewer
+   * through the embedder API. Undefined or null ⇒ no channel is opened.
+   *
+   * Mirrors `UrlParams.control` (`?control`), which the standalone bootstrap
+   * threads here already validated — an embedder passing this directly is
+   * responsible for the URL it supplies. See
+   * `core/app/control/control-client.ts` for what a controller may call.
+   */
+  control?: string | null;
+
+  /**
+   * Shared secret presented to the hub as `?token=` (`luxar serve
+   * --control-token`). Mirrors `UrlParams.controlToken`.
+   */
+  controlToken?: string | null;
 }

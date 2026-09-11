@@ -1,7 +1,9 @@
 # Remote Control Spec — driving a Luxar viewer from an external program
 
-**Status:** Phase A (viewer-side API) and Phase C §4.1 (authored waypoints) are
-implemented. Phase B, Phase C §4.2 (kiosk) and Phase D are design, not code.
+**Status:** Phase A (viewer-side API), Phase B (the WebSocket hub, the viewer's
+control client and the Python controller) and Phase C §4.1 (authored waypoints)
+are implemented. Phase C §4.2 (kiosk permissions), the control-panel page, and
+Phase D are design, not code.
 
 ## 1. Purpose
 
@@ -121,7 +123,7 @@ on('camera-changed', (pose: CameraSnapshot) => void)
 `selection`, `element-click` events, a controller can mirror the viewer without
 polling.
 
-## 3. Phase B — WebSocket hub (design)
+## 3. Phase B — WebSocket hub (implemented)
 
 ### 3.1 Topology
 
@@ -131,9 +133,16 @@ several displays may all want to attach. So the **hub** lives in `luxar serve`
 
 ```
 luxar serve scene.luxar.zarr --viewer --control          # adds ws://host:port/control
-viewer:  http://host:port/?src=...&control=ws://host:port/control&kiosk
+viewer:  http://host:port/?src=...&control                 # bare flag; §3.3
 python:  luxar.control.Viewer("ws://host:port/control")
 ```
+
+The hub is mounted on the **viewer** app (`_build_viewer_app`), which is what
+makes the socket same-origin with the pages it drives. Its route is registered
+*before* the static mount, and that order is load-bearing: Starlette matches
+routes in declaration order and a `Mount` at `/` swallows every path below it,
+WebSockets included. A test pins the order, and the test is verified to fail
+when the order is wrong.
 
 The hub relays: a request from any controller goes to every attached viewer
 (or to one, when addressed by `viewer` id); a viewer's replies and events go to
@@ -156,33 +165,100 @@ JSON text frames, JSON-RPC 2.0 shape. The method set is **literally the
 { "jsonrpc": "2.0", "method": "event", "params": { "name": "dimensions-changed", "payload": { ... } } }
 ```
 
-Methods: `getViewerState`, `getCameraPose`, `setCameraPose`, `flyTo`,
-`getDimensions`, `setDimensionValue`, `getRenderingSettings`,
-`setRenderingSettings`, `getLayers`, `setLayer`, `switchDataset`, `screenshot`
-(returns a data URL), `setInputEnabled`, `subscribe` / `unsubscribe` (event
-names). Blobs and functions never cross the wire; everything else is the
-TypeScript signature verbatim.
+**`params` are positional.** JSON-RPC permits an object too; we do not use it.
+A named form needs a table mapping every method's parameter names, maintained
+on both sides of the wire, and that table drifts the first time a signature
+changes. Positional params follow mechanically from the TypeScript signature.
+The `event` notification obeys the same rule:
+`{"method": "event", "params": ["dimensions-changed", payload]}`.
+
+**The method set, stated exactly.** "The embedder API verbatim" is nearly true,
+and the exceptions are what rot if left unwritten, so:
+
+> The wire surface is every public `LuxarApp` method, minus
+> `CONTROL_EXCLUDED_METHODS` (each carrying a recorded reason), plus
+> `subscribe` / `unsubscribe`.
+
+The lists live in `core/app/control/method-policy.ts`, and a lock test scans
+`core/app.ts` and fails if a public member is in neither — so the next embedder
+method cannot land outside the policy unnoticed. Today's exclusions:
+
+| Excluded | Why |
+|---|---|
+| `dispose` | A one-frame remote kill switch with no way back, since `init` is not exposed. Every other verb is undone by sending another. |
+| `init` | Takes a canvas and a container element. |
+| `on` | Takes a listener function; `subscribe` / `unsubscribe` carry the capability by name. |
+| `registerContext`, `unregisterContext`, `registerBinding`, `unregisterBinding` | `KeyBinding.handler` is a required function, so the argument cannot be encoded. |
+| `pushContext`, `popContext` | Mutate an input-context stack whose depth a controller cannot observe. |
+| `components`, `initialized` | Property accessors; `components` returns live engine objects. |
+
+`screenshot` crosses as `{mime, base64}` rather than a `Blob`. Live `Error`
+values in event payloads become `{name, message}` — a blind `JSON.stringify`
+turns an `Error` into `{}`, which is the worst possible answer to "what went
+wrong".
 
 ### 3.3 Viewer side
 
-One module, `core/app/control/control-client.ts`: connects when `?control=` is
-present, dispatches method calls onto the live `LuxarApp` by name against an
-allow-list, forwards subscribed events, reconnects with backoff. It has no
-knowledge of what the methods do.
+One module, `core/app/control/control-client.ts`: connects when `?control` is
+present, dispatches method calls onto the live `LuxarApp` by name against the
+policy above, forwards subscribed events, reconnects with backoff. It has no
+knowledge of what the methods do. `core/app/control/README.md` is the local
+guide.
+
+**`?control` is a bare flag.** The hub rides on the app that served the page, so
+the socket address is derived from `location` — which keeps it working behind a
+reverse proxy, under `luxar export` and in the native launcher, none of which
+know their own address at authoring time. `?control=<url>` remains as a
+split-origin override and is **same-origin only** unless
+`?controlAllowCrossOrigin` is also present: otherwise a crafted
+`?src=<real>&control=ws://attacker/` link would hand an attacker both the
+display and `getViewerState()`. `normalizeControlSocketUrl` also rejects
+non-`ws`/`wss` schemes, protocol-relative addresses, credentials in the URL, an
+insecure socket from a secure page, a fragment, and any query key but `token`.
+
+**Two plumbing details that are bugs if missed.** The viewer only provisions
+picking when a `selection` / `element-*` listener exists *at dataset-load
+time*, so the client attaches to every event eagerly at construction and
+`subscribe` gates only *forwarding* — a lazily-attached client would leave
+those three events permanently dead with no error. And `camera-changed` is
+throttled to 20 Hz, because it fires at frame rate and an auto-rotating kiosk
+never stops moving.
 
 ### 3.4 Python side
 
-`luxar.control.Viewer` mirrors the method list with snake_case names and
-typed dataclasses for `CameraSnapshot` / `LayerPatch`. Synchronous facade over
-`websockets` (an async variant for the agent). Events arrive on a callback or
-an iterator. `camera-changed` is throttled by the viewer's client to
-≤ 20 Hz before it is sent.
+`luxar.control.Viewer` (`packages/luxar/src/luxar/control/`) is a synchronous
+controller: `call(method, *params)` is the engine room and the escape hatch,
+with snake_case wrappers for the handful most used —
+`get_viewer_state`, `get_dimensions`, `set_dimension_value`, `get_camera_pose`,
+`fly_to`, `recenter_camera`, `subscribe` / `unsubscribe`. A refusal arrives as
+`ControlError` carrying the JSON-RPC code, and `ControlError.no_viewer_attached`
+distinguishes "nothing is listening yet" from "that failed" — a display that has
+not booted is something a kiosk script waits for, not an error to abort on.
+
+`dimension_index(name)` resolves a dimension by name, because
+`setDimensionValue` takes a positional index and an index moves when the author
+reorders `Dimensions([...])`.
+
+An async variant (for the agent) can wrap the same wire format; nothing here
+assumes the synchronous one is the only client.
 
 ### 3.5 Security
 
-Same-host LAN kiosk by default: the hub binds the address `luxar serve` binds.
-`--control-token <t>` requires `?token=` on the WebSocket URL for controllers;
-viewers attach with the same token. No other auth is planned.
+Same-host LAN kiosk by default: the hub binds the address `luxar serve` binds,
+which is loopback unless `--host 0.0.0.0` is given. `--control-token <t>`
+requires `?token=` on the WebSocket URL, compared with `hmac.compare_digest`;
+viewers and controllers present the same token, and a wrong one is closed with
+RFC 6455 code 1008 (as is an unrecognised `?role=`). No other auth is planned.
+
+Two things to say plainly rather than imply. **A token in a query string** lands
+in browser history and in the address bar of whatever tablet is on the plinth;
+it is a LAN convenience, not a secret. **The hub is open by default**, so
+anything that can reach the socket can drive the display — including
+`switchDataset`, which is on the wire deliberately. The dispatcher runs its
+argument through the viewer's own `normalizeDataSourceUrl` (the app's method
+validates nothing), so a `file:` or `javascript:` URL is refused, but a
+reachable hub on an untrusted network is still a display someone else can
+repoint. Use `--control-token`, or do not bind past loopback.
 
 ## 4. Phase C — authored waypoints (implemented) and kiosk mode (design)
 
