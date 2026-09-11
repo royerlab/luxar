@@ -89,10 +89,10 @@ by flicker test on the companion ``gsplats_3d_culling_study`` demo.
 
 That validation was blind to what the cull cost. Scored per frame against the
 raw recording (manuscript SD14, five frames), the culled archive sat 5-8 dB
-below a fresh fit of the same frames, and an uncelled tile of the batch fit
+below a fresh fit of the same frames, and an unculled tile of the batch fit
 scored identically to the fresh fit (39.45 vs 39.46 dB): the WHOLE gap was the
 cull. The dim tail is haze in a flicker test but signal in a PSNR, so the
-recipe now ships the uncelled merge. The archive is correspondingly larger.
+recipe now ships the unculled merge. The archive is correspondingly larger.
 
 WHERE THE DATA COMES FROM
 ================================================================================
@@ -159,7 +159,7 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
         --gpus 0 --jobs-per-gpu 2 \
         --merge-recipe stream --merge-n-lods 4
 
-    # 2. Physical microns, straight from the uncelled merge (no amplitude cull,
+    # 2. Physical microns, straight from the unculled merge (no amplitude cull,
     #    see CULLING above). Time is left as an INTEGER FRAME INDEX on purpose —
     #    see `normalise_time_axis` below for why a scaled axis does not survive
     #    the centres encoder.
@@ -185,16 +185,18 @@ exposure from drifting as the embryo brightens, and it is why the appearance
 constants below are portable across the whole recording.
 
 ``--merge-n-lods 4`` (equal-count) gives a 4-rung ladder whose first rung is a
-quarter of the node, 64,000 splats per timepoint, which is what
-``check-demo-ladders`` wants on a sliced node (rung 0 at or above 10 % of the
-node, or playback re-pays a thin rung 0 every tick). The two ``--merge-target-ms
-200`` ladders this archive carried before both fail that gate: the 2026-08
+quarter of the node, 64,000 splats per timepoint, which satisfies
+``check-demo-ladders``' sliced-node share floor (rung 0 at or above 10 % of the
+node, or playback re-pays a thin rung 0 every tick). The current gate still
+rejects the ladder under its slice-unaware 1,000,000-element commit cap; #2699
+tracks that auditor defect. The two ``--merge-target-ms 200`` ladders this
+archive carried before also fail the share floor: the 2026-08
 archive's 14 rungs were sized against the whole node and its rung 0 held a
 median 45 splats per timepoint (#2374/#2376); the per-slice sizing that replaced
 it gives 5 rungs with rung 0 at 8.14 % of the node. ``EXPECTED_RUNGS`` pins 4.
 
 The fit directory is preserved across recompute attempts so ``batch-fit run`` can
-resume completed timepoints. Only the derived filter, transform, and archive
+resume completed timepoints. Only the derived transform and archive
 outputs are replaced on a retry. Delete ``fit/`` manually after changing fit
 constants such as ``ITERS``; otherwise the default resume path can reuse the old
 tiles and merged output.
@@ -436,18 +438,24 @@ def _only_leaf(node: Any, label: str) -> Any:
     return leaves[0]
 
 
-def _validate_rebuilt_archive(node: Any) -> int:
-    """Validate the merged leaf count and progressive-rung contract."""
+def _validate_rebuilt_archive(node: Any, expected_splats: int) -> int:
+    """Validate the final leaf count and progressive-rung contract."""
     leaf = _only_leaf(node, "rebuild")
     rungs = int(leaf.n_additive_sublods)
     if rungs != EXPECTED_RUNGS:
         raise RuntimeError(
             f"rebuild produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
         )
-    return int(leaf.n_splats)
+    got = int(leaf.n_splats)
+    if got != expected_splats:
+        raise RuntimeError(
+            f"rebuild changed the fitted splat count from {expected_splats:,} "
+            f"to {got:,} during transform or optimise"
+        )
+    return got
 
 
-def _validate_fitted_splat_count(node: Any) -> None:
+def _validate_fitted_splat_count(node: Any) -> int:
     """Reject an incomplete or misconfigured merged fit before transforming it."""
     got = int(_only_leaf(node, "fitted merge").n_splats)
     drift = abs(got - NOMINAL_FITTED_SPLATS) / NOMINAL_FITTED_SPLATS
@@ -462,10 +470,11 @@ def _validate_fitted_splat_count(node: Any) -> None:
         f"fitted merge validated: {got:,} splats "
         f"(nominal {NOMINAL_FITTED_SPLATS:,}, {drift:.3%} drift)"
     )
+    return got
 
 
 def recompute_archive(work_dir: Path) -> Path:
-    """Refit, filter, physically scale, and re-chunk the 500-frame archive."""
+    """Refit, physically scale, and re-chunk the 500-frame archive."""
     with asection("Recomputing the Drosophila embryogenesis archive"):
         if SOURCE_ARG is None:
             raise SystemExit(
@@ -525,11 +534,11 @@ def recompute_archive(work_dir: Path) -> Path:
         )
         merged = fit / "merged" / "final.gsplats.zarr"
         fitted_node, _ = load_gsplat_node(merged)
-        _validate_fitted_splat_count(fitted_node)
+        fitted_count = _validate_fitted_splat_count(fitted_node)
         del fitted_node
         # No post-fit amplitude cull (2026-09): the shipped 2026-08 archive was the
         # fit filtered at AMPLITUDE_MIN (65 % of the splats removed) and scored 5-8 dB
-        # below a fresh fit of the same frames; the uncelled merge IS the recipe.
+        # below a fresh fit of the same frames; the unculled merge IS the recipe.
         run_luxar_cli(
             "gsplat",
             "transform",
@@ -547,9 +556,9 @@ def recompute_archive(work_dir: Path) -> Path:
         )
 
         node, _ = load_gsplat_node(str(final))
-        got = _validate_rebuilt_archive(node)
+        got = _validate_rebuilt_archive(node, fitted_count)
         aprint(
-            f"rebuilt {got:,} splats (uncelled recipe; nominal {NOMINAL_FITTED_SPLATS:,})"
+            f"rebuilt {got:,} splats (unculled recipe; nominal {NOMINAL_FITTED_SPLATS:,})"
         )
         aprint(f"rebuilt: {final}")
         return final
@@ -636,7 +645,7 @@ def normalise_time_axis(node) -> tuple[float, float, int]:
 
 
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
-    """Build the 4D scene from the pre-fitted, culled, physically-scaled data."""
+    """Build the 4D scene from the pre-fitted, physically-scaled data."""
     with asection("Creating the Drosophila embryogenesis scene"):
         node, _ = load_gsplat_node(str(data_path))
 

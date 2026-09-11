@@ -32,7 +32,7 @@ PIPELINE — reproducible per channel with ``--recompute``:
        zipped array. ``--source-*`` expects either assembled array, not the
        per-timepoint directory.
     2. Measure (and only record) the camera pedestal per channel: on the ten
-       zero-based frames in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the centre
+       zero-based frames in ``CAMERA_PEDESTAL_SAMPLE_INDICES``, take the centre
        of the peak bin in a 512-bin histogram over values at or below that
        frame's 95th percentile, then take the median of those ten modes. The
        per-frame step matches ``estimate_floor(frame, method="mode")`` in
@@ -61,7 +61,7 @@ PIPELINE — reproducible per channel with ``--recompute``:
        pedestal splats beneath them, at a 17-26 dB foreground cost; SSIM is
        blind to that (an empty render scores 0.82). No post-fit cull now.
     6. ``batch-fit run --merge-recipe stream --merge-n-lods 8`` merges the
-       (uncelled) tiles into ONE leaf with the recorded 8-rung progressive
+       (unculled) tiles into ONE leaf with the recorded 8-rung progressive
        ladder (the run's own merge; the run's default would be 4 rungs).
     7. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
        → isotropic Z, amplitudes on a 0-1 scale.
@@ -173,13 +173,13 @@ HPC_SOURCE_ROOT = (
 SOURCE_FILE_PATTERN = "*_t{timepoint}.tiff"
 #: Axis order of every deconvolved per-timepoint TIFF before stacking.
 SOURCE_FRAME_AXES = "z,y,x"
-#: Ten evenly spaced zero-based frames (rounded linspace 0..99) used for floors.
-BACKGROUND_FLOOR_SAMPLE_INDICES = (0, 11, 22, 33, 44, 55, 66, 77, 88, 99)
+#: Ten evenly spaced zero-based frames (rounded linspace 0..99) used for pedestals.
+CAMERA_PEDESTAL_SAMPLE_INDICES = (0, 11, 22, 33, 44, 55, 66, 77, 88, 99)
 #: Per-frame mode measurement: histogram the low-intensity bulk through p95.
-BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE = 95.0
-BACKGROUND_FLOOR_HISTOGRAM_BINS = 512
-#: Combine the ten per-frame modes into the one floor pinned per channel.
-BACKGROUND_FLOOR_REDUCTION = "median"
+CAMERA_PEDESTAL_HISTOGRAM_PERCENTILE = 95.0
+CAMERA_PEDESTAL_HISTOGRAM_BINS = 512
+#: Combine the ten per-frame modes into the one pedestal pinned per channel.
+CAMERA_PEDESTAL_REDUCTION = "median"
 
 # Channel configuration — each becomes an independently-toggleable layer.
 # Named colormaps (not baked RGB) so the viewer applies the LUT at display
@@ -192,17 +192,14 @@ CHANNELS = [
         "marker": "cldnb:lyn-mScarlet (membranes)",
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
-        # Retuned by eye by Loic on 2026-09-11 on the raw-fit archives (pedestal
-        # kept, no cull), in the archives' own amplitude units (Layers-panel data
-        # range 0-2.702 for membranes, 0-23.009 for nuclei); volumetric, kappa
-        # 0.02, scene exposure -3.4 stops. Supersedes the 2026-09-10 additive
-        # retune, which was made on the culled 2026-08 store.
         "opacity": 0.5,
-        # Display window (Layers-panel range) and gamma. The window is authored
-        # as intensity/offset: intensity = 1 / (hi - lo), offset = -lo / (hi - lo),
-        # which the viewer maps back to [lo, hi] on a colormapped node.
-        "window": (0.007, 2.192),
-        "gamma": 1.67,
+        # Display window (Layers-panel range) and gamma, set by eye on the shipped
+        # store (re-tuned 2026-09-10 under ADDITIVE compositing, see the graft).
+        # The window is authored as intensity/offset: intensity = 1 / (hi - lo),
+        # offset = -lo / (hi - lo), which the viewer maps back to [lo, hi] on a
+        # colormapped node. A gamma below 1 lifts the dim membrane shell.
+        "window": (0.0, 1.719),
+        "gamma": 0.71,
         # The enclosing structure, so it composites FIRST and the nuclei read on
         # top of it. This deliberately does NOT match the order the viewer would
         # infer: containment goes by bounding-sphere radius, and this fit gives
@@ -220,7 +217,7 @@ CHANNELS = [
         #: Provenance and scoring basis only: it stays IN the data, because a fit
         #: of the pedestal-subtracted frame loses the faint background structure.
         "camera_pedestal": 105.9911880493164,
-        #: What the recipe must reproduce. The uncelled 2026-09 rebuild keeps every
+        #: What the recipe must reproduce. The unculled 2026-09 rebuild keeps every
         #: seed (64,000 x 100 frames); the 2026-08 redundancy-culled build had
         #: 5,864,440 ("Wrote single stream lod: 5,864,440 splats, 4D").
         "expected_splats": 6_400_000,
@@ -230,15 +227,15 @@ CHANNELS = [
         "file": "neuromast_nuclei.gsplats.zarr",
         "colormap": "bop_orange",  # GFP nuclei, iSIM 488/525
         "marker": "she:GFP (nuclei)",
-        "opacity": 1.0,
-        "window": (0.025, 4.896),
-        "gamma": 2.82,
+        "opacity": 0.47,
+        "window": (0.0, 0.459),
+        "gamma": 0.69,
         #: Inside the membrane shell, so it composites last (on top).
         "layer_order": 20,
         "source_flag": "source-nuclei",
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
         "camera_pedestal": 103.88801574707031,
-        # 2026-09 uncelled rebuild: every seed kept (2026-08 culled build: 5,530,300).
+        # 2026-09 unculled rebuild: every seed kept (2026-08 culled build: 5,530,300).
         "expected_splats": 6_400_000,
     },
 ]
@@ -270,9 +267,10 @@ PRESET = "n2s"
 TILE_SIZE = 640
 #: Concurrent fit workers per GPU. NOT `auto` — see the docstring's warning.
 JOBS_PER_GPU = 12
-#: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give 0.25 um z-step
-#: and 0.1083 um pixels (2.31x); the shipped scenes were built with 2.5 and this value is kept
-#: until the demo scene is rebuilt on the measured pitch (paper registry: voxel_um=(0.25, 0.1083, 0.1083)).
+#: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give
+#: 0.25 um z-step and 0.1083 um pixels (2.31x); the shipped scenes were built
+#: with 2.5, kept until the scene is rebuilt on the measured pitch
+#: (paper registry: voxel_um=(0.25, 0.1083, 0.1083)).
 VOXEL_SCALE = (2.5, 1.0, 1.0, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
@@ -284,16 +282,11 @@ EXPECTED_RUNGS = 8
 # ---- Appearance, shared by both channels -----------------------------------
 #: Scene exposure in log2 stops (Rendering Controls > HDR > Exposure).
 EXPOSURE_STOPS = -3.4
-#: Volumetric optical depth (kappa) shared by both layers.
-ABSORPTION = 0.02
 
 
 # =============================================================================
 # Data loading
 # =============================================================================
-#: Array name inside the background-subtracted intermediate group. Named rather
-#: than left at the store root because the writer facade creates arrays UNDER a
-#: group, and rooting an array directly would mean bypassing it.
 @contextmanager
 def _open_source(path: Path) -> Iterator[Any]:
     """Yield a channel source's 4D array and close any zip store afterwards.
@@ -418,26 +411,18 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
 
         node, _ = load_gsplat_node(str(final))
         got = _validate_rebuilt_channel(channel, list(iter_leaves(node)))
-        expected = channel.get("expected_splats")
-        if expected is None:
-            aprint(
-                f"{name}: rebuilt {got:,} splats (no recorded count yet for the uncelled recipe)"
+        expected = int(channel["expected_splats"])
+        drift = abs(got - expected) / expected
+        aprint(f"{name}: rebuilt {got:,} splats (recorded {expected:,}, {drift:.3%})")
+        # A tolerance, not equality: nothing pins the reduction order of a
+        # 12-worker parallel fit, so exact reproduction is not achievable. 1% is
+        # far tighter than any recipe change and far looser than float noise.
+        if drift >= 0.01:
+            raise RuntimeError(
+                f"{name}: rebuilt {got:,} splats against a recorded {expected:,} "
+                f"({drift:.2%} drift). Over 1% means the recipe changed, not "
+                f"float noise -- check the source array."
             )
-        else:
-            expected = int(expected)
-            drift = abs(got - expected) / expected
-            aprint(
-                f"{name}: rebuilt {got:,} splats (recorded {expected:,}, {drift:.3%})"
-            )
-            # A tolerance, not equality: nothing pins the reduction order of a
-            # 12-worker parallel fit, so exact reproduction is not achievable. 1% is
-            # far tighter than any recipe change and far looser than float noise.
-            if drift >= 0.01:
-                raise RuntimeError(
-                    f"{name}: rebuilt {got:,} splats against a recorded {expected:,} "
-                    f"({drift:.2%} drift). Over 1% means the recipe changed, not "
-                    f"float noise -- check the source array."
-                )
         return final
 
 
@@ -586,13 +571,11 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         path=str(path),
                         opacity=ch.get("opacity", 1.0),
                         # Cross-layer draw order, stated rather than inferred
-                        # from bounding-sphere radii (see CHANNELS above):
-                        # membranes first, nuclei on top.
+                        # from bounding-sphere radii (see CHANNELS above). Kept
+                        # under additive compositing (where order is moot) so a
+                        # switch to a depth-sorted mode preserves anatomy.
                         layer_order=ch["layer_order"],
-                        # Volumetric with kappa 0.02, the look Loic retuned on
-                        # the raw-fit archives (CHANNELS above, 2026-09-11).
-                        blending_mode="volumetric",
-                        absorption=ABSORPTION,
+                        blending_mode="additive",
                         gamma=ch["gamma"],
                         intensity=1.0 / (ch["window"][1] - ch["window"][0]),
                         offset=-ch["window"][0] / (ch["window"][1] - ch["window"][0]),

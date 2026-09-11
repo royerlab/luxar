@@ -58,7 +58,7 @@ def test_recorded_recipe_constants_match_the_source_and_published_run() -> None:
     assert demo.TILE_SIZE >= max(demo.SOURCE_SHAPE[1:])
     assert demo.NOMINAL_FITTED_SPLATS == 128_000_000
     # The 2026-08 archive's amplitude cutoff (33.40462112 -> 83,221,420 splats)
-    # is gone: the uncelled merge is the recipe.
+    # is gone: the unculled merge is the recipe.
     assert not hasattr(demo, "AMPLITUDE_MIN")
     assert not hasattr(demo, "EXPECTED_SPLATS")
     assert (
@@ -174,11 +174,14 @@ def test_rebuilt_archive_requires_one_leaf_and_the_recorded_rungs(monkeypatch) -
         n_additive_sublods=demo.EXPECTED_RUNGS,
     )
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [valid])
-    assert demo._validate_rebuilt_archive(object()) == demo.NOMINAL_FITTED_SPLATS
+    assert (
+        demo._validate_rebuilt_archive(object(), demo.NOMINAL_FITTED_SPLATS)
+        == demo.NOMINAL_FITTED_SPLATS
+    )
 
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [valid, valid])
     with pytest.raises(RuntimeError, match="2 leaves, expected one"):
-        demo._validate_rebuilt_archive(object())
+        demo._validate_rebuilt_archive(object(), demo.NOMINAL_FITTED_SPLATS)
 
     invalid_rungs = SimpleNamespace(
         n_splats=demo.NOMINAL_FITTED_SPLATS,
@@ -186,7 +189,15 @@ def test_rebuilt_archive_requires_one_leaf_and_the_recorded_rungs(monkeypatch) -
     )
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [invalid_rungs])
     with pytest.raises(RuntimeError, match="progressive rungs"):
-        demo._validate_rebuilt_archive(object())
+        demo._validate_rebuilt_archive(object(), demo.NOMINAL_FITTED_SPLATS)
+
+    changed_count = SimpleNamespace(
+        n_splats=demo.NOMINAL_FITTED_SPLATS - 1,
+        n_additive_sublods=demo.EXPECTED_RUNGS,
+    )
+    monkeypatch.setattr(demo, "iter_leaves", lambda _node: [changed_count])
+    with pytest.raises(RuntimeError, match="changed the fitted splat count"):
+        demo._validate_rebuilt_archive(object(), demo.NOMINAL_FITTED_SPLATS)
 
 
 def test_fitted_archive_requires_one_leaf_and_uses_a_one_percent_tolerance(
@@ -196,7 +207,7 @@ def test_fitted_archive_requires_one_leaf_and_uses_a_one_percent_tolerance(
         n_splats=round(demo.NOMINAL_FITTED_SPLATS * 0.991)
     )
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [within_tolerance])
-    demo._validate_fitted_splat_count(object())
+    assert demo._validate_fitted_splat_count(object()) == within_tolerance.n_splats
 
     monkeypatch.setattr(
         demo,

@@ -6,18 +6,18 @@ Six things here are worth pinning, each with a quiet failure mode:
    pedestal is kept, see the demo docstring's step 2), so the only thing between
    the source and the GPU is the shape check; a wrong file must fail there.
 2. **Two sources, not one.** The channels were acquired and assembled
-   separately, so the recompute needs a path per channel and the two floors are
-   different. A single ``--source`` would fit one channel twice.
+   separately, so the recompute needs a path per channel and the two recorded
+   camera pedestals differ. A single ``--source`` would fit one channel twice.
 3. **The recipe constants.** ``--jobs-per-gpu`` must not be ``auto``: on the
    acquisition box ``auto`` sized 100 concurrent workers for 100 tasks and every
    one was OOM-killed before a tile landed.
 4. **The upstream provenance.** The durable HPC directories, numeric TIFF order,
-   axis convention and floor measurement are the recipe for rebuilding the two
-   assembled arrays if the current copies disappear.
+   axis convention and camera-pedestal measurement are the recipe for rebuilding
+   the two assembled arrays if the current copies disappear.
 5. **The download estimate.** It must stay derived from both manifest archives,
    or metadata can silently drift when either channel is re-uploaded.
 6. **The shipped appearance.** The compiled scene must preserve the tuned
-   blending, optical depth, windows, gamma, opacity, order, and exposure.
+   additive blending, windows, gamma, opacity, order, and exposure.
 """
 
 import json
@@ -104,7 +104,7 @@ def test_manifest_and_download_size_pin_the_channel_pair() -> None:
 
 @pytest.fixture(autouse=True)
 def _small_shape(monkeypatch):
-    """Run the subtraction against a 360-voxel array, not an 11 GB one."""
+    """Run source-shape probes against 360 voxels, not an 11 GB array."""
     monkeypatch.setattr(demo, "SOURCE_SHAPE", SMALL)
 
 
@@ -162,7 +162,7 @@ class TestTheSourceIsValidatedBeforeTheGpu:
         with pytest.raises(SystemExit, match="no array at its root"):
             demo._validate_source(tmp_path / "empty.zarr")
 
-    def test_a_zip_store_is_closed_after_the_streamed_read(self, tmp_path):
+    def test_a_zip_store_is_closed_after_the_shape_probe(self, tmp_path):
         import zarr
         from zarr.storage import ZipStore
 
@@ -204,7 +204,7 @@ class TestBothChannelsNeedTheirOwnSource:
         pedestals = {ch["name"]: ch["camera_pedestal"] for ch in demo.CHANNELS}
         assert len(set(pedestals.values())) == 2
 
-    def test_the_expected_counts_are_the_uncelled_seed_budget(self):
+    def test_the_expected_counts_are_the_unculled_seed_budget(self):
         """With no cull anywhere (fit-time retention 0, no post-fit step) every
         frame keeps exactly its seeds, so both channels record SEEDS x frames.
         The 2026-08 culled build had 5,864,440 / 5,530,300 and the two differed."""
@@ -256,27 +256,26 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
     output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
     root = open_group(output, mode="r")
 
-    # Retuned by eye on 2026-09-11 on the raw-fit archives (pedestal kept, no
-    # cull), volumetric with kappa 0.02; windows in the archives' amplitude units.
+    # Retuned on 2026-09-10 against the archives currently pinned in the manifest.
     expected = {
         "membranes": {
-            "window": (0.007, 2.192),
-            "gamma": 1.67,
+            "window": (0.0, 1.719),
+            "gamma": 0.71,
             "opacity": 0.5,
             "layer_order": 10,
         },
         "nuclei": {
-            "window": (0.025, 4.896),
-            "gamma": 2.82,
-            "opacity": 1.0,
+            "window": (0.0, 0.459),
+            "gamma": 0.69,
+            "opacity": 0.47,
             "layer_order": 20,
         },
     }
     for name, appearance in expected.items():
         attrs = dict(root[name].attrs)
         lo, hi = appearance["window"]
-        assert attrs["blending_mode"] == "volumetric"
-        assert attrs["absorption"] == pytest.approx(demo.ABSORPTION) == 0.02
+        assert attrs["blending_mode"] == "additive"
+        assert attrs.get("absorption", 1.0) == pytest.approx(1.0)
         assert attrs["gamma"] == pytest.approx(appearance["gamma"])
         assert attrs["opacity"] == pytest.approx(appearance["opacity"])
         assert attrs["layer_order"] == appearance["layer_order"]
@@ -309,8 +308,8 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert demo.SOURCE_AXES == "time,z,y,x"
         assert demo.SOURCE_AXES == "time," + demo.SOURCE_FRAME_AXES
 
-    def test_the_background_floor_recipe_is_recorded(self):
-        assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == (
+    def test_the_camera_pedestal_recipe_is_recorded(self):
+        assert demo.CAMERA_PEDESTAL_SAMPLE_INDICES == (
             0,
             11,
             22,
@@ -322,28 +321,28 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
             88,
             99,
         )
-        assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == tuple(
+        assert demo.CAMERA_PEDESTAL_SAMPLE_INDICES == tuple(
             int(round(value)) for value in np.linspace(0, REAL_SOURCE_SHAPE[0] - 1, 10)
         )
-        assert demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE == 95.0
-        assert demo.BACKGROUND_FLOOR_HISTOGRAM_BINS == 512
-        assert demo.BACKGROUND_FLOOR_REDUCTION == "median"
+        assert demo.CAMERA_PEDESTAL_HISTOGRAM_PERCENTILE == 95.0
+        assert demo.CAMERA_PEDESTAL_HISTOGRAM_BINS == 512
+        assert demo.CAMERA_PEDESTAL_REDUCTION == "median"
         floors = {ch["name"]: ch["camera_pedestal"] for ch in demo.CHANNELS}
         assert floors == {
             "membranes": 105.9911880493164,
             "nuclei": 103.88801574707031,
         }
 
-    def test_the_recorded_per_frame_recipe_matches_estimate_floor(self):
+    def test_the_recorded_per_frame_pedestal_recipe_matches_estimate_floor(self):
         rng = np.random.default_rng(0)
         frame = rng.normal(104.0, 2.0, (32, 32)).astype(np.float32)
         frame[12:16, 12:16] += 400.0
         assert np.all(frame > 0.0)
-        upper = np.percentile(frame, demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE)
+        upper = np.percentile(frame, demo.CAMERA_PEDESTAL_HISTOGRAM_PERCENTILE)
         background = frame[frame <= upper]
         histogram, edges = np.histogram(
             background.astype(np.float64),
-            bins=demo.BACKGROUND_FLOOR_HISTOGRAM_BINS,
+            bins=demo.CAMERA_PEDESTAL_HISTOGRAM_BINS,
         )
         peak = int(np.argmax(histogram))
         recorded_floor = float(0.5 * (edges[peak] + edges[peak + 1]))
@@ -408,8 +407,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert fit[fit.index("--cull-retention") + 1] == "0.0"
         assert fit[fit.index("--merge-recipe") + 1] == "stream"
         assert fit[fit.index("--merge-n-lods") + 1] == str(demo.EXPECTED_RUNGS)
-        # The pinned subtraction is the only floor; `auto` on the subtracted input
-        # removed the dim band (floor 0.198 / 0.259 of the frame, 2026-09-10).
+        # The raw frames have minimum 0, so the legacy hard-min floor is a no-op.
         assert fit[fit.index("--floor") + 1] == "none"
         # The raw root-level array is the fit input; nothing is pre-subtracted.
         assert fit[3] == str(tmp_path / "src.zarr")

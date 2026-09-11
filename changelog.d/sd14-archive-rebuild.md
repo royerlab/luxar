@@ -1,11 +1,11 @@
-#### Time-lapse demo archives rebuilt without post-fit culls, with gate-clean ladders
+#### Time-lapse demo archives rebuilt without post-fit culls, with equal-count ladders
 
 The three 4D Gaussian-splat demos (Drosophila embryogenesis, zebrafish h2afva
 51-timepoint variant, neuromast two-channel) shipped archives that scored far below
 fresh fits of the same frames. The Drosophila archive was the fit filtered at a fixed
 amplitude cutoff (65 % of the splats removed, 5-8 dB below the fit); the neuromast
 archive was redundancy-culled at 0.20, which removed bright nuclear splats as
-"redundant" with the background beneath them. Both culls are gone: the uncelled
+"redundant" with the background beneath them. Both culls are gone: the unculled
 merge is the recipe, and the recorded splat counts follow (128,000,000 and
 6,400,000 per channel).
 
@@ -21,4 +21,7 @@ The sliced archives are laddered with four equal-count rungs (`--merge-n-lods 4`
 whole node that budget starved rung 0 to a handful of splats per timepoint, and
 sized per slice it left rung 0 under 10 % of the node, so `check-demo-ladders`
 refused both. Neuromast pins its recorded eight rungs explicitly, because
-`batch-fit run`'s merge defaults to four.
+`batch-fit run`'s merge defaults to four. The four-rung Drosophila and h2afva
+ladders satisfy the sliced-node share floor but still hit the slice-unaware
+1,000,000-element commit cap tracked in #2699; neuromast's eight-rung ladder
+passes the current gate.

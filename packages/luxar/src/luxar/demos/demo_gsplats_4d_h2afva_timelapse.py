@@ -96,6 +96,9 @@ PIPELINE — reproducible with ``--recompute``:
        a target-ms ladder starves rung 0 (whole-node sizing) or, sized per
        slice as the CLI now does, leaves rung 0 under 1 % of the node, and
        ``check-demo-ladders`` refuses both (10 % share floor on a sliced node).
+       Four rungs satisfy that floor, but the current gate still rejects the
+       ladder under its slice-unaware 1,000,000-element commit cap; #2699 tracks
+       that auditor defect.
     5. ``luxar optimise --profile archive`` — re-chunk. LAST, because step 4
        adds arrays that also want the 1 MB layout.
 
@@ -269,7 +272,7 @@ LAYER_COLORMAP = "plasma"
 
 
 def _validate_rebuilt_archive(node: Any) -> int:
-    """Require the recorded one-leaf, twelve-rung archive shape."""
+    """Require the recorded one-leaf, four-rung archive shape."""
     leaves = list(iter_leaves(node))
     if len(leaves) != 1:
         raise RuntimeError(f"rebuild produced {len(leaves)} leaves, expected one")
