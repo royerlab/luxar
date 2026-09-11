@@ -1027,7 +1027,7 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
 - Gate the check on `viewer_config.animation` (`playing: true`), not on "has a
   hidden axis": a keypress-navigated axis is the refine case. A whole array in
   ONE chunk is benign (no boundary to cross); the stall shape is many chunks of
-  several frames. Read the atom's hidden-axis span from the bounds array — a
+  several frames. Read the atom's hidden-axis span from `chunk_bounds` — a
   store with one NODE per hidden coordinate (hilbert_curve_3d) misreads when
   the scene range is divided by chunk count. Wave 2026-09-11: only
   `collision_animated` plays (1.8 frames/chunk on `hosting`); ocean's tentacles
@@ -1048,17 +1048,10 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   was never optimised, and stores built on another machine by another operator
   are exactly the ones that slip through. A chunk-cost number without the
   layout it was measured on is not a number.
-- Demo ID vs STORE NAME, once and for all: `GALLERY_ONLY` and `DEMO_META["key"]`
-  are keyed on the demo id; the served store, `_redirects`, the rebuild lists
-  and the tile comparison are keyed on `DEMO_META["outputs"]` (the store name).
-  Seven demos differ (`volumetric_cloud`->`cloud`, `particle_collision`->
-  `collision`, `quasicrystal_3d`->`quasicrystal`, `bioluminescent_ocean`->
-  `ocean`, `lsystem_forest`->`forest`, `particle_collision_animated`->
-  `collision_animated`, `zebrahub_velocity_streamlines`->
-  `zebrahub_velocity_streamlines_standard`; the removed `network_performance`
-  served `performance_test`). A capture pass fed store names exits 0 with two
-  placeholder tiles, and a tile-count guard passes because a placeholder is a
-  tile — resolve every list through DEMO_META before use.
+- Resolve demo ids versus store names through §8.1 before using any operator
+  list. Gallery capture selectors accept demo ids and only warn on unmatched
+  store names, so a mis-keyed pass can exit 0 with placeholder tiles and still
+  satisfy a tile-count guard.
 
 ### 3.22 Guard the artefact you ship, not only the inputs you fed it
 
@@ -1416,10 +1409,20 @@ python scripts/gallery/gen_redirects.py \
 
 Two things it handles that a reimplementation gets wrong:
 
-- **A demo key is not always its store name** — 8 of 90 manifest entries differ
-  (`cosmicflows_laniakea` → `cosmicflows_laniakea_full`, `nd_transforms` →
-  `nd_transforms_bench`, and six more). Take the store from the entry's
-  `dataset`, never from its `id`. Routes are emitted for both spellings.
+- **A demo key is not always its store name** — 7 of 88 manifest entries differ:
+  `cosmicflows_laniakea` → `cosmicflows_laniakea_full`; `nd_transforms` →
+  `nd_transforms_bench`; `ppi_flow_field` → `ppi_flow_field_full`;
+  `particle_collision_animated` → `collision_animated`;
+  `zebrahub_velocity_streamlines` →
+  `zebrahub_velocity_streamlines_standard`; `gsplats_interop_observatory` →
+  `gsplats_interop_observatory_rubin` and
+  `gsplats_interop_observatory_gemini-south`; and
+  `gsplats_interop_spz_scaniverse` → `gsplats_interop_spz_hornedlizard` and
+  `gsplats_interop_spz_racoonfamily`. The retired `network_performance` demo
+  likewise served `performance_test`. Gallery capture/generation selectors use
+  demo ids; served R2 directories and operator upload/rebuild lists use store
+  names. This generator takes the store from the manifest entry's `dataset`
+  field, never its `id`, and emits routes for both spellings.
 - **`--check-contract`** fails the build naming any README-linked key without a
   route. The root README links 29 tile titles at these routes, so a key rename
   is a **breaking change**. If a rename is genuinely needed, add an alias route
