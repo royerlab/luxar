@@ -1417,14 +1417,16 @@ Two things it handles that a reimplementation gets wrong:
   `particle_collision_animated` → `collision_animated`;
   `zebrahub_velocity_streamlines` →
   `zebrahub_velocity_streamlines_standard`; `gsplats_interop_observatory` →
-  `gsplats_interop_observatory_rubin` and
-  `gsplats_interop_observatory_gemini-south`; and
-  `gsplats_interop_spz_scaniverse` → `gsplats_interop_spz_hornedlizard` and
-  `gsplats_interop_spz_racoonfamily`. The retired `network_performance` demo
-  likewise served `performance_test`. Gallery capture/generation selectors use
-  demo ids; served R2 directories and operator upload/rebuild lists use store
-  names. This generator takes the store from the manifest entry's `dataset`
-  field, never its `id`, and emits routes for both spellings.
+  `gsplats_interop_observatory_rubin`; and `gsplats_interop_spz_scaniverse` →
+  `gsplats_interop_spz_hornedlizard`. The two interop demos also emit
+  `gsplats_interop_observatory_gemini-south` and
+  `gsplats_interop_spz_racoonfamily`, respectively; those secondary outputs
+  have no manifest entry and therefore no stable route, but still belong in
+  operator upload/rebuild lists. The retired `network_performance` demo likewise
+  served `performance_test`. Gallery capture/generation selectors use demo ids;
+  served R2 directories and operator upload/rebuild lists use store names. This
+  generator takes the store from the manifest entry's `dataset` field, never
+  its `id`, and emits routes for both spellings.
 - **`--check-contract`** fails the build naming any README-linked key without a
   route. The root README links 29 tile titles at these routes, so a key rename
   is a **breaking change**. If a rename is genuinely needed, add an alias route
