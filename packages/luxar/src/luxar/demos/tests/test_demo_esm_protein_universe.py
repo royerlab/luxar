@@ -486,7 +486,7 @@ def test_auto_dolly_rides_with_the_turntable() -> None:
     assert still.auto_dolly_period is None
 
 
-def test_high_quality_restores_ssaa_and_full_dpr() -> None:
+def test_high_quality_restores_kiosk_settings() -> None:
     from luxar.demos import demo_esm_protein_universe as demo
 
     vc = demo._viewer_config(
@@ -498,7 +498,7 @@ def test_high_quality_restores_ssaa_and_full_dpr() -> None:
 
 
 def test_high_quality_flag_is_spelled_in_main_and_documented() -> None:
-    """The CLI switch must reach `build_universe_scene` and the docstring."""
+    """The CLI switch and its dolly effect stay visible to users."""
     import inspect
 
     from luxar.demos import demo_esm_protein_universe as demo
@@ -506,4 +506,7 @@ def test_high_quality_flag_is_spelled_in_main_and_documented() -> None:
     src = inspect.getsource(demo.main)
     assert '"--high-quality" in sys.argv' in src
     assert "high_quality=high_quality" in src
-    assert "--high-quality" in (demo.__doc__ or "")
+    module_doc = demo.__doc__ or ""
+    assert "--high-quality" in module_doc
+    assert "95% dolly" in module_doc
+    assert "95% dolly swing" in (demo.build_universe_scene.__doc__ or "")
