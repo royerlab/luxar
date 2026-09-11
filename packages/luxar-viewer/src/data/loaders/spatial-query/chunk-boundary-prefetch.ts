@@ -29,6 +29,7 @@ function boundaryPosition(
 ): number | null {
   const atomRows = index.metadata.chunk_size;
   if (!atomRows || atomRows <= 0) return null;
+  if (dimension < 0 || dimension >= index.metadata.ndim) return null;
   const atom = Math.floor(row / atomRows);
   if (atom < 0 || atom >= index.chunkCount) return null;
   const offset = atom * index.metadata.ndim * 2 + dimension * 2;

@@ -91,4 +91,22 @@ describe('planChunkBoundaryViewStates', () => {
       ])
     ).toEqual([predicted]);
   });
+
+  it('keeps one-step prefetch when the moved dimension exceeds the index ndim', () => {
+    const current = { ...view(1), slicePosition: [0, 0, 0, 1, 1] };
+    const predicted = { ...current, slicePosition: [0, 0, 0, 1, 2] };
+    const malformedIndex = index();
+    malformedIndex.chunkBounds[40] = 500;
+    malformedIndex.chunkBounds[41] = 505;
+
+    expect(
+      planChunkBoundaryViewStates(
+        current,
+        predicted,
+        [{ start: 100, end: 200 }],
+        malformedIndex,
+        [{ shape: [800], chunks: [400] }]
+      )
+    ).toEqual([predicted]);
+  });
 });
