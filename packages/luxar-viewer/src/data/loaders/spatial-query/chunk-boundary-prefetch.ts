@@ -39,6 +39,47 @@ function nextBoundaryRow(edge: number, chunkRows: number, forward: boolean): num
     : Math.floor(edge / chunkRows) * chunkRows - 1;
 }
 
+function rangeEdge(ranges: readonly LoadRange[], forward: boolean): number {
+  return forward
+    ? Math.max(...ranges.map((range) => range.end))
+    : Math.min(...ranges.map((range) => range.start));
+}
+
+function usableFirstAxisLayout(array: FirstAxisChunkLayout): [number, number] | null {
+  const rowCount = array.shape[0] ?? 0;
+  const chunkRows = array.chunks[0] ?? 0;
+  return rowCount > 0 && chunkRows > 0 && chunkRows < rowCount ? [rowCount, chunkRows] : null;
+}
+
+function isAhead(position: number, currentPosition: number, forward: boolean): boolean {
+  return forward ? position > currentPosition : position < currentPosition;
+}
+
+interface BoundarySearch {
+  array: FirstAxisChunkLayout;
+  index: ChunkSpatialIndex;
+  edge: number;
+  dimension: number;
+  currentPosition: number;
+  forward: boolean;
+}
+
+function nextArrayBoundaryPosition(search: BoundarySearch): number | null {
+  const layout = usableFirstAxisLayout(search.array);
+  if (!layout) return null;
+  const [rowCount, chunkRows] = layout;
+
+  let row = nextBoundaryRow(search.edge, chunkRows, search.forward);
+  while (row >= 0 && row < rowCount) {
+    const position = boundaryPosition(search.index, row, search.dimension, search.forward);
+    if (position !== null && isAhead(position, search.currentPosition, search.forward)) {
+      return position;
+    }
+    row += search.forward ? chunkRows : -chunkRows;
+  }
+  return null;
+}
+
 export function planChunkBoundaryViewStates(
   current: ViewState,
   predicted: ViewState,
@@ -52,38 +93,24 @@ export function planChunkBoundaryViewStates(
   const delta = predicted.slicePosition[dimension] - current.slicePosition[dimension];
   if (!Number.isFinite(delta) || delta === 0) return [predicted];
   const forward = delta > 0;
-  const edge = forward
-    ? Math.max(...ranges.map((range) => range.end))
-    : Math.min(...ranges.map((range) => range.start));
+  const edge = rangeEdge(ranges, forward);
+  const currentPosition = current.slicePosition[dimension];
   const positions = new Set<number>([predicted.slicePosition[dimension]]);
 
   for (const array of arrays) {
-    const rowCount = array.shape[0] ?? 0;
-    const chunkRows = array.chunks[0] ?? 0;
-    if (rowCount <= 0 || chunkRows <= 0 || chunkRows >= rowCount) continue;
-
-    let row = nextBoundaryRow(edge, chunkRows, forward);
-    while (row >= 0 && row < rowCount) {
-      const position = boundaryPosition(index, row, dimension, forward);
-      if (
-        position !== null &&
-        (forward
-          ? position > current.slicePosition[dimension]
-          : position < current.slicePosition[dimension])
-      ) {
-        positions.add(position);
-        break;
-      }
-      row += forward ? chunkRows : -chunkRows;
-    }
+    const position = nextArrayBoundaryPosition({
+      array,
+      index,
+      edge,
+      dimension,
+      currentPosition,
+      forward,
+    });
+    if (position !== null) positions.add(position);
   }
 
   return [...positions]
-    .sort(
-      (left, right) =>
-        Math.abs(left - current.slicePosition[dimension]) -
-        Math.abs(right - current.slicePosition[dimension])
-    )
+    .sort((left, right) => Math.abs(left - currentPosition) - Math.abs(right - currentPosition))
     .map((position) => {
       const slicePosition = [...predicted.slicePosition];
       slicePosition[dimension] = position;

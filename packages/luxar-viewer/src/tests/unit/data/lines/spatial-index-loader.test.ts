@@ -1095,6 +1095,7 @@ describe('LinesSpatialIndexLoader', () => {
         await bodyLoader.prefetchChunks(viewState);
         const callsAfter = (zarr.get as any).mock.calls.length;
         expect(callsAfter).toBeGreaterThan(callsBefore);
+        expect(SpatialQueryBuilder).toHaveBeenCalledTimes(3);
       });
 
       it('skips fetches when the spatial query returns no ranges', async () => {
@@ -1108,7 +1109,7 @@ describe('LinesSpatialIndexLoader', () => {
 
         const callsBefore = (zarr.get as any).mock.calls.length;
 
-        mockExecute.mockResolvedValueOnce([]);
+        mockExecute.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
         await bodyLoader.prefetchChunks({
           displayDims: [0, 1, 2],
           slicePosition: [100, 100, 100],

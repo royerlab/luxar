@@ -857,36 +857,37 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    *
    * Mirrors the gsplats / points `prefetchChunks(viewState)` so a
    * dimension-animation hook can prefetch the next slice while the
-   * current frame renders. Lines need both the segment-level bounds
-   * (segments + widths + colors + sharpness keyed on segment range)
-   * and the vertex-level bounds (vertices keyed on the
-   * segment→vertex projection); this implementation keeps it simple
-   * by warming each available array over the queried segment ranges
-   * — the segment→vertex remap happens at demand time and the L0/L1
-   * cache absorbs the extra reads.
+   * current frame renders. Segments are keyed by segment ranges; vertices,
+   * widths, colors, and sharpness are keyed by vertex ranges. Querying both
+   * published indexes keeps speculative reads in the same row currency as
+   * the demand path instead of treating segment offsets as vertex offsets.
    */
   async prefetchChunks(viewState: LinesViewState): Promise<void> {
     await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.segments) return;
 
-    let ranges: SegmentRange[];
+    let segmentRanges: SegmentRange[];
+    let vertexRanges: SegmentRange[];
     try {
-      ranges = await this.queryVisibleSegmentRanges(viewState);
+      [segmentRanges, vertexRanges] = await Promise.all([
+        this.queryVisibleSegmentRanges(viewState),
+        this.queryVisibleVertexRanges(viewState),
+      ]);
     } catch {
       return;
     }
-    if (ranges.length === 0) return;
-
-    const arrays = [
+    const vertexArrays = [
       this.arrays.vertices,
-      this.arrays.segments,
       this.arrays.widths,
       this.arrays.colors,
       this.arrays.sharpness,
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
 
-    await prefetchRangesIntoCache(arrays, ranges);
+    await Promise.all([
+      prefetchRangesIntoCache([this.arrays.segments], segmentRanges),
+      prefetchRangesIntoCache(vertexArrays, vertexRanges),
+    ]);
   }
 
   async prefetchChunkBoundary(current: LinesViewState, predicted: LinesViewState): Promise<void> {
@@ -895,10 +896,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       await this.prefetchChunks(predicted);
       return;
     }
-    const ranges = await this.queryVisibleSegmentRanges(current);
-    const arrays = [
+    const segmentRanges = await this.queryVisibleSegmentRanges(current);
+    const segmentArrays = [this.arrays.segments];
+    const vertexArrays = [
       this.arrays.vertices,
-      this.arrays.segments,
       this.arrays.widths,
       this.arrays.colors,
       this.arrays.sharpness,
@@ -906,11 +907,22 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const views = planChunkBoundaryViewStates(
       current,
       predicted,
-      ranges,
+      segmentRanges,
       this.chunkIndex.segmentIndex,
-      arrays
+      segmentArrays
     );
-    await Promise.all(views.map((view) => this.prefetchChunks(view)));
+
+    const attrs = this.node.attrs as unknown as LinesMetadata;
+    if (attrs.vertex_ordering) {
+      const vertexIndex = this.vertexSpatialIndex(attrs);
+      const vertexRanges = await this.queryVisibleVertexRanges(current);
+      views.push(
+        ...planChunkBoundaryViewStates(current, predicted, vertexRanges, vertexIndex, vertexArrays)
+      );
+    }
+
+    const uniqueViews = new Map(views.map((view) => [view.slicePosition.join(','), view]));
+    await Promise.all([...uniqueViews.values()].map((view) => this.prefetchChunks(view)));
   }
 
   /**
@@ -922,6 +934,29 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   private async loadDualChunkBounds(attrs: LinesMetadata): Promise<LinesDualChunkIndex | null> {
     return loadLinesDualChunkIndex(this.zarrLocation, attrs);
+  }
+
+  private vertexSpatialIndex(attrs: LinesMetadata) {
+    return {
+      chunkBounds: this.chunkIndex!.vertexChunkBounds,
+      chunkCount: this.chunkIndex!.vertexChunkCount,
+      metadata: { ndim: attrs.ndim, chunk_size: attrs.vertex_ordering!.chunk_size },
+    };
+  }
+
+  private async queryVisibleVertexRanges(viewState: LinesViewState): Promise<SegmentRange[]> {
+    if (viewState.noPreimage) return [];
+    const attrs = this.node.attrs as unknown as LinesMetadata;
+    if (!this.chunkIndex || !attrs.vertex_ordering) {
+      return [{ start: 0, end: attrs.n_vertices }];
+    }
+    return new SpatialQueryBuilder(this.vertexSpatialIndex(attrs), viewState, {
+      geometryType: 'lines',
+      totalElements: attrs.n_vertices,
+      chunkSize: attrs.vertex_ordering.chunk_size,
+      extendDims: this.node.attrs.extend_to_all || [],
+      logModule: Modules.LINES_LOADER,
+    }).execute();
   }
 
   /**
