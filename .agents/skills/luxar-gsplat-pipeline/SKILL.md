@@ -490,6 +490,27 @@ about hidden dimensions. Three regimes (2026-08-30 and 2026-09-10 measurements):
 The slice-major ordering is NOT something to add — it already exists
 (`io/_ordering/compound.py`); do not re-propose it.
 
+Three refinements from applying the rule to a whole hosted wave (2026-09-11):
+
+- *Gate on whether the axis is actually PLAYED.* Only a store whose
+  `viewer_config.animation` entry has `playing: true` (or whose users play it)
+  is the frames-per-chunk case; a node sliced by a keypress-navigated axis
+  (ocean's time, forest's season/growth, hilbert's order) is the refine case,
+  and `archive` stays right. Camera `auto_rotate` is not playback.
+- *One chunk for the whole array is the BENIGN shape*, not the risk: there is no
+  boundary to cross, every frame is resident after one larger fetch. The stall
+  needs MANY chunks holding several frames each, so the one-step lookahead
+  cannot reach the next boundary.
+- *Read the atom's hidden-axis span from the bounds array, not the scene
+  dimension's range.* A store that partitions NODES by the hidden axis (one
+  node per Hilbert order) holds one coordinate per node; dividing the scene
+  range by the node's chunk count reports frames-per-chunk that do not exist.
+
+Measured on the wave: `collision_animated` on `hosting` = 143 chunks over 250
+frames = 1.8 frames/chunk (target 1-2); ocean's tentacles sit at 28 frames per
+`archive` chunk (3.5 on `hosting`) — harmless while nothing plays that axis,
+but "make ocean play" is not a free change.
+
 ```bash
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe tiles --max-elements 250000

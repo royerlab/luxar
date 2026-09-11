@@ -1024,6 +1024,18 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   against the Functions request cap. Not animated: smaller is a pure win.
 - `optimise` is per-array and hidden-dim blind; until #2686's per-node guard
   lands, the operator decides per store.
+- Gate the check on `viewer_config.animation` (`playing: true`), not on "has a
+  hidden axis": a keypress-navigated axis is the refine case. A whole array in
+  ONE chunk is benign (no boundary to cross); the stall shape is many chunks of
+  several frames. Read the atom's hidden-axis span from the bounds array — a
+  store with one NODE per hidden coordinate (hilbert_curve_3d) misreads when
+  the scene range is divided by chunk count. Wave 2026-09-11: only
+  `collision_animated` plays (1.8 frames/chunk on `hosting`); ocean's tentacles
+  would be 28 frames/chunk on `archive` if that axis were ever played.
+- For a TIME-PARTED store (h2afva) the profile rationale is request count, not
+  rung residency: each part is one frame loaded whole, so there is no
+  cross-timepoint rung to keep warm. Measured: 26 chunks per part x 51 parts =
+  1,326 requests on `archive` vs ~5,400 on `hosting`.
 
 ### 3.22 Guard the artefact you ship, not only the inputs you fed it
 
