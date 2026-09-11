@@ -25,8 +25,6 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import * as THREE from 'three';
-
 if (typeof globalThis.ImageData === 'undefined') {
   (globalThis as any).ImageData = class ImageData {
     data: Uint8ClampedArray;
@@ -187,25 +185,21 @@ describe('RecordingSession', () => {
   describe('capture-resolution alignment', () => {
     /**
      * Point the mock at a viewport of the given DISPLAY size and give it
-     * the two collaborators the scale-resolution branch touches: a real
-     * PerspectiveCamera (the branch is gated on `instanceof`) and the
-     * material refresh.
+     * the renderer/display sizes and material refresh used by the
+     * scale-resolution branch.
      *
      * `renderer.getSize()` is set to the SSAA-multiplied size the real
      * renderer would report, so a session that reads the renderer
      * instead of the post-processing display size is visible here rather
      * than passing on a coincidence.
      */
-    function withCanvas(width: number, height: number): THREE.PerspectiveCamera {
+    function withCanvas(width: number, height: number): void {
       const scale = mockSceneManager.postProcessing.getEffectiveRenderScale();
       mockSceneManager.postProcessing.getDisplaySize = vi.fn().mockReturnValue({ width, height });
       mockSceneManager.renderer.getSize = vi
         .fn()
         .mockReturnValue({ x: Math.round(width * scale), y: Math.round(height * scale) });
       mockSceneManager.updateMaterialsForCurrentCamera = vi.fn();
-      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
-      mockSceneManager.camera = camera;
-      return camera;
     }
 
     it('records the 1080p preset at exactly 1920x1080', () => {

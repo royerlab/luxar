@@ -1,8 +1,8 @@
 /**
  * Post-processing-pipeline construction extracted from
  * SceneManager. Thin factory over `PostProcessingManager`'s
- * constructor that wires the resize callback through to the
- * caller's material-update hook.
+ * constructor that restores the camera projection from the logical
+ * display size before invoking the caller's material-update hook.
  *
  * @module scene/scene-manager/render-pipeline/post-processing-setup
  */

@@ -115,10 +115,11 @@ export class PostProcessingManager {
   private _previousRenderTimestamp = 0;
 
   /**
-   * @param onResize  Optional callback invoked with the display size after every
-   *   reallocation of the render-target pyramid (resize, SSAA
-   *   toggle, MSAA toggle, DPR change). SceneManager wires this to
-   *   `updateMaterialsForCurrentCamera()` so point/line/gsplat
+   * @param onResize  Optional callback invoked with the display size and the
+   *   manager's current camera after every reallocation of the render-target
+   *   pyramid (resize, SSAA toggle, MSAA toggle, DPR change). Passing the live
+   *   camera keeps the hook correct across perspective/orthographic swaps.
+   *   SceneManager wires this to `updateMaterialsForCurrentCamera()` so point/line/gsplat
    *   shaders pick up the new drawing-buffer size — otherwise their
    *   pre-computed `pointSizeFactor` / `uResolution` uniforms go
    *   stale on AA toggles and the scene looks subtly wrong until the
