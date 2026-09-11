@@ -15,10 +15,10 @@ A ladder can exist and still be worthless. For example,
 leaf therefore fails when any level exceeds either ``--max-share`` of the total
 or the absolute ``--max-level-elements`` commit budget. On a barrier-ordered
 sliced leaf, that absolute arm measures the conservative largest per-coordinate
-fetch from the level's chunk bounds; unsliced, unindexed, multi-axis, and
-``extend_to_all`` leaves retain the node-level cap. This bounds-based commit arm
-is independent of the coordinate-decoding histogram used by the share arm
-below, so their reports can differ at chunk boundaries.
+fetch from the level's chunk bounds; unsliced, unindexed, multi-axis, malformed
+or mixed-metadata, and ``extend_to_all`` leaves retain the node-level cap. This
+bounds-based commit arm is independent of the coordinate-decoding histogram
+used by the share arm below, so their reports can differ at chunk boundaries.
 
 A SECOND arm audits nodes the viewer SLICES (any non-displayed dimension). A
 ladder's rungs are sized against the whole node, but only one slice is ever on
