@@ -909,7 +909,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         const vertexIndex = this.vertexSpatialIndex(attrs);
         const vertexRanges = await this.queryVisibleVertexRanges(current);
         views.push(
-          ...planChunkBoundaryViewStates(current, predicted, vertexRanges, vertexIndex, vertexArrays)
+          ...planChunkBoundaryViewStates(
+            current,
+            predicted,
+            vertexRanges,
+            vertexIndex,
+            vertexArrays
+          )
         );
       }
     } catch {

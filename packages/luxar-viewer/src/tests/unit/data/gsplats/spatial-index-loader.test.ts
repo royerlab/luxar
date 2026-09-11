@@ -1820,9 +1820,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         mockExecute.mockRejectedValueOnce(new Error('malformed current view'));
         mockExecute.mockResolvedValueOnce([{ start: 100, end: 200 }]);
 
-        await expect(
-          bodyLoader.prefetchChunkBoundary(current, predicted)
-        ).resolves.toBeUndefined();
+        await expect(bodyLoader.prefetchChunkBoundary(current, predicted)).resolves.toBeUndefined();
 
         const queriedPositions = (
           SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
@@ -1846,10 +1844,14 @@ describe('GSplatsSpatialIndexLoader', () => {
         for (const array of Object.values(mockArrays)) {
           array.chunks[0] = 400;
         }
-        const originalGet = vi.mocked(zarr.get).getMockImplementation();
-        vi.mocked(zarr.get).mockImplementation((array, slices) => {
+        const zarrGet = zarr.get as unknown as ReturnType<typeof vi.fn>;
+        const originalGet = zarrGet.getMockImplementation() as (
+          array: unknown,
+          slices: unknown
+        ) => unknown;
+        zarrGet.mockImplementation((array: unknown, slices: unknown) => {
           if (array === chunkBoundsArray) return Promise.resolve({ data: chunkBounds });
-          return originalGet!(array, slices);
+          return originalGet(array, slices);
         });
         bodyLoader = new GSplatsSpatialIndexLoader(
           mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],

@@ -100,13 +100,9 @@ describe('planChunkBoundaryViewStates', () => {
     malformedIndex.chunkBounds[41] = 505;
 
     expect(
-      planChunkBoundaryViewStates(
-        current,
-        predicted,
-        [{ start: 100, end: 200 }],
-        malformedIndex,
-        [{ shape: [800], chunks: [400] }]
-      )
+      planChunkBoundaryViewStates(current, predicted, [{ start: 100, end: 200 }], malformedIndex, [
+        { shape: [800], chunks: [400] },
+      ])
     ).toEqual([predicted]);
   });
 });

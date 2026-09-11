@@ -1234,9 +1234,7 @@ describe('LinesSpatialIndexLoader', () => {
           .mockResolvedValueOnce([{ start: 10, end: 20 }])
           .mockResolvedValueOnce([{ start: 100, end: 120 }]);
 
-        await expect(
-          bodyLoader.prefetchChunkBoundary(current, predicted)
-        ).resolves.toBeUndefined();
+        await expect(bodyLoader.prefetchChunkBoundary(current, predicted)).resolves.toBeUndefined();
 
         const queriedPositions = (
           SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
