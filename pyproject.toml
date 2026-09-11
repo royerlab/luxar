@@ -950,6 +950,11 @@ name = "Subpackage layering"
 type = "layers"
 layers = [
     "luxar.cli",
+    # A user-facing driver, peer of the CLI: it imports nothing inside luxar
+    # today (stdlib plus `websockets`), and sits above `core` so the typed
+    # snapshot/patch dataclasses the spec anticipates can be adopted without
+    # moving the layer.
+    "luxar.control",
     "luxar.environment",
     "luxar.demos",
     "luxar.io",

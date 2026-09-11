@@ -83,7 +83,7 @@ export const CONTROL_FORWARDED_EVENTS: readonly string[] = [
  * The handlers take no arguments because nothing here reads the `Event`: the
  * only payload that matters is `MessageEvent.data`, which `onmessage` declares
  * explicitly. A real `WebSocket` therefore satisfies this structurally except
- * for its handler arity, which {@link openPlatformSocket} bridges.
+ * for its handler arity, which the module-private `openPlatformSocket` bridges.
  */
 export interface ControlSocketLike {
   send(data: string): void;
