@@ -1034,8 +1034,16 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   would be 28 frames/chunk on `archive` if that axis were ever played.
 - For a TIME-PARTED store (h2afva) the profile rationale is request count, not
   rung residency: each part is one frame loaded whole, so there is no
-  cross-timepoint rung to keep warm. Measured: 26 chunks per part x 51 parts =
-  1,326 requests on `archive` vs ~5,400 on `hosting`.
+  cross-timepoint rung to keep warm. Estimated at 30 B/splat: rung 0 (20,833
+  splats, 0.6 MB) is one `archive` chunk vs three on `hosting`; a coarse-rung
+  traverse over 51 parts is ~1,400 requests on `archive` vs ~5,400 on `hosting`
+  (the first measurement quoted for this store was taken on the writer-default
+  layout by mistake; re-measure on the optimised store before quoting a number).
+- Read `chunk_layout` BEFORE measuring chunk cost, and check it on EVERY store
+  in a wave, not a sample: its absence is the only reliable sign that a scene
+  was never optimised, and stores built on another machine by another operator
+  are exactly the ones that slip through. A chunk-cost number without the
+  layout it was measured on is not a number.
 
 ### 3.22 Guard the artefact you ship, not only the inputs you fed it
 
