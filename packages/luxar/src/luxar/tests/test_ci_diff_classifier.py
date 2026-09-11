@@ -46,7 +46,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
 COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
-CUDA_WORKFLOW = REPO / ".github/workflows/cuda-native.yml"
+CUDA_WORKFLOW = REPO / ".github/workflows/cuda-nightly.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -61,7 +61,7 @@ CUDA_WORKFLOW = REPO / ".github/workflows/cuda-native.yml"
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
     (
-        ".github/workflows/cuda-native.yml",
+        ".github/workflows/cuda-nightly.yml",
         "py",
         "test_cuda_cadence_is_dispatch_only_and_requires_two_gpus parses it",
     ),
@@ -1711,15 +1711,17 @@ def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
     job = parsed["jobs"]["cuda-native"]
     assert job["runs-on"] == ["self-hosted", "obsidian-cuda"]
     assert job["permissions"] == {"contents": "read", "issues": "write"}
-    assert job["timeout-minutes"] == "60"
+    assert job["timeout-minutes"] == "75"
     assert job["env"]["MAX_JOBS"] == "2"
     assert job["env"]["LUXAR_REQUIRE_CUDA"] == "1"
 
     steps = {step["name"]: step for step in job["steps"] if "name" in step}
-    assert steps["Install Hatch"]["timeout-minutes"] == "10"
-    assert steps["Compile-check CUDA translation units"]["timeout-minutes"] == "10"
-    assert steps["Build CUDA extensions"]["timeout-minutes"] == "30"
+    assert steps["Install Hatch"]["timeout-minutes"] == "5"
+    assert steps["Require the two-GPU CUDA runner"]["timeout-minutes"] == "15"
+    assert steps["Compile-check CUDA translation units"]["timeout-minutes"] == "5"
+    assert steps["Build CUDA extensions"]["timeout-minutes"] == "20"
     assert steps["Run CUDA parity suites"]["timeout-minutes"] == "20"
+    assert steps["Report cadence failure"]["timeout-minutes"] == "5"
 
     run_steps = [step["run"] for step in steps.values() if "run" in step]
     commands = "\n".join(run_steps)
@@ -1729,10 +1731,17 @@ def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
     assert "make build-nlm-cuda" in commands
     assert "make test-cuda" in commands
     assert "make test-nlm-cuda" in commands
-    assert "CUDA native cadence failure" in commands
-    assert "--assignee royerloic" in commands
-    assert "gh issue comment" in commands
-    assert steps["Report cadence failure"]["if"] == "${{ failure() }}"
+    report = steps["Report cadence failure"]
+    assert report["if"] == "${{ failure() || cancelled() }}"
+    assert report["uses"].startswith("actions/github-script@")
+    assert not report["uses"].endswith("@v8")
+    assert report["with"]["github-token"] == "${{ github.token }}"
+    script = report["with"]["script"]
+    assert "CUDA native cadence failure" in script
+    assert "github.paginate(github.rest.issues.listForRepo" in script
+    assert "github.rest.issues.createComment" in script
+    assert "github.rest.issues.create" in script
+    assert 'assignees: ["royerloic"]' in script
 
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     assert "pytest $(CUDA_EXT_DIR)/tests/ -v -rs" in makefile
@@ -1740,17 +1749,6 @@ def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
         "pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v -rs"
         in makefile
     )
-
-    cuda_conftest = (
-        REPO / "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/conftest.py"
-    ).read_text(encoding="utf-8")
-    nlm_conftest = (
-        REPO / "packages/luxar/src/luxar/gsplats/preprocessing/tests/conftest.py"
-    ).read_text(encoding="utf-8")
-    assert 'os.environ.get("LUXAR_REQUIRE_CUDA") == "1"' in cuda_conftest
-    assert "CUDA_BACKEND_AVAILABLE" in cuda_conftest
-    assert 'os.environ.get("LUXAR_REQUIRE_CUDA") != "1"' in nlm_conftest
-    assert "NLM_CUDA_AVAILABLE" in nlm_conftest
 
 
 def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:

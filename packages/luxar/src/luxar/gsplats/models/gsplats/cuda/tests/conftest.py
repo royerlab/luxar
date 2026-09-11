@@ -25,7 +25,7 @@ import torch
 
 
 def pytest_configure(config):
-    """Register custom markers."""
+    """Enforce required CUDA coverage and register custom markers."""
     if os.environ.get("LUXAR_REQUIRE_CUDA") == "1":
         from luxar.gsplats.models.gsplats.cuda import (
             CUDA_AVAILABLE,

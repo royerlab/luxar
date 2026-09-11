@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       LUXAR_REQUIRE_CUDA: "1"
       MAX_JOBS: "2"
@@ -37,19 +37,20 @@ jobs:
           python-version: "3.12"
 
       - name: Install Hatch
-        timeout-minutes: 10
+        timeout-minutes: 5
         run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
       - name: Require the two-GPU CUDA runner
+        timeout-minutes: 15
         run: |
           hatch run python -c "import torch; assert torch.cuda.is_available(); assert torch.cuda.device_count() >= 2, torch.cuda.device_count()"
 
       - name: Compile-check CUDA translation units
-        timeout-minutes: 10
+        timeout-minutes: 5
         run: hatch run check-native --only nvcc --require nvcc
 
       - name: Build CUDA extensions
-        timeout-minutes: 30
+        timeout-minutes: 20
         run: |
           make build-cuda
           make build-nlm-cuda
@@ -61,23 +62,37 @@ jobs:
           make test-nlm-cuda
 
       - name: Report cadence failure
-        if: ${{ failure() }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          title="CUDA native cadence failure"
-          body="Run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed for commit \`$GITHUB_SHA\`."
-          issue_number="$(
-            gh issue list \
-              --repo "$GITHUB_REPOSITORY" \
-              --state open \
-              --search "\"$title\" in:title" \
-              --json number,title \
-              --jq '.[] | select(.title == "CUDA native cadence failure") | .number' \
-              | head -n 1
-          )"
-          if [ -n "$issue_number" ]; then
-            gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
-          else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body" --assignee royerloic
-          fi
+        if: ${{ failure() || cancelled() }}
+        timeout-minutes: 5
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const title = "CUDA native cadence failure";
+            const body = `Run ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${context.runId} failed or was cancelled for commit \`${context.sha}\`.`;
+            const { owner, repo } = context.repo;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = issues.find(
+              (issue) => !issue.pull_request && issue.title === title,
+            );
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+                assignees: ["royerloic"],
+              });
+            }
