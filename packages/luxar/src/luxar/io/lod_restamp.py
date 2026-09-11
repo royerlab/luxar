@@ -102,6 +102,7 @@ from .._zarr_compat import (
     read_consolidated_attrs,
 )
 from ..core.group.lod.group import (
+    PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
     coverage_fractions,
     partitioned_coverage_fractions,
@@ -579,7 +580,9 @@ def _plan_lod(
         finest_anchor=finest_anchor,
         path=path,
     )
-    resolved_anchor = 1.0 if partition_bound else WHOLE_OBJECT_FINEST_ANCHOR
+    resolved_anchor = (
+        PARTITION_FINEST_AREA if partition_bound else WHOLE_OBJECT_FINEST_ANCHOR
+    )
     if finest_anchor is not None and not partition_bound:
         resolved_anchor = finest_anchor
 
