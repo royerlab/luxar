@@ -2,11 +2,13 @@ import type { ViewState } from '../../data-loader-types';
 import type { LoadRange } from '../base-types';
 import type { ChunkSpatialIndex } from './spatial-query-builder';
 
+/** Minimal first-axis layout needed to locate zarr chunk boundaries. */
 export interface FirstAxisChunkLayout {
   shape: readonly number[];
   chunks: readonly number[];
 }
 
+/** Return the sole moved hidden dimension, or null for no/multi-axis motion. */
 function movedHiddenDimension(current: ViewState, predicted: ViewState): number | null {
   let moved: number | null = null;
   for (let dim = 0; dim < current.slicePosition.length; dim++) {
@@ -18,6 +20,7 @@ function movedHiddenDimension(current: ViewState, predicted: ViewState): number 
   return moved;
 }
 
+/** Map an element row to the hidden-axis bound of its spatial-index atom. */
 function boundaryPosition(
   index: ChunkSpatialIndex,
   row: number,
@@ -33,28 +36,33 @@ function boundaryPosition(
   return Number.isFinite(position) ? position : null;
 }
 
+/** Return the first row in the adjacent zarr chunk in playback direction. */
 function nextBoundaryRow(edge: number, chunkRows: number, forward: boolean): number {
   return forward
     ? Math.ceil(edge / chunkRows) * chunkRows
     : Math.floor(edge / chunkRows) * chunkRows - 1;
 }
 
+/** Select the leading visible row edge in playback direction. */
 function rangeEdge(ranges: readonly LoadRange[], forward: boolean): number {
   return forward
     ? Math.max(...ranges.map((range) => range.end))
     : Math.min(...ranges.map((range) => range.start));
 }
 
+/** Validate and return the row count and first-axis chunk size. */
 function usableFirstAxisLayout(array: FirstAxisChunkLayout): [number, number] | null {
   const rowCount = array.shape[0] ?? 0;
   const chunkRows = array.chunks[0] ?? 0;
   return rowCount > 0 && chunkRows > 0 && chunkRows < rowCount ? [rowCount, chunkRows] : null;
 }
 
+/** Test whether a candidate hidden-axis coordinate lies ahead of the playhead. */
 function isAhead(position: number, currentPosition: number, forward: boolean): boolean {
   return forward ? position > currentPosition : position < currentPosition;
 }
 
+/** Inputs for one array's next-boundary search. */
 interface BoundarySearch {
   array: FirstAxisChunkLayout;
   index: ChunkSpatialIndex;
@@ -64,6 +72,7 @@ interface BoundarySearch {
   forward: boolean;
 }
 
+/** Find the first future index atom that enters the array's adjacent zarr chunk. */
 function nextArrayBoundaryPosition(search: BoundarySearch): number | null {
   const layout = usableFirstAxisLayout(search.array);
   if (!layout) return null;
@@ -80,6 +89,12 @@ function nextArrayBoundaryPosition(search: BoundarySearch): number | null {
   return null;
 }
 
+/**
+ * Plan the one-step predicted slice plus the next zarr chunk boundary for each array.
+ *
+ * The index atom bounds translate first-axis row boundaries back into hidden-axis
+ * coordinates. Multi-axis motion and unusable metadata retain the one-step plan.
+ */
 export function planChunkBoundaryViewStates(
   current: ViewState,
   predicted: ViewState,
