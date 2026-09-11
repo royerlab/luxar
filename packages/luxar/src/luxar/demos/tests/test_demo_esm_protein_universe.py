@@ -448,3 +448,39 @@ def test_shipped_stories_author_valid_waypoints() -> None:
     pose = waypoints[0].camera
     distance = np.linalg.norm(np.asarray(pose.position) - np.asarray(pose.target))
     assert distance >= max(STORIES[0].min_distance, 1.2 * BUBBLE_MIN_RADIUS)
+
+
+# ---------------------------------------------------------------------------
+# Render quality (2026-09-10 review: laptop defaults, kiosk behind a flag)
+# ---------------------------------------------------------------------------
+
+
+def test_default_viewer_config_is_the_laptop_build() -> None:
+    """SSAA off and DPR capped at 1.0 unless the kiosk flag asks otherwise."""
+    from luxar.demos import demo_esm_protein_universe as demo
+
+    vc = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=False, audio=False)
+    assert vc.ssaa_enabled is False
+    assert vc.allow_high_dpr is False
+
+
+def test_high_quality_restores_ssaa_and_full_dpr() -> None:
+    from luxar.demos import demo_esm_protein_universe as demo
+
+    vc = demo._viewer_config(
+        [], (0.0, 0.0, 100.0), auto_rotate=False, audio=False, high_quality=True
+    )
+    assert vc.ssaa_enabled is True
+    assert vc.allow_high_dpr is True
+
+
+def test_high_quality_flag_is_spelled_in_main_and_documented() -> None:
+    """The CLI switch must reach `build_universe_scene` and the docstring."""
+    import inspect
+
+    from luxar.demos import demo_esm_protein_universe as demo
+
+    src = inspect.getsource(demo.main)
+    assert '"--high-quality" in sys.argv' in src
+    assert "high_quality=high_quality" in src
+    assert "--high-quality" in (demo.__doc__ or "")

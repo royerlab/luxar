@@ -103,6 +103,7 @@ from luxar.demos import (
     require_module,
     stamp_input_digests,
     warn_if_no_cuda_gpu,
+    window_attrs,
 )
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
@@ -124,9 +125,19 @@ VOXEL_SIZE_ZYX = (0.29, 0.26, 0.26)
 # toggleable layer coloured by a BOP (Blue-Orange-Purple) microscopy LUT.
 # The viewer applies the colormap at display time (interactive switching).
 CHANNELS = [
-    {"index": 0, "name": "Membranes", "colormap": "bop_orange"},
-    {"index": 1, "name": "Nuclei", "colormap": "bop_blue"},
+    # `window` is the Layers panel's DISPLAY RANGE, hand-tuned on the hosted
+    # scene (2026-09-10) on top of LAYER_INTENSITY; authored as
+    # intensity = 1/(hi-lo), offset = -lo/(hi-lo) (see `window_attrs`). The
+    # non-zero floors drop the residual haze under each channel.
+    {
+        "index": 0,
+        "name": "Membranes",
+        "colormap": "bop_orange",
+        "window": (0.006, 0.053),
+    },
+    {"index": 1, "name": "Nuclei", "colormap": "bop_blue", "window": (0.009, 0.114)},
 ]
+
 
 # Per-channel brightness multiplier applied before writing. Kept conservative
 # because the two channels are emitters whose contributions should sum. Their
@@ -376,6 +387,7 @@ Controls:
                     gsplats = gsplats.scale_intensity(LAYER_INTENSITY)
 
                     n_splats = len(gsplats.amplitudes)
+                    window = window_attrs(ch_config["window"])
 
                     # colormap= applies a BOP LUT at display time; layer=True
                     # exposes the node in the Layers panel. Data columns are
@@ -393,8 +405,14 @@ Controls:
                         blending_mode="additive",
                         layer=True,
                         colormap=colormap,
+                        # The Layers-panel window, stored as intensity/offset.
+                        intensity=window["intensity"],
+                        offset=window["offset"],
                     )
-                    aprint(f"  Added {n_splats:,} splats with colormap='{colormap}'")
+                    aprint(
+                        f"  Added {n_splats:,} splats with colormap='{colormap}' "
+                        f"window={ch_config['window']}"
+                    )
 
             # --- Overlays ---
             scene.add_text(

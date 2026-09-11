@@ -364,17 +364,17 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 # ~300 Mpc deep, so depth ordering carries real information:
                 # additive sums straight through the box and the nearest
                 # clusters stop reading as nearer. Absorption is what buys that
-                # depth cue, and 1.0 (the default) is far too thin at this
-                # scale — the far wall still shows through the densest halos.
-                # 10.0 puts the extinction length well inside the box, so
-                # foreground structure occludes background structure.
+                # depth cue. Hand-tuned in the Layers panel against the hosted
+                # demo (2026-09-10): 0.8 keeps the far wall faintly visible
+                # through the filaments so the web still reads as a connected
+                # 3D lattice, where the earlier 10.0 turned the near halos into
+                # opaque blobs that hid everything behind them.
                 blending_mode="volumetric",
-                absorption=10.0,
-                # Volumetric compositing accumulates opacity along the ray, so
-                # the fully-opaque splats additive wanted now over-fill; 0.66
-                # keeps the filament interiors translucent enough to see the
-                # structure behind them.
-                opacity=0.66,
+                absorption=0.8,
+                # Near-opaque splats: with the lower absorption the filament
+                # interiors no longer over-fill, so the per-splat alpha can be
+                # pushed up to give the dense nodes solid cores.
+                opacity=0.95,
                 intensity=1.0,
                 # `gamma` and the display range are deliberately NOT set: the
                 # writer derives `amplitude_data_range` as [min, p99.9] of the

@@ -130,7 +130,6 @@
     "packages/luxar/src/luxar/demos/demo_ocean_currents_earth.py::BLE001": 1,
     "packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py::BLE001": 2,
     "packages/luxar/src/luxar/demos/demo_quantum_orbitals.py::BLE001": 1,
-    "packages/luxar/src/luxar/demos/demo_sharpness_showcase.py::B905": 1,
     "packages/luxar/src/luxar/demos/demo_spotify_tracks.py::BLE001": 2,
     "packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py::BLE001": 1,
     "packages/luxar/src/luxar/demos/demo_tabula_sapiens.py::BLE001": 5,

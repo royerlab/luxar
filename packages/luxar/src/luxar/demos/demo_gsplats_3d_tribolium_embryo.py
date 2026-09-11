@@ -499,17 +499,15 @@ def create_luxar_scene(
             scene = compiler.create_scene(
                 dimensions=dims,
                 # Neutral tone-mapping, not the viewer's default ACES (#1459):
-                # verified against this volume, which needs ~2 stops
-                # (exposure=1.97) to bring the emission-absorption integral up
-                # to a readable level once the layer's own opacity is held down
-                # to 0.06. Neutral rather than ACES because what does reach the
-                # top of the range is the embryo's dense core, and Neutral rolls
-                # those peaks off instead of clipping them flat. Both numbers
-                # were in effect while the layer settings below were dialled in,
-                # so moving either needs a live A/B, not a blind flip.
-                viewer_config=ViewerConfig(
-                    cinematic_mode=True, tone_mapping="Neutral", exposure=1.97
-                ),
+                # what reaches the top of the range is the embryo's dense core,
+                # and Neutral rolls those peaks off instead of clipping them
+                # flat. Exposure sits at the 0-stop identity: the +1.97 stops
+                # the pre-floor fit needed went away with the 2026-09-10
+                # re-tune below, which brings the light up through the layer's
+                # own opacity and colour window instead. All four numbers were
+                # dialled together in the hosted viewer, so moving one needs a
+                # live A/B, not a blind flip.
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="Neutral"),
                 citation=DEMO_META["citation"],
             )
 
@@ -560,29 +558,29 @@ Navigation:
                     # alpha-over: the embryo then reads as dense tissue with
                     # real front-to-back depth cueing instead of a shell of
                     # composited surface peaks. The three numbers below were
-                    # dialled together against the pre-floor fit. The current
-                    # 675-count-floor fit removes most of that store's haze and
-                    # has not yet been re-A/B'd, so treat them as an inherited
-                    # baseline rather than a newly verified coupling.
+                    # re-dialled together in the hosted viewer's Layers panel
+                    # against the 675-count-floor fit (2026-09-10), replacing
+                    # the pre-floor baseline (kappa 3.13 / opacity 0.06 /
+                    # window 0-1.085 under +1.97 stops of exposure).
                     blending_mode="volumetric",
-                    # Absorption carries the depth: kappa 3.13 is well above the
+                    # Absorption carries the depth: kappa 2.53 is well above the
                     # 1.0 identity, so the far side of the embryo attenuates
                     # visibly through the near side. (kappa=0 would render
                     # exactly like additive.)
-                    absorption=3.13,
-                    # The counterweight to that kappa on the pre-floor fit.
-                    # Holding emission down to 0.06 kept its accumulated haze
-                    # in range; the floor-refitted store needs a fresh live A/B.
-                    opacity=0.06,
-                    # DISPLAY RANGE 0-1.085 as the Layers panel shows it. This
-                    # is a DIRECT-COLOUR node (explicit RGB, no colormap), so
-                    # the window is on the authored colour and `intensity` is a
-                    # plain gain: intensity = 1/(hi-lo) = 1/1.085, with offset
+                    absorption=2.53,
+                    # Full per-splat emission. The floor-refitted store has lost
+                    # the haze the old 0.06 was holding down, so the light now
+                    # comes from the splats themselves rather than from a
+                    # +2-stop exposure boost on a dimmed layer.
+                    opacity=1.0,
+                    # COLOUR RANGE 0-0.533 as the Layers panel shows it. This is
+                    # a DIRECT-COLOUR node (explicit RGB, no colormap), so the
+                    # window is on the authored colour and `intensity` is a
+                    # plain gain: intensity = 1/(hi-lo) = 1/0.533, with offset
                     # left at the 0 identity because the window starts at zero.
-                    # A window that runs PAST 1.0 is therefore a slight
-                    # roll-down, moving the brightest accumulated cores a
-                    # little farther into Neutral's shoulder, as dialled in.
-                    intensity=1.0 / 1.085,
+                    # A window top BELOW 1.0 is a ~1.9x brightening of the
+                    # amber, which is what replaces the old exposure stops.
+                    intensity=1.0 / 0.533,
                     layer=True,
                 )
                 aprint(f"Added {n_splats:,} splats")

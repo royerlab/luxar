@@ -636,6 +636,13 @@ class TestResolveAdditiveAxisPoints:
         assert spec is not None
         assert spec["counts"] == "energy:0.5,0.9,1.0"
 
+    def test_valid_equi_energy_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_points({"counts": "equi-energy:4"})
+        assert spec is not None
+        assert spec["counts"] == "equi-energy:4"
+        with pytest.raises(ValueError, match=">= 1"):
+            resolve_additive_axis_points({"counts": "equi-energy:0"})
+
     def test_other_doomed_counts_raise_at_resolve(self) -> None:
         # Same partial-group trap as stream:0 — any counts value the write
         # path is guaranteed to reject must fail at resolve time too.
@@ -1024,3 +1031,67 @@ def test_no_sub_LOD_carries_the_private_skip_scene_bounds_flag(tmp_path) -> None
         )
     # The flag must still DO its job: the parent describes the whole ladder.
     assert "position_bounds" in parent.attrs
+
+
+class TestEquiEnergyPointsLadder:
+    def test_rungs_carry_equal_energy_and_fatten(self) -> None:
+        from luxar.core.group.lod.points import compute_points_energy
+
+        rng = np.random.RandomState(11)
+        n = 5_000
+        positions = rng.rand(n, 3).astype(np.float32)
+        # Heavy-tailed radii -> heavy-tailed energy (radius**3).
+        radii = rng.lognormal(mean=0.0, sigma=0.8, size=n).astype(np.float32)
+        colors = rng.rand(n, 3).astype(np.float32)
+
+        levels = make_additive_lod_points(
+            positions,
+            radii,
+            method="salience",
+            salience_kind="energy",
+            counts="equi-energy:4",
+            colors=colors,
+        )
+        assert sum(lvl.size for lvl in levels) == n
+        assert len(levels) == 4
+        sizes = [lvl.size for lvl in levels]
+        assert sizes[0] < sizes[-1]
+
+        energy = compute_points_energy(n, radii, colors, None)
+        total = float(energy.sum())
+        per_level = [float(energy[lvl].sum()) for lvl in levels]
+        # Each rung reaches its equal share (cuts fall at the first element
+        # crossing k/4), so every rung but the last is within one element of it.
+        cum = 0.0
+        for k, e in enumerate(per_level, start=1):
+            cum += e
+            assert cum >= total * k / 4 - 1e-9
+            if k < 4:
+                assert cum - energy[levels[k - 1][-1]] < total * k / 4
+
+    def test_end_to_end_writes_an_equi_energy_ladder(self, tmp_path) -> None:
+        output = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(12)
+        positions = rng.rand(3_000, 3).astype(np.float32)
+        radii = rng.lognormal(mean=0.0, sigma=0.8, size=3_000).astype(np.float32)
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                positions,
+                radii=radii,
+                additive_lod=dict(
+                    method="salience", salience_kind="energy", counts="equi-energy:3"
+                ),
+            )
+
+        grp = zarr.open(str(output), mode="r")["pts"]
+        n_sub = int(grp.attrs["n_additive_sublods"])
+        assert n_sub == 3
+        sizes = [int(grp[f"additive_{i}"].attrs["n_points"]) for i in range(n_sub)]
+        assert sum(sizes) == 3_000
+        assert sizes[0] < sizes[-1]
+        assert grp["additive_0"].attrs["lod_stats"]["lod_breakpoints_kind"] == (
+            "equi-energy"
+        )

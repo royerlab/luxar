@@ -132,6 +132,7 @@ DEMO_META = {
     },
 }
 
+import math
 import shutil
 import sys
 import tempfile
@@ -141,8 +142,9 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.shading import bake_ambient_occlusion
 from luxar.utils.paths import get_demos_output_dir
 
@@ -471,6 +473,52 @@ def element_to_color(elements: np.ndarray) -> np.ndarray:
 # =============================================================================
 
 
+def standing_camera(positions: np.ndarray, *, margin: float = 1.08) -> CameraConfig:
+    """Opening pose with the complex STANDING: rotor axis vertical, F1 head up,
+    peripheral stalk to the right (2026-09-10 review).
+
+    Derived from the atom cloud rather than hard-coded, so it survives a
+    different PDB entry or atom filter: the long axis is the first principal
+    component; "up" is the end with the wider cross-section (the F1 head is
+    bulkier than the membrane sector); "right" is the direction of the outermost
+    off-axis mass (the peripheral stalk hangs off one side); the camera sits
+    perpendicular to both, far enough to frame the bounding sphere at the
+    cinematic 63 degree lens.
+    """
+    pts = np.asarray(positions, dtype=np.float64)
+    centre = pts.mean(axis=0)
+    x = pts - centre
+    _evals, evecs = np.linalg.eigh(x.T @ x / max(len(x), 1))
+    axis = evecs[:, -1]
+    along = x @ axis
+    perp = x - np.outer(along, axis)
+    radial = np.linalg.norm(perp, axis=1)
+    # Wider end up.
+    if radial[along > 0].mean() < radial[along < 0].mean():
+        axis, along = -axis, -along
+    # Screen-right: the second principal axis, signed towards the heavier tail
+    # of the mass distribution along it (positive third moment). The
+    # peripheral stalk is the complex's one-sided appendage, so it is what
+    # skews the cross-section, and it lands on the right.
+    side = evecs[:, -2]
+    side -= axis * float(side @ axis)
+    side /= float(np.linalg.norm(side))
+    across = perp @ side
+    if float(np.mean(across**3)) < 0.0:
+        side = -side
+    # A camera looking along `view` with `axis` up has screen-right = view x up,
+    # so view = up x right puts `side` on the right.
+    view = np.cross(axis, side)
+    radius = float(np.linalg.norm(x, axis=1).max())
+    distance = radius * margin / math.sin(math.radians(CINEMATIC_FOV_DEG / 2.0))
+    position = centre - view * distance
+    return CameraConfig(
+        position=(float(position[0]), float(position[1]), float(position[2])),
+        target=(float(centre[0]), float(centre[1]), float(centre[2])),
+        up=(float(axis[0]), float(axis[1]), float(axis[2])),
+    )
+
+
 def generate_atp_synthase(
     output_path: Path,
     pdb_id: str = "5DN6",
@@ -579,7 +627,11 @@ def generate_atp_synthase(
                 scene = compiler.create_scene(
                     dimensions=dims,
                     citation=DEMO_META["citation"],
-                    viewer_config=ViewerConfig(cinematic_mode=True),
+                    viewer_config=ViewerConfig(
+                        cinematic_mode=True,
+                        # Open with the turbine standing (see `standing_camera`).
+                        camera=standing_camera(positions),
+                    ),
                 )
 
                 # Sharpness for protein atoms (normalized [0, 1] knob; 0.5 = Gaussian)

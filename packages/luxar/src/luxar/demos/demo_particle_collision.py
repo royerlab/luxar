@@ -124,6 +124,7 @@ DEMO_META = {
     "citation": None,
 }
 
+import math
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -134,8 +135,9 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._particle_collision_tracks import generate_helix_points
 from luxar.utils.paths import get_demos_output_dir
 
@@ -159,6 +161,22 @@ HCAL_OUTER = 10.0  # ~10 interaction lengths for hadron containment
 MUON_INNER = 11.0  # Muon spectrometer - drift tubes and chambers
 MUON_OUTER = 15.0  # Outermost detector layer
 DETECTOR_LENGTH = 25.0  # Half-length in z (beam direction)
+
+#: Opening pose (2026-09-10 review: "show the collision sideways"). The beam
+#: runs along z, so a camera on the +x side with y up puts the beam axis
+#: HORIZONTAL across the screen: tracks fan left and right from the vertex and
+#: both end-cap rings are visible. The distance is composed for the cinematic
+#: 63 degree lens: the detector half-length subtends ~91% of the half-FOV, so
+#: the 50 m detector spans roughly 60% of a 16:9 frame (37 m; render-verified).
+#: The small y lift tilts the barrel just enough for the rings to read as
+#: ellipses.
+SIDE_VIEW_FILL = 0.906
+SIDE_VIEW_DISTANCE = (
+    SIDE_VIEW_FILL * DETECTOR_LENGTH / math.tan(math.radians(CINEMATIC_FOV_DEG / 2))
+)
+SIDE_VIEW_CAMERA = CameraConfig(
+    position=(SIDE_VIEW_DISTANCE, 4.0, 0.0), target=(0.0, 0.0, 0.0), up=(0.0, 1.0, 0.0)
+)
 
 # Magnetic field strength
 # Real ATLAS: 2 Tesla solenoid in inner detector
@@ -1055,6 +1073,7 @@ def generate_detector_scene(
                 # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
                 allow_high_dpr=True,
                 cinematic_mode=True,
+                camera=SIDE_VIEW_CAMERA,
             ),
         )
 

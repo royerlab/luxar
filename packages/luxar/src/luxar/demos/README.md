@@ -424,15 +424,6 @@ Rows: identity, `offset +5`, `offset -3`, `scale ×2`, `scale ×2 offset +2`, a 
 
 ### Feature Showcase Demos
 
-#### demo_sharpness_showcase.py - Point Sharpness Showcase
-Comprehensive showcase of the point sharpness feature: gradient from peaky (0.0) to hard-edged (1.0) on the normalized knob, fixed sharpness comparison rows, mixed sharpness cloud, and sinusoidal wave pattern.
-
-**Run**: `luxar demo run sharpness_showcase [-- --points N]`
-
-**Demonstrates**: Sharpness parameter control (normalized [0, 1] knob mapping to a super-Gaussian falloff exponent beta=2^(6s-2); 0.5 = Gaussian), soft/peaky points (low s) vs sharp disc-like points (high s), color-coded sharpness values, multiple visualization patterns.
-
----
-
 #### demo_lsystem_forest.py - L-System Forest: a Year in a Growing Forest (All Four Geometry Types)
 The flagship synthetic scene: a terrain-planted procedural forest scrubbable through time on two non-displayed dimensions — `growth` (six stages, each a genuine re-derivation of every tree at increasing iteration depth, staggered per tree so maturity rolls across the field in waves) and `season` (spring blossom, summer green, autumn fire, winter frost). All four geometry types share the frame: a shaded fBm-heightfield **Mesh** terrain (snow in winter), eight tree species as merged indexed **Lines** nodes (one Layers-panel row per species, per-vertex hover labels with species/instance/season/stage), volumetric **GSplat** foliage clouds oriented along their parent branches (blossom splats in spring, fire palette in autumn, evergreen conifers in winter), and **Points** accents (summer fireflies, winter frost sparkle, spring petals, each pinned to its season and extended over growth).
 
@@ -448,20 +439,6 @@ The 3D Hilbert curve — a continuous, self-similar polyline that visits every c
 **Run**: `luxar demo run hilbert_curve_3d [-- --max-order=6]`
 
 **Demonstrates**: Single ultra-long `polyline` Lines node (262k+ vertices, 262k segments), thin constant width with color gradient along traversal, runtime-verified Hamiltonian path on the integer lattice, slider-driven recursion exploration (each order on its own slot of a non-displayed `order` dim), Skilling's vectorized 3D Hilbert algorithm.
-
----
-
-#### demo_network_performance.py - Network Performance Testing
-Large multi-cluster dataset (1M points) for testing viewer performance under network constraints.
-
-**Run**:
-```bash
-luxar demo run network_performance
-luxar demo run network_performance -- --profile 3g
-luxar demo run network_performance -- --points=2000000 --profile satellite
-```
-
-**Demonstrates**: Network simulation (bandwidth throttling, latency, jitter, packet loss), progressive loading behavior with limited bandwidth, cache effectiveness under bandwidth constraints, multi-cluster particle systems (1M+ points).
 
 ---
 
@@ -535,7 +512,9 @@ The big-map sibling of the stories tour: every point is one of **7.7 million clu
 
 Three things differ from the Swiss-Prot tour, each forced by the data. **Grain**: this map is coherent at a far finer scale — ten nearest neighbours share a Pfam family 74% of the time against a 0.06% random baseline, but they sit within 0.01 units, and a family forms several small pure knots rather than one blob — so a story selects by **dominant Pfam family** (or a product-name pattern, or a region predicate) and frames its densest knot within ~0.3 units, scored by member count × purity so a purity-weighted seed lands on the family's own knot rather than the densest place in the map. **Whole-map stories**: a stop whose subject is a quarter of the map lights every member (no knot cut, no bubble, camera pulled back), drawing a fixed random sample of at most 300K points — the 7.7M backdrop alone sits at the viewer's residency ceiling, and a 2M-point highlight was declined at its first rung — with the panel saying "one in 7 drawn". **Detail on demand**: the 7.7M-point backdrop is a hand-built `kind=partition` of 64 BSP tiles (≤125K points each, split on the three spatial columns so the serialized axes are the displayed dimensions), each tile a hand-authored two-level `kind=lod` ladder whose coarse level is a seeded 1-in-4 subsample of the tile's own **points** with colours × 4 (additive light conserved) — not the writer's synthesised Gaussians. Coverage is evaluated per tile against the tile's own projected box, so the tiles must be small: with eight, each was a 20-unit cube whose box filled the screen from the overview and three sat at full detail there. At 64 the overview and the whole-map stories draw every tile coarse (~1.9M points) and a knot swaps in only its nearest handful. Measured at a pinned DPR of 1 on an M4 Max: overview 121 fps, a knot looking outward 143 fps, the same knot looking through the map's centre 69 fps, a whole-map stop 112 fps. Two dead ends, both measured: one lod group over a partition swapped every part at once (9.6M resident at each knot), and Gaussian coarse levels drew the knot-to-centre view at 6 fps (1 fps at DPR 2) against 144 fps for the same positions as plain points — merged Gaussians are fat where the cloud is sparse and a million of them overlap on every pixel from inside the cloud, while a point stays 1 px however many there are. **Appearance**: the backdrop is coloured by the domain of life of each cluster's dominant phylum (the landscape palette) and clusters with no characterised member are dimmed to 45%, so the dark proteome reads as geography before its story is told; point radii are sized for a camera ~0.7 units from a knot (a world radius that spans 25 px there would blur a knot into one blob), and the backdrop carries no hover labels (seven million strings would dominate the store) while story members do, with a UniRef link.
 
-**Run**: `luxar demo run esm_protein_universe [-- --no-serve] [-- --no-audio] [-- --no-turntables] [-- --coords PATH] [-- --annotations PATH]`
+**Run**: `luxar demo run esm_protein_universe [-- --no-serve] [-- --no-audio] [-- --no-turntables] [-- --high-quality] [-- --coords PATH] [-- --annotations PATH]`
+
+The default build is the laptop one: supersampling off and the device pixel ratio capped at 1.0, because SSAA on top of a 2x display made the scene crawl on ordinary machines. `--high-quality` restores the kiosk settings (SSAA on, render at full device resolution).
 
 **Requires**: two parquet files handed over by the ESM Atlas team (`local_data="manual-file"`, not public — the published Atlas release is separate, and its licence is stated as CC-BY-4.0 by Biohub and CC BY-SA 4.0 by the AWS Open Data registry, so the demo credits only the permission it has): the coordinates (`umap_coordinates_3d.parquet`) and the annotations (`representative_proteins_min50_pfam_taxa_desc_named_v3.parquet`), joined on the MD5 of the representative sequence. Drop them in `~/.cache/luxar/esm_protein_universe/` (or `~/Downloads`); the first run folds them into a compact per-cluster cache (`universe_v3.npz`, ~2 min) and later runs start from it (the scene compiles in ~40 s). Turntables and sound have the same requirements as the stories tour and share its turntable cache and ambient bed.
 
@@ -1522,10 +1501,8 @@ hatch run python packages/luxar/src/luxar/demos/demo_galaxy_simulation.py
 hatch run python packages/luxar/src/luxar/demos/demo_nd_transforms.py
 
 # --- Feature Showcases ---
-hatch run python packages/luxar/src/luxar/demos/demo_sharpness_showcase.py
 hatch run python packages/luxar/src/luxar/demos/demo_lsystem_forest.py
 hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py
-hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 
 # --- Embedding / UMAP ---
 hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py

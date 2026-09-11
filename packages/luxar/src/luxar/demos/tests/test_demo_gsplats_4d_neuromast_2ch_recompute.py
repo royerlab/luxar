@@ -287,25 +287,28 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
     output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
     root = open_group(output, mode="r")
 
+    # Re-tuned live in the hosted viewer's Layers panel on 2026-09-10, under
+    # additive compositing (the volumetric kappa 0.02 pair is gone with it).
     expected = {
         "membranes": {
-            "window": (0.007, 0.242),
-            "gamma": 1.67,
+            "window": (0.0, 1.719),
+            "gamma": 0.71,
             "opacity": 0.5,
             "layer_order": 10,
         },
         "nuclei": {
-            "window": (0.025, 0.719),
-            "gamma": 2.82,
-            "opacity": 1.0,
+            "window": (0.0, 0.459),
+            "gamma": 0.69,
+            "opacity": 0.47,
             "layer_order": 20,
         },
     }
     for name, appearance in expected.items():
         attrs = dict(root[name].attrs)
         lo, hi = appearance["window"]
-        assert attrs["blending_mode"] == "volumetric"
-        assert attrs["absorption"] == pytest.approx(0.02)
+        assert attrs["blending_mode"] == "additive"
+        # No authored kappa any more: whatever the writer stamps is its default.
+        assert attrs.get("absorption", 1.0) == pytest.approx(1.0)
         assert attrs["gamma"] == pytest.approx(appearance["gamma"])
         assert attrs["opacity"] == pytest.approx(appearance["opacity"])
         assert attrs["layer_order"] == appearance["layer_order"]

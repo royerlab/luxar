@@ -81,7 +81,8 @@ Options:
     --no-serve:        Generate scene without launching viewer
     --serve-only:      Just serve a previously generated scene (skips rebuild)
     --max-elements=N:  Per-part BSP cap for tiles/overview/adaptive (default 50000)
-    --factor=K:        Coarse-cap compression for overview/levels (default 8)
+    --factor=K:        Coarse-cap compression for overview/levels (default 4)
+    Adaptive/levels use the fixed demo depth LEVELS=2.
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_recipes_tribolium.luxar.zarr
@@ -155,7 +156,19 @@ from luxar.utils.paths import get_demos_output_dir
 # 50K → ~5 spatial parts, enough to see the cells and the frustum-culling story.
 MAX_ELEMENTS = 50_000
 # Coarse-cap compression for overview / levels (one substitutive level ≈ N/FACTOR splats).
-FACTOR = 8
+#
+# Was 8 with the default three levels, i.e. N/8, N/64, N/512. At the opening
+# pose each of the six embryos occupies roughly 5% of the screen, below the
+# ladder's first switch (1/8 of the screen area), so every column sat on its
+# COARSEST level — ~600 splats for a 300K fit, individually visible blobs
+# (2026-09-10 review: "way too coarse, you see the splats"). The gallery is six
+# objects side by side, so no column can ever reach the half-screen finest
+# anchor without zooming; the fix that stays within the recipes' own contract
+# is a shallower, gentler ladder: K=4 and TWO levels gives N/4 and N/16, so the
+# opening pose shows ~19K splats per embryo and one zoom step reaches N/4.
+# The general "finer levels should trigger sooner" question is #2685.
+FACTOR = 4
+LEVELS = 2
 # NB: the overview coarse↔fine switch uses viewport-relative coverage_fraction
 # thresholds. Unlike a whole-object `levels` ladder, overview's pair is stamped by
 # `partitioned_coverage_fractions`, so the coarse cap (fewer-but-larger splats) is
@@ -348,6 +361,7 @@ def _params() -> RecipeParams:
         additive_method=ADDITIVE_METHOD,  # type: ignore[arg-type]
         max_elements=MAX_ELEMENTS,
         compression_factor=FACTOR,
+        levels=LEVELS,
         device=detect_device(),
         seed=0,
     )
@@ -363,13 +377,17 @@ def _cli_for(recipe: str) -> str:
     if recipe == "stream":
         return base + f" --n-lods {N_LODS} --method {ADDITIVE_METHOD}"
     if recipe == "levels":
-        return base + f" --compression-factor {FACTOR}"
+        return base + f" --compression-factor {FACTOR} --levels {LEVELS}"
     if recipe == "tiles":
         return base + f" --max-elements {MAX_ELEMENTS} --n-lods {N_LODS}"
     if recipe == "overview":
         return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
     if recipe == "adaptive":
-        return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
+        return (
+            base
+            + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
+            + f" --levels {LEVELS}"
+        )
     return base
 
 

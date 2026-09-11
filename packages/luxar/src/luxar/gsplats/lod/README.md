@@ -328,6 +328,14 @@ into LOD levels:
   with `streaming_chunk_splats(target_ms, bandwidth_mbps,
   bytes_per_splat)` — e.g. 200 ms @ 25 Mbps @ 45 B/splat → ~14 k. The
   CLI's `--target-ms`/`--bandwidth-mbps` do this for you.
+- `"equi-energy:<n>"` — `n` rungs at **equal shares of cumulative
+  self-energy** along the ordering, then any increment above
+  `DEFAULT_MAX_ADDITIVE_COMMIT` split into capped steps. Under a
+  contribution-first ordering (`self_energy`) the first rung is the few
+  heaviest splats and each later rung is fatter in count for the same light:
+  fast first paint, and the slow rungs are the ones whose absence shows
+  least. The `e(k)` stamps read ≈ `k/n` at the requested cuts by
+  construction. Shared with Points/Lines (`equi_energy_cuts`).
 - `list[int]` — explicit cumulative splat counts. The list length sets
   the number of levels. Example: `[1000, 5000, 25000]`. In per-part /
   per-level contexts (partitioned parts, pyramid levels) the counts are

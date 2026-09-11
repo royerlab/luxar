@@ -379,6 +379,14 @@ def create_luxar_scene(output_path: Path) -> Path:
     return output_path
 
 
+#: Measured-table typography. Smaller than the explainer so the table's left
+#: edge stays clear of the explainer's right edge (see `_add_overlay`).
+TABLE_HEADER_FONT = 0.015
+TABLE_ROW_FONT = 0.0155
+TABLE_TOP = 0.078
+TABLE_ROW_PITCH = 0.0215
+
+
 def _add_overlay(scene, rows: list[dict]) -> None:
     """Title, the point of the demo, and the measured table.
 
@@ -397,27 +405,32 @@ def _add_overlay(scene, rows: list[dict]) -> None:
     faint = "rgba(255,255,255,0.45)"
     left = 0.055  # clear of the icon rail
 
+    # The explainer and the table share the top band, so their widths are
+    # budgeted: the explainer lines are kept short enough to end well before
+    # x ~ 0.62 at this size, and the table is small enough to start past
+    # x ~ 0.75 (2026-09-10: at 0.019 the second explainer line ran under the
+    # table's second row on a 16:9 view).
     for size, y, text, colour in [
         (0.028, 0.05, "What does culling actually remove?", white),
         (
-            0.019,
+            0.017,
             0.085,
             "Cumulative culling keeps the brightest splats carrying a fraction R "
-            "of the fit's total amplitude.",
+            "of the total amplitude.",
             dim,
         ),
         (
-            0.019,
-            0.108,
-            "It removes the dim, diffuse tail first — background and haze — so the "
-            "count falls much faster than the look does.",
+            0.017,
+            0.107,
+            "The dim, diffuse tail goes first — background and haze — so the count "
+            "falls faster than the look.",
             dim,
         ),
         (
-            0.019,
-            0.140,
-            "Press 1 then [ / ] to step the Cull selector. Same camera, same "
-            "pixels — step it as a flicker test.",
+            0.017,
+            0.136,
+            "Press 1 then [ / ] to step the Cull selector: same camera, same "
+            "pixels — a flicker test.",
             faint,
         ),
     ]:
@@ -428,7 +441,7 @@ def _add_overlay(scene, rows: list[dict]) -> None:
     scene.add_text(
         "retention · splats · kept · size · vs raw",
         position=(0.98, 0.05),
-        font_size=0.018,
+        font_size=TABLE_HEADER_FONT,
         anchor="top-right",
         color=faint,
     )
@@ -436,16 +449,16 @@ def _add_overlay(scene, rows: list[dict]) -> None:
         scene.add_text(
             f"{row['retention']:.3f} · {row['splats']:,} · {row['pct']:.0f}% · "
             f"{row['mb']:.2f} MB · {row['ratio']:.0f}:1",
-            position=(0.98, 0.082 + i * 0.027),
-            font_size=0.019,
+            position=(0.98, TABLE_TOP + i * TABLE_ROW_PITCH),
+            font_size=TABLE_ROW_FONT,
             anchor="top-right",
             color=dim,
         )
     scene.add_text(
         f"ratio vs the decoded acquisition — {RAW_SHAPE[0]}x{RAW_SHAPE[1]}"
         f"x{RAW_SHAPE[2]} uint16 = {RAW_BYTES / 1048576:.0f} MB",
-        position=(0.98, 0.082 + len(rows) * 0.027 + 0.014),
-        font_size=0.016,
+        position=(0.98, TABLE_TOP + len(rows) * TABLE_ROW_PITCH + 0.012),
+        font_size=0.014,
         anchor="top-right",
         color=faint,
     )

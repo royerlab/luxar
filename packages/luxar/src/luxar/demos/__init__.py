@@ -84,6 +84,13 @@ from ._support.runtime.provenance import (
 )
 from ._support.runtime.viewer import launch_viewer
 
+
+def window_attrs(window: tuple[float, float]) -> dict[str, float]:
+    """Intensity and offset storing a Layers-panel display window."""
+    lo, hi = window
+    return {"intensity": 1.0 / (hi - lo), "offset": -lo / (hi - lo)}
+
+
 __all__ = [
     "BUILDER_FINGERPRINT_ATTR",
     "INSTALL_SPECS",
@@ -150,4 +157,5 @@ __all__ = [
     "voxel_sampled_payload_agreement",
     "warn_if_no_cuda_gpu",
     "warn_if_quarantined",
+    "window_attrs",
 ]

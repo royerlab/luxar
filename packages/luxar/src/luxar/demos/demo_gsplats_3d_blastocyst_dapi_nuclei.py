@@ -421,6 +421,114 @@ def fit_dapi_gsplats(volume, acquisition=None):
 # =============================================================================
 
 
+#: Volume frame (2026-09-10 review: "add a box and grid to get a better sense of
+#: the volume"). The box is the fit's bounding box padded by this fraction of
+#: its extent; the grid tiles the box face at the low end of the scene's second
+#: axis (THREE's Y-up floor) in this many divisions per side.
+FRAME_PADDING = 0.03
+GRID_DIVISIONS = 8
+FRAME_COLOR = (0.55, 0.62, 0.78)
+
+
+def volume_frame_lines(
+    centers: np.ndarray,
+    *,
+    padding: float = FRAME_PADDING,
+    divisions: int = GRID_DIVISIONS,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Wireframe box and floor grid around ``centers`` as two indexed line sets.
+
+    Returns ``(box_vertices, box_indices, grid_vertices, grid_indices)``. The
+    box is the padded axis-aligned bounding box (12 edges); the grid lies on
+    the ``y = min`` face with ``divisions`` cells per side, its rim coinciding
+    with the box's bottom edges so the two read as one frame.
+    """
+    c = np.asarray(centers, dtype=np.float64)
+    lo = c.min(axis=0)
+    hi = c.max(axis=0)
+    pad = (hi - lo) * padding
+    lo = lo - pad
+    hi = hi + pad
+    x0, y0, z0 = lo
+    x1, y1, z1 = hi
+    box = np.array(
+        [
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x0, y1, z0],
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x0, y1, z1],
+        ],
+        dtype=np.float32,
+    )
+    box_edges = np.array(
+        [
+            [0, 1],
+            [1, 2],
+            [2, 3],
+            [3, 0],
+            [4, 5],
+            [5, 6],
+            [6, 7],
+            [7, 4],
+            [0, 4],
+            [1, 5],
+            [2, 6],
+            [3, 7],
+        ],
+        dtype=np.uint32,
+    ).ravel()
+
+    ticks = np.linspace(0.0, 1.0, divisions + 1)
+    xs = x0 + (x1 - x0) * ticks
+    zs = z0 + (z1 - z0) * ticks
+    verts: list[list[float]] = []
+    edges: list[list[int]] = []
+    for x in xs[1:-1]:  # interior lines only; the rim is the box's own edges
+        verts += [[x, y0, z0], [x, y0, z1]]
+        edges.append([len(verts) - 2, len(verts) - 1])
+    for z in zs[1:-1]:
+        verts += [[x0, y0, z], [x1, y0, z]]
+        edges.append([len(verts) - 2, len(verts) - 1])
+    grid = np.asarray(verts, dtype=np.float32).reshape(-1, 3)
+    grid_edges = np.asarray(edges, dtype=np.uint32).ravel()
+    return box, box_edges, grid, grid_edges
+
+
+def add_volume_frame(scene, centers: np.ndarray) -> None:
+    """Add the faint bounding box and floor grid as two toggleable Lines layers."""
+    box, box_edges, grid, grid_edges = volume_frame_lines(centers)
+    extent = float(np.ptp(np.asarray(centers, dtype=np.float64), axis=0).max())
+    width = extent * 0.002  # hairline at the opening framing
+    scene.add_lines(
+        "volume_box",
+        vertices=box,
+        widths=width,
+        colors=FRAME_COLOR,
+        indices=box_edges,
+        line_type="indexed",
+        blending_mode="additive",
+        sharpness=0.8,
+        opacity=0.35,
+        layer=True,
+    )
+    scene.add_lines(
+        "floor_grid",
+        vertices=grid,
+        widths=width * 0.6,
+        colors=FRAME_COLOR,
+        indices=grid_edges,
+        line_type="indexed",
+        blending_mode="additive",
+        sharpness=0.8,
+        opacity=0.18,
+        layer=True,
+    )
+
+
 def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
     if output_path is None:
@@ -484,6 +592,11 @@ Controls:
                 colormap="plasma",
                 layer=True,
             )
+            # A faint box + floor grid so the volume's extent and depth read
+            # against the black background (the nuclei alone give no sense of
+            # the imaged cube). Both are Layers-panel rows, so they can be
+            # switched off for a clean still.
+            add_volume_frame(scene, gsplats_data.centers)
             add_demo_caption(
                 scene,
                 "Light-sheet microscopy • DAPI-labelled nuclei",

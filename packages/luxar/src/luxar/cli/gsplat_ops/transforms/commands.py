@@ -659,7 +659,9 @@ def additive_dataset(
         "-b",
         help="'equal-count' (default) | 'stream:C' (geometric streaming ladder, "
         "first chunk C splats then doubling; sized per leaf) | "
-        "'counts:N1,N2,...' (clamped per leaf) | 'energy:f1,f2,...'.",
+        "'equi-energy:N' (N rungs at equal shares of cumulative self-energy per "
+        "leaf; commit-capped) | 'counts:N1,N2,...' (clamped per leaf) | "
+        "'energy:f1,f2,...'.",
     ),
     target_ms: Optional[float] = typer.Option(
         None,

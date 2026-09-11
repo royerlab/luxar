@@ -308,6 +308,8 @@ def lod_recipe(
         "-b",
         help="'equal-count' (default) | 'stream:C' (geometric streaming ladder, "
         "first chunk C splats then doubling; sized per part/level) | "
+        "'equi-energy:N' (N rungs at equal shares of cumulative self-energy: few "
+        "heavy splats first, fatter rungs later; commit-capped) | "
         "'counts:N1,N2,...' | 'energy:f1,f2,...'.",
     ),
     target_ms: Optional[float] = typer.Option(
