@@ -192,14 +192,17 @@ CHANNELS = [
         "marker": "cldnb:lyn-mScarlet (membranes)",
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
+        # Retuned by eye by Loic on 2026-09-11 on the raw-fit archives (pedestal
+        # kept, no cull), in the archives' own amplitude units (Layers-panel data
+        # range 0-2.702 for membranes, 0-23.009 for nuclei); volumetric, kappa
+        # 0.02, scene exposure -3.4 stops. Supersedes the 2026-09-10 additive
+        # retune, which was made on the culled 2026-08 store.
         "opacity": 0.5,
-        # Display window (Layers-panel range) and gamma, set by eye on the shipped
-        # store (re-tuned 2026-09-10 under ADDITIVE compositing, see the graft).
-        # The window is authored as intensity/offset: intensity = 1 / (hi - lo),
-        # offset = -lo / (hi - lo), which the viewer maps back to [lo, hi] on a
-        # colormapped node. A gamma below 1 lifts the dim membrane shell.
-        "window": (0.0, 1.719),
-        "gamma": 0.71,
+        # Display window (Layers-panel range) and gamma. The window is authored
+        # as intensity/offset: intensity = 1 / (hi - lo), offset = -lo / (hi - lo),
+        # which the viewer maps back to [lo, hi] on a colormapped node.
+        "window": (0.007, 2.192),
+        "gamma": 1.67,
         # The enclosing structure, so it composites FIRST and the nuclei read on
         # top of it. This deliberately does NOT match the order the viewer would
         # infer: containment goes by bounding-sphere radius, and this fit gives
@@ -227,9 +230,9 @@ CHANNELS = [
         "file": "neuromast_nuclei.gsplats.zarr",
         "colormap": "bop_orange",  # GFP nuclei, iSIM 488/525
         "marker": "she:GFP (nuclei)",
-        "opacity": 0.47,
-        "window": (0.0, 0.459),
-        "gamma": 0.69,
+        "opacity": 1.0,
+        "window": (0.025, 4.896),
+        "gamma": 2.82,
         #: Inside the membrane shell, so it composites last (on top).
         "layer_order": 20,
         "source_flag": "source-nuclei",
@@ -281,6 +284,8 @@ EXPECTED_RUNGS = 8
 # ---- Appearance, shared by both channels -----------------------------------
 #: Scene exposure in log2 stops (Rendering Controls > HDR > Exposure).
 EXPOSURE_STOPS = -3.4
+#: Volumetric optical depth (kappa) shared by both layers.
+ABSORPTION = 0.02
 
 
 # =============================================================================
@@ -581,16 +586,13 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         path=str(path),
                         opacity=ch.get("opacity", 1.0),
                         # Cross-layer draw order, stated rather than inferred
-                        # from bounding-sphere radii (see CHANNELS above). Kept
-                        # under additive compositing (where order is moot) so a
-                        # switch back to a depth-sorted mode in the Layers panel
-                        # still composites membranes first.
+                        # from bounding-sphere radii (see CHANNELS above):
+                        # membranes first, nuclei on top.
                         layer_order=ch["layer_order"],
-                        # Additive, re-tuned live 2026-09-10: the two channels
-                        # were composited volumetrically (kappa 0.02) and read
-                        # dim; order-independent additive with the windows and
-                        # gammas above lets both channels read at once.
-                        blending_mode="additive",
+                        # Volumetric with kappa 0.02, the look Loic retuned on
+                        # the raw-fit archives (CHANNELS above, 2026-09-11).
+                        blending_mode="volumetric",
+                        absorption=ABSORPTION,
                         gamma=ch["gamma"],
                         intensity=1.0 / (ch["window"][1] - ch["window"][0]),
                         offset=-ch["window"][0] / (ch["window"][1] - ch["window"][0]),
