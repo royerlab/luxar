@@ -311,28 +311,6 @@ MIN_NODE_MINOR := 22
 | `make test-nlm-cuda` | Run NLM CUDA extension tests |
 | `make clean-nlm-cuda` | Clean NLM CUDA build artifacts |
 
-#### Native backend release verification
-
-The Linux compile gate cannot exercise the Objective-C++ binding, the Metal
-shader compiler, or the Metal parity suite. Hosted macOS CI and a dedicated Mac
-runner are intentionally not used, so every release candidate must be checked
-manually on Apple silicon before it is tagged:
-
-```bash
-hatch run check-native --require cxx --require metal
-hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests -v
-```
-
-The first command fails if either the host compiler or `xcrun metal` is missing,
-instead of reporting a misleading green run with a skipped arm. The second
-command must collect and execute the Metal tests rather than skip them; confirm
-the summary reports passed tests and no skips caused by unavailable MPS.
-
-CUDA compile and parity coverage run on a separate low-priority cadence rather
-than in pull-request CI, because the device compile takes minutes and the
-workstation GPUs are shared with interactive work. See #2544 for that runner
-work.
-
 ### Data & Demos
 
 | Command | Description |
@@ -393,6 +371,32 @@ work.
 | `make release-check` | Dry-run release: run ALL preflight checks, tag/push nothing |
 | `make release` | Cut release: validate main + CI green, tag `v<version>`, push (triggers PyPI publish) |
 | `make publish` / `make publish-test` | Disabled — use `make release` (tag-triggered OIDC publish via CI) |
+
+#### Native backend release verification
+
+The Linux compile gate cannot exercise the Objective-C++ binding, the Metal
+shader compiler, or the Metal parity suite. Hosted macOS CI and a dedicated Mac
+runner are not used today — they are deferred until a Mac runner exists (#2544).
+Every release candidate must therefore be checked manually on Apple silicon
+before it is tagged:
+
+```bash
+hatch run check-native --require cxx --require metal
+LUXAR_REQUIRE_METAL=1 hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests -v -rs
+```
+
+Without a CUDA toolkit, the compile check must report successful checks for
+`nlm/bindings.cpp`, `metal/bindings.mm`, and `metal/kernels.metal`, skip
+`cuda/bindings.cpp` because its headers are unavailable, report the `nvcc` arm
+as `SKIP`, and finish with `3/3 translation unit(s) compile-checked`. The parity
+command fails during pytest configuration if the Metal backend or MPS interop is
+unavailable, so a release check cannot pass with the Metal tests silently
+skipped.
+
+CUDA compile and parity coverage will run on a separate low-priority cadence
+rather than in pull-request CI, because the device compile takes minutes and the
+workstation GPUs are shared with interactive work. That runner work is tracked
+in #2544 and is not in place yet.
 
 ## Dependency Management
 

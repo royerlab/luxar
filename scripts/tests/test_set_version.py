@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from types import ModuleType
@@ -24,6 +25,9 @@ REPO = Path(__file__).resolve().parents[2]
 SET_VERSION = REPO / "scripts/set_version.py"
 CHECK_VERSIONS = REPO / "scripts/check_version_consistency.py"
 RELEASE = REPO / "scripts/release.sh"
+METAL_TEST_CONFTEST = (
+    REPO / "packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests/conftest.py"
+)
 MAKEFILE = REPO / "Makefile"
 
 
@@ -571,6 +575,48 @@ def test_release_preflight_honors_environment_precedence(tmp_path: Path) -> None
     assert "the tag will NOT publish to npm" in output
     assert "the tag WILL publish" not in output
     assert calls == ["repos/royerlab/luxar/environments/npm/variables"]
+
+
+def test_release_preflight_surfaces_native_backend_verification(tmp_path: Path) -> None:
+    output, _ = _run_release_preflight(tmp_path)
+
+    assert re.search(
+        r"Confirm the Apple-silicon native backend release verification ran for "
+        r"[0-9a-f]{12}\.",
+        output,
+    )
+
+
+def test_required_metal_gate_rejects_an_unavailable_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load(METAL_TEST_CONFTEST, "metal_test_conftest")
+    monkeypatch.setenv("LUXAR_REQUIRE_METAL", "1")
+    monkeypatch.setattr(module, "is_metal_available", lambda: False)
+    monkeypatch.setattr(module, "get_metal_status", lambda: "test backend unavailable")
+
+    with pytest.raises(pytest.UsageError, match="test backend unavailable"):
+        module.pytest_configure()
+
+
+def test_metal_gate_is_inert_without_the_release_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load(METAL_TEST_CONFTEST, "optional_metal_test_conftest")
+    monkeypatch.delenv("LUXAR_REQUIRE_METAL", raising=False)
+    monkeypatch.setattr(module, "is_metal_available", lambda: False)
+
+    module.pytest_configure()
+
+
+def test_required_metal_gate_accepts_an_available_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load(METAL_TEST_CONFTEST, "available_metal_test_conftest")
+    monkeypatch.setenv("LUXAR_REQUIRE_METAL", "1")
+    monkeypatch.setattr(module, "is_metal_available", lambda: True)
+
+    module.pytest_configure()
 
 
 def test_release_preflight_matches_case_insensitive_workflow_comparison(
