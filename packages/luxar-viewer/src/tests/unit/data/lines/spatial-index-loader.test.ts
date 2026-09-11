@@ -176,6 +176,7 @@ describe('LinesSpatialIndexLoader', () => {
       widths: { shape: number[]; dtype: string; attrs?: object };
       colors: { shape: number[]; dtype: string; attrs?: object };
       sharpness: { shape: number[]; dtype: string; attrs?: object };
+      scalars: { shape: number[]; dtype: string; attrs?: object };
     };
     let vertexBoundsArray: { shape: number[]; dtype: string; attrs: object };
     let segmentBoundsArray: { shape: number[]; dtype: string; attrs: object };
@@ -191,6 +192,7 @@ describe('LinesSpatialIndexLoader', () => {
         widths: { shape: [1000], dtype: 'float32', attrs: {} },
         colors: { shape: [1000, 3], dtype: 'float32', attrs: {} },
         sharpness: { shape: [1000], dtype: 'float32', attrs: {} },
+        scalars: { shape: [1000], dtype: 'float32', attrs: {} },
       };
 
       mockZarrLocation = makeMockZarrLocation();
@@ -216,6 +218,7 @@ describe('LinesSpatialIndexLoader', () => {
         if (path.includes('widths')) return Promise.resolve(mockArrays.widths);
         if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
         if (path.includes('sharpnesses')) return Promise.resolve(mockArrays.sharpness);
+        if (path.includes('scalars')) return Promise.resolve(mockArrays.scalars);
         return Promise.reject(new Error(`Unknown array: ${path}`));
       });
 
@@ -1121,6 +1124,29 @@ describe('LinesSpatialIndexLoader', () => {
         expect(vertexReads).toHaveLength(4);
         expect(
           vertexReads.every((call) => call[1][0].start === 100 && call[1][0].end === 120)
+        ).toBe(true);
+      });
+
+      it('warms scalar chunks for scalar-colored lines', async () => {
+        bodyLoader.dispose();
+        bodyLoader = new LinesSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof LinesSpatialIndexLoader>[0],
+          makeLinesNode({ attrs: { ...makeLinesNode().attrs, has_scalars: true } })
+        );
+        mockExecute
+          .mockResolvedValueOnce([{ start: 10, end: 20 }])
+          .mockResolvedValueOnce([{ start: 100, end: 120 }]);
+
+        await bodyLoader.prefetchChunks({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+
+        expect(
+          (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+            (call) => call[0] === mockArrays.scalars
+          )
         ).toBe(true);
       });
 

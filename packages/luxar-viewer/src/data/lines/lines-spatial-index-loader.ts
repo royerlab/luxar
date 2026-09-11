@@ -858,7 +858,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * Mirrors the gsplats / points `prefetchChunks(viewState)` so a
    * dimension-animation hook can prefetch the next slice while the
    * current frame renders. Segments are keyed by segment ranges; vertices,
-   * widths, colors, and sharpness are keyed by vertex ranges. Querying both
+   * widths, colors, sharpness, and scalars are keyed by vertex ranges. Querying both
    * published indexes keeps speculative reads in the same row currency as
    * the demand path instead of treating segment offsets as vertex offsets.
    */
@@ -877,12 +877,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     } catch {
       return;
     }
-    const vertexArrays = [
-      this.arrays.vertices,
-      this.arrays.widths,
-      this.arrays.colors,
-      this.arrays.sharpness,
-    ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
+    const vertexArrays = this.prefetchVertexArrays();
 
     await Promise.all([
       prefetchRangesIntoCache([this.arrays.segments], segmentRanges),
@@ -897,12 +892,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       return;
     }
     const segmentArrays = [this.arrays.segments];
-    const vertexArrays = [
-      this.arrays.vertices,
-      this.arrays.widths,
-      this.arrays.colors,
-      this.arrays.sharpness,
-    ].filter((array): array is zarr.Array<zarr.DataType, zarr.Readable> => array != null);
+    const vertexArrays = this.prefetchVertexArrays();
     let views: LinesViewState[];
     try {
       const segmentRanges = await this.queryVisibleSegmentRanges(current);
@@ -934,6 +924,16 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       )
       .slice(0, 2);
     await Promise.all(nearestViews.map((view) => this.prefetchChunks(view)));
+  }
+
+  private prefetchVertexArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {
+    return [
+      this.arrays.vertices,
+      this.arrays.widths,
+      this.arrays.colors,
+      this.arrays.sharpness,
+      this.arrays.scalars,
+    ].filter((array): array is zarr.Array<zarr.DataType, zarr.Readable> => array != null);
   }
 
   private sliceDistance(left: LinesViewState, right: LinesViewState): number {

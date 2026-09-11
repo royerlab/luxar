@@ -851,14 +851,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
     if (ranges.length === 0) return;
 
-    const arrays = [
-      this.arrays.positions,
-      this.arrays.colors,
-      this.arrays.radii,
-      this.arrays.sharpness,
-    ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
-
-    await prefetchRangesIntoCache(arrays, ranges);
+    await prefetchRangesIntoCache(this.prefetchArrays(), ranges);
   }
 
   async prefetchChunkBoundary(current: ViewState, predicted: ViewState): Promise<void> {
@@ -874,14 +867,19 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       await this.prefetchChunks(predicted);
       return;
     }
-    const arrays = [
+    const arrays = this.prefetchArrays();
+    const views = planChunkBoundaryViewStates(current, predicted, ranges, this.chunkIndex, arrays);
+    await Promise.all(views.map((view) => this.prefetchChunks(view)));
+  }
+
+  private prefetchArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {
+    return [
       this.arrays.positions,
       this.arrays.colors,
       this.arrays.radii,
       this.arrays.sharpness,
+      this.arrays.scalars,
     ].filter((array): array is zarr.Array<zarr.DataType, zarr.Readable> => array != null);
-    const views = planChunkBoundaryViewStates(current, predicted, ranges, this.chunkIndex, arrays);
-    await Promise.all(views.map((view) => this.prefetchChunks(view)));
   }
 
   /**

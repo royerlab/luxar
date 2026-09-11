@@ -89,6 +89,11 @@ describe('PointsSpatialIndexLoader', () => {
         chunks: [1000],
         dtype: 'float32',
       },
+      scalars: {
+        shape: [10000],
+        chunks: [1000],
+        dtype: 'float32',
+      },
     };
 
     // Setup mock zarr location
@@ -141,6 +146,7 @@ describe('PointsSpatialIndexLoader', () => {
       if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
       if (path.includes('radii')) return Promise.resolve(mockArrays.radii);
       if (path.includes('sharpness')) return Promise.resolve(mockArrays.sharpness);
+      if (path.includes('scalars')) return Promise.resolve(mockArrays.scalars);
       return Promise.reject(new Error(`Unknown array: ${path}`));
     });
 
@@ -894,6 +900,27 @@ describe('PointsSpatialIndexLoader', () => {
       const callsAfter = (zarr.get as any).mock.calls.length;
       // Each available array × range adds a get() call.
       expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+
+    it('warms scalar chunks for scalar-colored points', async () => {
+      loader.dispose();
+      loader = new PointsSpatialIndexLoader(mockZarrLocation, {
+        ...mockNode,
+        attrs: { ...mockNode.attrs, has_scalars: true },
+      });
+      mockExecute.mockResolvedValueOnce([{ start: 100, end: 200 }]);
+
+      await loader.prefetchChunks({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      });
+
+      expect(
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+          (call) => call[0] === mockArrays.scalars
+        )
+      ).toBe(true);
     });
 
     it('warms the predicted slice and only the nearest next chunk boundary', async () => {
