@@ -1070,8 +1070,17 @@ def make_substitutive_lod(
         if ref_energy is not None and np.isfinite(ref_energy):
             level_stats["reference_energy"] = float(ref_energy)
 
+    def _stamp_footprint(level_stats: dict, level_data: GSplatData) -> None:
+        if level_data.n_splats == 0:
+            return
+        sigma_geo = np.sqrt(level_data.volumes())
+        finite = sigma_geo[np.isfinite(sigma_geo) & (sigma_geo > 0)]
+        if finite.size:
+            level_stats["median_footprint"] = float(np.median(finite))
+
     # Collect per-level outputs and pack them as SubstitutiveLevels.
     finest_stats: dict = {"n_splats_total": int(src.n_splats)}
+    _stamp_footprint(finest_stats, src)
     if quality_stamps:
         # The finest level IS the reference: quality 1.0 by construction.
         finest_stats["quality"] = 1.0
@@ -1166,6 +1175,7 @@ def make_substitutive_lod(
                     + f", {volume_refit_stats['wall_s']:.1f}s"
                 )
         level_stats: dict = {"n_splats_total": int(stored.n_splats)}
+        _stamp_footprint(level_stats, stored)
         if level_refine_stats:
             level_refine_stats.pop("_mass_n", None)
             level_stats["refine"] = "l2"

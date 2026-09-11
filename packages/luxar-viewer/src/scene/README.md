@@ -371,17 +371,25 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    is applied between measurement and selection: `b` multiplies `screen-area`,
    while `sqrt(b)` multiplies legacy diagonal `coverage`, so both move by the
    same area factor. The neutral default is `b = 1`.
-5. Pick the finest child whose `coverageFraction` threshold (the
+5. When every child carries `level_stats.median_footprint`, project those
+   node-local scene-unit medians through the node transform and camera using
+   logical CSS pixels. Pick the coarsest level whose typical footprint is at
+   most 1.5 px, with a 10% downgrade deadband. This avoids an adaptive-DPR
+   feedback loop. `lod-bias` keeps its area-unit meaning, so the footprint
+   limit is divided by `sqrt(b)`. Missing or invalid stamps fall through to
+   the occupancy path. Footprint-selected switches are hard swaps for now;
+   occupancy cross-fade bands are not reused with mismatched units.
+6. Otherwise, pick the finest child whose `coverageFraction` threshold (the
    per-child value read from the zarr attr `coverage_fraction`, in
    whichever units step 4's `selector` names) is satisfied by that
    metric, with 10% asymmetric, spacing-aware hysteresis on the
    downgrade direction to suppress threshold-edge flicker
    (`pickChildWithHysteresis`).
-6. Swap visibility atomically when the desired child differs; lazy
+7. Swap visibility atomically when the desired child differs; lazy
    targets that are not yet committed kick `ensureLoaded()` and swap
    on a later frame once `ready` flips true — unless the
    **hidden-layer load gate** vetoes it (below).
-7. **Hidden-layer load gate**: no deferred load (initial, settled
+8. **Hidden-layer load gate**: no deferred load (initial, settled
    reload, or cross-fade partner pre-load) is _started_ while the
    group is not effectively visible — its own `visible` flag or any
    ancestor's is `false` (`isEffectivelyVisible` in

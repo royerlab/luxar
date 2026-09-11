@@ -588,6 +588,22 @@ class TestApiContract:
             assert "quality" not in lv.stats
             assert "reference_energy" not in lv.stats
 
+    def test_median_footprint_stamped_on_every_level(self):
+        data = _make_isotropic_3d(n=32, seed=1)
+        pyramid = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        footprints = [lv.stats["median_footprint"] for lv in pyramid.substitutive_levels]
+        assert all(np.isfinite(value) and value > 0 for value in footprints)
+        assert footprints[0] < footprints[1]
+
     def test_stats_recorded(self):
         data = _make_isotropic_3d(n=16, seed=0)
         pyramid = make_substitutive_lod(

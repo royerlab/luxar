@@ -86,9 +86,12 @@ import { coverageBlendPlan } from './lod-blend';
 import { applyLodFade, FADE_EPSILON, isBlendableSubtree } from './lod-fade';
 import {
   computeEntryWorldBox,
+  MAX_MEDIAN_FOOTPRINT_PX,
+  pickChildByFootprintWithHysteresis,
   pickChildWithHysteresis,
   projectBoxAreaFraction,
   projectBoxDiagonalPx,
+  projectWorldRadiusPx,
   type WorldBoxOptions,
 } from './lod-selector-math';
 import { enforceResidentByteBudget } from './lod-eviction';
@@ -367,6 +370,8 @@ export interface LODGroupChild {
    * No upper bound is enforced here.
    */
   coverageFraction: number;
+  /** Median element footprint in node-local scene units. */
+  medianFootprint?: number;
   /**
    * Raw nD position bounds (from the child's ``position_bounds`` zarr
    * attribute). Stored unprojected because ``displayDims`` can change
@@ -611,6 +616,8 @@ interface LODGroupEntryCache {
    * way the list is viewport-independent and needs no per-frame rebuild.
    */
   thresholds: number[];
+  medianFootprints: number[] | null;
+  footprintPx: number[];
   /** Whether any child needs the optional robust-bounds metric fold. */
   hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
@@ -634,6 +641,49 @@ interface LODGroupEntryCache {
  */
 const FRUSTUM_SCRATCH = new THREE.Frustum();
 const FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
+const FOOTPRINT_CENTER_SCRATCH = new THREE.Vector3();
+const FOOTPRINT_VIEW_CENTER_SCRATCH = new THREE.Vector3();
+
+function resolveLodBias(value: number | undefined): number {
+  return value != null && Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+interface FootprintPickOptions {
+  viewportHeight: number;
+  lodBias: number;
+}
+
+function pickStampedFootprintChild(
+  entry: LODGroupEntry,
+  cache: LODGroupEntryCache,
+  worldBox: BoundingBox,
+  camera: THREE.Camera,
+  options: FootprintPickOptions
+): number | null {
+  if (!cache.medianFootprints) return null;
+  FOOTPRINT_CENTER_SCRATCH.set(
+    (worldBox.min.x + worldBox.max.x) / 2,
+    (worldBox.min.y + worldBox.max.y) / 2,
+    (worldBox.min.z + worldBox.max.z) / 2
+  );
+  const worldScale = entry.groupObject.matrixWorld.getMaxScaleOnAxis();
+  for (let i = 0; i < cache.medianFootprints.length; i++) {
+    const projected = projectWorldRadiusPx(
+      cache.medianFootprints[i] * worldScale,
+      FOOTPRINT_CENTER_SCRATCH,
+      camera,
+      options.viewportHeight,
+      FOOTPRINT_VIEW_CENTER_SCRATCH
+    );
+    if (projected == null || !Number.isFinite(projected)) return null;
+    cache.footprintPx[i] = projected;
+  }
+  return pickChildByFootprintWithHysteresis(
+    cache.footprintPx,
+    entry.activeChildIndex,
+    MAX_MEDIAN_FOOTPRINT_PX / Math.sqrt(options.lodBias)
+  );
+}
 const PARTITION_FRUSTUM_SCRATCH = new THREE.Frustum();
 const PARTITION_FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
 // Cold parts have no loaded footprint to union, so pad x/y symmetrically to
@@ -979,6 +1029,12 @@ export class LODGroupRegistry {
     this.entries.set(entry.path, entry);
     this.caches.set(entry.path, {
       thresholds: entry.children.map((c) => c.coverageFraction),
+      medianFootprints: entry.children.every(
+        (child) => child.medianFootprint != null && child.medianFootprint > 0
+      )
+        ? entry.children.map((child) => child.medianFootprint!)
+        : null,
+      footprintPx: new Array<number>(entry.children.length),
       hasLodBounds: entry.children.some((c) => c.lodBounds != null),
       localBoxScratch: {
         min: { x: 0, y: 0, z: 0 },
@@ -1716,6 +1772,7 @@ export class LODGroupRegistry {
     // FILL_FACTOR·fittedAxisPx), hoisted so the coverage-band cross-fade below
     // can blend around a boundary. -1 ⇒ not computed (locked / off-screen).
     let coverageMetric = -1;
+    let usedFootprintSelection = false;
     if (entry.selectorMode !== 'auto') {
       // Explicit lock bypasses the off-screen gate: a user who pins a level
       // keeps it whether or not the group is on screen.
@@ -1796,12 +1853,25 @@ export class LODGroupRegistry {
             const fittedAxisPx = Math.min(viewport.width, viewport.height);
             coverageMetric = diagonalPx / (FILL_FACTOR * fittedAxisPx);
           }
-          const configuredBias = this.deps.getLodBias?.() ?? 1;
-          const lodBias =
-            Number.isFinite(configuredBias) && configuredBias > 0 ? configuredBias : 1;
+          const lodBias = resolveLodBias(this.deps.getLodBias?.());
           coverageMetric *= entry.selector === 'screen-area' ? lodBias : Math.sqrt(lodBias);
         }
-        desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
+        const footprintDesired = forceFinest
+          ? null
+          : pickStampedFootprintChild(entry, cache, worldBox, camera, {
+              viewportHeight: viewport.height,
+              lodBias: resolveLodBias(this.deps.getLodBias?.()),
+            });
+        if (footprintDesired == null) {
+          desired = pickChildWithHysteresis(
+            cache.thresholds,
+            entry.activeChildIndex,
+            coverageMetric
+          );
+        } else {
+          desired = footprintDesired;
+          usedFootprintSelection = true;
+        }
         entry.offScreen = false;
       }
     }
@@ -1998,6 +2068,7 @@ export class LODGroupRegistry {
       !entry.offScreen &&
       aspirationFresh &&
       displayIdx === entry.activeChildIndex &&
+      !usedFootprintSelection &&
       coverageMetric >= 0
     ) {
       const cache = this.caches.get(entry.path);

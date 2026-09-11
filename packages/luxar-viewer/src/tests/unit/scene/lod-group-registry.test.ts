@@ -34,6 +34,8 @@ import {
 import {
   computeEntryWorldBox,
   DEGENERATE_RECT_HALF_EXTENT,
+  pickChildByFootprintWithHysteresis,
+  projectWorldRadiusPx,
 } from '../../../scene/lod-selector-math';
 import {
   calculateCameraDistance,
@@ -1563,6 +1565,52 @@ describe('LODGroupRegistry — selector mode', () => {
 });
 
 describe('LODGroupRegistry — auto evaluation', () => {
+  it('selects the coarsest level whose median footprint is at most 1.5 CSS pixels', () => {
+    expect(pickChildByFootprintWithHysteresis([6, 1.4, 0.4], 0)).toBe(1);
+    expect(pickChildByFootprintWithHysteresis([1.3, 0.4], 1)).toBe(0);
+    expect(pickChildByFootprintWithHysteresis([1.4, 0.4], 1)).toBe(1);
+  });
+
+  it('projects footprints in logical viewport pixels for both camera projections', () => {
+    const center = new THREE.Vector3(0, 0, -10);
+    const perspective = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 100);
+    perspective.updateMatrixWorld(true);
+    const at600 = projectWorldRadiusPx(1, center, perspective, 600);
+    const at1200 = projectWorldRadiusPx(1, center, perspective, 1200);
+    expect(at1200).toBeCloseTo(at600! * 2);
+
+    const ortho = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
+    expect(projectWorldRadiusPx(1, center, ortho, 600)).toBeCloseTo(30);
+  });
+
+  it('uses complete footprint stamps before occupancy and keeps lod bias in area units', () => {
+    function selectedAtBias(lodBias: number, completeStamps = true): number {
+      const camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 100);
+      camera.updateMatrixWorld(true);
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getLodBias: () => lodBias,
+      });
+      const bounds = { min: [-0.1, -0.1, -10.1], max: [0.1, 0.1, -9.9] };
+      const children = [0.1, 0.02, 0.005].map((medianFootprint, index) => ({
+        ...makeChild([0, 0.25, 0.5][index]),
+        positionBounds: bounds,
+        ...(completeStamps || index !== 1 ? { medianFootprint } : {}),
+      }));
+      const entry = makeEntry(children, 0, `/footprint-${lodBias}-${completeStamps}`);
+      entry.selector = 'screen-area';
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      return entry.activeChildIndex;
+    }
+
+    expect(selectedAtBias(1)).toBe(1);
+    expect(selectedAtBias(4)).toBe(2);
+    expect(selectedAtBias(1, false)).toBe(0);
+  });
+
   it("applies lod bias in area units to selector='screen-area'", () => {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();

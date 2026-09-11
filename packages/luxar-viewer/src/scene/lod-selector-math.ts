@@ -322,6 +322,50 @@ export function pickChildWithHysteresis(
   return currentIdx;
 }
 
+export const MAX_MEDIAN_FOOTPRINT_PX = 1.5;
+
+export function pickChildByFootprintWithHysteresis(
+  footprintsPx: readonly number[],
+  currentIdx: number,
+  maxFootprintPx: number = MAX_MEDIAN_FOOTPRINT_PX,
+  hysteresisRatio: number = HYSTERESIS_RATIO
+): number {
+  if (footprintsPx.length === 0) return -1;
+  let natural = footprintsPx.length - 1;
+  for (let i = 0; i < footprintsPx.length; i++) {
+    if (footprintsPx[i] <= maxFootprintPx) {
+      natural = i;
+      break;
+    }
+  }
+  if (natural >= currentIdx) return natural;
+  return footprintsPx[natural] <= maxFootprintPx * (1 - hysteresisRatio) ? natural : currentIdx;
+}
+
+export function projectWorldRadiusPx(
+  radiusWorld: number,
+  worldCenter: THREE.Vector3,
+  camera: THREE.Camera,
+  viewportHeight: number,
+  viewCenterScratch: THREE.Vector3 = new THREE.Vector3()
+): number | null {
+  if (!(radiusWorld > 0) || !Number.isFinite(radiusWorld) || viewportHeight <= 0) return null;
+  if (camera instanceof THREE.PerspectiveCamera) {
+    const viewCenter = viewCenterScratch.copy(worldCenter).applyMatrix4(camera.matrixWorldInverse);
+    const depth = -viewCenter.z;
+    if (!(depth > 0)) return Number.POSITIVE_INFINITY;
+    return (
+      (radiusWorld * viewportHeight) /
+      (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2))
+    );
+  }
+  if (camera instanceof THREE.OrthographicCamera) {
+    const frustumHeight = (camera.top - camera.bottom) / camera.zoom;
+    return frustumHeight > 0 ? (radiusWorld * viewportHeight) / frustumHeight : null;
+  }
+  return null;
+}
+
 /**
  * Minimal structural shape {@link computeEntryWorldBox} reads off a registry
  * entry (``LODGroupEntry`` satisfies it structurally — same pattern as

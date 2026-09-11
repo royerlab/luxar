@@ -74,6 +74,13 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
   max: [] as readonly number[],
 };
 
+function readMedianFootprint(attrs: SceneNode['attrs']): number | undefined {
+  const stats = (attrs as Record<string, unknown>).level_stats;
+  if (!stats || typeof stats !== 'object') return undefined;
+  const value = (stats as Record<string, unknown>).median_footprint;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 /**
  * Build a deferred (lazy) ``LODGroupChild`` from an already cheap-attached
  * placeholder. Geometry-agnostic: the caller supplies ``runExpensive`` (fetch +
@@ -111,6 +118,7 @@ function attachLazyChild(
     object: placeholder,
     nodePath: child.path,
     coverageFraction,
+    medianFootprint: readMedianFootprint(child.attrs),
     positionBounds,
     lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
     ready: false,
@@ -631,6 +639,7 @@ export async function loadLodGroupNode(
     const entryChild: LODGroupChild = {
       object: childObject,
       coverageFraction,
+      medianFootprint: readMedianFootprint(child.attrs),
       positionBounds,
       lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
     };
