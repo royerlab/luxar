@@ -166,25 +166,31 @@ describe('luma8', () => {
 });
 
 describe('the capture spec and this module agree', () => {
+  const specPath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../screenshots/generate-gallery.spec.ts'
+  );
+
   it('the in-page luma expression matches luma8', () => {
     // The page-side decode CANNOT import this module — its body is serialised
     // into the browser — so the coefficients are duplicated by necessity. This
     // pins the duplicate: if either side is retuned alone, this fails.
-    const specPath = path.join(
-      path.dirname(fileURLToPath(import.meta.url)),
-      '../screenshots/generate-gallery.spec.ts'
-    );
     const src = fs.readFileSync(specPath, 'utf-8');
     expect(src).toContain('Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2])');
   });
 
   it('the page downscales to COMPARE_SIZE rather than a hardcoded literal', () => {
-    const specPath = path.join(
-      path.dirname(fileURLToPath(import.meta.url)),
-      '../screenshots/generate-gallery.spec.ts'
-    );
     const src = fs.readFileSync(specPath, 'utf-8');
     expect(src).toContain('[a, b, COMPARE_SIZE]');
     expect(COMPARE_SIZE).toBe(256);
+  });
+
+  it('freezes auto-dolly before still framing begins', () => {
+    const src = fs.readFileSync(specPath, 'utf-8');
+    const freeze = src.indexOf('controls?.setAutoDolly?.(false)');
+    const frame = src.indexOf('await centerCamera(page);', freeze);
+
+    expect(freeze).toBeGreaterThan(src.indexOf('await waitForDataLoaded(page'));
+    expect(frame).toBeGreaterThan(freeze);
   });
 });
