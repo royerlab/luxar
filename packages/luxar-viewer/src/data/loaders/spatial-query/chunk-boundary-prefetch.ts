@@ -95,6 +95,26 @@ function nextArrayBoundaryPosition(search: BoundarySearch): number | null {
   return null;
 }
 
+/** Find the nearest qualifying boundary across the loader's arrays. */
+function nearestArrayBoundaryPosition(
+  arrays: readonly FirstAxisChunkLayout[],
+  search: Omit<BoundarySearch, 'array'>
+): number | null {
+  let nearest: number | null = null;
+  for (const array of arrays) {
+    const position = nextArrayBoundaryPosition({ ...search, array });
+    if (
+      position !== null &&
+      (nearest === null ||
+        Math.abs(position - search.predictedPosition) <
+          Math.abs(nearest - search.predictedPosition))
+    ) {
+      nearest = position;
+    }
+  }
+  return nearest;
+}
+
 /**
  * Plan the predicted slice plus the nearest next zarr chunk boundary across all arrays.
  *
@@ -116,25 +136,13 @@ export function planChunkBoundaryViewStates(
   const forward = delta > 0;
   const edge = rangeEdge(ranges, forward);
   const predictedPosition = predicted.slicePosition[dimension];
-  let nearestBoundary: number | null = null;
-
-  for (const array of arrays) {
-    const position = nextArrayBoundaryPosition({
-      array,
-      index,
-      edge,
-      dimension,
-      predictedPosition,
-      forward,
-    });
-    if (
-      position !== null &&
-      (nearestBoundary === null ||
-        Math.abs(position - predictedPosition) < Math.abs(nearestBoundary - predictedPosition))
-    ) {
-      nearestBoundary = position;
-    }
-  }
+  const nearestBoundary = nearestArrayBoundaryPosition(arrays, {
+    index,
+    edge,
+    dimension,
+    predictedPosition,
+    forward,
+  });
 
   const boundaryPositions =
     nearestBoundary === null || nearestBoundary === predictedPosition ? [] : [nearestBoundary];
