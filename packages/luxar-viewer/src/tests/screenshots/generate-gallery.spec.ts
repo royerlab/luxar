@@ -1400,6 +1400,7 @@ for (const demo of DEMOS) {
       console.log(`[${demo.id}] timelapse still framePoint=${frac}`);
     }
 
+    // Camera fitting and exposure must measure a fixed radius, not a live dolly phase.
     await page.evaluate(() => (window as any).__luxarDebug?.controls?.setAutoDolly?.(false));
     await hideChrome(page);
     // Frame FIRST (F restores the authored camera or bounds-fits), optionally

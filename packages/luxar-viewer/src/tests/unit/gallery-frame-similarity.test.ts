@@ -187,10 +187,16 @@ describe('the capture spec and this module agree', () => {
 
   it('freezes auto-dolly before still framing begins', () => {
     const src = fs.readFileSync(specPath, 'utf-8');
-    const freeze = src.indexOf('controls?.setAutoDolly?.(false)');
+    const capture = src.indexOf('const needsNav = Boolean(demo.dimensionNav);');
+    const timelapse = src.indexOf('if (demo.timelapse) {', capture);
+    const freeze = src.indexOf('controls?.setAutoDolly?.(false)', timelapse);
+    const hide = src.indexOf('await hideChrome(page);', freeze);
     const frame = src.indexOf('await centerCamera(page);', freeze);
 
-    expect(freeze).toBeGreaterThan(src.indexOf('await waitForDataLoaded(page'));
-    expect(frame).toBeGreaterThan(freeze);
+    expect(capture).toBeGreaterThan(-1);
+    expect(timelapse).toBeGreaterThan(capture);
+    expect(freeze).toBeGreaterThan(timelapse);
+    expect(hide).toBeGreaterThan(freeze);
+    expect(frame).toBeGreaterThan(hide);
   });
 });
