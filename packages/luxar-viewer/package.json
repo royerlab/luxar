@@ -134,7 +134,7 @@
     "@vitest/coverage-v8": "~4.1.10",
     "@vitest/ui": "~4.1.10",
     "dependency-cruiser": "^18.2.0",
-    "eslint": "^10.9.1",
+    "eslint": "^10.10.0",
     "fast-check": "^4.9.0",
     "glob": "^13.0.6",
     "globals": "^17.12.0",
