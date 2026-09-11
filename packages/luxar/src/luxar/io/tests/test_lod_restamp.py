@@ -641,8 +641,8 @@ def test_anchor_migrates_and_reanchors_a_legacy_ladder(legacy_scene: Path) -> No
     report = restamp_lod_store(legacy_scene, finest_anchor=0.25)
 
     assert _ladder(legacy_scene, "pts") == [0.0, 0.25]
-    assert report.restamped[0].path == "pts"
-    assert report.restamped[0].old_selector == LEGACY_LOD_SELECTOR
+    restamped = next(group for group in report.restamped if group.path == "pts")
+    assert restamped.old_selector == LEGACY_LOD_SELECTOR
 
 
 def test_repeating_the_same_anchor_changes_nothing(tmp_path: Path) -> None:
