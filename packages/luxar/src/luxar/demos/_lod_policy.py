@@ -350,9 +350,10 @@ def stream_ladder(
     **Capped increments**, via :func:`~luxar.utils.lod_breakpoints.
     capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
     and would block the main thread on these leaves. For a sliced node the
-    whole-node ceiling scales by ``slices`` because the viewer commits one
-    barrier-ordered slice; the built-scene gate checks the exact busiest-slice
-    count from ``chunk_bounds`` rather than trusting the average.
+    whole-node ceiling scales by ``slices``: this budgets 900,000 rows per slice
+    under uniform mixing, while the built-scene gate checks the conservative
+    largest per-coordinate fetch from ``chunk_bounds``. The gap to that gate's
+    1,000,000-row cap is headroom for non-uniform slices and boundary chunks.
 
     A SLICED NODE WANTS A SHARE, NOT A BUDGET — PASS ``slices``
     -----------------------------------------------------------
@@ -490,6 +491,7 @@ def stream_ladder(
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
     )
     commit_ceiling = DEFAULT_MAX_ADDITIVE_COMMIT * slices
+    slice_label = "slice" if slices == 1 else "slices"
     if slices > 1:
         # Loic's ruling, 2026-08-30: on a sliced node the contract is a SHARE of
         # the frame, not a download budget. A share is what tracks whether the
@@ -514,10 +516,11 @@ def stream_ladder(
             raise ValueError(
                 f"Sliced node with {n:,} elements cannot deliver its "
                 f"{100 / SLICED_LADDER_MAX_DEPTH:g}% first "
-                f"rung within the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-element "
-                "per-slice commit ceiling. Partition this leaf after moving any "
-                "stacked axis last, or supply explicit capped cuts instead of "
-                "stream_ladder."
+                f"rung within the {commit_ceiling:,}-element whole-node commit "
+                f"ceiling for {slices:,} {slice_label} "
+                f"({DEFAULT_MAX_ADDITIVE_COMMIT:,} per slice under uniform "
+                "mixing). Partition this leaf after moving any stacked axis "
+                "last, or supply explicit capped cuts instead of stream_ladder."
             )
         first_chunk = share_chunk
     if geometry == "lines":
@@ -529,9 +532,11 @@ def stream_ladder(
         if largest_commit > commit_ceiling:
             raise ValueError(
                 "Lines streaming ladder with resolved chunk "
-                f"{first_chunk:,} exceeds the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-vertex "
-                "per-slice commit ceiling "
-                f"(largest whole-node commit {largest_commit:,}) for n={n:,}. "
+                f"{first_chunk:,} resolves a {largest_commit:,}-vertex whole-node "
+                f"commit, above the {commit_ceiling:,}-vertex ceiling for "
+                f"{slices:,} {slice_label} "
+                f"({DEFAULT_MAX_ADDITIVE_COMMIT:,} per slice "
+                "under uniform mixing). "
                 "Supply capped polyline-count cuts for this leaf instead."
             )
     counts: Any = (

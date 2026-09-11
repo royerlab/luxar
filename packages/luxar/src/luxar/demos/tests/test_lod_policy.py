@@ -973,7 +973,11 @@ class TestStreamLadder:
 
     def test_lines_refuse_the_first_size_whose_increment_breaks_the_cap(self) -> None:
         with pytest.raises(
-            ValueError, match="resolved chunk 39,062 exceeds the 900,000-vertex"
+            ValueError,
+            match=(
+                "resolved chunk 39,062 resolves a 900,001-vertex whole-node "
+                "commit, above the 900,000-vertex ceiling for 1 slice"
+            ),
         ):
             stream_ladder(2_149_985, geometry="lines")
 
@@ -1265,10 +1269,20 @@ scene.add_gsplats_from_data(
         assert sliced > whole
         assert sliced == -(-1_800_001 // SLICED_LADDER_MAX_DEPTH)
 
-    def test_lines_scale_the_commit_ceiling_by_slice_count(self) -> None:
+    def test_lines_slice_scaled_ladder_survives_level_specialization(self) -> None:
+        from luxar.core.group.lod.group import level_additive_lod
+
         spec = stream_ladder(1_800_005, geometry="lines", slices=4)
+        resolved = level_additive_lod(
+            spec,
+            level_n=1_800_005,
+            compression_factor=4,
+            is_coarsest=True,
+            slices=4,
+        )
 
         assert spec["counts"] == "stream:225001"
+        assert resolved == spec
 
     def test_sliced_points_scale_the_commit_ceiling_by_slice_count(self) -> None:
         counts = stream_ladder(7_200_001, slices=2)["counts"]
@@ -1284,7 +1298,13 @@ scene.add_gsplats_from_data(
         assert counts[0] / counts[-1] == 1 / SLICED_LADDER_MAX_DEPTH
 
     def test_slice_scaling_still_rejects_an_impossible_average_commit(self) -> None:
-        with pytest.raises(ValueError, match="per-slice commit ceiling"):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "1,800,000-element whole-node commit ceiling for 2 slices.*"
+                "900,000 per slice under uniform mixing"
+            ),
+        ):
             stream_ladder(14_400_001, slices=2)
 
     def test_the_slice_scaled_ceiling_respects_the_configured_share(

@@ -14,9 +14,11 @@ A ladder can exist and still be worthless. For example,
 7,998,490 over 8M points: 99.98% of the data remained in one commit. A large
 leaf therefore fails when any level exceeds either ``--max-share`` of the total
 or the absolute ``--max-level-elements`` commit budget. On a barrier-ordered
-sliced leaf, that absolute arm measures the busiest resident slice from the
-level's chunk bounds; unsliced, unindexed, and ``extend_to_all`` leaves retain
-the node-level cap.
+sliced leaf, that absolute arm measures the conservative largest per-coordinate
+fetch from the level's chunk bounds; unsliced, unindexed, multi-axis, and
+``extend_to_all`` leaves retain the node-level cap. This bounds-based commit arm
+is independent of the coordinate-decoding histogram used by the share arm
+below, so their reports can differ at chunk boundaries.
 
 A SECOND arm audits nodes the viewer SLICES (any non-displayed dimension). A
 ladder's rungs are sized against the whole node, but only one slice is ever on
@@ -199,7 +201,13 @@ def _element_count(attrs: dict[str, Any]) -> int:
 
 
 def _slice_ordering(level: Any) -> tuple[list[int], int, str] | None:
-    """Return barrier dims, row atom, and bounds array for one level."""
+    """Return barrier dims, row atom, and bounds array for one level.
+
+    Hidden barrier dimensions are discrete and non-spatial, so the viewer's
+    quarter-cell query targets one coordinate. Coordinates closer than the
+    stored bounds epsilon are the residual exception handled conservatively by
+    :func:`_busiest_slice_elements`.
+    """
     attrs = dict(level.attrs)
     if attrs.get("extend_to_all"):
         return None
@@ -222,7 +230,13 @@ def _slice_ordering(level: Any) -> tuple[list[int], int, str] | None:
 
 
 def _busiest_slice_elements(level: Any) -> int | None:
-    """Exact largest resident-slice count from one-dimensional chunk bounds."""
+    """Conservative largest one-coordinate fetch from one-axis chunk bounds.
+
+    Whole chunks are the viewer's fetch atom, so a chunk whose bounds touch two
+    coordinates counts toward both. Distinct coordinates must be separated by
+    more than the producer's bounds epsilon or their intervals merge here,
+    conservatively inflating the result toward the whole-level count.
+    """
     ordering = _slice_ordering(level)
     if ordering is None:
         return None
@@ -262,7 +276,7 @@ def _busiest_slice_elements(level: Any) -> int | None:
 def _largest_commit_elements(
     leaf: Any, n_sub: int, node_biggest: int
 ) -> tuple[int, int | None]:
-    """Return the cap measurement and optional busiest-slice detail."""
+    """Return the cap measurement and optional coordinate-fetch upper bound."""
     if leaf.attrs.get("extend_to_all"):
         return node_biggest, None
     sliced_sizes = [
@@ -281,22 +295,23 @@ def _commit_cap_result(
     detail: str,
     max_level_elements: int,
 ) -> tuple[str, tuple[str, str] | None]:
-    """Add slice detail and return an absolute-cap failure when present."""
+    """Return a detail suffix and absolute-cap failure when present."""
     commit_biggest, sliced_biggest = _largest_commit_elements(leaf, n_sub, node_biggest)
+    detail_suffix = ""
     if sliced_biggest is not None:
-        detail += f", busiest slice {sliced_biggest:,} elements"
+        detail_suffix = f", largest coordinate fetch {sliced_biggest:,} elements"
     if commit_biggest <= max_level_elements:
-        return detail, None
+        return detail_suffix, None
     measured = (
-        f"busiest slice has {commit_biggest:,} elements"
+        f"largest coordinate fetch is {commit_biggest:,} elements"
         if sliced_biggest is not None
         else f"largest level has {commit_biggest:,} elements"
     )
     return (
-        detail,
+        detail_suffix,
         (
             "fail",
-            f"{detail} — {measured}, above the "
+            f"{detail}{detail_suffix} — {measured}, above the "
             f"{max_level_elements:,} absolute commit cap",
         ),
     )
@@ -545,9 +560,10 @@ def check_leaf(
     detail = f"{n_sub} levels {sizes}, largest {share:.1%} of {summed:,}"
 
     if summed > min_elements:
-        detail, cap_failure = _commit_cap_result(
+        cap_detail, cap_failure = _commit_cap_result(
             leaf, n_sub, biggest, detail, max_level_elements
         )
+        detail += cap_detail
         if cap_failure is not None:
             return cap_failure
         if share > max_share:

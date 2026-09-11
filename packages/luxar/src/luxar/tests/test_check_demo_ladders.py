@@ -15,6 +15,7 @@ import zarr
 from luxar.utils import paths as luxar_paths
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_BOUND_HALF_WIDTH = 1e-3
 
 
 def _load_checker() -> ModuleType:
@@ -79,7 +80,7 @@ def _add_slice_bounds(
     bounds = np.zeros((len(coordinates), 4, 2), dtype=np.float32)
     for index, coordinate in enumerate(coordinates):
         lo, hi = coordinate if isinstance(coordinate, tuple) else (coordinate,) * 2
-        bounds[index, 3] = (lo - 1e-5, hi + 1e-5)
+        bounds[index, 3] = (lo - _BOUND_HALF_WIDTH, hi + _BOUND_HALF_WIDTH)
     level.create_array("chunk_bounds", data=bounds)
 
 
@@ -93,7 +94,10 @@ def _add_line_slice_bounds(
     }
     bounds = np.zeros((len(coordinates), 4, 2), dtype=np.float32)
     for index, coordinate in enumerate(coordinates):
-        bounds[index, 3] = (coordinate - 1e-5, coordinate + 1e-5)
+        bounds[index, 3] = (
+            coordinate - _BOUND_HALF_WIDTH,
+            coordinate + _BOUND_HALF_WIDTH,
+        )
     level.create_array("vertex_chunk_bounds", data=bounds)
 
 
@@ -141,7 +145,7 @@ def test_absolute_level_cap_uses_the_busiest_barrier_ordered_slice(
     status, message = _check(leaf, max_level_elements=70)
 
     assert status == "fail"
-    assert "busiest slice has 80 elements" in message
+    assert "largest coordinate fetch is 80 elements" in message
 
 
 def test_absolute_level_cap_accepts_large_levels_when_each_slice_is_bounded(
@@ -156,7 +160,7 @@ def test_absolute_level_cap_accepts_large_levels_when_each_slice_is_bounded(
     status, message = _check(leaf, max_level_elements=70)
 
     assert status == "ok"
-    assert "busiest slice 60 elements" in message
+    assert "largest coordinate fetch 60 elements" in message
 
 
 def test_absolute_level_cap_reads_lines_vertex_ordering_bounds(tmp_path: Path) -> None:
@@ -172,11 +176,34 @@ def test_absolute_level_cap_reads_lines_vertex_ordering_bounds(tmp_path: Path) -
     status, message = _check(leaf, max_level_elements=70)
 
     assert status == "ok"
-    assert "busiest slice 60 elements" in message
+    assert "largest coordinate fetch 60 elements" in message
+
+
+def test_absolute_level_cap_reads_gsplat_chunk_bounds(tmp_path: Path) -> None:
+    leaf = _make_leaf(tmp_path / "gsplats.zarr", [120, 120, 120])
+    leaf.attrs.update({"type": "gsplats", "n_splats": 360})
+    del leaf.attrs["n_points"]
+    for index in range(3):
+        level = leaf[f"additive_{index}"]
+        level.attrs.update({"type": "gsplats", "n_splats": 120})
+        del level.attrs["n_points"]
+        _add_slice_bounds(level, chunk_size=30, coordinates=[0, 0, 1, 1])
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "ok"
+    assert "largest coordinate fetch 60 elements" in message
 
 
 @pytest.mark.parametrize(
-    "fallback", ["unsliced", "extend_to_all", "multiple_slice_dims", "malformed"]
+    "fallback",
+    [
+        "unsliced",
+        "extend_to_all",
+        "multiple_slice_dims",
+        "malformed",
+        "mixed_levels",
+    ],
 )
 def test_absolute_level_cap_keeps_node_level_fallbacks(
     tmp_path: Path, fallback: str
@@ -196,6 +223,13 @@ def test_absolute_level_cap_keeps_node_level_fallbacks(
             _add_slice_bounds(level, chunk_size=30, coordinates=[0, 0, 1, 1])
             level.attrs["slice_dims"] = (
                 [2, 3] if fallback == "multiple_slice_dims" else ["not-an-index"]
+            )
+    elif fallback == "mixed_levels":
+        for index in range(2):
+            _add_slice_bounds(
+                leaf[f"additive_{index}"],
+                chunk_size=30,
+                coordinates=[0, 0, 1, 1],
             )
 
     status, message = _check(leaf, max_level_elements=70)
