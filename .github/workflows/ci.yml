@@ -183,7 +183,7 @@ jobs:
             # manifests; generated-fixture-freshness.test.ts checks the Makefile's
             # E2E fixture prerequisite wiring. The third-party-notices test scrapes
             # colormap tables from scripts/generate_builtin_colormaps.py.
-            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^Makefile$|^README\.md$|^scripts/generate_builtin_colormaps\.py$|^scripts/gallery/(media-)?manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
+            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^\.nvmrc$|^Makefile$|^README\.md$|^scripts/generate_builtin_colormaps\.py$|^scripts/gallery/(media-)?manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
             printf '%s\n' "$changed" | grep -qE '(\.go$|^packages/luxar/src/luxar/cli/_launchers/|(^|/)go\.(mod|sum)$)' && dom_go=true || true
             # This workflow DEFINES how every suite is invoked, so it belongs to all
@@ -932,10 +932,11 @@ jobs:
         working-directory: packages/luxar-viewer
         run: pnpm test:generate-fixtures
 
-      - name: Check (overrides + format + typecheck + lint + layers + knip + coverage)
+      - name: Check (overrides + Node types + format + typecheck + lint + layers + knip + coverage)
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         # `pnpm run check:ci` runs in this order:
         #   check:overrides (security pins single-sourced in pnpm-workspace.yaml)
+        #   → check:node-types (@types/node package major matches .nvmrc)
         #   → check:format → typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)

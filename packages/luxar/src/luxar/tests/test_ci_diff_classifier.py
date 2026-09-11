@@ -93,6 +93,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py derives the published LFS candidate set from it",
     ),
     (
+        ".nvmrc",
+        "ts",
+        "check:node-types compares it against the declared @types/node major",
+    ),
+    (
         ".gitignore",
         "py",
         "test_wheel_source_completeness.py guards package sources against broad "
