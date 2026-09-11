@@ -55,6 +55,7 @@ import {
   loadColorRanges,
   colorComponentsOf,
   prefetchRangesIntoCache,
+  planChunkBoundaryViewStates,
   OnceInit,
   makeInitialLoaderMetrics,
   buildSpatialIndexMetrics,
@@ -858,6 +859,23 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
 
     await prefetchRangesIntoCache(arrays, ranges);
+  }
+
+  async prefetchChunkBoundary(current: ViewState, predicted: ViewState): Promise<void> {
+    await this._onceInit.ensure(() => this.initialize());
+    if (!this.chunkIndex || !this.arrays.positions) {
+      await this.prefetchChunks(predicted);
+      return;
+    }
+    const ranges = await this.queryVisiblePointRanges(current);
+    const arrays = [
+      this.arrays.positions,
+      this.arrays.colors,
+      this.arrays.radii,
+      this.arrays.sharpness,
+    ].filter((array): array is zarr.Array<zarr.DataType, zarr.Readable> => array != null);
+    const views = planChunkBoundaryViewStates(current, predicted, ranges, this.chunkIndex, arrays);
+    await Promise.all(views.map((view) => this.prefetchChunks(view)));
   }
 
   /**

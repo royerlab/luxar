@@ -32,6 +32,7 @@ import {
   getExpectedColorType,
   loadColorRanges,
   prefetchRangesIntoCache,
+  planChunkBoundaryViewStates,
   makeInitialLoaderMetrics,
   buildSpatialIndexMetrics,
   loadSliceWithCache,
@@ -886,6 +887,30 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
 
     await prefetchRangesIntoCache(arrays, ranges);
+  }
+
+  async prefetchChunkBoundary(current: LinesViewState, predicted: LinesViewState): Promise<void> {
+    await this._onceInit.ensure(() => this.initialize());
+    if (!this.chunkIndex || !this.arrays.segments) {
+      await this.prefetchChunks(predicted);
+      return;
+    }
+    const ranges = await this.queryVisibleSegmentRanges(current);
+    const arrays = [
+      this.arrays.vertices,
+      this.arrays.segments,
+      this.arrays.widths,
+      this.arrays.colors,
+      this.arrays.sharpness,
+    ].filter((array): array is zarr.Array<zarr.DataType, zarr.Readable> => array != null);
+    const views = planChunkBoundaryViewStates(
+      current,
+      predicted,
+      ranges,
+      this.chunkIndex.segmentIndex,
+      arrays
+    );
+    await Promise.all(views.map((view) => this.prefetchChunks(view)));
   }
 
   /**

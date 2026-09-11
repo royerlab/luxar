@@ -53,6 +53,10 @@ export {
   type EncodingType,
 } from './spatial-query/range-loader';
 export { prefetchRangesIntoCache } from './spatial-query/prefetch-ranges';
+export {
+  planChunkBoundaryViewStates,
+  type FirstAxisChunkLayout,
+} from './spatial-query/chunk-boundary-prefetch';
 export { isAbortError } from './abort-error';
 export {
   getSharedRangeLoader,
