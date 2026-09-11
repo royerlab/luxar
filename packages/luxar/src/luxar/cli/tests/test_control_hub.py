@@ -391,6 +391,83 @@ class TestViewerAppWiring:
         assert "reachable from the network without a token" in output
 
 
+class TestOriginCheck:
+    """Cross-Site WebSocket Hijacking is the attack this closes.
+
+    A WebSocket handshake is not subject to the same-origin policy and has no
+    CORS preflight, so without an ``Origin`` check any page a visitor opens
+    could drive the kiosk — and read its dataset URL back out of
+    ``getViewerState()``.
+    """
+
+    def test_a_cross_origin_browser_handshake_is_refused(self) -> None:
+        api, hub = _app()
+        client = TestClient(api)
+        with client.websocket_connect(
+            "/control", headers={"origin": "http://evil.example"}
+        ) as socket:
+            # Asserted BEFORE the receive, and deliberately: if the check were
+            # removed, the socket would attach and `receive()` would block
+            # forever waiting for a close that never comes. A hang is a much
+            # worse failure than an assertion, so the fast check goes first.
+            assert hub.controller_count == 0, "a cross-origin handshake attached"
+            message = socket.receive()
+            assert message["type"] == "websocket.close"
+            assert message["code"] == CLOSE_POLICY_VIOLATION
+
+    def test_a_same_origin_handshake_attaches(self) -> None:
+        api, hub = _app()
+        client = TestClient(api)
+        # TestClient sends Host: testserver.
+        with client.websocket_connect(
+            "/control", headers={"origin": "http://testserver"}
+        ):
+            assert hub.controller_count == 1
+
+    def test_the_scheme_may_differ_from_the_host_header(self) -> None:
+        # An https page dials wss; `Host` carries no scheme, so only host:port
+        # can be compared.
+        api, hub = _app()
+        client = TestClient(api)
+        with client.websocket_connect(
+            "/control", headers={"origin": "https://testserver"}
+        ):
+            assert hub.controller_count == 1
+
+    def test_a_handshake_with_no_origin_attaches(self) -> None:
+        """Non-browser clients send none, `luxar.control.Viewer` included."""
+        api, hub = _app()
+        client = TestClient(api)
+        with client.websocket_connect("/control"):
+            assert hub.controller_count == 1
+
+    @pytest.mark.parametrize(
+        "origin,host,expected",
+        [
+            (None, "kiosk.local:5173", True),
+            ("http://kiosk.local:5173", "kiosk.local:5173", True),
+            ("https://kiosk.local:5173", "kiosk.local:5173", True),
+            ("HTTP://KIOSK.LOCAL:5173", "kiosk.local:5173", True),
+            ("http://kiosk.local", "kiosk.local:5173", False),
+            ("http://evil.example", "kiosk.local:5173", False),
+            # A sandboxed iframe sends the literal string "null"; it must never
+            # match a real host.
+            ("null", "kiosk.local:5173", False),
+            ("http://kiosk.local:5173", None, False),
+        ],
+    )
+    def test_origin_allowed(
+        self, origin: str | None, host: str | None, expected: bool
+    ) -> None:
+        assert ControlHub().origin_allowed(origin, host) is expected
+
+    def test_an_explicit_allowlist_wins_over_the_host_comparison(self) -> None:
+        # The reverse-proxy case, where Origin and Host differ honestly.
+        hub = ControlHub(allowed_origins=["https://exhibit.museum"])
+        assert hub.origin_allowed("https://exhibit.museum", "internal:8000") is True
+        assert hub.origin_allowed("https://internal:8000", "internal:8000") is False
+
+
 class TestAuthorized:
     """The predicate itself, including the open-hub case."""
 
@@ -403,9 +480,24 @@ class TestAuthorized:
             ("secret", "Secret", False),
             ("secret", "", False),
             ("secret", None, False),
+            # Non-ASCII must REFUSE, not raise: `hmac.compare_digest` throws a
+            # TypeError on a non-ASCII str, which would turn a wrong password
+            # into a 500 and take the socket down with it.
+            ("secret", "sécret", False),
+            ("sécret", "sécret", True),
+            ("sécret", "secret", False),
+            ("🔑", "🔑", True),
+            ("🔑", "🗝", False),
         ],
     )
     def test_token_comparison(
         self, configured: str | None, presented: str | None, expected: bool
     ) -> None:
         assert ControlHub(token=configured).authorized(presented) is expected
+
+    def test_a_non_ascii_token_attaches_over_a_real_socket(self) -> None:
+        """End to end, because the TypeError was raised inside the handler."""
+        api, hub = _app(token="sécret")
+        client = TestClient(api)
+        with client.websocket_connect("/control?token=s%C3%A9cret"):
+            assert hub.controller_count == 1
