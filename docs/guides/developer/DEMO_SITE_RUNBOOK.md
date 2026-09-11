@@ -1388,7 +1388,7 @@ change what the earlier sections tell you to do.
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
 - Gallery: 90 tiles, 90 stills, 88 videos. Two demos are deliberately
   still-only (§8.2).
-- 98 stable `/d/` routes (§8.1.1).
+- 95 stable `/d/` routes (§8.1.1).
 
 #### 8.1.1 Stable per-demo routes — `/d/<demo-key>`
 
