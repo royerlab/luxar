@@ -1484,6 +1484,23 @@ def _viewer_config(
         auto_rotate=auto_rotate,
         auto_rotate_speed=0.5 if auto_rotate else None,
         auto_rotate_axis="world-y" if auto_rotate else None,
+        # A slow breath in and out under the turntable, dialled in on the kiosk
+        # display: the map reads as a volume rather than a flat cloud, and the
+        # near extreme brings the knots close enough to read. Gated on
+        # `auto_rotate` because that flag is what `--no-auto-rotate` uses to ask
+        # for a still camera, and half a motion is worse than none.
+        #
+        # NOTE the cost, which is real (see `auto_dolly_amplitude_percent`):
+        # screen area goes as 1/d^2, so a 95% swing moves projected area by
+        # (1+a)^4 and the LOD ladder answers by loading finer levels at the near
+        # extreme — measured elsewhere at 2.29M resident elements against 118k
+        # for a 15% swing. That is affordable here because the kiosk serves the
+        # store from local disk with a warm cache; on the HOSTED copy of this
+        # demo the same swing is paid for in requests, so if the hosted build
+        # ever feels heavy, this amplitude is the first thing to bring down.
+        auto_dolly=auto_rotate,
+        auto_dolly_amplitude_percent=95.0 if auto_rotate else None,
+        auto_dolly_period=58.5 if auto_rotate else None,
         # Render quality (2026-09-10 review): supersampling and rendering above
         # CSS resolution are what make the kiosk build crisp, and also what made
         # it crawl on an ordinary laptop — SSAA is a 4x fragment cost on top of

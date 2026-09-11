@@ -464,6 +464,27 @@ def test_default_viewer_config_is_the_laptop_build() -> None:
     assert vc.allow_high_dpr is False
 
 
+def test_auto_dolly_rides_with_the_turntable() -> None:
+    """The dolly breathes under the spin, and stops when the spin does.
+
+    `--no-auto-rotate` exists to ask for a still camera; a scene that stopped
+    rotating but kept sliding in and out would be a worse answer than either.
+    """
+    from luxar.demos import demo_esm_protein_universe as demo
+
+    spinning = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
+    assert spinning.auto_dolly is True
+    assert spinning.auto_dolly_amplitude_percent == 95.0
+    assert spinning.auto_dolly_period == 58.5
+
+    still = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=False, audio=False)
+    assert still.auto_dolly is False
+    # Unset, not zero: the tri-state contract is that an omitted field keeps
+    # the viewer's own default rather than authoring a degenerate one.
+    assert still.auto_dolly_amplitude_percent is None
+    assert still.auto_dolly_period is None
+
+
 def test_high_quality_restores_ssaa_and_full_dpr() -> None:
     from luxar.demos import demo_esm_protein_universe as demo
 

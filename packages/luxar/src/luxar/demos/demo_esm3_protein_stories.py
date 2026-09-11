@@ -1345,6 +1345,19 @@ def build_stories_scene(
             # opening shot looks down at the cloud (spin plus wobble), which
             # over minutes wanders the camera under the map.
             auto_rotate_axis="world-y" if auto_rotate else None,
+            # A slow breath in and out under the turntable, dialled in on the
+            # kiosk display — the cloud reads as a volume rather than a flat
+            # sheet. Gated on `auto_rotate` because that is the flag
+            # `--no-auto-rotate` uses to ask for a still camera.
+            #
+            # The amplitude is at the cap, and that is not free: screen area
+            # goes as 1/d^2, so the near extreme pulls finer LOD levels in (see
+            # `auto_dolly_amplitude_percent`). Affordable on a kiosk serving
+            # from local disk; the number to lower first if the hosted copy of
+            # this tour ever feels heavy.
+            auto_dolly=auto_rotate,
+            auto_dolly_amplitude_percent=95.0 if auto_rotate else None,
+            auto_dolly_period=58.5 if auto_rotate else None,
             # Supersampling: a kiosk-sized point cloud shimmers under the
             # turntable without it; the display is a single large screen with a
             # GPU to spare, so the cost is acceptable.
