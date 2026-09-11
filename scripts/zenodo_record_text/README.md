@@ -28,6 +28,10 @@ Check for drift without a token or modifying the snapshots:
 
     python3 scripts/zenodo_record_text/capture.py --check
 
+The check compares the public record's `modified` timestamp with the captured
+deposition timestamp; they coincide without an open edit, so a timestamp-only
+mismatch can indicate an unpublished edit rather than changed record text.
+
 Commit the result. A changed `description_sha256` with no accompanying commit
 means someone edited a record and the repo has not caught up.
 
