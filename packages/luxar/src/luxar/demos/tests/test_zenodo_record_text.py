@@ -2963,7 +2963,7 @@ def test_capture_check_accepts_matching_public_records_without_a_token(
     (tmp_path / "records.json").write_bytes(index_bytes)
     monkeypatch.setattr(capture, "HERE", tmp_path)
     monkeypatch.setattr(capture, "MANIFEST", manifest)
-    monkeypatch.delenv("ZENODO_TOKEN", raising=False)
+    monkeypatch.setenv("ZENODO_TOKEN", "must-not-leak")
     requested = []
 
     def urlopen(request: Any, **_kwargs: Any) -> Any:
