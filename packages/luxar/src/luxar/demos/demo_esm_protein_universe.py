@@ -1491,15 +1491,14 @@ def _viewer_config(
         # for a still camera, and half a motion is worse than none.
         #
         # NOTE the cost, which is real (see `auto_dolly_amplitude_percent`):
-        # screen area goes as 1/d^2, so a 95% swing moves projected area by
-        # (1+a)^4 and the LOD ladder answers by loading finer levels at the near
-        # extreme — measured elsewhere at 2.29M resident elements against 118k
-        # for a 15% swing. That is affordable here because the kiosk serves the
-        # store from local disk with a warm cache; on the HOSTED copy of this
-        # demo the same swing is paid for in requests, so if the hosted build
-        # ever feels heavy, this amplitude is the first thing to bring down.
+        # screen area goes as 1/d^2, so the 95% kiosk swing makes the LOD ladder
+        # load finer levels at the near extreme. The hosted/laptop build uses a
+        # gentler breath; the kiosk serves its larger swing from a warm local
+        # cache.
         auto_dolly=auto_rotate,
-        auto_dolly_amplitude_percent=95.0 if auto_rotate else None,
+        auto_dolly_amplitude_percent=(95.0 if high_quality else 20.0)
+        if auto_rotate
+        else None,
         auto_dolly_period=58.5 if auto_rotate else None,
         # Render quality (2026-09-10 review): supersampling and rendering above
         # CSS resolution are what make the kiosk build crisp, and also what made

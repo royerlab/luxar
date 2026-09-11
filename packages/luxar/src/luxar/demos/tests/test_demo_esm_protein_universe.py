@@ -456,12 +456,13 @@ def test_shipped_stories_author_valid_waypoints() -> None:
 
 
 def test_default_viewer_config_is_the_laptop_build() -> None:
-    """SSAA off and DPR capped at 1.0 unless the kiosk flag asks otherwise."""
+    """The hosted default avoids kiosk-only render and dolly costs."""
     from luxar.demos import demo_esm_protein_universe as demo
 
-    vc = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=False, audio=False)
+    vc = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
     assert vc.ssaa_enabled is False
     assert vc.allow_high_dpr is False
+    assert vc.auto_dolly_amplitude_percent == 20.0
 
 
 def test_auto_dolly_rides_with_the_turntable() -> None:
@@ -474,7 +475,7 @@ def test_auto_dolly_rides_with_the_turntable() -> None:
 
     spinning = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
     assert spinning.auto_dolly is True
-    assert spinning.auto_dolly_amplitude_percent == 95.0
+    assert spinning.auto_dolly_amplitude_percent == 20.0
     assert spinning.auto_dolly_period == 58.5
 
     still = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=False, audio=False)
@@ -489,10 +490,11 @@ def test_high_quality_restores_ssaa_and_full_dpr() -> None:
     from luxar.demos import demo_esm_protein_universe as demo
 
     vc = demo._viewer_config(
-        [], (0.0, 0.0, 100.0), auto_rotate=False, audio=False, high_quality=True
+        [], (0.0, 0.0, 100.0), auto_rotate=True, audio=False, high_quality=True
     )
     assert vc.ssaa_enabled is True
     assert vc.allow_high_dpr is True
+    assert vc.auto_dolly_amplitude_percent == 95.0
 
 
 def test_high_quality_flag_is_spelled_in_main_and_documented() -> None:
