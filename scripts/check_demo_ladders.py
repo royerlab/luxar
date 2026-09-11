@@ -13,7 +13,10 @@ A ladder can exist and still be worthless. For example,
 ``global_rivers_earth/terrain`` once shipped levels of 8 / 56 / 272 / 1174 /
 7,998,490 over 8M points: 99.98% of the data remained in one commit. A large
 leaf therefore fails when any level exceeds either ``--max-share`` of the total
-or the absolute ``--max-level-elements`` commit budget.
+or the absolute ``--max-level-elements`` commit budget. On a barrier-ordered
+sliced leaf, that absolute arm measures the busiest resident slice from the
+level's chunk bounds; unsliced, unindexed, and ``extend_to_all`` leaves retain
+the node-level cap.
 
 A SECOND arm audits nodes the viewer SLICES (any non-displayed dimension). A
 ladder's rungs are sized against the whole node, but only one slice is ever on
@@ -192,6 +195,50 @@ def _element_count(attrs: dict[str, Any]) -> int:
         if key in attrs:
             return int(attrs[key] or 0)
     return 0
+
+
+def _slice_ordering(level: Any) -> tuple[list[int], int, str] | None:
+    """Return barrier dims, row atom, and bounds array for one level."""
+    attrs = dict(level.attrs)
+    if attrs.get("extend_to_all"):
+        return None
+    if attrs.get("type") == "lines":
+        ordering = attrs.get("vertex_ordering")
+        if not isinstance(ordering, dict):
+            return None
+        bounds_name = "vertex_chunk_bounds"
+    else:
+        ordering = attrs
+        bounds_name = "chunk_bounds"
+    dims = [int(dim) for dim in ordering.get("slice_dims", [])]
+    try:
+        chunk_size = int(ordering.get("chunk_size", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if not dims or chunk_size < 1 or bounds_name not in level:
+        return None
+    return dims, chunk_size, bounds_name
+
+
+def _busiest_slice_elements(level: Any) -> int | None:
+    """Exact largest resident-slice count from barrier-pure chunk bounds."""
+    ordering = _slice_ordering(level)
+    if ordering is None:
+        return None
+    dims, chunk_size, bounds_name = ordering
+    total = _element_count(dict(level.attrs))
+    bounds = level[bounds_name]
+    expected_chunks = (total + chunk_size - 1) // chunk_size
+    if total < 1 or bounds.shape[0] != expected_chunks:
+        return None
+    counts: Counter[tuple[object, ...]] = Counter()
+    for index in range(expected_chunks):
+        rows = min(chunk_size, total - index * chunk_size)
+        key = tuple(
+            (float(bounds[index, dim, 0]), float(bounds[index, dim, 1])) for dim in dims
+        )
+        counts[key] += rows
+    return max(counts.values(), default=0)
 
 
 def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
@@ -433,14 +480,32 @@ def check_leaf(
         )
 
     biggest = max(sizes) if sizes else 0
+    sliced_sizes = (
+        []
+        if attrs.get("extend_to_all")
+        else [_busiest_slice_elements(leaf[f"additive_{i}"]) for i in range(n_sub)]
+    )
+    sliced_biggest = (
+        max(size for size in sliced_sizes if size is not None)
+        if sliced_sizes and all(size is not None for size in sliced_sizes)
+        else None
+    )
+    commit_biggest = biggest if sliced_biggest is None else sliced_biggest
     share = biggest / summed if summed else 0.0
     detail = f"{n_sub} levels {sizes}, largest {share:.1%} of {summed:,}"
+    if sliced_biggest is not None:
+        detail += f", busiest slice {sliced_biggest:,} elements"
 
     if summed > min_elements:
-        if biggest > max_level_elements:
+        if commit_biggest > max_level_elements:
+            measured = (
+                f"busiest slice has {commit_biggest:,} elements"
+                if sliced_biggest is not None
+                else f"largest level has {commit_biggest:,} elements"
+            )
             return (
                 "fail",
-                f"{detail} — largest level has {biggest:,} elements, above the "
+                f"{detail} — {measured}, above the "
                 f"{max_level_elements:,} absolute commit cap",
             )
         if share > max_share:

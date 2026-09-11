@@ -68,6 +68,37 @@ def _check(leaf: zarr.Group, **overrides: int | float) -> tuple[str, str]:
     return checker.check_leaf(leaf, **options)
 
 
+def _add_slice_bounds(
+    level: zarr.Group,
+    *,
+    chunk_size: int,
+    coordinates: list[int],
+    extend_to_all: bool = False,
+) -> None:
+    """Stamp one barrier-pure chunk per coordinate on a synthetic level."""
+    level.attrs.update({"slice_dims": [3], "chunk_size": chunk_size})
+    if extend_to_all:
+        level.attrs["extend_to_all"] = ["time"]
+    bounds = np.zeros((len(coordinates), 4, 2), dtype=np.float32)
+    for index, coordinate in enumerate(coordinates):
+        bounds[index, 3] = (coordinate - 1e-5, coordinate + 1e-5)
+    level.create_array("chunk_bounds", data=bounds)
+
+
+def _add_line_slice_bounds(
+    level: zarr.Group, *, chunk_size: int, coordinates: list[int]
+) -> None:
+    """Stamp the nested Lines vertex-ordering equivalent of slice bounds."""
+    level.attrs["vertex_ordering"] = {
+        "slice_dims": [3],
+        "chunk_size": chunk_size,
+    }
+    bounds = np.zeros((len(coordinates), 4, 2), dtype=np.float32)
+    for index, coordinate in enumerate(coordinates):
+        bounds[index, 3] = (coordinate - 1e-5, coordinate + 1e-5)
+    level.create_array("vertex_chunk_bounds", data=bounds)
+
+
 @pytest.mark.parametrize(
     ("sizes", "expected_status"),
     [
@@ -96,6 +127,72 @@ def test_absolute_level_cap_catches_large_balanced_increment(tmp_path: Path) -> 
     assert status == "fail"
     assert "500 elements" in message
     assert "absolute commit cap" in message
+
+
+def test_absolute_level_cap_uses_the_busiest_barrier_ordered_slice(
+    tmp_path: Path,
+) -> None:
+    leaf = _make_leaf(tmp_path / "sliced.zarr", [120, 120, 120])
+    for index in range(3):
+        _add_slice_bounds(
+            leaf[f"additive_{index}"], chunk_size=40, coordinates=[0, 1, 1]
+        )
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "fail"
+    assert "busiest slice has 80 elements" in message
+
+
+def test_absolute_level_cap_accepts_large_levels_when_each_slice_is_bounded(
+    tmp_path: Path,
+) -> None:
+    leaf = _make_leaf(tmp_path / "sliced.zarr", [120, 120, 120])
+    for index in range(3):
+        _add_slice_bounds(
+            leaf[f"additive_{index}"], chunk_size=30, coordinates=[0, 0, 1, 1]
+        )
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "ok"
+    assert "busiest slice 60 elements" in message
+
+
+def test_absolute_level_cap_reads_lines_vertex_ordering_bounds(tmp_path: Path) -> None:
+    leaf = _make_leaf(tmp_path / "lines.zarr", [120, 120, 120])
+    leaf.attrs.update({"type": "lines", "n_vertices": 360})
+    del leaf.attrs["n_points"]
+    for index in range(3):
+        level = leaf[f"additive_{index}"]
+        level.attrs.update({"type": "lines", "n_vertices": 120})
+        del level.attrs["n_points"]
+        _add_line_slice_bounds(level, chunk_size=30, coordinates=[0, 0, 1, 1])
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "ok"
+    assert "busiest slice 60 elements" in message
+
+
+@pytest.mark.parametrize("fallback", ["unsliced", "extend_to_all"])
+def test_absolute_level_cap_keeps_node_level_fallbacks(
+    tmp_path: Path, fallback: str
+) -> None:
+    leaf = _make_leaf(tmp_path / f"{fallback}.zarr", [120, 120, 120])
+    if fallback == "extend_to_all":
+        leaf.attrs["extend_to_all"] = ["time"]
+        for index in range(3):
+            _add_slice_bounds(
+                leaf[f"additive_{index}"],
+                chunk_size=30,
+                coordinates=[0, 0, 1, 1],
+            )
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "fail"
+    assert "largest level has 120 elements" in message
 
 
 def test_large_unladdered_leaf_fails_but_small_leaf_skips(tmp_path: Path) -> None:

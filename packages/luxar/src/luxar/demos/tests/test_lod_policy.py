@@ -1265,27 +1265,27 @@ scene.add_gsplats_from_data(
         assert sliced > whole
         assert sliced == -(-1_800_001 // SLICED_LADDER_MAX_DEPTH)
 
-    def test_lines_reject_a_resolved_ladder_over_the_commit_ceiling(self) -> None:
-        with pytest.raises(ValueError, match="900,000-vertex commit ceiling"):
-            stream_ladder(1_800_005, geometry="lines", slices=4)
+    def test_lines_scale_the_commit_ceiling_by_slice_count(self) -> None:
+        spec = stream_ladder(1_800_005, geometry="lines", slices=4)
 
-        assert (
-            stream_ladder(1_800_004, geometry="lines", slices=4)["counts"]
-            == "stream:225001"
-        )
+        assert spec["counts"] == "stream:225001"
 
-    def test_rejects_a_sliced_node_too_large_to_deliver_the_share(self) -> None:
-        with pytest.raises(ValueError, match="cannot deliver its 12.5% first rung"):
-            stream_ladder(7_200_001, slices=2)
+    def test_sliced_points_scale_the_commit_ceiling_by_slice_count(self) -> None:
+        counts = stream_ladder(7_200_001, slices=2)["counts"]
 
-        assert stream_ladder(7_200_000, slices=2)["counts"][0] == 900_000
+        assert counts[0] == 900_001
+        increments = [counts[0], *np.diff(counts)]
+        assert max(increments) <= 1_800_000
 
-    def test_the_rejection_reports_the_configured_share(
+    def test_the_slice_scaled_ceiling_respects_the_configured_share(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(lod_policy, "SLICED_LADDER_MAX_DEPTH", 10)
-        with pytest.raises(ValueError, match="cannot deliver its 10% first rung"):
-            stream_ladder(9_000_001, slices=2)
+        counts = stream_ladder(9_000_001, slices=2)["counts"]
+
+        assert counts[0] == 900_001
+        increments = [counts[0], *np.diff(counts)]
+        assert max(increments) <= 1_800_000
 
     def test_rejects_a_slice_count_below_one(self) -> None:
         with pytest.raises(ValueError, match="slices must be >= 1"):
