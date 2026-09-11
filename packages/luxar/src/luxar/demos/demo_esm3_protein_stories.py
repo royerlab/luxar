@@ -12,7 +12,8 @@ This is the reference scene for the viewer's remote-control features
 (``docs/guides/specs/REMOTE_CONTROL_SPEC.md``): the camera poses are authored
 ``Waypoint``\\s bound to the ``story`` dimension, the captions are dimension-aware
 overlays, and auto-rotate is on so a story step keeps the turntable spinning
-while it moves the point the camera spins around.
+while it moves the point the camera spins around; a slow dolly breath continues
+under that turntable motion.
 
 Scene structure (two toggleable layers plus one highlight per story):
     - **Backdrop** — every protein, dimmed, in the base demo's taxon colours,
@@ -1350,11 +1351,9 @@ def build_stories_scene(
             # sheet. Gated on `auto_rotate` because that is the flag
             # `--no-auto-rotate` uses to ask for a still camera.
             #
-            # The amplitude is at the cap, and that is not free: screen area
-            # goes as 1/d^2, so the near extreme pulls finer LOD levels in (see
-            # `auto_dolly_amplitude_percent`). Affordable on a kiosk serving
-            # from local disk; the number to lower first if the hosted copy of
-            # this tour ever feels heavy.
+            # This scene's stream ladders are additive rather than selectable
+            # LOD groups, so the swing changes framing without changing element
+            # residency. The cap is deliberately dramatic kiosk tuning.
             auto_dolly=auto_rotate,
             auto_dolly_amplitude_percent=95.0 if auto_rotate else None,
             auto_dolly_period=58.5 if auto_rotate else None,
