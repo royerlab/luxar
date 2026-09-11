@@ -86,7 +86,12 @@ def check_snapshots() -> int:
     drift = False
     for key, record in records().items():
         dep = int(record["zenodo_record"])
-        published = fetch(dep, published_record=True)
+        try:
+            published = fetch(dep, published_record=True)
+        except (urllib.error.HTTPError, OSError, SystemExit) as exc:
+            print(f"{key} unreachable: {exc}")
+            drift = True
+            continue
         description = published["metadata"]["description"]
         expected = index.get(key, {})
         actual = {
