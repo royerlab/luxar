@@ -1029,9 +1029,11 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   ONE chunk is benign (no boundary to cross); the stall shape is many chunks of
   several frames. Read the atom's hidden-axis span from `chunk_bounds` — a
   store with one NODE per hidden coordinate (hilbert_curve_3d) misreads when
-  the scene range is divided by chunk count. Wave 2026-09-11: only
-  `collision_animated` plays (1.8 frames/chunk on `hosting`); ocean's tentacles
-  would be 28 frames/chunk on `archive` if that axis were ever played.
+  the scene range is divided by chunk count. Wave 2026-09-11:
+  `collision_animated` plays at 1.8 frames/chunk on `hosting`; `cloud` also
+  starts with playback enabled but has not yet been measured on its published
+  layout. Ocean's tentacles would be 28 frames/chunk on `archive` if that axis
+  were ever played.
 - For a TIME-PARTED store (h2afva) the profile rationale is request count, not
   rung residency: each part is one frame loaded whole, so there is no
   cross-timepoint rung to keep warm. Measured on the published `archive` layout
