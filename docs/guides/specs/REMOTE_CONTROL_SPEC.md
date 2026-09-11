@@ -144,10 +144,11 @@ routes in declaration order and a `Mount` at `/` swallows every path below it,
 WebSockets included. A test pins the order, and the test is verified to fail
 when the order is wrong.
 
-The hub relays: a request from any controller goes to every attached viewer
-(or to one, when addressed by `viewer` id); a viewer's replies and events go to
-the controllers. The hub keeps no state of its own beyond the attachment list;
-the viewer is the source of truth (`getViewerState()` on connect).
+The hub relays: a request from any controller goes to every attached viewer;
+a viewer's replies and events go to the controllers. Addressing one viewer of
+several is not supported. The hub keeps no state of its own beyond the
+attachment list; the viewer is the source of truth (`getViewerState()` on
+connect).
 
 ### 3.2 Wire format
 
@@ -257,9 +258,10 @@ Two deliberate allowances, both stated rather than implied. A handshake with
 **no `Origin` at all is allowed**, because non-browser clients send none —
 `luxar.control.Viewer` included — and refusing them would break the Python
 controller outright; this check defends against a *browser* being used as the
-attacker's proxy, which is the actual attack. And an explicit
-`allowed_origins` list overrides the comparison, for a reverse proxy where
-`Origin` and `Host` differ for honest reasons.
+attacker's proxy, which is the actual attack. A valid configured token also
+permits an explicit split-origin viewer (`?controlAllowCrossOrigin`) or a
+reverse proxy that rewrites `Host`; an embedding application may instead pass
+an explicit `allowed_origins` list to `ControlHub`.
 
 Same-host LAN kiosk by default: the hub binds the address `luxar serve` binds,
 which is loopback unless `--host 0.0.0.0` is given. `--control-token <t>`
@@ -271,13 +273,14 @@ RFC 6455 code 1008 (as is an unrecognised `?role=`). No other auth is planned.
 
 Two things to say plainly rather than imply. **A token in a query string** lands
 in browser history and in the address bar of whatever tablet is on the plinth;
-it is a LAN convenience, not a secret. **The hub is open by default**, so
-anything that can reach the socket can drive the display — including
-`switchDataset`, which is on the wire deliberately. The dispatcher runs its
-argument through the viewer's own `normalizeDataSourceUrl` (the app's method
-validates nothing), so a `file:` or `javascript:` URL is refused, but a
-reachable hub on an untrusted network is still a display someone else can
-repoint. Use `--control-token`, or do not bind past loopback.
+it is a LAN convenience, not a secret. **The hub is open by default to
+same-host browser pages and non-browser clients**, so an unauthenticated peer
+that can reach the socket can drive the display — including `switchDataset`,
+which is on the wire deliberately. The dispatcher runs its argument through
+the viewer's own `normalizeDataSourceUrl` (the app's method validates nothing),
+so a `file:` or `javascript:` URL is refused, but a reachable hub on an
+untrusted network is still a display someone else can repoint. Use
+`--control-token`, or do not bind past loopback.
 
 ## 4. Phase C — authored waypoints (implemented) and kiosk mode (design)
 

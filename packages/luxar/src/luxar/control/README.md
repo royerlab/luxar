@@ -93,10 +93,11 @@ at frame rate otherwise, and an auto-rotating kiosk never stops moving.
 the flight lands and `switchDataset` when the new scene has loaded, so the
 default is 30 s rather than something that looks snappy and then lies.
 
-**The hub is open unless `--control-token` is set.** The designed deployment is
-a LAN the operator owns. A token passed here travels as a query parameter, so
-it also lands in the viewer's address bar and history — fine for a kiosk, not a
-substitute for not exposing the hub to a network you do not trust.
+**The hub is open unless `--control-token` is set.** Without one, browser
+sockets must be same-host while non-browser clients remain unauthenticated. A
+valid token permits split-origin or reverse-proxied setups. It travels as a
+query parameter, so it also lands in the viewer's address bar and history —
+fine for a kiosk, not a substitute for avoiding an untrusted network.
 
 ## See also
 

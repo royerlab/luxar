@@ -141,7 +141,7 @@ class TestEvents:
                     event = {
                         "jsonrpc": "2.0",
                         "method": "event",
-                        "params": {"name": "dimensions-changed", "payload": {}},
+                        "params": ["dimensions-changed", {}],
                     }
                     viewer.send_text(json.dumps(event))
                     assert first.receive_json() == event
@@ -466,6 +466,15 @@ class TestOriginCheck:
         hub = ControlHub(allowed_origins=["https://exhibit.museum"])
         assert hub.origin_allowed("https://exhibit.museum", "internal:8000") is True
         assert hub.origin_allowed("https://internal:8000", "internal:8000") is False
+
+    def test_a_valid_token_allows_an_explicit_split_origin(self) -> None:
+        api, hub = _app(token="secret")
+        client = TestClient(api)
+        with client.websocket_connect(
+            "/control?role=viewer&token=secret",
+            headers={"origin": "https://display.example"},
+        ):
+            assert hub.viewer_count == 1
 
 
 class TestAuthorized:

@@ -205,14 +205,16 @@ class ControlHub:
                 code=CLOSE_POLICY_VIOLATION, reason=f"unknown role {role!r}"
             )
             return
+        if not self.authorized(token):
+            await websocket.close(code=CLOSE_POLICY_VIOLATION, reason="bad token")
+            return
         headers = websocket.headers
-        if not self.origin_allowed(headers.get("origin"), headers.get("host")):
+        if self._token is None and not self.origin_allowed(
+            headers.get("origin"), headers.get("host")
+        ):
             await websocket.close(
                 code=CLOSE_POLICY_VIOLATION, reason="cross-origin handshake"
             )
-            return
-        if not self.authorized(token):
-            await websocket.close(code=CLOSE_POLICY_VIOLATION, reason="bad token")
             return
 
         key = next(self._next_socket)

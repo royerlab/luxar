@@ -67,6 +67,8 @@ standalone bootstrap, which already ran `?src` through `normalizeDataSourceUrl`.
 A controller has not, so the boundary does it here. Without that step any peer
 that can reach the socket could hand the display a `file:` or `javascript:` URL.
 
-**The hub is open unless `--control-token` is set.** The designed deployment is
-a LAN the operator owns. That is a deliberate choice, and it is the reason the
-two paragraphs above exist.
+**The hub is open unless `--control-token` is set.** Without a token, browser
+sockets must have the same host as the hub; non-browser clients send no
+`Origin`. A valid token is also the explicit allowance for split-origin and
+proxied deployments. The designed deployment is a LAN the operator owns. That
+is a deliberate choice, and it is the reason the two paragraphs above exist.

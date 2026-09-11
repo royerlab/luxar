@@ -18,9 +18,10 @@
  * ## Threat model
  *
  * The designed deployment is a kiosk on a LAN the operator owns, and the hub
- * is open unless `luxar serve --control-token` is used. Anything that can
- * reach the socket can therefore drive the display. That is a deliberate
- * choice, not an oversight — but it means two things are worth knowing:
+ * is open unless `luxar serve --control-token` is used. Same-host browser
+ * pages and non-browser clients that can reach the socket can therefore drive
+ * the display. That is a deliberate choice, not an oversight — but it means
+ * two things are worth knowing:
  *
  * - `dispose` is **excluded outright**. It tears the viewer down in one frame
  *   and `init` is not on the wire, so there is no way back: a single frame
