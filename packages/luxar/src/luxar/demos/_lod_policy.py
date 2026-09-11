@@ -434,8 +434,9 @@ def stream_ladder(
     whose unit matches the ``n`` a caller naturally has. The cost is that the
     string form is a plain doubling ladder — its last increment approaches ``n/2``
     rather than being capped. The resolved ladder is checked against the 900,000
-    ceiling because the crossing point depends on the effective first chunk;
-    a larger Lines leaf needs capped cuts expressed in polylines instead.
+    per-slice ceiling (scaled to a whole-node ceiling by ``slices``) because the
+    crossing point depends on the effective first chunk; a larger Lines leaf
+    needs capped cuts expressed in polylines instead.
 
     Args:
         n: Element count of the leaf — points for ``"points"``, VERTICES for

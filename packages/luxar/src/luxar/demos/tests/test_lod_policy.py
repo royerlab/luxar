@@ -1283,6 +1283,10 @@ scene.add_gsplats_from_data(
         assert counts == [16_000_000, 32_000_000, 64_000_000, 128_000_000]
         assert counts[0] / counts[-1] == 1 / SLICED_LADDER_MAX_DEPTH
 
+    def test_slice_scaling_still_rejects_an_impossible_average_commit(self) -> None:
+        with pytest.raises(ValueError, match="per-slice commit ceiling"):
+            stream_ladder(14_400_001, slices=2)
+
     def test_the_slice_scaled_ceiling_respects_the_configured_share(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

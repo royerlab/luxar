@@ -543,11 +543,11 @@ def check_leaf(
     biggest = max(sizes) if sizes else 0
     share = biggest / summed if summed else 0.0
     detail = f"{n_sub} levels {sizes}, largest {share:.1%} of {summed:,}"
-    detail, cap_failure = _commit_cap_result(
-        leaf, n_sub, biggest, detail, max_level_elements
-    )
 
     if summed > min_elements:
+        detail, cap_failure = _commit_cap_result(
+            leaf, n_sub, biggest, detail, max_level_elements
+        )
         if cap_failure is not None:
             return cap_failure
         if share > max_share:
