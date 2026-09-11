@@ -1277,6 +1277,12 @@ scene.add_gsplats_from_data(
         increments = [counts[0], *np.diff(counts)]
         assert max(increments) <= 1_800_000
 
+    def test_the_128m_500_timepoint_case_keeps_its_share(self) -> None:
+        counts = stream_ladder(128_000_000, slices=500)["counts"]
+
+        assert counts == [16_000_000, 32_000_000, 64_000_000, 128_000_000]
+        assert counts[0] / counts[-1] == 1 / SLICED_LADDER_MAX_DEPTH
+
     def test_the_slice_scaled_ceiling_respects_the_configured_share(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

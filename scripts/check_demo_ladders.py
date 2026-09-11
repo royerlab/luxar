@@ -211,8 +211,8 @@ def _slice_ordering(level: Any) -> tuple[list[int], int, str] | None:
     else:
         ordering = attrs
         bounds_name = "chunk_bounds"
-    dims = [int(dim) for dim in ordering.get("slice_dims", [])]
     try:
+        dims = [int(dim) for dim in ordering.get("slice_dims", [])]
         chunk_size = int(ordering.get("chunk_size", 0) or 0)
     except (TypeError, ValueError):
         return None
@@ -232,7 +232,14 @@ def _busiest_slice_elements(level: Any) -> int | None:
     total = _element_count(dict(level.attrs))
     bounds = np.asarray(level[bounds_name][:])
     expected_chunks = (total + chunk_size - 1) // chunk_size
-    if total < 1 or bounds.shape[0] != expected_chunks:
+    if (
+        total < 1
+        or bounds.ndim != 3
+        or bounds.shape[0] != expected_chunks
+        or bounds.shape[2] < 2
+        or dims[0] < 0
+        or dims[0] >= bounds.shape[1]
+    ):
         return None
     dim = dims[0]
     events: list[tuple[float, int, int]] = []
@@ -250,6 +257,49 @@ def _busiest_slice_elements(level: Any) -> int | None:
         current += delta
         busiest = max(busiest, current)
     return busiest
+
+
+def _largest_commit_elements(
+    leaf: Any, n_sub: int, node_biggest: int
+) -> tuple[int, int | None]:
+    """Return the cap measurement and optional busiest-slice detail."""
+    if leaf.attrs.get("extend_to_all"):
+        return node_biggest, None
+    sliced_sizes = [
+        _busiest_slice_elements(leaf[f"additive_{i}"]) for i in range(n_sub)
+    ]
+    if not sliced_sizes or any(size is None for size in sliced_sizes):
+        return node_biggest, None
+    sliced_biggest = max(int(size) for size in sliced_sizes if size is not None)
+    return sliced_biggest, sliced_biggest
+
+
+def _commit_cap_result(
+    leaf: Any,
+    n_sub: int,
+    node_biggest: int,
+    detail: str,
+    max_level_elements: int,
+) -> tuple[str, tuple[str, str] | None]:
+    """Add slice detail and return an absolute-cap failure when present."""
+    commit_biggest, sliced_biggest = _largest_commit_elements(leaf, n_sub, node_biggest)
+    if sliced_biggest is not None:
+        detail += f", busiest slice {sliced_biggest:,} elements"
+    if commit_biggest <= max_level_elements:
+        return detail, None
+    measured = (
+        f"busiest slice has {commit_biggest:,} elements"
+        if sliced_biggest is not None
+        else f"largest level has {commit_biggest:,} elements"
+    )
+    return (
+        detail,
+        (
+            "fail",
+            f"{detail} — {measured}, above the "
+            f"{max_level_elements:,} absolute commit cap",
+        ),
+    )
 
 
 def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
@@ -491,34 +541,15 @@ def check_leaf(
         )
 
     biggest = max(sizes) if sizes else 0
-    sliced_sizes = (
-        []
-        if attrs.get("extend_to_all")
-        else [_busiest_slice_elements(leaf[f"additive_{i}"]) for i in range(n_sub)]
-    )
-    sliced_biggest = (
-        max(size for size in sliced_sizes if size is not None)
-        if sliced_sizes and all(size is not None for size in sliced_sizes)
-        else None
-    )
-    commit_biggest = biggest if sliced_biggest is None else sliced_biggest
     share = biggest / summed if summed else 0.0
     detail = f"{n_sub} levels {sizes}, largest {share:.1%} of {summed:,}"
-    if sliced_biggest is not None:
-        detail += f", busiest slice {sliced_biggest:,} elements"
+    detail, cap_failure = _commit_cap_result(
+        leaf, n_sub, biggest, detail, max_level_elements
+    )
 
     if summed > min_elements:
-        if commit_biggest > max_level_elements:
-            measured = (
-                f"busiest slice has {commit_biggest:,} elements"
-                if sliced_biggest is not None
-                else f"largest level has {commit_biggest:,} elements"
-            )
-            return (
-                "fail",
-                f"{detail} — {measured}, above the "
-                f"{max_level_elements:,} absolute commit cap",
-            )
+        if cap_failure is not None:
+            return cap_failure
         if share > max_share:
             return (
                 "fail",

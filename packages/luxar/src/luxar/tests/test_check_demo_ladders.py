@@ -175,7 +175,9 @@ def test_absolute_level_cap_reads_lines_vertex_ordering_bounds(tmp_path: Path) -
     assert "busiest slice 60 elements" in message
 
 
-@pytest.mark.parametrize("fallback", ["unsliced", "extend_to_all"])
+@pytest.mark.parametrize(
+    "fallback", ["unsliced", "extend_to_all", "multiple_slice_dims", "malformed"]
+)
 def test_absolute_level_cap_keeps_node_level_fallbacks(
     tmp_path: Path, fallback: str
 ) -> None:
@@ -187,6 +189,13 @@ def test_absolute_level_cap_keeps_node_level_fallbacks(
                 leaf[f"additive_{index}"],
                 chunk_size=30,
                 coordinates=[0, 0, 1, 1],
+            )
+    elif fallback in ("multiple_slice_dims", "malformed"):
+        for index in range(3):
+            level = leaf[f"additive_{index}"]
+            _add_slice_bounds(level, chunk_size=30, coordinates=[0, 0, 1, 1])
+            level.attrs["slice_dims"] = (
+                [2, 3] if fallback == "multiple_slice_dims" else ["not-an-index"]
             )
 
     status, message = _check(leaf, max_level_elements=70)
