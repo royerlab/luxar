@@ -157,7 +157,7 @@ dev = [
     # with an error naming ruff_python_ast rather than grimp. Linux keeps its
     # standard cp314 wheel at every version, so CI never sees this and only
     # Mac developers are broken. Revisit once upstream restores the wheel.
-    "grimp<3.16",
+    "grimp<3.18",
 ]
 io = [
     "tifffile>=2023.1.0",
