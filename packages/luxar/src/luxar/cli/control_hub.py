@@ -35,7 +35,7 @@ from __future__ import annotations
 import hmac
 import itertools
 import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from arbol import aprint
 from fastapi import WebSocket
@@ -68,6 +68,19 @@ _INVALID_REQUEST = -32600
 _NO_VIEWER = -32001
 
 
+def _origin_host(origin: str) -> str:
+    """The ``host:port`` of an ``Origin`` header, lowercased.
+
+    Parsed rather than string-matched so `http://kiosk.local:5173` and
+    `https://kiosk.local:5173` both reduce to the host the `Host` header
+    carries — and so an origin like `null` (a sandboxed iframe) reduces to
+    something that can never match one.
+    """
+    from urllib.parse import urlparse
+
+    return urlparse(origin.strip()).netloc.lower()
+
+
 def _error_frame(request_id: Any, code: int, message: str) -> str:
     """A JSON-RPC error response. ``request_id`` may be ``None`` (parse error)."""
     return json.dumps(
@@ -86,9 +99,22 @@ class ControlHub:
     (uvicorn drives the whole app there), so the registries need no locking.
     """
 
-    def __init__(self, *, token: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        *,
+        token: Optional[str] = None,
+        allowed_origins: Optional[Iterable[str]] = None,
+    ) -> None:
         #: Shared secret required as ``?token=`` when set (``--control-token``).
         self._token = token
+        #: Explicit browser origins allowed to attach. ``None`` compares the
+        #: handshake's ``Origin`` against its own ``Host`` instead, which is
+        #: self-configuring and right for the same-origin deployment.
+        self._allowed_origins = (
+            None
+            if allowed_origins is None
+            else {o.strip().lower() for o in allowed_origins}
+        )
         self._viewers: Dict[int, WebSocket] = {}
         self._controllers: Dict[int, WebSocket] = {}
         self._next_socket = itertools.count(1)
@@ -105,12 +131,50 @@ class ControlHub:
 
         Constant-time compare: a hub on a LAN kiosk is reachable by anything on
         that LAN, and ``==`` on a secret leaks its prefix through timing.
+
+        Compared as UTF-8 BYTES, not as ``str``. ``hmac.compare_digest`` raises
+        ``TypeError`` on a non-ASCII ``str``, so a token with an accent in it
+        would have crashed the handler — turning a wrong password into a 500
+        rather than a refusal, and taking the socket down with it.
         """
         if self._token is None:
             return True
         if token is None:
             return False
-        return hmac.compare_digest(token, self._token)
+        return hmac.compare_digest(token.encode("utf-8"), self._token.encode("utf-8"))
+
+    def origin_allowed(self, origin: Optional[str], host: Optional[str]) -> bool:
+        """Whether a handshake's ``Origin`` header may attach.
+
+        **Cross-Site WebSocket Hijacking.** A WebSocket handshake is not subject
+        to the same-origin policy and carries no CORS preflight, so without this
+        check *any* page a visitor happens to open could connect to
+        ``ws://localhost:<port>/control`` and drive the kiosk — or call
+        ``getViewerState()`` and read back the dataset URL. The browser sends an
+        ``Origin`` header it cannot forge, so comparing it to the ``Host`` the
+        request arrived on closes the whole class.
+
+        Two deliberate allowances:
+
+        - **No ``Origin`` at all is allowed.** Non-browser clients do not send
+          one — ``luxar.control.Viewer`` included — and refusing them would
+          break the Python controller entirely. This check defends against a
+          *browser* being used as the attacker's proxy, which is the actual
+          attack; a non-browser attacker with LAN access is what
+          ``--control-token`` and the loopback default are for.
+        - An explicit ``allowed_origins`` list wins, for a reverse proxy or a
+          deliberately split origin, where ``Origin`` and ``Host`` differ for
+          honest reasons.
+        """
+        if origin is None:
+            return True
+        if self._allowed_origins is not None:
+            return origin in self._allowed_origins
+        if host is None:
+            return False
+        # Compare host:port, not the whole URL: the scheme legitimately differs
+        # (an https page dials wss, and Host carries no scheme).
+        return _origin_host(origin) == host.strip().lower()
 
     @property
     def viewer_count(self) -> int:
@@ -139,6 +203,12 @@ class ControlHub:
         if role not in ROLES:
             await websocket.close(
                 code=CLOSE_POLICY_VIOLATION, reason=f"unknown role {role!r}"
+            )
+            return
+        headers = websocket.headers
+        if not self.origin_allowed(headers.get("origin"), headers.get("host")):
+            await websocket.close(
+                code=CLOSE_POLICY_VIOLATION, reason="cross-origin handshake"
             )
             return
         if not self.authorized(token):

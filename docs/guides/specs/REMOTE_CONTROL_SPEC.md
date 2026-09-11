@@ -157,13 +157,14 @@ JSON text frames, JSON-RPC 2.0 shape. The method set is **literally the
 
 ```javascript
 // controller → viewer
+// params are POSITIONAL — the TypeScript signature's argument order, verbatim.
 { "jsonrpc": "2.0", "id": 7, "method": "flyTo",
-  "params": { "pose": { ... }, "opts": { "durationMs": 2000 } } }
+  "params": [ { "position": [0, 0, 40] }, { "durationMs": 2000 } ] }
 // viewer → controller
 { "jsonrpc": "2.0", "id": 7, "result": { "completed": true } }
-{ "jsonrpc": "2.0", "id": 8, "error": { "code": -32602, "message": "unknown layer '/x'" } }
-// viewer → controllers (notification, no id)
-{ "jsonrpc": "2.0", "method": "event", "params": { "name": "dimensions-changed", "payload": { ... } } }
+{ "jsonrpc": "2.0", "id": 8, "error": { "code": -32603, "message": "unknown layer '/x'" } }
+// viewer → controllers (notification, no id) — positional here too
+{ "jsonrpc": "2.0", "method": "event", "params": [ "dimensions-changed", { "ndim": 4 } ] }
 ```
 
 **`params` are positional.** JSON-RPC permits an object too; we do not use it.
@@ -245,9 +246,27 @@ assumes the synchronous one is the only client.
 
 ### 3.5 Security
 
+**Cross-Site WebSocket Hijacking is checked, and it has to be.** A WebSocket
+handshake is not subject to the same-origin policy and carries no CORS
+preflight, so *any* page a visitor happens to open could otherwise connect to
+`ws://localhost:<port>/control`, drive the display, and read the dataset URL
+back out of `getViewerState()` — on a loopback-only hub, with no LAN exposure at
+all. The hub therefore compares the handshake's `Origin` against the `Host` it
+arrived on (`ControlHub.origin_allowed`) and closes a mismatch with 1008.
+
+Two deliberate allowances, both stated rather than implied. A handshake with
+**no `Origin` at all is allowed**, because non-browser clients send none —
+`luxar.control.Viewer` included — and refusing them would break the Python
+controller outright; this check defends against a *browser* being used as the
+attacker's proxy, which is the actual attack. And an explicit
+`allowed_origins` list overrides the comparison, for a reverse proxy where
+`Origin` and `Host` differ for honest reasons.
+
 Same-host LAN kiosk by default: the hub binds the address `luxar serve` binds,
 which is loopback unless `--host 0.0.0.0` is given. `--control-token <t>`
-requires `?token=` on the WebSocket URL, compared with `hmac.compare_digest`;
+requires `?token=` on the WebSocket URL, compared with `hmac.compare_digest`
+over UTF-8 **bytes** (that function raises `TypeError` on a non-ASCII `str`, so
+comparing strings would turn a wrong password into a crashed handler);
 viewers and controllers present the same token, and a wrong one is closed with
 RFC 6455 code 1008 (as is an unrecognised `?role=`). No other auth is planned.
 
