@@ -905,7 +905,7 @@ check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI 
 check-gallery-media:  ## Verify hosted root-README media against its manifest (opt-in)
 	$(HATCH) run python scripts/gallery/verify_media.py
 
-check-external-references:  ## Run all network-backed reference audits (report-only)
+check-external-references:  ## Run reference audits and enforce cadence liveness
 	$(HATCH) run python scripts/run_external_reference_audits.py
 
 check-gallery-staleness:  ## Report README gallery staleness and manifest media sizes

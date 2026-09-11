@@ -341,7 +341,7 @@ MIN_NODE_MINOR := 22
 | `make check-demo-links` | Opt-in demo click-through destination audit; reports request failures and human-only checks without failing the command |
 | `make check-zenodo-live` | Opt-in live Zenodo manifest-pin audit using the system Python; requires `ZENODO_TOKEN` and is deliberately not a required CI gate |
 | `make check-cold-fetch` | Opt-in pre-removal gate that downloads hosted demo datasets into a throwaway cache with in-repo payloads hidden, then verifies their hosted SHA-256 pins |
-| `make check-external-references` | Run all network-backed reference audits and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
+| `make check-external-references` | Run all network-backed audits and emit one PASS/NOTICE/WARNING/ERROR report; third-party findings are report-only, while stale repository cadences fail |
 | `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
 ### Utilities
@@ -400,6 +400,13 @@ CUDA compile and parity coverage will run on a separate low-priority cadence
 rather than in pull-request CI, because the device compile takes minutes and the
 workstation GPUs are shared with interactive work. That runner work is tracked
 in #2544 and is not in place yet.
+
+The weekly external-reference audit provides an independent GitHub-hosted clock
+for repository cadence liveness. It reads public Actions metadata without a
+token and fails when the `CUDA native cadence` workflow is disabled, has no
+successful run after its three-day bootstrap grace, or its latest success is
+older than three days. Before that workflow reaches the default branch, the
+check reports a human notice rather than failing bootstrap.
 
 ## Dependency Management
 

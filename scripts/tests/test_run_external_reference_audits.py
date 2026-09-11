@@ -26,18 +26,21 @@ def test_all_external_reference_audits_are_declared() -> None:
         "Demo click-throughs",
         "Zenodo manifest pins",
         "Hosted gallery media",
+        "Repository cadence liveness",
     ]
     assert audit_module.AUDITS[2].required_env == ("ZENODO_TOKEN",)
     assert audit_module.AUDITS[2].command == ("make", "check-zenodo-live")
     assert audit_module.AUDITS[3].command == ("make", "check-gallery-media")
+    assert audit_module.AUDITS[4].gating is True
+    assert audit_module.AUDITS[4].parse_levels is True
 
 
 def test_make_targets_use_the_intended_python_environments() -> None:
     makefile = (SCRIPT.parents[1] / "Makefile").read_text()
 
     assert (
-        "check-external-references:  ## Run all network-backed reference audits"
-        " (report-only)\n\t$(HATCH) run python scripts/run_external_reference_audits.py"
+        "check-external-references:  ## Run reference audits and enforce cadence"
+        " liveness\n\t$(HATCH) run python scripts/run_external_reference_audits.py"
         in makefile
     )
     assert (
@@ -165,7 +168,7 @@ def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) ->
     monkeypatch.setattr(subprocess, "run", run)
     audits = tuple(
         audit_module.Audit(audit.name, audit.command, parse_levels=audit.parse_levels)
-        for audit in audit_module.AUDITS
+        for audit in audit_module.AUDITS[:4]
     )
 
     results = [audit_module.run_audit(audit, env={}) for audit in audits]
@@ -404,7 +407,7 @@ def test_audits_run_from_the_repository_root(monkeypatch) -> None:
     assert seen_cwd == SCRIPT.parents[1]
 
 
-def test_main_writes_the_same_visible_summary_and_always_exits_zero(
+def test_main_writes_the_same_visible_summary_and_gates_only_cadence_failures(
     monkeypatch, tmp_path, capsys
 ) -> None:
     results = [
@@ -415,7 +418,7 @@ def test_main_writes_the_same_visible_summary_and_always_exits_zero(
     summary_path = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
 
-    assert audit_module.main() == 0
+    assert audit_module.main() == 1
 
     stdout = capsys.readouterr().out
     summary = summary_path.read_text()
@@ -425,7 +428,7 @@ def test_main_writes_the_same_visible_summary_and_always_exits_zero(
     )
     assert "**Worst level: WARNING**" in summary
     assert stdout.count("**WARNING**") == len(audit_module.AUDITS)
-    assert "report-only and never gate merges" in stdout
+    assert "reference findings remain report-only" in stdout
 
 
 def test_annotations_surface_non_pass_levels_and_escape_commands() -> None:
