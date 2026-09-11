@@ -322,7 +322,7 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     );
 
     mgr.resize(96, 96);
-    expect(onResize).toHaveBeenCalled();
+    expect(onResize).toHaveBeenCalledWith({ width: 96, height: 96 });
 
     mgr.dispose();
   });

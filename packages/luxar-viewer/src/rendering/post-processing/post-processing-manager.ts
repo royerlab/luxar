@@ -114,7 +114,7 @@ export class PostProcessingManager {
   private _previousRenderTimestamp = 0;
 
   /**
-   * @param onResize  Optional callback invoked after every
+   * @param onResize  Optional callback invoked with the display size after every
    *   reallocation of the render-target pyramid (resize, SSAA
    *   toggle, MSAA toggle, DPR change). SceneManager wires this to
    *   `updateMaterialsForCurrentCamera()` so point/line/gsplat
@@ -129,7 +129,7 @@ export class PostProcessingManager {
     private scene: THREE.Scene,
     private camera: THREE.Camera,
     size: { width: number; height: number },
-    private onResize?: () => void
+    private onResize?: (displaySize: { width: number; height: number }) => void
   ) {
     // Keep the renderer's output color space at the working space
     // (linear) so it doesn't auto-encode our output. Both the
@@ -847,7 +847,7 @@ export class PostProcessingManager {
     // uResolution based on `renderer.getDrawingBufferSize()` and
     // would otherwise stay at the pre-resize values until the next
     // window resize fired.
-    this.onResize?.();
+    this.onResize?.(this.getDisplaySize());
   }
 
   // ================================================================

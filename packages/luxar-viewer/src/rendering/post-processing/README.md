@@ -126,10 +126,11 @@ SSAA multipliers above 1x suspend the configured MSAA samples to avoid
 allocating redundant multisample renderbuffers at the supersampled size.
 
 The optional `onResize` callback runs after every render-target
-reallocation (resize, SSAA toggle, MSAA toggle, DPR change). The host
-wires it to `SceneManager.updateMaterialsForCurrentCamera()` so the
-scene materials' cached `pointSizeFactor` / `uResolution` uniforms
-follow the new drawing-buffer dimensions.
+reallocation (resize, SSAA toggle, MSAA toggle, DPR change) and receives
+the logical display size. The SceneManager factory restores the camera
+projection from that size before refreshing the scene materials' cached
+`pointSizeFactor` / `uResolution` uniforms, so SSAA's enlarged drawing
+buffer cannot leak into the orbit projection.
 
 ### Capture paths
 
