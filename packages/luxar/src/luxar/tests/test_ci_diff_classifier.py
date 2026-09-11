@@ -60,6 +60,11 @@ CUDA_WORKFLOW = REPO / ".github/workflows/cuda-nightly.yml"
 #: than the single thing keeping their gate alive. Do not read the table as a list
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
+    (
+        ".github/workflows/cuda-nightly.yml",
+        "py",
+        "test_cuda_cadence_is_dispatch_only_and_requires_two_gpus parses it",
+    ),
     # The native sources. `.cu`/`.cuh` already routed; the C++/ObjC++/shader
     # ones did NOT, so a change to any of these three reached no gate at all
     # until `check-native` existed to be reached (A15-03).
