@@ -6,11 +6,15 @@
  * "flapping context" are the two cases worth pinning.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startKioskWatchdog } from '../../../../../core/app/kiosk/watchdog';
 import { applyKioskMode } from '../../../../../core/app/kiosk/apply-kiosk';
 import { KIOSK_MODE_OFF, resolveKioskMode } from '../../../../../config/kiosk';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 /** A minimal EventTarget plus controllable timers. */
 function harness(graceS = 10) {

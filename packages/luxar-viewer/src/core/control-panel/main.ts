@@ -121,6 +121,12 @@ export interface ControlPanelBootstrapPorts {
 type CustomPanelState = 'unmounted' | 'mounting' | 'mounted' | 'failed';
 type ConnectedUrlParams = UrlParams & { control: string };
 
+function registerBeforeUnload(ports: ControlPanelBootstrapPorts, teardown: () => void): void {
+  (ports.onBeforeUnload ?? ((listener) => window.addEventListener('beforeunload', listener)))(
+    teardown
+  );
+}
+
 interface StatusHandlerContext {
   params: UrlParams;
   root: HTMLElement;
@@ -508,9 +514,7 @@ function startConnectedPanel(
     cancelChapterRetry();
     socket?.dispose();
   };
-  (ports.onBeforeUnload ?? ((listener) => window.addEventListener('beforeunload', listener)))(
-    teardown
-  );
+  registerBeforeUnload(ports, teardown);
 }
 
 export function bootstrap(ports: ControlPanelBootstrapPorts = {}): void {
