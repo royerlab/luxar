@@ -44,8 +44,12 @@ export interface SelectionSnapshot {
 }
 
 function formatLodGroup(group: LODGroupDebugInfo): string {
-  const footprint = group.footprintStamped ? 'footprint-stamped' : 'occupancy-fallback';
+  const footprint = group.footprintStamped ? 'stamps-present' : 'no-stamps';
   return `${group.name}:${group.activeLevel}/${group.levelCount - 1}[${group.selector},${footprint}]`;
+}
+
+export function hasSubstitutiveSelection(values: Array<string | null>): boolean {
+  return values.some((value) => value !== null && value.length > 0);
 }
 
 export function summarizeSelection(

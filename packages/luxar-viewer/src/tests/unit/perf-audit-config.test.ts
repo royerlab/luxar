@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { biasArmsForScene, parseLodBiasArms, summarizeSelection } from '../e2e/perf-audit-config';
+import {
+  biasArmsForScene,
+  hasSubstitutiveSelection,
+  parseLodBiasArms,
+  summarizeSelection,
+} from '../e2e/perf-audit-config';
 
 describe('parseLodBiasArms', () => {
   it('preserves the existing audit scenario when the sweep is unset', () => {
@@ -51,7 +56,7 @@ describe('summarizeSelection', () => {
     ]);
     expect(snapshot).toEqual({
       visibleElements: 12,
-      activeLevels: '/lod:1/2[screen-area,footprint-stamped]',
+      activeLevels: '/lod:1/2[screen-area,stamps-present]',
     });
   });
 
@@ -63,7 +68,7 @@ describe('summarizeSelection', () => {
     expect(snapshot.visibleElements).toBe(20);
   });
 
-  it('does not count a leaf hidden by an ancestor', () => {
+  it('counts a lod-group descendant under its group', () => {
     const snapshot = summarizeSelection({ lodGroups }, [
       { path: '/lod/coarse', bucket: 'opaque', depthWrite: true, renderOrder: 0, elements: 600 },
     ]);
@@ -75,5 +80,12 @@ describe('summarizeSelection', () => {
       visibleElements: null,
       activeLevels: null,
     });
+  });
+});
+
+describe('hasSubstitutiveSelection', () => {
+  it('requires a non-empty substitutive-group selection', () => {
+    expect(hasSubstitutiveSelection([null, ''])).toBe(false);
+    expect(hasSubstitutiveSelection([null, '/lod:1/2[screen-area,stamps-present]'])).toBe(true);
   });
 });

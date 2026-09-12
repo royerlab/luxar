@@ -61,6 +61,7 @@ import {
 } from './perf-audit-helpers';
 import {
   biasArmsForScene,
+  hasSubstitutiveSelection,
   parseLodBiasArms,
   summarizeSelection,
   type LodBiasArm,
@@ -452,6 +453,14 @@ test.describe('viewer audit bench', () => {
         } finally {
           await context.close();
         }
+      }
+
+      if (
+        REQUIRE_SCENES &&
+        scene.lodLadder === true &&
+        !hasSubstitutiveSelection(runs.map((run) => run.defaultLevels))
+      ) {
+        throw new Error(`${scene.path} has no substitutive LOD group at the opening pose`);
       }
 
       const { medians, spreads } = aggregate(runs.map((run) => run.metrics));
