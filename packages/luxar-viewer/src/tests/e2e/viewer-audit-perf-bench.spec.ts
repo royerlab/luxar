@@ -455,14 +455,6 @@ test.describe('viewer audit bench', () => {
         }
       }
 
-      if (
-        REQUIRE_SCENES &&
-        scene.lodLadder === true &&
-        !hasSubstitutiveSelection(runs.map((run) => run.defaultLevels))
-      ) {
-        throw new Error(`${scene.path} has no substitutive LOD group at the opening pose`);
-      }
-
       const { medians, spreads } = aggregate(runs.map((run) => run.metrics));
       const scenarioId = `audit-${scene.id}${bias.scenarioSuffix}${NET ? `-${NET}` : ''}`;
       const row = {
@@ -487,6 +479,14 @@ test.describe('viewer audit bench', () => {
       const outPath = path.join(VIEWER_ROOT, 'perf-results', currentCommitSha(), 'results.json');
       mergeResultRow(outPath, currentCommitSha(), row);
       console.log(`[audit] ${scenarioId}: ${JSON.stringify(row.audit)}`);
+
+      if (
+        REQUIRE_SCENES &&
+        scene.lodLadder === true &&
+        !hasSubstitutiveSelection(runs.map((run) => run.defaultLevels))
+      ) {
+        throw new Error(`${scene.path} has no substitutive LOD group at the opening pose`);
+      }
 
       // Guard for #2561: a retained-byte cap that binds below what a scene
       // streams silently turns L2 into a no-op, and the only symptom is a
