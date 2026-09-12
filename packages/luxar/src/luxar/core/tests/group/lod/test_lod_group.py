@@ -663,6 +663,24 @@ def _stacked_4d_gsplatdata(n_per=600, n_groups=3, seed=0):
     return lift_points_to_gsplats(pos, np.full(len(pos), 0.5, np.float32))
 
 
+def _stacked_4d_gsplatdata_display_first(n_per=300, n_groups=3, seed=0):
+    """Flat GSplatData: xyz in columns 0-2, categorical group in column 3."""
+    from luxar.gsplats.lift import lift_points_to_gsplats
+
+    rng = np.random.default_rng(seed)
+    parts = [
+        np.column_stack(
+            [
+                rng.normal(0, 5, (n_per, 3)).astype(np.float32),
+                np.full(n_per, g, np.float32),
+            ]
+        )
+        for g in range(n_groups)
+    ]
+    pos = np.vstack(parts).astype(np.float32)
+    return lift_points_to_gsplats(pos, np.full(len(pos), 0.5, np.float32))
+
+
 def _gsplat_coarse_purity(store, name) -> float:
     """Max |fractional offset| of the kind=lod gsplat children's dim-0 centers."""
     grp = store[name]
@@ -732,6 +750,30 @@ class TestCoarsenDimsGsplats:
         store = zarr.open(str(out), mode="r")
         assert _gsplat_coarse_purity(store, "splats") < 1e-4
 
+    def test_auto_default_maps_display_dims_through_dim_order(self, tmp_path) -> None:
+        out = tmp_path / "g.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=_dims_4d())
+            scene.add_gsplats_from_data(
+                "splats",
+                _stacked_4d_gsplatdata_display_first(),
+                dim_order=["x", "y", "z", "coloring"],
+                lod_group=dict(
+                    compression_factor=4,
+                    levels=1,
+                    method="kmeans_lloyd",
+                    lloyd_iterations=1,
+                    device="cpu",
+                    seed=0,
+                ),
+            )
+        store = zarr.open(str(out), mode="r")
+        group = store["splats"]
+        coarse = group["child_0"]
+        fine = group["child_1"]
+        assert int(coarse.attrs["n_splats"]) < int(fine.attrs["n_splats"])
+        assert _gsplat_coarse_purity(store, "splats") < 1e-4
+
 
 class TestResolveCoarsenDimsResolver:
     """Direct unit tests for resolve_coarsen_dims (scene -> column indices)."""
@@ -768,6 +810,60 @@ class TestResolveCoarsenDimsResolver:
             2,
             3,
         )
+
+    def test_auto_maps_scene_display_dims_to_data_columns(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+
+        assert resolve_coarsen_dims(
+            self._scene(_dims_4d()),
+            4,
+            None,
+            dim_order=["x", "y", "z", "coloring"],
+        ) == (0, 1, 2)
+
+    @pytest.mark.parametrize("raw", [None, "display"])
+    def test_dim_order_mapping_no_displayed_dimension(self, raw):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+
+        if raw == "display":
+            with pytest.raises(ValueError, match="maps no displayed dimension"):
+                resolve_coarsen_dims(
+                    self._scene(_dims_4d()),
+                    1,
+                    raw,
+                    dim_order=["coloring"],
+                )
+        else:
+            assert (
+                resolve_coarsen_dims(
+                    self._scene(_dims_4d()),
+                    1,
+                    raw,
+                    dim_order=["coloring"],
+                )
+                is None
+            )
+
+    def test_names_map_to_data_columns(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+
+        assert resolve_coarsen_dims(
+            self._scene(_dims_4d()),
+            4,
+            ["z", "x"],
+            dim_order=["x", "y", "z", "coloring"],
+        ) == (0, 2)
+
+    def test_missing_named_data_column_raises(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+
+        with pytest.raises(ValueError, match="not mapped by dim_order"):
+            resolve_coarsen_dims(
+                self._scene(_dims_4d()),
+                3,
+                ["coloring"],
+                dim_order=["x", "y", "z"],
+            )
 
     def test_name_on_unaligned_raises(self):
         # n_cols (3) != scene ndim (4): a name could map to the wrong column.

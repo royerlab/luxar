@@ -1042,7 +1042,7 @@ class TestCoarsenDims:
             ]
         )
 
-    def write(self, tmp_path, verts, faces, coarsen):
+    def write(self, tmp_path, verts, faces, coarsen, *, dim_order=None):
         from luxar import LuxarZarrCompiler
 
         store = tmp_path / "cd.luxar.zarr"
@@ -1052,6 +1052,7 @@ class TestCoarsenDims:
                 "surf",
                 verts,
                 faces,
+                dim_order=dim_order,
                 substitutive_lod={"levels": 2, "coarsen_dims": coarsen},
             )
         return ladder_children(read_nodes(store))
@@ -1086,6 +1087,22 @@ class TestCoarsenDims:
         by_name = self.write(tmp_path / "n", verts, faces, ["x", "y"])
         by_index = self.write(tmp_path / "i", verts, faces, [0, 1])
         assert [c["n_vertices"] for c in by_name] == [c["n_vertices"] for c in by_index]
+
+    def test_display_dims_after_nonidentity_dim_order(self, tmp_path):
+        verts, faces = octasphere_4d(3, 0.0)
+        canonical = self.write(tmp_path / "canonical", verts, faces, "display")
+        permuted = self.write(
+            tmp_path / "permuted",
+            verts[:, [3, 0, 1, 2]],
+            faces,
+            "display",
+            dim_order=["t", "x", "y", "z"],
+        )
+
+        canonical_counts = [child["n_vertices"] for child in canonical]
+        permuted_counts = [child["n_vertices"] for child in permuted]
+        assert permuted_counts == canonical_counts
+        assert permuted_counts[0] < permuted_counts[-1]
 
 
 class TestNormalFrame:

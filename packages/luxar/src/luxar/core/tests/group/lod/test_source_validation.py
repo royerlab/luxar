@@ -1811,12 +1811,12 @@ class TestTheGSplatsPartitionSpecCheckSitsWhereTheFlatPathPutsIt:
 
     _BAD_SPEC = {"rule": "bogus"}
 
-    def _split(self, scene: Any, **kwargs: Any) -> Exception:
+    def _split(self, scene: Any, lod_group: Any = True, **kwargs: Any) -> Exception:
         return refusal(
             lambda: scene.add_gsplats_from_data(
                 "g",
                 _multi_substitutive_3d_data(),
-                lod_group=True,
+                lod_group=lod_group,
                 partition=self._BAD_SPEC,
                 **kwargs,
             )
@@ -1844,12 +1844,25 @@ class TestTheGSplatsPartitionSpecCheckSitsWhereTheFlatPathPutsIt:
         assert "g" not in compiler.store
         assert finalized_group_keys(compiler, path) == set()
 
-    def test_the_dim_order_spec_check_above_it_wins(self, tmp_path: Any) -> None:
-        _, scene, _ = open_scene(tmp_path, "lg_slot_dim_order.luxar.zarr")
+    @pytest.mark.parametrize(
+        "lod_group",
+        [
+            pytest.param(True, id="stored"),
+            pytest.param({"recompute": True}, id="computed"),
+        ],
+    )
+    def test_the_dim_order_spec_check_above_it_wins(
+        self, tmp_path: Any, lod_group: Any
+    ) -> None:
+        _, scene, _ = open_scene(
+            tmp_path, f"lg_slot_dim_order_{type(lod_group).__name__}.luxar.zarr"
+        )
 
-        exc = self._split(scene, dim_order=["X", "Y", "X"])
+        exc = self._split(scene, lod_group=lod_group, dim_order=["X", "Y", "X"])
 
-        assert "dim_order has duplicate names" in str(exc)
+        assert (
+            "Could not add gsplats 'g': dim_order has duplicate names: ['X', 'Y', 'X']"
+        ) in str(exc)
         assert "partition rule" not in str(exc)
 
     def test_it_outranks_the_labels_refusal_below_it(self, tmp_path: Any) -> None:
@@ -2110,17 +2123,24 @@ class TestTheLadderConflictOutranksTheOtherPreWrapperFaults:
     ]
 
     @pytest.mark.parametrize("case,kwargs,other_fault", _CASES)
-    @pytest.mark.parametrize("lod_group", [True, False])
+    @pytest.mark.parametrize(
+        "lod_group",
+        [
+            pytest.param(True, id="stored"),
+            pytest.param(False, id="flat"),
+            pytest.param({"recompute": True}, id="computed"),
+        ],
+    )
     def test_the_conflict_is_named_on_both_routes(
         self,
         tmp_path: Any,
         case: str,
         kwargs: Dict[str, Any],
         other_fault: str,
-        lod_group: bool,
+        lod_group: Any,
     ) -> None:
         compiler, scene, path = open_scene(
-            tmp_path, f"lg_rank_{case}_{lod_group}.luxar.zarr"
+            tmp_path, f"lg_rank_{case}_{type(lod_group).__name__}.luxar.zarr"
         )
 
         exc = refusal(
