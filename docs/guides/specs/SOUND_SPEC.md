@@ -201,7 +201,7 @@ on cuts the previous story's narration); an `on_depart` clip plays out.
 Browsers refuse to start an `AudioContext` without a user gesture on the page.
 
 - **Kiosk**: launch Chrome with `--autoplay-policy=no-user-gesture-required`
-  (documented next to the kiosk block in `REMOTE_CONTROL_SPEC.md` §4.4). The
+  (documented next to the kiosk block in `REMOTE_CONTROL_SPEC.md` §4.3). The
   context starts on load.
 - **Fallback**: if the context is `suspended` after load, the engine shows a
   minimal "Tap to enable sound" gate (an overlay, dismissed by the first

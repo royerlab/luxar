@@ -197,7 +197,7 @@ class KioskConfig:
 
     All fields optional; unset keeps the viewer's ordinary behaviour. ``?kiosk``
     on the URL is a hard override for a display whose store predates this
-    block. See ``docs/guides/specs/REMOTE_CONTROL_SPEC.md`` §4.4.
+    block. See ``docs/guides/specs/REMOTE_CONTROL_SPEC.md`` §4.3.
     """
 
     #: Master switch. ``False`` (or unset) leaves everything as it is.
@@ -879,7 +879,7 @@ class ControlPanelConfig:
     chapters come from a discrete dimension's ``categories``. This block is
     enrichment on top of that.
 
-    See ``docs/guides/specs/REMOTE_CONTROL_SPEC.md`` §4.3.
+    See ``docs/guides/specs/REMOTE_CONTROL_SPEC.md`` §4.4.
     """
 
     #: Panel heading. Unset uses the display's own scene title.
