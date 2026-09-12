@@ -975,24 +975,50 @@ def _validate_coarsen_dims_spec(value: Any) -> Any:
     )
 
 
-def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
+def resolve_coarsen_dims(
+    scene: Any,
+    n_cols: int,
+    raw: Any,
+    *,
+    dim_order: Optional[Sequence[str]] = None,
+) -> Optional[tuple]:
     """Resolve a raw ``coarsen_dims`` spec into concrete center-column indices.
 
     ``scene`` supplies the dimension metadata; ``n_cols`` is the lifted gsplat
-    dimensionality (== the position columns being coarsened). Returns a sorted
-    tuple of allowed-coarsen column indices, or ``None`` meaning "coarsen over
-    all dims" (no barrier — the historical behavior).
+    dimensionality (== the position columns being coarsened). ``dim_order``,
+    when supplied, names those input columns in scene-dimension terms. Returns a
+    sorted tuple of allowed-coarsen column indices, or ``None`` meaning "coarsen
+    over all dims" (no barrier — the historical behavior).
 
     Default (``raw is None``) is **Auto**: coarsen over the scene's *displayed*
-    dims and group by the *non-displayed* dims. This only applies when the
-    positions are aligned with the scene (``n_cols == scene.ndim``); otherwise
-    (dim_order / extend_to_all reshaped the columns) Auto safely falls back to
-    all-dims. ``"display"`` is the explicit form of Auto and errors if unaligned;
-    ``"all"`` forces all-dims; a list resolves names via ``Dimensions.get_index``
-    and ints as direct column indices.
+    dims and group by the *non-displayed* dims. With ``dim_order``, scene names
+    are mapped back to the input columns being coarsened; without it, positions
+    must already be aligned 1:1 with the scene. ``"display"`` is the explicit
+    form of Auto and errors if alignment is unknown; ``"all"`` forces all-dims;
+    a list resolves names through the same mapping and ints as direct input
+    column indices.
     """
     dims = getattr(scene, "_dimensions", None) if scene is not None else None
     aligned = dims is not None and int(dims.ndim) == int(n_cols)
+
+    data_to_scene: Optional[list[int]] = None
+    if dim_order is not None:
+        if dims is None:
+            raise ValueError("dim_order requires scene dimensions")
+        if len(dim_order) != n_cols:
+            raise ValueError(
+                f"dim_order has {len(dim_order)} names but data has {n_cols} columns"
+            )
+        if len(set(dim_order)) != len(dim_order):
+            raise ValueError("dim_order has duplicate names")
+        data_to_scene = []
+        for name in dim_order:
+            try:
+                data_to_scene.append(int(dims.get_index(name)))
+            except (KeyError, ValueError) as exc:
+                raise ValueError(
+                    f"dim_order name {name!r} not found in scene dimensions"
+                ) from exc
 
     def _finalize(idxs: Any) -> Optional[tuple]:
         norm = sorted({int(i) for i in idxs})
@@ -1008,7 +1034,16 @@ def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
     if raw == "all":
         return None
     if raw is None or raw == "display":
-        if not aligned:
+        if data_to_scene is not None:
+            displayed_scene = set(dims.displayed)
+            displayed = [
+                data_col
+                for data_col, scene_dim in enumerate(data_to_scene)
+                if scene_dim in displayed_scene
+            ]
+        elif aligned:
+            displayed = [d for d in dims.displayed if 0 <= d < n_cols]
+        else:
             if raw == "display":
                 raise ValueError(
                     "coarsen_dims='display' requires positions aligned with the "
@@ -1016,8 +1051,6 @@ def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
                     f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
                 )
             return None  # Auto, unaligned -> safe all-dims fallback
-        assert dims is not None  # implied by `aligned`
-        displayed = [d for d in dims.displayed if 0 <= d < n_cols]
         non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
         if not non_displayed:
             return None  # nothing to group by -> coarsen everything (no-op barrier)
@@ -1026,7 +1059,15 @@ def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
     idxs: list[int] = []
     for x in raw:
         if isinstance(x, str):
-            if not aligned:
+            if data_to_scene is not None:
+                scene_idx = int(dims.get_index(x))
+                try:
+                    idxs.append(data_to_scene.index(scene_idx))
+                except ValueError as exc:
+                    raise ValueError(
+                        f"coarsen_dims name {x!r} is not mapped by dim_order"
+                    ) from exc
+            elif not aligned:
                 # Names resolve to scene-dim indices, which only equal center
                 # columns when positions span the scene 1:1. Refuse rather than
                 # silently mapping a name to the wrong column.
@@ -1035,7 +1076,8 @@ def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
                     f"scene dims (got {n_cols} columns, scene ndim "
                     f"{getattr(dims, 'ndim', '?')}). Pass explicit column indices."
                 )
-            idxs.append(int(dims.get_index(x)))  # type: ignore[union-attr]
+            else:
+                idxs.append(int(dims.get_index(x)))
         else:
             idxs.append(int(x))
     return _finalize(idxs)
