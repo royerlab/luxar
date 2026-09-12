@@ -64,7 +64,7 @@ export interface ChapterSource {
  */
 export const MAX_DERIVED_CHAPTERS = 24;
 
-interface DeriveOptions {
+export interface DeriveOptions {
   /**
    * Dimension to walk, by name. When given and resolvable it wins outright,
    * including past {@link MAX_DERIVED_CHAPTERS} — an explicit choice is an
