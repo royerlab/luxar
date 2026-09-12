@@ -185,7 +185,7 @@
         "elevation": 0
       },
       "fillTarget": 0.45,
-      "note": "fillTarget 0.65 (was default 0.95): 77.3% border-lit at 0.95; became an unrecognisable close-up. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | fillTarget 0.65 -> 0.45: 0.65 moved border-lit 77.3% -> 41.1%, right direction but not far enough for a subject this diffuse."
+      "note": "fillTarget 0.65 (was default 0.95): 77.3% border-lit at 0.95; became an unrecognisable close-up. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | fillTarget 0.65 -> 0.45: 0.65 moved border-lit 77.3% -> 41.1%, right direction but not far enough for a subject this diffuse. The under-fill warning at 0.45 is expected and deliberate; raising the target restores the worse crop."
     },
     {
       "id": "gsplats_4d_celegans_tracking",
