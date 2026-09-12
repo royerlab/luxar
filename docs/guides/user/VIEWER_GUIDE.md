@@ -174,6 +174,8 @@ Append parameters to the viewer URL to control startup behavior.
 | `control` | flag \| WebSocket URL | Attach this viewer to the serving app's control hub. A URL selects an explicit hub and must be same-origin unless `controlAllowCrossOrigin` is present. |
 | `controlToken` | string | Shared control-hub token, matching `luxar serve --control-token`. Query-string tokens are visible in browser history and are only a LAN convenience. |
 | `controlAllowCrossOrigin` | flag | Permit an explicit `control` URL to cross the page origin. Without this flag, explicit control sockets are same-origin only; use it only with an authenticated or explicitly origin-allow-listed hub. |
+| `panel` | module URL | Load an alternative same-origin control-panel module. Cross-origin modules are rejected. |
+| `kiosk` | flag | Apply the hard kiosk-lockdown override for this session. This can tighten authored kiosk permissions but cannot unlock them. |
 | `debug` | flag | Enable the debug interface (developer use). |
 | `no-cache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
 | `no-slice-cache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
