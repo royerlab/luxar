@@ -1,6 +1,8 @@
 name: CUDA native cadence
 
 # Dispatched by the off-peak timer in royerlab/luxar-ci with `--ref dev`.
+# That dispatcher pins this filename as `cuda-nightly.yml`; renaming it silently
+# stops the cadence.
 # workflow_dispatch is not registered until this file reaches the default branch
 # (main) through promotion; after that, `--ref dev` tests and attests the dev SHA.
 # Keeping this out of `schedule:` is load-bearing: scheduled workflows follow
