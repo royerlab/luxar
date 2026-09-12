@@ -367,7 +367,17 @@ def _matching_workflow(
     # path, and a pagination race can show one twice. Neither is a live cadence,
     # and reporting "multiple workflows registered" for them would red a healthy
     # cadence and blame the table.
-    live = [item for item in matches if item.get("state") != "deleted"]
+    live = []
+    seen_ids: set[object] = set()
+    for item in matches:
+        if item.get("state") == "deleted":
+            continue
+        workflow_id = item.get("id")
+        if workflow_id is not None and workflow_id in seen_ids:
+            continue
+        live.append(item)
+        if workflow_id is not None:
+            seen_ids.add(workflow_id)
     if len(live) > 1:
         raise ContractError(f"multiple active workflows are registered at {path!r}")
     return live[0] if live else None
@@ -448,6 +458,10 @@ def _latest_success(
     for entry in workflow_runs:
         if not isinstance(entry, dict):
             raise ContractError("GitHub listed a non-object workflow run")
+        if entry.get("head_branch") != cadence.branch:
+            continue
+        if entry.get("event") != cadence.event:
+            continue
         if entry.get("conclusion") != "success":
             continue
         starts.append(_parse_time(entry.get("created_at"), "created_at"))

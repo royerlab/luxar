@@ -90,6 +90,8 @@ def _run(
     """
     entry: dict[str, object] = {
         "conclusion": conclusion,
+        "head_branch": CADENCE.branch,
+        "event": CADENCE.event,
         "created_at": created_at,
         "run_started_at": "2026-09-11T12:00:00Z",
         "updated_at": "2026-09-11T19:00:00Z",
@@ -314,6 +316,18 @@ def test_two_active_workflows_at_one_path_are_a_contract_failure() -> None:
 
     assert results[0].level == "CONFIG"
     assert "multiple active workflows are registered" in results[0].detail
+
+
+def test_duplicate_pages_do_not_turn_one_workflow_into_two() -> None:
+    result = _check(
+        workflow_pages=[
+            _listing(_workflow(), total_count=2),
+            _listing(_workflow(), total_count=2),
+        ],
+        runs={"workflow_runs": [_run()]},
+    )
+
+    assert result.level == "OK"
 
 
 def test_a_deleted_record_beside_a_live_one_does_not_red_a_healthy_cadence() -> None:
@@ -960,6 +974,33 @@ def test_a_non_success_conclusion_is_skipped_not_raised() -> None:
     result = _check(
         workflow_pages=[_listing(_workflow())],
         runs={"workflow_runs": [_run(conclusion="failure")]},
+        now=AFTER_NOT_BEFORE,
+    )
+
+    assert result.level == "STALE"
+    assert "no successful run" in result.detail
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"head_branch": "main", "event": CADENCE.event},
+        {"head_branch": CADENCE.branch, "event": "push"},
+    ],
+)
+def test_a_run_leaked_past_an_identity_filter_is_skipped(
+    overrides: dict[str, object],
+) -> None:
+    result = _check(
+        workflow_pages=[_listing(_workflow())],
+        runs={
+            "workflow_runs": [
+                _run(
+                    created_at=(AFTER_NOT_BEFORE - timedelta(hours=1)).isoformat(),
+                    **overrides,
+                )
+            ]
+        },
         now=AFTER_NOT_BEFORE,
     )
 
