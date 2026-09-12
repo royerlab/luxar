@@ -648,6 +648,33 @@ def test_a_manifest_whose_datasets_are_not_an_object_is_a_broken_input(
     assert CHECKER.exit_status(findings) == 2
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("files", 5),
+        ("variants", ["a"]),
+        ("variants", {"v": "oops"}),
+        ("variants", {"v": {"files": 5}}),
+    ],
+)
+def test_malformed_dataset_labelling_fields_honour_the_exit_2_contract(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    """Wrong nested shapes are skipped instead of escaping as a traceback."""
+    dataset = _droso_dataset()
+    dataset["files"] = []
+    dataset[field] = value
+    findings, _report, status = _run(
+        tmp_path,
+        {"gsplats_4d_drosophila_embryogenesis": dataset},
+        {"droso-timelapse": DROSO_BULLET},
+    )
+
+    assert [finding.level for finding in findings] == ["CONFIG"]
+    assert "no bullet" in findings[0].message
+    assert status == 2
+
+
 def test_a_file_entry_that_is_not_an_object_does_not_break_labelling(
     tmp_path: Path,
 ) -> None:

@@ -322,9 +322,16 @@ def _dataset_labels(dataset: dict[str, Any]) -> frozenset[str]:
     ``h2afva`` never claims ``h2afva_51tp.gsplats.zarr.zip``'s bullet.
     """
     labels = set()
-    files = list(dataset.get("files", ()))
-    for variant in dataset.get("variants", {}).values():
-        files.extend(variant.get("files", ()))
+    raw_files = dataset.get("files", ())
+    files = list(raw_files) if isinstance(raw_files, list) else []
+    variants = dataset.get("variants", {})
+    if isinstance(variants, dict):
+        for variant in variants.values():
+            if not isinstance(variant, dict):
+                continue
+            variant_files = variant.get("files", ())
+            if isinstance(variant_files, list):
+                files.extend(variant_files)
     for entry in files:
         if isinstance(entry, dict) and entry.get("name"):
             labels.add(str(entry["name"]))
