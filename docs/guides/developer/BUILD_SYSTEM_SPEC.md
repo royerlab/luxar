@@ -379,7 +379,7 @@ MIN_NODE_MINOR := 22
 
 The Linux compile gate cannot exercise the Objective-C++ binding, the Metal
 shader compiler, or the Metal parity suite. Hosted macOS CI and a dedicated Mac
-runner are not used today — they are deferred until a Mac runner exists (#2544).
+runner are not used today — they are deferred until a Mac runner exists.
 Every release candidate must therefore be checked manually on Apple silicon
 before it is tagged:
 
@@ -396,10 +396,16 @@ command fails during pytest configuration if the Metal backend or MPS interop is
 unavailable, so a release check cannot pass with the Metal tests silently
 skipped.
 
-CUDA compile and parity coverage will run on a separate low-priority cadence
-rather than in pull-request CI, because the device compile takes minutes and the
-workstation GPUs are shared with interactive work. That runner work is tracked
-in #2544 and is not in place yet.
+CUDA compile and parity coverage runs on a separate low-priority, dispatch-only
+cadence rather than in pull-request CI, because the device compile takes minutes
+and the workstation GPUs are shared with interactive work. The systemd timer in
+`royerlab/luxar-ci` dispatches `.github/workflows/cuda-nightly.yml` with
+`--ref dev`; a newly added dispatch workflow is unavailable until promotion
+first carries it to the default branch (`main`). The two-GPU job compile-checks
+both `nvcc` translation units, builds the splatting and NLM extensions, and runs
+both parity suites with `LUXAR_REQUIRE_CUDA=1`, so a missing backend fails during
+pytest configuration instead of silently skipping. A failure opens or updates
+the `CUDA native cadence failure` issue assigned to @royerloic.
 
 ## Dependency Management
 
@@ -864,13 +870,13 @@ reads that same `CLAUDE.md` and skill page, and adds
 `.agents/skills/luxar-gsplat-pipeline/SKILL.md` and
 `docs/specs/GSPLATS_DIMENSION_MAPPING.md` to the Python-owned set.
 Consequently, every `CLAUDE.md` edit runs the Python matrix.
-Three workflow files, `.gitattributes`, and `.gitignore` are `dom_py` for the
+Four workflow files, `.gitattributes`, and `.gitignore` are `dom_py` for the
 same reason: `test_docs_workflow.py` reads `docs.yml` and `.gitattributes`,
 `test_run_external_reference_audits.py` asserts the schedule, permissions and
 token wiring of `external-reference-audits.yml`, the classifier test parses
-`coverage.yml`, and the wheel-completeness guard reads `.gitignore`. A workflow
-file matches no other domain on its own, so each has to be named or its guard
-never runs.
+`coverage.yml` and `cuda-nightly.yml`, and the wheel-completeness guard reads
+`.gitignore`. A workflow file matches no other domain on its own, so each has to
+be named or its guard never runs.
 Viewer TypeScript sources read by Python contract tests are also `dom_py`.
 Those tests resolve files through the shared `viewer_source()` helper, and
 `test_ci_diff_classifier.py` statically scans every literal helper call: each

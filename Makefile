@@ -2593,7 +2593,7 @@ test-cuda:  ## Run CUDA extension tests
 		echo ""; \
 	fi
 	@# Run tests
-	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v
+	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v -rs
 	@echo ""
 	@echo "✅ CUDA tests completed!"
 
@@ -2670,7 +2670,7 @@ test-nlm-cuda:  ## Run NLM CUDA extension tests
 		$(MAKE) build-nlm-cuda; \
 		echo ""; \
 	fi
-	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v
+	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v -rs
 	@echo ""
 	@echo "✅ NLM CUDA tests completed!"
 
