@@ -1859,7 +1859,9 @@ class TestTheGSplatsPartitionSpecCheckSitsWhereTheFlatPathPutsIt:
 
         exc = self._split(scene, lod_group=lod_group, dim_order=["X", "Y", "X"])
 
-        assert "dim_order has duplicate names" in str(exc)
+        assert (
+            "Could not add gsplats 'g': dim_order has duplicate names: ['X', 'Y', 'X']"
+        ) in str(exc)
         assert "partition rule" not in str(exc)
 
     def test_it_outranks_the_labels_refusal_below_it(self, tmp_path: Any) -> None:
