@@ -64,10 +64,25 @@ describe('planChunkBoundaryViewStates', () => {
 
   it('deduplicates a chunk boundary that equals the predicted slice', () => {
     const views = planChunkBoundaryViewStates(view(0), view(2), [{ start: 0, end: 100 }], index(), [
-      { shape: [800], chunks: [200] },
+      { shape: [400], chunks: [200] },
     ]);
 
     expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([2]);
+  });
+
+  it('does not let a predicted-slice boundary mask a later array boundary', () => {
+    const views = planChunkBoundaryViewStates(
+      view(0),
+      view(2),
+      [{ start: 0, end: 100 }],
+      index(),
+      [
+        { shape: [800], chunks: [200] },
+        { shape: [800], chunks: [400] },
+      ]
+    );
+
+    expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([2, 4]);
   });
 
   it('searches behind the predicted slice after a reverse multi-step scrub', () => {

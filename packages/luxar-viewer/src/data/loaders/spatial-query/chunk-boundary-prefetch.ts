@@ -61,9 +61,9 @@ function usableFirstAxisLayout(array: FirstAxisChunkLayout): [number, number] | 
   return rowCount > 0 && chunkRows > 0 && chunkRows < rowCount ? [rowCount, chunkRows] : null;
 }
 
-/** Test whether a candidate coordinate reaches or passes the predicted slice. */
+/** Test whether a candidate coordinate lies strictly beyond the predicted slice. */
 function reachesPrediction(position: number, predictedPosition: number, forward: boolean): boolean {
-  return forward ? position >= predictedPosition : position <= predictedPosition;
+  return forward ? position > predictedPosition : position < predictedPosition;
 }
 
 /** Inputs for one array's next-boundary search. */
