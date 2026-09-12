@@ -737,6 +737,8 @@ def _chunk_frame_span(
     atoms_per_chunk: int,
 ) -> float | None:
     """Largest inclusive frame span of one planned first-axis chunk."""
+    if atoms_per_chunk < 1:
+        return None
     if bounds_name not in frozenset(array_keys(group)):
         return None
     bounds = group[bounds_name]
@@ -788,8 +790,6 @@ def _group_playback_warning(
                 continue
             bounds_name, bounds_dims = resolved
             atoms_per_chunk = plan.target_chunks[0] // plan.atom
-            if atoms_per_chunk < 1:
-                continue
             key = (bounds_name, bounds_dims, step, atoms_per_chunk)
             if key not in span_cache:
                 span_cache[key] = _chunk_frame_span(
