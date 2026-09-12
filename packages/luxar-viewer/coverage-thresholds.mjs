@@ -129,7 +129,7 @@ export const COVERAGE_RECORDED = {
   branches: 83.04,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
-  'src/config/**': { lines: 95.36, functions: 100, branches: 94.15 },
+  'src/config/**': { lines: 96.36, functions: 100, branches: 94.05 },
   'src/utils/**': { lines: 99.6, functions: 100, branches: 96.19 },
   'src/scene/**': { lines: 95.5, functions: 86.74, branches: 91.15 },
   'src/cache/**': { lines: 95.03, functions: 95.2, branches: 85.41 },
@@ -137,7 +137,7 @@ export const COVERAGE_RECORDED = {
   'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
   'src/workers/**': { lines: 91.39, functions: 91.41, branches: 86.74 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
-  'src/core/**': { lines: 91.11, functions: 77.38, branches: 86.94 },
+  'src/core/**': { lines: 91.11, functions: 78.43, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
   'src/rendering/**': { lines: 77.18, functions: 78.13, branches: 73.22 },
 };

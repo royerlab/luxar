@@ -5,7 +5,7 @@
     "BLE",
     "RUF012"
   ],
-  "settings_fingerprint": "6256551a5895c98af43c2d84a366766712afd042be680704cb03a22982bfaaf7",
+  "settings_fingerprint": "3e83455587fe9a62874e7fcf974fd020ca18664c72c3d18286d97a3e17c28acc",
   "violations": {
     "packages/luxar/src/luxar/_process.py::BLE001": 1,
     "packages/luxar/src/luxar/cli/demo_render.py::B905": 2,
