@@ -289,6 +289,8 @@ class Group(Node):
                 ``device``, ``seed``, ``coverage_fractions``, ``coarsen_dims``,
                 ``max_aspect`` (anisotropy cap on the coarse levels, default
                 3.0; ``None`` disables).
+                Integer ``coarsen_dims`` entries name the scene-ordered position
+                columns after ``dim_order`` has been applied.
                 Composes with ``additive_lod``, which then describes how
                 each level streams in (every level gets a streaming ladder by
                 default; pass ``additive_lod=False`` to opt out). When combined
@@ -1117,7 +1119,9 @@ class Group(Node):
                 to finest), ``dict(...)`` (compute via
                 :func:`make_substitutive_lod`), or ``dict(..., recompute=True)``.
                 Optional ``coverage_fractions=[...]`` inside the dict overrides
-                the auto-derived thresholds.
+                the auto-derived thresholds. On a computed ladder, integer
+                ``coarsen_dims`` entries name the raw ``result.centers`` columns
+                before ``dim_order``; dimension names remain scene names.
             lod_group: Backward-compatible alias for ``substitutive_lod``.
                 Passing both is refused.
             additive_lod: Additive-axis control, uniform across substitutive
