@@ -980,22 +980,18 @@ def _coarsen_data_to_scene(
 ) -> Optional[list[int]]:
     """Return the scene-dimension index named by each input data column."""
     if dim_order is not None:
-        if dims is None:
-            raise ValueError("dim_order requires scene dimensions")
-        if len(dim_order) != n_cols:
-            raise ValueError(
-                f"dim_order has {len(dim_order)} names but data has {n_cols} columns"
-            )
-        if len(set(dim_order)) != len(dim_order):
-            raise ValueError("dim_order has duplicate names")
+        if (
+            dims is None
+            or len(dim_order) != n_cols
+            or len(set(dim_order)) != len(dim_order)
+        ):
+            return None
         data_to_scene = []
         for name in dim_order:
             try:
                 data_to_scene.append(int(dims.get_index(name)))
-            except (KeyError, ValueError) as exc:
-                raise ValueError(
-                    f"dim_order name {name!r} not found in scene dimensions"
-                ) from exc
+            except (KeyError, ValueError):
+                return None
         return data_to_scene
     return None
 
@@ -1003,7 +999,6 @@ def _coarsen_data_to_scene(
 def _displayed_data_columns(
     dims: Any,
     n_cols: int,
-    raw: Any,
     data_to_scene: Optional[list[int]],
 ) -> Optional[list[int]]:
     """Resolve displayed scene dimensions to the input columns being reduced."""
@@ -1016,12 +1011,6 @@ def _displayed_data_columns(
         ]
     if dims is not None and int(dims.ndim) == int(n_cols):
         return [d for d in dims.displayed if 0 <= d < n_cols]
-    if raw == "display":
-        raise ValueError(
-            "coarsen_dims='display' requires positions aligned with the "
-            f"scene dims (got {n_cols} columns, scene ndim "
-            f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
-        )
     return None
 
 
@@ -1070,7 +1059,9 @@ def resolve_coarsen_dims(
     must already be aligned 1:1 with the scene. ``"display"`` is the explicit
     form of Auto and errors if alignment is unknown; ``"all"`` forces all-dims;
     a list resolves names through the same mapping and ints as direct input
-    column indices.
+    column indices. The mapping only changes the result when a non-displayed
+    dimension occupies a different input and scene column; permutations solely
+    among displayed dimensions resolve to the same set.
     """
     dims = getattr(scene, "_dimensions", None) if scene is not None else None
     data_to_scene = _coarsen_data_to_scene(dims, n_cols, dim_order)
@@ -1089,9 +1080,21 @@ def resolve_coarsen_dims(
     if raw == "all":
         return None
     if raw is None or raw == "display":
-        displayed = _displayed_data_columns(dims, n_cols, raw, data_to_scene)
+        displayed = _displayed_data_columns(dims, n_cols, data_to_scene)
         if displayed is None:
+            if raw == "display":
+                raise ValueError(
+                    "coarsen_dims='display' requires positions aligned with the "
+                    f"scene dims (got {n_cols} columns, scene ndim "
+                    f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
+                )
             return None  # Auto, unaligned -> safe all-dims fallback
+        if not displayed and data_to_scene is not None:
+            if raw == "display":
+                raise ValueError(
+                    "coarsen_dims='display': dim_order maps no displayed dimension"
+                )
+            return None
         non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
         if not non_displayed:
             return None  # nothing to group by -> coarsen everything (no-op barrier)

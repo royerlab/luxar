@@ -821,6 +821,29 @@ class TestResolveCoarsenDimsResolver:
             dim_order=["x", "y", "z", "coloring"],
         ) == (0, 1, 2)
 
+    @pytest.mark.parametrize("raw", [None, "display"])
+    def test_dim_order_mapping_no_displayed_dimension(self, raw):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+
+        if raw == "display":
+            with pytest.raises(ValueError, match="maps no displayed dimension"):
+                resolve_coarsen_dims(
+                    self._scene(_dims_4d()),
+                    1,
+                    raw,
+                    dim_order=["coloring"],
+                )
+        else:
+            assert (
+                resolve_coarsen_dims(
+                    self._scene(_dims_4d()),
+                    1,
+                    raw,
+                    dim_order=["coloring"],
+                )
+                is None
+            )
+
     def test_names_map_to_data_columns(self):
         from luxar.core.group.lod.group import resolve_coarsen_dims
 
