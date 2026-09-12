@@ -603,6 +603,41 @@ def test_annotate_leaf_skips_nonfinite_energy_fraction() -> None:
     assert report.leaves[0].energy_fraction_cum == []
 
 
+def test_non_lod_annotation_never_decodes_cholesky_offdiag() -> None:
+    """Ordinary leaves keep the cheap diagonal-only annotation path."""
+    from luxar.gsplats.lod.annotate import AnnotateReport, _annotate_leaf
+
+    offdiag = object()
+
+    class _FakeGroup:
+        def __init__(self) -> None:
+            self._arrays: Dict[str, Any] = {
+                "amplitudes": np.ones(2, dtype=np.float64),
+                "cholesky_factors_diag": np.ones((2, 3), dtype=np.float64),
+                "cholesky_factors_offdiag": offdiag,
+            }
+            self.attrs: Dict[str, Any] = {}
+            self.path = "leaf"
+
+        def __contains__(self, key: str) -> bool:
+            return key in self._arrays
+
+        def __getitem__(self, key: str) -> Any:
+            return self._arrays[key]
+
+    class _FakeDecoder:
+        def decode(self, arr: Any, _root: Any) -> np.ndarray:
+            if arr is offdiag:
+                raise AssertionError("non-LOD annotation decoded off-diagonal factors")
+            return np.asarray(arr)
+
+    group = _FakeGroup()
+    report = AnnotateReport(path="mem", dry_run=True)
+    _annotate_leaf(group, group, _FakeDecoder(), report, dry_run=True)
+
+    assert report.leaves[0].n_splats == 2
+
+
 def test_annotate_is_idempotent(levels_store: Path) -> None:
     """Running annotate twice yields identical stamps (and a stable hash)."""
     _strip_quality_attrs(levels_store)
