@@ -1,3 +1,11 @@
+/** Pure configuration and snapshot helpers for the viewer audit benchmark. */
+
+import type {
+  DebugState,
+  DrawOrderEntry,
+  LODGroupDebugInfo,
+} from '../../core/app/debug/debug-state';
+
 export interface LodBiasArm {
   value: number | null;
   scenarioSuffix: string;
@@ -21,7 +29,39 @@ export function parseLodBiasArms(raw: string | undefined): LodBiasArm[] {
   }
   return values.map((value) => ({
     value,
-    scenarioSuffix: `-lod-bias-${value}`,
-    query: `&lod-bias=${value}`,
+    scenarioSuffix: value === 1 ? '' : `-lod-bias-${value}`,
+    query: value === 1 ? '' : `&lod-bias=${value}`,
   }));
+}
+
+export function biasArmsForScene(hasLodLadder: boolean, arms: LodBiasArm[]): LodBiasArm[] {
+  return hasLodLadder ? arms : [{ value: null, scenarioSuffix: '', query: '' }];
+}
+
+export interface SelectionSnapshot {
+  visibleElements: number | null;
+  activeLevels: string | null;
+}
+
+function formatLodGroup(group: LODGroupDebugInfo): string {
+  const footprint = group.footprintStamped ? 'footprint-stamped' : 'occupancy-fallback';
+  return `${group.name}:${group.activeLevel}/${group.levelCount - 1}[${group.selector},${footprint}]`;
+}
+
+export function summarizeSelection(
+  state: Pick<DebugState, 'lodGroups'> | null | undefined,
+  drawOrder: DrawOrderEntry[] | null | undefined
+): SelectionSnapshot {
+  if (!state || !drawOrder) return { visibleElements: null, activeLevels: null };
+  const lodPaths = state.lodGroups.map((group) => group.name);
+  const measuredEntries =
+    lodPaths.length === 0
+      ? drawOrder
+      : drawOrder.filter((entry) =>
+          lodPaths.some((lodPath) => entry.path === lodPath || entry.path.startsWith(`${lodPath}/`))
+        );
+  return {
+    visibleElements: measuredEntries.reduce((sum, entry) => sum + entry.elements, 0),
+    activeLevels: state.lodGroups.map(formatLodGroup).sort().join(','),
+  };
 }
