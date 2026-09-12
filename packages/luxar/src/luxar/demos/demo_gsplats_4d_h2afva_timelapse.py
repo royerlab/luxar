@@ -13,7 +13,7 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    The pinned archive is one leaf of 121,163,285 splats with a four-rung
+    The pinned archive is one leaf of 121,163,285 splats with a twelve-rung
     progressive ladder. The SCENE does not graft that leaf as-is: at build time
     it is re-authored (no refit — the splats are untouched) into a
     ``kind=partition`` of **one part per timepoint**, 51 parts, each carrying
@@ -126,8 +126,7 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei, re-authored as 51 played parts with eight "
-        "equal-count rungs each."
+        "of histone-labelled nuclei, 121M splats streamed per frame."
     ),
     "category": "microscopy",
     "geometry": "gsplats",

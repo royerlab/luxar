@@ -492,7 +492,7 @@ wrong number is most tempting: it collapses a tree into one node, and that node'
 
 Worked case. The pinned `h2afva_51tp` generation is the result of the 3.17
 rebuild (`flatten` → `lod --recipe stream` → `optimise`): one 4D leaf with a
-four-step progressive ladder and 121,163,285 splats:
+twelve-step progressive ladder and 121,163,285 splats:
 
     node total, 51 timepoints   121,163,285   <- what ElementCapacityWarning prints
     resident slice, worst case    2,629,840   <- what the GPU commits
@@ -713,7 +713,7 @@ The `h2afva_51tp` rebuild exposed two further traps:
 
 Result now pinned for `h2afva_51tp`: 1,873,559,527 → 1,115,714,088 bytes
 (**−40.5%**), 176 substitutive levels → 0, and the former partitioned tree → one
-4D leaf with a four-step progressive ladder. The chunk count fell from
+4D leaf with a twelve-step progressive ladder. The chunk count fell from
 125,751 to 2,316, with all 51 timepoints intact at uniform spacing and none
 blended.
 

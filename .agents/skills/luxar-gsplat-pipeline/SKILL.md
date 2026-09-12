@@ -443,7 +443,7 @@ zero request benefit; substitutive levels cost +49%.
 
 **A partition per TIMEPOINT is a different animal, and it won (2026-09-10).**
 Measured on the h2afva 51-timepoint archive at identical chunking, cold cache,
-stepping the time axis: the single sliced leaf with a global 11-rung ladder
+stepping the time axis: the single sliced leaf with a global 12-rung ladder
 re-streams that ladder from its bottom on every slice and leaves **3-27%** of
 the frame resident while a step loads; 44 spatial parts keep 68-85% resident
 but pay ~30 MB per step because every part is still sliced by time; **one part
