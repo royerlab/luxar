@@ -1283,6 +1283,10 @@ export class LuxarApp {
     }
     return {
       src: this.currentDatasetSrc ?? this.options.src ?? null,
+      // Read from the document rather than kept as a field: the authored
+      // title, the `?title=` parameter and the built-in default all land
+      // there already, so this reports what is actually on the tab.
+      title: document.title,
       camera: this.getCameraPose(),
       dimensions: this.getDimensions(),
       rendering: this.getRenderingSettings(),

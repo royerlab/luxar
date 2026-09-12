@@ -209,6 +209,16 @@ export interface LayerPatch {
 export interface ViewerState {
   /** Dataset URL currently shown, or `null` before the first load. */
   src: string | null;
+  /**
+   * What the display calls itself: the scene's authored
+   * `viewer_config.title`, else the `?title=` parameter, else the page's own.
+   *
+   * Here because a remote controller cannot know it any other way — a touch
+   * panel is a separate page whose own `document.title` is the bundle's
+   * generic string, and putting that in front of an audience is exactly the
+   * wrong heading.
+   */
+  title: string;
   camera: CameraSnapshot;
   dimensions: EmbedderDimensions;
   rendering: RenderingSettings;

@@ -45,11 +45,18 @@ const CONTRACT_CLASSES = [
 ];
 
 /** Custom properties an author may set. */
+// `--luxar-control-tile-min` was deliberately RETIRED, not lost. It set a
+// minimum tile WIDTH, and a minimum width is incompatible with the page's one
+// hard requirement: a `minmax(<min>, 1fr)` track cannot shrink past its
+// floor, so the grid overflows as soon as the chapters outgrow the viewport —
+// which is the scrolling a kiosk panel must never do. Tile size now falls out
+// of the fitted column count instead (`config/control-panel/fit-grid.ts`).
+// Safe to remove because the authoring vocabulary has not shipped yet, so no
+// authored stylesheet can be reading it.
 const CONTRACT_PROPERTIES = [
   '--luxar-control-columns',
   '--luxar-control-gap',
   '--luxar-control-radius',
-  '--luxar-control-tile-min',
 ];
 
 /** State hooks the renderer maintains. */

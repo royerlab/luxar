@@ -36,6 +36,14 @@ import { ControllerSocket, type ControllerStatus } from './controller-socket';
  */
 const IDLE_RESET_MS = 120_000;
 
+/**
+ * The one line of instruction the panel gives.
+ *
+ * A kiosk visitor needs to be told the tiles are touchable — an unlabelled
+ * grid is often read as a legend rather than a control.
+ */
+const CONTROL_PANEL_HINT = 'Touch a tile to travel there';
+
 /** Shape of `getDimensions()` over the wire, as far as this page cares. */
 interface WireDimensions {
   displayed?: number[];
@@ -131,6 +139,28 @@ function bootstrap(): void {
     }, IDLE_RESET_MS);
   }
 
+  /**
+   * The display's own scene title, or a neutral fallback.
+   *
+   * Best-effort by design: a title is decoration, and a panel that refuses to
+   * draw because one RPC failed is far worse than a panel with a generic
+   * heading. Any failure or unexpected shape falls through to the fallback.
+   */
+  async function sceneTitle(): Promise<string> {
+    try {
+      const state = await socket?.call('getViewerState');
+      if (state !== null && typeof state === 'object') {
+        const candidate = (state as { title?: unknown }).title;
+        if (typeof candidate === 'string' && candidate.trim() !== '') {
+          return candidate.trim();
+        }
+      }
+    } catch {
+      // Fall through to the fallback.
+    }
+    return document.title;
+  }
+
   function markActive(position: number | undefined): void {
     if (source === null || position === undefined) return;
     panel.setActive(activeChapterIndex(source, position));
@@ -147,7 +177,15 @@ function bootstrap(): void {
       metadata: dims.metadata as DimensionMetadata[],
       ranges: dims.ranges as Array<[number, number]>,
     });
-    panel.render(source, { title: document.title });
+    // The scene names itself; the panel page cannot. `document.title` on
+    // control.html is the bundle's own generic string, which is the wrong
+    // thing to put in front of an audience — ask the display for the title it
+    // is actually showing and fall back only if it has none.
+    const title = await sceneTitle();
+    panel.render(source, {
+      title,
+      subtitle: source === null ? undefined : CONTROL_PANEL_HINT,
+    });
     markActive(dims.currentStep[source?.dimensionIndex ?? -1]);
     await socket?.call('subscribe', ['dimensions-changed']);
     restartIdleTimer();

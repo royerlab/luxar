@@ -47,11 +47,11 @@ from .network_simulation import (
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
     _LOCAL_CORS_ORIGIN_REGEX,
-    ALL_INTERFACES_HOSTS,
     advertised_host,
     append_title_param,
     authority_hostname,
     get_viewer_dist_path,
+    is_loopback_host,
     origin_hostname,
 )
 from .utils import (
@@ -232,7 +232,7 @@ def _add_cors(
         allow_origin_regex = _LOCAL_CORS_ORIGIN_REGEX
         # A loopback bind keeps the plain middleware: its Host is already in
         # the regex, so the same-host rule would add nothing.
-        if not _is_loopback_bind(bind_host):
+        if not is_loopback_host(bind_host):
             middleware_class = _SameHostCORSMiddleware
     elif origin == "*":
         allow_origins = ["*"]
@@ -255,20 +255,6 @@ def _add_cors(
 # is deliberately NOT here: binding it exposes the server on every network
 # interface, which is exactly the case the LAN-exposure warning must fire on.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-
-
-def _is_loopback_bind(bind_host: Optional[str]) -> bool:
-    """True when ``bind_host`` reaches only this machine.
-
-    An unset host is treated as loopback: callers that never say where they
-    bound get the strict historical default rather than a widened one.
-    """
-    if bind_host is None:
-        return True
-    host = bind_host.strip().lower()
-    if host in ALL_INTERFACES_HOSTS:
-        return False
-    return host.strip("[]") in _LOOPBACK_HOSTS
 
 
 def _warn_if_lan_exposed(host: str, cors_origin: str) -> None:

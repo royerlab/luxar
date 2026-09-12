@@ -19,6 +19,8 @@ from arbol import aprint
 
 from .._zarr_compat import array_keys, group_keys
 from .._zarr_compat import open_group as zarr_open_group
+from ..utils.hosts import ALL_INTERFACES_HOSTS as _ALL_INTERFACES_HOSTS
+from ..utils.hosts import is_loopback_host as _is_loopback_host
 
 # CORS configuration shared across the CLI. Lives here (not in main.py)
 # so subcommand modules like gsplat_commands.py can import it without
@@ -32,10 +34,11 @@ from .._zarr_compat import open_group as zarr_open_group
 _LOCAL_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
 _DEFAULT_CORS_ORIGIN = "local"
 
-# The wildcard bind sentinels. Binding one of these listens on every
-# interface, so the address a client actually used is not knowable from the
-# bind string alone — it has to be resolved (see `advertised_host`).
-ALL_INTERFACES_HOSTS = frozenset({"0.0.0.0", "::", ""})  # nosec B104
+# Re-exported so existing `cli.utils` importers keep working; the definitions
+# live in `luxar.utils.hosts` because `luxar.demos` needs them too and sits
+# ABOVE `luxar.cli` in the layering contract.
+ALL_INTERFACES_HOSTS = _ALL_INTERFACES_HOSTS
+is_loopback_host = _is_loopback_host
 
 
 def primary_lan_address() -> Optional[str]:

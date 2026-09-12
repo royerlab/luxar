@@ -21,7 +21,9 @@
  * | Hook | Meaning |
  * |---|---|
  * | `.luxar-control-panel` | the root |
+ * | `.luxar-control-header` | the one-line header bar |
  * | `.luxar-control-title` / `.luxar-control-subtitle` | heading text |
+ * | `.luxar-control-tile-index` | the tile's position in the tour |
  * | `.luxar-control-grid` | the tile container |
  * | `.luxar-control-tile` | one chapter |
  * | `.luxar-control-tile-label` / `-sublabel` | text inside a tile |
@@ -30,12 +32,15 @@
  * | `[data-authored-label]` | `"true"` when the label came from the scene |
  * | `[data-chapter-index]` / `[data-chapter-value]` | which stop a tile is |
  * | `--luxar-control-columns` | grid column count |
+ * | `[data-chapter-count]` | how many tiles the grid holds |
+ * | `[data-grid-columns]` | the fitted column count, mirrored for tests/CSS |
  *
  * A lock test pins these names, because a rename would silently break every
  * authored stylesheet in the field.
  */
 
 import type { ChapterSource } from '../../config/control-panel/derive-chapters';
+import { fitGrid } from '../../config/control-panel/fit-grid';
 import { EventGroup } from '../../utils/cross-layer/event-group';
 
 /** CSS class prefix for everything this module creates. */
@@ -60,7 +65,11 @@ export interface ControlPanelPorts {
 export interface ControlPanelOptions {
   title?: string;
   subtitle?: string;
-  /** Grid columns. Unset lets the stylesheet decide from the viewport. */
+  /**
+   * Grid columns. Unset means "fit the container": the renderer measures the
+   * grid and picks a count so the tiles form a full-page matrix. An authored
+   * number pins it and the measurement is skipped.
+   */
   columns?: number | null;
   /** Per-chapter extra line, keyed by chapter index. */
   sublabels?: Record<number, string>;
@@ -101,7 +110,9 @@ function buildGrid(
   if (options.columns != null && options.columns > 0) {
     grid.style.setProperty(CONTROL_COLUMNS_PROPERTY, String(options.columns));
   }
-  for (const chapter of source.chapters) {
+  grid.dataset.chapterCount = String(source.chapters.length);
+  const total = source.chapters.length;
+  for (const [ordinal, chapter] of source.chapters.entries()) {
     const tile = element('button', 'luxar-control-tile');
     tile.type = 'button';
     tile.setAttribute('role', 'listitem');
@@ -109,6 +120,17 @@ function buildGrid(
     tile.dataset.chapterValue = String(chapter.value);
     tile.dataset.authoredLabel = String(chapter.authored);
     tile.dataset.active = 'false';
+    // A tour has an order, and a visitor wants to know where in it they are.
+    // `aria-hidden` because the numeral is a visual cue only — a screen reader
+    // already gets position from the list, and hearing "zero one, Overview"
+    // is worse than hearing "Overview".
+    const numeral = element(
+      'span',
+      'luxar-control-tile-index',
+      String(ordinal + 1).padStart(total >= 10 ? 2 : 1, '0')
+    );
+    numeral.setAttribute('aria-hidden', 'true');
+    tile.append(numeral);
     tile.append(element('span', 'luxar-control-tile-label', chapter.label));
     const sublabel = options.sublabels?.[chapter.index];
     if (sublabel) tile.append(element('span', 'luxar-control-tile-sublabel', sublabel));
@@ -133,47 +155,129 @@ export function createControlPanel(ports: ControlPanelPorts): ControlPanelView {
   // go with them or a long-running kiosk accumulates one set per redraw.
   let events = new EventGroup();
   let source: ChapterSource | null = null;
+  let grid: HTMLElement | null = null;
 
   const reset = (): void => {
     events.dispose();
     events = new EventGroup();
     root.replaceChildren();
+    grid = null;
   };
 
+  /**
+   * Size the grid to its own box so the tiles form one full page.
+   *
+   * Measured rather than expressed in CSS because `repeat(auto-fill,
+   * minmax(...))` cannot say "fit exactly N cells in this box" — it fills from
+   * a minimum width and overflows once N outgrows the viewport, which is the
+   * scrolling this page exists to avoid.
+   */
+  const applyFit = (grid: HTMLElement, count: number): void => {
+    const box = grid.getBoundingClientRect();
+    const { columns } = fitGrid(count, box.width / box.height);
+    grid.style.setProperty(CONTROL_COLUMNS_PROPERTY, String(columns));
+    grid.dataset.gridColumns = String(columns);
+    centreFinalRow(grid, count, columns);
+  };
+
+  /**
+   * Nudge the last row so a partial one sits centred under the full ones.
+   *
+   * Eleven chapters in four columns leave one hole, and a hole at the end of
+   * the bottom row reads as a mistake on a screen a visitor is looking at.
+   *
+   * The grid is laid out in HALF-tile tracks (see the stylesheet) precisely so
+   * this is expressible: centring an odd leftover needs a half-tile shift,
+   * which whole columns cannot describe. Each tile spans two tracks, so the
+   * first tile of the last row starts `leftover` tracks in — one track per
+   * half-tile — and the row ends up symmetric.
+   */
+  const centreFinalRow = (grid: HTMLElement, count: number, columns: number): void => {
+    const tiles = Array.from(grid.querySelectorAll<HTMLElement>('.luxar-control-tile'));
+    // Always clear first: a re-fit to a different column count changes both
+    // which tile begins the last row and how far it should move.
+    for (const tile of tiles) tile.style.removeProperty('grid-column');
+    const remainder = count % columns;
+    if (remainder === 0) return;
+    const leftover = columns - remainder;
+    const firstOfLastRow = tiles[count - remainder];
+    if (firstOfLastRow === undefined) return;
+    // `grid-column`, not `grid-column-start`. Writing only the start resets
+    // the span to 1 — the stylesheet's `span 2` lives in the same shorthand —
+    // so the centred tile came out half the width of every other one. The
+    // span has to be restated here.
+    firstOfLastRow.style.setProperty('grid-column', `${1 + leftover} / span 2`);
+  };
+
+  /**
+   * Re-fit whenever the grid's box changes.
+   *
+   * A ResizeObserver rather than a `window.resize` listener: a tablet rotating
+   * fires resize, but so does the on-screen keyboard, a browser-chrome change
+   * and a safe-area shift — and none of those are guaranteed to have laid the
+   * grid out by the time the handler runs. Observing the element itself asks
+   * the question that actually matters. Guarded because jsdom has no
+   * ResizeObserver, and the renderer's tests run there.
+   */
+  const observeFit = (grid: HTMLElement, count: number): void => {
+    applyFit(grid, count);
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => applyFit(grid, count));
+    observer.observe(grid);
+    events.add(() => observer.disconnect());
+  };
+
+  /**
+   * The header, as one element or none.
+   *
+   * Wrapped rather than returned as loose siblings so the stylesheet can put
+   * the scene name and the touch hint on a single line — two children of the
+   * panel's column layout would stack, and stacking costs a band of tile area
+   * for no gain.
+   */
   const header = (options: ControlPanelOptions): HTMLElement[] => {
-    const nodes: HTMLElement[] = [];
-    if (options.title) nodes.push(element('h1', 'luxar-control-title', options.title));
+    if (!options.title && !options.subtitle) return [];
+    const bar = element('header', 'luxar-control-header');
+    if (options.title) bar.append(element('h1', 'luxar-control-title', options.title));
     if (options.subtitle) {
-      nodes.push(element('p', 'luxar-control-subtitle', options.subtitle));
+      bar.append(element('p', 'luxar-control-subtitle', options.subtitle));
     }
-    return nodes;
+    return [bar];
   };
 
   return {
     render(next, options = {}) {
       reset();
       source = next;
+      // Captured before the branch: the fit call below runs after `append`,
+      // where TypeScript can no longer narrow `next` for us.
+      const chapterCount = next?.chapters.length ?? 0;
       const nodes = header(options);
       if (next === null || next.chapters.length === 0) {
         nodes.push(
           element('div', 'luxar-control-message', 'This scene has no chapters to jump to.')
         );
       } else {
-        nodes.push(
-          buildGrid(
-            next,
-            options,
-            (chapterIndex) => {
-              const chapter = next.chapters[chapterIndex];
-              if (chapter === undefined) return;
-              ports.call('setDimensionValue', [next.dimensionIndex, chapter.value]);
-              ports.onInteraction?.();
-            },
-            events
-          )
+        grid = buildGrid(
+          next,
+          options,
+          (chapterIndex) => {
+            const chapter = next.chapters[chapterIndex];
+            if (chapter === undefined) return;
+            ports.call('setDimensionValue', [next.dimensionIndex, chapter.value]);
+            ports.onInteraction?.();
+          },
+          events
         );
+        nodes.push(grid);
       }
       root.append(...nodes);
+      // AFTER append, or the grid has no box to measure yet. An author who
+      // pinned `columns` keeps it: their number is already on the element and
+      // re-fitting would overwrite a deliberate choice.
+      if (grid !== null && chapterCount > 0 && (options.columns == null || options.columns <= 0)) {
+        observeFit(grid, chapterCount);
+      }
     },
 
     setActive(index) {

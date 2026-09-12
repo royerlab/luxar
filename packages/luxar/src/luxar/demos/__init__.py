@@ -73,7 +73,13 @@ from ._support.downloads.download import (
 from ._support.downloads.remote_zip import download_zip_member
 from ._support.runtime.cli import run_luxar_cli
 from ._support.runtime.device import detect_device, warn_if_no_cuda_gpu
-from ._support.runtime.flags import parse_demo_flags, parse_int_arg, parse_path_arg
+from ._support.runtime.flags import (
+    control_serve_args,
+    parse_demo_flags,
+    parse_int_arg,
+    parse_path_arg,
+    parse_str_arg,
+)
 from ._support.runtime.provenance import (
     BUILDER_FINGERPRINT_ATTR,
     INPUT_DIGESTS_ATTR,
@@ -128,6 +134,7 @@ __all__ = [
     "hsv_to_rgb",
     "is_installed",
     "is_lfs_pointer",
+    "control_serve_args",
     "launch_viewer",
     "load_dataset_bundle",
     "load_dataset_gsplats",
@@ -140,6 +147,7 @@ __all__ = [
     "parse_demo_flags",
     "parse_int_arg",
     "parse_path_arg",
+    "parse_str_arg",
     "print_data_provenance",
     "quarantine_file",
     "require_local_data",

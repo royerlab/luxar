@@ -73,7 +73,32 @@ describe('createControlPanel', () => {
 
   it('renders one tile per chapter, in order', () => {
     panel.render(tourSource(STORIES));
-    expect(tiles().map((t) => t.textContent)).toEqual(STORIES);
+    // The LABEL, not the tile's whole `textContent`: a tile also carries its
+    // position in the tour as a numeral, and asserting on the concatenation
+    // would make this test fail for a purely decorative change.
+    expect(tiles().map((t) => t.querySelector('.luxar-control-tile-label')?.textContent)).toEqual(
+      STORIES
+    );
+  });
+
+  it('numbers the tiles from one, in order', () => {
+    panel.render(tourSource(STORIES));
+    expect(tiles().map((t) => t.querySelector('.luxar-control-tile-index')?.textContent)).toEqual([
+      '1',
+      '2',
+      '3',
+    ]);
+  });
+
+  it('hides the numeral from assistive technology', () => {
+    // A screen reader already conveys position from the list; hearing
+    // "one, Overview" is worse than hearing "Overview".
+    panel.render(tourSource(STORIES));
+    for (const tile of tiles()) {
+      expect(tile.querySelector('.luxar-control-tile-index')?.getAttribute('aria-hidden')).toBe(
+        'true'
+      );
+    }
   });
 
   it('renders tiles as real buttons', () => {
@@ -132,12 +157,38 @@ describe('createControlPanel', () => {
     expect(grid?.style.getPropertyValue(CONTROL_COLUMNS_PROPERTY)).toBe('4');
   });
 
-  it('leaves the column count to the stylesheet when unset or nonsense', () => {
+  it('fits a column count itself when unset or nonsense', () => {
+    // The panel must be ONE page with no scrolling, so an absent column count
+    // is not "let the stylesheet decide" — `repeat(auto-fill, minmax(...))`
+    // cannot fit exactly N cells in a box and overflows once the chapters
+    // outgrow the viewport. The renderer measures the grid and commits to a
+    // number. Under jsdom every box is 0x0, so this asserts the shape of the
+    // answer (a real column count) rather than a specific layout; `fitGrid`'s
+    // own tests cover which number comes out for which aspect.
     for (const columns of [undefined, null, 0, -3]) {
       panel.render(tourSource(STORIES), { columns });
       const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
-      expect(grid?.style.getPropertyValue(CONTROL_COLUMNS_PROPERTY)).toBe('');
+      const fitted = Number(grid?.style.getPropertyValue(CONTROL_COLUMNS_PROPERTY));
+      expect(Number.isInteger(fitted)).toBe(true);
+      expect(fitted).toBeGreaterThan(0);
+      expect(fitted).toBeLessThanOrEqual(STORIES.length);
+      expect(grid?.dataset.gridColumns).toBe(String(fitted));
     }
+  });
+
+  it('keeps an authored column count instead of re-fitting over it', () => {
+    // A pinned number is a deliberate choice; measuring would silently
+    // overwrite it on the first resize.
+    panel.render(tourSource(STORIES), { columns: 2 });
+    const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
+    expect(grid?.style.getPropertyValue(CONTROL_COLUMNS_PROPERTY)).toBe('2');
+    expect(grid?.dataset.gridColumns).toBeUndefined();
+  });
+
+  it('records the chapter count on the grid', () => {
+    panel.render(tourSource(STORIES));
+    const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
+    expect(grid?.dataset.chapterCount).toBe(String(STORIES.length));
   });
 
   it('renders a per-chapter sublabel when given one', () => {
@@ -152,7 +203,9 @@ describe('createControlPanel', () => {
     // Chapter labels come from scene attributes, which are untrusted input.
     panel.render(tourSource(['<img src=x onerror=alert(1)>']));
     expect(tiles()[0].querySelector('img')).toBeNull();
-    expect(tiles()[0].textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(tiles()[0].querySelector('.luxar-control-tile-label')?.textContent).toBe(
+      '<img src=x onerror=alert(1)>'
+    );
   });
 
   describe('setActive', () => {

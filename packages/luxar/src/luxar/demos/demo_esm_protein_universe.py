@@ -57,6 +57,16 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe
     python -m luxar.demos.demo_esm_protein_universe --no-serve
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
+
+Touch panel (off by default):
+    A kiosk can be driven from a tablet — a full-screen matrix of one tile per
+    story, derived from the tour itself. ``--control`` exposes it; loopback
+    alone is not reachable from a tablet, so a real kiosk also needs
+    ``--host 0.0.0.0`` and, because that opens the display to the network, a
+    ``--control-token``. The command prints both URLs.
+
+    python -m luxar.demos.demo_esm_protein_universe --control
+    python -m luxar.demos.demo_esm_protein_universe --control --host 0.0.0.0 --control-token SECRET
     python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 """
@@ -127,7 +137,7 @@ from luxar.core.viewer_config import (
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import launch_viewer, parse_path_arg
+from luxar.demos import control_serve_args, launch_viewer, parse_path_arg
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._dependencies import require_module
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -1474,6 +1484,9 @@ def _viewer_config(
     # except for render quality: see `high_quality` below. `overview` is the raw
     # distance-tuned pose; `pull_in` carries it to the cinematic 63° lens.
     return ViewerConfig(
+        # Names the browser tab AND the control panel's header — see the same
+        # note in demo_esm3_protein_stories. A filename is not a title.
+        title="The protein universe",
         cinematic_mode=True,
         camera=CameraConfig(position=pull_in(overview), target=(0.0, 0.0, 0.0)),
         # Authored, not left to the slider (see the BRIGHTNESS note by
@@ -1939,7 +1952,9 @@ def main() -> None:
         aprint("")
         aprint("  Press '1' to select the STORY slider, then '[' / ']' to step.")
         aprint(f"  Total clusters: {n:,}")
-        launch_viewer(output_path)
+        # Remote control is OFF unless asked for: `--control`, plus
+        # `--control-token` and `--host 0.0.0.0` for a tablet on the LAN.
+        launch_viewer(output_path, serve_args=control_serve_args())
 
     aprint("Cleanup complete")
 

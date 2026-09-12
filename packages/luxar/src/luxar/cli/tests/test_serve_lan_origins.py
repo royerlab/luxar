@@ -20,11 +20,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from ..serving import _build_data_app, _is_loopback_bind
+from ..serving import _build_data_app
 from ..utils import (
     ALL_INTERFACES_HOSTS,
     advertised_host,
     authority_hostname,
+    is_loopback_host,
     origin_authority,
     origin_hostname,
     primary_lan_address,
@@ -277,7 +278,7 @@ class TestAdvertisedHost:
         assert result is None or result.count(".") == 3
 
 
-class TestLoopbackBindPredicate:
+class TestLoopbackHostPredicate:
     @pytest.mark.parametrize(
         ("bind", "expected"),
         [
@@ -293,4 +294,4 @@ class TestLoopbackBindPredicate:
         ],
     )
     def test_only_genuine_loopback_counts(self, bind: str, expected: bool) -> None:
-        assert _is_loopback_bind(bind) is expected
+        assert is_loopback_host(bind) is expected
