@@ -209,6 +209,7 @@ ladder rewrite moves no chunk data and opens no array.
 luxar restamp-lod scene.luxar.zarr                      # every legacy ladder
 luxar restamp-lod scene.luxar.zarr --dry-run            # report only
 luxar restamp-lod scene.luxar.zarr --group tiled/part_0 # one ladder (repeatable)
+luxar restamp-lod scene.luxar.zarr --anchor 0.25        # re-anchor whole-object ladders
 luxar restamp-lod fit.gsplats.zarr --group /            # the gsplats root ladder
 ```
 
@@ -220,12 +221,17 @@ tile-bound — and its group stamped `screen-area`. Tile-bound is the tree
 writers' full rule: a real multi-part `kind=partition` above the ladder, OR a
 `kind=partition` among the ladder's own children (the `overview` recipe's coarse
 cap, which is pinned at fills-screen on purpose). A group already on
-`screen-area` is skipped, so a second run changes nothing, `content_hash`
-included.
+`screen-area` is skipped by default, so a second run changes nothing,
+`content_hash` included. `--anchor` sets the requested finest area for every
+whole-object ladder the pass processes, both legacy ladders being migrated and
+already-`screen-area` groups rebuilt from their stored level count.
+Partition-bound ladders keep their fills-screen `1.0` anchor. A ladder already
+matching the requested anchor remains a no-op, including its `content_hash`.
 
-It is never automatic: an authored `coverage_fractions=[...]` list and a legacy
-derived one are indistinguishable on disk, so running the command IS the opt-in
-and the per-group old→new ladder is printed as the audit trail. Sibling of
+It is never automatic: an authored `coverage_fractions=[...]` list and a derived
+one are indistinguishable on disk, including a hand-authored ladder already
+stamped `screen-area`, so running the command IS the opt-in and the per-group
+old→new ladder is printed as the audit trail. Sibling of
 `luxar optimise` rather than a flag on it — that pass preserves every attribute
 and refuses same-path work; this one changes only attributes and works in place.
 A `.zarr.zip` is refused (nothing to write back to). When anything changes the

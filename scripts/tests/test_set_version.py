@@ -17,6 +17,7 @@ import re
 import subprocess
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -27,6 +28,12 @@ CHECK_VERSIONS = REPO / "scripts/check_version_consistency.py"
 RELEASE = REPO / "scripts/release.sh"
 METAL_TEST_CONFTEST = (
     REPO / "packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests/conftest.py"
+)
+CUDA_TEST_CONFTEST = (
+    REPO / "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/conftest.py"
+)
+NLM_CUDA_TEST_CONFTEST = (
+    REPO / "packages/luxar/src/luxar/gsplats/preprocessing/tests/conftest.py"
 )
 MAKEFILE = REPO / "Makefile"
 
@@ -615,6 +622,114 @@ def test_required_metal_gate_accepts_an_available_backend(
     module = _load(METAL_TEST_CONFTEST, "available_metal_test_conftest")
     monkeypatch.setenv("LUXAR_REQUIRE_METAL", "1")
     monkeypatch.setattr(module, "is_metal_available", lambda: True)
+
+    module.pytest_configure()
+
+
+def test_required_cuda_gate_rejects_an_unavailable_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.models.gsplats.cuda as cuda_backend
+
+    module = _load(CUDA_TEST_CONFTEST, "required_cuda_test_conftest")
+    monkeypatch.setenv("LUXAR_REQUIRE_CUDA", "1")
+    monkeypatch.setattr(cuda_backend, "CUDA_AVAILABLE", True)
+    monkeypatch.setattr(cuda_backend, "CUDA_BACKEND_AVAILABLE", False)
+
+    with pytest.raises(pytest.UsageError, match="splatting backend is unavailable"):
+        module.pytest_configure(Mock())
+
+
+def test_required_cuda_gate_rejects_an_unavailable_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.models.gsplats.cuda as cuda_backend
+
+    module = _load(CUDA_TEST_CONFTEST, "required_cuda_device_test_conftest")
+    monkeypatch.setenv("LUXAR_REQUIRE_CUDA", "1")
+    monkeypatch.setattr(cuda_backend, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(cuda_backend, "CUDA_BACKEND_AVAILABLE", True)
+
+    with pytest.raises(pytest.UsageError, match="cannot access a CUDA device"):
+        module.pytest_configure(Mock())
+
+
+def test_cuda_gate_is_inert_without_the_cadence_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.models.gsplats.cuda as cuda_backend
+
+    module = _load(CUDA_TEST_CONFTEST, "optional_cuda_test_conftest")
+    monkeypatch.delenv("LUXAR_REQUIRE_CUDA", raising=False)
+    monkeypatch.setattr(cuda_backend, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(cuda_backend, "CUDA_BACKEND_AVAILABLE", False)
+
+    module.pytest_configure(Mock())
+
+
+def test_required_cuda_gate_accepts_an_available_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.models.gsplats.cuda as cuda_backend
+
+    module = _load(CUDA_TEST_CONFTEST, "available_cuda_test_conftest")
+    monkeypatch.setenv("LUXAR_REQUIRE_CUDA", "1")
+    monkeypatch.setattr(cuda_backend, "CUDA_AVAILABLE", True)
+    monkeypatch.setattr(cuda_backend, "CUDA_BACKEND_AVAILABLE", True)
+
+    module.pytest_configure(Mock())
+
+
+def test_required_nlm_cuda_gate_rejects_an_unavailable_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.preprocessing.cuda as nlm_cuda_backend
+
+    module = _load(NLM_CUDA_TEST_CONFTEST, "required_nlm_cuda_test_conftest")
+    monkeypatch.setenv("LUXAR_REQUIRE_CUDA", "1")
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(nlm_cuda_backend, "NLM_CUDA_AVAILABLE", False)
+
+    with pytest.raises(pytest.UsageError, match="NLM CUDA backend is unavailable"):
+        module.pytest_configure()
+
+
+def test_required_nlm_cuda_gate_rejects_an_unavailable_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.preprocessing.cuda as nlm_cuda_backend
+
+    module = _load(NLM_CUDA_TEST_CONFTEST, "required_nlm_cuda_device_test_conftest")
+    monkeypatch.setenv("LUXAR_REQUIRE_CUDA", "1")
+    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+    monkeypatch.setattr(nlm_cuda_backend, "NLM_CUDA_AVAILABLE", True)
+
+    with pytest.raises(pytest.UsageError, match="cannot access a CUDA device"):
+        module.pytest_configure()
+
+
+def test_nlm_cuda_gate_is_inert_without_the_cadence_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.preprocessing.cuda as nlm_cuda_backend
+
+    module = _load(NLM_CUDA_TEST_CONFTEST, "optional_nlm_cuda_test_conftest")
+    monkeypatch.delenv("LUXAR_REQUIRE_CUDA", raising=False)
+    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+    monkeypatch.setattr(nlm_cuda_backend, "NLM_CUDA_AVAILABLE", False)
+
+    module.pytest_configure()
+
+
+def test_required_nlm_cuda_gate_accepts_an_available_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.preprocessing.cuda as nlm_cuda_backend
+
+    module = _load(NLM_CUDA_TEST_CONFTEST, "available_nlm_cuda_test_conftest")
+    monkeypatch.setenv("LUXAR_REQUIRE_CUDA", "1")
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(nlm_cuda_backend, "NLM_CUDA_AVAILABLE", True)
 
     module.pytest_configure()
 

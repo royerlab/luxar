@@ -1429,17 +1429,26 @@ class TestSubstitutiveLinesConservationAndSymmetry:
 
 
 class TestCoarsenDimsLines:
-    def _build_4d(self, tmp_path, *, coarsen_dims="__unset__", n_groups=3):
+    def _build_4d(
+        self,
+        tmp_path,
+        *,
+        coarsen_dims="__unset__",
+        n_groups=3,
+        n_seg=1200,
+        dim_order=None,
+    ):
         # Segments stacked at categorical (display=False) coloring values 0..G-1,
         # sharing the same xyz so a barrier-unaware coarsening would blend them.
         rng = np.random.default_rng(0)
-        n_seg = 1200
         xyz = rng.normal(0, 5, (2 * n_seg, 3)).astype(np.float32)
         parts = [
             np.column_stack([np.full(2 * n_seg, g, np.float32), xyz])
             for g in range(n_groups)
         ]
         verts = np.vstack(parts).astype(np.float32)
+        if dim_order is not None:
+            verts = verts[:, [1, 2, 3, 0]]
         dims = Dimensions(
             [
                 Dimension(
@@ -1461,6 +1470,7 @@ class TestCoarsenDimsLines:
                 verts,
                 0.8,
                 line_type="segments",
+                dim_order=dim_order,
                 substitutive_lod=dict(levels=3, device="cpu", **kw),
             )
         return zarr.open(str(out), mode="r")["curves"]
@@ -1478,6 +1488,17 @@ class TestCoarsenDimsLines:
 
     def test_auto_default_groups_by_non_displayed(self, tmp_path) -> None:
         assert self._purity(self._build_4d(tmp_path)) < 1e-4
+
+    def test_auto_default_after_nonidentity_dim_order(self, tmp_path) -> None:
+        grp = self._build_4d(
+            tmp_path,
+            n_seg=200,
+            dim_order=["x", "y", "z", "coloring"],
+        )
+        assert self._purity(grp) < 1e-4
+        assert int(grp["child_0"].attrs["n_splats"]) < int(
+            grp["child_3"].attrs["n_segments"]
+        )
 
     def test_all_dims_blends(self, tmp_path) -> None:
         grp = self._build_4d(tmp_path, n_groups=4, coarsen_dims="all")

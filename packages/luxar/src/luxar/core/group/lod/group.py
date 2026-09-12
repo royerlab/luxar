@@ -975,24 +975,126 @@ def _validate_coarsen_dims_spec(value: Any) -> Any:
     )
 
 
-def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
+def _coarsen_data_to_scene(
+    dims: Any, n_cols: int, dim_order: Optional[Sequence[str]]
+) -> Optional[list[int]]:
+    """Return the scene-dimension index named by each input data column."""
+    if dim_order is not None:
+        # Decline malformed specs so their established errors remain owned by
+        # from_data._reject_before_wrapper and the adders' apply_dim_order_positions.
+        if (
+            dims is None
+            or len(dim_order) != n_cols
+            or len(set(dim_order)) != len(dim_order)
+        ):
+            return None
+        data_to_scene = []
+        for name in dim_order:
+            try:
+                data_to_scene.append(int(dims.get_index(name)))
+            except (KeyError, ValueError):
+                return None
+        return data_to_scene
+    return None
+
+
+def _displayed_data_columns(
+    dims: Any,
+    n_cols: int,
+    data_to_scene: Optional[list[int]],
+) -> Optional[list[int]]:
+    """Resolve displayed scene dimensions to the input columns being reduced."""
+    if data_to_scene is not None:
+        displayed_scene = set(dims.displayed)
+        return [
+            data_col
+            for data_col, scene_dim in enumerate(data_to_scene)
+            if scene_dim in displayed_scene
+        ]
+    if dims is not None and int(dims.ndim) == int(n_cols):
+        return [d for d in dims.displayed if 0 <= d < n_cols]
+    return None
+
+
+def _resolve_displayed_coarsen_dims(
+    dims: Any,
+    n_cols: int,
+    raw: Any,
+    data_to_scene: Optional[list[int]],
+) -> Optional[list[int]]:
+    """Resolve Auto/display specs, returning ``None`` for all-dims fallback."""
+    displayed = _displayed_data_columns(dims, n_cols, data_to_scene)
+    if displayed is None:
+        if raw == "display":
+            raise ValueError(
+                "coarsen_dims='display' requires positions aligned with the "
+                f"scene dims (got {n_cols} columns, scene ndim "
+                f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
+            )
+        return None
+    if not displayed and data_to_scene is not None:
+        if raw == "display":
+            raise ValueError(
+                "coarsen_dims='display': dim_order maps no displayed dimension"
+            )
+        return None
+    non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
+    return displayed if non_displayed else None
+
+
+def _coarsen_name_to_data_column(
+    dims: Any,
+    n_cols: int,
+    name: str,
+    data_to_scene: Optional[list[int]],
+) -> int:
+    """Resolve one scene dimension name to an input data-column index."""
+    if data_to_scene is not None:
+        scene_idx = int(dims.get_index(name))
+        try:
+            return data_to_scene.index(scene_idx)
+        except ValueError as exc:
+            raise ValueError(
+                f"coarsen_dims name {name!r} is not mapped by dim_order"
+            ) from exc
+    if dims is None or int(dims.ndim) != int(n_cols):
+        raise ValueError(
+            "coarsen_dims by name requires positions aligned with the "
+            f"scene dims (got {n_cols} columns, scene ndim "
+            f"{getattr(dims, 'ndim', '?')}). Pass explicit column indices."
+        )
+    return int(dims.get_index(name))
+
+
+def resolve_coarsen_dims(
+    scene: Any,
+    n_cols: int,
+    raw: Any,
+    *,
+    dim_order: Optional[Sequence[str]] = None,
+) -> Optional[tuple]:
     """Resolve a raw ``coarsen_dims`` spec into concrete center-column indices.
 
     ``scene`` supplies the dimension metadata; ``n_cols`` is the lifted gsplat
-    dimensionality (== the position columns being coarsened). Returns a sorted
-    tuple of allowed-coarsen column indices, or ``None`` meaning "coarsen over
-    all dims" (no barrier — the historical behavior).
+    dimensionality (== the position columns being coarsened). ``dim_order``,
+    when supplied, names those input columns in scene-dimension terms. Returns a
+    sorted tuple of allowed-coarsen column indices, or ``None`` meaning "coarsen
+    over all dims" (no barrier — the historical behavior).
 
     Default (``raw is None``) is **Auto**: coarsen over the scene's *displayed*
-    dims and group by the *non-displayed* dims. This only applies when the
-    positions are aligned with the scene (``n_cols == scene.ndim``); otherwise
-    (dim_order / extend_to_all reshaped the columns) Auto safely falls back to
-    all-dims. ``"display"`` is the explicit form of Auto and errors if unaligned;
-    ``"all"`` forces all-dims; a list resolves names via ``Dimensions.get_index``
-    and ints as direct column indices.
+    dims and group by the *non-displayed* dims. With ``dim_order``, scene names
+    are mapped back to the input columns being coarsened; without it, positions
+    must already be aligned 1:1 with the scene. ``"display"`` is the explicit
+    form of Auto and errors if alignment is unknown; ``"all"`` forces all-dims;
+    a list resolves names through the same mapping and ints as direct input
+    column indices. The mapping only changes the result when a non-displayed
+    dimension occupies a different input and scene column; permutations solely
+    among displayed dimensions resolve to the same set. Internally, ``None``
+    also means a malformed mapping was declined and left to
+    ``validate_dim_order_spec`` at the downstream write boundary.
     """
     dims = getattr(scene, "_dimensions", None) if scene is not None else None
-    aligned = dims is not None and int(dims.ndim) == int(n_cols)
+    data_to_scene = _coarsen_data_to_scene(dims, n_cols, dim_order)
 
     def _finalize(idxs: Any) -> Optional[tuple]:
         norm = sorted({int(i) for i in idxs})
@@ -1008,34 +1110,15 @@ def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
     if raw == "all":
         return None
     if raw is None or raw == "display":
-        if not aligned:
-            if raw == "display":
-                raise ValueError(
-                    "coarsen_dims='display' requires positions aligned with the "
-                    f"scene dims (got {n_cols} columns, scene ndim "
-                    f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
-                )
-            return None  # Auto, unaligned -> safe all-dims fallback
-        assert dims is not None  # implied by `aligned`
-        displayed = [d for d in dims.displayed if 0 <= d < n_cols]
-        non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
-        if not non_displayed:
-            return None  # nothing to group by -> coarsen everything (no-op barrier)
+        displayed = _resolve_displayed_coarsen_dims(dims, n_cols, raw, data_to_scene)
+        if displayed is None:
+            return None
         return _finalize(displayed)
     # Explicit list of names / indices.
     idxs: list[int] = []
     for x in raw:
         if isinstance(x, str):
-            if not aligned:
-                # Names resolve to scene-dim indices, which only equal center
-                # columns when positions span the scene 1:1. Refuse rather than
-                # silently mapping a name to the wrong column.
-                raise ValueError(
-                    "coarsen_dims by name requires positions aligned with the "
-                    f"scene dims (got {n_cols} columns, scene ndim "
-                    f"{getattr(dims, 'ndim', '?')}). Pass explicit column indices."
-                )
-            idxs.append(int(dims.get_index(x)))  # type: ignore[union-attr]
+            idxs.append(_coarsen_name_to_data_column(dims, n_cols, x, data_to_scene))
         else:
             idxs.append(int(x))
     return _finalize(idxs)
@@ -1687,11 +1770,14 @@ def level_additive_lod(
             (cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts)),
             default=0,
         )
-        if largest_commit > DEFAULT_MAX_ADDITIVE_COMMIT:
+        commit_ceiling = DEFAULT_MAX_ADDITIVE_COMMIT * slices
+        if largest_commit > commit_ceiling:
             raise ValueError(
                 f"Sliced node with {level_n:,} elements resolves a "
                 f"{largest_commit:,}-element additive increment, above the "
-                f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. "
+                f"{commit_ceiling:,}-element whole-node commit ceiling for "
+                f"{slices:,} slices ({DEFAULT_MAX_ADDITIVE_COMMIT:,} per slice "
+                "under uniform mixing). "
                 "Reduce the leaf size (Points: partition=) or supply an explicit "
                 "additive_lod ladder."
             )

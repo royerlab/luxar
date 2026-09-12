@@ -443,22 +443,23 @@ zero request benefit; substitutive levels cost +49%.
 
 **A partition per TIMEPOINT is a different animal, and it won (2026-09-10).**
 Measured on the h2afva 51-timepoint archive at identical chunking, cold cache,
-stepping the time axis: the single sliced leaf with a global 11-rung ladder
+stepping the time axis: the single sliced leaf with a global 12-rung ladder
 re-streams that ladder from its bottom on every slice and leaves **3-27%** of
 the frame resident while a step loads; 44 spatial parts keep 68-85% resident
 but pay ~30 MB per step because every part is still sliced by time; **one part
-per timepoint** with its own capped stream ladder fetches exactly one part per
-step (~27 MB, nothing from other timepoints), paints its 20.8 K-splat first rung
-at once, and can never starve a slice because the ladder is sized against that
-frame alone. Its cost is the full part per step with no reuse across
-timepoints, and one live GPU buffer per part (51 here) — pair it with
+per timepoint** with its own equal-count ladder fetches exactly one part per
+step (~27 MB, nothing from other timepoints). Each part uses eight
+equal-count rungs, so the 2,217,045-splat reference frame paints 277,131 splats
+(12.5%, ~8.31 MB at 30 B/splat) in rung 0 rather than the former 20.8 K download-
+budget rung. Its cost is the full part per step with no reuse across timepoints,
+and one live GPU buffer per part (51 here) — pair it with
 next-timepoint prefetch and watch the GPU byte budget (the refinement residency
 gate stops rungs when the pool is near its ceiling). `equi-energy` ladders lost
 on the same data: first rungs of 2-7 K splats let the viewer's stop-early rules
 end a pass at e(k)=0.33. Reach for equi-energy where a few heavy elements carry
 most of the light, not on a uniform nuclei field. Recipe, from Python: take the
 finest content, split on the time column, `make_additive_lod(part,
-method="self_energy", breakpoints=capped_stream_cuts(n, 39_062))` per part,
+method="self_energy", breakpoints=time_part_ladders([n], part_count=51)[0])` per part,
 write a `GSplatPartition` with `barrier_dims=[time_col]`, graft it with
 `add_gsplats_from_file` (see `demo_gsplats_4d_h2afva_timelapse.py`).
 
@@ -477,18 +478,40 @@ about hidden dimensions. Three regimes (2026-08-30 and 2026-09-10 measurements):
   (#2377). 1 MB wins; 64 KB made playback 13x worse there.
 - *Un-laddered, played* (`collision_animated`, an animated Lines node): the store
   is already slice-major, so a 1 MB chunk simply holds ~6 frames. Every ~6
-  frames the playhead crosses into the next chunk of each array and waits for a
-  0.25-0.85 MB fetch; the viewer's time lookahead is ONE step deep, so it cannot
-  hide a boundary six frames wide. Here the number to compute is
+  frames the playhead crosses into the next chunk of each array. The viewer now
+  prefetches the nearest next chunk boundary while the preceding frames play,
+  adding about 2.9 frames of mean lead at 1 MB on this node. Here the number to
+  compute is
   **frames-per-chunk** = (rows per zarr chunk / `chunk_size` atom) x the atom's
   hidden-axis span from `chunk_bounds`. `hosting` (~1.5 frames per chunk) is the
   middle of the request/byte trade; the request cap of the hosted site
-  (Cloudflare Functions) rules out `local`'s 3,500 chunks. Issue #2686 proposes
-  the per-node guard.
+  (Cloudflare Functions) rules out `local`'s 3,500 chunks. Issue #2686 landed
+  that viewer-side boundary prefetch rather than the proposed per-node guard.
 - *Not animated* (keypress-navigated, refine pass): smaller is a pure win.
 
 The slice-major ordering is NOT something to add — it already exists
 (`io/_ordering/compound.py`); do not re-propose it.
+
+Three refinements from applying the rule to a whole hosted wave (2026-09-11):
+
+- *Gate on whether the axis is actually PLAYED.* Only a store whose
+  `viewer_config.animation` entry has `playing: true` (or whose users play it)
+  is the frames-per-chunk case; a node sliced by a keypress-navigated axis
+  (ocean's time, forest's season/growth, hilbert's order) is the refine case,
+  and `archive` stays right. Camera `auto_rotate` is not playback.
+- *One chunk for the whole array is the BENIGN shape*, not the risk: there is no
+  boundary to cross, every frame is resident after one larger fetch. The stall
+  needs MANY chunks holding several frames each; boundary-aware lookahead now
+  warms the next crossing while the preceding frames play.
+- *Read the atom's hidden-axis span from `chunk_bounds`, not the scene
+  dimension's range.* A store that partitions NODES by the hidden axis (one
+  node per Hilbert order) holds one coordinate per node; dividing the scene
+  range by the node's chunk count reports frames-per-chunk that do not exist.
+
+Measured on the wave: `collision_animated` on `hosting` = 143 chunks over 250
+frames = 1.8 frames/chunk (target 1-2); ocean's tentacles sit at 28 frames per
+`archive` chunk (~7 on `hosting`) — harmless while nothing plays that axis,
+but "make ocean play" is not a free change.
 
 ```bash
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6

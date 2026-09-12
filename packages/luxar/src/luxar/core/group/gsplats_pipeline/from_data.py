@@ -816,7 +816,12 @@ def add_gsplats_from_data_impl(
             from ..lod.group import _validate_coarsen_dims_spec, resolve_coarsen_dims
 
             raw = _validate_coarsen_dims_spec(lod_group.get("coarsen_dims"))
-            resolved = resolve_coarsen_dims(group._find_scene(), int(result.ndim), raw)
+            resolved = resolve_coarsen_dims(
+                group._find_scene(),
+                int(result.ndim),
+                raw,
+                dim_order=dim_order,
+            )
             lod_group = {**lod_group, "coarsen_dims": resolved}
 
     # Resolve the two LOD axes. Substitutive first (it can produce a

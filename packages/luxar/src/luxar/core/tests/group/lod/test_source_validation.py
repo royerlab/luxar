@@ -164,6 +164,7 @@ apart.
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -1810,12 +1811,12 @@ class TestTheGSplatsPartitionSpecCheckSitsWhereTheFlatPathPutsIt:
 
     _BAD_SPEC = {"rule": "bogus"}
 
-    def _split(self, scene: Any, **kwargs: Any) -> Exception:
+    def _split(self, scene: Any, lod_group: Any = True, **kwargs: Any) -> Exception:
         return refusal(
             lambda: scene.add_gsplats_from_data(
                 "g",
                 _multi_substitutive_3d_data(),
-                lod_group=True,
+                lod_group=lod_group,
                 partition=self._BAD_SPEC,
                 **kwargs,
             )
@@ -1843,12 +1844,25 @@ class TestTheGSplatsPartitionSpecCheckSitsWhereTheFlatPathPutsIt:
         assert "g" not in compiler.store
         assert finalized_group_keys(compiler, path) == set()
 
-    def test_the_dim_order_spec_check_above_it_wins(self, tmp_path: Any) -> None:
-        _, scene, _ = open_scene(tmp_path, "lg_slot_dim_order.luxar.zarr")
+    @pytest.mark.parametrize(
+        "lod_group",
+        [
+            pytest.param(True, id="stored"),
+            pytest.param({"recompute": True}, id="computed"),
+        ],
+    )
+    def test_the_dim_order_spec_check_above_it_wins(
+        self, tmp_path: Any, lod_group: Any
+    ) -> None:
+        _, scene, _ = open_scene(
+            tmp_path, f"lg_slot_dim_order_{type(lod_group).__name__}.luxar.zarr"
+        )
 
-        exc = self._split(scene, dim_order=["X", "Y", "X"])
+        exc = self._split(scene, lod_group=lod_group, dim_order=["X", "Y", "X"])
 
-        assert "dim_order has duplicate names" in str(exc)
+        assert (
+            "Could not add gsplats 'g': dim_order has duplicate names: ['X', 'Y', 'X']"
+        ) in str(exc)
         assert "partition rule" not in str(exc)
 
     def test_it_outranks_the_labels_refusal_below_it(self, tmp_path: Any) -> None:
@@ -2109,17 +2123,24 @@ class TestTheLadderConflictOutranksTheOtherPreWrapperFaults:
     ]
 
     @pytest.mark.parametrize("case,kwargs,other_fault", _CASES)
-    @pytest.mark.parametrize("lod_group", [True, False])
+    @pytest.mark.parametrize(
+        "lod_group",
+        [
+            pytest.param(True, id="stored"),
+            pytest.param(False, id="flat"),
+            pytest.param({"recompute": True}, id="computed"),
+        ],
+    )
     def test_the_conflict_is_named_on_both_routes(
         self,
         tmp_path: Any,
         case: str,
         kwargs: Dict[str, Any],
         other_fault: str,
-        lod_group: bool,
+        lod_group: Any,
     ) -> None:
         compiler, scene, path = open_scene(
-            tmp_path, f"lg_rank_{case}_{lod_group}.luxar.zarr"
+            tmp_path, f"lg_rank_{case}_{type(lod_group).__name__}.luxar.zarr"
         )
 
         exc = refusal(
@@ -4097,6 +4118,51 @@ class TestGSplatsLodGroupColourDtype:
         store = zarr.open_group(path, mode="r")
         assert store["g"].attrs["kind"] == "lod"
         assert sorted(store["g"].group_keys()) == ["child_0", "child_1"]
+
+    def test_level_stats_survive_scene_authoring(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lg_level_stats.luxar.zarr")
+        data = _dtype_multi_substitutive_data(
+            lambda n, _lvl: int64_rgb(n).astype(np.uint8)
+        )
+        data = data.__class__.from_substitutive_levels(
+            [
+                replace(
+                    level,
+                    stats={
+                        **level.stats,
+                        "median_footprint": float(index + 1),
+                        "footprint_dims": [0, 1, 2],
+                    },
+                )
+                for index, level in enumerate(data.substitutive_levels)
+            ]
+        )
+
+        scene.add_gsplats_from_data(
+            "g", data, lod_group=True, dim_order=["Z", "Y", "X"]
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g/child_0"].attrs["level_stats"]["median_footprint"] == 2.0
+        assert store["g/child_1"].attrs["level_stats"]["median_footprint"] == 1.0
+        assert store["g/child_0"].attrs["level_stats"]["footprint_dims"] == [2, 1, 0]
+
+    def test_unstamped_levels_do_not_gain_empty_stats(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lg_empty_level_stats.luxar.zarr")
+        data = _dtype_multi_substitutive_data(
+            lambda n, _lvl: int64_rgb(n).astype(np.uint8)
+        )
+        data = data.__class__.from_substitutive_levels(
+            [replace(level, stats={}) for level in data.substitutive_levels]
+        )
+
+        scene.add_gsplats_from_data("g", data, lod_group=True)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert "level_stats" not in store["g/child_0"].attrs
+        assert "level_stats" not in store["g/child_1"].attrs
 
 
 def _two_rung_finest_level_data(second_rung_colors: Any) -> Any:

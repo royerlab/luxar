@@ -24,6 +24,7 @@ import { FxaaPass } from './fxaa/pass';
 import { FullscreenPass } from './fullscreen/pass';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { clamp } from '../../utils/clamp';
+import type { LuxarCamera } from '../../utils/camera-utils';
 import {
   computeEffectiveSize,
   getPhysicalSize,
@@ -114,10 +115,11 @@ export class PostProcessingManager {
   private _previousRenderTimestamp = 0;
 
   /**
-   * @param onResize  Optional callback invoked after every
-   *   reallocation of the render-target pyramid (resize, SSAA
-   *   toggle, MSAA toggle, DPR change). SceneManager wires this to
-   *   `updateMaterialsForCurrentCamera()` so point/line/gsplat
+   * @param onResize  Optional callback invoked with the display size and the
+   *   manager's current camera after every reallocation of the render-target
+   *   pyramid (resize, SSAA toggle, MSAA toggle, DPR change). Passing the live
+   *   camera keeps the hook correct across perspective/orthographic swaps.
+   *   SceneManager wires this to `updateMaterialsForCurrentCamera()` so point/line/gsplat
    *   shaders pick up the new drawing-buffer size — otherwise their
    *   pre-computed `pointSizeFactor` / `uResolution` uniforms go
    *   stale on AA toggles and the scene looks subtly wrong until the
@@ -127,9 +129,9 @@ export class PostProcessingManager {
     private renderer: Renderer,
     private capabilities: RendererCapabilities,
     private scene: THREE.Scene,
-    private camera: THREE.Camera,
+    private camera: LuxarCamera,
     size: { width: number; height: number },
-    private onResize?: () => void
+    private onResize?: (displaySize: { width: number; height: number }, camera: LuxarCamera) => void
   ) {
     // Keep the renderer's output color space at the working space
     // (linear) so it doesn't auto-encode our output. Both the
@@ -325,7 +327,7 @@ export class PostProcessingManager {
   // Camera
   // ================================================================
 
-  setCamera(camera: THREE.Camera): void {
+  setCamera(camera: LuxarCamera): void {
     this.camera = camera;
   }
 
@@ -847,7 +849,7 @@ export class PostProcessingManager {
     // uResolution based on `renderer.getDrawingBufferSize()` and
     // would otherwise stay at the pre-resize values until the next
     // window resize fired.
-    this.onResize?.();
+    this.onResize?.(this.getDisplaySize(), this.camera);
   }
 
   // ================================================================

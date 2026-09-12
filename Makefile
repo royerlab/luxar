@@ -10,7 +10,7 @@
         test-e2e test-e2e-browsers test-e2e-mobile test-e2e-smoke test-e2e-smoke-strict test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-cold-fetch check-typescript check-rust check-knip check-gallery-staleness check-gallery-media check-wasm-deps setup-dev \
-        check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
+        check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-snapshots check-record-attribution check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
 	generate-gallery-datasets generate-gallery \
@@ -672,7 +672,7 @@ lint-typescript:  ## Run ESLint on TypeScript code
 	cd packages/luxar-viewer && pnpm run lint
 
 type-check-python:  ## Run mypy type checking on Python code
-	$(HATCH) run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py
+	$(HATCH) run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py
 
 type-check-typescript:  ## Run TypeScript type checking
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -905,10 +905,16 @@ check-cold-fetch:  ## Verify hosted demo datasets fetch from nothing and match t
 check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI gate)
 	python3 scripts/zenodo_migration_audit.py --live
 
+check-zenodo-snapshots:  ## Compare captured Zenodo record text with live records (opt-in)
+	$(HATCH) run python scripts/zenodo_record_text/capture.py --check
+
+check-record-attribution:  ## Compare captured Zenodo record text with manifest attribution (opt-in)
+	python3 scripts/check_record_attribution.py
+
 check-gallery-media:  ## Verify hosted root-README media against its manifest (opt-in)
 	$(HATCH) run python scripts/gallery/verify_media.py
 
-check-external-references:  ## Run all network-backed reference audits (report-only)
+check-external-references:  ## Run all external reference audits (report-only)
 	$(HATCH) run python scripts/run_external_reference_audits.py
 
 check-gallery-staleness:  ## Report README gallery staleness and manifest media sizes
@@ -2593,7 +2599,7 @@ test-cuda:  ## Run CUDA extension tests
 		echo ""; \
 	fi
 	@# Run tests
-	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v
+	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v -rs
 	@echo ""
 	@echo "✅ CUDA tests completed!"
 
@@ -2670,7 +2676,7 @@ test-nlm-cuda:  ## Run NLM CUDA extension tests
 		$(MAKE) build-nlm-cuda; \
 		echo ""; \
 	fi
-	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v
+	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v -rs
 	@echo ""
 	@echo "✅ NLM CUDA tests completed!"
 

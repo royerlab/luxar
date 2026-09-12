@@ -130,10 +130,10 @@
     "custom": {
       "code:codeRepository": "https://github.com/royerlab/luxar"
     },
-    "submitted": false,
-    "description_sha256": "32eab51f9497c7ef0450b06cf213743426149565ec93b265865b27447510558f",
-    "description_chars": 22937,
-    "zenodo_modified": "2026-09-02T20:53:40.103780+00:00"
+    "submitted": true,
+    "description_sha256": "69ee861a5764d6e18ea4147dc58d96c8532e2f64d40a65d24f9f5edbfc45276c",
+    "description_chars": 23483,
+    "zenodo_modified": "2026-09-02T21:15:35.803836+00:00"
   },
   "cc-by-sa": {
     "deposition": "21912282",
@@ -181,10 +181,10 @@
     "custom": {
       "code:codeRepository": "https://github.com/royerlab/luxar"
     },
-    "submitted": false,
+    "submitted": true,
     "description_sha256": "78ed4ec7b56918ecfcc21f912fcf972c01f035a9c6a9b32913356a008c0e7807",
     "description_chars": 6856,
-    "zenodo_modified": "2026-09-02T20:53:43.406450+00:00"
+    "zenodo_modified": "2026-09-02T21:22:08.610882+00:00"
   },
   "h2afva": {
     "deposition": "21912284",
@@ -234,10 +234,10 @@
     "custom": {
       "code:codeRepository": "https://github.com/royerlab/luxar"
     },
-    "submitted": false,
+    "submitted": true,
     "description_sha256": "35a9be49c758d91c5d7107e4888b76623553414fbc71269a1a043300c4ceb536",
     "description_chars": 6299,
-    "zenodo_modified": "2026-09-02T20:53:45.667967+00:00"
+    "zenodo_modified": "2026-09-02T21:23:17.322486+00:00"
   },
   "droso-timelapse": {
     "deposition": "22118695",
@@ -304,10 +304,10 @@
         }
       }
     },
-    "submitted": false,
-    "description_sha256": "5e61cb110e88b655f3a604d281411fd19c8aea57da92f6d7e5d55b30e782ea7a",
-    "description_chars": 3282,
-    "zenodo_modified": "2026-09-02T20:53:48.019925+00:00"
+    "submitted": true,
+    "description_sha256": "9e9e6219c0d9fa97b9699f8c54688e79d0b0d454fabfa24d9710b3b2c41f8e29",
+    "description_chars": 3495,
+    "zenodo_modified": "2026-09-02T21:20:45.087191+00:00"
   },
-  "_captured_utc": "2026-09-02T20:54:07Z"
+  "_captured_utc": "2026-09-11T17:39:12Z"
 }

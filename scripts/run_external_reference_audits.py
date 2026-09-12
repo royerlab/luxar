@@ -1,4 +1,10 @@
-"""Run every network-backed reference audit and write one non-gating summary.
+"""Run every external-reference audit and write one non-gating summary.
+
+Most legs observe third parties over the network. One does not: the record
+attribution audit compares two copies of the same provenance claim that both
+live in this repository, and belongs here because the live record text it
+measures against is authored on Zenodo, so a finding cannot be fixed by a
+commit and must not gate one.
 
 The shared report vocabulary is deliberately small:
 
@@ -11,8 +17,9 @@ The shared report vocabulary is deliberately small:
 ``ERROR``
     The audit could not run because its command or configuration is broken.
 
-The command always exits zero. These checks observe third parties, so their
-findings belong in the report rather than in the required CI gate.
+The command always exits zero. These checks measure things this repository does
+not own, so their findings belong in the report rather than in the required CI
+gate.
 """
 
 from __future__ import annotations
@@ -56,6 +63,8 @@ class Result:
 AUDITS = (
     Audit("Documentation links", ("make", "check-docs-external-links")),
     Audit("Demo click-throughs", ("make", "check-demo-links"), parse_levels=True),
+    Audit("Zenodo record snapshots", ("make", "check-zenodo-snapshots")),
+    Audit("Record attribution", ("make", "check-record-attribution")),
     Audit(
         "Zenodo manifest pins",
         ("make", "check-zenodo-live"),
@@ -79,6 +88,9 @@ _LEVEL_PATTERN = re.compile(
     rf"^\[({'|'.join(re.escape(level) for level in _DEMO_LEVELS)})]", re.MULTILINE
 )
 _COMMAND_ERROR_MARKERS = (
+    # A producer that reports [CONFIG] could not run its comparison at all,
+    # which is a broken configuration rather than a finding about a reference.
+    "[CONFIG]",
     "No rule to make target",
     "Traceback (most recent call last):",
     "command not found",
@@ -174,7 +186,7 @@ def render_summary(results: Sequence[Result]) -> str:
     lines = [
         "# External reference audits",
         "",
-        "These network-backed checks are report-only and never gate merges.",
+        "These external-reference checks are report-only and never gate merges.",
         "",
         f"**Worst level: {worst_level.name}**",
         "",

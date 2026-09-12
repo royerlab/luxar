@@ -735,6 +735,22 @@ to counts.
   level vs its group's finest content (constant-cost sampled estimator, see
   `luxar.gsplats.lod.quality`). The finest side is 1.0 by definition
   (including each part leaf of an `overview` fine partition).
+- **`level_stats.median_footprint`** (per GSplat `kind=lod` child): median
+  geometric-mean marginal sigma across the columns named by sibling key
+  **`level_stats.footprint_dims`**, in node-local scene units. Those indices
+  name the node's stored columns (after any scene `dim_order` mapping). The
+  viewer uses it only for a derived `selector="screen-area"` ladder whose
+  displayed columns match those dimensions, projects it in logical CSS pixels,
+  and selects the coarsest level at or below 1.5 px. This holds the finest level
+  much longer than occupancy selection and can multiply resident geometry (up
+  to 16.7x in the representative #2685 measurement); the 1.5 px policy remains
+  provisional pending the full scene sweep. Missing, invalid, or mismatched
+  stamps keep the occupancy selector unchanged; explicit legacy
+  `coverage_fractions` are therefore never overridden. `lod-bias` remains an
+  area factor, so the accepted footprint scales by `1/sqrt(b)`.
+  Content-changing rewrites drop both measured keys rather than carrying stale
+  values; rebuilding or running `gsplat annotate-quality` restores them. Points
+  and Lines have no equivalent stamp yet and remain occupancy-selected.
 
 The viewer's recursive quality algebra: a leaf currently shows the estimate
 `q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its

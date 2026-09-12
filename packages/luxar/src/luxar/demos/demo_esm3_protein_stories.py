@@ -12,7 +12,8 @@ This is the reference scene for the viewer's remote-control features
 (``docs/guides/specs/REMOTE_CONTROL_SPEC.md``): the camera poses are authored
 ``Waypoint``\\s bound to the ``story`` dimension, the captions are dimension-aware
 overlays, and auto-rotate is on so a story step keeps the turntable spinning
-while it moves the point the camera spins around.
+while it moves the point the camera spins around; a slow dolly breath continues
+under that turntable motion.
 
 Scene structure (two toggleable layers plus one highlight per story):
     - **Backdrop** — every protein, dimmed, in the base demo's taxon colours,
@@ -1378,6 +1379,17 @@ def build_stories_scene(
             # opening shot looks down at the cloud (spin plus wobble), which
             # over minutes wanders the camera under the map.
             auto_rotate_axis="world-y" if auto_rotate else None,
+            # A slow breath in and out under the turntable, dialled in on the
+            # kiosk display — the cloud reads as a volume rather than a flat
+            # sheet. Gated on `auto_rotate` because that is the flag
+            # `--no-auto-rotate` uses to ask for a still camera.
+            #
+            # This scene's stream ladders are additive rather than selectable
+            # LOD groups, so the swing changes framing without changing element
+            # residency. The cap is deliberately dramatic kiosk tuning.
+            auto_dolly=auto_rotate,
+            auto_dolly_amplitude_percent=95.0 if auto_rotate else None,
+            auto_dolly_period=58.5 if auto_rotate else None,
             # Supersampling: a kiosk-sized point cloud shimmers under the
             # turntable without it; the display is a single large screen with a
             # GPU to spare, so the cost is acceptable.

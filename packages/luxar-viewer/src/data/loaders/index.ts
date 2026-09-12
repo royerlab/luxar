@@ -8,7 +8,7 @@
  *
  * Subpackages:
  * - **spatial-query/** — chunk-bounds probe, tolerance computer, AABB query
- *   builder, and the encoding-dispatching range loader.
+ *   builder, chunk-boundary prefetch planner, and encoding-dispatching range loader.
  * - **picking/** — label and image-label loaders consumed by core/app/picking.
  * - **overlays/** — overlay config loader consumed by the overlay manager.
  *
@@ -53,6 +53,7 @@ export {
   type EncodingType,
 } from './spatial-query/range-loader';
 export { prefetchRangesIntoCache } from './spatial-query/prefetch-ranges';
+export { planChunkBoundaryViewStates } from './spatial-query/chunk-boundary-prefetch';
 export { isAbortError } from './abort-error';
 export {
   getSharedRangeLoader,

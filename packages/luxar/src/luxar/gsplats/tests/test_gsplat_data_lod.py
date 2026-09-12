@@ -746,6 +746,19 @@ class TestSubstitutivePreservation:
 
     def test_transform_preserves_pyramid(self):
         data = self._make_pyramid()
+        data = GSplatData.from_substitutive_levels(
+            [
+                replace(
+                    level,
+                    stats={
+                        **level.stats,
+                        "median_footprint": float(index + 1),
+                        "footprint_dims": [0, 1, 2],
+                    },
+                )
+                for index, level in enumerate(data.substitutive_levels)
+            ]
+        )
         out = data.transform(np.eye(3) * 2.0)
         assert out.n_substitutive == 3
         for s in range(3):
@@ -754,6 +767,9 @@ class TestSubstitutivePreservation:
                 data.at_substitutive(s).centers * 2.0,
                 atol=1e-4,
             )
+            assert out.substitutive_levels[s].stats[
+                "median_footprint"
+            ] == pytest.approx(2.0 * (s + 1))
 
     def test_without_label_ids_preserves_pyramid(self) -> None:
         data = self._make_pyramid(counts=(12, 5))
@@ -908,6 +924,37 @@ class TestSubstitutivePreservation:
             np.testing.assert_allclose(
                 lvl.colors[n1:], [[0.0, 1.0, 0.0]] * (lvl.n_splats - n1)
             )
+
+    @pytest.mark.parametrize("merge", ["concatenate", "channel_colors"])
+    def test_pyramid_merge_drops_stale_footprint_stats(self, merge):
+        def stamped(data, footprint):
+            return GSplatData.from_substitutive_levels(
+                [
+                    replace(
+                        level,
+                        stats={
+                            **level.stats,
+                            "median_footprint": footprint,
+                            "footprint_dims": [0, 1, 2],
+                        },
+                    )
+                    for level in data.substitutive_levels
+                ]
+            )
+
+        left = stamped(self._make_pyramid(seed=1), 1.0)
+        right = stamped(self._make_pyramid(seed=2), 8.0)
+        if merge == "concatenate":
+            out = GSplatData.concatenate([left, right])
+        else:
+            out = GSplatData.merge_with_channel_colors(
+                [left, right],
+                channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            )
+
+        for level in out.substitutive_levels:
+            assert "median_footprint" not in level.stats
+            assert "footprint_dims" not in level.stats
 
 
 class TestDegenerateInputs:

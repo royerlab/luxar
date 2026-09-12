@@ -49,84 +49,92 @@ class TestRouting:
         # ids are integers from its own counter, and an integer id of the
         # controller's could legitimately coincide with one.
         api, _ = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as controller:
-                controller.send_text(_request("setDimensionValue", "abc", 3, 7))
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as viewer,
+            client.websocket_connect("/control?role=controller") as controller,
+        ):
+            controller.send_text(_request("setDimensionValue", "abc", 3, 7))
 
-                seen: Dict[str, Any] = viewer.receive_json()
-                assert seen["method"] == "setDimensionValue"
-                assert seen["params"] == [3, 7]
-                # The hub numbers requests itself so two controllers cannot
-                # collide, so the id the viewer sees is NOT the controller's.
-                assert seen["id"] != "abc"
-                assert isinstance(seen["id"], int)
+            seen: Dict[str, Any] = viewer.receive_json()
+            assert seen["method"] == "setDimensionValue"
+            assert seen["params"] == [3, 7]
+            # The hub numbers requests itself so two controllers cannot
+            # collide, so the id the viewer sees is NOT the controller's.
+            assert seen["id"] != "abc"
+            assert isinstance(seen["id"], int)
 
-                viewer.send_text(_reply(seen["id"], None))
-                answer = controller.receive_json()
-                # ...and the controller gets its own id back.
-                assert answer["id"] == "abc"
-                assert answer["result"] is None
+            viewer.send_text(_reply(seen["id"], None))
+            answer = controller.receive_json()
+            # ...and the controller gets its own id back.
+            assert answer["id"] == "abc"
+            assert answer["result"] is None
 
     def test_two_controllers_numbering_from_one_do_not_collide(self) -> None:
         api, _ = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as first:
-                with client.websocket_connect("/control?role=controller") as second:
-                    first.send_text(_request("getCameraPose", 1))
-                    first_seen = viewer.receive_json()
-                    second.send_text(_request("getLayers", 1))
-                    second_seen = viewer.receive_json()
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as viewer,
+            client.websocket_connect("/control?role=controller") as first,
+            client.websocket_connect("/control?role=controller") as second,
+        ):
+            first.send_text(_request("getCameraPose", 1))
+            first_seen = viewer.receive_json()
+            second.send_text(_request("getLayers", 1))
+            second_seen = viewer.receive_json()
 
-                    assert first_seen["id"] != second_seen["id"]
+            assert first_seen["id"] != second_seen["id"]
 
-                    # Answer the SECOND one first: routing must follow the id,
-                    # not arrival order.
-                    viewer.send_text(_reply(second_seen["id"], ["layer"]))
-                    answer = second.receive_json()
-                    assert answer == {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "result": ["layer"],
-                    }
+            # Answer the SECOND one first: routing must follow the id,
+            # not arrival order.
+            viewer.send_text(_reply(second_seen["id"], ["layer"]))
+            answer = second.receive_json()
+            assert answer == {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": ["layer"],
+            }
 
-                    viewer.send_text(_reply(first_seen["id"], {"fov": 60}))
-                    answer = first.receive_json()
-                    assert answer["result"] == {"fov": 60}
+            viewer.send_text(_reply(first_seen["id"], {"fov": 60}))
+            answer = first.receive_json()
+            assert answer["result"] == {"fov": 60}
 
     def test_a_notification_needs_no_reply_and_is_forwarded_verbatim(self) -> None:
         api, _ = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as controller:
-                controller.send_text(
-                    json.dumps({"jsonrpc": "2.0", "method": "recenterCamera"})
-                )
-                seen = viewer.receive_json()
-                assert seen == {"jsonrpc": "2.0", "method": "recenterCamera"}
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as viewer,
+            client.websocket_connect("/control?role=controller") as controller,
+        ):
+            controller.send_text(
+                json.dumps({"jsonrpc": "2.0", "method": "recenterCamera"})
+            )
+            seen = viewer.receive_json()
+            assert seen == {"jsonrpc": "2.0", "method": "recenterCamera"}
 
     def test_a_second_viewers_duplicate_reply_is_dropped(self) -> None:
         """Fan-out means N replies for one request; the controller wants one."""
         api, _ = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as first_viewer:
-            with client.websocket_connect("/control?role=viewer") as second_viewer:
-                with client.websocket_connect("/control?role=controller") as controller:
-                    controller.send_text(_request("getCameraPose", 9))
-                    seen = first_viewer.receive_json()
-                    assert second_viewer.receive_json()["id"] == seen["id"]
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as first_viewer,
+            client.websocket_connect("/control?role=viewer") as second_viewer,
+            client.websocket_connect("/control?role=controller") as controller,
+        ):
+            controller.send_text(_request("getCameraPose", 9))
+            seen = first_viewer.receive_json()
+            assert second_viewer.receive_json()["id"] == seen["id"]
 
-                    first_viewer.send_text(_reply(seen["id"], "first"))
-                    assert controller.receive_json()["result"] == "first"
+            first_viewer.send_text(_reply(seen["id"], "first"))
+            assert controller.receive_json()["result"] == "first"
 
-                    # The loser's reply has no pending entry left to route on.
-                    second_viewer.send_text(_reply(seen["id"], "second"))
-                    controller.send_text(_request("getLayers", 10))
-                    relayed = first_viewer.receive_json()
-                    first_viewer.send_text(_reply(relayed["id"], []))
-                    # If the duplicate had been relayed it would arrive here.
-                    assert controller.receive_json()["id"] == 10
+            # The loser's reply has no pending entry left to route on.
+            second_viewer.send_text(_reply(seen["id"], "second"))
+            controller.send_text(_request("getLayers", 10))
+            relayed = first_viewer.receive_json()
+            first_viewer.send_text(_reply(relayed["id"], []))
+            # If the duplicate had been relayed it would arrive here.
+            assert controller.receive_json()["id"] == 10
 
 
 class TestEvents:
@@ -134,22 +142,24 @@ class TestEvents:
 
     def test_events_reach_every_controller_and_no_viewer(self) -> None:
         api, _ = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as first:
-                with client.websocket_connect("/control?role=controller") as second:
-                    event = {
-                        "jsonrpc": "2.0",
-                        "method": "event",
-                        "params": ["dimensions-changed", {}],
-                    }
-                    viewer.send_text(json.dumps(event))
-                    assert first.receive_json() == event
-                    assert second.receive_json() == event
-                    # And the viewer is not echoed its own event: the next thing
-                    # it receives is the relayed request below, not the event.
-                    second.send_text(_request("getLayers", 4))
-                    assert viewer.receive_json()["method"] == "getLayers"
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as viewer,
+            client.websocket_connect("/control?role=controller") as first,
+            client.websocket_connect("/control?role=controller") as second,
+        ):
+            event = {
+                "jsonrpc": "2.0",
+                "method": "event",
+                "params": ["dimensions-changed", {}],
+            }
+            viewer.send_text(json.dumps(event))
+            assert first.receive_json() == event
+            assert second.receive_json() == event
+            # And the viewer is not echoed its own event: the next thing
+            # it receives is the relayed request below, not the event.
+            second.send_text(_request("getLayers", 4))
+            assert viewer.receive_json()["method"] == "getLayers"
 
 
 class TestNoViewer:
@@ -200,43 +210,47 @@ class TestMalformedFrames:
 
     def test_a_stray_response_from_a_controller_is_ignored(self) -> None:
         api, _ = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as controller:
-                controller.send_text(_reply(1, "I am not a viewer"))
-                controller.send_text(_request("getLayers", 5))
-                assert viewer.receive_json()["method"] == "getLayers"
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as viewer,
+            client.websocket_connect("/control?role=controller") as controller,
+        ):
+            controller.send_text(_reply(1, "I am not a viewer"))
+            controller.send_text(_request("getLayers", 5))
+            assert viewer.receive_json()["method"] == "getLayers"
 
     def test_binary_frames_do_not_close_the_socket(self) -> None:
         api, _ = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as controller:
-                controller.send_bytes(b"\x01\x02\x03")
-                answer = controller.receive_json()
-                assert answer["id"] is None
-                assert answer["error"]["code"] == -32600
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as viewer,
+            client.websocket_connect("/control?role=controller") as controller,
+        ):
+            controller.send_bytes(b"\x01\x02\x03")
+            answer = controller.receive_json()
+            assert answer["id"] is None
+            assert answer["error"]["code"] == -32600
 
-                controller.send_text(_request("getLayers", 5))
-                request = viewer.receive_json()
-                viewer.send_bytes(b"\x04\x05")
-                viewer.send_text(_reply(request["id"], "still attached"))
-                assert controller.receive_json()["result"] == "still attached"
+            controller.send_text(_request("getLayers", 5))
+            request = viewer.receive_json()
+            viewer.send_bytes(b"\x04\x05")
+            viewer.send_text(_reply(request["id"], "still attached"))
+            assert controller.receive_json()["result"] == "still attached"
 
     @pytest.mark.parametrize("bad_id", [[1], {"request": 1}], ids=["array", "object"])
     def test_unroutable_reply_ids_do_not_close_the_socket(self, bad_id: object) -> None:
         api, hub = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as controller:
-                controller.send_text(_request("getLayers", 5))
-                request = viewer.receive_json()
-                viewer.send_json(
-                    {"jsonrpc": "2.0", "id": bad_id, "result": "not routable"}
-                )
-                viewer.send_text(_reply(request["id"], "still attached"))
-                assert controller.receive_json()["result"] == "still attached"
-                assert hub.pending_count == 0
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as viewer,
+            client.websocket_connect("/control?role=controller") as controller,
+        ):
+            controller.send_text(_request("getLayers", 5))
+            request = viewer.receive_json()
+            viewer.send_json({"jsonrpc": "2.0", "id": bad_id, "result": "not routable"})
+            viewer.send_text(_reply(request["id"], "still attached"))
+            assert controller.receive_json()["result"] == "still attached"
+            assert hub.pending_count == 0
 
 
 class TestAttachment:
@@ -295,48 +309,44 @@ class TestPendingHygiene:
 
     def test_a_departed_controllers_requests_are_forgotten(self) -> None:
         api, hub = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as controller:
-                controller.send_text(_request("getCameraPose", 1))
-                viewer.receive_json()
-                assert hub.pending_count == 1
-            # Its replies are unroutable now, so holding them is a leak.
-            assert hub.pending_count == 0
+        with TestClient(api) as client:
+            with client.websocket_connect("/control?role=viewer") as viewer:
+                with client.websocket_connect("/control?role=controller") as controller:
+                    controller.send_text(_request("getCameraPose", 1))
+                    viewer.receive_json()
+                    assert hub.pending_count == 1
+                # Its replies are unroutable now, so holding them is a leak.
+                assert hub.pending_count == 0
 
     def test_a_wedged_viewer_cannot_grow_the_table_past_the_cap(self) -> None:
         api, hub = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as controller:
-                overshoot = MAX_PENDING_PER_CONTROLLER + 10
-                for request_id in range(overshoot):
-                    controller.send_text(_request("getCameraPose", request_id))
-                for _ in range(overshoot):
-                    viewer.receive_json()  # relayed, never answered
-                assert hub.pending_count == MAX_PENDING_PER_CONTROLLER
+        with (
+            TestClient(api) as client,
+            client.websocket_connect("/control?role=viewer") as viewer,
+            client.websocket_connect("/control?role=controller") as controller,
+        ):
+            overshoot = MAX_PENDING_PER_CONTROLLER + 10
+            for request_id in range(overshoot):
+                controller.send_text(_request("getCameraPose", request_id))
+            for _ in range(overshoot):
+                viewer.receive_json()  # relayed, never answered
+            assert hub.pending_count == MAX_PENDING_PER_CONTROLLER
 
     def test_the_newest_requests_are_the_ones_kept(self) -> None:
         """Eviction drops the oldest, which is the one least likely to matter."""
-        api, hub = _app()
-        client = TestClient(api)
-        with client.websocket_connect("/control?role=viewer") as viewer:
-            with client.websocket_connect("/control?role=controller") as controller:
-                relayed = []
-                for request_id in range(MAX_PENDING_PER_CONTROLLER + 1):
-                    controller.send_text(_request("getCameraPose", request_id))
-                    relayed.append(viewer.receive_json()["id"])
+        hub = ControlHub()
+        controller_key = 7
+        relayed = [
+            hub._remember(controller_key, request_id)
+            for request_id in range(MAX_PENDING_PER_CONTROLLER + 1)
+        ]
 
-                # The oldest was evicted, so answering it routes nowhere.
-                viewer.send_text(_reply(relayed[0], "stale"))
-                # The newest still routes.
-                viewer.send_text(_reply(relayed[-1], "fresh"))
-                answer = controller.receive_json()
-                assert answer["result"] == "fresh"
-                assert answer["id"] == MAX_PENDING_PER_CONTROLLER
-                # One over the cap was sent, so one was evicted and the table
-                # sat at the cap; answering the newest pops exactly that one.
-                assert hub.pending_count == MAX_PENDING_PER_CONTROLLER - 1
+        assert hub.pending_count == MAX_PENDING_PER_CONTROLLER
+        assert list(hub._pending) == relayed[1:]
+        assert hub._pending[relayed[-1]] == (
+            controller_key,
+            MAX_PENDING_PER_CONTROLLER,
+        )
 
 
 class TestViewerAppWiring:

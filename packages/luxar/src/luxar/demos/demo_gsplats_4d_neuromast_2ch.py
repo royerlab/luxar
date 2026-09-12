@@ -31,31 +31,47 @@ PIPELINE — reproducible per channel with ``--recompute``:
        was assembled this way; the membranes array in hand ships as a single
        zipped array. ``--source-*`` expects either assembled array, not the
        per-timepoint directory.
-    2. Measure one background floor per channel: on the ten zero-based frames
-       in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the centre of the peak bin
-       in a 512-bin histogram over values at or below that frame's 95th
-       percentile, then take the median of those ten modes. The per-frame step
-       matches ``estimate_floor(frame, method="mode")`` in
+    2. Measure (and only record) the camera pedestal per channel: on the ten
+       zero-based frames in ``CAMERA_PEDESTAL_SAMPLE_INDICES``, take the centre
+       of the peak bin in a 512-bin histogram over values at or below that
+       frame's 95th percentile, then take the median of those ten modes. The
+       per-frame step matches ``estimate_floor(frame, method="mode")`` in
        ``luxar.gsplats.calibration.noise_floor``; that helper additionally
        excludes exact zeros and caps at the frame median, neither of which
        affected these frames. The recorded results are 105.991 (membranes) and
-       103.888 (nuclei); expect reproduction within one float32 ulp, while the
-       pinned literals are the values used for subtraction. ``--recompute``
-       subtracts each pinned value with a clip at zero; do not re-measure it
-       during a rebuild.
+       103.888 (nuclei), kept in ``CHANNELS[...]["camera_pedestal"]``.
+       The pedestal is NOT subtracted before the fit. Measured 2026-09-10 on
+       frames 50 and 99: a fit of the exactly pedestal-subtracted, zero-clipped
+       frame loses the low-contrast background modulation (actin ruffles at
+       0.2-1 % of the frame maximum: correlation 0.16 / 0.12 against the frame,
+       36 % / 65 % of the seeds dead), while the same fit of the raw frame keeps
+       it (0.55 / 0.43, under 2 % dead) -- seeds that land on exactly-zero
+       background have nothing to fit and die, and relaxing the amplitude
+       sparsity changes nothing. The pedestal costs a constant haze that the
+       display window removes; the recorded values are provenance, and the basis
+       for any fidelity score (compare a raw-frame render with the raw frame).
     3. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
        Recorded, not re-run: the sweep is hours and its answer is stable.
-    4. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
-       64k seeds, ``--floor auto``, no fit-time cull.
-    5. Redundancy-cull every per-timepoint tile
-       (``-m redundancy --redundancy-threshold 0.20``) → ~11% lighter at
-       SSIM-flat quality. Per TILE, before the merge: culling the merged
-       timelapse would need the whole 4D reconstruction in memory at once.
-    6. ``batch-fit merge --recipe stream`` over the culled tiles → ONE leaf with
-       an 8-rung progressive ladder. The stacked time axis is a hard coarsening
-       barrier, so no rung blends two timepoints.
-    7. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
-       → isotropic Z, amplitudes on a 0-1 scale.
+    4. ``batch-fit run`` on the RAW assembled array: 100 timepoints, one uniform
+       tile each, ``n2s`` preset, 64k seeds, ``--floor none`` (every frame's
+       minimum is 0, so nothing is subtracted; see step 2), no fit-time cull.
+    5. (Removed 2026-09.) The 2026-08 build redundancy-culled every tile at
+       threshold 0.20, validated by SSIM. Per-frame PSNR against the raw frame
+       showed the cull removing bright nuclear splats as "redundant" with the
+       pedestal splats beneath them, at a 17-26 dB foreground cost; SSIM is
+       blind to that (an empty render scores 0.82). No post-fit cull now.
+    6. ``batch-fit run --merge-recipe stream --merge-n-lods 8`` merges the
+       (unculled) tiles into ONE leaf with the recorded 8-rung progressive
+       ladder (the run's own merge; the run's default would be 4 rungs).
+    7. ``gsplat transform --scale 2.308402585410896,1.0,1.0,1.0
+       --normalize-intensity 1.0`` → the factor is the measured 0.25 um z-step
+       over the 0.1083 um lateral pitch, which removes the voxel anisotropy so
+       Z becomes commensurate with X/Y; amplitudes on a 0-1 scale. The centres
+       stay in **lateral-pixel units**, NOT microns: 1 unit = 0.1083 um.
+       (The 2026-08 pair on the record was transformed with the historical 2.5
+       — an 8.3 % Z stretch — and stays pinned in ``data_manifest.json``;
+       the corrected rebuild is ready, but publishing it still needs the record
+       upload and manifest repin, which this recipe change does not do.)
 
     Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
@@ -164,13 +180,13 @@ HPC_SOURCE_ROOT = (
 SOURCE_FILE_PATTERN = "*_t{timepoint}.tiff"
 #: Axis order of every deconvolved per-timepoint TIFF before stacking.
 SOURCE_FRAME_AXES = "z,y,x"
-#: Ten evenly spaced zero-based frames (rounded linspace 0..99) used for floors.
-BACKGROUND_FLOOR_SAMPLE_INDICES = (0, 11, 22, 33, 44, 55, 66, 77, 88, 99)
+#: Ten evenly spaced zero-based frames (rounded linspace 0..99) used for pedestals.
+CAMERA_PEDESTAL_SAMPLE_INDICES = (0, 11, 22, 33, 44, 55, 66, 77, 88, 99)
 #: Per-frame mode measurement: histogram the low-intensity bulk through p95.
-BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE = 95.0
-BACKGROUND_FLOOR_HISTOGRAM_BINS = 512
-#: Combine the ten per-frame modes into the one floor pinned per channel.
-BACKGROUND_FLOOR_REDUCTION = "median"
+CAMERA_PEDESTAL_HISTOGRAM_PERCENTILE = 95.0
+CAMERA_PEDESTAL_HISTOGRAM_BINS = 512
+#: Combine the ten per-frame modes into the one pedestal pinned per channel.
+CAMERA_PEDESTAL_REDUCTION = "median"
 
 # Channel configuration — each becomes an independently-toggleable layer.
 # Named colormaps (not baked RGB) so the viewer applies the LUT at display
@@ -204,13 +220,14 @@ CHANNELS = [
         "source_flag": "source-membranes",
         #: Durable upstream TIFF tree.
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Membranes/Deconvolved",
-        #: Global background floor, measured ONCE on this channel and recorded.
-        #: Re-measuring would drift, and the fit's own `--floor auto` runs on top
-        #: of the subtraction rather than replacing it.
-        "background_floor": 105.9911880493164,
-        #: What the recipe must reproduce, from the merge that built the shipped
-        #: archive ("Wrote single stream lod: 5,864,440 splats, 4D").
-        "expected_splats": 5_864_440,
+        #: Camera pedestal, measured ONCE on this channel and recorded (step 2).
+        #: Provenance and scoring basis only: it stays IN the data, because a fit
+        #: of the pedestal-subtracted frame loses the faint background structure.
+        "camera_pedestal": 105.9911880493164,
+        #: What the recipe must reproduce. The unculled 2026-09 rebuild keeps every
+        #: seed (64,000 x 100 frames); the 2026-08 redundancy-culled build had
+        #: 5,864,440 ("Wrote single stream lod: 5,864,440 splats, 4D").
+        "expected_splats": 6_400_000,
     },
     {
         "name": "nuclei",
@@ -224,8 +241,9 @@ CHANNELS = [
         "layer_order": 20,
         "source_flag": "source-nuclei",
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
-        "background_floor": 103.88801574707031,
-        "expected_splats": 5_530_300,
+        "camera_pedestal": 103.88801574707031,
+        # 2026-09 unculled rebuild: every seed kept (2026-08 culled build: 5,530,300).
+        "expected_splats": 6_400_000,
     },
 ]
 
@@ -256,11 +274,13 @@ PRESET = "n2s"
 TILE_SIZE = 640
 #: Concurrent fit workers per GPU. NOT `auto` — see the docstring's warning.
 JOBS_PER_GPU = 12
-#: Redundancy cull threshold, chosen from a measured 0.02/0.05/0.10/0.20/0.35
-#: sweep as the most aggressive setting still SSIM-flat.
-REDUNDANCY_THRESHOLD = 0.20
-#: Voxel anisotropy: z is 2.5x the lateral pitch on this instrument.
-VOXEL_SCALE = (2.5, 1.0, 1.0, 1.0)
+#: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give a
+#: 0.25 um z-step and 0.1083 um pixels = 2.3084x (the paper registry records
+#: voxel_um=(0.25, 0.1083, 0.1083)). A RATIO, not a micron conversion: it only
+#: makes Z commensurate with X/Y, and the centres stay on the lateral-pixel grid.
+#: The 2026-08 pair on the record carries the historical 2.5 (step 7). Kept as
+#: the computed quotient rather than a rounded literal.
+VOXEL_SCALE = (0.25 / 0.1083, 1.0, 1.0, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
 NORMALIZE_INTENSITY = 1.0
@@ -276,12 +296,6 @@ EXPOSURE_STOPS = -3.4
 # =============================================================================
 # Data loading
 # =============================================================================
-#: Array name inside the background-subtracted intermediate group. Named rather
-#: than left at the store root because the writer facade creates arrays UNDER a
-#: group, and rooting an array directly would mean bypassing it.
-BGSUB_ARRAY_KEY = "volume"
-
-
 @contextmanager
 def _open_source(path: Path) -> Iterator[Any]:
     """Yield a channel source's 4D array and close any zip store afterwards.
@@ -309,46 +323,22 @@ def _open_source(path: Path) -> Iterator[Any]:
             store.close()
 
 
-def _subtract_background(src: Path, out: Path, floor: float) -> Path:
-    """Write ``src - floor`` (clipped at 0) under ``out``, one timepoint at a time.
+def _validate_source(src: Path) -> tuple[int, ...]:
+    """Refuse a wrong-shaped or array-less source before the GPU is touched.
 
-    Streamed rather than vectorised over the whole array because a channel is
-    100 x 84 x 580 x 576 float32 = 11.2 GB, and one expression would hold the
-    input, the shifted copy and the clipped copy at once.
-
-    Returns the path of the written group; the array is ``out/<BGSUB_ARRAY_KEY>``.
+    The fit reads the RAW assembled array directly (docstring step 2: the camera
+    pedestal is kept), so this is the only step between the source and
+    ``batch-fit run`` and the only place a wrong file is caught cheaply.
     """
-    from luxar._zarr_compat import create_array, open_group
-
     with _open_source(src) as array:
         shape = tuple(getattr(array, "shape", ()) or ())
-        if shape != SOURCE_SHAPE:
-            raise SystemExit(
-                f"{src.name} has shape {shape or 'no array at its root'}, want "
-                f"{SOURCE_SHAPE}. Both channels of this recording share that extent, "
-                f"so a mismatch means the wrong file or a partial assembly."
-            )
-        with asection(f"Subtracting background floor {floor:.4f} -> {out.name}"):
-            group = open_group(out, mode="w")
-            dest = create_array(
-                group,
-                BGSUB_ARRAY_KEY,
-                shape=SOURCE_SHAPE,
-                dtype="float32",
-                # One timepoint per chunk: every consumer downstream (the fit, the
-                # cull, this loop) reads exactly one timepoint at a time.
-                chunks=(1,) + SOURCE_SHAPE[1:],
-                compressor=None,
-            )
-            for t in range(SOURCE_SHAPE[0]):
-                frame = np.asarray(array[t], dtype=np.float32)
-                np.subtract(frame, np.float32(floor), out=frame)
-                np.clip(frame, 0.0, None, out=frame)
-                dest[t] = frame
-            dest.attrs["axes"] = SOURCE_AXES
-            dest.attrs["background_floor"] = float(floor)
-            dest.attrs["source"] = str(src)
-    return out
+    if shape != SOURCE_SHAPE:
+        raise SystemExit(
+            f"{src.name} has shape {shape or 'no array at its root'}, want "
+            f"{SOURCE_SHAPE}. Both channels of this recording share that extent, "
+            f"so a mismatch means the wrong file or a partial assembly."
+        )
+    return shape
 
 
 def _validate_rebuilt_channel(channel: dict, leaves: Sequence[Any]) -> int:
@@ -364,61 +354,22 @@ def _validate_rebuilt_channel(channel: dict, leaves: Sequence[Any]) -> int:
     return int(leaves[0].n_splats)
 
 
-def _cull_tiles(fit_dir: Path, culled_dir: Path) -> int:
-    """Redundancy-cull every per-timepoint tile into a parallel batch directory.
-
-    The manifest is copied verbatim so ``batch-fit merge`` reads the same plan;
-    only the tile stores differ. Culling per tile rather than after the merge is
-    a memory constraint: the redundancy metric renders the splats to measure
-    each one's local contribution, and doing that on the merged 4D result would
-    mean reconstructing all 100 timepoints at once.
-    """
-    tiles = sorted((fit_dir / "tiles").glob("*.gsplats.zarr"))
-    if not tiles:
-        raise SystemExit(
-            f"no tiles under {fit_dir / 'tiles'} -- the fit produced nothing to cull"
-        )
-    shutil.rmtree(culled_dir, ignore_errors=True)
-    (culled_dir / "tiles").mkdir(parents=True)
-    shutil.copy2(fit_dir / "manifest.json", culled_dir / "manifest.json")
-    for marker in sorted((fit_dir / "tiles").glob("*.empty")):
-        shutil.copy2(marker, culled_dir / "tiles" / marker.name)
-    with asection(f"Culling {len(tiles)} tiles (threshold {REDUNDANCY_THRESHOLD})"):
-        for tile in tiles:
-            run_luxar_cli(
-                "gsplat",
-                "cull",
-                str(tile),
-                str(culled_dir / "tiles" / tile.name),
-                "-m",
-                "redundancy",
-                "--shape",
-                ",".join(str(v) for v in SOURCE_SHAPE[1:]),
-                "--redundancy-threshold",
-                str(REDUNDANCY_THRESHOLD),
-            )
-    return len(tiles)
-
-
 def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
     """Refit one channel end to end and return its finished archive."""
     name = str(channel["name"])
     with asection(f"Recomputing the {name} channel"):
-        bgsub = work_dir / f"{name}_bgsub.zarr"
         fit_dir = work_dir / f"{name}_fit"
-        culled_dir = work_dir / f"{name}_fit_culled"
         final = work_dir / str(channel["file"])
 
-        _subtract_background(source, bgsub, float(channel["background_floor"]))
+        _validate_source(source)
 
+        # The RAW array, root-level (no --array-key): the pedestal stays in.
         run_luxar_cli(
             "gsplat",
             "batch-fit",
             "run",
-            str(bgsub),
+            str(source),
             str(fit_dir),
-            "--array-key",
-            BGSUB_ARRAY_KEY,
             "--axes",
             SOURCE_AXES,
             "--tiling",
@@ -429,36 +380,39 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
             PRESET,
             "--seeds",
             str(SEEDS),
+            # Nothing is subtracted (docstring steps 2 and 4).
             "--floor",
-            "auto",
-            # No fit-time cull: the redundancy cull below is the one that was
-            # measured, and stacking a second criterion on top of it would make
-            # the retained count depend on two thresholds instead of one.
+            "none",
+            # No fit-time cull (0 keeps every splat): the fit's own pruning of
+            # zero-amplitude seeds is the only reduction; see docstring step 5 for
+            # why the 2026-08 post-fit redundancy cull was dropped.
             "--cull-retention",
             "0.0",
             "--jobs-per-gpu",
             str(JOBS_PER_GPU),
-        )
-        n_tiles = _cull_tiles(fit_dir, culled_dir)
-        aprint(f"culled {n_tiles} tiles")
-
-        # `batch-fit run` above already merged the UNCULLED tiles; that result is
-        # discarded. Merging here is what produces the shipped ladder.
-        run_luxar_cli(
-            "gsplat",
-            "batch-fit",
-            "merge",
-            str(culled_dir),
-            "--recipe",
+            # The streaming ladder is built by the run's own merge; there is no
+            # post-fit cull any more (docstring step 5).
+            "--merge-recipe",
             "stream",
+            # Pinned: `batch-fit run`'s merge defaults to a 4-rung ladder while the
+            # 2026-08 archive (built by a standalone `batch-fit merge`) has 8; the
+            # rung count is part of the recorded recipe and validated below.
+            "--merge-n-lods",
+            str(EXPECTED_RUNGS),
         )
-        merged = culled_dir / "merged" / "final.gsplats.zarr"
+        merged = fit_dir / "merged" / "final.gsplats.zarr"
         if not merged.exists():
             raise SystemExit(f"merge produced no {merged}")
 
         # Anisotropy + normalisation LAST: this is what takes the archive off the
         # voxel grid, and the fit's PSNR stamps are only comparable to the source
-        # before it happens.
+        # before it happens. The factor is the measured 2.3084 rather than the 2.5
+        # the pinned archives carry, so a rebuild is 7.7% shorter in Z than the
+        # published pair, and the display windows in ``CHANNELS`` plus the
+        # bounding-sphere radii recorded there -- and tabulated in the neuromast
+        # row of ``docs/guides/specs/LAYER_ORDER_SPEC.md`` -- were measured on
+        # the old geometry and want re-measuring before the corrected pair is
+        # repinned.
         run_luxar_cli(
             "gsplat",
             "transform",
@@ -482,7 +436,7 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
             raise RuntimeError(
                 f"{name}: rebuilt {got:,} splats against a recorded {expected:,} "
                 f"({drift:.2%} drift). Over 1% means the recipe changed, not "
-                f"float noise -- check the source array and the cull threshold."
+                f"float noise -- check the source array."
             )
         return final
 
@@ -568,10 +522,13 @@ def resolve_channel_paths() -> list[Path]:
 def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     """Build the 4D two-channel scene: one layer-enabled gsplats node per marker.
 
-    The gsplats are pre-fit 4D (``z, y, x, time``), already anisotropy-corrected
-    (Z ×2.5), intensity-normalised and redundancy-culled, so we simply graft each
-    channel with its LUT and ``layer=True``. Both channels share identical 4D
-    bounds → they co-register and animate together over the Time dimension.
+    The gsplats are pre-fit 4D (``z, y, x, time``), already Z-scaled and
+    intensity-normalised, so we simply graft each channel with its LUT and
+    ``layer=True``. The pinned pair was scaled by the historical 2.5, not
+    ``VOXEL_SCALE`` (step 7), so a scene built from the downloaded archives is
+    8.3 % stretched in Z; one built by ``--recompute`` is not.
+    Both channels share identical 4D bounds → they co-register and animate
+    together over the Time dimension.
     """
     with asection("Creating 4D two-channel neuromast scene"):
         # Explicit, named 4D dims (not the generic dim0..dim3 from
@@ -583,6 +540,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         node, _ = load_gsplat_node(str(channel_paths[0]))
         bmin, bmax = center_bounds(node)
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
+        # The µm labels are aspirational: 1 unit = 0.1083 µm; see step 7 and #2723.
         dims = Dimensions(
             [
                 Dimension(
@@ -611,7 +569,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                 dimensions=dims,
                 # Exposure pulled down 3.4 stops (set by eye with the channel
                 # windows): at the default camera distance the rosette core
-                # otherwise saturates to white under both volumetric layers.
+                # otherwise saturates to white under both additive layers.
                 viewer_config=ViewerConfig(
                     cinematic_mode=True, tone_mapping="ACES", exposure=EXPOSURE_STOPS
                 ),
@@ -634,13 +592,8 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         # Cross-layer draw order, stated rather than inferred
                         # from bounding-sphere radii (see CHANNELS above). Kept
                         # under additive compositing (where order is moot) so a
-                        # switch back to a depth-sorted mode in the Layers panel
-                        # still composites membranes first.
+                        # switch to a depth-sorted mode preserves anatomy.
                         layer_order=ch["layer_order"],
-                        # Additive, re-tuned live 2026-09-10: the two channels
-                        # were composited volumetrically (kappa 0.02) and read
-                        # dim; order-independent additive with the windows and
-                        # gammas above lets both channels read at once.
                         blending_mode="additive",
                         gamma=ch["gamma"],
                         intensity=1.0 / (ch["window"][1] - ch["window"][0]),
