@@ -176,4 +176,40 @@ describe('applyKioskMode', () => {
     teardown();
     expect(p.reload).not.toHaveBeenCalled();
   });
+
+  it('schedules on the platform timer when none is injected', async () => {
+    // The DEFAULT port path, asserted on what it DOES rather than on what it
+    // avoids. It used to call `window.setTimeout` in a suite whose default
+    // environment is node, and the resulting `window is not defined` escaped
+    // as an unhandled error from inside a dispatched listener: the run printed
+    // "Errors 1" and still reported every test as passing. The test above
+    // could not catch it either — it asserts `reload` was NOT called, which is
+    // equally true of code that threw before arming anything.
+    const reload = vi.fn();
+    const canvas = new EventTarget();
+    const watchdog = startKioskWatchdog({ canvas, graceS: 0, reload });
+
+    canvas.dispatchEvent(new Event('webglcontextlost'));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    watchdog.dispose();
+  });
+
+  it('cancels the platform timer on recovery, with no ports injected', async () => {
+    const reload = vi.fn();
+    const onRecovered = vi.fn();
+    const canvas = new EventTarget();
+    const watchdog = startKioskWatchdog({ canvas, graceS: 0, reload, onRecovered });
+
+    canvas.dispatchEvent(new Event('webglcontextlost'));
+    canvas.dispatchEvent(new Event('webglcontextrestored'));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // The default `clearTimer` has to work too, or a recovered display would
+    // reload anyway — which is the one thing this module exists to avoid.
+    expect(reload).not.toHaveBeenCalled();
+    expect(onRecovered).toHaveBeenCalledTimes(1);
+    watchdog.dispose();
+  });
 });

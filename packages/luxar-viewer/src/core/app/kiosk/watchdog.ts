@@ -48,8 +48,14 @@ export interface KioskWatchdog {
  * restarting the timer on each flap could postpone it forever.
  */
 export function startKioskWatchdog(ports: KioskWatchdogPorts): KioskWatchdog {
-  const setTimer = ports.setTimer ?? ((handler, ms) => window.setTimeout(handler, ms));
-  const clearTimer = ports.clearTimer ?? ((handle) => window.clearTimeout(handle));
+  // `globalThis`, not `window`: this module needs a timer, not a DOM. Reaching
+  // for `window` made the default path throw `window is not defined` in the
+  // unit suite, whose default environment is node — as an UNHANDLED error from
+  // inside a dispatched event listener, which prints "Errors 1" but leaves
+  // every test reported as passing, so it is easy to read the run as green.
+  const setTimer =
+    ports.setTimer ?? ((handler, ms) => globalThis.setTimeout(handler, ms) as unknown as number);
+  const clearTimer = ports.clearTimer ?? ((handle) => globalThis.clearTimeout(handle));
   let pending: number | undefined;
   let disposed = false;
 
