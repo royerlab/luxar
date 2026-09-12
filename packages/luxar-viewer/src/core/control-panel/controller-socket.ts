@@ -67,12 +67,6 @@ export interface ControllerSocketPorts {
   openSocket?: (url: string) => ControlSocketLike;
 }
 
-interface Pending {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 /** Build the URL dialled: the hub plus the two query parameters it reads. */
 export function buildControllerSocketUrl(url: string, token: string | null): string {
   const target = new URL(url);
@@ -85,7 +79,14 @@ export class ControllerSocket {
   private readonly ports: ControllerSocketPorts;
   private socket: ControlSocketLike | null = null;
   private nextId = 1;
-  private readonly pending = new Map<JsonRpcId, Pending>();
+  private readonly pending = new Map<
+    JsonRpcId,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   private reconnectDelayMs = CONTROLLER_RECONNECT_BASE_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;

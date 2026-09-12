@@ -108,7 +108,9 @@ describe('createControlPanel', () => {
     for (const tile of tiles()) {
       expect(tile.tagName).toBe('BUTTON');
       expect((tile as HTMLButtonElement).type).toBe('button');
+      expect(tile.getAttribute('role')).toBeNull();
     }
+    expect(root.querySelector('.luxar-control-grid')?.getAttribute('role')).toBeNull();
   });
 
   it('carries the chapter identity on each tile', () => {

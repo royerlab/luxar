@@ -403,14 +403,6 @@
   line-height: 1.5;
 }
 
-.luxar-control-message code {
-  padding: 0.1em 0.35em;
-  border-radius: 4px;
-  background: var(--luxar-bg-secondary, #18181d);
-  font-family: var(--luxar-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.95em;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .luxar-control-tile {
     transition: none;

@@ -106,7 +106,6 @@ function buildGrid(
   events: EventGroup
 ): HTMLElement {
   const grid = element('div', 'luxar-control-grid');
-  grid.setAttribute('role', 'list');
   if (options.columns != null && options.columns > 0) {
     grid.style.setProperty(CONTROL_COLUMNS_PROPERTY, String(options.columns));
   }
@@ -115,7 +114,6 @@ function buildGrid(
   for (const [ordinal, chapter] of source.chapters.entries()) {
     const tile = element('button', 'luxar-control-tile');
     tile.type = 'button';
-    tile.setAttribute('role', 'listitem');
     tile.dataset.chapterIndex = String(chapter.index);
     tile.dataset.chapterValue = String(chapter.value);
     tile.dataset.authoredLabel = String(chapter.authored);

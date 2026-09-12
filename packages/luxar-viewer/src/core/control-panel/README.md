@@ -37,6 +37,11 @@ enrich the result later; it is not needed to get started.
 If a scene has no chapter dimension — most scenes are not tours — the page says
 so rather than drawing an empty grid.
 
+The two-minute idle reset is armed by a tile interaction, not by opening the
+panel. If a visitor walks away after making a selection, the display returns to
+the first chapter; merely connecting a panel never moves a display an operator
+has deliberately parked elsewhere.
+
 ## Things worth knowing before you change this
 
 **It must not pull the renderer in.** The panel imports the viewer's `config`

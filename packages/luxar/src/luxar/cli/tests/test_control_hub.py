@@ -390,6 +390,16 @@ class TestViewerAppWiring:
         output = capsys.readouterr().out
         assert "reachable from the network without a token" in output
 
+    def test_control_panel_url_quotes_the_token(self) -> None:
+        from luxar.cli.serving import _build_control_panel_url
+
+        assert _build_control_panel_url("kiosk.local", 5173) == (
+            "http://kiosk.local:5173/control.html?control"
+        )
+        assert _build_control_panel_url("kiosk.local", 5173, "space & slash/") == (
+            "http://kiosk.local:5173/control.html?control&controlToken=space%20%26%20slash%2F"
+        )
+
 
 class TestOriginCheck:
     """Cross-Site WebSocket Hijacking is the attack this closes.

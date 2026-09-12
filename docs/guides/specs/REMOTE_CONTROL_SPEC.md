@@ -388,6 +388,10 @@ chapter dimension, and a page with no hub, each say so in words rather than
 drawing an empty grid — the second is exactly what an exported folder shows
 until its launcher grows a relay.
 
+The two-minute idle reset starts only after a tile interaction. Opening the
+panel alone never moves the display; after a visitor makes a selection and
+walks away, the timer returns the display to the first chapter.
+
 **Styling.** `src/styles/control-panel.css` is self-contained (it does *not*
 import `styles/index.css`, which pulls twenty component sheets and the GUI
 library) and every colour reads a `--luxar-*` token with a fallback. The page
