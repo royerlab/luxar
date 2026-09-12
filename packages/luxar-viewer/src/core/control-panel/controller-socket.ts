@@ -21,6 +21,7 @@ import {
   type JsonRpcId,
 } from '../../utils/json-rpc';
 import { log, Modules } from '../../utils/log';
+import { CLOSE_POLICY_VIOLATION } from '../../config/control-contract';
 import type { ControlSocketLike } from '../app/control/control-client';
 
 /** First reconnect delay after an unexpected close. */
@@ -36,8 +37,17 @@ export const CONTROLLER_RECONNECT_MAX_MS = 15_000;
  */
 export const CONTROLLER_CALL_TIMEOUT_MS = 30_000;
 
-/** Connection state, for a status line the visitor can act on. */
-export type ControllerStatus = 'connecting' | 'open' | 'closed';
+/**
+ * Connection state, for a status line the visitor can act on.
+ *
+ * `refused` is terminal and separate from `closed` on purpose: the hub accepts
+ * a handshake it means to refuse and then closes it with
+ * `CLOSE_POLICY_VIOLATION`, so a wrong token, an unknown role or a foreign
+ * origin arrive here as a close like any other. Folding them into `closed`
+ * reported a mistyped token as "waiting for the display" and retried it
+ * forever — against a hub that will refuse every attempt for the same reason.
+ */
+export type ControllerStatus = 'connecting' | 'open' | 'closed' | 'refused';
 
 /** A rejected call, carrying the JSON-RPC code so a caller can branch on it. */
 export class ControllerCallError extends Error {
@@ -124,13 +134,18 @@ export class ControllerSocket {
       if (typeof event.data === 'string') this.handleFrame(event.data);
     };
     socket.onerror = () => log.warning(Modules.APP, 'control panel: socket error');
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       this.socket = null;
-      this.ports.onStatus?.('closed');
+      const refused = event?.code === CLOSE_POLICY_VIOLATION;
+      this.ports.onStatus?.(refused ? 'refused' : 'closed');
       // Every outstanding promise is now unanswerable; settling them is the
       // difference between a panel that says "disconnected" and one that hangs.
-      this.rejectAll(new Error('the control socket closed'));
-      if (!this.disposed) this.scheduleReconnect();
+      this.rejectAll(
+        new Error(refused ? 'the hub refused this panel' : 'the control socket closed')
+      );
+      // A refusal is about who we are, not about the network, so retrying it
+      // cannot succeed and only keeps the hub busy refusing us.
+      if (!this.disposed && !refused) this.scheduleReconnect();
     };
   }
 

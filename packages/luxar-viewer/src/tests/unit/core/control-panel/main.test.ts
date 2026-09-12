@@ -128,6 +128,12 @@ describe('control-panel bootstrap', () => {
       'No control hub',
       expect.stringContaining('luxar serve <scene> --viewer --control')
     );
+    // This page is reached from an exported folder too, where that command
+    // does not exist and `python serve.py --control` is the one that does.
+    expect(context.panel.showMessage).toHaveBeenCalledWith(
+      'No control hub',
+      expect.stringContaining('python serve.py --control')
+    );
     expect(context.panel.showMessage).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.stringContaining('`')
@@ -277,6 +283,62 @@ describe('control-panel bootstrap', () => {
 
     expect(mountPanel).toHaveBeenCalledTimes(1);
     expect(context.socket.call).not.toHaveBeenCalled();
+  });
+
+  it('names a refusal instead of promising to reconnect', async () => {
+    const context = harness({ params: params('?control') });
+
+    context.socketPorts.onStatus?.('refused');
+
+    const [title, body] = (
+      context.panel.showMessage as unknown as {
+        mock: { calls: string[][] };
+      }
+    ).mock.calls.at(-1)!;
+    expect(title).toBe('Refused by the hub');
+    // The one thing an operator can act on: the token they typed on the tablet.
+    expect(body).toContain('token');
+    expect(context.panel.showMessage).not.toHaveBeenCalledWith('Reconnecting', expect.any(String));
+  });
+
+  it('keeps the refusal message when the in-flight call rejects after it', async () => {
+    // The real sequence with a wrong token, which the status-only test above
+    // does NOT reproduce: the socket OPENS (the hub accepts a handshake it
+    // means to refuse), the panel asks for dimensions, then the close arrives
+    // and rejects that call a microtask later. The loader's catch used to
+    // paint over the refusal, so a mistyped token read as "waiting for the
+    // display" and nobody thought to look at the token.
+    const context = harness({ params: params('?control') });
+    vi.mocked(context.socket.call).mockRejectedValue(new Error('the hub refused this panel'));
+
+    context.socketPorts.onStatus?.('open');
+    context.socketPorts.onStatus?.('refused');
+    await settle();
+
+    expect(context.panel.showMessage).toHaveBeenLastCalledWith(
+      'Refused by the hub',
+      expect.stringContaining('token')
+    );
+    expect(context.panel.showMessage).not.toHaveBeenCalledWith(
+      'Waiting for the display',
+      expect.any(String)
+    );
+  });
+
+  it('only claims the display is missing when the hub said so', async () => {
+    // `-32001` is the hub answering "nothing to drive". Any other failure is
+    // something else, and asserting "connected, no viewer yet" for all of them
+    // was a claim the code had not established.
+    const context = harness({ params: params('?control') });
+    vi.mocked(context.socket.call).mockResolvedValue({ not: 'dimensions' });
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+
+    expect(context.panel.showMessage).not.toHaveBeenCalledWith(
+      'Waiting for the display',
+      expect.any(String)
+    );
   });
 
   it('falls back once after a custom panel fails, without remounting it', async () => {

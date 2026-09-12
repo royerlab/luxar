@@ -62,6 +62,7 @@ print(result.stdout)
 - `../_process.py` - Shared package-root child-process lifecycle primitive; see `../README.md`
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
+- `_export_serve_template.py` - The `serve.py` that `luxar export` writes into an export folder, copied with two values substituted. A real module rather than a string inside `export.py` so ruff, mypy and the test suite see it — it hosts the touch-panel relay behind `--control`, and a WebSocket relay hidden in an f-string (where every brace has to be doubled) is unreviewable. **Stdlib only**, because an export folder gets zipped and handed to someone who has never installed Luxar. It is the third implementation of the relay in `control_hub.py`, so it carries a copy of the generated wire contract that `tests/test_export_control_relay.py` pins to `_control_contract.py`.
 - `native_app.py` - Native bundle producers (macOS `.app`, Linux portable folder) for `luxar export --native`
 - `network_simulation.py` - Network simulation middleware and profile definitions
 - `_launchers/` - Go-compiled launcher binaries (populated by `make build-launchers`; ride along in wheel builds)

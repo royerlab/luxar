@@ -89,7 +89,15 @@ export interface ControlSocketLike {
   send(data: string): void;
   close(): void;
   onopen: (() => void) | null;
-  onclose: (() => void) | null;
+  /**
+   * Close handler.
+   *
+   * The `code` is optional in the type and load-bearing in practice: the hub
+   * accepts a handshake it means to refuse and then closes it with a code, so
+   * that a client can tell "no hub here" from "your token is wrong". A handler
+   * that ignored the code would make that choice pointless.
+   */
+  onclose: ((event?: { code?: number }) => void) | null;
   onerror: (() => void) | null;
   onmessage: ((event: { data: unknown }) => void) | null;
 }

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ControlSocketLike } from '../../../../core/app/control/control-client';
+import { CLOSE_POLICY_VIOLATION } from '../../../../config/control-contract';
 import {
   buildControllerSocketUrl,
   CONTROLLER_CALL_TIMEOUT_MS,
   CONTROLLER_RECONNECT_BASE_MS,
+  CONTROLLER_RECONNECT_MAX_MS,
   ControllerCallError,
   ControllerSocket,
 } from '../../../../core/control-panel/controller-socket';
@@ -14,7 +16,7 @@ class FakeSocket implements ControlSocketLike {
   readonly sent: string[] = [];
   closed = false;
   onopen: (() => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event?: { code?: number }) => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
 
@@ -30,8 +32,8 @@ class FakeSocket implements ControlSocketLike {
     this.onopen?.();
   }
 
-  disconnect(): void {
-    this.onclose?.();
+  disconnect(code?: number): void {
+    this.onclose?.(code === undefined ? undefined : { code });
   }
 
   receive(data: unknown): void {
@@ -184,6 +186,39 @@ describe('ControllerSocket events and lifecycle', () => {
     sockets[2].disconnect();
     await vi.advanceTimersByTimeAsync(CONTROLLER_RECONNECT_BASE_MS);
     expect(openSocket).toHaveBeenCalledTimes(4);
+  });
+
+  it('reports a policy-violation close as refused and stops retrying', async () => {
+    vi.useFakeTimers();
+    const { sockets, openSocket, onStatus } = harness();
+
+    // 1008 is what the hub closes a wrong token, an unknown role or a foreign
+    // origin with. Retrying cannot change any of those, and the panel used to
+    // report all three as "Reconnecting" forever.
+    sockets[0].disconnect(CLOSE_POLICY_VIOLATION);
+
+    expect(onStatus).toHaveBeenLastCalledWith('refused');
+    await vi.advanceTimersByTimeAsync(CONTROLLER_RECONNECT_MAX_MS * 4);
+    expect(openSocket).toHaveBeenCalledTimes(1);
+  });
+
+  it('still retries an ordinary close, and settles pending work as refused', async () => {
+    vi.useFakeTimers();
+    const { controller, sockets, openSocket, onStatus } = harness();
+    const pending = controller.call('getDimensions');
+    const refused = expect(pending).rejects.toThrow('the hub refused this panel');
+
+    sockets[0].disconnect(CLOSE_POLICY_VIOLATION);
+    await refused;
+
+    // A close with no code at all (a dropped network) must still reconnect —
+    // the refusal path must not have swallowed the ordinary one.
+    const second = new ControllerSocket({ url: 'ws://host/control', token: null, openSocket });
+    second.connect();
+    sockets[1].disconnect();
+    await vi.advanceTimersByTimeAsync(CONTROLLER_RECONNECT_BASE_MS);
+    expect(openSocket).toHaveBeenCalledTimes(3);
+    expect(onStatus).toHaveBeenCalledWith('refused');
   });
 
   it('retries when opening the platform socket throws', async () => {

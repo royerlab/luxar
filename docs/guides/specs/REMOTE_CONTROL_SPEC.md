@@ -1,10 +1,10 @@
 # Remote Control Spec — driving a Luxar viewer from an external program
 
-**Status:** Phase A (viewer-side API), Phase B (the WebSocket hub, the viewer's
-control client and the Python controller) and Phase C §4.1 (authored waypoints)
-are implemented, as is Phase C §4.2 (the control-panel page). Phase C §4.3
-(kiosk permissions), the authored `control_panel` block, and
-Phase D are design, not code.
+**Status:** Phases A, B and C are implemented — the viewer-side API, the
+WebSocket hub, the viewer's control client and the Python controller, authored
+waypoints (§4.1), the control-panel page (§4.2), kiosk permissions (§4.3) and
+the authored `control_panel` block (§4.4). §4.5 records the three places a hub
+can now live. Phase D is design, not code.
 
 ## 1. Purpose
 
@@ -291,7 +291,7 @@ so a `file:` or `javascript:` URL is refused, but a reachable hub on an
 untrusted network is still a display someone else can repoint. Use
 `--control-token`, or do not bind past loopback.
 
-## 4. Phase C — authored waypoints (implemented) and kiosk mode (design)
+## 4. Phase C — authored waypoints, the panel, and kiosk mode (implemented)
 
 Both blocks live in `viewer_config` (Python `luxar.core.viewer_config`, viewer
 `types/zarr.ts` + `config/zarr-bridge`), because the scene author decides what
@@ -396,8 +396,9 @@ A tap sends `setDimensionValue` as a **notification**, not a call: the display
 should move at once, and the authoritative position arrives as the
 `dimensions-changed` event that also marks the active tile. A scene with no
 chapter dimension, and a page with no hub, each say so in words rather than
-drawing an empty grid — the second is exactly what an exported folder shows
-until its launcher grows a relay.
+drawing an empty grid. The no-hub message names every host that can provide one
+(§4.5), because this page is reached from a checkout, an exported folder and a
+native app, and the command differs in each.
 
 The two-minute idle reset starts only after a tile interaction. Opening the
 panel alone never moves the display; after a visitor makes a selection and
@@ -413,7 +414,7 @@ theme would re-theme the big screen on its next reload.
 The class names, `data-*` state hooks and `--luxar-control-*` custom properties
 are the authored styling contract, pinned by a lock test from both the DOM and
 the stylesheet side. That contract is also the reason there is no presentational
-`layout` enum in §4.3: CSS is the general answer, and an enum beside it would
+`layout` enum in §4.4: CSS is the general answer, and an enum beside it would
 accrete `font_size`, `aspect`, `padding` forever.
 
 **`?panel=<module>`** loads an alternative page module, which receives an
@@ -432,9 +433,9 @@ the panel may reach no renderer or codec at all. That is not a source-level
 property — the page imports viewer `config` and `ui` modules, and a shared chunk
 could drag a renderer in with no offending import in its own tree.
 
-### 4.3 Kiosk permissions (design)
+### 4.3 Kiosk permissions (implemented)
 
-Extend the existing `ui` block:
+An addition to the existing `ui` block:
 
 ```python
 scene.viewer_config.ui.kiosk = KioskConfig(
@@ -443,12 +444,29 @@ scene.viewer_config.ui.kiosk = KioskConfig(
     allow_keyboard=False,     # ignore the keyboard entirely
     show_panels=False,        # no rail, no panels, no dataset browser
     watchdog_reload=True,     # reload on WebGL context loss
+    watchdog_grace_s=10.0,    # ... but only after recovery has had its chance
 )
 ```
 
+Every field is optional and unset keeps the viewer's ordinary behaviour, so
+`enabled=True` alone locks the display down. `watchdog_reload` is the one
+exception to that shape: it stays **off** unless asked for, because a reload is
+destructive to a recovery already in progress — the viewer restores a lost
+WebGL context on its own where it can, and the watchdog fires only after
+`watchdog_grace_s` has passed without that working.
+
 `?kiosk` on the URL is a hard override for a display whose store predates the
-block. Kiosk mode reuses `setInputEnabled(false)` and the existing panel
-visibility flags; only the watchdog is new.
+block. It can **lock** such a display and deliberately cannot unlock one: a URL
+is the least trustworthy input a kiosk has, and "anyone who can edit the query
+string can unlock the exhibit" is not a lock.
+
+**`setInputEnabled(false)` was not enough**, and it took a measurement to find
+out. It gates the viewer's own shortcuts and picking, while the orbit controls
+listen on the canvas themselves — so panels hid, the flag read as set, and the
+camera stayed fully draggable. The scene auto-rotates, which makes a plain
+before/after prove nothing; against a *control arm* the drag moved the camera
+62.3 units against 1.36 of idle drift, a factor of 46. Kiosk mode therefore
+also calls `ControlsManager.setEnabled(false)`.
 
 **Launching the display.** The big screen runs Chrome in kiosk mode; these flags
 are the operator's side of the contract (the scene-side block above cannot set
@@ -467,6 +485,82 @@ google-chrome --kiosk --noerrdialogs --disable-infobars \
 (`SOUND_SPEC.md` §4.4) start its `AudioContext` on load instead of showing its
 "Tap to enable sound" gate. Muted video autoplays under the default policy too,
 so a display without the flag still shows the turntables; only sound needs it.
+
+### 4.4 Authored presentation (implemented)
+
+Everything in §4.2 works with no authoring at all; this block is enrichment on
+top, and every field is optional:
+
+```python
+scene.viewer_config.control_panel = ControlPanelConfig(
+    title="Twelve stories in the protein universe",
+    subtitle="Touch a tile to travel there",
+    chapter_dimension="story",   # by NAME; an index breaks when dims reorder
+    columns=4,                   # unset lets the panel fit its own container
+    idle_reset_s=120,            # 0 holds the last stop instead
+    stylesheet="...",            # CSS text, capped
+    chapters={1: Chapter(sublabel="the molecule of breath")},
+)
+```
+
+**`chapters` is a keyed map of overrides, not a second list.** The tiles are
+derived from the dimension's own `categories`, so a parallel list of chapter
+titles would drift the first time a story was added — the panel would show
+eleven labels for twelve stops and nothing would fail. Both ESM tours take
+their tile subtitles from the same `Story` table their waypoints are built
+from, for the same reason: no new strings were written for the panel.
+
+**Author CSS is treated as hostile**, on the `overlay_html` precedent: capped at
+`MAX_CONTROL_STYLESHEET_CHARS`, injected through a `<style>` element's
+`textContent` (never `innerHTML`), and stripped of `@import` and of any remote
+`url()`. The last one is not only a code-execution concern — every remote URL
+in a stylesheet is a beacon that reports the kiosk's address to whoever hosts
+it, each time the panel loads.
+
+**The panel fits one page.** It measures its own container and scores candidate
+grids on cell aspect against a target, plus a penalty for empty cells
+(`config/control-panel/fit-grid.ts`), so ten to twelve chapters land in a
+steady 4×3 on a landscape tablet and 3×4 in portrait. Ties keep FEWER columns,
+because the larger touch target is the better answer on a screen a stranger
+will use once. Tracks are half-tile wide (2× columns, each tile spanning 2) —
+that is what makes a partial final row expressible as centred rather than
+trailing a hole. Labels size against the tile with `cqmin`, not the viewport,
+since the cell shrinks as chapters are added while the screen does not.
+
+### 4.5 Where the hub lives (implemented)
+
+A browser cannot host a server, so the display and the panel need something in
+the middle. That something now exists in three places, for three deployments,
+and they are three implementations of one protocol:
+
+| Host | Relay | Enabled by |
+|---|---|---|
+| Dev checkout / a served scene | `luxar.cli.control_hub` (asyncio) | `luxar serve <scene> --viewer --control` |
+| Native app (`luxar export --native`) | `packages/luxar-launcher/hub.go` | `LUXAR_LAUNCHER_CONTROL=1` |
+| Exported folder (`luxar export`) | `luxar/cli/_export_serve_template.py` (threads, stdlib) | `python serve.py --control` |
+
+Three implementations of a protocol is three chances to drift, and the third
+one ships inside artifacts nobody rebuilds: a native binary, and a folder that
+gets zipped and emailed. So everything they must agree on — the roles, the
+close code for a refused handshake, the JSON-RPC error codes, the pending cap —
+lives in `control-contract/contract.yaml` and is projected into Python,
+TypeScript and Go by `scripts/gen_control_contract.py`, with
+`hatch run check-control-contract` failing the build on drift. The exported
+script is the one party that cannot import its projection (it must run with
+nothing but the stdlib, in a folder belonging to someone who has never
+installed Luxar), so it carries a copy that
+`cli/tests/test_export_control_relay.py` pins to the contract.
+
+All three refuse the same three things, for the reasons in §3.5: an unknown
+`?role=` (refused rather than defaulted — a typo attaching as a *controller*
+would attach with authority), a wrong token (compared in constant time), and a
+cross-origin browser handshake.
+
+The exported script is also **threaded**, which is not a detail: a WebSocket
+occupies its thread for as long as the kiosk runs, so on the single-threaded
+server it replaced the first attached panel would have blocked every later
+request — including the scene's own chunks, leaving a display that never
+finished loading.
 
 ## 5. Phase D — conversational agent (design)
 

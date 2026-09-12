@@ -1,14 +1,16 @@
 """Export a Luxar zarr scene + viewer into a standalone offline folder.
 
 The exported folder contains everything needed to view the scene:
-- The Luxar viewer (HTML, JS, CSS, WASM)
+- The Luxar viewer (HTML, JS, CSS, WASM) -- including the touch-panel page
 - The zarr dataset (copied as-is)
-- A serve.py script (Python 3 stdlib only)
+- A serve.py script (Python 3 stdlib only), which can also host the
+  remote-control relay so the folder alone runs a kiosk
 - A README.txt with usage instructions
 
 Usage:
     luxar export my_scene.luxar.zarr -o my_export/
     cd my_export && python serve.py
+    cd my_export && python serve.py --control --host 0.0.0.0   # kiosk
 """
 
 from __future__ import annotations
@@ -223,124 +225,59 @@ def _generate_serve_script(
     aprint(f"Generated {serve_path}")
 
 
+#: The generated ``serve.py`` is this module, copied with two values
+#: substituted. It is a real module rather than a string literal so ruff, mypy
+#: and the test suite all see it -- a WebSocket relay hidden inside an f-string
+#: (where every brace has to be doubled) is unreviewable, and this one is the
+#: fourth implementation of a relay that three other files already agree on.
+SERVE_TEMPLATE = Path(__file__).with_name("_export_serve_template.py")
+
+#: Assignments substituted in the template, as ``name -> value`` at export time.
+#: Matched anchored at line start, so the constants' *uses* are untouched.
+_SUBSTITUTED = ("DATA_DIR_NAME", "TITLE_QUERY")
+
+
+def _substitute(script: str, name: str, value: str) -> str:
+    """Replace the template's ``name = ...`` line with ``value``.
+
+    Raises rather than silently letting the template's own default through: a
+    missed substitution would export a folder whose serve.py points at a data
+    directory that is not there, which looks like a broken scene rather than a
+    broken export.
+    """
+    pattern = re.compile(rf"^{name} = .*$", re.MULTILINE)
+    script, count = pattern.subn(f"{name} = {value!r}", script, count=1)
+    if count != 1:
+        raise RuntimeError(
+            f"{SERVE_TEMPLATE.name} has no `{name} = ...` line to substitute; "
+            f"the template and the exporter have drifted apart."
+        )
+    return script
+
+
 def _get_serve_script_content(data_dir_name: str, title: Optional[str] = None) -> str:
     """Return the serve.py script content.
 
-    Uses only Python 3 stdlib -- no external dependencies required.
+    Uses only Python 3 stdlib -- no external dependencies required, because
+    this folder gets zipped and handed to people who have never installed
+    Luxar.
 
     Args:
         data_dir_name: Name of the data directory (embedded in the script).
-        title: Optional tab title; baked in PRE-ENCODED as a ready-to-append
-            query fragment so the generated script needs no urllib import.
+        title: Optional tab title, baked in PRE-ENCODED as a ready-to-append
+            query fragment.
 
     Returns:
         Complete serve.py script as a string.
     """
-    title_query = f"&title={quote(title)}" if title else ""
-    return f'''#!/usr/bin/env python3
-"""Serve this exported Luxar scene locally.
-
-Usage:
-    python serve.py [--port PORT] [--no-open]
-
-Requirements:
-    Python 3 (stdlib only -- no pip install needed)
-"""
-
-import argparse
-import http.server
-import socket
-import sys
-import threading
-import webbrowser
-from functools import partial
-from pathlib import Path
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR_NAME = "{data_dir_name}"
-
-
-class QuietHandler(http.server.SimpleHTTPRequestHandler):
-    """Serves the viewer and its zarr data from one origin.
-
-    No cross-origin headers: the viewer (/viewer) and its data are served from
-    the same host:port, differing only by path, so same-origin fetches need
-    none. A wildcard cross-origin policy here would only widen exposure —
-    letting any web page read the locally-served scene if it discovered the port.
-    """
-
-    def end_headers(self):
-        # SimpleHTTPRequestHandler sends Last-Modified but no Cache-Control, so
-        # browsers fall back to HEURISTIC freshness and can serve STALE files
-        # after this folder is re-exported in place (same URLs, new bytes).
-        # no-cache forces revalidation on mutable scene data AND the unhashed
-        # viewer shell (index.html, wasm); unchanged files still return as cheap
-        # 304s. Content-hashed viewer chunks under /viewer/assets/ embed a build
-        # hash in their URL and are immutable, so they stay cacheable.
-        #
-        # self.path is unset when a malformed request line trips send_error()
-        # before parse_request() assigns it, so read it defensively — a bad
-        # request must still get a clean 400, not an AttributeError traceback.
-        path = getattr(self, "path", "").split("?", 1)[0]
-        if not path.startswith("/viewer/assets/"):
-            self.send_header("Cache-Control", "no-cache")
-        super().end_headers()
-
-    def log_message(self, format, *args):
-        """Suppress request logging for cleaner output."""
-        pass
-
-
-def find_port(start=8000, attempts=100):
-    """Find an available port starting from start."""
-    for i in range(attempts):
-        port = start + i
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("127.0.0.1", port))
-                return port
-            except OSError:
-                continue
-    return None
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Serve exported Luxar scene")
-    parser.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
-    parser.add_argument(
-        "--no-open", action="store_true", help="Don't open browser automatically"
-    )
-    args = parser.parse_args()
-
-    port = find_port(args.port)
-    if port is None:
-        print("Error: No available port found near {{}}".format(args.port))
-        sys.exit(1)
-
-    handler = partial(QuietHandler, directory=str(SCRIPT_DIR))
-    server = http.server.HTTPServer(("127.0.0.1", port), handler)
-
-    data_url = "http://127.0.0.1:{{}}/{{}}".format(port, DATA_DIR_NAME)
-    viewer_url = "http://127.0.0.1:{{}}/viewer/?src={{}}{title_query}".format(
-        port, data_url
-    )
-
-    print("Luxar viewer: {{}}".format(viewer_url))
-    print("Press Ctrl+C to stop")
-
-    if not args.no_open:
-        threading.Timer(0.5, webbrowser.open, args=[viewer_url]).start()
-
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\\nShutting down...")
-        server.shutdown()
-
-
-if __name__ == "__main__":
-    main()
-'''
+    script = SERVE_TEMPLATE.read_text()
+    values = {
+        "DATA_DIR_NAME": data_dir_name,
+        "TITLE_QUERY": f"&title={quote(title)}" if title else "",
+    }
+    for name in _SUBSTITUTED:
+        script = _substitute(script, name, values[name])
+    return script
 
 
 def _generate_readme(output: Path, data_dir_name: str) -> None:
@@ -363,24 +300,44 @@ This starts a local HTTP server and opens the viewer in your browser.
 
 Requirements
 ------------
-- Python 3 (any version, no extra packages needed)
+- Python 3.9 or newer (stdlib only, no extra packages needed)
 - A modern web browser (Chrome, Firefox, Safari, Edge)
 
 Options
 -------
     python serve.py --port 9000     Use a custom port
     python serve.py --no-open       Don't open browser automatically
+    python serve.py --host 0.0.0.0  Accept connections from the network
+    python serve.py --control       Host the touch-panel relay (see below)
+
+Kiosk mode: driving the display from a tablet
+---------------------------------------------
+    python serve.py --control --host 0.0.0.0 --control-token SECRET
+
+With --control this folder runs a kiosk on its own: the script prints two
+URLs, one for the big display and one for a tablet. Open the first on the
+display, the second on the tablet, and tapping a tile moves the display.
+
+It is off by default, because a folder you double-click should not start
+listening for anything that wants to drive it. --host 0.0.0.0 is what makes
+the tablet able to reach it at all, and on any network you do not control,
+pass --control-token: without one, anything that can reach this machine can
+drive the display. The token travels in the URL, so it is visible in the
+tablet's address bar and its history -- fine for a LAN exhibit, not a
+password.
 
 Folder Structure
 ----------------
     viewer/         The Luxar viewer (HTML, JS, CSS, WASM)
     {data_dir_name}/             The zarr dataset
-    serve.py        Local HTTP server (Python stdlib only)
+    serve.py        Local HTTP server + control relay (Python stdlib only)
     README.txt      This file
 
 Notes
 -----
-- Do NOT open viewer/index.html directly -- file:// protocol does not work
+- Do NOT open the viewer's HTML files directly. Both pages
+  (viewer/index.html and the touch panel viewer/control.html) need a server:
+  the file:// protocol cannot fetch the dataset.
 - The serve.py script uses only Python stdlib -- no pip install needed
 - To share this scene: zip the entire folder and send it
 """

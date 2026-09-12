@@ -125,6 +125,17 @@ interface StatusHandlerContext {
   ports: ControlPanelBootstrapPorts;
   socket: () => ControllerSocket | undefined;
   customPanelState: { current: CustomPanelState };
+  /**
+   * Set once the hub refuses this panel, and never cleared.
+   *
+   * Shared with the chapter loader because a refusal arrives as a close, which
+   * rejects the `getDimensions` already in flight — and that rejection is
+   * handled a microtask LATER than the status change. Without this the loader's
+   * catch painted over the refusal, so a mistyped token still read as "waiting
+   * for the display". Found by loading the page with a wrong token, not by the
+   * unit test that drove the status alone.
+   */
+  connectionState: { refused: boolean };
   cancelChapterRetry: (resetDelay?: boolean) => void;
   loadChaptersWithRetry: () => Promise<void>;
 }
@@ -189,9 +200,20 @@ function createStatusHandler(context: StatusHandlerContext): (status: Controller
       return;
     }
     context.cancelChapterRetry(false);
-    if (!customPanelOwnsPage(context.customPanelState.current)) {
-      context.panel.showMessage('Reconnecting', 'Lost the control hub. Trying again...');
+    if (status === 'refused') context.connectionState.refused = true;
+    if (customPanelOwnsPage(context.customPanelState.current)) return;
+    if (status === 'refused') {
+      // Terminal, and worth naming: the hub refused this panel rather than
+      // dropping it, so "reconnecting" would be a lie and nobody would think
+      // to look at the token they typed on the tablet.
+      context.panel.showMessage(
+        'Refused by the hub',
+        'The control hub would not accept this panel. Check the token in this ' +
+          'page URL against the one the server printed.'
+      );
+      return;
     }
+    context.panel.showMessage('Reconnecting', 'Lost the control hub. Trying again...');
   };
 }
 
@@ -363,6 +385,7 @@ function startConnectedPanel(
   let chapterRetryTimer: ReturnType<typeof setTimeout> | undefined;
   let chapterRetryDelayMs = CHAPTER_RETRY_BASE_MS;
   const customPanelState: { current: CustomPanelState } = { current: 'unmounted' };
+  const connectionState = { refused: false };
 
   const panel = (ports.createPanel ?? createControlPanel)({
     root,
@@ -432,13 +455,22 @@ function startConnectedPanel(
       cancelChapterRetry();
     } catch (error) {
       log.warning(Modules.APP, 'control panel: could not load chapters:', error);
-      panel.showMessage(
-        'Waiting for the display',
-        'Connected to the hub, but no viewer has attached yet.'
-      );
       if (error instanceof ControllerCallError && error.noViewerAttached) {
+        // The ONLY error that licenses this message: the hub said so.
+        panel.showMessage(
+          'Waiting for the display',
+          'Connected to the hub, but no viewer has attached yet.'
+        );
         scheduleChapterRetry();
+        return;
       }
+      // A refusal or a dropped socket already has a message from the status
+      // handler, and it is more specific than anything this catch could say.
+      if (connectionState.refused) return;
+      panel.showMessage(
+        'Could not read the chapters',
+        'The hub answered, but the display did not describe its chapters.'
+      );
     }
   }
 
@@ -449,6 +481,7 @@ function startConnectedPanel(
     ports,
     socket: () => socket,
     customPanelState,
+    connectionState,
     cancelChapterRetry,
     loadChaptersWithRetry,
   });
@@ -484,14 +517,16 @@ export function bootstrap(ports: ControlPanelBootstrapPorts = {}): void {
     return;
   }
 
-  // No hub configured. The honest answer, not an empty grid: this is exactly
-  // what an exported folder gets until its launcher grows a relay.
+  // No hub configured. The honest answer, not an empty grid — and it names
+  // every host that can provide one, because this page is reached from three
+  // of them: a dev checkout, an exported folder, and a native app.
   const panel = (ports.createPanel ?? createControlPanel)({ root, call: () => undefined });
   panel.showMessage(
     'No control hub',
     'This page drives a Luxar viewer over a control hub, and none was given. ' +
-      'Serve the scene with luxar serve <scene> --viewer --control, then open ' +
-      'the control URL it prints.'
+      'Start one with luxar serve <scene> --viewer --control, or, in an ' +
+      'exported folder, python serve.py --control — then open the control ' +
+      'URL it prints.'
   );
 }
 
