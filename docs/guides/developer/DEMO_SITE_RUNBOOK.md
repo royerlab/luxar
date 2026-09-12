@@ -1094,10 +1094,12 @@ Two guards, and the pairing is the point:
 - **Stage completeness, before the page is built.** Count store directories (or
   symlinks — `is_dir()` follows them) in the stage and require it to equal what
   the prefix serves. This one says *why*.
-- **Tile count, after the render.** Count `href="/viewer/index.html?src="`
-  occurrences and require one per store; separately require every tile to
-  reference the *new* prefix, since a stale-prefix tile passes a bare count. This
-  one says *that*, and is the last line before deploy.
+- **Tile count, after the render.** Count
+  `href="https://luxarviewer.dev/?src="` occurrences and require one per store;
+  also accept legacy `href="/viewer/index.html?src="` links while `/viewer/`
+  remains served. Separately require every tile to reference the *new* prefix,
+  since a stale-prefix tile passes a bare count. This one says *that*, and is the
+  last line before deploy.
 
 Verify a new guard against the broken artefact, not only the fixed one. Both were
 run against the page that actually deployed: 9 vs 85, abort. A guard only tested
