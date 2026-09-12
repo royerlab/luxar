@@ -87,10 +87,20 @@ dimension-bound overlays and fires `waypoint-arrived`, which the sound layer's
 narration keys on. Nothing here needs to know about any of it.
 
 **Replies and events share one socket.** `recv_event(timeout_s=None)` returns
-the next subscribed notification as `(name, payload)`, and events that arrive
-while `call` waits for its answer are buffered for it. `camera-changed` is
-throttled viewer-side to 20 Hz; it fires at frame rate otherwise, and an
-auto-rotating kiosk never stops moving.
+the next notification as `(name, payload)`, and events that arrive while `call`
+waits for its answer are buffered for it. `camera-changed` is throttled
+viewer-side to 20 Hz; it fires at frame rate otherwise, and an auto-rotating
+kiosk never stops moving.
+
+Two things to know about that stream. It is **not filtered to your own
+subscriptions** — the hub fans a viewer's events out to every attached
+controller, so a script that subscribed to nothing still receives whatever a
+touch panel asked for; match on `name` rather than assuming. And the buffer is
+**bounded** at `MAX_BUFFERED_EVENTS`, dropping the oldest past the cap, because
+a controller that makes calls but never reads events would otherwise grow for
+the life of the process — measured at roughly 91 MB an hour against a 20 Hz
+`camera-changed` stream. A reader that has fallen behind wants the current
+camera pose anyway, not one from a thousand frames ago.
 
 **Timeouts are generous because replies can be slow.** `flyTo` resolves when
 the flight lands and `switchDataset` when the new scene has loaded, so the

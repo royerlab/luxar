@@ -9,10 +9,7 @@ The method names are the viewer's own embedder API, so anything the browser's
 from luxar.control import Viewer
 
 with Viewer("ws://kiosk.local:5173/control") as viewer:
-    state = viewer.get_viewer_state()
-    story = state["dimensions"]["metadata"].index(
-        next(d for d in state["dimensions"]["metadata"] if d["name"] == "story")
-    )
+    story = viewer.dimension_index("story")   # by name, never a position
     viewer.set_dimension_value(story, 3)      # fly to the fourth chapter
 ```
 

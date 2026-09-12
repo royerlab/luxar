@@ -28,6 +28,23 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 #: the flight lands, and ``switchDataset`` when the new scene has loaded.
 DEFAULT_TIMEOUT_S = 30.0
 
+#: How many unread events a controller buffers before dropping the oldest.
+#:
+#: There has to be a bound. The hub fans a viewer's events out to EVERY
+#: attached controller regardless of what each one subscribed to, so a script
+#: that subscribed to nothing still receives whatever a touch panel asked for
+#: — and `call` drains the socket while it waits for its reply, so those
+#: events pile up during exactly the long waits (`flyTo`, `switchDataset`)
+#: when a 20 Hz `camera-changed` stream is landing. Unbounded, that measured
+#: ~91 MB after an hour.
+#:
+#: It also restores a bound that already existed: ``websockets.connect``
+#: defaults to ``max_queue=16`` and stops reading past its high-water mark, so
+#: the socket itself applied backpressure until the frames were drained into a
+#: Python-side buffer. 1024 is generous for any reader that polls at all,
+#: while keeping the worst case at kilobytes rather than tens of megabytes.
+MAX_BUFFERED_EVENTS = 1024
+
 #: JSON-RPC code the hub answers with when no viewer is attached.
 NO_VIEWER_CODE = -32001
 
@@ -83,7 +100,7 @@ class Viewer:
         self._url = _with_query(url, role="controller", token=token)
         self._timeout_s = timeout_s
         self._ids = itertools.count(1)
-        self._events: deque[Tuple[str, Any]] = deque()
+        self._events: deque[Tuple[str, Any]] = deque(maxlen=MAX_BUFFERED_EVENTS)
         self._socket = _connect(self._url, timeout_s)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -170,11 +187,23 @@ class Viewer:
     def recv_event(
         self, timeout_s: Optional[float] = None
     ) -> Optional[Tuple[str, Any]]:
-        """Return the next subscribed event as ``(name, payload)``.
+        """Return the next event as ``(name, payload)``.
+
+        Not only the events *this* controller subscribed to: the hub fans a
+        viewer's events out to every attached controller, so a script that
+        subscribed to nothing still sees whatever another controller — a touch
+        panel, say — asked for. Match on ``name`` rather than assuming.
 
         Events received while :meth:`call` waits for its reply are buffered and
-        returned first. ``timeout_s=None`` waits indefinitely; a finite timeout
-        returns ``None`` when no event arrives before its deadline.
+        returned first. That buffer holds at most
+        :data:`MAX_BUFFERED_EVENTS`; past the cap the OLDEST are dropped, so a
+        long-lived controller that never reads events cannot grow without
+        limit. ``timeout_s=None`` waits indefinitely; a finite timeout returns
+        ``None`` when no event arrives before its deadline.
+
+        Raises:
+            ConnectionClosed: If the socket closed while waiting. This reads
+                the same socket as :meth:`call` and fails the same way.
         """
         if self._events:
             return self._events.popleft()
