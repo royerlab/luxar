@@ -53,8 +53,9 @@
         "azimuth": 90,
         "elevation": 8
       },
-      "distance": 32,
-      "exposure": 1.2
+      "distance": 60,
+      "exposure": 1.2,
+      "note": "fillTarget 0.55 (was default 0.95): 86.6% border-lit at 0.95; live frames two small orbitals with wide margin. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | distance 32 -> 60 (fillTarget removed: it is INERT when `distance` is set, so the 0.55 attempt was a no-op and 86.6% -> 90.0% border-lit was run variance). The orbitals overflowed the frame at distance 32; the live still shows two small lobes with wide margin."
     },
     {
       "id": "desi_galaxies",
@@ -182,7 +183,9 @@
       "viewAngle": {
         "azimuth": 90,
         "elevation": 0
-      }
+      },
+      "fillTarget": 0.45,
+      "note": "fillTarget 0.65 (was default 0.95): 77.3% border-lit at 0.95; became an unrecognisable close-up. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | fillTarget 0.65 -> 0.45: 0.65 moved border-lit 77.3% -> 41.1%, right direction but not far enough for a subject this diffuse."
     },
     {
       "id": "gsplats_4d_celegans_tracking",
@@ -337,7 +340,7 @@
       "script": "demo_nuclear_pore_complex.py",
       "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr",
       "citation": "Mosalaganti et al. 2022",
-      "fillTarget": 0.70,
+      "fillTarget": 0.7,
       "note": "fillTarget 0.70, re-derived after #2262 replaced one Nup107-160 Y-complex ring (41,288 elements) with the whole pore (9,874,128) \u2014 a 239x change, so the previous 0.75 was metered on a different object. Three arms, final coverage / final lit / border-lit: 0.75 -> 85.8% / 73.9% / 504 of 4316 (11.7%); 0.70 -> 77.8% / 62.3% / 70 (1.6%); 0.65 -> 71.3% / 53.1% / 1 (0.0%). CHOSEN ON THE RENDER, not on the warning clearing. The still is well framed at ALL THREE values \u2014 the crop metric spans all 10 orbit poses, so a clean still can carry a real warning from a pose nobody sees in isolation. Pulling orbit frames with ffmpeg settled it: at 0.75 the outer lilac ring is cut flat against the frame edge, at 0.70 every frame is complete with margin. 0.65 removes the last graze but shrinks the subject visibly for no gain the eye can see. Note the harness suggested 0.65 -> 0.55 for a SINGLE lit pixel: it recommends lower whenever a dense silhouette grazes an edge, which a rotating disc always eventually will, so do not follow it mechanically."
     },
     {
@@ -387,7 +390,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_bioluminescent_ocean.py",
-      "dataset": "datasets/demos/ocean.luxar.zarr"
+      "dataset": "datasets/demos/ocean.luxar.zarr",
+      "fillTarget": 0.7,
+      "note": "fillTarget 0.7 (was default 0.95): 81.8% border-lit at 0.95; jellyfish tentacles cut off at the edges. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "caida_as_topology",
@@ -629,7 +634,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_volumetric_cloud.py",
-      "dataset": "datasets/demos/cloud.luxar.zarr"
+      "dataset": "datasets/demos/cloud.luxar.zarr",
+      "fillTarget": 0.7,
+      "note": "fillTarget 0.7 (was default 0.95): 83.4% border-lit at 0.95; cloud filled the frame edge to edge. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "zebrahub_multiome",
@@ -689,7 +696,9 @@
       "category": "embeddings",
       "script": "demo_zebrahub_velocity_streamlines.py",
       "dataset": "datasets/demos/zebrahub_velocity_streamlines_standard.luxar.zarr",
-      "citation": "Lange et al. 2024 (Zebrahub)"
+      "citation": "Lange et al. 2024 (Zebrahub)",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65 (was default 0.95): 73.2% border-lit at 0.95; streamlines overflowed the frame. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "gsplats_2d_cmu1_pathology",
@@ -844,7 +853,7 @@
         "framePoint": 0.9
       },
       "citation": "Royer et al. 2016",
-      "fillTarget": 0.80,
+      "fillTarget": 0.8,
       "note": "fillTarget 0.80, not the 0.9 inherited from the h2afva timelapse: this embryo is a ~2.5:1 prolate ellipsoid, so at 0.9 it is cut flat at BOTH poles \u2014 and for an embryogenesis timelapse the anterior/posterior ends are the subject, not spare margin. Border-lit fell 737/4316 (17.1%) to 16/4316 (0.4%), a 46x reduction, and the render shows the whole embryo with margin at 0.80. The harness then suggested 0.7 for those 16 remaining pixels; that is its standing over-suggestion on any subject whose silhouette grazes an edge and was not followed. framePoint 0.9 KEPT: late in the 500-timepoint series the nuclei are individually resolved and the ventral furrow is legible, which is the point of the demo. Store needs no LOD work \u2014 the hosted archive is already flat with 14 additive rungs and no substitutive levels. Its largest node reads 37,930,613 (9x the 4,194,304 floor) but Time is display=false over [0.0, 249.5] step 0.5, so the resident slice is 166,443, i.e. 25x UNDER; this is the store _lod_policy.py cites for exactly that point."
     },
     {
