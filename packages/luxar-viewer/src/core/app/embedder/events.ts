@@ -1,4 +1,3 @@
-import type { ControlPanelSettings } from '../../../config/zarr-bridge/control-panel';
 /**
  * Public event + value types for the programmatic embedder API.
  *
@@ -12,6 +11,7 @@ import type { ControlPanelSettings } from '../../../config/zarr-bridge/control-p
  * Re-exported from the package root (`src/index.ts`).
  */
 
+import type { ControlPanelSettings } from '../../../config/zarr-bridge/control-panel';
 import type { DimensionMetadata } from '../../../types/dims';
 
 export type { Unsubscribe } from '../../../utils/cross-layer/event-bus';

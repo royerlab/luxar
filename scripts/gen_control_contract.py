@@ -118,20 +118,20 @@ def render_python(c: Dict[str, Any]) -> str:
     lines.append("")
 
     lines.append("# WebSocket close codes.")
-    for key, value in _int_items(c, "close_codes"):
-        lines.append(f"CLOSE_{key.upper()} = {value}")
+    for key, int_value in _int_items(c, "close_codes"):
+        lines.append(f"CLOSE_{key.upper()} = {int_value}")
     lines.append("")
 
     lines.append("# JSON-RPC.")
     lines.append(f'JSONRPC_VERSION = "{c["jsonrpc"]["version"]}"')
     lines.append(f'EVENT_METHOD = "{c["jsonrpc"]["event_method"]}"')
-    for key, value in _int_items(c, "jsonrpc", "error_codes"):
-        lines.append(f"{key.upper()} = {value}")
+    for key, int_value in _int_items(c, "jsonrpc", "error_codes"):
+        lines.append(f"{key.upper()} = {int_value}")
     lines.append("")
 
     lines.append("# Limits bounding what an untrusted peer can make us hold.")
-    for key, value in _int_items(c, "limits"):
-        lines.append(f"{key.upper()} = {value}")
+    for key, int_value in _int_items(c, "limits"):
+        lines.append(f"{key.upper()} = {int_value}")
     lines.append("")
 
     return "\n".join(lines)
@@ -160,20 +160,20 @@ def render_typescript(c: Dict[str, Any]) -> str:
     lines += ["} as const;", ""]
 
     lines.append("/** WebSocket close codes. */")
-    for key, value in _int_items(c, "close_codes"):
-        lines.append(f"export const CLOSE_{key.upper()} = {value};")
+    for key, int_value in _int_items(c, "close_codes"):
+        lines.append(f"export const CLOSE_{key.upper()} = {int_value};")
     lines.append("")
 
     lines.append("/** JSON-RPC. */")
     lines.append(f"export const JSONRPC_VERSION = '{c['jsonrpc']['version']}';")
     lines.append(f"export const EVENT_METHOD = '{c['jsonrpc']['event_method']}';")
-    for key, value in _int_items(c, "jsonrpc", "error_codes"):
-        lines.append(f"export const {key.upper()} = {value};")
+    for key, int_value in _int_items(c, "jsonrpc", "error_codes"):
+        lines.append(f"export const {key.upper()} = {int_value};")
     lines.append("")
 
     lines.append("/** Limits bounding what an untrusted peer can make us hold. */")
-    for key, value in _int_items(c, "limits"):
-        lines.append(f"export const {key.upper()} = {value};")
+    for key, int_value in _int_items(c, "limits"):
+        lines.append(f"export const {key.upper()} = {int_value};")
     lines.append("")
 
     return "\n".join(lines)
