@@ -250,6 +250,11 @@ def build_animated_lines_store(
     n_frames: int = 8,
     atoms_per_frame: int = 2,
     node_type: str = "lines",
+    dimension_step: float | None = 1.0,
+    step_size: float | None = None,
+    include_segments: bool = False,
+    vertex_slice_major: bool = True,
+    n_parts: int = 1,
 ) -> Path:
     """A small slice-major indexed node with repeated atoms per frame."""
     root = open_group(path, mode="w")
@@ -261,46 +266,94 @@ def build_animated_lines_store(
                     {"name": "x", "display": True, "step": None},
                     {"name": "y", "display": True, "step": None},
                     {"name": "z", "display": True, "step": None},
-                    {"name": "time", "display": False, "step": 1.0},
+                    {
+                        "name": "time",
+                        "display": False,
+                        "discrete": dimension_step is not None,
+                        "step": dimension_step,
+                    },
                 ]
             },
-            "viewer_config": {"animation": [{}, {}, {}, {"playing": playing}]},
+            "viewer_config": {
+                "animation": [
+                    {},
+                    {},
+                    {},
+                    {
+                        "playing": playing,
+                        **({"step_size": step_size} if step_size is not None else {}),
+                    },
+                ]
+            },
         }
     )
-    node = root.create_group("tracks")
+    container = root.create_group("tracks")
     if laddered:
-        node.attrs.update({"kind": "lod", "type": "group"})
-        node = node.create_group("level_0")
+        container.attrs.update({"kind": "lod", "type": "group"})
+        nodes = [container.create_group("level_0")]
+    elif n_parts > 1:
+        container.attrs.update({"kind": "partition", "type": "group"})
+        nodes = [container.create_group(f"part_{index}") for index in range(n_parts)]
+    else:
+        nodes = [container]
     atom = 10
     n_atoms = n_frames * atoms_per_frame
-    ordering = {"ordering": "hilbert", "slice_dims": [3], "chunk_size": atom}
-    if node_type == "lines":
-        node.attrs.update({"type": node_type, "ndim": 4, "vertex_ordering": ordering})
-        bounds_name = "vertex_chunk_bounds"
-        array_name = "vertices"
-    else:
-        node.attrs.update({"type": node_type, **ordering})
-        bounds_name = "chunk_bounds"
-        array_name = "positions" if node_type == "points" else "centers"
-    bounds = np.zeros((n_atoms, 4, 2), dtype=np.float32)
-    frame_values = np.repeat(np.arange(n_frames), atoms_per_frame)
-    bounds[:, 3, 0] = frame_values
-    bounds[:, 3, 1] = frame_values
-    create_array(
-        node,
-        bounds_name,
-        data=bounds,
-        chunks=bounds.shape,
-        compressor=None,
-    )
-    vertices = np.zeros((n_atoms * atom, 4), dtype=np.uint16)
-    create_array(
-        node,
-        array_name,
-        data=vertices,
-        chunks=(atom, 4),
-        compressor=None,
-    )
+    frame_step = dimension_step if dimension_step is not None else 1.0
+    frame_values = np.repeat(np.arange(n_frames) * frame_step, atoms_per_frame)
+    for node in nodes:
+        ordering = {
+            "ordering": "hilbert",
+            "slice_dims": [3] if vertex_slice_major else [],
+            "chunk_size": atom,
+        }
+        if node_type == "lines":
+            node.attrs.update(
+                {"type": node_type, "ndim": 4, "vertex_ordering": ordering}
+            )
+            bounds_name = "vertex_chunk_bounds"
+            array_name = "vertices"
+        else:
+            node.attrs.update({"type": node_type, **ordering})
+            bounds_name = "chunk_bounds"
+            array_name = "positions" if node_type == "points" else "centers"
+        bounds = np.zeros((n_atoms, 4, 2), dtype=np.float32)
+        bounds[:, 3, 0] = frame_values
+        bounds[:, 3, 1] = frame_values
+        create_array(
+            node,
+            bounds_name,
+            data=bounds,
+            chunks=bounds.shape,
+            compressor=None,
+        )
+        vertices = np.zeros((n_atoms * atom, 4), dtype=np.uint16)
+        create_array(
+            node,
+            array_name,
+            data=vertices,
+            chunks=(atom, 4),
+            compressor=None,
+        )
+        if include_segments and node_type == "lines":
+            node.attrs["segment_ordering"] = {
+                "ordering": "hilbert",
+                "slice_dims": [3, 7],
+                "chunk_size": atom,
+            }
+            create_array(
+                node,
+                "segment_chunk_bounds",
+                data=bounds,
+                chunks=bounds.shape,
+                compressor=None,
+            )
+            create_array(
+                node,
+                "segments",
+                data=np.zeros((n_atoms * atom, 2), dtype=np.uint32),
+                chunks=(atom, 2),
+                compressor=None,
+            )
     consolidate(root)
     return path
 
@@ -1801,6 +1854,107 @@ class TestPlaybackWarnings:
         plan = plan_optimisation(root, target_bytes=480)
 
         assert plan.playback_warnings == []
+
+    def test_lines_segment_grid_can_drive_warning(self, tmp_path: Path) -> None:
+        src = build_animated_lines_store(
+            tmp_path / "segments.luxar.zarr",
+            include_segments=True,
+            vertex_slice_major=False,
+        )
+
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+
+        assert len(plan.playback_warnings) == 1
+        warning = plan.playback_warnings[0]
+        assert warning.array_path == "tracks/segments"
+        assert warning.frames_per_chunk == pytest.approx(3.0)
+
+    @pytest.mark.parametrize(
+        ("dimension_step", "step_size"),
+        [(1.0, 3.0), (2.0, 3.0), (None, 3.0)],
+    )
+    def test_animation_step_override_is_the_frame_unit(
+        self,
+        tmp_path: Path,
+        dimension_step: float | None,
+        step_size: float,
+    ) -> None:
+        src = build_animated_lines_store(
+            tmp_path / "step-override.luxar.zarr",
+            dimension_step=dimension_step,
+            step_size=step_size,
+        )
+
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+
+        assert plan.playback_warnings == []
+
+    def test_continuous_animation_step_override_enables_warning(
+        self, tmp_path: Path
+    ) -> None:
+        src = build_animated_lines_store(
+            tmp_path / "continuous-step-override.luxar.zarr",
+            dimension_step=None,
+            step_size=0.5,
+        )
+
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+
+        assert plan.playback_warnings[0].frames_per_chunk == pytest.approx(5.0)
+
+    def test_invalid_animation_step_override_falls_back(self, tmp_path: Path) -> None:
+        src = build_animated_lines_store(
+            tmp_path / "invalid-step-override.luxar.zarr",
+            step_size=-3.0,
+        )
+
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+
+        assert plan.playback_warnings[0].frames_per_chunk == pytest.approx(3.0)
+
+    def test_sub_atom_sharded_chunks_do_not_abort_plan(self, tmp_path: Path) -> None:
+        src = build_animated_lines_store(tmp_path / "sharded.luxar.zarr")
+        root = open_group(src, mode="a")
+        node = root["tracks"]
+        del node["vertices"]
+        vertices = node.create_array(
+            "vertices",
+            shape=(160, 4),
+            dtype="u2",
+            chunks=(4, 4),
+            shards=(20, 4),
+        )
+        vertices[:] = 0
+        consolidate(root)
+
+        plan = plan_optimisation(root, target_bytes=480)
+
+        assert plan.playback_warnings == []
+
+    def test_tied_arrays_choose_stable_path(self, tmp_path: Path) -> None:
+        src = build_animated_lines_store(
+            tmp_path / "stable-array.luxar.zarr",
+            include_segments=True,
+        )
+
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+
+        assert plan.playback_warnings[0].array_path == "tracks/segments"
+
+    def test_partition_reports_only_worst_child(self, tmp_path: Path) -> None:
+        src = build_animated_lines_store(
+            tmp_path / "partition.luxar.zarr",
+            n_parts=6,
+        )
+
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+
+        assert len(plan.playback_warnings) == 1
+        assert plan.playback_warnings[0].node_path == "tracks/part_0"
+
+        result = _run(str(src), "--target-bytes", "480", "--dry-run")
+        assert result.exit_code == 0, result.output
+        assert result.output.count("would span up to 3.0 time frames/chunk") == 1
 
 
 # --------------------------------------------------------------------------

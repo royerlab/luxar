@@ -637,7 +637,11 @@ def plan_optimisation(
 
 
 def _playing_dimensions(root: zarr.Group) -> list[tuple[int, str, float]]:
-    """Played scene dimensions as ``(index, name, positive step)`` tuples."""
+    """Played dimensions as ``(index, name, positive tick step)`` tuples.
+
+    Auto playback on a continuous dimension has no fixed tick step and is
+    therefore not diagnosable unless the animation supplies ``step_size``.
+    """
     attrs = dict(root.attrs)
     viewer_config = attrs.get("viewer_config")
     scene_dimensions = attrs.get("scene_dimensions")
@@ -654,18 +658,30 @@ def _playing_dimensions(root: zarr.Group) -> list[tuple[int, str, float]]:
         if index >= len(dimensions) or not isinstance(dimensions[index], dict):
             continue
         dimension = dimensions[index]
-        step = dimension.get("step")
-        try:
-            numeric_step = abs(float(step))
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(numeric_step) or numeric_step == 0:
+        base_step = _positive_float(dimension.get("step"))
+        numeric_step = _positive_float(animation.get("step_size"))
+        if numeric_step is not None and dimension.get("discrete") is True:
+            grid_step = base_step or 1.0
+            cells = math.floor(numeric_step / grid_step + 0.5)
+            numeric_step = max(grid_step, cells * grid_step)
+        elif numeric_step is None:
+            numeric_step = base_step
+        if numeric_step is None:
             continue
         name = dimension.get("name")
         played.append(
             (index, name if isinstance(name, str) else str(index), numeric_step)
         )
     return played
+
+
+def _positive_float(raw: Any) -> float | None:
+    """A finite positive float, or ``None`` when ``raw`` is not one."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0 else None
 
 
 def _is_ladder(attrs: dict[str, Any]) -> bool:
@@ -691,6 +707,8 @@ def _ordering_for_array(
             ndim = int(raw_ndim)
         except (TypeError, ValueError):
             return None
+        # ``slice_dims`` addresses the 2×D segment endpoint coordinates, while
+        # ``segment_chunk_bounds`` stores one D-wide union bound per atom.
         bounds_dims: tuple[int, ...] = (dimension, dimension + ndim)
         bounds_name = "segment_chunk_bounds"
     else:
@@ -757,7 +775,7 @@ def _group_playback_warning(
     candidates: list[PlaybackChunkWarning] = []
     span_cache: dict[tuple[str, tuple[int, ...], float, int], float | None] = {}
     for dimension, dimension_name, step in played:
-        for array_name in array_keys(group):
+        for array_name in sorted(array_keys(group)):
             path = f"{group_path}/{array_name}" if group_path else array_name
             plan = plans.get(path)
             if plan is None or not plan.shape or plan.atom is None:
@@ -770,6 +788,8 @@ def _group_playback_warning(
                 continue
             bounds_name, bounds_dims = resolved
             atoms_per_chunk = plan.target_chunks[0] // plan.atom
+            if atoms_per_chunk < 1:
+                continue
             key = (bounds_name, bounds_dims, step, atoms_per_chunk)
             if key not in span_cache:
                 span_cache[key] = _chunk_frame_span(
@@ -795,24 +815,42 @@ def _group_playback_warning(
 def _plan_playback_warnings(
     root: zarr.Group, plans: dict[str, ArrayPlan]
 ) -> list[PlaybackChunkWarning]:
-    """Warn once per un-laddered node when planned chunks span many frames."""
+    """Warn once per un-laddered node or partition root for wide chunks."""
     played = _playing_dimensions(root)
     if not played:
         return []
-    warnings: list[PlaybackChunkWarning] = []
+    warnings: dict[tuple[str, str], PlaybackChunkWarning] = {}
 
-    def visit(group: zarr.Group, path: str, inside_ladder: bool) -> None:
-        laddered = inside_ladder or _is_ladder(dict(group.attrs))
+    def visit(
+        group: zarr.Group,
+        path: str,
+        inside_ladder: bool,
+        partition_root: str | None,
+    ) -> None:
+        attrs = dict(group.attrs)
+        laddered = inside_ladder or _is_ladder(attrs)
+        if partition_root is None and attrs.get("kind") == "partition":
+            partition_root = path or "/"
         if not laddered:
             warning = _group_playback_warning(path, group, plans, played)
             if warning is not None:
-                warnings.append(warning)
+                key = (
+                    ("partition", partition_root)
+                    if partition_root is not None
+                    else ("node", path)
+                )
+                previous = warnings.get(key)
+                if (
+                    previous is None
+                    or warning.frames_per_chunk > previous.frames_per_chunk
+                ):
+                    warnings[key] = warning
         for name in sorted(group_keys(group)):
             child_path = f"{path}/{name}" if path else name
-            visit(group[name], child_path, laddered)
+            visit(group[name], child_path, laddered, partition_root)
 
-    visit(root, "", False)
-    return warnings
+    visit(root, "", False, None)
+    return list(warnings.values())
 
 
 def _walk_groups(group: zarr.Group, path: str = "") -> Iterator[tuple[str, zarr.Group]]:
