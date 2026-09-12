@@ -1733,8 +1733,7 @@ def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
     assert "make test-nlm-cuda" in commands
     report = steps["Report cadence failure"]
     assert report["if"] == "${{ failure() || cancelled() }}"
-    assert report["uses"].startswith("actions/github-script@")
-    assert not report["uses"].endswith("@v8")
+    assert re.fullmatch(r"actions/github-script@[0-9a-f]{40}", report["uses"])
     assert report["with"]["github-token"] == "${{ github.token }}"
     script = report["with"]["script"]
     assert "CUDA native cadence failure" in script
