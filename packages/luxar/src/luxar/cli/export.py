@@ -1,13 +1,15 @@
 """Export a Luxar zarr scene + viewer into a standalone offline folder.
 
 The exported folder contains everything needed to view the scene:
+
 - The Luxar viewer (HTML, JS, CSS, WASM) -- including the touch-panel page
 - The zarr dataset (copied as-is)
 - A serve.py script (Python 3 stdlib only), which can also host the
   remote-control relay so the folder alone runs a kiosk
 - A README.txt with usage instructions
 
-Usage:
+Usage::
+
     luxar export my_scene.luxar.zarr -o my_export/
     cd my_export && python serve.py
     cd my_export && python serve.py --control --host 0.0.0.0   # kiosk
