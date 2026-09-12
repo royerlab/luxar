@@ -443,22 +443,23 @@ zero request benefit; substitutive levels cost +49%.
 
 **A partition per TIMEPOINT is a different animal, and it won (2026-09-10).**
 Measured on the h2afva 51-timepoint archive at identical chunking, cold cache,
-stepping the time axis: the single sliced leaf with a global 11-rung ladder
+stepping the time axis: the single sliced leaf with a global 12-rung ladder
 re-streams that ladder from its bottom on every slice and leaves **3-27%** of
 the frame resident while a step loads; 44 spatial parts keep 68-85% resident
 but pay ~30 MB per step because every part is still sliced by time; **one part
-per timepoint** with its own capped stream ladder fetches exactly one part per
-step (~27 MB, nothing from other timepoints), paints its 20.8 K-splat first rung
-at once, and can never starve a slice because the ladder is sized against that
-frame alone. Its cost is the full part per step with no reuse across
-timepoints, and one live GPU buffer per part (51 here) — pair it with
+per timepoint** with its own equal-count ladder fetches exactly one part per
+step (~27 MB, nothing from other timepoints). Each part uses eight
+equal-count rungs, so the 2,217,045-splat reference frame paints 277,131 splats
+(12.5%, ~8.31 MB at 30 B/splat) in rung 0 rather than the former 20.8 K download-
+budget rung. Its cost is the full part per step with no reuse across timepoints,
+and one live GPU buffer per part (51 here) — pair it with
 next-timepoint prefetch and watch the GPU byte budget (the refinement residency
 gate stops rungs when the pool is near its ceiling). `equi-energy` ladders lost
 on the same data: first rungs of 2-7 K splats let the viewer's stop-early rules
 end a pass at e(k)=0.33. Reach for equi-energy where a few heavy elements carry
 most of the light, not on a uniform nuclei field. Recipe, from Python: take the
 finest content, split on the time column, `make_additive_lod(part,
-method="self_energy", breakpoints=capped_stream_cuts(n, 39_062))` per part,
+method="self_energy", breakpoints=time_part_ladders([n], part_count=51)[0])` per part,
 write a `GSplatPartition` with `barrier_dims=[time_col]`, graft it with
 `add_gsplats_from_file` (see `demo_gsplats_4d_h2afva_timelapse.py`).
 

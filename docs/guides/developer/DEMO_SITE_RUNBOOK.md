@@ -720,13 +720,15 @@ blended.
 **Superseded at the SCENE level on 2026-09-10.** The pinned archive stays one
 laddered leaf, but `demo_gsplats_4d_h2afva_timelapse.py` now re-authors it at
 build time into a `kind=partition` of one part per TIMEPOINT (51 parts, each with
-a capped stream ladder: 20,833-splat first rung, doubling, 900 K cap), cached
-beside the download. Measured cold against the single leaf and against 44
-spatial parts at identical chunking: the single leaf's global ladder re-streamed
-from its bottom on every slice (3-27% of the frame resident while a step loads);
-spatial parts paid ~30 MB per step; time parts fetch exactly one part per step
-and never starve a slice. The "a partition buys nothing on a time-stacked node"
-rule above is about SPATIAL parts; time parts are a different structure.
+eight equal-count rungs: 277,131 splats in rung 0 for the 2,217,045-splat
+reference frame, with every increment under the 900 K cap), cached beside the
+download. Measured cold with the former capped-stream recipe against the single
+leaf and against 44 spatial parts at identical chunking: the single leaf's
+global ladder re-streamed from its bottom on every slice (3-27% of the frame
+resident while a step loads); spatial parts paid ~30 MB per step; time parts
+fetch exactly one part per step and never starve a slice. The "a partition buys
+nothing on a time-stacked node" rule above is about SPATIAL parts; time parts
+are a different structure.
 
 ### 3.18 A probe must emit the evidence that its own window was valid
 
