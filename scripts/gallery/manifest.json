@@ -867,7 +867,8 @@
         "framePoint": 0.9
       },
       "citation": "Lange et al. 2024 (Zebrahub)",
-      "fillTarget": 0.9
+      "fillTarget": 0.6,
+      "note": "fillTarget 0.9 -> 0.60: the 51-time-part rebuild frames the LAST timepoint, where the embryo is largest; at 0.90 it filled the frame with 88.1% border-lit and read as blown out. 0.60 brings it to 7.7%."
     },
     {
       "id": "gsplats_3d_decimation_study",
