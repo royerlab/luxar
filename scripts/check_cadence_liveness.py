@@ -92,7 +92,6 @@ of a mock that discards them.
 from __future__ import annotations
 
 import argparse
-import ast
 import http.client
 import json
 import os
@@ -620,44 +619,6 @@ def main(
     for result in results:
         print(f"[{result.level}] {result.cadence.workflow_name}: {result.detail}")
     return int(any(result.level in RED_LEVELS for result in results))
-
-
-def _literal_levels(node: ast.expr | None) -> set[str]:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return {node.value}
-    if isinstance(node, ast.IfExp):
-        return _literal_levels(node.body) | _literal_levels(node.orelse)
-    raise ContractError(f"the level argument is not a string literal: {node!r}")
-
-
-def declared_result_levels(source: str | None = None) -> tuple[set[str], int]:
-    """Return every level literal passed to `_result`, and stray `Result` calls.
-
-    Exposed so a test can prove the module emits nothing outside `LEVELS`, and
-    that every result goes through the validating `_result` factory rather than
-    round the side of it, without re-implementing the parse in the test. A
-    stray is any `Result(...)` call not lexically inside `_result` -- at module
-    level, in a class body, in an `async def`, in a lambda, or in a
-    comprehension included, which is why this walks calls rather than
-    enumerating function scopes. `source` overrides the module's own text so the
-    counting branch itself can be exercised.
-    """
-    tree = ast.parse(Path(__file__).read_text() if source is None else source)
-    factory_nodes: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_result":
-            factory_nodes = {id(inner) for inner in ast.walk(node)}
-            break
-    levels: set[str] = set()
-    stray_result_calls = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-            continue
-        if node.func.id == "Result" and id(node) not in factory_nodes:
-            stray_result_calls += 1
-        elif node.func.id == "_result":
-            levels |= _literal_levels(node.args[1] if len(node.args) > 1 else None)
-    return levels, stray_result_calls
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import dataclasses
 import email.message
 import http.client
@@ -246,8 +247,35 @@ def test_daily_workflow_has_the_permissions_and_token_to_enforce_the_table() -> 
 # --------------------------------------------------------------------------
 
 
+def _literal_levels(node: ast.expr | None) -> set[str]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, ast.IfExp):
+        return _literal_levels(node.body) | _literal_levels(node.orelse)
+    raise module.ContractError(f"the level argument is not a string literal: {node!r}")
+
+
+def declared_result_levels(source: str | None = None) -> tuple[set[str], int]:
+    tree = ast.parse(SCRIPT.read_text() if source is None else source)
+    factory_nodes: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_result":
+            factory_nodes = {id(inner) for inner in ast.walk(node)}
+            break
+    levels: set[str] = set()
+    stray_result_calls = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id == "Result" and id(node) not in factory_nodes:
+            stray_result_calls += 1
+        elif node.func.id == "_result":
+            levels |= _literal_levels(node.args[1] if len(node.args) > 1 else None)
+    return levels, stray_result_calls
+
+
 def test_the_module_emits_only_declared_levels() -> None:
-    levels, stray_result_calls = module.declared_result_levels()
+    levels, stray_result_calls = declared_result_levels()
 
     assert stray_result_calls == 0, "a Result was built outside the _result factory"
     assert levels == {"OK", "NOTICE", "UNKNOWN", "STALE", "CONFIG"}
@@ -276,7 +304,7 @@ def test_a_stray_result_is_counted_in_every_scope(scope: str, source: str) -> No
         "def _result(cadence, level, detail):\n    return Result(c, level, detail)\n"
     )
 
-    levels, strays = module.declared_result_levels(source=factory + source)
+    levels, strays = declared_result_levels(source=factory + source)
 
     assert strays == 1, scope
     assert levels == set()
@@ -287,7 +315,7 @@ def test_the_stray_guard_does_not_flag_the_factorys_own_call() -> None:
         "def _result(cadence, level, detail):\n    return Result(c, level, detail)\n"
     )
 
-    levels, strays = module.declared_result_levels(
+    levels, strays = declared_result_levels(
         source=factory + "def f(c):\n    return _result(c, 'STALE', 'd')\n"
     )
 
