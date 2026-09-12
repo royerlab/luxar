@@ -62,7 +62,7 @@ describe('planChunkBoundaryViewStates', () => {
     expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([5, 6]);
   });
 
-  it('deduplicates a chunk boundary that equals the predicted slice', () => {
+  it('keeps one-step prefetch when no later chunk remains', () => {
     const views = planChunkBoundaryViewStates(view(0), view(2), [{ start: 0, end: 100 }], index(), [
       { shape: [400], chunks: [200] },
     ]);

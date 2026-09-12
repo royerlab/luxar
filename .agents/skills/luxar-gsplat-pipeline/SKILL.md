@@ -477,14 +477,15 @@ about hidden dimensions. Three regimes (2026-08-30 and 2026-09-10 measurements):
   (#2377). 1 MB wins; 64 KB made playback 13x worse there.
 - *Un-laddered, played* (`collision_animated`, an animated Lines node): the store
   is already slice-major, so a 1 MB chunk simply holds ~6 frames. Every ~6
-  frames the playhead crosses into the next chunk of each array and waits for a
-  0.25-0.85 MB fetch; the viewer's time lookahead is ONE step deep, so it cannot
-  hide a boundary six frames wide. Here the number to compute is
+  frames the playhead crosses into the next chunk of each array. The viewer now
+  prefetches the nearest next chunk boundary while the preceding frames play,
+  adding about 2.9 frames of mean lead at 1 MB on this node. Here the number to
+  compute is
   **frames-per-chunk** = (rows per zarr chunk / `chunk_size` atom) x the atom's
   hidden-axis span from `chunk_bounds`. `hosting` (~1.5 frames per chunk) is the
   middle of the request/byte trade; the request cap of the hosted site
-  (Cloudflare Functions) rules out `local`'s 3,500 chunks. Issue #2686 proposes
-  the per-node guard.
+  (Cloudflare Functions) rules out `local`'s 3,500 chunks. Issue #2686 landed
+  that viewer-side boundary prefetch rather than the proposed per-node guard.
 - *Not animated* (keypress-navigated, refine pass): smaller is a pure win.
 
 The slice-major ordering is NOT something to add — it already exists
@@ -499,8 +500,8 @@ Three refinements from applying the rule to a whole hosted wave (2026-09-11):
   and `archive` stays right. Camera `auto_rotate` is not playback.
 - *One chunk for the whole array is the BENIGN shape*, not the risk: there is no
   boundary to cross, every frame is resident after one larger fetch. The stall
-  needs MANY chunks holding several frames each, so the one-step lookahead
-  cannot reach the next boundary.
+  needs MANY chunks holding several frames each; boundary-aware lookahead now
+  warms the next crossing while the preceding frames play.
 - *Read the atom's hidden-axis span from `chunk_bounds`, not the scene
   dimension's range.* A store that partitions NODES by the hidden axis (one
   node per Hilbert order) holds one coordinate per node; dividing the scene

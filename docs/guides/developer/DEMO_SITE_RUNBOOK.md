@@ -1014,8 +1014,8 @@ direction (#2686). Two things were NOT the cause, and the first diagnosis
 wrongly blamed one of them: the ordering is already slice-major (compound
 ordering, `vertex_ordering.slice_dims == [3]`, every atom inside one frame), and
 the old prefetcher did run — only one step ahead.
-For this node the mean added lead is about 2.9 frames with ``archive``, 1.2
-frames with ``hosting``, and 1.0 frame with ``local``; the profile choice still
+For this node the mean added lead is about 2.9 frames with `archive`, 1.2
+frames with `hosting`, and 1.0 frame with `local`; the profile choice still
 governs how much time the prefetch has to hide each request.
 
 Rules that fall out, alongside 3.17 and the #2377 residency finding:
@@ -1029,11 +1029,11 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   against the Functions request cap. Not animated: smaller is a pure win.
 - `optimise` is per-array and hidden-dim blind; it cannot infer playback and
   ladder-cache policy, so the operator still decides per store.
-- The ``optimise`` pass stays per-array blind by design; what is missing is a warn-only
-  guard on top of it, and #2686 landed boundary prefetch in the viewer rather
-  than that guard. So the gate described next is a spec, not current
-  behaviour: gate it on `viewer_config.animation` (`playing: true`), not on
-  "has a hidden axis" — a keypress-navigated axis is the refine case. The
+- The `optimise` pass stays per-array blind by design; what is missing is a
+  warn-only guard on top of it, and #2686 landed boundary prefetch in the
+  viewer rather than that guard. So the gate described next is a spec, not
+  current behaviour: gate it on `viewer_config.animation` (`playing: true`),
+  not on "has a hidden axis" — a keypress-navigated axis is the refine case. The
   measurements after it hold either way. A whole array in ONE chunk is
   benign (no boundary to cross); the stall shape is many chunks of several
   frames. Read the atom's hidden-axis span from `chunk_bounds` — a

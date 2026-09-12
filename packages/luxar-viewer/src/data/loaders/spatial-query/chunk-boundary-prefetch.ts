@@ -144,6 +144,7 @@ export function planChunkBoundaryViewStates(
     forward,
   });
 
+  // Equality is belt-and-braces because candidates are selected strictly beyond prediction.
   const boundaryPositions =
     nearestBoundary === null || nearestBoundary === predictedPosition ? [] : [nearestBoundary];
   return [predictedPosition, ...boundaryPositions].map((position) => {
