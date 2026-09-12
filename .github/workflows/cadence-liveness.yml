@@ -1,5 +1,8 @@
 name: Cadence liveness
 
+# A red result surfaces on this scheduled Actions run; this read-only workflow
+# intentionally does not create or update a second tracking issue.
+
 on:
   workflow_dispatch:
   schedule:

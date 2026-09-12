@@ -256,6 +256,17 @@ def _literal_levels(node: ast.expr | None) -> set[str]:
 
 
 def declared_result_levels(source: str | None = None) -> tuple[set[str], int]:
+    """Return every level literal passed to `_result`, and stray `Result` calls.
+
+    Exposed so a test can prove the module emits nothing outside `LEVELS`, and
+    that every result goes through the validating `_result` factory rather than
+    round the side of it, without re-implementing the parse in the test. A
+    stray is any `Result(...)` call not lexically inside `_result` -- at module
+    level, in a class body, in an `async def`, in a lambda, or in a
+    comprehension included, which is why this walks calls rather than
+    enumerating function scopes. `source` overrides the module's own text so the
+    counting branch itself can be exercised.
+    """
     tree = ast.parse(SCRIPT.read_text() if source is None else source)
     factory_nodes: set[int] = set()
     for node in ast.walk(tree):

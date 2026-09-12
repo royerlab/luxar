@@ -389,9 +389,8 @@ def _unregistered_result(cadence: Cadence, repo_root: Path, now: datetime) -> Re
     absence tracks promotion to the default branch, not the health of the
     cadence. The scheduled host checks out that default branch, while a manual
     run may intentionally probe another ref; neither changes the level. At or
-    after `not_before`,
-    promotion has had its window and absence is real -- un-promoted, deleted, or
-    renamed out from under the table.
+    after `not_before`, promotion has had its window and absence is real --
+    un-promoted, deleted, or renamed out from under the table.
     """
     if (repo_root / cadence.workflow_path).is_file():
         cause = (
