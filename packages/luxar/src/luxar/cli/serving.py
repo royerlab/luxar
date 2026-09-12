@@ -209,6 +209,18 @@ def _build_viewer_url(
     return viewer_url
 
 
+def _build_control_panel_url(
+    host: str, port: int, control_token: Optional[str] = None
+) -> str:
+    """Build the tablet control-panel URL printed by ``serve --control``."""
+    from urllib.parse import quote
+
+    panel_url = f"http://{host}:{port}/control.html?control"
+    if control_token:
+        panel_url += f"&controlToken={quote(control_token, safe='')}"
+    return panel_url
+
+
 def _path_is_within(path: Path, base: Path) -> bool:
     """Return True if ``path`` resolves inside ``base``."""
     try:
@@ -501,13 +513,9 @@ def _serve_viewer(
     aprint(f"🌐 Viewer available at: {viewer_url}")
     if control:
         aprint(f"🎛️  Control hub listening at: ws://{host}:{port}/control")
-        from urllib.parse import quote
-
         # The touch panel is a second page in the same bundle, so it shares this
         # origin and needs no address of its own — `?control` is a bare flag.
-        panel_url = f"http://{host}:{port}/control.html?control"
-        if control_token:
-            panel_url += f"&controlToken={quote(control_token, safe='')}"
+        panel_url = _build_control_panel_url(host, port, control_token)
         aprint(f"📱 Control panel for a tablet: {panel_url}")
         if host.strip().lower() not in _LOOPBACK_HOSTS and not control_token:
             aprint(
