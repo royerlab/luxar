@@ -405,7 +405,9 @@ first carries it to the default branch (`main`). The two-GPU job compile-checks
 both `nvcc` translation units, builds the splatting and NLM extensions, and runs
 both parity suites with `LUXAR_REQUIRE_CUDA=1`, so a missing backend fails during
 pytest configuration instead of silently skipping. A failure opens or updates
-the `CUDA native cadence failure` issue assigned to @royerloic.
+the `CUDA native cadence failure` issue assigned to @royerloic. The daily
+`.github/workflows/cadence-liveness.yml` job separately fails when successful
+dispatches stop arriving within the cadence table's staleness window.
 
 ## Dependency Management
 
@@ -870,13 +872,15 @@ reads that same `CLAUDE.md` and skill page, and adds
 `.agents/skills/luxar-gsplat-pipeline/SKILL.md` and
 `docs/specs/GSPLATS_DIMENSION_MAPPING.md` to the Python-owned set.
 Consequently, every `CLAUDE.md` edit runs the Python matrix.
-Four workflow files, `.gitattributes`, and `.gitignore` are `dom_py` for the
+Five workflow files, `.gitattributes`, and `.gitignore` are `dom_py` for the
 same reason: `test_docs_workflow.py` reads `docs.yml` and `.gitattributes`,
 `test_run_external_reference_audits.py` asserts the schedule, permissions and
 token wiring of `external-reference-audits.yml`, the classifier test parses
-`coverage.yml` and `cuda-nightly.yml`, and the wheel-completeness guard reads
-`.gitignore`. A workflow file matches no other domain on its own, so each has to
-be named or its guard never runs.
+`coverage.yml` and `cuda-nightly.yml`,
+`test_daily_workflow_has_the_permissions_and_token_to_enforce_the_table` parses
+`cadence-liveness.yml`, and the wheel-completeness guard reads `.gitignore`. A
+workflow file matches no other domain on its own, so each has to be named or its
+guard never runs.
 Viewer TypeScript sources read by Python contract tests are also `dom_py`.
 Those tests resolve files through the shared `viewer_source()` helper, and
 `test_ci_diff_classifier.py` statically scans every literal helper call: each

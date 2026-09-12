@@ -61,6 +61,11 @@ CUDA_WORKFLOW = REPO / ".github/workflows/cuda-nightly.yml"
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
     (
+        ".github/workflows/cadence-liveness.yml",
+        "py",
+        "test_daily_workflow_has_the_permissions_and_token_to_enforce_the_table parses it",
+    ),
+    (
         ".github/workflows/cuda-nightly.yml",
         "py",
         "test_cuda_cadence_is_dispatch_only_and_requires_two_gpus parses it",
