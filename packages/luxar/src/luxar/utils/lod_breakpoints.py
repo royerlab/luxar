@@ -67,9 +67,11 @@ DEFAULT_CAPPED_FIRST_CHUNK = 2_000
 
 #: Ceiling on ONE additive increment, for :func:`capped_stream_cuts`. This is
 #: the number that makes a multi-million-element leaf streamable: no single
-#: commit may block the main thread, whatever the level is worth in total. Set
-#: below the 1,000,000 that ``scripts/check_demo_ladders.py`` fails a level at
-#: (``DEFAULT_MAX_LEVEL_ELEMENTS``), with margin.
+#: commit may block the main thread, whatever the level is worth in total. For
+#: sliced authoring this is the per-slice allowance under uniform mixing; callers
+#: scale the whole-node ceiling by their slice count. The built-scene gate checks
+#: the busiest coordinate's chunk-granular fetch against 1,000,000, leaving
+#: headroom for non-uniform slices and boundary chunks counted at both values.
 DEFAULT_MAX_ADDITIVE_COMMIT = 900_000
 
 #: Deepest default ladder for a sliced node: rung 0 carries at least 1/8 of

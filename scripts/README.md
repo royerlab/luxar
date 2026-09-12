@@ -60,10 +60,13 @@ scripts/
 
 Audits every built `*.luxar.zarr` demo (or explicitly supplied scenes) and
 fails when a large Points, Lines, or GSplats leaf has no additive ladder, a
-single increment exceeds the relative `--max-share` limit, or an increment
-exceeds the absolute `--max-level-elements` commit budget. For sliced nodes it
-also histograms rung 0 by hidden coordinate across every partition part and
-fails when the lower fifth-percentile visible slice is below
+single increment exceeds the relative `--max-share` limit, or the absolute
+`--max-level-elements` commit budget. On a barrier-ordered sliced leaf, the
+absolute arm measures the conservative largest per-coordinate fetch from the
+level's `chunk_bounds`; unsliced, unindexed, multi-axis, malformed or
+mixed-metadata, and `extend_to_all` leaves retain the node-level cap. For sliced
+nodes it also histograms rung 0 by hidden coordinate across every partition
+part and fails when the lower fifth-percentile visible slice is below
 `--min-slice-first-rung` (default 250), when rung 0 is below
 `--min-slice-rung-share` of the measured node (default 10%), or when a sliced
 survey is empty. Five measured pre-#2384 stores are exempt from the share arm

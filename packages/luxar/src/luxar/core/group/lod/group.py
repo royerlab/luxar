@@ -1687,11 +1687,14 @@ def level_additive_lod(
             (cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts)),
             default=0,
         )
-        if largest_commit > DEFAULT_MAX_ADDITIVE_COMMIT:
+        commit_ceiling = DEFAULT_MAX_ADDITIVE_COMMIT * slices
+        if largest_commit > commit_ceiling:
             raise ValueError(
                 f"Sliced node with {level_n:,} elements resolves a "
                 f"{largest_commit:,}-element additive increment, above the "
-                f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. "
+                f"{commit_ceiling:,}-element whole-node commit ceiling for "
+                f"{slices:,} slices ({DEFAULT_MAX_ADDITIVE_COMMIT:,} per slice "
+                "under uniform mixing). "
                 "Reduce the leaf size (Points: partition=) or supply an explicit "
                 "additive_lod ladder."
             )
