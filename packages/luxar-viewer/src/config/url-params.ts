@@ -296,6 +296,15 @@ export interface UrlParams {
   panel: string | null;
   /** Enable the `window.__luxarDebug` interface (`?debug`). */
   debug: boolean;
+  /**
+   * `?kiosk` — lock this display down for unattended public use.
+   *
+   * A hard override over the scene's authored `ui.kiosk` block, because this
+   * is the OPERATOR's channel: a store that predates the block, or one
+   * borrowed for an exhibit it was never authored for, still has to be
+   * lockable from the launch command. See `config/kiosk.ts`.
+   */
+  kiosk: boolean;
   /** Disable all cache layers (`?no-cache`). */
   noCache: boolean;
   /** Disable only the SliceCache / S-cache (`?no-slice-cache`). */
@@ -547,6 +556,7 @@ export function readUrlParams(search?: string, origin?: ControlSocketOrigin): Ur
     controlAllowCrossOrigin: allowCrossOriginControl,
     panel: normalizePanelModuleUrl(params.get('panel'), pageOrigin),
     debug: params.has('debug'),
+    kiosk: params.has('kiosk'),
     noCache: params.has('no-cache'),
     noSliceCache: params.has('no-slice-cache'),
     noOpfs: params.has('no-opfs'),

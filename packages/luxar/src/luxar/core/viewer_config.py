@@ -180,6 +180,83 @@ class CameraConfig:
         )
 
 
+#: Seconds a kiosk watchdog waits for the WebGL context to come back before
+#: reloading the page. Generous, because the viewer's own recovery gets first
+#: refusal and a reload throws away every warm cache the display has built.
+DEFAULT_KIOSK_WATCHDOG_S = 10.0
+
+
+@dataclass
+class KioskConfig:
+    """Lock a display down for unattended public use.
+
+    A kiosk display is a screen nobody should be able to change. Not a security
+    boundary — anyone at the keyboard of the host can do anything — but the
+    difference between an exhibit that survives a day of visitors and one that
+    ends up showing the rendering-controls panel with the point size at zero.
+
+    All fields optional; unset keeps the viewer's ordinary behaviour. ``?kiosk``
+    on the URL is a hard override for a display whose store predates this
+    block. See ``docs/guides/specs/REMOTE_CONTROL_SPEC.md`` §4.3.
+    """
+
+    #: Master switch. ``False`` (or unset) leaves everything as it is.
+    enabled: Optional[bool] = None
+    #: Let pointer, wheel and touch reach the canvas. Off in kiosk mode: a
+    #: visitor who drags the camera away from the tour cannot put it back.
+    allow_pointer: Optional[bool] = None
+    #: Let the keyboard reach the viewer. Off in kiosk mode.
+    allow_keyboard: Optional[bool] = None
+    #: Show the rail and its panels. Off in kiosk mode.
+    show_panels: Optional[bool] = None
+    #: Reload the page when the WebGL context is lost and does not come back.
+    #: The viewer recovers on its own where it can; this is the last resort for
+    #: a screen with nobody in front of it.
+    watchdog_reload: Optional[bool] = None
+    #: How long to give recovery before reloading. See
+    #: :data:`DEFAULT_KIOSK_WATCHDOG_S`.
+    watchdog_grace_s: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        """Validate every field that is set."""
+        for name in (
+            "enabled",
+            "allow_pointer",
+            "allow_keyboard",
+            "show_panels",
+            "watchdog_reload",
+        ):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, bool):
+                raise ValueError(f"ui.kiosk.{name} must be a bool, got {value!r}")
+        if self.watchdog_grace_s is not None:
+            _validate_finite_number(
+                self.watchdog_grace_s, "ui.kiosk.watchdog_grace_s", 0.0, 600.0
+            )
+
+    _FIELDS = (
+        "allow_keyboard",
+        "allow_pointer",
+        "enabled",
+        "show_panels",
+        "watchdog_grace_s",
+        "watchdog_reload",
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        return {
+            name: getattr(self, name)
+            for name in self._FIELDS
+            if getattr(self, name) is not None
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> KioskConfig:
+        """Create from dictionary. Unknown keys are ignored."""
+        return cls(**{name: data.get(name) for name in cls._FIELDS})
+
+
 @dataclass
 class UIConfig:
     """UI panel visibility configuration.
@@ -194,6 +271,13 @@ class UIConfig:
     show_scale_bar: Optional[bool] = None
     show_layers: Optional[bool] = None
     show_overlays: Optional[bool] = None
+    #: Unattended-display lockdown. See :class:`KioskConfig`.
+    kiosk: Optional[KioskConfig] = None
+
+    def __post_init__(self) -> None:
+        """Validate the nested block; the flags are plain optional bools."""
+        if self.kiosk is not None and not isinstance(self.kiosk, KioskConfig):
+            raise ValueError(f"ui.kiosk must be a KioskConfig, got {self.kiosk!r}")
 
     # All field names for sparse serialization (alphabetical after show_)
     _FIELDS = (
@@ -213,12 +297,20 @@ class UIConfig:
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
+        if self.kiosk is not None:
+            kiosk = self.kiosk.to_dict()
+            if kiosk:
+                result["kiosk"] = kiosk
         return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> UIConfig:
         """Create from dictionary."""
-        return cls(**{f: data.get(f) for f in cls._FIELDS})
+        raw = data.get("kiosk")
+        return cls(
+            **{f: data.get(f) for f in cls._FIELDS},
+            kiosk=KioskConfig.from_dict(raw) if isinstance(raw, dict) else None,
+        )
 
 
 @dataclass
@@ -1399,48 +1491,42 @@ class ViewerConfig:
         Returns:
             ViewerConfig instance.
         """
-        camera = None
-        if "camera" in data and isinstance(data["camera"], dict):
-            camera = CameraConfig.from_dict(data["camera"])
-
-        environment = None
-        if "environment" in data and isinstance(data["environment"], dict):
-            environment = EnvironmentConfig.from_dict(data["environment"])
-
-        ui = None
-        if "ui" in data and isinstance(data["ui"], dict):
-            ui = UIConfig.from_dict(data["ui"])
-
-        dimensions = None
-        if "dimensions" in data and isinstance(data["dimensions"], dict):
-            dimensions = DimensionsConfig.from_dict(data["dimensions"])
+        # One table rather than a branch per block. Every nested block reads
+        # the same way — "present, and a dict? then parse it" — so spelling it
+        # out six times only meant the next block added another branch to an
+        # already-over-complex function.
+        nested = {
+            name: parser(data[name])
+            for name, parser in (
+                ("camera", CameraConfig.from_dict),
+                ("environment", EnvironmentConfig.from_dict),
+                ("ui", UIConfig.from_dict),
+                ("dimensions", DimensionsConfig.from_dict),
+                ("audio", AudioConfig.from_dict),
+                ("control_panel", ControlPanelConfig.from_dict),
+            )
+            if isinstance(data.get(name), dict)
+        }
 
         animation = None
-        if "animation" in data and isinstance(data["animation"], list):
+        if isinstance(data.get("animation"), list):
             animation = [AnimationConfig.from_dict(a) for a in data["animation"]]
 
         waypoints = None
-        if "waypoints" in data and isinstance(data["waypoints"], list):
+        if isinstance(data.get("waypoints"), list):
             waypoints = [
                 Waypoint.from_dict(w) for w in data["waypoints"] if isinstance(w, dict)
             ]
 
-        audio = None
-        if "audio" in data and isinstance(data["audio"], dict):
-            audio = AudioConfig.from_dict(data["audio"])
-        control_panel = None
-        if "control_panel" in data and isinstance(data["control_panel"], dict):
-            control_panel = ControlPanelConfig.from_dict(data["control_panel"])
-
         kwargs: Dict[str, Any] = {
-            "camera": camera,
-            "environment": environment,
-            "ui": ui,
-            "dimensions": dimensions,
+            "camera": nested.get("camera"),
+            "environment": nested.get("environment"),
+            "ui": nested.get("ui"),
+            "dimensions": nested.get("dimensions"),
             "animation": animation,
             "waypoints": waypoints,
-            "audio": audio,
-            "control_panel": control_panel,
+            "audio": nested.get("audio"),
+            "control_panel": nested.get("control_panel"),
         }
 
         # Populate simple fields from data

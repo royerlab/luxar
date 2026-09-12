@@ -23,6 +23,8 @@ import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-drive
 import { ControlClient } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
+import { resolveKioskMode } from '../config/kiosk';
+import { applyKioskMode } from './app/kiosk/apply-kiosk';
 import {
   extractControlPanelConfig,
   type ControlPanelSettings,
@@ -183,6 +185,13 @@ export class LuxarApp {
    * switching scenes cannot leave the previous scene's panel authoring behind.
    */
   private controlPanelConfig: ControlPanelSettings | null = null;
+  /**
+   * Teardown for the kiosk watchdog, if one is running.
+   *
+   * Held so `switchDataset` cannot leave the previous scene's watchdog
+   * listening on a canvas whose context state it no longer describes.
+   */
+  private kioskTeardown: (() => void) | null = null;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -546,6 +555,37 @@ export class LuxarApp {
     // panel is a separate page and asks for it over the wire, so the display's
     // only job is to remember what the store said.
     this.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
+    this.applyKiosk(viewerConfig);
+  }
+
+  /**
+   * Lock the display down when the scene or the URL asks for it.
+   *
+   * Resolved from BOTH the authored `ui.kiosk` block and `?kiosk`, with the URL
+   * winning — see `config/kiosk.ts`. Re-applied on every dataset load, and the
+   * previous watchdog torn down first, so switching scenes cannot accumulate
+   * listeners on a long-running exhibit.
+   */
+  private applyKiosk(viewerConfig: ZarrViewerConfig | undefined): void {
+    this.kioskTeardown?.();
+    this.kioskTeardown = null;
+    // `this.options?` because this now runs inside the viewer-config pass,
+    // which a partially-constructed app can reach before its options are set —
+    // and a missing option means "no ?kiosk", not a crash that aborts the rest
+    // of the load (theme, dimension state, the render loop after it).
+    const mode = resolveKioskMode(viewerConfig?.ui?.kiosk, this.options?.kiosk === true);
+    if (!mode.enabled) return;
+    this.kioskTeardown = applyKioskMode(mode, {
+      setInputEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
+      setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
+      hidePanels: () => {
+        this.renderingControls.hide();
+        this.scaleBar?.hide();
+        this.layersPanel?.hide();
+        this.overlayManager?.hide();
+      },
+      canvas: this.sceneManager.renderer?.domElement,
+    });
   }
 
   /**

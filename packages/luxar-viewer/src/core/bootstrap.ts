@@ -340,6 +340,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // `?control` was absent or its value was refused.
     control: urlParams.control,
     controlToken: urlParams.controlToken,
+    kiosk: urlParams.kiosk,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
     densityGuard: urlParams.densityGuard,

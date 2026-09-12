@@ -1,0 +1,86 @@
+/**
+ * Apply a resolved {@link KioskMode} to a running viewer.
+ *
+ * Separate from `viewer-config/apply-state.ts` on purpose. That dispatcher
+ * applies what the STORE says; kiosk mode is resolved from the store *and* the
+ * URL, and the URL has to win. Folding it in would have meant handing the
+ * dispatcher a second, differently-sourced input and hoping every future
+ * reader noticed which fields came from where.
+ *
+ * Ports-injected and returning its own teardown, so the whole thing is
+ * testable without a browser and a `switchDataset` cannot leave a previous
+ * scene's watchdog running.
+ *
+ * @module core/app/kiosk/apply-kiosk
+ */
+
+import type { KioskMode } from '../../../config/kiosk';
+import { startKioskWatchdog, type KioskWatchdog } from './watchdog';
+
+/** What applying kiosk mode needs from the app. */
+export interface KioskPorts {
+  /** Enable or disable pointer/wheel/touch and keyboard handling together. */
+  setInputEnabled: (enabled: boolean) => void;
+  /**
+   * Enable or disable the CAMERA CONTROLS.
+   *
+   * Separate from `setInputEnabled`, and necessarily so: the input handler
+   * gates the viewer's own shortcuts and picking, while orbit/fly controls
+   * listen on the canvas themselves. Disabling only the first left the camera
+   * fully draggable under `?kiosk` — measured at 46x the auto-rotate drift, so
+   * a visitor could still swing the view off the tour.
+   */
+  setControlsEnabled?: (enabled: boolean) => void;
+  /** Enable or disable keyboard handling alone, when the app can separate it. */
+  setKeyboardEnabled?: (enabled: boolean) => void;
+  /** Hide every panel and the rail. */
+  hidePanels?: () => void;
+  /** The canvas, for the watchdog's context listeners. Absent in tests. */
+  canvas?: EventTarget;
+  /** Reload the page. Injected so a test never navigates. */
+  reload?: () => void;
+}
+
+/**
+ * Turn input off, as far as the app can express it.
+ *
+ * The app's switch is pointer AND keyboard together, so a mode that allows one
+ * but not the other can only be honoured when a caller supplies the separate
+ * keyboard port. Without it, asking for a partial lockdown would silently
+ * leave BOTH on, which is the wrong way to fail for a public display — so the
+ * combined switch goes off if either is disallowed.
+ */
+function applyInputPermissions(mode: KioskMode, ports: KioskPorts): void {
+  const mixed = mode.allowPointer !== mode.allowKeyboard;
+  // The camera controls follow the POINTER permission alone: they are not a
+  // keyboard surface, and a display that allows keys but not dragging is a
+  // coherent thing to ask for.
+  if (!mode.allowPointer) ports.setControlsEnabled?.(false);
+  if (mixed && ports.setKeyboardEnabled) {
+    ports.setInputEnabled(mode.allowPointer);
+    ports.setKeyboardEnabled(mode.allowKeyboard);
+    return;
+  }
+  if (!mode.allowPointer || !mode.allowKeyboard) ports.setInputEnabled(false);
+}
+
+/**
+ * Apply `mode`. Returns a teardown that undoes the watchdog.
+ *
+ * A no-op when kiosk mode is off — including the teardown — so a caller can
+ * apply unconditionally and not branch.
+ */
+export function applyKioskMode(mode: KioskMode, ports: KioskPorts): () => void {
+  if (!mode.enabled) return () => undefined;
+
+  applyInputPermissions(mode, ports);
+  if (!mode.showPanels) ports.hidePanels?.();
+
+  if (!mode.watchdogReload || ports.canvas === undefined) return () => undefined;
+  const watchdog: KioskWatchdog = startKioskWatchdog({
+    canvas: ports.canvas,
+    graceS: mode.watchdogGraceS,
+    reload: ports.reload ?? (() => window.location.reload()),
+  });
+  return () => watchdog.dispose();
+}

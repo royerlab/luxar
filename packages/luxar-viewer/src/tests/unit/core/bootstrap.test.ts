@@ -100,6 +100,7 @@ const EMPTY_PARAMS: UrlParams = {
   controlAllowCrossOrigin: false,
   panel: null,
   debug: false,
+  kiosk: false,
   noCache: false,
   noSliceCache: false,
   noOpfs: false,

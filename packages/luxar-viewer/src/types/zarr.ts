@@ -5,6 +5,8 @@
  * eliminating the need for 'as any' type assertions throughout the codebase.
  */
 
+import type { ZarrKioskConfig } from '../config/kiosk';
+
 /**
  * Per-dimension affine transform for continuous/discrete dimensions.
  * Applied as: effective_value = scale * original_value + offset
@@ -252,6 +254,10 @@ export interface ZarrViewerConfig {
     show_scale_bar?: boolean;
     show_layers?: boolean;
     show_overlays?: boolean;
+    // Unattended-display lockdown. Resolved (with `?kiosk`) by
+    // `config/kiosk.ts::resolveKioskMode`, which validates the shape — so
+    // this mirrors the writer's field names and nothing more.
+    kiosk?: ZarrKioskConfig;
   };
 
   // Theme
