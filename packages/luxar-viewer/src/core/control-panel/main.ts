@@ -163,6 +163,7 @@ function startCustomPanel(context: StatusHandlerContext): boolean {
 
 function createStatusHandler(context: StatusHandlerContext): (status: ControllerStatus) => void {
   return (status) => {
+    if (status === 'connecting') return;
     if (status === 'open') {
       context.cancelChapterRetry();
       if (startCustomPanel(context)) return;

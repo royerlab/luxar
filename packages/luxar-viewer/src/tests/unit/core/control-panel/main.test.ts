@@ -152,6 +152,17 @@ describe('control-panel bootstrap', () => {
     expect(context.socket.notify).toHaveBeenCalledWith('setDimensionValue', [3, 0]);
   });
 
+  it('keeps the connecting message while a socket dial is in progress', () => {
+    const context = harness();
+    expect(context.panel.showMessage).toHaveBeenLastCalledWith(
+      'Connecting',
+      'Looking for the control hub...'
+    );
+
+    context.socketPorts.onStatus?.('connecting');
+    expect(context.panel.showMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('retries a missing viewer with bounded backoff until chapters load', async () => {
     vi.useFakeTimers();
     const context = harness();
