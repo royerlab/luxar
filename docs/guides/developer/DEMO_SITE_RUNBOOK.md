@@ -1029,7 +1029,7 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   against the Functions request cap. Not animated: smaller is a pure win.
 - `optimise` is per-array and hidden-dim blind; it cannot infer playback and
   ladder-cache policy, so the operator still decides per store.
-- The planner stays per-array blind by design; what is missing is a warn-only
+- The ``optimise`` pass stays per-array blind by design; what is missing is a warn-only
   guard on top of it, and #2686 landed boundary prefetch in the viewer rather
   than that guard. So the gate described next is a spec, not current
   behaviour: gate it on `viewer_config.animation` (`playing: true`), not on
