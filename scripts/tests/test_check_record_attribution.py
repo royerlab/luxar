@@ -101,6 +101,12 @@ NEUROMAST_BULLET = (
 CORRECT_FRAMINGS = (
     "The imaging instrument is described in Royer et al., Nature Biotechnology "
     "34 (2016).",
+    "The imaging instrument used for this dataset is described in Royer et al.",
+    "The imaging microscope used throughout the experiment is described in "
+    "Royer et al.",
+    "The imaging method used for every timepoint here is described in Royer et al.",
+    "The imaging protocol used for these embryos is described in Royer et al.",
+    "The imaging pipeline that produced these splats is described in Royer et al.",
     "The microscope used for this imaging is described in Royer et al., Nature "
     "Biotechnology 34 (2016).",
     "Imaging method described in Royer et al., Nature Biotechnology 34 (2016).",
@@ -113,6 +119,7 @@ CORRECT_FRAMINGS = (
     "Imaging performed on the SiMView instrument described in Royer et al. (2016).",
     "The imaging has not been published in any article; the instrument is "
     "described in Royer et al.",
+    "The imaging has not under any circumstances ever been published in any article.",
     "The imaging data are not published in any paper.",
     # The archive, not the imaging, is the thing that was published.
     "The imaging was fitted and published as a single 4D archive.",

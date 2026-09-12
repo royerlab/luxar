@@ -72,11 +72,12 @@ claim is not seen when the text between "imaging" and the publication verb
   which is what keeps "Imaging was done; the method is described in X" clean,
   at the cost of not seeing a claim written across an inline genotype like
   ``w; His2Av::mRFP1; +``;
-* ends with a replacement head noun (instrument, microscope, method, protocol,
-  pipeline, technique, setup, apparatus, software), because then that noun and
-  not the imaging is what the publication covers;
-* ends with "not" or "never" and an optional short tail, because a denial is
-  the opposite of the claim;
+* contains a replacement head noun (instrument, microscope, method, protocol,
+  pipeline, technique, setup, apparatus, software) that runs into the
+  publication verb with no intervening comma, because then that noun and not
+  the imaging is what the publication covers;
+* contains "not" or "never" that runs into the publication verb with no
+  intervening comma, because a denial is the opposite of the claim;
 * ends in a manner adverbial ("... as previously described in ...");
 
 or when the imaging is demoted to the object of a preposition ("details *of the
@@ -100,10 +101,11 @@ SNAPSHOT_DIR = REPO_ROOT / "scripts/zenodo_record_text"
 
 # The imaging has to be the subject. The manifest spells this "the imaging
 # itself is unpublished" (x3); record text uses the bare "This imaging is
-# unpublished", and a reword to "has never been separately published" is just as
-# plausible, so the negated-publication shapes are matched too. This pattern is
-# applied to record bullets as well as to manifest attributions, so a one-sided
-# reword on either side cannot quietly drop a dataset out of the audit.
+# unpublished"; adjective-first "unpublished imaging" and a reword to "has
+# never been separately published" are just as plausible, so both shapes are
+# matched too. This pattern is applied to record bullets as well as to manifest
+# attributions, so a one-sided reword cannot quietly drop a dataset out of the
+# audit.
 _UNPUBLISHED_IMAGING = re.compile(
     r"\b(?:"
     r"unpublished\s+imaging"
@@ -141,7 +143,7 @@ _PUBLICATION_DESCRIBES_IMAGING = re.compile(
 # processing", "with no deconvolution nor denoising") and suppressed real claims.
 # "(no. 3 of the series)" stays out of scope regardless - the abbreviation's full
 # stop bounds the clause, which is a different rule.
-_NEGATED = re.compile(r"\b(?:not|never)\b[^,;]{0,24}$", re.IGNORECASE)
+_NEGATED = re.compile(r"\b(?:not|never)\b[^,;]*$", re.IGNORECASE)
 # A replacement HEAD NOUN: something other than the imaging is what the
 # publication covers. These are the maintainer's correct framings, and they must
 # never be flagged. Artefact nouns (archive, record, paper, fit, splat) are
@@ -151,7 +153,7 @@ _NEGATED = re.compile(r"\b(?:not|never)\b[^,;]{0,24}$", re.IGNORECASE)
 # removing them left the live report byte-identical.
 _INTERVENING_SUBJECT = re.compile(
     r"\b(?:instruments?|microscopes?|microscopy|methods?|methodology|protocols?"
-    r"|pipelines?|techniques?|setup|apparatus|software)\b[^,;]{0,24}$",
+    r"|pipelines?|techniques?|setup|apparatus|software)\b[^,;]*$",
     re.IGNORECASE,
 )
 # "Imaging was carried out as described in Royer et al.", "Imaging was performed
