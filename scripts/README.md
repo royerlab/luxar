@@ -35,11 +35,11 @@ scripts/
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
 | `gen_zenodo_records.py` | Generate Zenodo record descriptions from the manifest and committed `demo_archive_characteristics.json`; `--refresh` updates measurements, optionally preferring a namespaced `--archives-root`, exits 1 after writing if a pinned fit hashes but cannot be parsed, and warns without failing when fit bytes cannot be opened for hashing because those bytes cannot be checked against the pin; `--check` lists incomplete rows and fails on a pinned fit that is present but unreadable (never contacts Zenodo) |
-| `zenodo_record_text/capture.py` | Capture the live Zenodo descriptions and selected metadata into the repository; read-only against Zenodo |
+| `zenodo_record_text/capture.py` | Capture the live Zenodo descriptions and selected metadata into the repository, or compare the snapshots with public records via `--check`; read-only against Zenodo |
 | `zenodo_migration_audit.py` | Audit migration readiness offline by default; `--live` with `ZENODO_TOKEN` also compares manifest pins with Zenodo depositions, and `make check-zenodo-live` is the lean report-only entry point |
 | `verify_cold_fetch.py` | Cold-fetch every hosted demo dataset with the cache and in-repo payload hidden; `make check-cold-fetch` is the opt-in pre-removal gate |
 | `gallery/verify_media.py` | Validate the root README's content-addressed gallery manifest and fetch every hosted object to compare status, headers, byte count, and SHA-256; `make check-gallery-media` is the opt-in audit |
-| `run_external_reference_audits.py` | Run the documentation, demo click-through, live Zenodo-pin, and hosted-gallery-media audits independently; normalize them to PASS/NOTICE/WARNING/ERROR and write a non-gating GitHub job summary |
+| `run_external_reference_audits.py` | Run the documentation, demo click-through, Zenodo snapshot, live Zenodo-pin, and hosted-gallery-media audits independently; normalize them to PASS/NOTICE/WARNING/ERROR and write a non-gating GitHub job summary |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |

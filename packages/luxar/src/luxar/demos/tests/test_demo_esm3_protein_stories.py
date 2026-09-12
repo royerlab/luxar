@@ -377,6 +377,40 @@ def test_story_narration_is_the_short_spoken_script_not_the_panel() -> None:
     assert story_narration(_story()) == "Test story. why?"
 
 
+def test_auto_dolly_is_authored_and_gated_on_the_turntable() -> None:
+    """The dolly breathes under the spin, and stops when the spin does.
+
+    Asserted on the source because this demo builds its `ViewerConfig` inside
+    the scene build, which needs the ~50 MB landscape cache. `--no-auto-rotate`
+    exists to ask for a still camera, so a scene that stopped rotating but kept
+    sliding in and out would be a worse answer than either.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(demo))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "ViewerConfig"
+    ]
+    assert len(calls) == 1, "the demo authors exactly one ViewerConfig"
+    keywords = {kw.arg: kw.value for kw in calls[0].keywords if kw.arg is not None}
+
+    assert keywords["auto_dolly"].id == "auto_rotate"  # type: ignore[union-attr]
+    # The tuned kiosk values, gated so they vanish with the turntable.
+    expected = {"auto_dolly_amplitude_percent": 95.0, "auto_dolly_period": 58.5}
+    for name, value in expected.items():
+        gated = keywords[name]
+        assert isinstance(gated, ast.IfExp), f"{name} must be gated on auto_rotate"
+        assert gated.test.id == "auto_rotate"  # type: ignore[union-attr]
+        assert gated.body.value == value  # type: ignore[union-attr]
+        # The `else` branch must be None, not 0: an omitted field keeps the
+        # viewer's own default, while a zero would author a degenerate one.
+        assert gated.orelse.value is None  # type: ignore[union-attr]
+
+
 def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
     keys = [s.key for s in STORIES]
     assert len(keys) == len(set(keys)) == 10

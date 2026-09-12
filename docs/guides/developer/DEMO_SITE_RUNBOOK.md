@@ -1029,6 +1029,40 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   against the Functions request cap. Not animated: smaller is a pure win.
 - `optimise` is per-array and hidden-dim blind; it cannot infer playback and
   ladder-cache policy, so the operator still decides per store.
+- The planner stays per-array blind by design; what is missing is a warn-only
+  guard on top of it, and #2686 landed boundary prefetch in the viewer rather
+  than that guard. So the gate described next is a spec, not current
+  behaviour: gate it on `viewer_config.animation` (`playing: true`), not on
+  "has a hidden axis" — a keypress-navigated axis is the refine case. The
+  measurements after it hold either way. A whole array in ONE chunk is
+  benign (no boundary to cross); the stall shape is many chunks of several
+  frames. Read the atom's hidden-axis span from `chunk_bounds` — a
+  store with one NODE per hidden coordinate (hilbert_curve_3d) misreads when
+  the scene range is divided by chunk count. Wave 2026-09-11:
+  `collision_animated` plays at 1.8 frames/chunk on `hosting`; `cloud` also
+  starts with playback enabled but has not yet been measured on its published
+  layout. Ocean's tentacles would be 28 frames/chunk on `archive` if that axis
+  were ever played.
+- For a TIME-PARTED store (h2afva) the profile rationale is request count, not
+  rung residency: each part is one frame loaded whole, so there is no
+  cross-timepoint rung to keep warm. Measured on the published `archive` layout
+  (2026-09-11, `chunk_layout` read first): 127,192 chunks at the writer default
+  -> 3,793 on `archive` (33.5x fewer); a coarsest-rung traverse of all 51 parts
+  is **255 requests** (5 chunks per part), the finest rung 1,020. The 30 B/splat
+  one-array-per-rung estimate (~1,400) was 5.5x pessimistic — a rung carries
+  five arrays and `archive` packs them far better than a per-array byte
+  calculation predicts — so treat that estimate as a safe go/no-go upper bound,
+  never as the expected cost. (A first "measurement" of 1,326 on this store was
+  the writer default, not `archive`.)
+- Read `chunk_layout` BEFORE measuring chunk cost, and check it on EVERY store
+  in a wave, not a sample: its absence is the only reliable sign that a scene
+  was never optimised, and stores built on another machine by another operator
+  are exactly the ones that slip through. A chunk-cost number without the
+  layout it was measured on is not a number.
+- Resolve demo ids versus store names through §8.1 before using any operator
+  list. Gallery capture selectors accept demo ids and only warn on unmatched
+  store names, so a mis-keyed pass can exit 0 with placeholder tiles and still
+  satisfy a tile-count guard.
 
 ### 3.22 Guard the artefact you ship, not only the inputs you fed it
 
@@ -1363,7 +1397,7 @@ change what the earlier sections tell you to do.
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
 - Gallery: 90 tiles, 90 stills, 88 videos. Two demos are deliberately
   still-only (§8.2).
-- 98 stable `/d/` routes (§8.1.1).
+- 95 stable `/d/` routes (§8.1.1).
 
 #### 8.1.1 Stable per-demo routes — `/d/<demo-key>`
 
@@ -1386,10 +1420,22 @@ python scripts/gallery/gen_redirects.py \
 
 Two things it handles that a reimplementation gets wrong:
 
-- **A demo key is not always its store name** — 8 of 90 manifest entries differ
-  (`cosmicflows_laniakea` → `cosmicflows_laniakea_full`, `nd_transforms` →
-  `nd_transforms_bench`, and six more). Take the store from the entry's
-  `dataset`, never from its `id`. Routes are emitted for both spellings.
+- **A demo key is not always its store name** — 7 of 88 manifest entries differ:
+  `cosmicflows_laniakea` → `cosmicflows_laniakea_full`; `nd_transforms` →
+  `nd_transforms_bench`; `ppi_flow_field` → `ppi_flow_field_full`;
+  `particle_collision_animated` → `collision_animated`;
+  `zebrahub_velocity_streamlines` →
+  `zebrahub_velocity_streamlines_standard`; `gsplats_interop_observatory` →
+  `gsplats_interop_observatory_rubin`; and `gsplats_interop_spz_scaniverse` →
+  `gsplats_interop_spz_hornedlizard`. The two interop demos also emit
+  `gsplats_interop_observatory_gemini-south` and
+  `gsplats_interop_spz_racoonfamily`, respectively; those secondary outputs
+  have no manifest entry and therefore no stable route, but still belong in
+  operator upload/rebuild lists. The retired `network_performance` demo likewise
+  served `performance_test`. Gallery capture/generation selectors use demo ids;
+  served R2 directories and operator upload/rebuild lists use store names. This
+  generator takes the store from the manifest entry's `dataset` field, never
+  its `id`, and emits routes for both spellings.
 - **`--check-contract`** fails the build naming any README-linked key without a
   route. The root README links 29 tile titles at these routes, so a key rename
   is a **breaking change**. If a rename is genuinely needed, add an alias route

@@ -337,15 +337,19 @@ luxar optimise arbitrary.zarr out.zarr --generic           # a plain (non-Luxar)
 # (or carrying no `selector`) gets screen-occupancy-halved thresholds and a
 # `screen-area` stamp; the fills-screen anchor only under a REAL (>1 part)
 # partition. An EXPLICIT opt-in and nothing else may trigger it: an authored
-# `coverage_fractions=[...]` list and a legacy derived one are indistinguishable
-# on disk, so this may override a deliberate choice — hence the printed old→new
-# audit line, `--dry-run`, and `--group`. A group already on `screen-area` is
-# skipped, so a second run changes nothing, `content_hash` included. Exits 1 when
-# a ladder was left alone (unsupported selector → `gsplat migrate-format` first;
+# `coverage_fractions=[...]` list and a derived one are indistinguishable on
+# disk, including a hand-authored ladder already stamped `screen-area`, so this
+# may override a deliberate choice — hence the printed old→new audit line,
+# `--dry-run`, and `--group`. A group already on `screen-area` is
+# skipped by default, so a second run changes nothing, `content_hash` included;
+# `--anchor` explicitly re-derives whole-object ladders, including legacy ones
+# being migrated, while partition-bound ladders stay at `1.0`. Exits 1 when a
+# ladder was left alone (unsupported selector → `gsplat migrate-format` first;
 # unresolvable finest element count).
 luxar restamp-lod scene.luxar.zarr                         # every legacy ladder
 luxar restamp-lod scene.luxar.zarr --dry-run               # report the old→new ladders
 luxar restamp-lod scene.luxar.zarr --group tiled/part_0    # one ladder (repeatable)
+luxar restamp-lod scene.luxar.zarr --anchor 0.25           # re-anchor whole-object ladders
 luxar export scene.luxar.zarr -o my_export/             # Export scene + viewer as standalone offline folder
 luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in browser
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export

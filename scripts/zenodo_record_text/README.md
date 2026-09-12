@@ -1,6 +1,8 @@
 # Zenodo record descriptions, as published
 
-The four Zenodo record descriptions, captured verbatim from the live drafts.
+The four Zenodo record descriptions, captured verbatim from the live records.
+They are stored byte-for-byte as the API returns them, including markup and line
+wrapping; never reformat these files, only re-capture them.
 
 **These files are the authoritative text, not `gen_zenodo_records.py`'s output.**
 The published descriptions are hand-maintained: they carry framing, provenance
@@ -12,7 +14,7 @@ They live here because they lived nowhere else. Until 2026-09-02 the only copy
 was on Zenodo, so an accidental overwrite — or a well-meaning regeneration —
 would have destroyed prose that took real work, with no diff to recover it from.
 `records.json` records the field values alongside a `description_sha256`, so
-drift between this directory and the live drafts is detectable rather than
+drift between this directory and the live records is detectable rather than
 invisible.
 
 ## Refreshing after an edit on Zenodo
@@ -21,6 +23,14 @@ Descriptions are edited on Zenodo by the maintainer, so this directory follows
 rather than leads. Re-capture with a token in `ZENODO_TOKEN`:
 
     python3 scripts/zenodo_record_text/capture.py
+
+Check for drift without a token or modifying the snapshots:
+
+    python3 scripts/zenodo_record_text/capture.py --check
+
+The check compares the public record's `modified` timestamp with the captured
+deposition timestamp; they coincide without an open edit, so a timestamp-only
+mismatch can indicate an unpublished edit rather than changed record text.
 
 Commit the result. A changed `description_sha256` with no accompanying commit
 means someone edited a record and the repo has not caught up.
