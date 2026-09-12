@@ -1014,9 +1014,9 @@ direction (#2686). Two things were NOT the cause, and the first diagnosis
 wrongly blamed one of them: the ordering is already slice-major (compound
 ordering, `vertex_ordering.slice_dims == [3]`, every atom inside one frame), and
 the old prefetcher did run — only one step ahead.
-The added lead is bounded by one chunk of the shortest-stride array: about two
-frames at 1 MB here, but effectively zero when that chunk holds at most one
-frame, so the profile choice still governs playback.
+For this node the mean added lead is about 2.9 frames with ``archive``, 1.2
+frames with ``hosting``, and 1.0 frame with ``local``; the profile choice still
+governs how much time the prefetch has to hide each request.
 
 Rules that fall out, alongside 3.17 and the #2377 residency finding:
 
