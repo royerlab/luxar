@@ -1110,6 +1110,7 @@ def make_substitutive_lod(
                 "stop_reason": "input_too_small",
             }
             _stamp_quality(stop_stats, current)
+            _stamp_level_footprint(stop_stats, current)
             sub_levels.append(
                 _pack_level(
                     current,

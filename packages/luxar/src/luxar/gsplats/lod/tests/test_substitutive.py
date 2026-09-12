@@ -630,6 +630,24 @@ class TestApiContract:
         assert finest["median_footprint"] == pytest.approx(1.0)
         assert finest["footprint_dims"] == [0, 1, 2]
 
+    def test_input_too_small_terminal_level_keeps_footprint_stamp(self):
+        data = _make_isotropic_3d(n=8, seed=1)
+        pyramid = make_substitutive_lod(
+            data,
+            compression_factor=8,
+            levels=2,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+
+        terminal = pyramid.substitutive_levels[-1].stats
+        assert terminal["stop_reason"] == "input_too_small"
+        assert terminal["median_footprint"] > 0
+        assert terminal["footprint_dims"] == [0, 1, 2]
+
     def test_stats_recorded(self):
         data = _make_isotropic_3d(n=16, seed=0)
         pyramid = make_substitutive_lod(
