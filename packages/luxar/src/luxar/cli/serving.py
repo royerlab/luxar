@@ -18,6 +18,7 @@ from __future__ import annotations
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
+from ipaddress import IPv4Address, IPv6Address, ip_address
 from pathlib import Path
 from typing import (
     Any,
@@ -47,6 +48,7 @@ from .network_simulation import (
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
     _LOCAL_CORS_ORIGIN_REGEX,
+    ALL_INTERFACES_HOSTS,
     advertised_host,
     append_title_param,
     authority_hostname,
@@ -153,12 +155,12 @@ class _SameHostCORSMiddleware(CORSMiddleware):
     against the ``Host`` the request actually carried needs no guess at all,
     and keeps working for an address added after startup.
 
-    Why it is not a widening: CORS restrains browsers only. Anything that can
-    reach a non-loopback bind can already read the data without a browser, so
-    this grants a page on the kiosk's own host exactly what ``curl`` has. To
-    forge a match an attacker would have to serve their page FROM the kiosk's
-    address, which means already being on the machine. ``--cors-origin`` stays
-    available to name origins exactly.
+    The automatic allowance is IP-literal only. Accepting an arbitrary hostname
+    from ``Host`` would make DNS rebinding look same-host: an attacker-controlled
+    name can resolve to the kiosk after serving the page. A concrete IP bind is
+    compared directly; a wildcard bind accepts whichever IP-literal address the
+    request actually reached. Hostname deployments use ``--cors-origin`` to name
+    their viewer origin explicitly.
 
     The ``Host`` is carried in a :class:`~contextvars.ContextVar` because
     Starlette's ``is_allowed_origin`` hook receives only the origin, while
@@ -171,6 +173,18 @@ class _SameHostCORSMiddleware(CORSMiddleware):
     _request_host: ClassVar[ContextVar[Optional[str]]] = ContextVar(
         "luxar_cors_request_host", default=None
     )
+
+    def __init__(self, app: ASGIApp, *, bind_host: str, **kwargs: Any) -> None:
+        super().__init__(app, **kwargs)
+        self._wildcard_bind = bind_host.strip().lower() in ALL_INTERFACES_HOSTS
+        self._bound_ip = self._parse_ip(bind_host)
+
+    @staticmethod
+    def _parse_ip(host: str) -> IPv4Address | IPv6Address | None:
+        try:
+            return ip_address(host.strip().strip("[]"))
+        except ValueError:
+            return None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Record this request's ``Host`` for the duration of the request."""
@@ -188,12 +202,13 @@ class _SameHostCORSMiddleware(CORSMiddleware):
         host_header = self._request_host.get()
         if not host_header:
             return False
-        # Port excluded on purpose: the two servers are different ports of the
-        # same host. `origin_hostname` documents the contrast with the control
-        # hub, which compares WITH the port. Both sides fail closed on a
-        # malformed header, so neither can widen the allowance.
-        request_host = authority_hostname(host_header)
-        return bool(request_host) and origin_hostname(origin) == request_host
+        origin_ip = self._parse_ip(origin_hostname(origin))
+        if origin_ip is None:
+            return False
+        if not self._wildcard_bind:
+            return self._bound_ip is not None and origin_ip == self._bound_ip
+        request_ip = self._parse_ip(authority_hostname(host_header))
+        return request_ip is not None and origin_ip == request_ip
 
 
 def _add_cors(
@@ -215,17 +230,17 @@ def _add_cors(
             ``"*"`` allows any origin without credentials. Comma-separated
             explicit origins are also accepted.
         bind_host: The address this server is bound to. Under
-            ``cors_origin="local"`` a non-loopback bind also allows that
-            address as an origin on any port — see
-            :func:`~luxar.cli.utils.local_cors_origin_regex` for why that is
-            required rather than generous. Omitted (or loopback) keeps the
+            ``cors_origin="local"`` a non-loopback IP bind also allows that
+            address as an origin on any port. A wildcard bind accepts any
+            IP-literal address it actually receives; hostname binds require an
+            explicit ``cors_origin``. Omitted (or loopback) keeps the
             loopback-only default.
     """
     origin = cors_origin.strip() or _DEFAULT_CORS_ORIGIN
     allow_origins: list[str]
     allow_origin_regex: str | None = None
     allow_credentials = True
-    middleware_class: type[CORSMiddleware] = CORSMiddleware
+    same_host_bind: str | None = None
 
     if origin == _DEFAULT_CORS_ORIGIN:
         allow_origins = []
@@ -233,22 +248,34 @@ def _add_cors(
         # A loopback bind keeps the plain middleware: its Host is already in
         # the regex, so the same-host rule would add nothing.
         if not is_loopback_host(bind_host):
-            middleware_class = _SameHostCORSMiddleware
+            same_host_bind = bind_host or ""
     elif origin == "*":
         allow_origins = ["*"]
         allow_credentials = False
     else:
         allow_origins = [item.strip() for item in origin.split(",") if item.strip()]
 
-    api.add_middleware(
-        middleware_class,
-        allow_origins=allow_origins,
-        allow_origin_regex=allow_origin_regex,
-        allow_credentials=allow_credentials,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "ETag"],
-    )
+    if same_host_bind is not None:
+        api.add_middleware(
+            cast(Any, _SameHostCORSMiddleware),
+            bind_host=same_host_bind,
+            allow_origins=allow_origins,
+            allow_origin_regex=allow_origin_regex,
+            allow_credentials=allow_credentials,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "ETag"],
+        )
+    else:
+        api.add_middleware(
+            CORSMiddleware,
+            allow_origins=allow_origins,
+            allow_origin_regex=allow_origin_regex,
+            allow_credentials=allow_credentials,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "ETag"],
+        )
 
 
 # Genuine loopback addresses only. The all-interfaces sentinel (0.0.0.0 / ::)

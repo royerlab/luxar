@@ -91,12 +91,36 @@ class TestTheKioskPairing:
                 origin=f"http://{address}:5173",
             ), address
 
-    def test_a_hostname_bind_works_the_same_way(self, served: Path) -> None:
-        assert _allowed(
+    def test_a_hostname_bind_needs_an_explicit_origin(self, served: Path) -> None:
+        assert not _allowed(
             served,
             bind="kiosk.local",
             host="kiosk.local:8000",
             origin="http://kiosk.local:5173",
+        )
+
+    def test_a_concrete_ip_bind_uses_the_bound_address(self, served: Path) -> None:
+        assert _allowed(
+            served,
+            bind="10.0.0.55",
+            host="10.0.0.55:8000",
+            origin="http://10.0.0.55:5173",
+        )
+        assert not _allowed(
+            served,
+            bind="10.0.0.55",
+            host="10.0.0.146:8000",
+            origin="http://10.0.0.146:5173",
+        )
+
+    def test_a_rebound_dns_name_is_not_treated_as_the_bound_host(
+        self, served: Path
+    ) -> None:
+        assert not _allowed(
+            served,
+            bind="0.0.0.0",  # nosec B104 - a test argument, not a bind
+            host="evil.example:8000",
+            origin="http://evil.example",
         )
 
     @pytest.mark.parametrize(
