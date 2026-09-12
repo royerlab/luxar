@@ -81,6 +81,10 @@ function boundedNumber(value: unknown, min: number, max: number): number | undef
 export function sanitizeAuthorStylesheet(css: string): string {
   return (
     css
+      // Strip quoted remote URLs independently of their surrounding CSS
+      // function. This catches image-set() and malformed-but-parseable url()
+      // spellings; the page CSP remains the actual fetch boundary.
+      .replace(/(['"])(?:https?:)?\/\/[^'"]*\1/gi, 'none')
       // Remote url() FIRST, and the order is load-bearing: it neutralises the
       // URL inside any `@import` the next pass somehow fails to remove, so a
       // survivor becomes `@import none` and fetches nothing. Quoted or bare;
@@ -173,4 +177,18 @@ export function extractControlPanelConfig(raw: unknown): ControlPanelSettings | 
   const chapters = extractChapters(raw.chapters);
   if (chapters !== undefined) settings.chapters = chapters;
   return Object.keys(settings).length > 0 ? settings : null;
+}
+
+/** Re-validate the camelCase settings copy returned over the control wire. */
+export function validateControlPanelSettings(raw: unknown): ControlPanelSettings | null {
+  if (!isPlainObject(raw)) return null;
+  return extractControlPanelConfig({
+    title: raw.title,
+    subtitle: raw.subtitle,
+    chapter_dimension: raw.chapterDimension,
+    columns: raw.columns,
+    idle_reset_s: raw.idleResetS,
+    stylesheet: raw.stylesheet,
+    chapters: raw.chapters,
+  });
 }

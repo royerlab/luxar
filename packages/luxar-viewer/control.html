@@ -2,6 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'"
+    />
     <!-- No user scaling: this is a fixed menu on a plinth, and an accidental
          pinch is pure confusion for the next visitor. -->
     <meta

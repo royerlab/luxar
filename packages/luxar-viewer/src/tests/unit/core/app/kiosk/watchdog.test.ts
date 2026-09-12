@@ -30,7 +30,7 @@ function harness(graceS = 10) {
       return handle;
     },
     clearTimer: (handle) => {
-      timers.delete(handle);
+      if (typeof handle === 'number') timers.delete(handle);
     },
   });
   return {
@@ -113,7 +113,8 @@ describe('startKioskWatchdog', () => {
 describe('applyKioskMode', () => {
   function ports() {
     return {
-      setInputEnabled: vi.fn(),
+      setKeyboardEnabled: vi.fn(),
+      setControlsEnabled: vi.fn(),
       hidePanels: vi.fn(),
       reload: vi.fn(),
     };
@@ -122,7 +123,8 @@ describe('applyKioskMode', () => {
   it('does nothing at all when kiosk mode is off', () => {
     const p = ports();
     const teardown = applyKioskMode(KIOSK_MODE_OFF, p);
-    expect(p.setInputEnabled).not.toHaveBeenCalled();
+    expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
+    expect(p.setControlsEnabled).not.toHaveBeenCalled();
     expect(p.hidePanels).not.toHaveBeenCalled();
     // The teardown must be safe to call unconditionally.
     expect(() => teardown()).not.toThrow();
@@ -131,7 +133,8 @@ describe('applyKioskMode', () => {
   it('disables input and hides panels when locked down', () => {
     const p = ports();
     applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
-    expect(p.setInputEnabled).toHaveBeenCalledWith(false);
+    expect(p.setKeyboardEnabled).toHaveBeenCalledWith(false);
+    expect(p.setControlsEnabled).toHaveBeenCalledWith(false);
     expect(p.hidePanels).toHaveBeenCalledTimes(1);
   });
 
@@ -142,8 +145,29 @@ describe('applyKioskMode', () => {
       resolveKioskMode({ enabled: true, allow_pointer: true, allow_keyboard: true }, false),
       p
     );
-    expect(p.setInputEnabled).not.toHaveBeenCalled();
+    expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
+    expect(p.setControlsEnabled).not.toHaveBeenCalled();
     expect(p.hidePanels).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps pointer controls live when only the keyboard is locked', () => {
+    const p = ports();
+    applyKioskMode(
+      resolveKioskMode({ enabled: true, allow_pointer: true, allow_keyboard: false }, false),
+      p
+    );
+    expect(p.setKeyboardEnabled).toHaveBeenCalledWith(false);
+    expect(p.setControlsEnabled).not.toHaveBeenCalled();
+  });
+
+  it('keeps keyboard input live when only pointer controls are locked', () => {
+    const p = ports();
+    applyKioskMode(
+      resolveKioskMode({ enabled: true, allow_pointer: false, allow_keyboard: true }, false),
+      p
+    );
+    expect(p.setControlsEnabled).toHaveBeenCalledWith(false);
+    expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
   });
 
   it('keeps panels when the author asked for them', () => {
@@ -164,16 +188,17 @@ describe('applyKioskMode', () => {
   });
 
   it('wires the watchdog to the canvas when asked', () => {
+    vi.useFakeTimers();
     const p = ports();
     const canvas = new EventTarget();
     const teardown = applyKioskMode(
       resolveKioskMode({ enabled: true, watchdog_reload: true, watchdog_grace_s: 0 }, false),
       { ...p, canvas }
     );
-    // grace 0 means the timer is scheduled with a zero delay; assert it was
-    // armed rather than racing a real timer.
     canvas.dispatchEvent(new Event('webglcontextlost'));
+    expect(vi.getTimerCount()).toBe(1);
     teardown();
+    expect(vi.getTimerCount()).toBe(0);
     expect(p.reload).not.toHaveBeenCalled();
   });
 

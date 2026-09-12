@@ -19,8 +19,8 @@ import { startKioskWatchdog, type KioskWatchdog } from './watchdog';
 
 /** What applying kiosk mode needs from the app. */
 export interface KioskPorts {
-  /** Enable or disable pointer/wheel/touch and keyboard handling together. */
-  setInputEnabled: (enabled: boolean) => void;
+  /** Enable or disable routed keyboard handling. */
+  setKeyboardEnabled: (enabled: boolean) => void;
   /**
    * Enable or disable the CAMERA CONTROLS.
    *
@@ -31,8 +31,6 @@ export interface KioskPorts {
    * a visitor could still swing the view off the tour.
    */
   setControlsEnabled?: (enabled: boolean) => void;
-  /** Enable or disable keyboard handling alone, when the app can separate it. */
-  setKeyboardEnabled?: (enabled: boolean) => void;
   /** Hide every panel and the rail. */
   hidePanels?: () => void;
   /** The canvas, for the watchdog's context listeners. Absent in tests. */
@@ -42,26 +40,11 @@ export interface KioskPorts {
 }
 
 /**
- * Turn input off, as far as the app can express it.
- *
- * The app's switch is pointer AND keyboard together, so a mode that allows one
- * but not the other can only be honoured when a caller supplies the separate
- * keyboard port. Without it, asking for a partial lockdown would silently
- * leave BOTH on, which is the wrong way to fail for a public display — so the
- * combined switch goes off if either is disallowed.
+ * Apply pointer and keyboard permissions independently.
  */
 function applyInputPermissions(mode: KioskMode, ports: KioskPorts): void {
-  const mixed = mode.allowPointer !== mode.allowKeyboard;
-  // The camera controls follow the POINTER permission alone: they are not a
-  // keyboard surface, and a display that allows keys but not dragging is a
-  // coherent thing to ask for.
   if (!mode.allowPointer) ports.setControlsEnabled?.(false);
-  if (mixed && ports.setKeyboardEnabled) {
-    ports.setInputEnabled(mode.allowPointer);
-    ports.setKeyboardEnabled(mode.allowKeyboard);
-    return;
-  }
-  if (!mode.allowPointer || !mode.allowKeyboard) ports.setInputEnabled(false);
+  if (!mode.allowKeyboard) ports.setKeyboardEnabled(false);
 }
 
 /**

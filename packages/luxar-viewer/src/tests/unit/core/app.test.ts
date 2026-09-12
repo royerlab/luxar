@@ -190,6 +190,7 @@ describe('LuxarApp', () => {
       camera: { position: { x: 1, y: 2, z: 3 }, up: { x: 0, y: 1, z: 0 }, near: 0.1, far: 100 },
       // The ControlsManager surface the embedder hooks subscribe to.
       controls: {
+        setEnabled: vi.fn(),
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getFocusTarget: vi.fn(() => ({ x: 0, y: 0, z: 0 })),
@@ -245,6 +246,7 @@ describe('LuxarApp', () => {
     };
 
     mockRenderingControls = {
+      hide: vi.fn(),
       setAnimationController: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
       setDensityGuardControl: vi.fn(),
@@ -1759,18 +1761,38 @@ describe('LuxarApp', () => {
       }
     });
 
-    it('getViewerState bundles dataset, camera, dims, rendering and layers', async () => {
+    it('getViewerState bundles dataset, title, presentation, camera, dims, rendering and layers', async () => {
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({
+        control_panel: { title: 'Touch tour', columns: 3 },
+      });
       await app.init({ canvas: mockCanvas, src: SRC });
+      document.title = 'Protein stories';
       mockRenderingControls.getSettingsSnapshot.mockReturnValue({ exposure: 0.25 });
 
       const state = app.getViewerState();
 
       expect(state.src).toBe(SRC);
+      expect(state.title).toBe('Protein stories');
+      expect(state.controlPanel).toEqual({ title: 'Touch tour', columns: 3 });
       expect(state.camera).toMatchObject({ position: [1, 2, 3] });
       expect(state.dimensions).toMatchObject({ ndim: 0 });
       expect(state.rendering).toEqual({ exposure: 0.25 });
       // LayersPanel is mocked: its summaries come back undefined → empty list.
       expect(state.layers).toEqual([]);
+    });
+
+    it('keeps authored scene overlays visible in kiosk mode', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const hideOverlay = vi.fn();
+      const internals = app as unknown as {
+        overlayManager: { hide: () => void; dispose: () => void };
+        applyKiosk: (config: { ui: { kiosk: { enabled: boolean } } }) => void;
+      };
+      internals.overlayManager = { hide: hideOverlay, dispose: vi.fn() };
+
+      internals.applyKiosk({ ui: { kiosk: { enabled: true } } });
+
+      expect(hideOverlay).not.toHaveBeenCalled();
     });
   });
 

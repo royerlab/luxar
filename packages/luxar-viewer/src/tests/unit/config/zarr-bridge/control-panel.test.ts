@@ -143,6 +143,14 @@ describe('sanitizeAuthorStylesheet', () => {
     expect(out).toContain('data:image/gif;base64,R0lGOD');
   });
 
+  it.each(['url("https://evil.example/beacon)x")', 'image-set("https://evil.example/b.png" 1x)'])(
+    'removes remote fetch syntax shaped as %s',
+    (value) => {
+      const out = sanitizeAuthorStylesheet(`.tile { background-image: ${value}; }`);
+      expect(out).not.toContain('https://evil.example');
+    }
+  );
+
   it('leaves ordinary CSS untouched', () => {
     const css = '.luxar-control-tile { border-radius: 18px; color: #fff; }';
     expect(sanitizeAuthorStylesheet(css)).toBe(css);

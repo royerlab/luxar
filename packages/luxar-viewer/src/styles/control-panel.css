@@ -39,7 +39,9 @@
  * `layout` enum in the authored block: CSS is the general answer, and an enum
  * would accrete `font_size`, `aspect`, `padding` forever.
  *
- * The class and custom-property names here are that contract — see
+ * The class, custom-property, and state-attribute names here are that contract:
+ * `data-active`, `data-authored-label`, `data-chapter-index`,
+ * `data-chapter-value`, `data-chapter-count`, and `data-grid-columns`. See
  * `ui/control-panel/render-panel.ts`, and the lock test that pins them.
  */
 

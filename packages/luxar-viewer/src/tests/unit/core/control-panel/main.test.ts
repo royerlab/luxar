@@ -14,6 +14,7 @@ import {
   ControllerCallError,
   type ControllerSocket,
 } from '../../../../core/control-panel/controller-socket';
+import { MAX_CONTROL_STYLESHEET_CHARS } from '../../../../config/zarr-bridge/control-panel';
 import type {
   ControlPanelPorts,
   ControlPanelView,
@@ -112,6 +113,7 @@ function harness(overrides: Partial<ControlPanelBootstrapPorts> = {}) {
 
 beforeEach(() => {
   document.body.replaceChildren();
+  document.getElementById('luxar-control-author-style')?.remove();
   document.title = 'Protein stories';
 });
 
@@ -170,6 +172,98 @@ describe('control-panel bootstrap', () => {
     context.panelPorts.onInteraction?.();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(context.socket.notify).toHaveBeenCalledWith('setDimensionValue', [3, 0]);
+  });
+
+  it('applies authored presentation and replaces the author stylesheet', async () => {
+    const existing = document.createElement('style');
+    existing.id = 'luxar-control-author-style';
+    existing.textContent = '.old { color: red; }';
+    document.head.append(existing);
+    const context = harness();
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') return structuredClone(DIMS);
+      if (method === 'getViewerState') {
+        return {
+          title: 'Wire title',
+          controlPanel: {
+            title: 'Authored title',
+            subtitle: 'Authored subtitle',
+            columns: 2,
+            stylesheet: '.tile { color: blue; }',
+            chapters: { 1: { label: 'Blood', sublabel: 'Protein family' } },
+          },
+        };
+      }
+      return undefined;
+    });
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+
+    const [source, options] = vi.mocked(context.panel.render).mock.calls[0] ?? [];
+    expect(source?.chapters[1]).toMatchObject({ label: 'Blood', authored: true });
+    expect(options).toMatchObject({
+      title: 'Authored title',
+      subtitle: 'Authored subtitle',
+      columns: 2,
+      sublabels: { 1: 'Protein family' },
+    });
+    const styles = document.querySelectorAll('#luxar-control-author-style');
+    expect(styles).toHaveLength(1);
+    expect(styles[0]?.textContent).toBe('.tile { color: blue; }');
+  });
+
+  it('validates the wire copy of author CSS before applying it', async () => {
+    const context = harness();
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') return DIMS;
+      if (method === 'getViewerState') {
+        return {
+          controlPanel: {
+            stylesheet: '.tile { background: image-set("https://evil.example/b.png" 1x); }',
+          },
+        };
+      }
+      return undefined;
+    });
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+
+    expect(document.getElementById('luxar-control-author-style')?.textContent).not.toContain(
+      'https://evil.example'
+    );
+
+    context.teardown();
+    document.getElementById('luxar-control-author-style')?.remove();
+    const oversized = harness();
+    vi.mocked(oversized.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') return DIMS;
+      if (method === 'getViewerState') {
+        return { controlPanel: { stylesheet: 'x'.repeat(MAX_CONTROL_STYLESHEET_CHARS + 1) } };
+      }
+      return undefined;
+    });
+    oversized.socketPorts.onStatus?.('open');
+    await settle();
+    expect(document.getElementById('luxar-control-author-style')).toBeNull();
+  });
+
+  it('does not arm an idle reset when the scene disables it', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') return DIMS;
+      if (method === 'getViewerState') return { controlPanel: { idleResetS: 0 } };
+      return undefined;
+    });
+    context.socketPorts.onStatus?.('open');
+    await settle();
+
+    context.panelPorts.onInteraction?.();
+    await vi.runAllTimersAsync();
+
+    expect(context.socket.notify).not.toHaveBeenCalled();
   });
 
   it('keeps the connecting message while a socket dial is in progress', () => {

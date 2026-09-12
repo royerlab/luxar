@@ -22,7 +22,10 @@ import {
   type ChapterSource,
 } from '../../config/control-panel/derive-chapters';
 import { readUrlParams, type UrlParams } from '../../config/url-params';
-import type { ControlPanelSettings } from '../../config/zarr-bridge/control-panel';
+import {
+  validateControlPanelSettings,
+  type ControlPanelSettings,
+} from '../../config/zarr-bridge/control-panel';
 import type { DimensionMetadata } from '../../types/dims';
 import {
   createControlPanel,
@@ -45,7 +48,7 @@ import {
  * exhibit is found at chapter seven with no way back. Two minutes is long
  * enough not to interrupt someone reading.
  */
-const IDLE_RESET_MS = 120_000;
+const DEFAULT_IDLE_RESET_S = 120;
 /** First retry when the hub is up before the viewer attaches. */
 export const CHAPTER_RETRY_BASE_MS = 500;
 /** Keep retry traffic bounded while a display remains offline. */
@@ -236,15 +239,13 @@ function titleFromViewerState(state: unknown): string | null {
 /**
  * The scene's authored control-panel block out of the same reply, or `null`.
  *
- * The display already validated it through the zarr bridge, so this only has
- * to confirm it is an object — but it stays a separate function so the reply's
- * two interesting fields are read in one obvious place.
+ * The panel may be connected to a third-party hub, so it re-validates the wire
+ * copy rather than trusting that it passed through our display's zarr bridge.
  */
 function panelConfigFromViewerState(state: unknown): ControlPanelSettings | null {
   if (state === null || typeof state !== 'object') return null;
   const candidate = (state as { controlPanel?: unknown }).controlPanel;
-  if (candidate === null || typeof candidate !== 'object') return null;
-  return candidate as ControlPanelSettings;
+  return validateControlPanelSettings(candidate);
 }
 
 /**
@@ -253,7 +254,7 @@ function panelConfigFromViewerState(state: unknown): ControlPanelSettings | null
  * `textContent`, never `innerHTML`: the CSS came out of a store, so it is
  * untrusted input on the same footing as `overlay_html`. Setting text on a
  * `<style>` element cannot introduce markup however the string is shaped, and
- * the bridge has already stripped `@import` and remote `url()`.
+ * the settings validator has already stripped remote fetch constructs.
  */
 function applyAuthorStylesheet(css: string | undefined): void {
   const existing = document.getElementById(AUTHOR_STYLE_ELEMENT_ID);
@@ -395,12 +396,15 @@ function startConnectedPanel(
 
   function restartIdleTimer(): void {
     if (idleTimer !== undefined) clearTimeout(idleTimer);
+    idleTimer = undefined;
+    const idleResetS = presentation.config?.idleResetS ?? DEFAULT_IDLE_RESET_S;
+    if (idleResetS === 0) return;
     idleTimer = setTimeout(() => {
       const first = source?.chapters[0];
       if (first !== undefined && source !== null) {
         socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
       }
-    }, IDLE_RESET_MS);
+    }, idleResetS * 1000);
   }
 
   function cancelChapterRetry(resetDelay = true): void {

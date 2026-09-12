@@ -31,12 +31,15 @@ const STYLESHEET = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../../styles/control-panel.css'
 );
+const CONTROL_HTML = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../control.html');
 
 /** Every class an authored stylesheet is invited to target. */
 const CONTRACT_CLASSES = [
   'luxar-control-panel',
+  'luxar-control-header',
   'luxar-control-title',
   'luxar-control-subtitle',
+  'luxar-control-tile-index',
   'luxar-control-grid',
   'luxar-control-tile',
   'luxar-control-tile-label',
@@ -60,7 +63,14 @@ const CONTRACT_PROPERTIES = [
 ];
 
 /** State hooks the renderer maintains. */
-const CONTRACT_ATTRIBUTES = ['data-active', 'data-authored-label'];
+const CONTRACT_ATTRIBUTES = [
+  'data-active',
+  'data-authored-label',
+  'data-chapter-index',
+  'data-chapter-value',
+  'data-chapter-count',
+  'data-grid-columns',
+];
 
 function renderedPanel(): HTMLElement {
   const root = document.createElement('div');
@@ -92,6 +102,7 @@ function messagePanel(): HTMLElement {
 
 describe('control panel styling contract', () => {
   const css = readFileSync(STYLESHEET, 'utf8');
+  const html = readFileSync(CONTROL_HTML, 'utf8');
   /** Rules only — the file's own prose mentions names it must not IMPORT. */
   const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
 
@@ -99,6 +110,13 @@ describe('control panel styling contract', () => {
     // Without this, every assertion below would pass against an empty string.
     expect(css.length).toBeGreaterThan(500);
     expect(css).toContain(CONTROL_PANEL_CLASS);
+  });
+
+  it('blocks author CSS from fetching remote images, fonts, or stylesheets', () => {
+    expect(html).toContain("default-src 'self'");
+    expect(html).toContain("img-src 'self' data:");
+    expect(html).toContain("font-src 'self' data:");
+    expect(html).toContain("style-src 'self' 'unsafe-inline'");
   });
 
   it.each(CONTRACT_CLASSES)('styles .%s', (className) => {

@@ -576,13 +576,12 @@ export class LuxarApp {
     const mode = resolveKioskMode(viewerConfig?.ui?.kiosk, this.options?.kiosk === true);
     if (!mode.enabled) return;
     this.kioskTeardown = applyKioskMode(mode, {
-      setInputEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
+      setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
       setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
       hidePanels: () => {
         this.renderingControls.hide();
         this.scaleBar?.hide();
         this.layersPanel?.hide();
-        this.overlayManager?.hide();
       },
       canvas: this.sceneManager.renderer?.domElement,
     });
