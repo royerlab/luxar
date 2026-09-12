@@ -178,6 +178,34 @@ class TestErrors:
         assert caught.value.code == -32601
         assert "not exposed" in caught.value.message
 
+    @pytest.mark.parametrize(
+        "error",
+        ["nope", [], {"code": "abc"}, {"code": {"nested": True}}],
+    )
+    def test_a_malformed_error_frame_still_raises_control_error(
+        self, monkeypatch: pytest.MonkeyPatch, error: Any
+    ) -> None:
+        socket = FakeSocket([{"error": error}])
+        viewer = make_viewer(monkeypatch, socket)
+
+        with pytest.raises(ControlError) as caught:
+            viewer.call("getLayers")
+
+        assert caught.value.code == -32603
+        assert repr(error) in caught.value.message
+
+    def test_an_integer_string_error_code_is_preserved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket([{"error": {"code": "-32601", "message": "not exposed"}}])
+        viewer = make_viewer(monkeypatch, socket)
+
+        with pytest.raises(ControlError) as caught:
+            viewer.call("dispose")
+
+        assert caught.value.code == -32601
+        assert caught.value.message == "not exposed"
+
     def test_no_viewer_attached_is_distinguishable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
