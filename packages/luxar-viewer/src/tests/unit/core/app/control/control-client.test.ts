@@ -422,7 +422,7 @@ describe('ControlClient lifecycle', () => {
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const context = harness();
 
-    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION });
+    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION, reason: '' });
 
     expect(warning).toHaveBeenCalledWith(
       Modules.APP,
