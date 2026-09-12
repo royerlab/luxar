@@ -134,10 +134,12 @@ def _leaf_with_rungs(rungs, *, splats_per_rung=1):
     return GSplatLeaf(additive_sublods=[sublod] * rungs, meta={})
 
 
-def _tiny_gsplat_store(path: Path) -> Path:
+def _tiny_gsplat_store(path: Path, centers=None) -> Path:
+    if centers is None:
+        centers = np.array([[0, 0, 0, 0], [1, 1, 1, 1]], dtype=np.float32)
     save_gsplats(
         path,
-        centers=np.array([[0, 0, 0, 0], [1, 1, 1, 1]], dtype=np.float32),
+        centers=np.asarray(centers, dtype=np.float32),
         amplitudes=np.ones(2, dtype=np.float32),
         cholesky_factors=np.tile([1, 0, 1, 0, 0, 1, 0, 0, 0, 1], (2, 1)).astype(
             np.float32
@@ -285,6 +287,28 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
     assert dict(root.attrs)["viewer_config"]["exposure"] == pytest.approx(-3.4)
 
 
+def test_compiled_scene_dimensions_cover_both_channels(tmp_path) -> None:
+    channel_paths = [
+        _tiny_gsplat_store(
+            tmp_path / "membranes.gsplats.zarr",
+            [[1, 2, 3, 0], [10, 20, 30, 1]],
+        ),
+        _tiny_gsplat_store(
+            tmp_path / "nuclei.gsplats.zarr",
+            [[0, 1, 2, 0], [11, 21, 31, 1]],
+        ),
+    ]
+
+    output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
+    dimensions = dict(open_group(output, mode="r").attrs)["scene_dimensions"]
+    by_name = {dimension["name"]: dimension for dimension in dimensions["dimensions"]}
+
+    assert by_name["Z"]["range"] == [0.0, 11.0]
+    assert by_name["Y"]["range"] == [1.0, 21.0]
+    assert by_name["X"]["range"] == [2.0, 31.0]
+    assert all(by_name[name]["unit"] == "µm" for name in ("Z", "Y", "X"))
+
+
 class TestTheRecipeConstantsMatchTheRecordedRun:
     def test_the_per_timepoint_sources_are_recorded_outside_scratch(self):
         source_dirs = {ch["name"]: ch["hpc_source_dir"] for ch in demo.CHANNELS}
@@ -373,26 +397,20 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         """The source is time-FIRST; the fit emits spatial-first, stacked-last.
         The Z scale therefore applies to index 0, not index 1.
 
-        Placement only — the factor's VALUE is pinned by the sibling test below.
+        Placement only — the values are pinned by the sibling test below.
         """
         assert demo.SOURCE_AXES.startswith("time")
-        assert demo.VOXEL_SCALE[0] != 1.0, "index 0 is the scaled (Z) axis"
-        assert demo.VOXEL_SCALE[1:] == (1.0, 1.0, 1.0)
+        assert demo.VOXEL_SCALE[0] != demo.VOXEL_SCALE[1]
+        assert demo.VOXEL_SCALE[1] == demo.VOXEL_SCALE[2]
+        assert demo.VOXEL_SCALE[3] == 1.0, "the stacked time axis is unchanged"
 
-    def test_the_z_scale_is_the_measured_voxel_anisotropy(self):
-        """The MetaMorph headers record a 0.25 um z-step over a 0.1083 um lateral
-        pitch, so the factor is 2.3084x — not the historical 2.5, which stretched
-        Z by 8.3 % in the published scene.
+    def test_the_spatial_scale_is_the_measured_voxel_size_in_microns(self):
+        """The MetaMorph headers record 0.25 um z steps and 0.1083 um pixels.
 
-        Pinned against those two measured numbers rather than against the
-        expression that defines the constant: comparing it to its own source
-        passes for whatever instrument someone typed in, so it would not catch
-        the defect coming back with a different pitch.
+        Pin all three spatial axes: an anisotropy-only ratio gets the proportions
+        right but leaves the scene in lateral-pixel units while its axes claim um.
         """
-        z_step_um = 0.25
-        lateral_pitch_um = 0.1083
-        assert demo.VOXEL_SCALE[0] == pytest.approx(z_step_um / lateral_pitch_um)
-        assert demo.VOXEL_SCALE[0] == pytest.approx(2.3084, abs=1e-4)
+        assert demo.VOXEL_SCALE == pytest.approx((0.25, 0.1083, 0.1083, 1.0))
 
     def test_the_recipe_has_no_cull_at_all(self, monkeypatch, tmp_path):
         """The 2026-08 build redundancy-culled every tile at 0.20 and lost 17-26 dB
@@ -432,7 +450,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert "--array-key" not in fit
         assert not hasattr(demo, "REDUNDANCY_THRESHOLD")
 
-        # The transform is where the anisotropy correction reaches the archive.
+        # The transform is where physical micron units reach the archive.
         # Pinned as the EMITTED string: reversing the tuple or dropping --scale
         # entirely leaves every other assertion in this suite green. Same for
         # --normalize-intensity: change its value or drop the pair and the
@@ -442,9 +460,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         # a dropped flag names itself instead of raising a bare ValueError.
         transform = calls[1]
         assert "--scale" in transform
-        assert (
-            transform[transform.index("--scale") + 1] == "2.308402585410896,1.0,1.0,1.0"
-        )
+        assert transform[transform.index("--scale") + 1] == "0.25,0.1083,0.1083,1.0"
         assert "--normalize-intensity" in transform
         assert transform[transform.index("--normalize-intensity") + 1] == "1.0"
 

@@ -63,11 +63,10 @@ PIPELINE — reproducible per channel with ``--recompute``:
     6. ``batch-fit run --merge-recipe stream --merge-n-lods 8`` merges the
        (unculled) tiles into ONE leaf with the recorded 8-rung progressive
        ladder (the run's own merge; the run's default would be 4 rungs).
-    7. ``gsplat transform --scale 2.308402585410896,1.0,1.0,1.0
-       --normalize-intensity 1.0`` → the factor is the measured 0.25 um z-step
-       over the 0.1083 um lateral pitch, which removes the voxel anisotropy so
-       Z becomes commensurate with X/Y; amplitudes on a 0-1 scale. The centres
-       stay in **lateral-pixel units**, NOT microns: 1 unit = 0.1083 um.
+    7. ``gsplat transform --scale 0.25,0.1083,0.1083,1.0
+       --normalize-intensity 1.0`` → convert the three spatial centre and
+       covariance axes from voxels to microns using the measured MetaMorph
+       voxel size; amplitudes stay on a 0-1 scale.
        (The 2026-08 pair on the record was transformed with the historical 2.5
        — an 8.3 % Z stretch — and stays pinned in ``data_manifest.json``;
        the corrected rebuild is ready, but publishing it still needs the record
@@ -210,7 +209,7 @@ CHANNELS = [
         # The enclosing structure, so it composites FIRST and the nuclei read on
         # top of it. This deliberately does NOT match the order the viewer would
         # infer: containment goes by bounding-sphere radius, and this fit gives
-        # the nuclei channel the marginally LARGER sphere (555.5 vs 546.4, a 1.6%
+        # the nuclei channel the marginally LARGER sphere (60.17 vs 59.17 µm, a 1.7%
         # difference that is a property of where the splats landed, not of the
         # anatomy), so the inference draws nuclei first. A membrane shell
         # enclosing nuclei is the biology; state it.
@@ -274,13 +273,11 @@ PRESET = "n2s"
 TILE_SIZE = 640
 #: Concurrent fit workers per GPU. NOT `auto` — see the docstring's warning.
 JOBS_PER_GPU = 12
-#: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give a
-#: 0.25 um z-step and 0.1083 um pixels = 2.3084x (the paper registry records
-#: voxel_um=(0.25, 0.1083, 0.1083)). A RATIO, not a micron conversion: it only
-#: makes Z commensurate with X/Y, and the centres stay on the lateral-pixel grid.
-#: The 2026-08 pair on the record carries the historical 2.5 (step 7). Kept as
-#: the computed quotient rather than a rounded literal.
-VOXEL_SCALE = (0.25 / 0.1083, 1.0, 1.0, 1.0)
+#: Physical voxel size in fitted-axis order (Z, Y, X, Time). The raw MetaMorph
+#: headers and paper registry record voxel_um=(0.25, 0.1083, 0.1083); the
+#: stacked time coordinate is already in frames and must not be scaled.
+#: The 2026-08 pair on the record carries the historical Z-only 2.5 (step 7).
+VOXEL_SCALE = (0.25, 0.1083, 0.1083, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
 NORMALIZE_INTENSITY = 1.0
@@ -404,15 +401,11 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
         if not merged.exists():
             raise SystemExit(f"merge produced no {merged}")
 
-        # Anisotropy + normalisation LAST: this is what takes the archive off the
-        # voxel grid, and the fit's PSNR stamps are only comparable to the source
-        # before it happens. The factor is the measured 2.3084 rather than the 2.5
-        # the pinned archives carry, so a rebuild is 7.7% shorter in Z than the
-        # published pair, and the display windows in ``CHANNELS`` plus the
-        # bounding-sphere radii recorded there -- and tabulated in the neuromast
-        # row of ``docs/guides/specs/LAYER_ORDER_SPEC.md`` -- were measured on
-        # the old geometry and want re-measuring before the corrected pair is
-        # repinned.
+        # Physical voxel scaling + normalisation LAST: the fit's PSNR stamps are
+        # only comparable to the voxel-grid source before this conversion. The
+        # uniform 0.1083x shrink relative to the anisotropy-corrected rebuild
+        # leaves amplitudes unchanged, and cinematic auto-framing follows the
+        # bounds, so the measured ``CHANNELS`` appearance remains valid.
         run_luxar_cli(
             "gsplat",
             "transform",
@@ -522,13 +515,12 @@ def resolve_channel_paths() -> list[Path]:
 def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     """Build the 4D two-channel scene: one layer-enabled gsplats node per marker.
 
-    The gsplats are pre-fit 4D (``z, y, x, time``), already Z-scaled and
+    The gsplats are pre-fit 4D (``z, y, x, time``), already scaled to microns and
     intensity-normalised, so we simply graft each channel with its LUT and
-    ``layer=True``. The pinned pair was scaled by the historical 2.5, not
-    ``VOXEL_SCALE`` (step 7), so a scene built from the downloaded archives is
-    8.3 % stretched in Z; one built by ``--recompute`` is not.
-    Both channels share identical 4D bounds → they co-register and animate
-    together over the Time dimension.
+    ``layer=True``. The pinned pair was scaled by the historical Z-only 2.5, not
+    ``VOXEL_SCALE`` (step 7), so its spatial coordinates remain in lateral-pixel
+    units and Z is also stretched by 8.3 %; a ``--recompute`` build has physical
+    spatial units. Both channels co-register and animate over the Time dimension.
     """
     with asection("Creating 4D two-channel neuromast scene"):
         # Explicit, named 4D dims (not the generic dim0..dim3 from
@@ -537,10 +529,16 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         # so the Dimensions list must follow that exact order. The three
         # spatial axes are displayed; Time is a DISCRETE (step=1) hidden axis
         # that drives the playback slider.
-        node, _ = load_gsplat_node(str(channel_paths[0]))
-        bmin, bmax = center_bounds(node)
+        channel_bounds = []
+        for path in channel_paths:
+            node, _ = load_gsplat_node(str(path))
+            bounds = center_bounds(node)
+            if bounds is None:
+                raise ValueError(f"Channel has no centre bounds: {path}")
+            channel_bounds.append(bounds)
+        bmin = np.min([bounds[0] for bounds in channel_bounds], axis=0)
+        bmax = np.max([bounds[1] for bounds in channel_bounds], axis=0)
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
-        # The µm labels are aspirational: 1 unit = 0.1083 µm; see step 7 and #2723.
         dims = Dimensions(
             [
                 Dimension(
