@@ -47,7 +47,9 @@ export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
   lines: 88,
   statements: 87,
-  functions: 84,
+  // functions 84 -> 86 after the control-panel socket/bootstrap tests lifted
+  // measured function coverage past the slack budget.
+  functions: 86,
   // branches 80 -> 82 (2026-09): the GPU-budget tests here and the SSAA
   // framebuffer-clamp tests in #2661 each moved measured branch coverage past
   // the slack budget, and check-coverage-slack flagged the old floor as stale.
@@ -114,7 +116,7 @@ export const COVERAGE_THRESHOLDS = {
 export const COVERAGE_RECORDED = {
   lines: 89.38,
   statements: 88.43,
-  functions: 86.61,
+  functions: 87.01,
   branches: 83.04,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
