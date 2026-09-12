@@ -6,7 +6,7 @@ Welcome to Luxar's documentation! Luxar is a high-performance system for compili
 .. admonition:: See it running before you install anything
    :class: tip
 
-   `demos.luxarviewer.dev <https://demos.luxarviewer.dev>`_ hosts 90 of the
+   `demos.luxarviewer.dev <https://demos.luxarviewer.dev>`_ hosts 88 of the
    bundled demos as live, interactive scenes — real compiled archives streamed
    from object storage, not videos.
 
