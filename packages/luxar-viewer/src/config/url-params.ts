@@ -103,16 +103,17 @@ export interface ControlSocketOrigin {
  * `?control` is a **bare flag** in the ordinary case: the hub is served by the
  * same app that served this page (`luxar serve --control` puts it on the viewer
  * app), so the socket address is derivable and there is nothing to validate.
- * That also means it keeps working behind a reverse proxy, under `luxar export`
- * and inside the native launcher, none of which know their own address at
- * authoring time.
+ * That also means it keeps working behind an origin-rooted reverse proxy, under
+ * `luxar export` and inside the native launcher, none of which know their own
+ * address at authoring time. A path-prefixed proxy uses an explicit same-origin
+ * path such as `?control=/exhibit/control`.
  *
  * `?control=<url>` is the split-origin override, and it is **same-origin only**
  * unless `allowCrossOrigin` is also set. The threat is concrete: a crafted
  * `?src=<real>&control=ws://attacker/` link turns the display into something an
  * attacker drives, and hands them `getViewerState()` — the dataset URL, the
- * layer list and the camera. One host comparison closes the whole class, and
- * an exhibit that genuinely splits the origins says so explicitly.
+ * layer list and the camera. The host comparison blocks the direct cross-origin
+ * case, and an exhibit that genuinely splits the origins says so explicitly.
  *
  * @param raw The parameter value. `''` (a bare `?control`) derives the
  *   same-origin address; `null` means the flag was absent.

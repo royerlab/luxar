@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from luxar.control import ControlError, Viewer
-from luxar.control.viewer import _connect, _with_query
+from luxar.control.viewer import MAX_BUFFERED_EVENTS, _connect, _with_query
 
 
 class FakeSocket:
@@ -37,6 +37,8 @@ class FakeSocket:
 
     def recv(self, timeout: Optional[float] = None) -> str:
         self.recv_timeouts.append(timeout)
+        if not self.replies:
+            raise TimeoutError
         reply = self.replies.pop(0)
         if self.echo_id and "id" not in reply:
             reply = {**reply, "id": self.sent[-1]["id"]}
@@ -119,7 +121,7 @@ class TestCall:
     def test_frames_that_are_not_the_answer_are_skipped(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Events share the socket with replies."""
+        """Events share the socket with replies and remain available."""
         socket = FakeSocket(
             [
                 {"method": "event", "params": ["camera-changed", {}], "id": None},
@@ -130,6 +132,7 @@ class TestCall:
         socket.replies[1]["id"] = 1
         viewer = make_viewer(monkeypatch, socket)
         assert viewer.call("getLayers") == "mine"
+        assert viewer.recv_event() == ("camera-changed", {})
 
     def test_events_do_not_reset_the_reply_deadline(
         self, monkeypatch: pytest.MonkeyPatch
@@ -280,6 +283,93 @@ class TestNamedMethods:
         viewer = make_viewer(monkeypatch, socket)
         with pytest.raises(KeyError, match="stroy"):
             viewer.dimension_index("stroy")
+
+
+class TestEvents:
+    def test_recv_event_returns_a_notification(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket(
+            [{"method": "event", "params": ["waypoint-arrived", {"index": 3}]}]
+        )
+        socket.echo_id = False
+        viewer = make_viewer(monkeypatch, socket)
+
+        assert viewer.recv_event() == ("waypoint-arrived", {"index": 3})
+        assert socket.recv_timeouts == [None]
+
+    def test_recv_event_returns_none_at_its_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket()
+        viewer = make_viewer(monkeypatch, socket)
+
+        assert viewer.recv_event(timeout_s=0.01) is None
+        assert socket.recv_timeouts[0] is not None
+        assert 0 <= socket.recv_timeouts[0] <= 0.01
+
+
+class TestEventBufferIsBounded:
+    """A kiosk controller runs for hours. The buffer must not grow for hours.
+
+    `call` drains the socket while it waits for its reply, so events land in
+    the buffer during exactly the long waits (`flyTo`, `switchDataset`) when a
+    20 Hz `camera-changed` stream is arriving — and the hub fans events to
+    EVERY attached controller, so a script that subscribed to nothing still
+    receives whatever a touch panel asked for. Unbounded, that measured ~91 MB
+    after an hour.
+    """
+
+    def test_the_buffer_stops_growing_at_the_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        overflow = 50
+        events = [
+            {"method": "event", "params": ["camera-changed", {"n": i}]}
+            for i in range(MAX_BUFFERED_EVENTS + overflow)
+        ]
+        # One real reply at the end, so `call` returns rather than timing out
+        # after draining every event frame ahead of it. Its id is explicit
+        # because `echo_id` is off — the event frames must stay id-less to be
+        # recognised as notifications, and the id counter starts at 1.
+        socket = FakeSocket([*events, {"id": 1, "result": None}])
+        socket.echo_id = False
+        viewer = make_viewer(monkeypatch, socket)
+
+        viewer.call("recenterCamera")
+
+        assert len(viewer._events) == MAX_BUFFERED_EVENTS
+
+    def test_the_newest_events_are_the_ones_kept(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Dropping the OLDEST is the useful direction.
+
+        A reader that falls behind wants the current camera pose, not the one
+        from a thousand frames ago — and a `maxlen` deque that dropped from the
+        wrong end would keep exactly the stale ones.
+        """
+        overflow = 3
+        events = [
+            {"method": "event", "params": ["camera-changed", {"n": i}]}
+            for i in range(MAX_BUFFERED_EVENTS + overflow)
+        ]
+        socket = FakeSocket([*events, {"id": 1, "result": None}])
+        socket.echo_id = False
+        viewer = make_viewer(monkeypatch, socket)
+
+        viewer.call("recenterCamera")
+
+        first = viewer.recv_event()
+        assert first == ("camera-changed", {"n": overflow})
+        # And the very newest survived to the other end of the buffer.
+        drained = [first]
+        while viewer._events:
+            drained.append(viewer.recv_event())
+        assert drained[-1] == (
+            "camera-changed",
+            {"n": MAX_BUFFERED_EVENTS + overflow - 1},
+        )
 
 
 class TestLifecycle:

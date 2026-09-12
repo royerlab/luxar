@@ -34,9 +34,10 @@ shared with anything else that needs to speak the protocol.
 ## Things worth knowing before you change this
 
 **`?control` is a bare flag.** The hub rides on the app that served the page, so
-the socket address is derived from `location`. That keeps it working behind a
-reverse proxy, under `luxar export` and in the native launcher. `?control=<url>`
-exists for a split origin and is same-origin-only unless
+the socket address is derived from `location`. That keeps it working behind an
+origin-rooted reverse proxy, under `luxar export` and in the native launcher. A
+path-prefixed proxy uses an explicit path such as `?control=/exhibit/control`.
+`?control=<url>` exists for a split origin and is same-origin-only unless
 `?controlAllowCrossOrigin` is also given — see `normalizeControlSocketUrl` in
 `src/config/url-params.ts` for why that matters.
 
@@ -67,6 +68,8 @@ standalone bootstrap, which already ran `?src` through `normalizeDataSourceUrl`.
 A controller has not, so the boundary does it here. Without that step any peer
 that can reach the socket could hand the display a `file:` or `javascript:` URL.
 
-**The hub is open unless `--control-token` is set.** The designed deployment is
-a LAN the operator owns. That is a deliberate choice, and it is the reason the
-two paragraphs above exist.
+**The hub is open unless `--control-token` is set.** Without a token, browser
+sockets must have the same host as the hub; non-browser clients send no
+`Origin`. A valid token is also the explicit allowance for split-origin and
+proxied deployments. The designed deployment is a LAN the operator owns. That
+is a deliberate choice, and it is the reason the two paragraphs above exist.
