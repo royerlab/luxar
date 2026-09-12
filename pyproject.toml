@@ -83,6 +83,14 @@ dependencies = [
     "rich>=13.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
+    # Both halves of the remote-control channel need this: the hub in
+    # `luxar serve --control` is served through uvicorn's WebSocket support, and
+    # `luxar.control.Viewer` drives a viewer with `websockets.sync.client`.
+    # `uvicorn[standard]` happens to pull it in today, but depending on a
+    # transitive for an import we make ourselves is how a working install turns
+    # into an ImportError the moment that extra is repackaged. The sync client
+    # arrived in websockets 13.
+    "websockets>=13,<18",
     "arbol>=2025.2.27.2",
     "ansicolors>=1.1.8",
     "requests>=2.31.0",
@@ -942,6 +950,11 @@ name = "Subpackage layering"
 type = "layers"
 layers = [
     "luxar.cli",
+    # A user-facing driver, peer of the CLI: it imports nothing inside luxar
+    # today (stdlib plus `websockets`), and sits above `core` so the typed
+    # snapshot/patch dataclasses the spec anticipates can be adopted without
+    # moving the layer.
+    "luxar.control",
     "luxar.environment",
     "luxar.demos",
     "luxar.io",

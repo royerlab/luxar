@@ -20,6 +20,7 @@ import type {
 } from './app/embedder/events';
 import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
 import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-driver';
+import { ControlClient } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
 import type { AudioEngine } from '../audio/audio-engine';
@@ -168,6 +169,8 @@ export class LuxarApp {
    */
   private waypointListener?: () => void;
   private waypointDriver?: WaypointDriver;
+  /** Remote-control channel, present only when `options.control` is set. */
+  private controlClient?: ControlClient;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -305,6 +308,9 @@ export class LuxarApp {
       // Install before the initial load so its first recorded transient
       // failure can arm the bounded retry backoff immediately.
       this.setupOnlineRetry();
+      // The control client eagerly attaches the selection / element event
+      // consumers that picking checks once, during dataset provisioning.
+      this.installControlClient();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -633,6 +639,42 @@ export class LuxarApp {
       this.waypointListener = undefined;
     }
     this.waypointDriver = undefined;
+  }
+
+  /**
+   * Attach the remote-control channel, when one was asked for.
+   *
+   * Built before initial dataset routing because its eager `selection` and
+   * element listeners must exist when picking is provisioned. `this.events`
+   * owns the teardown (see `CONTROL_FORWARDED_EVENTS`).
+   *
+   * `invoke` indexes the app by method name, which is safe precisely because
+   * `isControlMethodAllowed` has already vetted the name against a list the
+   * lock test keeps exhaustive.
+   */
+  private installControlClient(): void {
+    const socketUrl = this.options.control;
+    if (socketUrl === undefined || socketUrl === null || socketUrl.length === 0) return;
+    const callable = this as unknown as Record<string, (...args: unknown[]) => unknown>;
+    // `on` is generic over the event map, so its payload type is narrowed per
+    // event name. The client subscribes by dynamic name and sanitizes whatever
+    // arrives, so it wants the un-narrowed shape.
+    const subscribeByName = this.on.bind(this) as unknown as (
+      event: string,
+      listener: (payload: unknown) => void
+    ) => () => void;
+    this.controlClient = new ControlClient({
+      socketUrl,
+      token: this.options.controlToken ?? null,
+      invoke: (method, params) => callable[method].apply(this, params),
+      subscribe: subscribeByName,
+      events: this.events,
+    });
+    this.controlClient.connect();
+    this.events.add(() => {
+      this.controlClient?.dispose();
+      this.controlClient = undefined;
+    });
   }
 
   private applyViewerConfigStateCore(viewerConfig: ZarrViewerConfig | undefined): void {

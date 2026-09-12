@@ -47,6 +47,7 @@ from .restamp_lod_command import register_restamp_lod_command
 from .serving import (
     DirectoryListingStaticFiles,
     _add_cors,
+    _build_viewer_url,
     _is_sensitive_serve_path,
     _serve_data,
     _serve_viewer,
@@ -193,6 +194,16 @@ def _start_data_server_thread(
     return thread
 
 
+def _warn_control_flag_misuse(
+    *, control: bool, control_token: Optional[str], viewer: bool, viewer_only: bool
+) -> None:
+    """Explain control options that cannot affect the selected serve mode."""
+    if control and not (viewer or viewer_only):
+        aprint("⚠️  --control requires --viewer or --viewer-only. Ignoring --control.")
+    if control_token and not control:
+        aprint("⚠️  --control-token requires --control. Ignoring --control-token.")
+
+
 # ────────────────────────────── serve ────────────────────────────────────────
 @app.command()
 def serve(
@@ -213,6 +224,16 @@ def serve(
     packet_loss: PacketLossOption = None,
     cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
     allow_sensitive_path: AllowSensitivePathOption = False,
+    control: bool = typer.Option(
+        False,
+        "--control",
+        help="Expose the remote-control hub at /control (kiosk touch panels, agents)",
+    ),
+    control_token: Optional[str] = typer.Option(
+        None,
+        "--control-token",
+        help="Require this shared secret as ?token= on every control socket",
+    ),
 ) -> None:
     """Serve a directory, Zarr dataset, or viewer via HTTP.
 
@@ -246,6 +267,12 @@ def serve(
             aprint(
                 "⚠️  --viewer-only already includes the viewer; --viewer is redundant"
             )
+        _warn_control_flag_misuse(
+            control=control,
+            control_token=control_token,
+            viewer=viewer,
+            viewer_only=viewer_only,
+        )
         _warn_if_lan_exposed(host, cors_origin)
 
         # Handle viewer-only mode
@@ -257,7 +284,15 @@ def serve(
             if actual_viewer_port is None:
                 raise typer.Exit(1)
 
-            _serve_viewer(host, actual_viewer_port, None, open_browser, cors_origin)
+            _serve_viewer(
+                host,
+                actual_viewer_port,
+                None,
+                open_browser,
+                cors_origin,
+                control=control,
+                control_token=control_token,
+            )
             return
 
         # Require path for data serving
@@ -326,7 +361,11 @@ def serve(
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
                     args=(host, actual_viewer_port, data_url, False, cors_origin),
-                    kwargs={"title": dataset_title(serve_path)},
+                    kwargs={
+                        "title": dataset_title(serve_path),
+                        "control": control,
+                        "control_token": control_token,
+                    },
                     daemon=True,
                 )
                 viewer_thread.start()
@@ -349,9 +388,13 @@ def serve(
                 aprint("⚠️  Viewer not served; skipping --open.")
             else:
                 data_url = f"http://{host}:{actual_port}"
-                viewer_url = append_title_param(
-                    f"http://{host}:{actual_viewer_port}/?src={data_url}",
-                    dataset_title(serve_path),
+                viewer_url = _build_viewer_url(
+                    host,
+                    actual_viewer_port,
+                    data_url,
+                    title=dataset_title(serve_path),
+                    control=control,
+                    control_token=control_token,
                 )
                 open_browser_func(viewer_url)
 
