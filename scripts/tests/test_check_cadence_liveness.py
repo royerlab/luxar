@@ -14,6 +14,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import yaml
 
 SCRIPT = Path(__file__).parents[1] / "check_cadence_liveness.py"
 SPEC = importlib.util.spec_from_file_location("check_cadence_liveness", SCRIPT)
@@ -209,6 +210,35 @@ def test_not_before_is_not_an_unbounded_snooze() -> None:
     """
     assert datetime(2026, 9, 12, tzinfo=UTC) <= CADENCE.not_before
     assert CADENCE.not_before <= datetime(2026, 9, 15, tzinfo=UTC)
+
+
+def test_daily_workflow_has_the_permissions_and_token_to_enforce_the_table() -> None:
+    workflow_path = module.REPO_ROOT / ".github/workflows/cadence-liveness.yml"
+    workflow = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
+
+    assert workflow["on"]["workflow_dispatch"] == ""
+    assert workflow["on"]["schedule"] == [{"cron": "17 11 * * *"}]
+    cron_fields = workflow["on"]["schedule"][0]["cron"].split()
+    assert cron_fields[2:] == ["*", "*", "*"]
+    assert timedelta(days=1) <= min(cadence.max_age for cadence in module.CADENCES)
+    assert workflow["permissions"] == {"contents": "read", "actions": "read"}
+    assert workflow["concurrency"] == {
+        "group": "cadence-liveness",
+        "cancel-in-progress": "false",
+    }
+    job = workflow["jobs"]["check"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == "10"
+    steps = job["steps"]
+    assert steps[0]["uses"] == (
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    )
+    assert steps[1]["uses"] == (
+        "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
+    )
+    check = next(step for step in steps if step.get("name") == "Check cadences")
+    assert check["run"] == "python scripts/check_cadence_liveness.py"
+    assert check["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
 
 
 # --------------------------------------------------------------------------

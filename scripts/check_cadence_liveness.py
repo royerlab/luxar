@@ -59,11 +59,10 @@ Scope, stated plainly so the table is not read as a broader promise than it is:
   unit on a host, and a `workflow_runs` query structurally cannot see it. Read
   `CADENCES` as "these workflow cadences are watched", never as "cadences are
   watched".
-* **Detection latency would be set by the host, not by the table.** No job in
-  this repository runs this script yet. Whatever job eventually does must run at
-  least as often as the smallest `max_age` in `CADENCES`; otherwise a stale
-  cadence is only noticed on the host's next firing, and the host's period --
-  not `max_age` -- is the real bound.
+* **Detection latency is bounded by the host, not by the table alone.** The
+  dedicated `cadence-liveness.yml` job runs daily, and its contract test keeps
+  that period no longer than the smallest `max_age` in `CADENCES`; otherwise a
+  stale cadence would only be noticed on the host's next firing.
 
 Transport failure is deliberately *not* a red, but "transport failure" is drawn
 narrowly. A connection error, a body truncated mid-read, a body that is not
@@ -389,8 +388,9 @@ def _unregistered_result(cadence: Cadence, repo_root: Path, now: datetime) -> Re
     The level comes from `not_before` alone; the presence probe only picks the
     wording. See the module docstring's two dated listing measurements for why:
     absence tracks promotion to the default branch, not the health of the
-    cadence, so keying the level on the checkout would make the verdict depend
-    on which branch the host happened to fetch. At or after `not_before`,
+    cadence. The scheduled host checks out that default branch, while a manual
+    run may intentionally probe another ref; neither changes the level. At or
+    after `not_before`,
     promotion has had its window and absence is real -- un-promoted, deleted, or
     renamed out from under the table.
     """
