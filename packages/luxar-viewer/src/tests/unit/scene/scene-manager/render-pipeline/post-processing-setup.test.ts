@@ -19,6 +19,7 @@ vi.mock('../../../../../rendering/post-processing/post-processing-manager', () =
 
 import { createPostProcessing } from '../../../../../scene/scene-manager/render-pipeline/post-processing-setup';
 import { PostProcessingManager } from '../../../../../rendering/post-processing/post-processing-manager';
+import { ControlsManager } from '../../../../../controls/controls-manager';
 import type {
   Renderer,
   RendererCapabilities,
@@ -48,7 +49,54 @@ describe('createPostProcessing', () => {
     expect(args[2]).toBe(scene);
     expect(args[3]).toBe(camera);
     expect(args[4]).toEqual({ width: 1024, height: 768 });
-    expect(args[5]).toBe(onResize);
+    expect(args[5]).toEqual(expect.any(Function));
+    args[5]!({ width: 1024, height: 768 }, camera);
+    expect(onResize).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the target projection from logical display size across physical scales', () => {
+    const width = 2509;
+    const height = 1328;
+    const renderer = makeRenderer(width, height);
+    const capabilities = {} as RendererCapabilities;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+    const controls = new ControlsManager(camera, renderer.domElement, scene);
+    const target = new THREE.Vector3(4, -2, 1);
+    camera.position.set(10, 5, 12);
+    camera.lookAt(new THREE.Vector3(1, 0, 0));
+    camera.updateMatrixWorld(true);
+    controls.setTarget(target);
+
+    createPostProcessing({
+      renderer,
+      capabilities,
+      scene,
+      camera,
+      onResize: vi.fn(),
+    });
+    const resizeCallback = vi.mocked(PostProcessingManager).mock.calls.at(-1)![5]!;
+    const focusBefore = controls.getFocusTarget();
+    const projectedBefore = focusBefore.clone().project(camera);
+    expect(Math.abs(projectedBefore.x) + Math.abs(projectedBefore.y)).toBeGreaterThan(0.1);
+
+    for (const dpr of [1, 1.5, 2]) {
+      for (const multiplier of [1, 1.5, 2, 3, 4]) {
+        const physicalWidth = Math.floor(width * dpr * multiplier);
+        const physicalHeight = Math.floor(height * dpr * multiplier);
+        camera.aspect = physicalWidth / physicalHeight;
+        camera.updateProjectionMatrix();
+
+        resizeCallback({ width, height }, camera);
+        camera.updateMatrixWorld(true);
+
+        const projected = controls.getFocusTarget().clone().project(camera);
+        expect(projected.x).toBeCloseTo(projectedBefore.x, 12);
+        expect(projected.y).toBeCloseTo(projectedBefore.y, 12);
+      }
+    }
+
+    controls.dispose();
   });
 
   it('falls back to window dimensions when canvas clientWidth/Height are 0', () => {

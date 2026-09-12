@@ -176,6 +176,7 @@ luxar restamp-lod                          # Re-derive every legacy ladder in ST
 luxar restamp-lod --dry-run                # Report the old→new ladders; write nothing
 luxar restamp-lod --group tiled/part_0     # Restrict to one ladder (repeatable)
 luxar restamp-lod --group /                # The store ROOT's own ladder
+luxar restamp-lod --anchor 0.25            # Re-anchor whole-object screen-area ladders
 ```
 
 Every `kind=lod` group carries per-child `coverage_fraction` thresholds plus a
@@ -184,8 +185,16 @@ screen-area metric existed sit on the legacy `coverage` diagonal one (or carry
 no `selector` at all, which means the same). This command re-derives those
 thresholds by screen-occupancy halving — the whole-object anchor for a plain
 ladder, the fills-screen anchor for a **tile-bound** one — and stamps the group
-`screen-area`. A group already on `screen-area` is skipped, so a second run
-changes nothing at all, down to the `content_hash`.
+`screen-area`. A group already on `screen-area` is skipped by default, so a
+second run changes nothing at all, down to the `content_hash`. `--anchor` sets
+the requested finest-level screen-area fraction for every whole-object ladder
+the pass processes, both legacy ladders being migrated and groups already on
+`screen-area`; partition-bound ladders remain pinned to fills-screen `1.0`.
+Repeating the same anchor is still a no-op. For a whole-object ladder,
+`--anchor a` corresponds to viewer `?lod-bias=0.5/a`; setting both compounds the
+effect. The equivalence does not extend to `overview` / `adaptive` partition
+ladders: viewer bias scales them too, while `--anchor` deliberately leaves them
+at `1.0`.
 
 Tile-bound is the tree writers' own two-clause rule, so a restamped store
 matches a freshly written one: a ladder is tile-anchored when a REAL multi-part
@@ -197,9 +206,10 @@ loading the whole dataset. A one-part partition is not a tiling (its single part
 IS the whole object) and does not bind.
 
 **It is an explicit opt-in, and it may override a deliberate choice.** An
-authored `coverage_fractions=[...]` list and a legacy derived ladder are
-indistinguishable on disk, which is exactly why nothing does this automatically
-and why the compiler's one-part-partition check only ever warns. The per-group
+authored `coverage_fractions=[...]` list and a derived ladder are
+indistinguishable on disk, including a hand-authored ladder already stamped
+`screen-area`. That is exactly why nothing does this automatically and why the
+compiler's one-part-partition check only ever warns. The per-group
 old→new ladder and the anchor used are printed for that reason — run `--dry-run`
 first, and use `--group` (repeatable; an unmatched path is an error, not a
 silent no-op) to restrict the pass to the ladders you meant. Group paths are
