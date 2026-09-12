@@ -166,9 +166,9 @@ __all__ = [
 #: is frames-per-chunk: rows per zarr chunk divided by the ``chunk_size`` atom,
 #: times the atom's hidden-axis span read off the bounds array. The writer
 #: already orders slice-major, so a 1 MB ``archive`` chunk of a 250-frame Lines
-#: node holds ~6 frames. The viewer now prefetches the next zarr chunk boundary
-#: of each queried array while those preceding frames play (#2686); before that,
-#: every boundary produced a measured 0.4-0.9 s stall on a 7 Mbps link.
+#: node holds ~6 frames. The viewer now prefetches the nearest next zarr chunk
+#: boundary across a node's arrays while those preceding frames play (#2686);
+#: before that, every boundary produced a measured 0.4-0.9 s stall on a 7 Mbps link.
 #: A LADDERED played node is the opposite case: a coarse rung that fits one
 #: chunk stays cache-resident and serves every timepoint (#2377), which is why
 #: the 4D splat demos ship at 1 MB. This pass still plans per array from bytes
