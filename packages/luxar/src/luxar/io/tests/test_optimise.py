@@ -1946,15 +1946,22 @@ class TestPlaybackWarnings:
             tmp_path / "partition.luxar.zarr",
             n_parts=6,
         )
+        root = open_group(src, mode="a")
+        bounds = root["tracks/part_5/vertex_chunk_bounds"]
+        widened = np.asarray(bounds[...])
+        widened[:, 3, :] *= 2
+        bounds[...] = widened
+        consolidate(root)
 
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+        plan = plan_optimisation(root, target_bytes=480)
 
         assert len(plan.playback_warnings) == 1
-        assert plan.playback_warnings[0].node_path == "tracks/part_0"
+        assert plan.playback_warnings[0].node_path == "tracks/part_5"
+        assert plan.playback_warnings[0].frames_per_chunk == pytest.approx(5.0)
 
         result = _run(str(src), "--target-bytes", "480", "--dry-run")
         assert result.exit_code == 0, result.output
-        assert result.output.count("would span up to 3.0 time frames/chunk") == 1
+        assert result.output.count("would span up to 5.0 time frames/chunk") == 1
 
 
 # --------------------------------------------------------------------------
