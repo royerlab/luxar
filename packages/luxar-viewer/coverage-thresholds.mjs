@@ -58,7 +58,12 @@ export const COVERAGE_THRESHOLDS = {
   // Crown jewels: high floors so a refactor cannot quietly erode them.
   'src/types/**': { lines: 97, functions: 94, branches: 96 },
   'src/wasm/**': { lines: 96, functions: 98, branches: 95 },
-  'src/config/**': { lines: 94, functions: 98, branches: 91 },
+  // branches 91 -> 93 after the control-panel / kiosk config tests (2026-09,
+  // #2714): `control-panel/fit-grid`, `zarr-bridge/control-panel` and
+  // `kiosk.ts` are pure and table-tested, so the subtree went 93.17 -> 94.15
+  // and check-coverage-slack flagged the old floor as stale — the ratchet
+  // working, same as the bumps below.
+  'src/config/**': { lines: 94, functions: 98, branches: 93 },
   'src/utils/**': { lines: 98, functions: 99, branches: 94 },
   // functions 85 -> 86 after the projected-density tracker / density guard
   // tests (2026-09): the subtree went 87.50 -> 88.06 and check-coverage-slack
@@ -85,7 +90,11 @@ export const COVERAGE_THRESHOLDS = {
   'src/workers/**': { lines: 89, functions: 90, branches: 85 },
   // functions 84 -> 86 after the promise-failure and formatter regressions
   // (2026-09, #2600) made check-coverage-slack flag the old floor as stale.
-  'src/ui/**': { lines: 89, functions: 86, branches: 77 },
+  // lines 89 -> 91 after the control-panel renderer tests (2026-09, #2714):
+  // `ui/control-panel/render-panel` is port-injected, so the grid fitting, the
+  // centred final row and the active-tile marking are all reachable from
+  // jsdom; the subtree went 91.90 -> 92.00 and the old floor went stale.
+  'src/ui/**': { lines: 91, functions: 86, branches: 77 },
   // branches 83 -> 85 after the #2508 capture-readiness tests reached the
   // version-skew branches nothing had exercised (a cap refusing on a partial
   // snapshot, the unreadable-figure paths, the hostile-string guard): the
@@ -120,14 +129,14 @@ export const COVERAGE_RECORDED = {
   branches: 83.04,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
-  'src/config/**': { lines: 95.36, functions: 100, branches: 93.17 },
+  'src/config/**': { lines: 95.36, functions: 100, branches: 94.15 },
   'src/utils/**': { lines: 99.6, functions: 100, branches: 96.19 },
   'src/scene/**': { lines: 95.5, functions: 86.74, branches: 91.15 },
   'src/cache/**': { lines: 95.03, functions: 95.2, branches: 85.41 },
   'src/controls/**': { lines: 96.32, functions: 90.72, branches: 89.44 },
   'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
   'src/workers/**': { lines: 91.39, functions: 91.41, branches: 86.74 },
-  'src/ui/**': { lines: 91.9, functions: 86.95, branches: 79.58 },
+  'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 91.11, functions: 77.38, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
   'src/rendering/**': { lines: 77.18, functions: 78.13, branches: 73.22 },
