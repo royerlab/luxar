@@ -351,6 +351,24 @@ def test_annotate_dry_run_writes_nothing(levels_store: Path) -> None:
     assert after_hash == before_hash
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_cheap_annotation_does_not_materialize_full_levels(
+    levels_store: Path, monkeypatch: pytest.MonkeyPatch, dry_run: bool
+) -> None:
+    def fail_load(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("default annotation must not load full splat levels")
+
+    monkeypatch.setattr("luxar.gsplats.lod.annotate._load_flat", fail_load)
+    annotate_quality_store(levels_store, device="cpu", dry_run=dry_run)
+
+    if not dry_run:
+        root = zarr.open_group(str(levels_store), mode="r")
+        for name in (key for key in root.group_keys() if key.startswith("child_")):
+            stats = root[name].attrs["level_stats"]
+            assert stats["median_footprint"] > 0
+            assert stats["footprint_dims"] == [0, 1, 2]
+
+
 def test_annotate_refreshes_content_hash(levels_store: Path) -> None:
     """New attrs must invalidate the viewer's persistent cache: the root
     content_hash changes and lands in consolidated metadata too."""

@@ -925,6 +925,37 @@ class TestSubstitutivePreservation:
                 lvl.colors[n1:], [[0.0, 1.0, 0.0]] * (lvl.n_splats - n1)
             )
 
+    @pytest.mark.parametrize("merge", ["concatenate", "channel_colors"])
+    def test_pyramid_merge_drops_stale_footprint_stats(self, merge):
+        def stamped(data, footprint):
+            return GSplatData.from_substitutive_levels(
+                [
+                    replace(
+                        level,
+                        stats={
+                            **level.stats,
+                            "median_footprint": footprint,
+                            "footprint_dims": [0, 1, 2],
+                        },
+                    )
+                    for level in data.substitutive_levels
+                ]
+            )
+
+        left = stamped(self._make_pyramid(seed=1), 1.0)
+        right = stamped(self._make_pyramid(seed=2), 8.0)
+        if merge == "concatenate":
+            out = GSplatData.concatenate([left, right])
+        else:
+            out = GSplatData.merge_with_channel_colors(
+                [left, right],
+                channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            )
+
+        for level in out.substitutive_levels:
+            assert "median_footprint" not in level.stats
+            assert "footprint_dims" not in level.stats
+
 
 class TestDegenerateInputs:
     """Edge-case hardening surfaced by the deep double-check."""

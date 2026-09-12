@@ -737,8 +737,9 @@ to counts.
   (including each part leaf of an `overview` fine partition).
 - **`level_stats.median_footprint`** (per GSplat `kind=lod` child): median
   geometric-mean marginal sigma across the columns named by sibling key
-  **`level_stats.footprint_dims`**, in node-local scene units. The viewer uses
-  it only for a derived `selector="screen-area"` ladder whose displayed columns
+  **`level_stats.footprint_dims`**, in node-local scene units. Those indices
+  name the node's stored columns (after any scene `dim_order` mapping). The
+  viewer uses it only for a derived `selector="screen-area"` ladder whose displayed columns
   match those dimensions, projects it in logical CSS pixels, and selects the
   coarsest level at or below 1.5 px. Missing, invalid, or mismatched stamps keep
   the occupancy selector unchanged; explicit legacy `coverage_fractions` are

@@ -788,6 +788,8 @@ def test_a_reduction_recomputes_energy_stamps_and_drops_quality(
         assert level.stats["n_splats_total"] == level.n_splats_total
         assert level.stats["reference_energy"] == pytest.approx(expected_w)
         assert "quality" not in level.stats
+        assert "median_footprint" not in level.stats
+        assert "footprint_dims" not in level.stats
         assert "refine_stats" not in level.stats
         assert "lod_cutpoints" not in level.stats
 

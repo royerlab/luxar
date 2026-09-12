@@ -4118,12 +4118,31 @@ class TestGSplatsLodGroupColourDtype:
             ]
         )
 
-        scene.add_gsplats_from_data("g", data, lod_group=True)
+        scene.add_gsplats_from_data(
+            "g", data, lod_group=True, dim_order=["Z", "Y", "X"]
+        )
         compiler.finalize()
 
         store = zarr.open_group(path, mode="r")
         assert store["g/child_0"].attrs["level_stats"]["median_footprint"] == 2.0
         assert store["g/child_1"].attrs["level_stats"]["median_footprint"] == 1.0
+        assert store["g/child_0"].attrs["level_stats"]["footprint_dims"] == [2, 1, 0]
+
+    def test_unstamped_levels_do_not_gain_empty_stats(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lg_empty_level_stats.luxar.zarr")
+        data = _dtype_multi_substitutive_data(
+            lambda n, _lvl: int64_rgb(n).astype(np.uint8)
+        )
+        data = data.__class__.from_substitutive_levels(
+            [replace(level, stats={}) for level in data.substitutive_levels]
+        )
+
+        scene.add_gsplats_from_data("g", data, lod_group=True)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert "level_stats" not in store["g/child_0"].attrs
+        assert "level_stats" not in store["g/child_1"].attrs
 
 
 def _two_rung_finest_level_data(second_rung_colors: Any) -> Any:

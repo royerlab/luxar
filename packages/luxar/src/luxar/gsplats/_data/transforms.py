@@ -8,7 +8,7 @@ every per-level op in the sibling mixins rebuilds its ladder through.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Callable, List
+from typing import TYPE_CHECKING, Any, Callable, List
 
 import numpy as np
 
@@ -26,6 +26,66 @@ if TYPE_CHECKING:
 
 
 _PRUNED_LEVEL_STATS = ("reference_energy", "quality", "n_splats_total")
+
+
+def _rescale_footprint_stats(stats: dict, linear: np.ndarray) -> dict:
+    """Rescale a footprint stamp through a linear transform, or drop it."""
+    updated = dict(stats)
+    footprint = updated.get("median_footprint")
+    footprint_dims = updated.get("footprint_dims")
+    if not isinstance(footprint, (int, float)) or not isinstance(footprint_dims, list):
+        if "median_footprint" in updated:
+            updated.pop("median_footprint", None)
+            updated.pop("footprint_dims", None)
+        return updated
+
+    axes = np.asarray(footprint_dims, dtype=int)
+    if axes.size == 0 or np.any((axes < 0) | (axes >= linear.shape[0])):
+        updated.pop("median_footprint", None)
+        updated.pop("footprint_dims", None)
+        return updated
+    determinant = abs(float(np.linalg.det(linear[np.ix_(axes, axes)])))
+    if not np.isfinite(determinant) or determinant <= 0:
+        updated.pop("median_footprint", None)
+        updated.pop("footprint_dims", None)
+        return updated
+    updated["median_footprint"] = float(footprint) * determinant ** (1.0 / axes.size)
+    return updated
+
+
+def _transform_substitutive_pyramid(
+    data: Any, matrix: np.ndarray
+) -> "GSplatData | None":
+    """Transform every level of a substitutive pyramid without flattening it."""
+    if data.n_substitutive <= 1:
+        return None
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    transformed_levels = []
+    for source_level in data.substitutive_levels:
+        transformed_level = data._view_of_level(source_level).transform(matrix)
+        out_level = transformed_level.substitutive_levels[0]
+        transformed_levels.append(
+            replace(
+                source_level,
+                additive_sublods=out_level.additive_sublods,
+                stats=out_level.stats,
+            )
+        )
+    return GSplatData.from_substitutive_levels(
+        transformed_levels, stats=dict(data.stats)
+    )
+
+
+def _rescale_level_footprints(data: "GSplatData", linear: np.ndarray) -> "GSplatData":
+    """Rebuild a transformed dataset with adjusted per-level footprint stamps."""
+    transformed_levels = [
+        replace(level, stats=_rescale_footprint_stats(level.stats, linear))
+        for level in data.substitutive_levels
+    ]
+    return data.__class__.from_substitutive_levels(
+        transformed_levels, stats=dict(data.stats)
+    )
 
 
 def _prune_empty_additive_sublods(
@@ -265,26 +325,14 @@ class TransformsMixin(_GSplatDataOps):
             >>> M = np.eye(4); M[:3, 3] = [10, 20, 30]
             >>> transformed = data.transform(M)
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
         from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
         # Multi-substitutive: transform every level and rebuild the pyramid
         # (mirrors filter_by/cull) rather than collapsing to the finest level.
-        if self.n_substitutive > 1:
-            transformed_levels = []
-            for source_level in self.substitutive_levels:
-                transformed_level = self._view_of_level(source_level).transform(matrix)
-                out_level = transformed_level.substitutive_levels[0]
-                transformed_levels.append(
-                    replace(
-                        source_level,
-                        additive_sublods=out_level.additive_sublods,
-                        stats=out_level.stats,
-                    )
-                )
-            return GSplatData.from_substitutive_levels(
-                transformed_levels, stats=dict(self.stats)
-            )
+        transformed_pyramid = _transform_substitutive_pyramid(self, matrix)
+        if transformed_pyramid is not None:
+            return transformed_pyramid
 
         matrix = np.asarray(matrix, dtype=np.float64)
         d = self.ndim
@@ -356,33 +404,7 @@ class TransformsMixin(_GSplatDataOps):
             )
 
         transformed = self._map_additive(_transform_lod)
-        transformed_levels = []
-        for level in transformed.substitutive_levels:
-            stats = dict(level.stats)
-            footprint = stats.get("median_footprint")
-            footprint_dims = stats.get("footprint_dims")
-            if isinstance(footprint, (int, float)) and isinstance(footprint_dims, list):
-                axes = np.asarray(footprint_dims, dtype=int)
-                if axes.size and np.all((0 <= axes) & (axes < d)):
-                    spatial_transform = A[np.ix_(axes, axes)]
-                    scale = abs(float(np.linalg.det(spatial_transform))) ** (
-                        1.0 / axes.size
-                    )
-                    if np.isfinite(scale) and scale > 0:
-                        stats["median_footprint"] = float(footprint) * scale
-                    else:
-                        stats.pop("median_footprint", None)
-                        stats.pop("footprint_dims", None)
-                else:
-                    stats.pop("median_footprint", None)
-                    stats.pop("footprint_dims", None)
-            elif "median_footprint" in stats:
-                stats.pop("median_footprint", None)
-                stats.pop("footprint_dims", None)
-            transformed_levels.append(replace(level, stats=stats))
-        return transformed.__class__.from_substitutive_levels(
-            transformed_levels, stats=dict(transformed.stats)
-        )
+        return _rescale_level_footprints(transformed, A)
 
     def translate(self, offset: np.ndarray) -> "GSplatData":
         """Translate all splat centers by an offset vector.
