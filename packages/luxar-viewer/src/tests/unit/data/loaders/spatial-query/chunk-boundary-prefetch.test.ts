@@ -79,6 +79,21 @@ describe('planChunkBoundaryViewStates', () => {
     expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([2, 4]);
   });
 
+  it('does not let a predicted-slice boundary mask an earlier array boundary', () => {
+    const views = planChunkBoundaryViewStates(
+      view(6),
+      view(3),
+      [{ start: 600, end: 700 }],
+      index(),
+      [
+        { shape: [800], chunks: [200] },
+        { shape: [800], chunks: [300] },
+      ]
+    );
+
+    expect(views.map((candidate) => candidate.slicePosition[3])).toEqual([3, 2]);
+  });
+
   it('searches behind the predicted slice after a reverse multi-step scrub', () => {
     const views = planChunkBoundaryViewStates(
       view(6),
