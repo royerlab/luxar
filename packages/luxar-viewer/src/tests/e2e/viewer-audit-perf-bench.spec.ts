@@ -57,6 +57,8 @@ import {
   waitForStateReady,
   type NetworkProfile,
 } from './perf-audit-helpers';
+import { parseLodBiasArms, type LodBiasArm } from './perf-audit-config';
+import type { DebugState } from '../../core/app/debug/debug-state';
 
 const VIEWER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const DATA_BASE = resolvePerfDataBase();
@@ -65,6 +67,7 @@ const BACKEND = process.env.LUXAR_PERF_BACKEND ?? 'webgl';
 const NET = (process.env.LUXAR_PERF_AUDIT_NET as NetworkProfile | undefined) ?? null;
 const FRAME_SECONDS = 3;
 const PLAYBACK_STEPS = 8;
+const LOD_BIAS_ARMS = parseLodBiasArms(process.env.LUXAR_PERF_AUDIT_LOD_BIASES);
 
 interface AuditScene {
   id: string;
@@ -78,6 +81,11 @@ interface AuditScene {
 
 const SCENES: AuditScene[] = [
   { id: 'dense-points', path: 'datasets/examples/dense_cubic_gradient_example.luxar.zarr' },
+  {
+    id: 'lines-lod-example',
+    path: 'datasets/examples/lines_substitutive_lod_example.luxar.zarr',
+  },
+  { id: 'gsplats-lod-example', path: 'datasets/examples/gsplats_lod_example.luxar.zarr' },
   { id: 'bench-100-nodes', path: 'datasets/examples/performance_benchmark_example.luxar.zarr' },
   { id: 'ct-gsplats', path: 'datasets/demos/gsplats_3d_ct_totalsegmentator.luxar.zarr' },
   {
@@ -85,6 +93,18 @@ const SCENES: AuditScene[] = [
     path: 'datasets/demos/gsplats_4d_neuromast_2ch.luxar.zarr',
     playback: true,
   },
+  {
+    id: 'zebrafish-4d',
+    path: 'datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr',
+    playback: true,
+  },
+  { id: 'hilbert-lines', path: 'datasets/demos/hilbert_curve_3d.luxar.zarr' },
+  { id: 'ocean-lines', path: 'datasets/demos/ocean.luxar.zarr', playback: true },
+  {
+    id: 'zebrahub-lines',
+    path: 'datasets/demos/zebrahub_velocity_streamlines_hifi.luxar.zarr',
+  },
+  { id: 'tribolium-recipes', path: 'datasets/demos/gsplats_recipes_tribolium.luxar.zarr' },
   {
     id: 'celegans-4d',
     path: 'datasets/demos/gsplats_4d_celegans_tracking.luxar.zarr',
@@ -102,6 +122,7 @@ const filter = (process.env.LUXAR_PERF_AUDIT_SCENES ?? '')
   .map((s) => s.trim())
   .filter(Boolean);
 const activeScenes = filter.length ? SCENES.filter((s) => filter.includes(s.id)) : SCENES;
+const auditCases = activeScenes.flatMap((scene) => LOD_BIAS_ARMS.map((bias) => ({ scene, bias })));
 
 function currentCommitSha(): string {
   try {
@@ -111,8 +132,8 @@ function currentCommitSha(): string {
   }
 }
 
-function sceneUrl(scene: AuditScene, extra = '&dpr=1'): string {
-  return `/?src=${DATA_BASE}/${scene.path}&debug${extra}`;
+function sceneUrl(scene: AuditScene, bias: LodBiasArm, extra = '&dpr=1'): string {
+  return `/?src=${DATA_BASE}/${scene.path}&debug${bias.query}${extra}`;
 }
 
 /** Skip cleanly when the store is not served (datasets live in the main checkout). */
@@ -171,6 +192,37 @@ interface RunMetrics extends LoadMetrics {
   playbackFullMs_cold: number | null;
   playbackFirstMs_warm: number | null;
   playbackFullMs_warm: number | null;
+  visibleElements_default: number | null;
+  visibleElements_zoom4x: number | null;
+}
+
+interface SelectionSnapshot {
+  visibleElements: number;
+  activeLevels: string;
+}
+
+async function readSelectionSnapshot(page: Page): Promise<SelectionSnapshot> {
+  return page.evaluate(() => {
+    const state = window.__luxarDebug?.getState?.() as DebugState | undefined;
+    if (!state) return { visibleElements: 0, activeLevels: '' };
+    const visibleElements = [
+      ...state.pointClouds,
+      ...state.gsplatMeshes,
+      ...state.lineMeshes,
+      ...state.meshNodes,
+    ].reduce((sum, node) => {
+      if (!node.visible) return sum;
+      if ('pointCount' in node) return sum + node.pointCount;
+      if ('splatCount' in node) return sum + node.splatCount;
+      if ('segmentCount' in node) return sum + node.segmentCount;
+      return sum + node.triangleCount;
+    }, 0);
+    const activeLevels = state.lodGroups
+      .map((group) => `${group.name}:${group.activeLevel}/${group.levelCount - 1}`)
+      .sort()
+      .join(',');
+    return { visibleElements, activeLevels };
+  });
 }
 
 async function newAuditContext(browser: Browser): Promise<BrowserContext> {
@@ -226,7 +278,10 @@ async function measureLoad(page: Page, scene: AuditScene, url: string): Promise<
   };
 }
 
-async function measureFrames(page: Page): Promise<Partial<RunMetrics>> {
+async function measureFrames(
+  page: Page
+): Promise<Partial<RunMetrics> & { defaultLevels: string; zoomLevels: string }> {
+  const defaultSelection = await readSelectionSnapshot(page);
   await setManualDpr(page, 1);
   const dpr1 = await measureContinuousRender(page, FRAME_SECONDS);
   await setManualDpr(page, 0.5);
@@ -236,6 +291,7 @@ async function measureFrames(page: Page): Promise<Partial<RunMetrics>> {
   await dollyCamera(page, 0.25);
   // A closer pose may promote lazy LOD levels; let them land before sampling.
   await waitForPerfSettled(page, 30_000);
+  const zoomSelection = await readSelectionSnapshot(page);
   const zoom = await measureContinuousRender(page, FRAME_SECONDS);
   return {
     frameP50Ms_dpr1: dpr1.p50,
@@ -243,6 +299,10 @@ async function measureFrames(page: Page): Promise<Partial<RunMetrics>> {
     frameP50Ms_dpr05: dpr05.p50,
     frameP50Ms_zoom4x: zoom.p50,
     drawCalls: perf.rendererInfo?.calls ?? null,
+    visibleElements_default: defaultSelection.visibleElements,
+    visibleElements_zoom4x: zoomSelection.visibleElements,
+    defaultLevels: defaultSelection.activeLevels,
+    zoomLevels: zoomSelection.activeLevels,
   };
 }
 
@@ -273,10 +333,14 @@ async function measurePlayback(page: Page): Promise<Partial<RunMetrics>> {
   };
 }
 
-async function runOnce(context: BrowserContext, scene: AuditScene): Promise<RunMetrics> {
+async function runOnce(
+  context: BrowserContext,
+  scene: AuditScene,
+  bias: LodBiasArm
+): Promise<RunMetrics & { defaultLevels: string; zoomLevels: string }> {
   const page = await context.newPage();
   try {
-    const load = await measureLoad(page, scene, sceneUrl(scene));
+    const load = await measureLoad(page, scene, sceneUrl(scene, bias));
     const frames = await measureFrames(page);
     const playback = scene.playback ? await measurePlayback(page) : {};
     // Last read before the page closes: catches drops from the dolly/settle
@@ -294,6 +358,8 @@ async function runOnce(context: BrowserContext, scene: AuditScene): Promise<RunM
       playbackFullMs_cold: null,
       playbackFirstMs_warm: null,
       playbackFullMs_warm: null,
+      visibleElements_default: null,
+      visibleElements_zoom4x: null,
       ...frames,
       ...playback,
     };
@@ -323,22 +389,24 @@ function aggregate(runs: RunMetrics[]): {
 }
 
 test.describe('viewer audit bench', () => {
-  for (const scene of activeScenes) {
-    test(`audit ${scene.id}${NET ? ` (${NET})` : ''}`, async ({ browser }) => {
+  for (const { scene, bias } of auditCases) {
+    test(`audit ${scene.id}${bias.value === null ? '' : ` lod-bias=${bias.value}`}${NET ? ` (${NET})` : ''}`, async ({
+      browser,
+    }) => {
       test.setTimeout(900_000);
       test.skip(!(await storeAvailable(scene)), `${scene.path} is not served at ${DATA_BASE}`);
 
-      const runs: RunMetrics[] = [];
+      const runs: Array<RunMetrics & { defaultLevels: string; zoomLevels: string }> = [];
       let warm: LoadMetrics | null = null;
       for (let i = 0; i < REPEATS; i++) {
         const context = await newAuditContext(browser);
         try {
-          runs.push(await runOnce(context, scene));
+          runs.push(await runOnce(context, scene, bias));
           if (i === REPEATS - 1) {
             // Same context = populated OPFS: the warm second visit.
             const page = await context.newPage();
             try {
-              warm = await measureLoad(page, scene, sceneUrl(scene));
+              warm = await measureLoad(page, scene, sceneUrl(scene, bias));
             } finally {
               await page.close();
             }
@@ -349,7 +417,7 @@ test.describe('viewer audit bench', () => {
       }
 
       const { medians, spreads } = aggregate(runs);
-      const scenarioId = `audit-${scene.id}${NET ? `-${NET}` : ''}`;
+      const scenarioId = `audit-${scene.id}${bias.scenarioSuffix}${NET ? `-${NET}` : ''}`;
       const row = {
         scenarioId,
         backend: BACKEND,
@@ -363,6 +431,9 @@ test.describe('viewer audit bench', () => {
           ...medians,
           warmSceneLoadedMs: warm?.sceneLoadedMs ?? null,
           warmRequests: warm?.requests ?? null,
+          lodBias: bias.value,
+          activeLevelsDefault: runs.at(-1)?.defaultLevels ?? '',
+          activeLevelsZoom4x: runs.at(-1)?.zoomLevels ?? '',
           spread: spreads,
         },
       };
@@ -461,7 +532,7 @@ test.describe('viewer audit bench', () => {
     try {
       const page = await context.newPage();
       await installAuditObservers(page);
-      await page.goto(sceneUrl(scene, ''));
+      await page.goto(sceneUrl(scene, LOD_BIAS_ARMS[0], ''));
       await waitForPerfReady(page);
       await waitForPerfSettled(page, 120_000);
       // 30 s of continuous rendering: enough for the controller to walk,

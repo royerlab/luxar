@@ -34,6 +34,13 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
 - `LUXAR_PERF_AUDIT_NET=hosted` throttles to 25 Mbps / 30 ms via CDP;
   `LUXAR_PERF_AUDIT_SCENES=dense-points,cmu1-2d` restricts scenes (the line bench
   owns `LUXAR_PERF_SCENARIO_FILTER` and rejects unknown ids).
+- `LUXAR_PERF_AUDIT_LOD_BIASES=1,2,4` crosses each selected scene with the
+  replacement-LOD bias axis. Rows are keyed `-lod-bias-N` and include committed
+  visible-element totals plus the active level of every substitutive group at
+  the opening pose and after the 4x dolly. The audit scene catalog includes the
+  Hilbert/ocean/ZebraHub dense-line cases, neuromast/zebrafish timelapses, the
+  Tribolium recipes contract check, and small checked-in Lines/GSplat LOD examples;
+  missing generated stores skip cleanly.
 - A separate `audit-dense-points-adaptive` row runs WITHOUT the `dpr=1` pin and
   records where the adaptive-DPR controller settles after 30 s.
 - A `spread` above ~0.15 on a headline metric means the host was busy; re-run
