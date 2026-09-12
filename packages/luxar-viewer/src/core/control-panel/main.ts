@@ -21,11 +21,20 @@ import {
   deriveChapters,
   type ChapterSource,
 } from '../../config/control-panel/derive-chapters';
-import { readUrlParams } from '../../config/url-params';
+import { readUrlParams, type UrlParams } from '../../config/url-params';
 import type { DimensionMetadata } from '../../types/dims';
-import { createControlPanel } from '../../ui/control-panel/render-panel';
+import {
+  createControlPanel,
+  type ControlPanelPorts,
+  type ControlPanelView,
+} from '../../ui/control-panel/render-panel';
 import { log, Modules } from '../../utils/log';
-import { ControllerSocket, type ControllerStatus } from './controller-socket';
+import {
+  ControllerCallError,
+  ControllerSocket,
+  type ControllerSocketPorts,
+  type ControllerStatus,
+} from './controller-socket';
 
 /**
  * Idle timeout before the panel sends the display back to its first chapter.
@@ -35,6 +44,10 @@ import { ControllerSocket, type ControllerStatus } from './controller-socket';
  * enough not to interrupt someone reading.
  */
 const IDLE_RESET_MS = 120_000;
+/** First retry when the hub is up before the viewer attaches. */
+export const CHAPTER_RETRY_BASE_MS = 500;
+/** Keep retry traffic bounded while a display remains offline. */
+export const CHAPTER_RETRY_MAX_MS = 5_000;
 
 /** Shape of `getDimensions()` over the wire, as far as this page cares. */
 interface WireDimensions {
@@ -75,6 +88,29 @@ export interface CustomPanelContext {
 /** The shape `?panel=` modules must default-export. */
 export type CustomPanelMount = (context: CustomPanelContext) => void | Promise<void>;
 
+export interface ControlPanelBootstrapPorts {
+  params?: UrlParams;
+  root?: HTMLElement;
+  createPanel?: (ports: ControlPanelPorts) => ControlPanelView;
+  createSocket?: (ports: ControllerSocketPorts) => ControllerSocket;
+  mountPanel?: (url: string, context: CustomPanelContext) => Promise<boolean>;
+  onBeforeUnload?: (listener: () => void) => void;
+}
+
+type CustomPanelState = 'unmounted' | 'mounting' | 'mounted' | 'failed';
+type ConnectedUrlParams = UrlParams & { control: string };
+
+interface StatusHandlerContext {
+  params: UrlParams;
+  root: HTMLElement;
+  panel: ControlPanelView;
+  ports: ControlPanelBootstrapPorts;
+  socket: () => ControllerSocket | undefined;
+  customPanelState: { current: CustomPanelState };
+  cancelChapterRetry: (resetDelay?: boolean) => void;
+  loadChaptersWithRetry: () => Promise<void>;
+}
+
 /**
  * Hand control to an authored panel module.
  *
@@ -97,29 +133,66 @@ async function mountCustomPanel(url: string, context: CustomPanelContext): Promi
   }
 }
 
-function bootstrap(): void {
-  const params = readUrlParams();
+function customPanelOwnsPage(state: CustomPanelState): boolean {
+  return state === 'mounting' || state === 'mounted';
+}
+
+function startCustomPanel(context: StatusHandlerContext): boolean {
+  const custom = context.params.panel;
+  const socket = context.socket();
+  if (custom === null || context.customPanelState.current === 'failed') return false;
+  if (context.customPanelState.current !== 'unmounted') return true;
+  if (socket === undefined) return false;
+
+  context.customPanelState.current = 'mounting';
+  void (context.ports.mountPanel ?? mountCustomPanel)(custom, {
+    socket,
+    root: context.root,
+    params: context.params,
+  }).then((mounted) => {
+    context.customPanelState.current = mounted ? 'mounted' : 'failed';
+    if (mounted) return;
+    context.panel.showMessage(
+      'Custom panel failed',
+      `Could not mount ${custom}. Falling back to the built-in chapter menu.`
+    );
+    void context.loadChaptersWithRetry();
+  });
+  return true;
+}
+
+function createStatusHandler(context: StatusHandlerContext): (status: ControllerStatus) => void {
+  return (status) => {
+    if (status === 'open') {
+      context.cancelChapterRetry();
+      if (startCustomPanel(context)) return;
+      void context.loadChaptersWithRetry();
+      return;
+    }
+    context.cancelChapterRetry(false);
+    if (!customPanelOwnsPage(context.customPanelState.current)) {
+      context.panel.showMessage('Reconnecting', 'Lost the control hub. Trying again...');
+    }
+  };
+}
+
+function startConnectedPanel(
+  params: ConnectedUrlParams,
+  root: HTMLElement,
+  ports: ControlPanelBootstrapPorts
+): void {
   let socket: ControllerSocket | undefined;
   let source: ChapterSource | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let chapterRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let chapterRetryDelayMs = CHAPTER_RETRY_BASE_MS;
+  const customPanelState: { current: CustomPanelState } = { current: 'unmounted' };
 
-  const panel = createControlPanel({
-    root: document.body,
+  const panel = (ports.createPanel ?? createControlPanel)({
+    root,
     call: (method, callParams) => socket?.notify(method, callParams),
     onInteraction: () => restartIdleTimer(),
   });
-
-  // No hub configured. The honest answer, not an empty grid: this is exactly
-  // what an exported folder gets until its launcher grows a relay.
-  if (params.control === null) {
-    panel.showMessage(
-      'No control hub',
-      'This page drives a Luxar viewer over a control hub, and none was given. ' +
-        'Serve the scene with `luxar serve <scene> --viewer --control`, then open ' +
-        'the control URL it prints.'
-    );
-    return;
-  }
 
   function restartIdleTimer(): void {
     if (idleTimer !== undefined) clearTimeout(idleTimer);
@@ -129,6 +202,22 @@ function bootstrap(): void {
         socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
       }
     }, IDLE_RESET_MS);
+  }
+
+  function cancelChapterRetry(resetDelay = true): void {
+    if (chapterRetryTimer !== undefined) clearTimeout(chapterRetryTimer);
+    chapterRetryTimer = undefined;
+    if (resetDelay) chapterRetryDelayMs = CHAPTER_RETRY_BASE_MS;
+  }
+
+  function scheduleChapterRetry(): void {
+    if (chapterRetryTimer !== undefined) return;
+    const delay = chapterRetryDelayMs;
+    chapterRetryTimer = setTimeout(() => {
+      chapterRetryTimer = undefined;
+      void loadChaptersWithRetry();
+    }, delay);
+    chapterRetryDelayMs = Math.min(delay * 2, CHAPTER_RETRY_MAX_MS);
   }
 
   function markActive(position: number | undefined): void {
@@ -150,42 +239,36 @@ function bootstrap(): void {
     panel.render(source, { title: document.title });
     markActive(dims.currentStep[source?.dimensionIndex ?? -1]);
     await socket?.call('subscribe', ['dimensions-changed']);
-    restartIdleTimer();
   }
 
-  const onStatus = (status: ControllerStatus): void => {
-    if (status === 'open' && params.panel !== null && socket !== undefined) {
-      // An authored panel takes over from here, or we fall back to the built-in
-      // one rather than leaving a blank screen on a plinth.
-      const custom = params.panel;
-      void mountCustomPanel(custom, { socket, root: document.body, params }).then((mounted) => {
-        if (!mounted) {
-          panel.showMessage(
-            'Custom panel failed',
-            `Could not mount ${custom}. Falling back to the built-in chapter menu.`
-          );
-          void loadChapters().catch(() => undefined);
-        }
-      });
-      return;
+  async function loadChaptersWithRetry(): Promise<void> {
+    try {
+      await loadChapters();
+      cancelChapterRetry();
+    } catch (error) {
+      log.warning(Modules.APP, 'control panel: could not load chapters:', error);
+      panel.showMessage(
+        'Waiting for the display',
+        'Connected to the hub, but no viewer has attached yet.'
+      );
+      if (error instanceof ControllerCallError && error.noViewerAttached) {
+        scheduleChapterRetry();
+      }
     }
-    if (status === 'open') {
-      // A viewer may not be attached yet (the display boots slower than the
-      // panel), so a failure here is a state to retry, not an error to show.
-      void loadChapters().catch((error: unknown) => {
-        log.warning(Modules.APP, 'control panel: could not load chapters:', error);
-        panel.showMessage(
-          'Waiting for the display',
-          'Connected to the hub, but no viewer has attached yet.'
-        );
-      });
-    }
-    if (status === 'closed') {
-      panel.showMessage('Reconnecting', 'Lost the control hub. Trying again...');
-    }
-  };
+  }
 
-  socket = new ControllerSocket({
+  const onStatus = createStatusHandler({
+    params,
+    root,
+    panel,
+    ports,
+    socket: () => socket,
+    customPanelState,
+    cancelChapterRetry,
+    loadChaptersWithRetry,
+  });
+
+  socket = (ports.createSocket ?? ((socketPorts) => new ControllerSocket(socketPorts)))({
     url: params.control,
     token: params.controlToken,
     onStatus,
@@ -198,10 +281,33 @@ function bootstrap(): void {
   panel.showMessage('Connecting', 'Looking for the control hub...');
   socket.connect();
 
-  window.addEventListener('beforeunload', () => {
+  const teardown = (): void => {
     if (idleTimer !== undefined) clearTimeout(idleTimer);
+    cancelChapterRetry();
     socket?.dispose();
-  });
+  };
+  (ports.onBeforeUnload ?? ((listener) => window.addEventListener('beforeunload', listener)))(
+    teardown
+  );
+}
+
+export function bootstrap(ports: ControlPanelBootstrapPorts = {}): void {
+  const params = ports.params ?? readUrlParams();
+  const root = ports.root ?? document.body;
+  if (params.control !== null) {
+    startConnectedPanel({ ...params, control: params.control }, root, ports);
+    return;
+  }
+
+  // No hub configured. The honest answer, not an empty grid: this is exactly
+  // what an exported folder gets until its launcher grows a relay.
+  const panel = (ports.createPanel ?? createControlPanel)({ root, call: () => undefined });
+  panel.showMessage(
+    'No control hub',
+    'This page drives a Luxar viewer over a control hub, and none was given. ' +
+      'Serve the scene with luxar serve <scene> --viewer --control, then open ' +
+      'the control URL it prints.'
+  );
 }
 
 bootstrap();
