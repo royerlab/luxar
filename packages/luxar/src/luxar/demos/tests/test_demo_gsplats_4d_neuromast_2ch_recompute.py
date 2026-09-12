@@ -371,10 +371,28 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
 
     def test_the_stacked_axis_is_last_in_the_fitted_output(self):
         """The source is time-FIRST; the fit emits spatial-first, stacked-last.
-        The Z scale therefore applies to index 0, not index 1."""
+        The Z scale therefore applies to index 0, not index 1.
+
+        Placement only — the factor's VALUE is pinned by the sibling test below.
+        """
         assert demo.SOURCE_AXES.startswith("time")
-        assert demo.VOXEL_SCALE[0] == 2.5
+        assert demo.VOXEL_SCALE[0] != 1.0, "index 0 is the scaled (Z) axis"
         assert demo.VOXEL_SCALE[1:] == (1.0, 1.0, 1.0)
+
+    def test_the_z_scale_is_the_measured_voxel_anisotropy(self):
+        """The MetaMorph headers record a 0.25 um z-step over a 0.1083 um lateral
+        pitch, so the factor is 2.3084x — not the historical 2.5, which stretched
+        Z by 8.3 % in the published scene.
+
+        Pinned against those two measured numbers rather than against the
+        expression that defines the constant: comparing it to its own source
+        passes for whatever instrument someone typed in, so it would not catch
+        the defect coming back with a different pitch.
+        """
+        z_step_um = 0.25
+        lateral_pitch_um = 0.1083
+        assert demo.VOXEL_SCALE[0] == pytest.approx(z_step_um / lateral_pitch_um)
+        assert demo.VOXEL_SCALE[0] == pytest.approx(2.3084, abs=1e-4)
 
     def test_the_recipe_has_no_cull_at_all(self, monkeypatch, tmp_path):
         """The 2026-08 build redundancy-culled every tile at 0.20 and lost 17-26 dB
@@ -413,6 +431,22 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert fit[3] == str(tmp_path / "src.zarr")
         assert "--array-key" not in fit
         assert not hasattr(demo, "REDUNDANCY_THRESHOLD")
+
+        # The transform is where the anisotropy correction reaches the archive.
+        # Pinned as the EMITTED string: reversing the tuple or dropping --scale
+        # entirely leaves every other assertion in this suite green. Same for
+        # --normalize-intensity: change its value or drop the pair and the
+        # rebuilt amplitudes no longer match the display windows that
+        # ``test_compiled_scene_preserves_the_tuned_appearance`` pins, with
+        # nothing else in this suite going red. Membership is asserted first so
+        # a dropped flag names itself instead of raising a bare ValueError.
+        transform = calls[1]
+        assert "--scale" in transform
+        assert (
+            transform[transform.index("--scale") + 1] == "2.308402585410896,1.0,1.0,1.0"
+        )
+        assert "--normalize-intensity" in transform
+        assert transform[transform.index("--normalize-intensity") + 1] == "1.0"
 
     def test_the_seed_budget_is_the_calibrated_k_star(self):
         assert demo.SEEDS == 64_000

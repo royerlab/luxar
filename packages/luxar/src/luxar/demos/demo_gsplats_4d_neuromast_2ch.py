@@ -63,8 +63,15 @@ PIPELINE — reproducible per channel with ``--recompute``:
     6. ``batch-fit run --merge-recipe stream --merge-n-lods 8`` merges the
        (unculled) tiles into ONE leaf with the recorded 8-rung progressive
        ladder (the run's own merge; the run's default would be 4 rungs).
-    7. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
-       → isotropic Z, amplitudes on a 0-1 scale.
+    7. ``gsplat transform --scale 2.308402585410896,1.0,1.0,1.0
+       --normalize-intensity 1.0`` → the factor is the measured 0.25 um z-step
+       over the 0.1083 um lateral pitch, which removes the voxel anisotropy so
+       Z becomes commensurate with X/Y; amplitudes on a 0-1 scale. The centres
+       stay in **lateral-pixel units**, NOT microns: 1 unit = 0.1083 um.
+       (The 2026-08 pair on the record was transformed with the historical 2.5
+       — an 8.3 % Z stretch — and stays pinned in ``data_manifest.json``;
+       the corrected rebuild is ready, but publishing it still needs the record
+       upload and manifest repin, which this recipe change does not do.)
 
     Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
@@ -267,11 +274,13 @@ PRESET = "n2s"
 TILE_SIZE = 640
 #: Concurrent fit workers per GPU. NOT `auto` — see the docstring's warning.
 JOBS_PER_GPU = 12
-#: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give
-#: 0.25 um z-step and 0.1083 um pixels (2.31x); the shipped scenes were built
-#: with 2.5, kept until the scene is rebuilt on the measured pitch
-#: (paper registry: voxel_um=(0.25, 0.1083, 0.1083)).
-VOXEL_SCALE = (2.5, 1.0, 1.0, 1.0)
+#: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give a
+#: 0.25 um z-step and 0.1083 um pixels = 2.3084x (the paper registry records
+#: voxel_um=(0.25, 0.1083, 0.1083)). A RATIO, not a micron conversion: it only
+#: makes Z commensurate with X/Y, and the centres stay on the lateral-pixel grid.
+#: The 2026-08 pair on the record carries the historical 2.5 (step 7). Kept as
+#: the computed quotient rather than a rounded literal.
+VOXEL_SCALE = (0.25 / 0.1083, 1.0, 1.0, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
 NORMALIZE_INTENSITY = 1.0
@@ -397,7 +406,13 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
 
         # Anisotropy + normalisation LAST: this is what takes the archive off the
         # voxel grid, and the fit's PSNR stamps are only comparable to the source
-        # before it happens.
+        # before it happens. The factor is the measured 2.3084 rather than the 2.5
+        # the pinned archives carry, so a rebuild is 7.7% shorter in Z than the
+        # published pair, and the display windows in ``CHANNELS`` plus the
+        # bounding-sphere radii recorded there -- and tabulated in the neuromast
+        # row of ``docs/guides/specs/LAYER_ORDER_SPEC.md`` -- were measured on
+        # the old geometry and want re-measuring before the corrected pair is
+        # repinned.
         run_luxar_cli(
             "gsplat",
             "transform",
@@ -507,10 +522,13 @@ def resolve_channel_paths() -> list[Path]:
 def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     """Build the 4D two-channel scene: one layer-enabled gsplats node per marker.
 
-    The gsplats are pre-fit 4D (``z, y, x, time``), already anisotropy-corrected
-    (Z ×2.5) and intensity-normalised, so we simply graft each
-    channel with its LUT and ``layer=True``. Both channels share identical 4D
-    bounds → they co-register and animate together over the Time dimension.
+    The gsplats are pre-fit 4D (``z, y, x, time``), already Z-scaled and
+    intensity-normalised, so we simply graft each channel with its LUT and
+    ``layer=True``. The pinned pair was scaled by the historical 2.5, not
+    ``VOXEL_SCALE`` (step 7), so a scene built from the downloaded archives is
+    8.3 % stretched in Z; one built by ``--recompute`` is not.
+    Both channels share identical 4D bounds → they co-register and animate
+    together over the Time dimension.
     """
     with asection("Creating 4D two-channel neuromast scene"):
         # Explicit, named 4D dims (not the generic dim0..dim3 from
@@ -522,6 +540,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         node, _ = load_gsplat_node(str(channel_paths[0]))
         bmin, bmax = center_bounds(node)
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
+        # The µm labels are aspirational: 1 unit = 0.1083 µm; see step 7 and #2723.
         dims = Dimensions(
             [
                 Dimension(
@@ -550,7 +569,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                 dimensions=dims,
                 # Exposure pulled down 3.4 stops (set by eye with the channel
                 # windows): at the default camera distance the rosette core
-                # otherwise saturates to white under both volumetric layers.
+                # otherwise saturates to white under both additive layers.
                 viewer_config=ViewerConfig(
                     cinematic_mode=True, tone_mapping="ACES", exposure=EXPOSURE_STOPS
                 ),
