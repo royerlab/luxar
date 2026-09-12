@@ -147,6 +147,16 @@ RECOVERED_DRIFTING_FRAMINGS = (
     # A manner adverbial runs into the verb; a parenthetical is bounded by its
     # own commas, so widening the manner clause must stop at one.
     "The imaging is, as we note, described in Royer et al.",
+    # A replacement subject or denial only clears the claim when it runs into
+    # the publication verb. Appositives and parentheticals still describe the
+    # imaging, so nouns and negations inside them must not suppress the claim.
+    "The imaging, acquired on the SiMView microscope, is described in Royer et al.",
+    "The imaging, a light-sheet microscopy timelapse, is described in Royer et al.",
+    "The imaging, produced with the standard acquisition protocol, is described "
+    "in Royer et al.",
+    "The imaging, which does not include the fixed-cutoff pass, is described in "
+    "Royer et al.",
+    "The imaging, not yet reprocessed, is described in Royer et al.",
 )
 # Clean only because "imaging" and the verb are more than a sentence-window
 # apart with a different subject in between; widening the window flags it.

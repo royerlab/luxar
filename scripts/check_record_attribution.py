@@ -72,10 +72,11 @@ claim is not seen when the text between "imaging" and the publication verb
   which is what keeps "Imaging was done; the method is described in X" clean,
   at the cost of not seeing a claim written across an inline genotype like
   ``w; His2Av::mRFP1; +``;
-* contains a replacement head noun (instrument, microscope, method, protocol,
+* ends with a replacement head noun (instrument, microscope, method, protocol,
   pipeline, technique, setup, apparatus, software), because then that noun and
   not the imaging is what the publication covers;
-* contains "not" or "never", because a denial is the opposite of the claim;
+* ends with "not" or "never" and an optional short tail, because a denial is
+  the opposite of the claim;
 * ends in a manner adverbial ("... as previously described in ...");
 
 or when the imaging is demoted to the object of a preposition ("details *of the
@@ -137,7 +138,7 @@ _PUBLICATION_DESCRIBES_IMAGING = re.compile(
 # processing", "with no deconvolution nor denoising") and suppressed real claims.
 # "(no. 3 of the series)" stays out of scope regardless - the abbreviation's full
 # stop bounds the clause, which is a different rule.
-_NEGATED = re.compile(r"\b(?:not|never)\b", re.IGNORECASE)
+_NEGATED = re.compile(r"\b(?:not|never)\b[^,;]{0,24}$", re.IGNORECASE)
 # A replacement HEAD NOUN: something other than the imaging is what the
 # publication covers. These are the maintainer's correct framings, and they must
 # never be flagged. Artefact nouns (archive, record, paper, fit, splat) are
@@ -147,7 +148,7 @@ _NEGATED = re.compile(r"\b(?:not|never)\b", re.IGNORECASE)
 # removing them left the live report byte-identical.
 _INTERVENING_SUBJECT = re.compile(
     r"\b(?:instruments?|microscopes?|microscopy|methods?|methodology|protocols?"
-    r"|pipelines?|techniques?|setup|apparatus|software)\b",
+    r"|pipelines?|techniques?|setup|apparatus|software)\b[^,;]{0,24}$",
     re.IGNORECASE,
 )
 # "Imaging was carried out as described in Royer et al.", "Imaging was performed
