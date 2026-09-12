@@ -341,7 +341,8 @@ MIN_NODE_MINOR := 22
 | `make check-demo-links` | Opt-in demo click-through destination audit; reports request failures and human-only checks without failing the command |
 | `make check-zenodo-live` | Opt-in live Zenodo manifest-pin audit using the system Python; requires `ZENODO_TOKEN` and is deliberately not a required CI gate |
 | `make check-cold-fetch` | Opt-in pre-removal gate that downloads hosted demo datasets into a throwaway cache with in-repo payloads hidden, then verifies their hosted SHA-256 pins |
-| `make check-external-references` | Run all network-backed reference audits and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
+| `make check-record-attribution` | Opt-in offline audit comparing each Zenodo record's captured description with the manifest `attribution`; reports where a record asserts a publication describes *the imaging* while the imaging is unpublished (one describing the instrument or method is the correct framing and is never flagged). Report-only because the wording is authored on Zenodo, which is also why its live-repo test asserts only repository-controlled properties — `scripts/tests` runs in the required `python-tests` job |
+| `make check-external-references` | Run every external-reference audit — network-backed ones plus the offline record-attribution comparison — and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
 | `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
 ### Utilities

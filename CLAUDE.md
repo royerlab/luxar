@@ -124,6 +124,15 @@ make check-docs   # REQUIRED gate mirror: completeness + TypeDoc ratchets +
 make check-docs-external-links  # opt-in external HTTP link audit (not a gate)
 make check-demo-links  # opt-in demo click-through audit (reports only; not a gate)
 make check-zenodo-live          # opt-in live Zenodo manifest-pin audit (not a gate)
+make check-record-attribution   # opt-in OFFLINE audit: does the captured Zenodo
+                  # record text still agree with the manifest's `attribution`?
+                  # Flags only a publication describing THE IMAGING — one describing
+                  # the INSTRUMENT or METHOD is the correct framing. Report-only BY
+                  # DESIGN: the wording is authored on Zenodo, so a finding is fixed
+                  # there and re-captured, never by regenerating the snapshot. Its
+                  # live-repo test is DELIBERATELY WEAK and must stay so — scripts/
+                  # tests runs in the REQUIRED python-tests job, so asserting what
+                  # the audit FINDS would gate on prose only Zenodo can change.
 make check-cold-fetch           # opt-in hosted demo cold-fetch gate before payload removal
 make check-external-references  # aggregate external audits (report-only, non-gating)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
