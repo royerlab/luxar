@@ -639,8 +639,8 @@ def plan_optimisation(
 def _playing_dimensions(root: zarr.Group) -> list[tuple[int, str, float]]:
     """Played dimensions as ``(index, name, positive tick step)`` tuples.
 
-    Auto playback on a continuous dimension has no fixed tick step and is
-    therefore not diagnosable unless the animation supplies ``step_size``.
+    Only auto playback on a continuous dimension lacks a fixed tick step and
+    is therefore not diagnosable unless the animation supplies ``step_size``.
     """
     attrs = dict(root.attrs)
     viewer_config = attrs.get("viewer_config")
@@ -666,6 +666,8 @@ def _playing_dimensions(root: zarr.Group) -> list[tuple[int, str, float]]:
             numeric_step = max(grid_step, cells * grid_step)
         elif numeric_step is None:
             numeric_step = base_step
+            if numeric_step is None and dimension.get("discrete") is True:
+                numeric_step = 1.0
         if numeric_step is None:
             continue
         name = dimension.get("name")

@@ -251,6 +251,7 @@ def build_animated_lines_store(
     atoms_per_frame: int = 2,
     node_type: str = "lines",
     dimension_step: float | None = 1.0,
+    dimension_discrete: bool | None = None,
     step_size: float | None = None,
     include_segments: bool = False,
     vertex_slice_major: bool = True,
@@ -269,7 +270,9 @@ def build_animated_lines_store(
                     {
                         "name": "time",
                         "display": False,
-                        "discrete": dimension_step is not None,
+                        "discrete": dimension_step is not None
+                        if dimension_discrete is None
+                        else dimension_discrete,
                         "step": dimension_step,
                     },
                 ]
@@ -1901,6 +1904,19 @@ class TestPlaybackWarnings:
         plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
 
         assert plan.playback_warnings[0].frames_per_chunk == pytest.approx(5.0)
+
+    def test_discrete_dimension_without_step_uses_unit_frame(
+        self, tmp_path: Path
+    ) -> None:
+        src = build_animated_lines_store(
+            tmp_path / "discrete-auto-step.luxar.zarr",
+            dimension_step=None,
+            dimension_discrete=True,
+        )
+
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+
+        assert plan.playback_warnings[0].frames_per_chunk == pytest.approx(3.0)
 
     def test_invalid_animation_step_override_falls_back(self, tmp_path: Path) -> None:
         src = build_animated_lines_store(
