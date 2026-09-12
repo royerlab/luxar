@@ -17,15 +17,25 @@ from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Callable, Iterator, MutableMapping, Optional, Union, cast
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Iterator,
+    MutableMapping,
+    Optional,
+    Union,
+    cast,
+)
 
 import uvicorn
 from arbol import aprint
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from starlette.datastructures import MutableHeaders
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.routing import Mount
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -37,8 +47,12 @@ from .network_simulation import (
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
     _LOCAL_CORS_ORIGIN_REGEX,
+    ALL_INTERFACES_HOSTS,
+    advertised_host,
     append_title_param,
+    authority_hostname,
     get_viewer_dist_path,
+    origin_hostname,
 )
 from .utils import (
     open_browser as open_browser_func,
@@ -118,7 +132,76 @@ class _ViewerStaticFiles(StaticFiles):
         )(scope, receive, send)
 
 
-def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
+class _SameHostCORSMiddleware(CORSMiddleware):
+    """CORS that also allows origins on the host the request arrived on.
+
+    Why this exists: `luxar serve --viewer` runs the data server and the
+    viewer on two ports of ONE host, and derives the viewer's ``?src=`` from
+    the address it bound. So on a non-loopback bind the browser fetches
+    ``http://<lan>:8000`` from a page on ``http://<lan>:5173`` — a
+    cross-origin pair that the loopback-only default refuses. The symptom is
+    a blank viewer and a console full of CORS errors while the data sits
+    there perfectly readable by ``curl``, which is the whole LAN kiosk
+    story broken.
+
+    Why the check is per-request rather than a computed allow-list: a machine
+    can hold several addresses on the same network, and a wildcard bind
+    answers on all of them. Baking one guessed address into
+    ``allow_origin_regex`` rejects a client that dialled a sibling address —
+    verified on a development Mac with Wi-Fi at ``10.0.0.55`` and Ethernet at
+    ``10.0.0.146``, where the route probe names only the second. Comparing
+    against the ``Host`` the request actually carried needs no guess at all,
+    and keeps working for an address added after startup.
+
+    Why it is not a widening: CORS restrains browsers only. Anything that can
+    reach a non-loopback bind can already read the data without a browser, so
+    this grants a page on the kiosk's own host exactly what ``curl`` has. To
+    forge a match an attacker would have to serve their page FROM the kiosk's
+    address, which means already being on the machine. ``--cors-origin`` stays
+    available to name origins exactly.
+
+    The ``Host`` is carried in a :class:`~contextvars.ContextVar` because
+    Starlette's ``is_allowed_origin`` hook receives only the origin, while
+    both of its call sites (preflight and response) run inside this
+    middleware's ``__call__`` on the same asyncio task — so a ContextVar is
+    per-request and safe under concurrency, where an instance attribute
+    would not be.
+    """
+
+    _request_host: ClassVar[ContextVar[Optional[str]]] = ContextVar(
+        "luxar_cors_request_host", default=None
+    )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Record this request's ``Host`` for the duration of the request."""
+        host = Headers(scope=scope).get("host") if scope["type"] == "http" else None
+        token = self._request_host.set(host)
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._request_host.reset(token)
+
+    def is_allowed_origin(self, origin: str) -> bool:
+        """Allow the configured origins, plus any port on the request's host."""
+        if super().is_allowed_origin(origin):
+            return True
+        host_header = self._request_host.get()
+        if not host_header:
+            return False
+        # Port excluded on purpose: the two servers are different ports of the
+        # same host. `origin_hostname` documents the contrast with the control
+        # hub, which compares WITH the port. Both sides fail closed on a
+        # malformed header, so neither can widen the allowance.
+        request_host = authority_hostname(host_header)
+        return bool(request_host) and origin_hostname(origin) == request_host
+
+
+def _add_cors(
+    api: FastAPI,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
+    *,
+    bind_host: Optional[str] = None,
+) -> None:
     """Add CORS middleware to a FastAPI application.
 
     ``cors_origin="local"`` is the safe development default: browser clients
@@ -131,15 +214,26 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
         cors_origin: Origin to allow. ``"local"`` allows loopback origins.
             ``"*"`` allows any origin without credentials. Comma-separated
             explicit origins are also accepted.
+        bind_host: The address this server is bound to. Under
+            ``cors_origin="local"`` a non-loopback bind also allows that
+            address as an origin on any port — see
+            :func:`~luxar.cli.utils.local_cors_origin_regex` for why that is
+            required rather than generous. Omitted (or loopback) keeps the
+            loopback-only default.
     """
     origin = cors_origin.strip() or _DEFAULT_CORS_ORIGIN
     allow_origins: list[str]
     allow_origin_regex: str | None = None
     allow_credentials = True
+    middleware_class: type[CORSMiddleware] = CORSMiddleware
 
     if origin == _DEFAULT_CORS_ORIGIN:
         allow_origins = []
         allow_origin_regex = _LOCAL_CORS_ORIGIN_REGEX
+        # A loopback bind keeps the plain middleware: its Host is already in
+        # the regex, so the same-host rule would add nothing.
+        if not _is_loopback_bind(bind_host):
+            middleware_class = _SameHostCORSMiddleware
     elif origin == "*":
         allow_origins = ["*"]
         allow_credentials = False
@@ -147,7 +241,7 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
         allow_origins = [item.strip() for item in origin.split(",") if item.strip()]
 
     api.add_middleware(
-        CORSMiddleware,
+        middleware_class,
         allow_origins=allow_origins,
         allow_origin_regex=allow_origin_regex,
         allow_credentials=allow_credentials,
@@ -161,6 +255,20 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
 # is deliberately NOT here: binding it exposes the server on every network
 # interface, which is exactly the case the LAN-exposure warning must fire on.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _is_loopback_bind(bind_host: Optional[str]) -> bool:
+    """True when ``bind_host`` reaches only this machine.
+
+    An unset host is treated as loopback: callers that never say where they
+    bound get the strict historical default rather than a widened one.
+    """
+    if bind_host is None:
+        return True
+    host = bind_host.strip().lower()
+    if host in ALL_INTERFACES_HOSTS:
+        return False
+    return host.strip("[]") in _LOOPBACK_HOSTS
 
 
 def _warn_if_lan_exposed(host: str, cors_origin: str) -> None:
@@ -192,7 +300,13 @@ def _build_viewer_url(
     control: bool = False,
     control_token: Optional[str] = None,
 ) -> str:
-    """Build the browser URL shared by viewer serving and ``serve --open``."""
+    """Build the browser URL shared by viewer serving and ``serve --open``.
+
+    A wildcard bind is resolved to a concrete address first: ``0.0.0.0`` is a
+    bind address, not a destination, so a URL containing it is not reachable
+    from the tablet the kiosk panel is meant to run on.
+    """
+    host = advertised_host(host)
     if data_url:
         viewer_url = append_title_param(
             f"http://{host}:{port}/?src={data_url.rstrip('/')}", title
@@ -369,6 +483,7 @@ def create_server_app(
     *,
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
     allow_sensitive_path: bool = False,
+    bind_host: Optional[str] = None,
 ) -> FastAPI:
     """Create a FastAPI server application for serving Zarr data.
 
@@ -379,6 +494,8 @@ def create_server_app(
         path: Path to directory or Zarr dataset to serve
         cors_origin: Allowed CORS origin. ``"local"`` allows loopback origins.
         allow_sensitive_path: If True, permit serving system directories.
+        bind_host: Bind address, so a LAN bind also allows its own origin
+            under ``cors_origin="local"`` (see :func:`_add_cors`).
 
     Returns:
         FastAPI application instance
@@ -387,7 +504,7 @@ def create_server_app(
     _validate_serve_path(serve_path, allow_sensitive_path=allow_sensitive_path)
 
     api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
-    _add_cors(api, cors_origin)
+    _add_cors(api, cors_origin, bind_host=bind_host)
 
     # Add health check endpoint
     @api.get("/health")
@@ -430,6 +547,7 @@ def _build_viewer_app(
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
     control: bool = False,
     control_token: Optional[str] = None,
+    bind_host: Optional[str] = None,
 ) -> FastAPI:
     """Build the viewer-server FastAPI app for ``viewer_dist``.
 
@@ -437,7 +555,7 @@ def _build_viewer_app(
     ``TestClient`` instead of a live uvicorn server.
     """
     api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
-    _add_cors(api, cors_origin)
+    _add_cors(api, cors_origin, bind_host=bind_host)
     if control:
         _add_control_hub(api, token=control_token)
     # AFTER the control route, and that order is load-bearing: starlette matches
@@ -487,6 +605,7 @@ def _serve_viewer(
         cors_origin=cors_origin,
         control=control,
         control_token=control_token,
+        bind_host=host,
     )
 
     viewer_url = _build_viewer_url(
@@ -500,12 +619,14 @@ def _serve_viewer(
 
     aprint(f"🌐 Viewer available at: {viewer_url}")
     if control:
-        aprint(f"🎛️  Control hub listening at: ws://{host}:{port}/control")
+        # Same resolution as the viewer URL: a tablet cannot dial 0.0.0.0.
+        reachable = advertised_host(host)
+        aprint(f"🎛️  Control hub listening at: ws://{reachable}:{port}/control")
         from urllib.parse import quote
 
         # The touch panel is a second page in the same bundle, so it shares this
         # origin and needs no address of its own — `?control` is a bare flag.
-        panel_url = f"http://{host}:{port}/control.html?control"
+        panel_url = f"http://{reachable}:{port}/control.html?control"
         if control_token:
             panel_url += f"&controlToken={quote(control_token, safe='')}"
         aprint(f"📱 Control panel for a tablet: {panel_url}")
@@ -589,6 +710,7 @@ def _serve_data(
         packet_loss_rate=packet_loss_rate,
         allow_sensitive_path=allow_sensitive_path,
         cors_origin=cors_origin,
+        bind_host=host,
     )
 
     aprint(f"💾 Data server running at http://{host}:{port}")
@@ -605,6 +727,7 @@ def _build_data_app(
     packet_loss_rate: float = 0.0,
     allow_sensitive_path: bool = False,
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
+    bind_host: Optional[str] = None,
 ) -> ASGIApp:
     """Build the data-server ASGI app for ``path`` (see :func:`_serve_data`).
 
@@ -615,7 +738,7 @@ def _build_data_app(
     _validate_serve_path(serve_path, allow_sensitive_path=allow_sensitive_path)
 
     api = FastAPI(title="Luxar Data Server", docs_url=None, redoc_url=None)
-    _add_cors(api, cors_origin)
+    _add_cors(api, cors_origin, bind_host=bind_host)
 
     api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
 
@@ -690,11 +813,11 @@ def served_store(
     chosen = pick_port(port if port is not None else 8900, host, label="server")
     if chosen is None:
         raise RuntimeError(f"No free port near {port or 8900} on {host}.")
-    api = create_server_app(str(path), cors_origin=cors_origin)
+    api = create_server_app(str(path), cors_origin=cors_origin, bind_host=host)
     # Mounted BEFORE the data root already on `/`? No — Starlette matches mounts in
     # order, and `/` would swallow `/viewer`, so the viewer goes on first by
     # rebuilding the router order: FastAPI appends routes, hence insert at 0.
-    viewer_app = _build_viewer_app(viewer_dist, cors_origin=cors_origin)
+    viewer_app = _build_viewer_app(viewer_dist, cors_origin=cors_origin, bind_host=host)
     api.router.routes.insert(0, Mount("/viewer", app=viewer_app))
 
     config = uvicorn.Config(api, host=host, port=chosen, log_level="error")

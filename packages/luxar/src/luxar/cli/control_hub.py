@@ -69,16 +69,21 @@ _NO_VIEWER = -32001
 
 
 def _origin_host(origin: str) -> str:
-    """The ``host:port`` of an ``Origin`` header, lowercased.
+    """The ``host:port`` of an ``Origin`` header, lowercased, ``""`` if malformed.
 
     Parsed rather than string-matched so `http://kiosk.local:5173` and
     `https://kiosk.local:5173` both reduce to the host the `Host` header
     carries — and so an origin like `null` (a sandboxed iframe) reduces to
     something that can never match one.
-    """
-    from urllib.parse import urlparse
 
-    return urlparse(origin.strip()).netloc.lower()
+    Strictly, via :func:`~luxar.cli.utils.origin_authority`: a plain
+    ``urlparse`` RAISES ``ValueError("Invalid IPv6 URL")`` on an unterminated
+    bracket like ``http://[::1``, which any unauthenticated client could send
+    to crash this handshake before the token is ever checked.
+    """
+    from .utils import origin_authority
+
+    return origin_authority(origin)
 
 
 def _error_frame(request_id: Any, code: int, message: str) -> str:
