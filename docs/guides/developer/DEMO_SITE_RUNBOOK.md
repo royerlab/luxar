@@ -1389,7 +1389,7 @@ number, and never put both in one table.
 
 ## 8. Current state, and what a fresh operator needs
 
-Written 2026-09-02. Read this before touching the site; several items below
+Written 2026-09-12. Read this before touching the site; several items below
 change what the earlier sections tell you to do.
 
 ### 8.1 Where the site stands right now
