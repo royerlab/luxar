@@ -741,6 +741,37 @@ def test_share_denominator_skips_unladdered_partition_parts(tmp_path: Path) -> N
     assert _sliced_verdicts(root) == []
 
 
+def test_partition_share_arm_reduces_over_the_worst_part(tmp_path: Path) -> None:
+    """A large healthy part must not hide a thin smaller played frame."""
+    root = zarr.open_group(tmp_path / "uneven-partition.zarr", mode="w")
+    root.attrs["kind"] = "partition"
+    for name, total, rung_count, coordinate in (
+        ("healthy", 90_000, 18_000, 0),
+        ("thin", 10_000, 500, 1),
+    ):
+        leaf = root.create_group(name)
+        leaf.attrs.update(
+            {"type": "points", "n_points": total, "n_additive_sublods": 2}
+        )
+        rung = leaf.create_group("additive_0")
+        rung.attrs.update({"type": "points", "n_points": rung_count, "slice_dims": [0]})
+        rung.create_array(
+            "positions",
+            data=np.full((rung_count, 1), coordinate, dtype=np.uint16),
+        )
+        leaf.create_group("additive_1").attrs.update(
+            {
+                "type": "points",
+                "n_points": total - rung_count,
+                "slice_dims": [0],
+            }
+        )
+
+    (path, status, message) = _sliced_verdicts(root)[0]
+    assert (path, status) == ("/", "fail")
+    assert "rung 0 is 5.00% of the worst part" in message
+
+
 def test_substitutive_share_uses_one_level_not_keywise_maxima(tmp_path: Path) -> None:
     """Synthetic maxima from different LOD alternatives must not inflate share."""
     root = zarr.open_group(tmp_path / "lod-share.zarr", mode="w")

@@ -28,7 +28,7 @@ converging past it. ``gsplats_4d_drosophila_embryogenesis`` shipped with a
 median of 45 splats per timepoint at rung 0 and played as an empty screen
 (#2374/#2376). Each sliced node therefore fails on either a per-coordinate
 ABSOLUTE floor (measured at its SPARSEST slices, not its busiest) or a SHARE
-floor on rung 0's fraction of the node.
+floor on rung 0's fraction of the node, or of the worst part for a partition.
 
 Usage:
     hatch run check-demo-ladders                              # all built demos
@@ -132,7 +132,8 @@ DEFAULT_MIN_SUBLODS = 3
 #: celegans both fail despite playing acceptably.
 DEFAULT_MIN_SLICE_FIRST_RUNG = 250
 
-#: A sliced node's rung 0 must also be a usable SHARE of the node, because
+#: A sliced node's rung 0 must also be a usable SHARE of the node (or every
+#: drawable part), because
 #: playback re-pays rung 0 on every tick and never converges past it. This is
 #: the gate form of the authoring contract in ``demos/_lod_policy`` (rung 0 >=
 #: ``n / SLICED_LADDER_MAX_DEPTH``, i.e. 12.5%); the 0.10 here leaves that a
@@ -357,26 +358,30 @@ def _first_rung_histogram(
 
 def _node_slice_measurement(
     group: Any, zarr_root: Any
-) -> tuple[Counter[tuple[object, ...]], int] | None:
-    """Return one sliced rung histogram and its matching subtree total."""
+) -> tuple[Counter[tuple[object, ...]], int, float, bool] | None:
+    """Return a sliced histogram, total, worst share, and partition flag."""
     attrs = dict(group.attrs)
     if attrs.get("type") in ("points", "lines", "gsplats"):
         histogram = _first_rung_histogram(group, zarr_root)
         if histogram is None:
             return None
-        return histogram, _element_count(attrs)
+        total = _element_count(attrs)
+        share = sum(histogram.values()) / total if total else 0.0
+        return histogram, total, share, False
 
     children = [group[name] for name in group.group_keys()]
     if attrs.get("kind") == "partition":
         combined: Counter[tuple[object, ...]] = Counter()
         total = 0
+        shares: list[float] = []
         for child in children:
             measurement = _node_slice_measurement(child, zarr_root)
             if measurement is not None:
-                child_histogram, child_total = measurement
+                child_histogram, child_total, child_share, _ = measurement
                 combined += child_histogram
                 total += child_total
-        return (combined, total) if combined else None
+                shares.append(child_share)
+        return (combined, total, min(shares), True) if combined else None
     if attrs.get("kind") == "lod":
         alternatives = [
             measurement
@@ -429,19 +434,21 @@ def sliced_rung_histograms(
     zarr_root = root if zarr_root is None else zarr_root
     return [
         (node_path, histogram)
-        for node_path, histogram, _ in sliced_rung_measurements(root, path, zarr_root)
+        for node_path, histogram, _, _, _ in sliced_rung_measurements(
+            root, path, zarr_root
+        )
     ]
 
 
 def sliced_rung_measurements(
     root: Any, path: str = "", zarr_root: Any = None
-) -> list[tuple[str, Counter[tuple[object, ...]], int]]:
-    """Yield sliced rung histograms with their matching subtree totals."""
+) -> list[tuple[str, Counter[tuple[object, ...]], int, float, bool]]:
+    """Yield sliced histograms with totals and worst drawable-part shares."""
     zarr_root = root if zarr_root is None else zarr_root
     measurement = _node_slice_measurement(root, zarr_root)
     if measurement is not None:
-        histogram, total = measurement
-        return [(path or "/", histogram, total)]
+        histogram, total, share, partitioned = measurement
+        return [(path or "/", histogram, total, share, partitioned)]
     return [
         result
         for name in root.group_keys()
@@ -477,17 +484,17 @@ def _record_sliced_verdicts(
       be worth drawing, and catches a node whose share looks healthy only
       because the node is small;
     * the SHARE arm asks whether rung 0 is a usable fraction of the node at all,
-      and catches a ladder that is simply too deep — the authoring defect in
-      #2376, where a rung sized against a download budget is divided by the
-      slice count. Its denominator adds only attr reads to the histogram pass,
-      and it is the reason a uniformly thin ladder cannot slip through on
-      absolute counts alone.
+      or of every drawable partition part. It catches a ladder that is simply
+      too deep — the authoring defect in #2376, where a rung sized against a
+      download budget is divided by the slice count. Its denominators add only
+      attr reads to the histogram pass, and the worst-part reduction prevents a
+      large healthy part from hiding a thin played frame.
     """
-    for path, histogram, node_total in sliced_rung_measurements(root):
+    for path, histogram, node_total, share, partitioned in sliced_rung_measurements(
+        root
+    ):
         count = sparsest_slice_elements(histogram)
         coverage = len(histogram)
-        rung_total = sum(histogram.values())
-        share = rung_total / node_total if node_total else 0.0
         where = (
             f" (rung 0 covers {coverage:,} coordinate{'s' if coverage != 1 else ''})"
         )
@@ -500,8 +507,9 @@ def _record_sliced_verdicts(
                 f"{min_first_rung:,} absolute first-paint floor{where}"
             )
         elif node_total and share < min_rung_share:
+            share_scope = "worst part" if partitioned else "node"
             thin = (
-                f"rung 0 is {share:.2%} of the node, below the "
+                f"rung 0 is {share:.2%} of the {share_scope}, below the "
                 f"{min_rung_share:.0%} share floor — the ladder is too deep for a "
                 f"sliced node, so playback re-pays a thin rung 0 every tick{where}"
             )

@@ -68,11 +68,12 @@ mixed-metadata, and `extend_to_all` leaves retain the node-level cap. For sliced
 nodes it also histograms rung 0 by hidden coordinate across every partition
 part and fails when the lower fifth-percentile visible slice is below
 `--min-slice-first-rung` (default 250), when rung 0 is below
-`--min-slice-rung-share` of the measured node (default 10%), or when a sliced
-survey is empty. Five measured pre-#2384 stores are exempt from the share arm
-only while they remain at least 6%; their keypress-navigated axes refine past
-rung 0, and any degraded rebuild goes red. The existing demo output directory
-is inventoried read-only; the check does not create it.
+`--min-slice-rung-share` of the measured node or its worst drawable partition
+part (default 10%), or when a sliced survey is empty. Five measured pre-#2384
+stores are exempt from the share arm only while they remain at least 6%; their
+keypress-navigated axes refine past rung 0, and any degraded rebuild goes red.
+The existing demo output directory is inventoried read-only; the check does not
+create it.
 
 ```bash
 hatch run check-demo-ladders
