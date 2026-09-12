@@ -126,7 +126,7 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei, 121M splats streamed per frame."
+        "of histone-labelled nuclei, 121M splats streamed frame by frame."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
