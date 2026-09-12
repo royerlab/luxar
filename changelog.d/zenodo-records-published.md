@@ -1,10 +1,10 @@
 #### Zenodo records published; demos now fetch from them
 
-All four demo-data Zenodo records were published on 2026-09-02, so `published` is now true
-for each and the fetch leg is live: `ensure_dataset` builds real download URLs
-and verifies every file against its recorded SHA-256. Concept DOIs, which Zenodo
-mints only at publication, are recorded alongside the version DOIs — those are
-the identifiers to cite, since they follow the latest version:
+All four demo-data Zenodo records were published on 2026-09-02, so `published`
+is now true for each and the fetch leg is live: `ensure_dataset` builds real
+download URLs and verifies every file against its recorded SHA-256. Concept
+DOIs, which Zenodo mints only at publication, are recorded alongside the version
+DOIs — those are the identifiers to cite, since they follow the latest version:
 
     cc-by            10.5281/zenodo.21912279
     cc-by-sa         10.5281/zenodo.21912281
