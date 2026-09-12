@@ -134,9 +134,9 @@ DEFAULT_MIN_SLICE_FIRST_RUNG = 250
 
 #: A sliced node's rung 0 must also be a usable SHARE of the node (or every
 #: drawable part), because playback re-pays rung 0 on every tick and never
-#: converges past it. This is
-#: the gate form of the authoring contract in ``demos/_lod_policy`` (rung 0 >=
-#: ``n / SLICED_LADDER_MAX_DEPTH``, i.e. 12.5%); the 0.10 here leaves that a
+#: converges past it. This is the gate form of the authoring contract in
+#: ``demos/_lod_policy`` (rung 0 >= ``n / SLICED_LADDER_MAX_DEPTH``, i.e.
+#: 12.5%); the 0.10 here leaves that a
 #: margin rather than tracking it exactly, so a small rounding change in the
 #: ladder builder does not turn the corpus red.
 DEFAULT_MIN_SLICE_RUNG_SHARE = 0.10
@@ -396,8 +396,8 @@ def _node_slice_measurement(
         alternatives = [
             measurement
             for child_name in child_names
-            for child in (group[child_name],)
-            if (measurement := _node_slice_measurement(child, zarr_root)) is not None
+            if (measurement := _node_slice_measurement(group[child_name], zarr_root))
+            is not None
         ]
         if not alternatives:
             return None
