@@ -926,7 +926,19 @@ def test_a_malformed_listing_payload_is_red(payload: object, fragment: str) -> N
         ({"id": True}, None, "omitted the workflow id"),
         ({}, {"total_count": 0}, "omitted workflow runs"),
         ({}, {"workflow_runs": ["nope"]}, "non-object workflow run"),
-        ({}, {"workflow_runs": [{"conclusion": "success"}]}, "omitted created_at"),
+        (
+            {},
+            {
+                "workflow_runs": [
+                    {
+                        "conclusion": "success",
+                        "head_branch": CADENCE.branch,
+                        "event": CADENCE.event,
+                    }
+                ]
+            },
+            "omitted created_at",
+        ),
         (
             {},
             {"workflow_runs": [_run(created_at="not-a-date")]},
