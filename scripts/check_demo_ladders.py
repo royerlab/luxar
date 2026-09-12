@@ -133,8 +133,8 @@ DEFAULT_MIN_SUBLODS = 3
 DEFAULT_MIN_SLICE_FIRST_RUNG = 250
 
 #: A sliced node's rung 0 must also be a usable SHARE of the node (or every
-#: drawable part), because
-#: playback re-pays rung 0 on every tick and never converges past it. This is
+#: drawable part), because playback re-pays rung 0 on every tick and never
+#: converges past it. This is
 #: the gate form of the authoring contract in ``demos/_lod_policy`` (rung 0 >=
 #: ``n / SLICED_LADDER_MAX_DEPTH``, i.e. 12.5%); the 0.10 here leaves that a
 #: margin rather than tracking it exactly, so a small rounding change in the
@@ -358,8 +358,8 @@ def _first_rung_histogram(
 
 def _node_slice_measurement(
     group: Any, zarr_root: Any
-) -> tuple[Counter[tuple[object, ...]], int, float, bool] | None:
-    """Return a sliced histogram, total, worst share, and partition flag."""
+) -> tuple[Counter[tuple[object, ...]], int, float, bool, str | None] | None:
+    """Return a sliced histogram, total, worst share, partition flag, and part."""
     attrs = dict(group.attrs)
     if attrs.get("type") in ("points", "lines", "gsplats"):
         histogram = _first_rung_histogram(group, zarr_root)
@@ -367,25 +367,36 @@ def _node_slice_measurement(
             return None
         total = _element_count(attrs)
         share = sum(histogram.values()) / total if total else 0.0
-        return histogram, total, share, False
+        return histogram, total, share, False, None
 
-    children = [group[name] for name in group.group_keys()]
+    child_names = list(group.group_keys())
     if attrs.get("kind") == "partition":
         combined: Counter[tuple[object, ...]] = Counter()
         total = 0
-        shares: list[float] = []
-        for child in children:
+        shares: list[tuple[float, str]] = []
+        for child_name in child_names:
+            child = group[child_name]
             measurement = _node_slice_measurement(child, zarr_root)
             if measurement is not None:
-                child_histogram, child_total, child_share, _ = measurement
+                child_histogram, child_total, child_share, _, child_worst = measurement
                 combined += child_histogram
                 total += child_total
-                shares.append(child_share)
-        return (combined, total, min(shares), True) if combined else None
+                if child_histogram and child_total > 0:
+                    worst_name = (
+                        child_name
+                        if child_worst is None
+                        else f"{child_name}/{child_worst}"
+                    )
+                    shares.append((child_share, worst_name))
+        if not combined or not shares:
+            return None
+        worst_share, worst_name = min(shares, key=lambda item: item[0])
+        return combined, total, worst_share, True, worst_name
     if attrs.get("kind") == "lod":
         alternatives = [
             measurement
-            for child in children
+            for child_name in child_names
+            for child in (group[child_name],)
             if (measurement := _node_slice_measurement(child, zarr_root)) is not None
         ]
         if not alternatives:
@@ -434,7 +445,7 @@ def sliced_rung_histograms(
     zarr_root = root if zarr_root is None else zarr_root
     return [
         (node_path, histogram)
-        for node_path, histogram, _, _, _ in sliced_rung_measurements(
+        for node_path, histogram, _, _, _, _ in sliced_rung_measurements(
             root, path, zarr_root
         )
     ]
@@ -442,13 +453,13 @@ def sliced_rung_histograms(
 
 def sliced_rung_measurements(
     root: Any, path: str = "", zarr_root: Any = None
-) -> list[tuple[str, Counter[tuple[object, ...]], int, float, bool]]:
-    """Yield sliced histograms with totals and worst drawable-part shares."""
+) -> list[tuple[str, Counter[tuple[object, ...]], int, float, bool, str | None]]:
+    """Yield sliced histograms with totals and worst drawable-part shares/names."""
     zarr_root = root if zarr_root is None else zarr_root
     measurement = _node_slice_measurement(root, zarr_root)
     if measurement is not None:
-        histogram, total, share, partitioned = measurement
-        return [(path or "/", histogram, total, share, partitioned)]
+        histogram, total, share, partitioned, worst_part = measurement
+        return [(path or "/", histogram, total, share, partitioned, worst_part)]
     return [
         result
         for name in root.group_keys()
@@ -490,9 +501,14 @@ def _record_sliced_verdicts(
       attr reads to the histogram pass, and the worst-part reduction prevents a
       large healthy part from hiding a thin played frame.
     """
-    for path, histogram, node_total, share, partitioned in sliced_rung_measurements(
-        root
-    ):
+    for (
+        path,
+        histogram,
+        node_total,
+        share,
+        partitioned,
+        worst_part,
+    ) in sliced_rung_measurements(root):
         count = sparsest_slice_elements(histogram)
         coverage = len(histogram)
         where = (
@@ -507,7 +523,9 @@ def _record_sliced_verdicts(
                 f"{min_first_rung:,} absolute first-paint floor{where}"
             )
         elif node_total and share < min_rung_share:
-            share_scope = "worst part" if partitioned else "node"
+            share_scope = (
+                f"worst part ({worst_part})" if partitioned and worst_part else "node"
+            )
             thin = (
                 f"rung 0 is {share:.2%} of the {share_scope}, below the "
                 f"{min_rung_share:.0%} share floor — the ladder is too deep for a "

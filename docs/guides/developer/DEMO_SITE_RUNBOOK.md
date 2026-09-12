@@ -492,7 +492,7 @@ wrong number is most tempting: it collapses a tree into one node, and that node'
 
 Worked case. The pinned `h2afva_51tp` generation is the result of the 3.17
 rebuild (`flatten` → `lod --recipe stream` → `optimise`): one 4D leaf with a
-twelve-step progressive ladder and 121,163,285 splats:
+four-step progressive ladder and 121,163,285 splats:
 
     node total, 51 timepoints   121,163,285   <- what ElementCapacityWarning prints
     resident slice, worst case    2,629,840   <- what the GPU commits
@@ -713,20 +713,22 @@ The `h2afva_51tp` rebuild exposed two further traps:
 
 Result now pinned for `h2afva_51tp`: 1,873,559,527 → 1,115,714,088 bytes
 (**−40.5%**), 176 substitutive levels → 0, and the former partitioned tree → one
-4D leaf with a twelve-step progressive ladder. The chunk count fell from
+4D leaf with a four-step progressive ladder. The chunk count fell from
 125,751 to 2,316, with all 51 timepoints intact at uniform spacing and none
 blended.
 
 **Superseded at the SCENE level on 2026-09-10.** The pinned archive stays one
 laddered leaf, but `demo_gsplats_4d_h2afva_timelapse.py` now re-authors it at
 build time into a `kind=partition` of one part per TIMEPOINT (51 parts, each with
-a capped stream ladder: 20,833-splat first rung, doubling, 900 K cap), cached
-beside the download. Measured cold against the single leaf and against 44
-spatial parts at identical chunking: the single leaf's global ladder re-streamed
-from its bottom on every slice (3-27% of the frame resident while a step loads);
-spatial parts paid ~30 MB per step; time parts fetch exactly one part per step
-and never starve a slice. The "a partition buys nothing on a time-stacked node"
-rule above is about SPATIAL parts; time parts are a different structure.
+eight equal-count rungs: 277,131 splats in rung 0 for the 2,217,045-splat
+reference frame, with every increment under the 900 K cap), cached beside the
+download. Measured cold with the former capped-stream recipe against the single
+leaf and against 44 spatial parts at identical chunking: the single leaf's
+global ladder re-streamed from its bottom on every slice (3-27% of the frame
+resident while a step loads); spatial parts paid ~30 MB per step; time parts
+fetch exactly one part per step and never starve a slice. The "a partition buys
+nothing on a time-stacked node" rule above is about SPATIAL parts; time parts
+are a different structure.
 
 ### 3.18 A probe must emit the evidence that its own window was valid
 

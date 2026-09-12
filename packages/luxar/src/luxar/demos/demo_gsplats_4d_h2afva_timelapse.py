@@ -13,16 +13,19 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    The pinned archive is one leaf of 121,163,285 splats with a 12-rung
+    The pinned archive is one leaf of 121,163,285 splats with a four-rung
     progressive ladder. The SCENE does not graft that leaf as-is: at build time
     it is re-authored (no refit — the splats are untouched) into a
     ``kind=partition`` of **one part per timepoint**, 51 parts, each carrying
     its own eight-rung equal-count ladder: a first rung of at least 1/8 of that
     timepoint, with every per-part increment below 900,000. No substitutive
-    levels anywhere.
+    levels anywhere. On the 2,217,045-splat reference frame, rung 0 grows from
+    the former 20,833 splats (0.63 MB) to 277,131 splats (8.31 MB at 30 B/splat),
+    about 2.7 seconds on a cold part at 25 Mbps.
 
-    Why time parts (measured 2026-09-10 against the single sliced leaf and
-    against 44 spatial parts, all at the same chunking):
+    Why time parts (measured 2026-09-10 with the former capped-stream recipe
+    against the single sliced leaf and 44 spatial parts, all at the same
+    chunking):
 
       - A time step is exactly one part. Nothing from other timepoints is
         fetched, the part's first rung paints at once, and its ladder is sized
@@ -123,8 +126,8 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei, 121M splats streamed progressively over a "
-        "12-rung ladder."
+        "of histone-labelled nuclei, re-authored as 51 played parts with eight "
+        "equal-count rungs each."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
@@ -458,9 +461,8 @@ def _finest_data(node: Any) -> list[GSplatData]:
     raise TypeError(f"unsupported gsplat node {type(node).__name__}")
 
 
-def time_part_ladders(n_per_part: list[int]) -> list[list[int]]:
+def time_part_ladders(n_per_part: list[int], *, part_count: int) -> list[list[int]]:
     """Cumulative equal-count cuts per played part, under the commit cap."""
-    part_count = len(n_per_part)
     if part_count <= 1:
         return [
             capped_stream_cuts(n, FIRST_RUNG_SPLATS, DEFAULT_MAX_ADDITIVE_COMMIT)
@@ -485,7 +487,9 @@ def time_part_ladders(n_per_part: list[int]) -> list[list[int]]:
             raise ValueError(
                 f"Time part with {part_elements:,} splats cannot carry an equal-count "
                 f"1/{TIME_PART_LADDER_MAX_DEPTH} first rung within the "
-                f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-splat per-part commit cap"
+                f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-splat per-part commit cap; use "
+                "fewer rungs (TIME_PART_LADDER_MAX_DEPTH) or split the frame "
+                "spatially"
             )
         ladders.append(cuts)
     return ladders
@@ -538,7 +542,7 @@ def build_time_parts(data_path: Path, out_path: Path) -> Path:
 
         parts: list[Any] = []
         counts = [int(count) for count in part_counts]
-        ladders = time_part_ladders(counts)
+        ladders = time_part_ladders(counts, part_count=len(counts))
         for t, expected_count, breakpoints in zip(times, counts, ladders, strict=True):
             mask = centers[:, TIME_COL] == t
             part = GSplatData(
