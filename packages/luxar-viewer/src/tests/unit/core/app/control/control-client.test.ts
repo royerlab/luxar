@@ -445,6 +445,19 @@ describe('ControlClient lifecycle', () => {
     warning.mockRestore();
   });
 
+  it('warns with the close reason and retry delay after a transient close', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const context = harness();
+
+    context.socket.onclose?.({ code: 1006, reason: 'network lost' });
+
+    expect(warning).toHaveBeenCalledWith(
+      Modules.APP,
+      `control: socket closed (1006: network lost); retrying in ${CONTROL_RECONNECT_BASE_MS} ms`
+    );
+    warning.mockRestore();
+  });
+
   it('treats an invalid configured URL as a reconnectable socket failure', () => {
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const openSocket = vi.fn();
