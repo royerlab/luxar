@@ -8,11 +8,14 @@ import pytest
 
 from luxar.conftest import viewer_source
 from luxar.core.viewer_config import (
+    MAX_CONTROL_STYLESHEET_CHARS,
     VALID_ENVIRONMENT_SOURCES,
     VALID_FOV_PRESETS,
     AnimationConfig,
     AudioConfig,
     CameraConfig,
+    Chapter,
+    ControlPanelConfig,
     DimensionsConfig,
     EnvironmentConfig,
     UIConfig,
@@ -1035,3 +1038,121 @@ class TestCameraZoom:
     def test_zoom_alone_is_a_valid_waypoint_camera(self) -> None:
         wp = Waypoint(when={"story": 2}, camera=CameraConfig(zoom=4))
         assert wp.to_dict()["camera"] == {"zoom": 4}
+
+
+class TestControlPanelConfig:
+    """The authored touch-panel block.
+
+    The property that matters most is that NOTHING is required: a scene with no
+    block still gets a working panel, because the chapters are derived from a
+    discrete dimension's ``categories``. This block is enrichment, so every
+    test here is either "an authored value survives" or "a bad one is refused
+    loudly rather than silently reinterpreted".
+    """
+
+    def test_round_trips_through_a_dict(self) -> None:
+        panel = ControlPanelConfig(
+            title="Eleven stories",
+            subtitle="Touch a tile",
+            chapter_dimension="story",
+            columns=4,
+            idle_reset_s=90.0,
+            stylesheet=".luxar-control-tile { border-radius: 4px; }",
+            chapters={1: Chapter(sublabel="the molecule of breath")},
+        )
+        restored = ControlPanelConfig.from_dict(panel.to_dict())
+        assert restored.to_dict() == panel.to_dict()
+        assert restored.chapters is not None
+        # JSON has no integer keys, so the writer emits strings; they must come
+        # back as ints or every lookup against a chapter position misses.
+        assert list(restored.chapters) == [1]
+        assert restored.chapters[1].sublabel == "the molecule of breath"
+
+    def test_unset_fields_are_omitted_not_null(self) -> None:
+        # A null in the store would be indistinguishable from an authored
+        # "clear this", and the viewer's rule is that ABSENT means derive.
+        assert ControlPanelConfig().to_dict() == {}
+        assert "control_panel" not in ViewerConfig().to_dict()
+
+    def test_reaches_the_store_through_viewer_config(self) -> None:
+        config = ViewerConfig(
+            control_panel=ControlPanelConfig(chapter_dimension="story")
+        )
+        assert config.to_dict()["control_panel"] == {"chapter_dimension": "story"}
+        assert ViewerConfig.from_dict(config.to_dict()).control_panel is not None
+
+    def test_an_empty_chapter_override_is_not_emitted(self) -> None:
+        # Otherwise the viewer reads position 0 as authored and stops treating
+        # its derived label as generated.
+        panel = ControlPanelConfig(chapters={0: Chapter(), 1: Chapter(label="Real")})
+        assert panel.to_dict()["chapters"] == {"1": {"label": "Real"}}
+
+    def test_chapters_are_emitted_in_position_order(self) -> None:
+        # Store attributes are read by humans debugging a kiosk; scrambled keys
+        # make a ten-story tour unreadable.
+        panel = ControlPanelConfig(
+            chapters={
+                3: Chapter(label="c"),
+                1: Chapter(label="a"),
+                2: Chapter(label="b"),
+            }
+        )
+        assert list(panel.to_dict()["chapters"]) == ["1", "2", "3"]
+
+    def test_idle_reset_of_zero_survives(self) -> None:
+        # Zero means "never reset" — an exhibit that holds its last stop — so a
+        # falsy check anywhere in the chain would silently re-enable it.
+        assert ControlPanelConfig(idle_reset_s=0.0).to_dict() == {"idle_reset_s": 0.0}
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"title": "  "}, "non-empty string"),
+            ({"subtitle": ""}, "non-empty string"),
+            ({"chapter_dimension": " "}, "non-empty string"),
+            ({"columns": 0}, "must be an int in"),
+            ({"columns": 13}, "must be an int in"),
+            ({"columns": True}, "must be an int in"),
+            ({"columns": 2.5}, "must be an int in"),
+            ({"idle_reset_s": -1.0}, "between"),
+            ({"idle_reset_s": float("inf")}, "finite"),
+            ({"stylesheet": 5}, "string of CSS"),
+            ({"chapters": [Chapter()]}, "dict of chapter index"),
+            ({"chapters": {-1: Chapter()}}, "non-negative ints"),
+            ({"chapters": {0: "nope"}}, "must be a Chapter"),
+        ],
+    )
+    def test_rejects(self, kwargs: dict, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            ControlPanelConfig(**kwargs)
+
+    def test_rejects_a_stylesheet_over_the_cap(self) -> None:
+        # The cap exists because this text ships to a tablet inside the store's
+        # attributes, and ``overlay_html`` sets the precedent.
+        with pytest.raises(ValueError, match="over the"):
+            ControlPanelConfig(stylesheet="a" * (MAX_CONTROL_STYLESHEET_CHARS + 1))
+        # Exactly at the cap is fine.
+        ControlPanelConfig(stylesheet="a" * MAX_CONTROL_STYLESHEET_CHARS)
+
+    def test_viewer_config_rejects_a_non_config(self) -> None:
+        with pytest.raises(ValueError, match="must be a ControlPanelConfig"):
+            ViewerConfig(control_panel={"title": "nope"})  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("field_name", ["label", "sublabel"])
+    def test_chapter_rejects_a_blank_override(self, field_name: str) -> None:
+        with pytest.raises(ValueError, match="non-empty string"):
+            Chapter(**{field_name: "   "})
+
+    def test_from_dict_ignores_junk_rather_than_raising(self) -> None:
+        # Forward compatibility, matching every other config block: a store
+        # written by a newer Luxar must still load in an older viewer.
+        restored = ControlPanelConfig.from_dict(
+            {
+                "title": "Kept",
+                "unknown_future_field": 1,
+                "chapters": {"1": {"sublabel": "kept"}, "nope": {"label": "x"}, "2": 5},
+            }
+        )
+        assert restored.title == "Kept"
+        assert restored.chapters is not None
+        assert list(restored.chapters) == [1]

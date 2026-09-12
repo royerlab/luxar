@@ -22,9 +22,11 @@ import {
   type ChapterSource,
 } from '../../config/control-panel/derive-chapters';
 import { readUrlParams, type UrlParams } from '../../config/url-params';
+import type { ControlPanelSettings } from '../../config/zarr-bridge/control-panel';
 import type { DimensionMetadata } from '../../types/dims';
 import {
   createControlPanel,
+  type ControlPanelOptions,
   type ControlPanelPorts,
   type ControlPanelView,
 } from '../../ui/control-panel/render-panel';
@@ -56,6 +58,14 @@ export const CHAPTER_RETRY_MAX_MS = 5_000;
  * grid is often read as a legend rather than a control.
  */
 const CONTROL_PANEL_HINT = 'Touch a tile to travel there';
+
+/**
+ * Id of the `<style>` element carrying an authored stylesheet.
+ *
+ * Fixed so a re-render replaces it rather than stacking another copy — a
+ * kiosk reconnects for weeks.
+ */
+const AUTHOR_STYLE_ELEMENT_ID = 'luxar-control-author-style';
 
 /** Shape of `getDimensions()` over the wire, as far as this page cares. */
 interface WireDimensions {
@@ -201,6 +211,145 @@ function titleFromViewerState(state: unknown): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
+/**
+ * The scene's authored control-panel block out of the same reply, or `null`.
+ *
+ * The display already validated it through the zarr bridge, so this only has
+ * to confirm it is an object — but it stays a separate function so the reply's
+ * two interesting fields are read in one obvious place.
+ */
+function panelConfigFromViewerState(state: unknown): ControlPanelSettings | null {
+  if (state === null || typeof state !== 'object') return null;
+  const candidate = (state as { controlPanel?: unknown }).controlPanel;
+  if (candidate === null || typeof candidate !== 'object') return null;
+  return candidate as ControlPanelSettings;
+}
+
+/**
+ * Apply an authored stylesheet to this page, replacing any earlier one.
+ *
+ * `textContent`, never `innerHTML`: the CSS came out of a store, so it is
+ * untrusted input on the same footing as `overlay_html`. Setting text on a
+ * `<style>` element cannot introduce markup however the string is shaped, and
+ * the bridge has already stripped `@import` and remote `url()`.
+ */
+function applyAuthorStylesheet(css: string | undefined): void {
+  const existing = document.getElementById(AUTHOR_STYLE_ELEMENT_ID);
+  if (css === undefined || css.trim() === '') {
+    existing?.remove();
+    return;
+  }
+  const style = existing ?? document.createElement('style');
+  style.id = AUTHOR_STYLE_ELEMENT_ID;
+  style.textContent = css;
+  if (existing === null) document.head.append(style);
+}
+
+/** What the display told us about itself, fetched once. */
+interface PresentationCache {
+  /** Fetch and remember. A failure leaves it unloaded so a later call retries. */
+  load(fetchState: () => Promise<unknown>): Promise<void>;
+  readonly title: string | null;
+  readonly config: ControlPanelSettings | null;
+}
+
+/**
+ * Remember the display's title and authored panel block, fetched once.
+ *
+ * Its own object rather than three variables in the page closure: the caching
+ * rule ("succeeded once, never ask again; failed, ask next time") is a real
+ * little state machine, and keeping it here means the bootstrap reads as
+ * wiring instead of carrying a third concern.
+ */
+function createPresentationCache(): PresentationCache {
+  let title: string | null = null;
+  let config: ControlPanelSettings | null = null;
+  // A flag rather than a null check on the two values: a scene may legitimately
+  // have neither, and testing the values would re-ask on every chapter load
+  // for exactly those scenes.
+  let loaded = false;
+  return {
+    async load(fetchState) {
+      if (loaded) return;
+      try {
+        const state = await fetchState();
+        title = titleFromViewerState(state);
+        config = panelConfigFromViewerState(state);
+        applyAuthorStylesheet(config?.stylesheet);
+        loaded = true;
+      } catch {
+        // Presentation is decoration. A panel that refuses to draw because one
+        // RPC failed is far worse than one with a derived heading, so this
+        // falls through and a later load retries.
+      }
+    },
+    get title() {
+      return title;
+    },
+    get config() {
+      return config;
+    },
+  };
+}
+
+/**
+ * Assemble the renderer's presentation options.
+ *
+ * Authored wins, derived fills in — each field INDEPENDENTLY, so a scene that
+ * names only its title keeps the built-in touch hint rather than losing it to
+ * a single all-or-nothing branch.
+ */
+function presentationOptions(
+  config: ControlPanelSettings | null,
+  wireTitle: string | null,
+  source: ChapterSource | null
+): ControlPanelOptions {
+  return {
+    title: config?.title ?? wireTitle ?? document.title,
+    // No hint when there are no tiles to touch.
+    subtitle: source === null ? undefined : (config?.subtitle ?? CONTROL_PANEL_HINT),
+    columns: config?.columns ?? null,
+    sublabels: chapterSublabels(config),
+  };
+}
+
+/**
+ * Authored per-chapter sublabels, keyed the way the renderer wants them.
+ *
+ * Returns `undefined` rather than an empty object so the renderer's
+ * `sublabels?.[i]` lookup is skipped entirely for an unauthored scene.
+ */
+function chapterSublabels(config: ControlPanelSettings | null): Record<number, string> | undefined {
+  if (config?.chapters === undefined) return undefined;
+  const out: Record<number, string> = {};
+  for (const [index, override] of Object.entries(config.chapters)) {
+    if (override.sublabel !== undefined) out[Number(index)] = override.sublabel;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Overwrite derived labels with authored ones, in place.
+ *
+ * Keyed overrides, not a parallel list: the labels come from the dimension's
+ * `categories`, which already hold them once in the store, so an author only
+ * names the positions they want to read differently. `authored` is set too, so
+ * the stylesheet stops styling the label as machine-generated.
+ */
+function applyChapterLabels(
+  source: ChapterSource | null,
+  config: ControlPanelSettings | null
+): void {
+  if (source === null || config?.chapters === undefined) return;
+  for (const chapter of source.chapters) {
+    const label = config.chapters[chapter.index]?.label;
+    if (label !== undefined) {
+      chapter.label = label;
+      chapter.authored = true;
+    }
+  }
+}
+
 function startConnectedPanel(
   params: ConnectedUrlParams,
   root: HTMLElement,
@@ -208,8 +357,8 @@ function startConnectedPanel(
 ): void {
   let socket: ControllerSocket | undefined;
   let source: ChapterSource | null = null;
-  /** The display's scene title, once asked for. It does not change under us. */
-  let cachedTitle: string | null = null;
+  /** The display's title and authored block, fetched once. */
+  const presentation = createPresentationCache();
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let chapterRetryTimer: ReturnType<typeof setTimeout> | undefined;
   let chapterRetryDelayMs = CHAPTER_RETRY_BASE_MS;
@@ -229,23 +378,6 @@ function startConnectedPanel(
         socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
       }
     }, IDLE_RESET_MS);
-  }
-
-  /**
-   * The display's own scene title, or this page's as a fallback.
-   *
-   * Best-effort by design: a title is decoration, and a panel that refuses to
-   * draw because one RPC failed is far worse than a panel with a generic
-   * heading. A failure leaves the cache empty, so a later load retries.
-   */
-  async function sceneTitle(): Promise<string> {
-    if (cachedTitle !== null) return cachedTitle;
-    try {
-      cachedTitle = titleFromViewerState(await socket?.call('getViewerState'));
-    } catch {
-      // Fall through to this page's own title.
-    }
-    return cachedTitle ?? document.title;
   }
 
   function cancelChapterRetry(resetDelay = true): void {
@@ -278,16 +410,18 @@ function startConnectedPanel(
     // AFTER the dimensions land, and once. Asking earlier would spend a call
     // on every failed retry — and while no viewer is attached the hub answers
     // -32001, so those calls could only fail anyway.
-    const title = await sceneTitle();
-    source = deriveChapters({
-      displayed: dims.displayed,
-      metadata: dims.metadata as DimensionMetadata[],
-      ranges: dims.ranges as Array<[number, number]>,
-    });
-    panel.render(source, {
-      title,
-      subtitle: source === null ? undefined : CONTROL_PANEL_HINT,
-    });
+    await presentation.load(() => socket?.call('getViewerState') ?? Promise.resolve(null));
+    source = deriveChapters(
+      {
+        displayed: dims.displayed,
+        metadata: dims.metadata as DimensionMetadata[],
+        ranges: dims.ranges as Array<[number, number]>,
+      },
+      // By NAME, so the authoring survives a `Dimensions([...])` reorder.
+      { dimensionName: presentation.config?.chapterDimension ?? null }
+    );
+    applyChapterLabels(source, presentation.config);
+    panel.render(source, presentationOptions(presentation.config, presentation.title, source));
     markActive(dims.currentStep[source?.dimensionIndex ?? -1]);
     await socket?.call('subscribe', ['dimensions-changed']);
   }

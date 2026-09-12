@@ -23,6 +23,10 @@ import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-drive
 import { ControlClient } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
+import {
+  extractControlPanelConfig,
+  type ControlPanelSettings,
+} from '../config/zarr-bridge/control-panel';
 import type { AudioEngine } from '../audio/audio-engine';
 import type { AudioPatch, AudioState } from '../types/audio';
 import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
@@ -171,6 +175,14 @@ export class LuxarApp {
   private waypointDriver?: WaypointDriver;
   /** Remote-control channel, present only when `options.control` is set. */
   private controlClient?: ControlClient;
+  /**
+   * The scene's authored control-panel block, as last loaded.
+   *
+   * Held for `getViewerState()` alone: the touch panel is a separate page and
+   * cannot read the store's attributes itself. Reset on every dataset load, so
+   * switching scenes cannot leave the previous scene's panel authoring behind.
+   */
+  private controlPanelConfig: ControlPanelSettings | null = null;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -530,6 +542,10 @@ export class LuxarApp {
     // AFTER the waypoints: the opening slice is final, so the first slab
     // evaluation starts exactly the sounds the opening story owns.
     this.installAudio(viewerConfig?.audio);
+    // Kept rather than applied: nothing in THIS page reads it. The control
+    // panel is a separate page and asks for it over the wire, so the display's
+    // only job is to remember what the store said.
+    this.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
   }
 
   /**
@@ -1292,6 +1308,7 @@ export class LuxarApp {
       rendering: this.getRenderingSettings(),
       layers: this.getLayers(),
       audio: this.getAudioState(),
+      controlPanel: this.controlPanelConfig,
     };
   }
 

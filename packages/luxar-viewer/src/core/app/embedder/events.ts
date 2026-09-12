@@ -1,3 +1,4 @@
+import type { ControlPanelSettings } from '../../../config/zarr-bridge/control-panel';
 /**
  * Public event + value types for the programmatic embedder API.
  *
@@ -225,6 +226,15 @@ export interface ViewerState {
   layers: LayerSummary[];
   /** The sound layer: context state, mute, gains, what is playing. */
   audio: AudioState;
+  /**
+   * The scene's authored `viewer_config.control_panel` block, or `null`.
+   *
+   * `null` means "derive everything", which is the normal case: the touch
+   * panel builds itself from a discrete dimension's `categories` and needs no
+   * authoring at all. Here because the panel is a SEPARATE PAGE from the
+   * display and has no other way to read the store's attributes.
+   */
+  controlPanel: ControlPanelSettings | null;
 }
 
 /**

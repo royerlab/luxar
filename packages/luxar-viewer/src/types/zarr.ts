@@ -278,6 +278,12 @@ export interface ZarrViewerConfig {
 
   // Sound layer defaults (master gain, buses, ducking, panning).
   audio?: ZarrAudioConfig;
+
+  // Touch-panel authoring: heading, which dimension the tiles walk, per-chapter
+  // overrides, author CSS. `unknown` on purpose — the shape is validated by
+  // `config/zarr-bridge/control-panel.ts`, and declaring it structurally here
+  // would let a caller read a field the validator has not checked.
+  control_panel?: unknown;
 }
 
 /**

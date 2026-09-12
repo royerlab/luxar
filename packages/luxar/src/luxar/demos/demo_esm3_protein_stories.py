@@ -104,6 +104,8 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import (
     AudioConfig,
     CameraConfig,
+    Chapter,
+    ControlPanelConfig,
     EnvironmentConfig,
     ViewerConfig,
     Waypoint,
@@ -1343,6 +1345,20 @@ def build_stories_scene(
                 )
             )
 
+        # The touch panel, authored from the SAME `STORIES` tuple the tour is
+        # built from — so a story added, removed or reworded cannot leave the
+        # panel describing the old tour. The tile labels themselves still come
+        # from the dimension's `categories` (each story's short `key`); this
+        # only adds the evocative second line, which the tour already wrote.
+        control_panel = ControlPanelConfig(
+            chapter_dimension=STORY_DIM,
+            chapters={
+                # +1: slot 0 is the Overview, so story k sits at k+1.
+                index + 1: Chapter(sublabel=story.subtitle)
+                for index, story in enumerate(stories)
+            },
+        )
+
         viewer_config = ViewerConfig(
             # Names the browser tab AND the control panel's header (the panel
             # reads it out of `getViewerState().title` — its own page title is
@@ -1350,6 +1366,7 @@ def build_stories_scene(
             # "esm3_protein_stories", which is a filename, not a title, and
             # this scene goes in front of an audience.
             title="Eleven stories in the protein universe",
+            control_panel=control_panel,
             cinematic_mode=True,
             camera=CameraConfig(position=overview_position, target=(0.0, 0.0, 0.0)),
             # The turntable is the point: a story step keeps the spin and moves

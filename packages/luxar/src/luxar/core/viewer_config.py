@@ -724,6 +724,204 @@ class AudioConfig:
         )
 
 
+#: Ceiling on an authored panel stylesheet, in characters. Mirrors
+#: ``MAX_OVERLAY_HTML_CHARS`` in the viewer: store-supplied CSS is untrusted
+#: input on the same footing as ``overlay_html``, and a scene should not be
+#: able to ship a megabyte of it to a tablet.
+MAX_CONTROL_STYLESHEET_CHARS = 64 * 1024
+
+#: Most tiles a sane panel lays out. Past this the grid cells are smaller than
+#: a fingertip, so a larger value is a mistake rather than a preference.
+MAX_CONTROL_COLUMNS = 12
+
+
+@dataclass
+class Chapter:
+    """Per-chapter overrides for the control panel. Everything optional.
+
+    Enrichment, never a parallel list. The chapters themselves are DERIVED
+    from the dimension's ``categories`` — which already hold the labels, once,
+    in the store — so this keys into that derivation by position. Two parallel
+    ten-item lists would drift the first time a story was inserted.
+    """
+
+    #: Replace the derived label. Prefer fixing ``categories`` instead; this
+    #: exists for a label that reads well in a tour but badly on a tile.
+    label: Optional[str] = None
+    #: A second, quieter line under the label.
+    sublabel: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Validate every field that is set."""
+        for name in ("label", "sublabel"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"control_panel chapter {name} must be a non-empty string, "
+                    f"got {value!r}"
+                )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        result: Dict[str, Any] = {}
+        if self.label is not None:
+            result["label"] = self.label
+        if self.sublabel is not None:
+            result["sublabel"] = self.sublabel
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Chapter:
+        """Create from dictionary. Unknown keys are ignored."""
+        return cls(label=data.get("label"), sublabel=data.get("sublabel"))
+
+
+@dataclass
+class ControlPanelConfig:
+    """How the touch panel presents this scene. Every field optional.
+
+    Unset means "derive it", which is the whole design: a scene with no
+    ``control_panel`` block at all still gets a usable panel, because the
+    chapters come from a discrete dimension's ``categories``. This block is
+    enrichment on top of that.
+
+    See ``docs/guides/specs/REMOTE_CONTROL_SPEC.md`` §4.2.
+    """
+
+    #: Panel heading. Unset uses the display's own scene title.
+    title: Optional[str] = None
+    #: The line under it. Unset uses the panel's built-in touch hint.
+    subtitle: Optional[str] = None
+    #: Which dimension the tiles walk, BY NAME. A name and not an index on
+    #: purpose: an index would break silently the first time ``Dimensions([…])``
+    #: was reordered, and the viewer resolves the name itself.
+    chapter_dimension: Optional[str] = None
+    #: Pin the grid width. Unset lets the panel fit its own container, which is
+    #: what keeps the tiles on one page across screen sizes.
+    columns: Optional[int] = None
+    #: Seconds of no touch before the panel returns to the first chapter.
+    #: ``0`` disables the reset — an exhibit that should hold its last stop.
+    idle_reset_s: Optional[float] = None
+    #: CSS text, injected into the panel page. Capped at
+    #: :data:`MAX_CONTROL_STYLESHEET_CHARS`; see the spec for what the panel
+    #: strips before applying it.
+    stylesheet: Optional[str] = None
+    #: Keyed overrides: chapter position -> :class:`Chapter`.
+    chapters: Optional[Dict[int, Chapter]] = None
+
+    def __post_init__(self) -> None:
+        """Validate every field that is set."""
+        for name in ("title", "subtitle", "chapter_dimension"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(
+                    f"control_panel.{name} must be a non-empty string, got {value!r}"
+                )
+        if self.columns is not None:
+            if (
+                isinstance(self.columns, bool)
+                or not isinstance(self.columns, int)
+                or not 1 <= self.columns <= MAX_CONTROL_COLUMNS
+            ):
+                raise ValueError(
+                    f"control_panel.columns must be an int in "
+                    f"[1, {MAX_CONTROL_COLUMNS}], got {self.columns!r}"
+                )
+        if self.idle_reset_s is not None:
+            _validate_finite_number(
+                self.idle_reset_s, "control_panel.idle_reset_s", 0.0, 86400.0
+            )
+        if self.stylesheet is not None:
+            self._validate_stylesheet(self.stylesheet)
+        if self.chapters is not None:
+            self._validate_chapters(self.chapters)
+
+    @staticmethod
+    def _validate_stylesheet(stylesheet: Any) -> None:
+        if not isinstance(stylesheet, str):
+            raise ValueError("control_panel.stylesheet must be a string of CSS")
+        if len(stylesheet) > MAX_CONTROL_STYLESHEET_CHARS:
+            raise ValueError(
+                f"control_panel.stylesheet is {len(stylesheet)} characters, over "
+                f"the {MAX_CONTROL_STYLESHEET_CHARS} cap"
+            )
+
+    @staticmethod
+    def _validate_chapters(chapters: Any) -> None:
+        if not isinstance(chapters, dict):
+            raise ValueError(
+                "control_panel.chapters must be a dict of chapter index -> Chapter"
+            )
+        for key, chapter in chapters.items():
+            if isinstance(key, bool) or not isinstance(key, int) or key < 0:
+                raise ValueError(
+                    f"control_panel.chapters keys must be non-negative ints, "
+                    f"got {key!r}"
+                )
+            if not isinstance(chapter, Chapter):
+                raise ValueError(
+                    f"control_panel.chapters[{key}] must be a Chapter, got {chapter!r}"
+                )
+
+    _FIELDS = (
+        "title",
+        "subtitle",
+        "chapter_dimension",
+        "columns",
+        "idle_reset_s",
+        "stylesheet",
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields.
+
+        ``chapters`` keys become STRINGS, because JSON has no integer keys and
+        zarr attributes are JSON. The viewer parses them back.
+        """
+        result: Dict[str, Any] = {}
+        for field_name in self._FIELDS:
+            value = getattr(self, field_name)
+            if value is not None:
+                result[field_name] = value
+        if self.chapters:
+            entries = {
+                str(index): chapter.to_dict()
+                for index, chapter in sorted(self.chapters.items())
+            }
+            # An all-empty Chapter() carries nothing; do not emit a key for it.
+            entries = {k: v for k, v in entries.items() if v}
+            if entries:
+                result["chapters"] = entries
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> ControlPanelConfig:
+        """Create from dictionary. Unknown keys are ignored."""
+        raw = data.get("chapters")
+        chapters: Optional[Dict[int, Chapter]] = None
+        if isinstance(raw, dict):
+            parsed: Dict[int, Chapter] = {}
+            for key, value in raw.items():
+                try:
+                    index = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(value, dict):
+                    parsed[index] = Chapter.from_dict(value)
+            chapters = parsed or None
+        return cls(
+            title=data.get("title"),
+            subtitle=data.get("subtitle"),
+            chapter_dimension=data.get("chapter_dimension"),
+            columns=data.get("columns"),
+            idle_reset_s=data.get("idle_reset_s"),
+            stylesheet=data.get("stylesheet"),
+            chapters=chapters,
+        )
+
+
 def _validate_hex_color(color: str) -> None:
     """Validate a hex color string like '#rrggbb'."""
     if not re.match(r"^#[0-9a-fA-F]{6}$", color):
@@ -977,6 +1175,7 @@ class ViewerConfig:
 
     # Sound layer defaults (master gain, buses, ducking, panning). See `AudioConfig`.
     audio: Optional[AudioConfig] = None
+    control_panel: Optional[ControlPanelConfig] = None
 
     def __post_init__(self) -> None:
         """Validate all configuration values."""
@@ -988,6 +1187,7 @@ class ViewerConfig:
 
         self._validate_waypoints()
         self._validate_audio()
+        self._validate_control_panel()
 
         if self.title is not None:
             if not isinstance(self.title, str) or not self.title.strip():
@@ -1167,12 +1367,22 @@ class ViewerConfig:
             audio_dict = self.audio.to_dict()
             if audio_dict:
                 result["audio"] = audio_dict
+        if self.control_panel is not None:
+            panel_dict = self.control_panel.to_dict()
+            if panel_dict:
+                result["control_panel"] = panel_dict
 
         return result
 
     def _validate_audio(self) -> None:
         if self.audio is not None and not isinstance(self.audio, AudioConfig):
             raise ValueError("audio must be an AudioConfig")
+
+    def _validate_control_panel(self) -> None:
+        if self.control_panel is not None and not isinstance(
+            self.control_panel, ControlPanelConfig
+        ):
+            raise ValueError("control_panel must be a ControlPanelConfig")
 
     def _waypoints_to_dict(self) -> Dict[str, Any]:
         if not self.waypoints:
@@ -1218,6 +1428,9 @@ class ViewerConfig:
         audio = None
         if "audio" in data and isinstance(data["audio"], dict):
             audio = AudioConfig.from_dict(data["audio"])
+        control_panel = None
+        if "control_panel" in data and isinstance(data["control_panel"], dict):
+            control_panel = ControlPanelConfig.from_dict(data["control_panel"])
 
         kwargs: Dict[str, Any] = {
             "camera": camera,
@@ -1227,6 +1440,7 @@ class ViewerConfig:
             "animation": animation,
             "waypoints": waypoints,
             "audio": audio,
+            "control_panel": control_panel,
         }
 
         # Populate simple fields from data

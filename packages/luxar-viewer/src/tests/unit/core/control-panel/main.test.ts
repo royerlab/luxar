@@ -144,9 +144,15 @@ describe('control-panel bootstrap', () => {
 
     expect(context.panel.render).toHaveBeenCalledWith(
       expect.objectContaining({ dimensionIndex: 3 }),
-      // The scene's own title, asked for over the wire, plus the one line of
-      // instruction a visitor needs to know the tiles are touchable.
-      { title: 'Protein stories', subtitle: 'Touch a tile to travel there' }
+      // `objectContaining`, not an exact match: presentation options grow
+      // (columns, sublabels, authored overrides) and this test is about the
+      // title and the hint, so an exact match would fail for unrelated
+      // additions. The scene's own title comes over the wire; the hint is what
+      // tells a visitor the tiles are touchable.
+      expect.objectContaining({
+        title: 'Protein stories',
+        subtitle: 'Touch a tile to travel there',
+      })
     );
     expect(context.panel.setActive).toHaveBeenCalledWith(1);
     // Third: `getDimensions`, then `getViewerState` for the title, then this.
