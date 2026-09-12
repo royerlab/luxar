@@ -61,7 +61,7 @@ import {
 } from './perf-audit-helpers';
 import {
   biasArmsForScene,
-  hasSubstitutiveSelection,
+  classifySubstitutiveSelection,
   parseLodBiasArms,
   summarizeSelection,
   type LodBiasArm,
@@ -480,12 +480,14 @@ test.describe('viewer audit bench', () => {
       mergeResultRow(outPath, currentCommitSha(), row);
       console.log(`[audit] ${scenarioId}: ${JSON.stringify(row.audit)}`);
 
-      if (
-        REQUIRE_SCENES &&
-        scene.lodLadder === true &&
-        !hasSubstitutiveSelection(runs.map((run) => run.defaultLevels))
-      ) {
-        throw new Error(`${scene.path} has no substitutive LOD group at the opening pose`);
+      if (REQUIRE_SCENES && scene.lodLadder === true) {
+        const selectionStatus = classifySubstitutiveSelection(runs.map((run) => run.defaultLevels));
+        if (selectionStatus === 'unavailable') {
+          throw new Error(`${scene.path} debug state unavailable at the opening pose`);
+        }
+        if (selectionStatus === 'missing') {
+          throw new Error(`${scene.path} has no substitutive LOD group at the opening pose`);
+        }
       }
 
       // Guard for #2561: a retained-byte cap that binds below what a scene

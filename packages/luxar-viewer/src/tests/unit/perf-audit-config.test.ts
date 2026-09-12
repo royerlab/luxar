@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   biasArmsForScene,
-  hasSubstitutiveSelection,
+  classifySubstitutiveSelection,
   parseLodBiasArms,
   summarizeSelection,
 } from '../e2e/perf-audit-config';
@@ -83,9 +83,15 @@ describe('summarizeSelection', () => {
   });
 });
 
-describe('hasSubstitutiveSelection', () => {
-  it('requires a non-empty substitutive-group selection', () => {
-    expect(hasSubstitutiveSelection([null, ''])).toBe(false);
-    expect(hasSubstitutiveSelection([null, '/lod:1/2[screen-area,stamps-present]'])).toBe(true);
+describe('classifySubstitutiveSelection', () => {
+  it('distinguishes unavailable debug state from an empty ladder selection', () => {
+    expect(classifySubstitutiveSelection([null, null])).toBe('unavailable');
+    expect(classifySubstitutiveSelection([null, ''])).toBe('missing');
+  });
+
+  it('accepts a non-empty substitutive-group selection', () => {
+    expect(classifySubstitutiveSelection([null, '/lod:1/2[screen-area,stamps-present]'])).toBe(
+      'present'
+    );
   });
 });

@@ -48,8 +48,13 @@ function formatLodGroup(group: LODGroupDebugInfo): string {
   return `${group.name}:${group.activeLevel}/${group.levelCount - 1}[${group.selector},${footprint}]`;
 }
 
-export function hasSubstitutiveSelection(values: Array<string | null>): boolean {
-  return values.some((value) => value !== null && value.length > 0);
+export type SubstitutiveSelectionStatus = 'unavailable' | 'missing' | 'present';
+
+export function classifySubstitutiveSelection(
+  values: Array<string | null>
+): SubstitutiveSelectionStatus {
+  if (values.every((value) => value === null)) return 'unavailable';
+  return values.some((value) => value !== null && value.length > 0) ? 'present' : 'missing';
 }
 
 export function summarizeSelection(
