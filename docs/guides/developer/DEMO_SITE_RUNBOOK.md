@@ -1351,14 +1351,25 @@ change what the earlier sections tell you to do.
 
 ### 8.1 Where the site stands right now
 
-- Data prefix: **`data/2026-09-02`**, 90 stores. **This is the only prefix.**
+- Data prefix: **`data/2026-09-12`**, 88 stores. **This is the only prefix.**
 - **There is no rollback prefix.** `2026-09-01` was purged after verification.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
-- Gallery: 90 tiles, 90 stills, 88 videos. Two demos are deliberately
+- Gallery: 88 tiles, 88 stills, 86 videos. Two demos are deliberately
   still-only (§8.2).
-- 98 stable `/d/` routes (§8.1.1).
+- 95 stable `/d/` routes (§8.1.1).
+- **Tiles and `/d/` routes open the STANDALONE viewer**,
+  `https://luxarviewer.dev/?src=<data URL>`, in a new tab — not the gallery's
+  own copy. The gallery used to ship a second viewer build at `/viewer/`, so
+  every release had to be deployed to two Pages projects and they drifted (the
+  standalone once sat 3 days stale). `demos.luxarviewer.dev/viewer/` is STILL
+  SERVED for links already in the wild; retire it by replacing the deployed
+  copy with `/viewer/* https://luxarviewer.dev/:splat 302`, and only then drop
+  the viewer overlay from the deploy tree and collapse the stamp/asset checks
+  to one host. Verified before switching: the data host's CORS allow-list
+  already includes `luxarviewer.dev`, and a tile URL carries only `?src=` —
+  all per-demo framing lives in each store's baked `viewer_config`.
 
 #### 8.1.1 Stable per-demo routes — `/d/<demo-key>`
 
