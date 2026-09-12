@@ -159,7 +159,9 @@ JSON text frames, JSON-RPC 2.0 shape. The method set is **literally the
 // controller → viewer
 // params are POSITIONAL — the TypeScript signature's argument order, verbatim.
 { "jsonrpc": "2.0", "id": 7, "method": "flyTo",
-  "params": [ { "position": [0, 0, 40] }, { "durationMs": 2000 } ] }
+  "params": [ { "position": [0, 0, 40], "target": [0, 0, 0],
+                "up": [0, 1, 0], "isOrtho": false, "fov": 45,
+                "near": 0.1, "far": 1000 }, { "durationMs": 2000 } ] }
 // viewer → controller
 { "jsonrpc": "2.0", "id": 7, "result": { "completed": true } }
 { "jsonrpc": "2.0", "id": 8, "error": { "code": -32603, "message": "unknown layer '/x'" } }
@@ -173,6 +175,8 @@ on both sides of the wire, and that table drifts the first time a signature
 changes. Positional params follow mechanically from the TypeScript signature.
 The `event` notification obeys the same rule:
 `{"method": "event", "params": ["dimensions-changed", payload]}`.
+The `flyTo` pose has the complete shape returned by `getCameraPose()`; callers
+normally copy that object and change the fields they want to animate.
 
 **The method set, stated exactly.** "The embedder API verbatim" is nearly true,
 and the exceptions are what rot if left unwritten, so:
@@ -208,11 +212,12 @@ knowledge of what the methods do. `core/app/control/README.md` is the local
 guide.
 
 **`?control` is a bare flag.** The hub rides on the app that served the page, so
-the socket address is derived from `location` — which keeps it working behind a
-reverse proxy, under `luxar export` and in the native launcher, none of which
-know their own address at authoring time. `?control=<url>` remains as a
-split-origin override and is **same-origin only** unless
-`?controlAllowCrossOrigin` is also present: otherwise a crafted
+the socket address is derived from `location` — which keeps it working behind an
+origin-rooted reverse proxy, under `luxar export` and in the native launcher,
+none of which know their own address at authoring time. A path-prefixed proxy
+uses an explicit same-origin path such as `?control=/exhibit/control`.
+`?control=<url>` remains as a split-origin override and is **same-origin only**
+unless `?controlAllowCrossOrigin` is also present: otherwise a crafted
 `?src=<real>&control=ws://attacker/` link would hand an attacker both the
 display and `getViewerState()`. `normalizeControlSocketUrl` also rejects
 non-`ws`/`wss` schemes, protocol-relative addresses, credentials in the URL, an
@@ -232,8 +237,9 @@ never stops moving.
 controller: `call(method, *params)` is the engine room and the escape hatch,
 with snake_case wrappers for the handful most used —
 `get_viewer_state`, `get_dimensions`, `set_dimension_value`, `get_camera_pose`,
-`fly_to`, `recenter_camera`, `subscribe` / `unsubscribe`. A refusal arrives as
-`ControlError` carrying the JSON-RPC code, and `ControlError.no_viewer_attached`
+`fly_to`, `recenter_camera`, `subscribe` / `unsubscribe`, plus `recv_event` for
+reading subscribed notifications. A refusal arrives as `ControlError` carrying
+the JSON-RPC code, and `ControlError.no_viewer_attached`
 distinguishes "nothing is listening yet" from "that failed" — a display that has
 not booted is something a kiosk script waits for, not an error to abort on.
 
@@ -252,7 +258,9 @@ preflight, so *any* page a visitor happens to open could otherwise connect to
 `ws://localhost:<port>/control`, drive the display, and read the dataset URL
 back out of `getViewerState()` — on a loopback-only hub, with no LAN exposure at
 all. The hub therefore compares the handshake's `Origin` against the `Host` it
-arrived on (`ControlHub.origin_allowed`) and closes a mismatch with 1008.
+arrived on (`ControlHub.origin_allowed`) and closes a mismatch with 1008. That
+blocks the direct cross-origin case; it is not a DNS-rebinding defence, so an
+untrusted network still requires `--control-token`.
 
 Two deliberate allowances, both stated rather than implied. A handshake with
 **no `Origin` at all is allowed**, because non-browser clients send none —

@@ -37,6 +37,8 @@ class FakeSocket:
 
     def recv(self, timeout: Optional[float] = None) -> str:
         self.recv_timeouts.append(timeout)
+        if not self.replies:
+            raise TimeoutError
         reply = self.replies.pop(0)
         if self.echo_id and "id" not in reply:
             reply = {**reply, "id": self.sent[-1]["id"]}
@@ -119,7 +121,7 @@ class TestCall:
     def test_frames_that_are_not_the_answer_are_skipped(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Events share the socket with replies."""
+        """Events share the socket with replies and remain available."""
         socket = FakeSocket(
             [
                 {"method": "event", "params": ["camera-changed", {}], "id": None},
@@ -130,6 +132,7 @@ class TestCall:
         socket.replies[1]["id"] = 1
         viewer = make_viewer(monkeypatch, socket)
         assert viewer.call("getLayers") == "mine"
+        assert viewer.recv_event() == ("camera-changed", {})
 
     def test_events_do_not_reset_the_reply_deadline(
         self, monkeypatch: pytest.MonkeyPatch
@@ -280,6 +283,30 @@ class TestNamedMethods:
         viewer = make_viewer(monkeypatch, socket)
         with pytest.raises(KeyError, match="stroy"):
             viewer.dimension_index("stroy")
+
+
+class TestEvents:
+    def test_recv_event_returns_a_notification(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket(
+            [{"method": "event", "params": ["waypoint-arrived", {"index": 3}]}]
+        )
+        socket.echo_id = False
+        viewer = make_viewer(monkeypatch, socket)
+
+        assert viewer.recv_event() == ("waypoint-arrived", {"index": 3})
+        assert socket.recv_timeouts == [None]
+
+    def test_recv_event_returns_none_at_its_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket()
+        viewer = make_viewer(monkeypatch, socket)
+
+        assert viewer.recv_event(timeout_s=0.01) is None
+        assert socket.recv_timeouts[0] is not None
+        assert 0 <= socket.recv_timeouts[0] <= 0.01
 
 
 class TestLifecycle:

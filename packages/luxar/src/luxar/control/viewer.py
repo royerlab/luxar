@@ -18,8 +18,9 @@ from __future__ import annotations
 import itertools
 import json
 import time
+from collections import deque
 from types import TracebackType
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 #: How long to wait for a viewer's reply before giving up, in seconds.
 #:
@@ -82,6 +83,7 @@ class Viewer:
         self._url = _with_query(url, role="controller", token=token)
         self._timeout_s = timeout_s
         self._ids = itertools.count(1)
+        self._events: deque[Tuple[str, Any]] = deque()
         self._socket = _connect(self._url, timeout_s)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -145,14 +147,17 @@ class Viewer:
     def _await_reply(self, request_id: int) -> Any:
         """Read frames until the answer to ``request_id`` arrives.
 
-        Events and replies share one socket, so anything else that turns up is
-        skipped. A controller that wants events should read them itself rather
-        than rely on this method's leftovers.
+        Events and replies share one socket, so event notifications are buffered
+        for :meth:`recv_event`; unrelated replies are skipped.
         """
         deadline = time.monotonic() + self._timeout_s
         while True:
             remaining_s = max(0.0, deadline - time.monotonic())
             frame = json.loads(self._socket.recv(timeout=remaining_s))
+            event = _event_from_frame(frame)
+            if event is not None:
+                self._events.append(event)
+                continue
             if not isinstance(frame, dict) or frame.get("id") != request_id:
                 continue
             if "error" in frame:
@@ -161,6 +166,31 @@ class Viewer:
                     int(error.get("code", 0)), str(error.get("message", "refused"))
                 )
             return frame.get("result")
+
+    def recv_event(
+        self, timeout_s: Optional[float] = None
+    ) -> Optional[Tuple[str, Any]]:
+        """Return the next subscribed event as ``(name, payload)``.
+
+        Events received while :meth:`call` waits for its reply are buffered and
+        returned first. ``timeout_s=None`` waits indefinitely; a finite timeout
+        returns ``None`` when no event arrives before its deadline.
+        """
+        if self._events:
+            return self._events.popleft()
+
+        deadline = None if timeout_s is None else time.monotonic() + timeout_s
+        while True:
+            remaining_s = (
+                None if deadline is None else max(0.0, deadline - time.monotonic())
+            )
+            try:
+                frame = json.loads(self._socket.recv(timeout=remaining_s))
+            except TimeoutError:
+                return None
+            event = _event_from_frame(frame)
+            if event is not None:
+                return event
 
     # ── named methods ────────────────────────────────────────────────────────
     # A thin layer over `call`, for the handful a controller reaches for most.
@@ -237,6 +267,21 @@ def _with_query(url: str, *, role: str, token: Optional[str]) -> str:
     if token:
         query["token"] = token
     return urlunparse(parts._replace(query=urlencode(query)))
+
+
+def _event_from_frame(frame: Any) -> Optional[Tuple[str, Any]]:
+    """Decode the viewer client's positional ``event`` notification."""
+    if not isinstance(frame, dict) or frame.get("method") != "event":
+        return None
+    params = frame.get("params")
+    if (
+        frame.get("id") is not None
+        or not isinstance(params, list)
+        or len(params) != 2
+        or not isinstance(params[0], str)
+    ):
+        return None
+    return params[0], params[1]
 
 
 def _connect(url: str, timeout_s: float) -> Any:

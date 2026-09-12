@@ -34,9 +34,10 @@ shared with anything else that needs to speak the protocol.
 ## Things worth knowing before you change this
 
 **`?control` is a bare flag.** The hub rides on the app that served the page, so
-the socket address is derived from `location`. That keeps it working behind a
-reverse proxy, under `luxar export` and in the native launcher. `?control=<url>`
-exists for a split origin and is same-origin-only unless
+the socket address is derived from `location`. That keeps it working behind an
+origin-rooted reverse proxy, under `luxar export` and in the native launcher. A
+path-prefixed proxy uses an explicit path such as `?control=/exhibit/control`.
+`?control=<url>` exists for a split origin and is same-origin-only unless
 `?controlAllowCrossOrigin` is also given — see `normalizeControlSocketUrl` in
 `src/config/url-params.ts` for why that matters.
 

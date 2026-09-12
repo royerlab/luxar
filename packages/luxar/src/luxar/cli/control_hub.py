@@ -81,6 +81,11 @@ def _origin_host(origin: str) -> str:
     return urlparse(origin.strip()).netloc.lower()
 
 
+def _normalize_origin(origin: str) -> str:
+    """Normalize an explicit browser origin for exact allow-list matching."""
+    return origin.strip().lower().rstrip("/")
+
+
 def _error_frame(request_id: Any, code: int, message: str) -> str:
     """A JSON-RPC error response. ``request_id`` may be ``None`` (parse error)."""
     return json.dumps(
@@ -113,7 +118,7 @@ class ControlHub:
         self._allowed_origins = (
             None
             if allowed_origins is None
-            else {o.strip().lower() for o in allowed_origins}
+            else {_normalize_origin(origin) for origin in allowed_origins}
         )
         self._viewers: Dict[int, WebSocket] = {}
         self._controllers: Dict[int, WebSocket] = {}
@@ -152,7 +157,8 @@ class ControlHub:
         ``ws://localhost:<port>/control`` and drive the kiosk — or call
         ``getViewerState()`` and read back the dataset URL. The browser sends an
         ``Origin`` header it cannot forge, so comparing it to the ``Host`` the
-        request arrived on closes the whole class.
+        request arrived on blocks the direct cross-origin case. This is not a
+        DNS-rebinding defence; use a token on an untrusted network.
 
         Two deliberate allowances:
 
@@ -169,7 +175,7 @@ class ControlHub:
         if origin is None:
             return True
         if self._allowed_origins is not None:
-            return origin in self._allowed_origins
+            return _normalize_origin(origin) in self._allowed_origins
         if host is None:
             return False
         # Compare host:port, not the whole URL: the scheme legitimately differs
@@ -198,6 +204,8 @@ class ControlHub:
 
         Refuses an unknown role or a bad token with
         :data:`CLOSE_POLICY_VIOLATION`, before the socket is registered.
+        A configured token supersedes the origin check (and any
+        ``allowed_origins`` list) so authenticated split-origin deployments work.
         """
         await websocket.accept()
         if role not in ROLES:
@@ -310,7 +318,10 @@ class ControlHub:
 
     async def _route_reply(self, frame: Dict[str, Any]) -> None:
         """Restore the asking controller's own request id and answer it."""
-        pending = self._pending.pop(_as_int(frame.get("id")), None)
+        request_id = _as_int(frame.get("id"))
+        if type(request_id) is not int:
+            return
+        pending = self._pending.pop(request_id, None)
         if pending is None:
             return  # a duplicate from a second viewer, or a vanished controller
         controller_key, original_id = pending

@@ -223,6 +223,21 @@ class TestMalformedFrames:
                 viewer.send_text(_reply(request["id"], "still attached"))
                 assert controller.receive_json()["result"] == "still attached"
 
+    @pytest.mark.parametrize("bad_id", [[1], {"request": 1}], ids=["array", "object"])
+    def test_unroutable_reply_ids_do_not_close_the_socket(self, bad_id: object) -> None:
+        api, hub = _app()
+        client = TestClient(api)
+        with client.websocket_connect("/control?role=viewer") as viewer:
+            with client.websocket_connect("/control?role=controller") as controller:
+                controller.send_text(_request("getLayers", 5))
+                request = viewer.receive_json()
+                viewer.send_json(
+                    {"jsonrpc": "2.0", "id": bad_id, "result": "not routable"}
+                )
+                viewer.send_text(_reply(request["id"], "still attached"))
+                assert controller.receive_json()["result"] == "still attached"
+                assert hub.pending_count == 0
+
 
 class TestAttachment:
     """Who may attach, and what happens when they leave."""
@@ -463,8 +478,8 @@ class TestOriginCheck:
 
     def test_an_explicit_allowlist_wins_over_the_host_comparison(self) -> None:
         # The reverse-proxy case, where Origin and Host differ honestly.
-        hub = ControlHub(allowed_origins=["https://exhibit.museum"])
-        assert hub.origin_allowed("https://exhibit.museum", "internal:8000") is True
+        hub = ControlHub(allowed_origins=[" HTTPS://Exhibit.Museum/ "])
+        assert hub.origin_allowed("https://EXHIBIT.MUSEUM/", "internal:8000") is True
         assert hub.origin_allowed("https://internal:8000", "internal:8000") is False
 
     def test_a_valid_token_allows_an_explicit_split_origin(self) -> None:

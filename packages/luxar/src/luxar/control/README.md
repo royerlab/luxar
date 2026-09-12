@@ -25,7 +25,9 @@ from luxar.control import Viewer
 
 with Viewer("ws://kiosk.local:5173/control", token="hunter2") as viewer:
     story = viewer.dimension_index("story")   # by NAME, not a hard-coded index
+    viewer.subscribe("waypoint-arrived")
     viewer.set_dimension_value(story, 3)      # fly to the fourth chapter
+    print(viewer.recv_event(timeout_s=10.0))  # ("waypoint-arrived", payload)
 
     viewer.recenter_camera()                  # re-frame the scene
     print(viewer.get_viewer_state()["src"])   # what it is showing
@@ -84,10 +86,11 @@ operation: the viewer's waypoint driver flies the camera, swaps the
 dimension-bound overlays and fires `waypoint-arrived`, which the sound layer's
 narration keys on. Nothing here needs to know about any of it.
 
-**Replies and events share one socket.** `call` skips frames that are not its
-own answer, so a controller that wants events should read them itself rather
-than rely on that. `camera-changed` is throttled viewer-side to 20 Hz; it fires
-at frame rate otherwise, and an auto-rotating kiosk never stops moving.
+**Replies and events share one socket.** `recv_event(timeout_s=None)` returns
+the next subscribed notification as `(name, payload)`, and events that arrive
+while `call` waits for its answer are buffered for it. `camera-changed` is
+throttled viewer-side to 20 Hz; it fires at frame rate otherwise, and an
+auto-rotating kiosk never stops moving.
 
 **Timeouts are generous because replies can be slow.** `flyTo` resolves when
 the flight lands and `switchDataset` when the new scene has loaded, so the
