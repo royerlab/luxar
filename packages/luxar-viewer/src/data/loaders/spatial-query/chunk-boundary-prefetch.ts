@@ -53,9 +53,8 @@ function rangeEdge(ranges: readonly LoadRange[], forward: boolean): number {
 
 /** Validate and return the row count and first-axis chunk size. */
 function usableFirstAxisLayout(array: FirstAxisChunkLayout): [number, number] | null {
-  // `chunks[0]` is the zarr chunk-grid shape. For zarr-3 sharded arrays it is
-  // the shard size, not the byte-range-readable inner chunk size, so this
-  // planner must not be reused for sharded stores without inner-grid metadata.
+  // Zarrita exposes the byte-range-readable inner chunk shape through `chunks`;
+  // for zarr-3 sharded arrays this is deliberately smaller than the shard grid.
   const rowCount = array.shape[0] ?? 0;
   const chunkRows = array.chunks[0] ?? 0;
   return rowCount > 0 && chunkRows > 0 && chunkRows < rowCount ? [rowCount, chunkRows] : null;
