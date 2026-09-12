@@ -55,7 +55,7 @@
       },
       "distance": 60,
       "exposure": 1.2,
-      "note": "fillTarget 0.55 (was default 0.95): 86.6% border-lit at 0.95; live frames two small orbitals with wide margin. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | distance 32 -> 60 (fillTarget removed: it is INERT when `distance` is set, so the 0.55 attempt was a no-op and 86.6% -> 90.0% border-lit was run variance). The orbitals overflowed the frame at distance 32; the live still shows two small lobes with wide margin."
+      "note": "distance 32 -> 60: the orbitals overflowed the frame at distance 32; the live still shows two small lobes with wide margin. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | The abandoned fillTarget 0.55 attempt was a no-op because fillTarget is INERT when `distance` is set; the 86.6% -> 90.0% border-lit change was run variance."
     },
     {
       "id": "desi_galaxies",
