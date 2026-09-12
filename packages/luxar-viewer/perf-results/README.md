@@ -25,11 +25,13 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
       pnpm test:perf:e2e -g 'viewer audit'
 
 - Datasets are the checkout's `datasets/examples` + `datasets/demos` stores.
-  `make run-examples` builds the two checked-in LOD examples; each demo row is
-  built by its corresponding `luxar demo run <key>` command. ZebraHub must use
-  `--preset hifi --streamline-lod`, which writes the `_hifi_lod` store. A missing
-  store skips its row with the path in the reason; set
-  `LUXAR_PERF_AUDIT_REQUIRE_SCENES=1` to make missing coverage fail the run.
+  `make run-examples` builds `dense-points`, `bench-100-nodes`, and the two
+  checked-in LOD examples. Build each remaining row with its corresponding
+  `luxar demo run <key> -- --no-serve` command. ZebraHub specifically needs
+  `luxar demo run zebrahub_velocity_streamlines -- --preset hifi --streamline-lod --no-serve`,
+  which writes the `_hifi_lod` store. A missing store skips its row with the path
+  in the reason; set `LUXAR_PERF_AUDIT_REQUIRE_SCENES=1` to make missing coverage
+  fail the run.
 - Metrics come from `__luxarDebug.getPerf()` (load-timeline milestones,
   `isSettled`), a long-task observer, request counters, and the rAF cadence under
   forced continuous rendering at DPR 1 / 0.5 and dollied 4x closer. Never WebGL
@@ -47,10 +49,11 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
   the opening pose and after the 4x dolly. The audit scene catalog includes the
   Hilbert/ocean/ZebraHub dense-line cases, neuromast/zebrafish timelapses, the
   Tribolium recipes contract check, and small checked-in Lines/GSplat LOD examples;
-  missing generated stores skip cleanly. The checked-in Lines LOD example uses
-  GSplat beads for its coarse levels until #2679; the rebuilt ZebraHub `_lod`
-  store is the genuine Lines substitutive arm. Active-level strings record the
-  selector units and whether footprint stamps are present.
+  missing generated stores skip cleanly. Both Lines LOD rows use GSplat beads
+  for their coarse levels until #2679; ZebraHub is the dense, real-scale Lines
+  arm, not a genuine-Lines-levels arm. Active-level strings record the selector
+  units and whether footprint stamps are present; stamp presence does not imply
+  the footprint selector applies to the current display dimensions.
 - A separate `audit-dense-points-adaptive` row runs WITHOUT the `dpr=1` pin and
   records where the adaptive-DPR controller settles after 30 s.
 - A `spread` above ~0.15 on a headline metric means the host was busy; re-run
