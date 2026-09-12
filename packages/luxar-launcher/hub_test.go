@@ -27,8 +27,7 @@ func serve(t *testing.T, token string) (*hub, string) {
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	host := strings.TrimPrefix(srv.URL, "http://")
-	mux.HandleFunc("/control", h.handler(host))
+	mux.HandleFunc("/control", h.handler())
 	return h, "ws" + strings.TrimPrefix(srv.URL, "http") + "/control"
 }
 
@@ -225,6 +224,14 @@ func TestBadTokenIsRefused(t *testing.T) {
 	waitFor(t, "controller to attach", func() bool { return h.controllerCount() == 1 })
 }
 
+func TestTokenAllowsAnAuthenticatedCrossOriginClient(t *testing.T) {
+	h, base := serve(t, "hunter2")
+	header := http.Header{}
+	header.Set("Origin", "http://panel.example:4000")
+	dial(t, base, "?role=controller&token=hunter2", header)
+	waitFor(t, "controller to attach", func() bool { return h.controllerCount() == 1 })
+}
+
 func TestCrossOriginBrowserHandshakeIsRefused(t *testing.T) {
 	// Cross-Site WebSocket Hijacking: a WS handshake is not subject to the
 	// same-origin policy and has no CORS preflight, so without this ANY page a
@@ -243,6 +250,14 @@ func TestMissingOriginIsAllowed(t *testing.T) {
 	// refusing them would break every script.
 	h, base := serve(t, "")
 	dial(t, base, "?role=controller", nil)
+	waitFor(t, "controller to attach", func() bool { return h.controllerCount() == 1 })
+}
+
+func TestSameOriginUsesTheRequestsHost(t *testing.T) {
+	h, base := serve(t, "")
+	header := http.Header{}
+	header.Set("Origin", strings.TrimSuffix(strings.Replace(base, "ws://", "http://", 1), "/control"))
+	dial(t, base, "?role=controller", header)
 	waitFor(t, "controller to attach", func() bool { return h.controllerCount() == 1 })
 }
 

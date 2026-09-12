@@ -119,7 +119,7 @@ func (h *hub) authorized(token string) bool {
 }
 
 // handler serves the relay endpoint.
-func (h *hub) handler(host string) http.HandlerFunc {
+func (h *hub) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		role := r.URL.Query().Get(ParamRole)
 		if role == "" {
@@ -144,11 +144,11 @@ func (h *hub) handler(host string) http.HandlerFunc {
 		case role != RoleViewer && role != RoleController:
 			_ = conn.Close(ClosePolicyViolation, "unknown role")
 			return
-		case !originAllowed(r.Header.Get("Origin"), host):
-			_ = conn.Close(ClosePolicyViolation, "cross-origin")
-			return
 		case !h.authorized(r.URL.Query().Get(ParamToken)):
 			_ = conn.Close(ClosePolicyViolation, "bad token")
+			return
+		case h.token == "" && !originAllowed(r.Header.Get("Origin"), r.Host):
+			_ = conn.Close(ClosePolicyViolation, "cross-origin")
 			return
 		}
 

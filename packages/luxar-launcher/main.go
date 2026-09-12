@@ -186,7 +186,7 @@ func startServer(root string) (string, *http.Server, error) {
 		// Registered BEFORE the catch-all: Go's mux prefers the longer
 		// pattern, but keeping the order explicit matches the Python side,
 		// where a Mount at "/" would swallow the socket route entirely.
-		mux.HandleFunc("/control", relay.handler(fmt.Sprintf("%s:%d", reachable, port)))
+		mux.HandleFunc("/control", relay.handler())
 		mux.Handle("/", handler)
 		handler = mux
 		viewerURL += "&control"
