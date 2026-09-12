@@ -14,19 +14,24 @@ Compare two:
 
 ## Viewer audit bench (`viewer-audit-perf-bench.spec.ts`)
 
-End-to-end load + frame numbers over six real scenes, cold (fresh browser context
+End-to-end load + frame numbers over thirteen real scenes, cold (fresh browser context
 per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
 (default 3) with `spread` = (max−min)/median per metric. Rows land in the same
-`results.json` under `audit`, keyed `audit-<scene>[-hosted]/<backend>`; the
+`results.json` under `audit`, keyed `audit-<scene>[-lod-bias-N][-hosted]/<backend>`; the
 `## Viewer audit (load + frames)` section of `pnpm perf:diff` compares them.
 
     pnpm build   # the audit bench measures the PRODUCTION bundle
     LUXAR_PERF_PREVIEW=1 LUXAR_PERF_HEADLESS=1 LUXAR_PERF_CHROME_ARGS=--use-angle=metal \
       pnpm test:perf:e2e -g 'viewer audit'
 
-- Datasets are the checkout's `datasets/examples` + `datasets/demos` stores
-  (`make run-examples`; demos via `luxar demo run <key>`), served by the config's
-  data server; a missing store skips its row with the path in the reason.
+- Datasets are the checkout's `datasets/examples` + `datasets/demos` stores.
+  `make run-examples` builds `dense-points`, `bench-100-nodes`, and the two
+  checked-in LOD examples. Build each remaining row with its corresponding
+  `luxar demo run <key> -- --no-serve` command. ZebraHub specifically needs
+  `luxar demo run zebrahub_velocity_streamlines -- --preset hifi --streamline-lod --no-serve`,
+  which writes the `_hifi_lod` store. A missing store skips its row with the path
+  in the reason; set `LUXAR_PERF_AUDIT_REQUIRE_SCENES=1` to make missing coverage
+  fail the run.
 - Metrics come from `__luxarDebug.getPerf()` (load-timeline milestones,
   `isSettled`), a long-task observer, request counters, and the rAF cadence under
   forced continuous rendering at DPR 1 / 0.5 and dollied 4x closer. Never WebGL
@@ -34,6 +39,21 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
 - `LUXAR_PERF_AUDIT_NET=hosted` throttles to 25 Mbps / 30 ms via CDP;
   `LUXAR_PERF_AUDIT_SCENES=dense-points,cmu1-2d` restricts scenes (the line bench
   owns `LUXAR_PERF_SCENARIO_FILTER` and rejects unknown ids).
+- `LUXAR_PERF_AUDIT_LOD_BIASES=1,2,4` crosses only scenes carrying a
+  substitutive ladder; non-ladder scenes remain single-arm frame/load rows. Bias
+  1 is the neutral existing key, while non-neutral rows are keyed `-lod-bias-N`.
+  The bench pins `no-lod-fade` so committed counts and active levels describe one
+  selected level rather than a cross-fade pair. Rows include committed
+  visible-element totals under substitutive groups (or the whole scene when
+  none exists) plus the active level of every substitutive group at
+  the opening pose and after the 4x dolly. The audit scene catalog includes the
+  Hilbert/ocean/ZebraHub dense-line cases, neuromast/zebrafish timelapses, the
+  Tribolium recipes contract check, and small checked-in Lines/GSplat LOD examples;
+  missing generated stores skip cleanly. Both Lines LOD rows use GSplat beads
+  for their coarse levels until #2679; ZebraHub is the dense, real-scale Lines
+  arm, not a genuine-Lines-levels arm. Active-level strings record the selector
+  units and whether footprint stamps are present; stamp presence does not imply
+  the footprint selector applies to the current display dimensions.
 - A separate `audit-dense-points-adaptive` row runs WITHOUT the `dpr=1` pin and
   records where the adaptive-DPR controller settles after 30 s.
 - A `spread` above ~0.15 on a headline metric means the host was busy; re-run
@@ -62,6 +82,10 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
   identical code across the runs (e.g. the `default` arm, or a backend fallback arm).
   If the control moved more than a few percent, the box was loaded — discard the run.
   Shared machines can wake background work mid-run.
+- **Capture discipline**: run the sweep from `dev` at or after the corpus rebuilds
+  in #2658, #2715, #2717, #2721, and #2710, then verify the SHA recorded in the
+  result row before comparing it. Reusing an older generated store can otherwise
+  change selector provenance without a code change.
 - **Absolute WASM floors**: `pnpm test:perf` reports misses without failing because
   wall-clock throughput follows host load. On a controlled quiet host, run
   `pnpm test:perf:strict` (equivalent to `LUXAR_PERF_QUIET_HOST=1 pnpm test:perf`) to

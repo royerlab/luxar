@@ -736,6 +736,10 @@ export async function loadLodGroupNode(
     defaultLevel,
     activeChildIndex: defaultLevel,
   };
+  lodThreeGroup.userData.lodSelector = entry.selector;
+  lodThreeGroup.userData.footprintStamped =
+    registryChildren.length > 0 &&
+    registryChildren.every((child) => child.medianFootprint != null && child.footprintDims != null);
 
   if (ctx.lodGroupRegistry) {
     ctx.lodGroupRegistry.register(entry);
