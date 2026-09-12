@@ -66,9 +66,9 @@ def test_a_clean_run_exits_zero_and_prints_the_audit_trail(tmp_path: Path) -> No
     # Anchor pinned TO ITS GROUP on one line: asserting the two labels appear
     # somewhere in the output passes just as happily when they are swapped, and
     # a swapped anchor is exactly the mistake worth catching.
-    assert "pts: anchor whole-object" in result.output
-    assert "tiled/part_0: anchor fills-screen" in result.output
-    assert "tiled/part_1: anchor fills-screen" in result.output
+    assert "pts: anchor whole-object 0.5" in result.output
+    assert "tiled/part_0: anchor fills-screen (tile) 1" in result.output
+    assert "tiled/part_1: anchor fills-screen (tile) 1" in result.output
     assert _node_attrs(store)["pts"]["selector"] == DERIVED_LOD_SELECTOR
 
 
@@ -96,6 +96,33 @@ def test_group_is_repeatable(tmp_path: Path) -> None:
     assert attrs["pts"]["selector"] == DERIVED_LOD_SELECTOR
     assert attrs["tiled/part_1"]["selector"] == DERIVED_LOD_SELECTOR
     assert attrs["tiled/part_0"]["selector"] == LEGACY_LOD_SELECTOR
+
+
+def test_anchor_rederives_an_already_current_ladder(tmp_path: Path) -> None:
+    store = _legacy_scene(tmp_path)
+    assert runner.invoke(app, ["restamp-lod", str(store)]).exit_code == 0
+
+    result = runner.invoke(
+        app,
+        ["restamp-lod", str(store), "--anchor", "0.25", "--group", "pts"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "[0, 0.5] → [0, 0.25]" in result.output
+    assert "pts: anchor whole-object 0.25" in result.output
+    assert _node_attrs(store)["pts/child_1"]["coverage_fraction"] == 0.25
+    assert _node_attrs(store)["tiled/part_0/child_1"]["coverage_fraction"] == 1.0
+
+
+def test_invalid_anchor_exits_one_without_writing(tmp_path: Path) -> None:
+    store = _legacy_scene(tmp_path)
+    before = _node_attrs(store)
+
+    result = runner.invoke(app, ["restamp-lod", str(store), "--anchor", "nan"])
+
+    assert result.exit_code == 1, result.output
+    assert "--anchor must be finite and in" in result.output
+    assert _node_attrs(store) == before
 
 
 def test_an_unmatched_group_exits_one(tmp_path: Path) -> None:

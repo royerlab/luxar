@@ -1160,24 +1160,45 @@ def test_default_composed_ladder_uses_a_resident_share_without_losing_the_ladder
     assert len(stream_cuts(60_000, sliced)) > 1
 
 
-def test_default_composed_ladder_rejects_a_resolved_increment_over_the_ceiling():
+def test_default_composed_ladder_scales_the_commit_ceiling_by_slice_count():
     from luxar.core.group.lod.group import (
         default_composed_additive_lod,
         level_additive_lod,
     )
 
     spec = default_composed_additive_lod(elements=2_100_000, slices=30)
+
+    resolved = level_additive_lod(
+        spec,
+        level_n=2_100_000,
+        compression_factor=4,
+        is_coarsest=True,
+        slices=30,
+    )
+
+    assert resolved is not None
+    assert resolved["counts"] == "stream:262500"
+
+
+def test_default_composed_ladder_rejects_above_the_slice_scaled_ceiling():
+    from luxar.core.group.lod.group import (
+        default_composed_additive_lod,
+        level_additive_lod,
+    )
+
+    spec = default_composed_additive_lod(elements=60_000_000, slices=30)
     with pytest.raises(
         ValueError,
         match=(
-            "1,050,000-element additive increment.*900,000-element commit ceiling.*"
+            "30,000,000-element additive increment.*27,000,000-element whole-node "
+            "commit ceiling for 30 slices.*900,000 per slice under uniform mixing.*"
             "Reduce the leaf size \\(Points: partition=\\) or supply an explicit "
             "additive_lod ladder"
         ),
     ):
         level_additive_lod(
             spec,
-            level_n=2_100_000,
+            level_n=60_000_000,
             compression_factor=4,
             is_coarsest=True,
             slices=30,

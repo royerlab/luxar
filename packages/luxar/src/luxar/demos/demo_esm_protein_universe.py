@@ -57,7 +57,7 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe
     python -m luxar.demos.demo_esm_protein_universe --no-serve
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
-    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR
+    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR + 95% dolly
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 """
 
@@ -1484,6 +1484,22 @@ def _viewer_config(
         auto_rotate=auto_rotate,
         auto_rotate_speed=0.5 if auto_rotate else None,
         auto_rotate_axis="world-y" if auto_rotate else None,
+        # A slow breath in and out under the turntable, dialled in on the kiosk
+        # display: the map reads as a volume rather than a flat cloud, and the
+        # near extreme brings the knots close enough to read. Gated on
+        # `auto_rotate` because that flag is what `--no-auto-rotate` uses to ask
+        # for a still camera, and half a motion is worse than none.
+        #
+        # NOTE the cost, which is real (see `auto_dolly_amplitude_percent`):
+        # screen area goes as 1/d^2, so the 95% kiosk swing makes the LOD ladder
+        # load finer levels at the near extreme. The hosted/laptop build uses a
+        # gentler breath; the kiosk serves its larger swing from a warm local
+        # cache.
+        auto_dolly=auto_rotate,
+        auto_dolly_amplitude_percent=(95.0 if high_quality else 20.0)
+        if auto_rotate
+        else None,
+        auto_dolly_period=58.5 if auto_rotate else None,
         # Render quality (2026-09-10 review): supersampling and rendering above
         # CSS resolution are what make the kiosk build crisp, and also what made
         # it crawl on an ordinary laptop — SSAA is a 4x fragment cost on top of
@@ -1751,8 +1767,9 @@ def build_universe_scene(
 ) -> int:
     """Write the universe scene. Returns the number of clusters in the backdrop.
 
-    ``high_quality`` re-enables the kiosk render settings (SSAA and rendering at
-    the display's full device pixel ratio); the default is the laptop build.
+    ``high_quality`` re-enables the kiosk settings (SSAA, rendering at the
+    display's full device pixel ratio, and the 95% dolly swing); the default is
+    the laptop build.
     """
     n = len(universe)
     assets: dict[str, TurntableAssets] = {}
@@ -1906,8 +1923,8 @@ def main() -> None:
     auto_rotate = "--no-auto-rotate" not in sys.argv
     turntables = "--no-turntables" not in sys.argv
     audio = "--no-audio" not in sys.argv
-    # Kiosk / big-GPU build: SSAA on and rendering at full device resolution.
-    # Off by default so the hosted demo runs on an ordinary laptop.
+    # Kiosk / big-GPU build: SSAA, full device resolution, and the 95% dolly
+    # swing. Off by default so the hosted demo runs on an ordinary laptop.
     high_quality = "--high-quality" in sys.argv
     try:
         annotations = find_input(ANNOTATIONS_PARQUET, parse_path_arg("annotations"))

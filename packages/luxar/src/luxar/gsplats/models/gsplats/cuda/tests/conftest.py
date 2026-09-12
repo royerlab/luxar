@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -24,7 +25,22 @@ import torch
 
 
 def pytest_configure(config):
-    """Register custom markers."""
+    """Enforce required CUDA coverage and register custom markers."""
+    if os.environ.get("LUXAR_REQUIRE_CUDA") == "1":
+        from luxar.gsplats.models.gsplats.cuda import (
+            CUDA_AVAILABLE,
+            CUDA_BACKEND_AVAILABLE,
+        )
+
+        if not CUDA_AVAILABLE:
+            raise pytest.UsageError(
+                "LUXAR_REQUIRE_CUDA=1 but PyTorch cannot access a CUDA device"
+            )
+        if not CUDA_BACKEND_AVAILABLE:
+            raise pytest.UsageError(
+                "LUXAR_REQUIRE_CUDA=1 but the CUDA splatting backend is unavailable"
+            )
+
     config.addinivalue_line(
         "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
     )

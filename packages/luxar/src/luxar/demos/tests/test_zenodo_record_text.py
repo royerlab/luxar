@@ -2786,6 +2786,22 @@ def _deposition(description: str) -> dict[str, Any]:
     }
 
 
+def _published_record(
+    description: str,
+    *,
+    submitted: bool = True,
+    modified: str = "2026-09-11T00:00:00Z",
+) -> dict[str, Any]:
+    return {
+        "metadata": {
+            "description": description,
+            "license": {"id": "cc-by-4.0"},
+        },
+        "submitted": submitted,
+        "modified": modified,
+    }
+
+
 def _capture_manifest(path: Path, records: dict[str, int]) -> None:
     path.write_text(
         json.dumps(
@@ -2919,6 +2935,141 @@ def test_capture_does_not_sleep_after_the_final_retry(
         capture.fetch(1, "token")
 
     assert sleeps == [3, 6, 9, 12, 15]
+
+
+def test_capture_check_accepts_matching_public_records_without_a_token(
+    capture: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"first": 10, "second": 20})
+    descriptions = {10: "Loïc 10", 20: "second"}
+    modified = "2026-09-11T00:00:00Z"
+    index = {
+        key: {
+            "description_sha256": hashlib.sha256(
+                descriptions[deposition].encode("utf-8")
+            ).hexdigest(),
+            "description_chars": len(descriptions[deposition]),
+            "submitted": True,
+            "zenodo_modified": modified,
+            "license": "cc-by-4.0",
+        }
+        for key, deposition in {"first": 10, "second": 20}.items()
+    }
+    index_bytes = json.dumps(index).encode("utf-8")
+    (tmp_path / "records.json").write_bytes(index_bytes)
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+    monkeypatch.setenv("ZENODO_TOKEN", "must-not-leak")
+    requested = []
+
+    def urlopen(request: Any, **_kwargs: Any) -> Any:
+        requested.append(request)
+        deposition = int(request.full_url.rsplit("/", 1)[1])
+        return io.StringIO(
+            json.dumps(_published_record(descriptions[deposition], modified=modified))
+        )
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", urlopen)
+
+    assert capture.main(["--check"]) == 0
+    assert capsys.readouterr().out == "first            OK\nsecond           OK\n"
+    assert [request.full_url for request in requested] == [
+        "https://zenodo.org/api/records/10",
+        "https://zenodo.org/api/records/20",
+    ]
+    assert all("Authorization" not in request.headers for request in requested)
+    assert not list(tmp_path.glob("*.html"))
+    assert (tmp_path / "records.json").read_bytes() == index_bytes
+
+
+def test_capture_check_reports_unreachable_record_and_continues(
+    capture: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"missing": 10, "available": 20})
+    description = "available"
+    modified = "2026-09-11T00:00:00Z"
+    (tmp_path / "records.json").write_text(
+        json.dumps(
+            {
+                "available": {
+                    "description_sha256": hashlib.sha256(
+                        description.encode("utf-8")
+                    ).hexdigest(),
+                    "description_chars": len(description),
+                    "submitted": True,
+                    "zenodo_modified": modified,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+
+    def urlopen(request: Any, **_kwargs: Any) -> Any:
+        deposition = int(request.full_url.rsplit("/", 1)[1])
+        if deposition == 10:
+            raise urllib.error.HTTPError(request.full_url, 404, "NOT FOUND", {}, None)
+        return io.StringIO(
+            json.dumps(_published_record(description, modified=modified))
+        )
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", urlopen)
+
+    assert capture.main(["--check"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "missing unreachable: HTTP Error 404: NOT FOUND\navailable        OK\n"
+    )
+    assert captured.err == ""
+
+
+def test_capture_check_reports_every_public_record_mismatch(
+    capture: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"record": 10})
+    (tmp_path / "records.json").write_text(
+        json.dumps(
+            {
+                "record": {
+                    "description_sha256": "0" * 64,
+                    "description_chars": 1,
+                    "submitted": False,
+                    "zenodo_modified": "2026-09-02T00:00:00Z",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+    monkeypatch.setattr(
+        capture.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: io.StringIO(json.dumps(_published_record("changed"))),
+    )
+
+    assert capture.main(["--check"]) == 1
+    output = capsys.readouterr().out
+    assert "record description_sha256:" in output
+    assert "record description_chars: 1 != 7" in output
+    assert "record submitted: False != True" in output
+    assert (
+        "record zenodo_modified: '2026-09-02T00:00:00Z' != "
+        "'2026-09-11T00:00:00Z'" in output
+    )
 
 
 class TestCheckExplainsAnAbsentFigure:
