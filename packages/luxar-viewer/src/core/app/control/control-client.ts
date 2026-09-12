@@ -80,16 +80,15 @@ export const CONTROL_FORWARDED_EVENTS: readonly string[] = [
 /**
  * The subset of `WebSocket` this client uses, so a test can supply a fake.
  *
- * The handlers take no arguments because nothing here reads the `Event`: the
- * only payload that matters is `MessageEvent.data`, which `onmessage` declares
- * explicitly. A real `WebSocket` therefore satisfies this structurally except
- * for its handler arity, which the module-private `openPlatformSocket` bridges.
+ * Only the event payloads this client reads are declared. A real `WebSocket`
+ * therefore satisfies this structurally except for its handler arity, which
+ * the module-private `openPlatformSocket` bridges.
  */
 export interface ControlSocketLike {
   send(data: string): void;
   close(): void;
   onopen: (() => void) | null;
-  onclose: (() => void) | null;
+  onclose: ((event: { code?: number; reason?: string }) => void) | null;
   onerror: (() => void) | null;
   onmessage: ((event: { data: unknown }) => void) | null;
 }
@@ -158,10 +157,10 @@ export class ControlClient {
   /** Dial the hub. Safe to call once; reconnects are scheduled internally. */
   connect(): void {
     if (this.disposed || this.socket !== null) return;
-    const url = buildViewerSocketUrl(this.ports.socketUrl, this.ports.token);
     const open = this.ports.openSocket ?? openPlatformSocket;
     let socket: ControlSocketLike;
     try {
+      const url = buildViewerSocketUrl(this.ports.socketUrl, this.ports.token);
       socket = open(url);
     } catch (error) {
       log.warning(Modules.APP, 'control: could not open the socket:', error);
@@ -180,9 +179,18 @@ export class ControlClient {
       // `close` always follows, and that is where reconnect is scheduled.
       log.warning(Modules.APP, 'control: socket error');
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       this.socket = null;
-      if (!this.disposed) this.scheduleReconnect();
+      if (this.disposed) return;
+      const delay = this.reconnectDelayMs;
+      if (event.code !== 1000) {
+        const reason = event.reason ? `: ${event.reason}` : '';
+        log.warning(
+          Modules.APP,
+          `control: socket closed (${event.code ?? 'unknown'}${reason}); retrying in ${delay} ms`
+        );
+      }
+      this.scheduleReconnect();
     };
   }
 
