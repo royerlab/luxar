@@ -97,6 +97,10 @@ the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
 exchange for far fewer stored objects. Re-measure browser traffic and request
 cost before changing that tradeoff.
 
+Read any playback warning after the `optimise` step. For an un-laddered played
+store, re-run at `hosting` and re-measure requests and per-step bytes before
+publishing; §3.21 records the current exception and measurement procedure.
+
 `make generate-gallery-datasets` automatically runs both built-scene auditors
 against only the stores it generated in that invocation, then reports on the
 complete local inventory. Scene-credit failures gate a rebuild without letting
