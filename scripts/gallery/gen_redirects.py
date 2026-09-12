@@ -15,9 +15,9 @@ a Function on the request path.
 
 Two things here are load-bearing and easy to get wrong in a rewrite:
 
-1. **A demo key is not always its store name.** Eight manifest entries differ
+1. **A demo key is not always its store name.** Seven manifest entries differ
    (``cosmicflows_laniakea`` → ``cosmicflows_laniakea_full``, ``nd_transforms`` →
-   ``nd_transforms_bench``, and six more). A mechanical ``id == store`` mapping
+   ``nd_transforms_bench``, and five more). A mechanical ``id == store`` mapping
    emits routes to stores that do not exist, each rendering a blank viewer with
    HTTP 200. Routes are therefore emitted for *both* spellings.
 2. **The README contract.** Tile titles in the root README link to these routes,
