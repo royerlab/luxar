@@ -143,16 +143,38 @@ def test_scene_grafts_time_parts_with_the_reviewed_layer_settings(
     assert attrs["layer"] is True
 
 
-def test_time_part_ladders_start_at_the_download_budget_and_stay_capped() -> None:
+def test_time_part_ladders_apply_the_share_floor_across_multiple_parts() -> None:
     assert _demo.FIRST_RUNG_SPLATS == 20_833
-    ladders = _demo.time_part_ladders([2_400_000, 20_000, 3])
+    ladders = _demo.time_part_ladders([2_400_000, 20_000, 3], part_count=3)
     big, small, tiny = ladders
-    assert big[0] == 20_833
+    assert big[0] == 300_000
     assert big[-1] == 2_400_000
     increments = [b - a for a, b in zip([0, *big[:-1]], big, strict=True)]
+    assert len(big) == _demo.TIME_PART_LADDER_MAX_DEPTH
+    assert max(increments) - min(increments) <= 1
     assert max(increments) <= _demo.DEFAULT_MAX_ADDITIVE_COMMIT
-    assert small == [20_000]
-    assert tiny == [3]
+    assert small == [2_500, 5_000, 7_500, 10_000, 12_500, 15_000, 17_500, 20_000]
+    assert tiny == [1, 2, 3]
+    assert _demo.time_part_ladders([2_217_045, 1], part_count=2)[0][0] == 277_131
+
+
+def test_a_single_time_part_keeps_the_download_budget_ladder() -> None:
+    assert (
+        _demo.time_part_ladders([2_400_000], part_count=1)[0][0]
+        == _demo.FIRST_RUNG_SPLATS
+    )
+
+
+def test_one_requested_ladder_uses_the_explicit_played_part_count() -> None:
+    assert _demo.time_part_ladders([2_400_000], part_count=51)[0][0] == 300_000
+
+
+def test_time_part_share_floor_cannot_exceed_the_per_part_commit_cap() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"per-part commit cap; use fewer rungs .* or split the frame spatially",
+    ):
+        _demo.time_part_ladders([7_200_001, 1], part_count=2)
 
 
 def test_time_parts_preserve_every_splat_and_split_on_time(tmp_path) -> None:
@@ -165,6 +187,7 @@ def test_time_parts_preserve_every_splat_and_split_on_time(tmp_path) -> None:
     node, _ = load_gsplat_node(str(out))
     assert type(node).__name__ == "GSplatPartition"
     assert len(node.children) == 2
+    assert [child.n_additive_sublods for child in node.children] == [2, 2]
     assert total_splats(node) == 4
     root = zarr.open_group(str(out), mode="r")
     assert dict(root.attrs)["source_stride"] == 5

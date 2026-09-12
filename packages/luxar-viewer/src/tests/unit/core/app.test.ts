@@ -443,6 +443,26 @@ describe('LuxarApp', () => {
       expect(ownershipMocks.install).toHaveBeenCalledTimes(1);
     });
 
+    it('installs control event consumers before the initial dataset load', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      mockSceneManager.loadSceneData.mockImplementation(async () => {
+        const events = (
+          app as unknown as {
+            embedderEvents: { hasListeners(event: string): boolean };
+          }
+        ).embedderEvents;
+        expect(events.hasListeners('selection')).toBe(true);
+        expect(events.hasListeners('element-click')).toBe(true);
+        expect(events.hasListeners('element-contextmenu')).toBe(true);
+      });
+
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        control: 'ws://localhost:5173/control',
+      });
+    });
+
     it('initialized starts false on a freshly-constructed LuxarApp (pre-init invariant)', () => {
       // core.md C5 fix: split off the construction-default assertion from
       // the post-init test below. Previously both assertions lived in the

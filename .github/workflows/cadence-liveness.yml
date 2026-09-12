@@ -1,0 +1,31 @@
+name: Cadence liveness
+
+# A red result surfaces on this scheduled Actions run; this read-only workflow
+# intentionally does not create or update a second tracking issue.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 11 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: cadence-liveness
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Check cadences
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/check_cadence_liveness.py

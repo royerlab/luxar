@@ -13,16 +13,19 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    The pinned archive is one leaf of 121,163,285 splats with a 12-rung
+    The pinned archive is one leaf of 121,163,285 splats with a twelve-rung
     progressive ladder. The SCENE does not graft that leaf as-is: at build time
     it is re-authored (no refit — the splats are untouched) into a
     ``kind=partition`` of **one part per timepoint**, 51 parts, each carrying
-    its own capped progressive (stream) ladder: a 20,833-splat first rung
-    (~200 ms at 25 Mbps), doubling, increments capped at 900,000. No
-    substitutive levels anywhere.
+    its own eight-rung equal-count ladder: a first rung of at least 1/8 of that
+    timepoint, with every per-part increment below 900,000. No substitutive
+    levels anywhere. On the 2,217,045-splat reference frame, rung 0 grows from
+    the former 20,833 splats (0.63 MB) to 277,131 splats (8.31 MB at 30 B/splat),
+    about 2.7 seconds on a cold part at 25 Mbps.
 
-    Why time parts (measured 2026-09-10 against the single sliced leaf and
-    against 44 spatial parts, all at the same chunking):
+    Why time parts (measured 2026-09-10 with the former capped-stream recipe
+    against the single sliced leaf and 44 spatial parts, all at the same
+    chunking):
 
       - A time step is exactly one part. Nothing from other timepoints is
         fetched, the part's first rung paints at once, and its ladder is sized
@@ -89,8 +92,16 @@ PIPELINE — reproducible with ``--recompute``:
        shape. Not ``gsplat slice``: that takes ranges, not a stride, and refuses
        a partition.
     3. ``gsplat flatten`` — collapse to one leaf, keeping the finest level.
-    4. ``gsplat lod --recipe stream --target-ms 200`` — put the progressive
-       ladder back (flatten drops it), sized for a ~200 ms first paint.
+    4. ``gsplat lod --recipe stream --n-lods 4`` — put the progressive ladder
+       back (flatten drops it): four equal-count rungs, so rung 0 is a quarter
+       of the node. The 2026-08 archive used ``--target-ms 200`` (12 rungs,
+       sized against the whole node); on a node the viewer slices per timepoint
+       a target-ms ladder starves rung 0 (whole-node sizing) or, sized per
+       slice as the CLI now does, leaves rung 0 under 1 % of the node, and
+       ``check-demo-ladders`` refuses both (10 % share floor on a sliced node).
+       Four rungs satisfy that floor, but the current gate still rejects the
+       ladder under its slice-unaware 1,000,000-element commit cap; #2699 tracks
+       that auditor defect.
     5. ``luxar optimise --profile archive`` — re-chunk. LAST, because step 4
        adds arrays that also want the 1 MB layout.
 
@@ -115,8 +126,7 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei, 121M splats streamed progressively over a "
-        "12-rung ladder."
+        "of histone-labelled nuclei, 121M splats streamed frame by frame."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
@@ -174,6 +184,7 @@ from luxar.gsplats.tree import (
 from luxar.utils.lod_breakpoints import (
     DEFAULT_BANDWIDTH_MBPS,
     DEFAULT_MAX_ADDITIVE_COMMIT,
+    DEFAULT_SLICED_LADDER_MAX_DEPTH,
     capped_stream_cuts,
     estimate_bytes_per_splat,
     streaming_chunk_splats,
@@ -220,11 +231,10 @@ PARENT_FINEST_SPLATS = 602_580_152
 #: ladder built by a fixed rule), so unlike a refit this admits no drift
 #: tolerance. A mismatch means the parent or the stride changed.
 EXPECTED_SPLATS = 121_163_285
-#: Progressive rungs recorded on the shipped one-leaf archive.
-EXPECTED_RUNGS = 12
-#: Progressive-ladder budget: the first rung is sized to roughly this many
-#: milliseconds of download at the CLI's default assumed bandwidth.
-LADDER_TARGET_MS = 200
+#: Progressive rungs of the one-leaf archive (equal-count ladder, step 4).
+EXPECTED_RUNGS = 4
+#: Equal-count progressive ladder; see step 4 for why not a target-ms budget.
+LADDER_N_LODS = 4
 #: Chunk profile. `archive` (1 MB) rather than `hosting` (256 KB) because this
 #: node is read a whole timepoint at a time, and the measured cost of the
 #: as-built layout was 173 requests per timepoint step against 2 after.
@@ -239,15 +249,15 @@ ARCHIVE_ABSORPTION = 1.34
 # ---- Scene-time re-authoring into time parts (variant B, 2026-09-10) --------
 #: Bump when the time-part recipe changes (ladder rule, encoding, part layout);
 #: the cache directory name carries it, so an old build is never reused.
-TIME_PARTS_VERSION = 1
-#: First rung of every part's ladder: the shared ~200 ms download budget
-#: (20,833 splats at 25 Mbps and 30 B/splat). A time part is ONE frame, not a
-#: sliced node, so the budget rule applies rather than the sliced share floor.
+TIME_PARTS_VERSION = 2
+#: Lower bound for a part's first rung before the played-part share floor.
 FIRST_RUNG_SPLATS = streaming_chunk_splats(
     DEFAULT_LADDER_TARGET_MS,
     DEFAULT_BANDWIDTH_MBPS,
     estimate_bytes_per_splat(ndim=4, has_colors=False),
 )
+#: Maximum equal-count depth for a partition stepped one part per played tick.
+TIME_PART_LADDER_MAX_DEPTH = DEFAULT_SLICED_LADDER_MAX_DEPTH
 #: Contribution ordering inside each part's ladder: the brightest nuclei first,
 #: so the 1/e(k) brightening of an incomplete ladder shows a dimmer version of
 #: the SAME frame rather than a random subset of it.
@@ -265,7 +275,7 @@ LAYER_COLORMAP = "plasma"
 
 
 def _validate_rebuilt_archive(node: Any) -> int:
-    """Require the recorded one-leaf, twelve-rung archive shape."""
+    """Require the recorded one-leaf, four-rung archive shape."""
     leaves = list(iter_leaves(node))
     if len(leaves) != 1:
         raise RuntimeError(f"rebuild produced {len(leaves)} leaves, expected one")
@@ -396,8 +406,8 @@ def recompute_archive(work_dir: Path) -> Path:
             str(laddered),
             "--recipe",
             "stream",
-            "--target-ms",
-            str(LADDER_TARGET_MS),
+            "--n-lods",
+            str(LADDER_N_LODS),
         )
         # Re-chunk LAST: the ladder above adds arrays that also want the archive
         # layout, and leaving them as-built is the 173-requests-per-step case.
@@ -450,12 +460,38 @@ def _finest_data(node: Any) -> list[GSplatData]:
     raise TypeError(f"unsupported gsplat node {type(node).__name__}")
 
 
-def time_part_ladders(n_per_part: list[int]) -> list[list[int]]:
-    """Cumulative ladder cuts per part: budget first rung, doubling, capped."""
-    return [
-        capped_stream_cuts(n, FIRST_RUNG_SPLATS, DEFAULT_MAX_ADDITIVE_COMMIT)
-        for n in n_per_part
-    ]
+def time_part_ladders(n_per_part: list[int], *, part_count: int) -> list[list[int]]:
+    """Cumulative equal-count cuts per played part, under the commit cap."""
+    if part_count <= 1:
+        return [
+            capped_stream_cuts(n, FIRST_RUNG_SPLATS, DEFAULT_MAX_ADDITIVE_COMMIT)
+            for n in n_per_part
+        ]
+
+    ladders: list[list[int]] = []
+    for part_elements in n_per_part:
+        raw = sorted(
+            {
+                -(-(index + 1) * part_elements // TIME_PART_LADDER_MAX_DEPTH)
+                for index in range(TIME_PART_LADDER_MAX_DEPTH)
+            }
+        )
+        cuts = [cut for cut in raw if 0 < cut < part_elements]
+        cuts.append(part_elements)
+        increments = [
+            cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts, strict=True)
+        ]
+        largest = max(increments, default=0)
+        if largest > DEFAULT_MAX_ADDITIVE_COMMIT:
+            raise ValueError(
+                f"Time part with {part_elements:,} splats cannot carry an equal-count "
+                f"1/{TIME_PART_LADDER_MAX_DEPTH} first rung within the "
+                f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-splat per-part commit cap; use "
+                "fewer rungs (TIME_PART_LADDER_MAX_DEPTH) or split the frame "
+                "spatially"
+            )
+        ladders.append(cuts)
+    return ladders
 
 
 def time_parts_cache_dir(data_path: Path) -> Path:
@@ -463,7 +499,8 @@ def time_parts_cache_dir(data_path: Path) -> Path:
     stat = data_path.stat()
     key = hashlib.sha1(
         f"{data_path.name}|{stat.st_size}|{int(stat.st_mtime)}|"
-        f"{TIME_PARTS_VERSION}|{FIRST_RUNG_SPLATS}|{LADDER_METHOD}".encode()
+        f"{TIME_PARTS_VERSION}|{FIRST_RUNG_SPLATS}|"
+        f"{TIME_PART_LADDER_MAX_DEPTH}|{LADDER_METHOD}".encode()
     ).hexdigest()[:10]
     return data_path.parent / f"51tp_timeparts_v{TIME_PARTS_VERSION}_{key}"
 
@@ -472,8 +509,9 @@ def build_time_parts(data_path: Path, out_path: Path) -> Path:
     """Re-author the archive as one laddered part per timepoint (no refit).
 
     Reads the finest content, splits it on the stacked time column, gives every
-    part its own capped stream ladder and writes a ``kind=partition`` archive.
-    Splat count is preserved exactly; only the grouping and the ladders change.
+    part its own capped equal-count ladder and writes a ``kind=partition``
+    archive. Splat count is preserved exactly; only the grouping and the
+    ladders change.
     """
     with asection("Re-authoring into time parts"):
         node, _ = load_gsplat_node(str(data_path))
@@ -498,12 +536,13 @@ def build_time_parts(data_path: Path, out_path: Path) -> Path:
         truncation = float(finest[0].truncation_radius)
         total = int(centers.shape[0])
         del finest
-        times = np.unique(centers[:, TIME_COL])
+        times, part_counts = np.unique(centers[:, TIME_COL], return_counts=True)
         aprint(f"{total:,} splats over {times.size} timepoints")
 
         parts: list[Any] = []
-        counts: list[int] = []
-        for t in times:
+        counts = [int(count) for count in part_counts]
+        ladders = time_part_ladders(counts, part_count=len(counts))
+        for t, expected_count, breakpoints in zip(times, counts, ladders, strict=True):
             mask = centers[:, TIME_COL] == t
             part = GSplatData(
                 centers=centers[mask],
@@ -512,11 +551,15 @@ def build_time_parts(data_path: Path, out_path: Path) -> Path:
                 colors=None if colors is None else colors[mask],
                 truncation_radius=truncation,
             )
-            counts.append(part.n_splats)
+            if part.n_splats != expected_count:
+                raise RuntimeError(
+                    f"time part {t:g} holds {part.n_splats:,} splats, "
+                    f"counted {expected_count:,}"
+                )
             laddered = make_additive_lod(
                 part,
                 method=LADDER_METHOD,
-                breakpoints=time_part_ladders([part.n_splats])[0],
+                breakpoints=breakpoints,
             )
             parts.append(laddered.tree)
         del centers, amplitudes, cholesky, colors
@@ -534,9 +577,10 @@ def build_time_parts(data_path: Path, out_path: Path) -> Path:
             GSplatPartition(children=parts, max_elements=max(counts), meta=meta),
             barrier_dims=[TIME_COL],
             pipeline_info={
-                "recipe": "time_parts_stream",
+                "recipe": "time_parts_equal_count",
                 "source": data_path.name,
-                "first_rung": FIRST_RUNG_SPLATS,
+                "n_lods": TIME_PART_LADDER_MAX_DEPTH,
+                "max_commit": DEFAULT_MAX_ADDITIVE_COMMIT,
                 "ladder_method": LADDER_METHOD,
                 "parts": len(parts),
             },

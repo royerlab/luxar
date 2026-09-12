@@ -12,7 +12,6 @@
  * optional collaborator references (animation/DPR/overlay managers).
  */
 
-import * as THREE from 'three';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
@@ -283,11 +282,6 @@ export class RecordingSession {
       const canvas = renderer.domElement;
       canvas.style.width = '100%';
       canvas.style.height = '100%';
-      const camera = this.sceneManager.camera;
-      if (camera instanceof THREE.PerspectiveCamera) {
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
-      }
       this.sceneManager.updateMaterialsForCurrentCamera();
     }
   }
@@ -315,11 +309,6 @@ export class RecordingSession {
       // visible resolution flip.
       renderer.setPixelRatio(this.sceneManager.activePixelRatio);
       this.sceneManager.postProcessing.resize(saved.rendererSize.width, saved.rendererSize.height);
-      const camera = this.sceneManager.camera;
-      if (camera instanceof THREE.PerspectiveCamera) {
-        camera.aspect = saved.rendererSize.width / saved.rendererSize.height;
-        camera.updateProjectionMatrix();
-      }
       this.sceneManager.updateMaterialsForCurrentCamera();
     }
 

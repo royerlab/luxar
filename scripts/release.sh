@@ -239,6 +239,7 @@ cat <<EOF
   and push it to $REMOTE, which triggers:
     $WORKFLOW  →  build viewer+wheel (Linux/OIDC)  →  publish ${BLD}luxar $VERSION${NC} to PyPI.
     $WORKFLOW_NPM  →  build lib bundle  →  publish ${BLD}@luxar/viewer${NC} to npm (if configured).
+  Confirm the Apple-silicon native backend release verification ran for ${REMOTE_SHA:0:12}.
   This is the real, public, irreversible release (PyPI/npm versions cannot be reused).
 EOF
 

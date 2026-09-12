@@ -1295,7 +1295,14 @@ class TestSubstitutiveLodGuards:
 # ────────────────────────────────────────────────────────────────────────
 
 
-def _build_4d(tmp_path, *, n_per=1500, n_groups=3, coarsen_dims="__unset__"):
+def _build_4d(
+    tmp_path,
+    *,
+    n_per=1500,
+    n_groups=3,
+    coarsen_dims="__unset__",
+    dim_order=None,
+):
     """A 4D scene: categorical (display=False) `coloring` dim 0 + xyz displayed.
 
     The same xyz is stacked at each coloring value, so a barrier-unaware
@@ -1307,6 +1314,8 @@ def _build_4d(tmp_path, *, n_per=1500, n_groups=3, coarsen_dims="__unset__"):
         np.column_stack([np.full(n_per, g, np.float32), xyz]) for g in range(n_groups)
     ]
     pos = np.vstack(parts).astype(np.float32)
+    if dim_order is not None:
+        pos = pos[:, [1, 2, 3, 0]]
     palette = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], np.float32)
     colors = np.vstack([np.tile(palette[g % 3], (n_per, 1)) for g in range(n_groups)])
     dims = Dimensions(
@@ -1328,6 +1337,7 @@ def _build_4d(tmp_path, *, n_per=1500, n_groups=3, coarsen_dims="__unset__"):
             pos,
             colors=colors.astype(np.float32),
             radii=np.full(len(pos), 0.5, np.float32),
+            dim_order=dim_order,
             substitutive_lod=dict(compression_factor=4, levels=3, device="cpu", **kw),
         )
     return zarr.open(str(out), mode="r")["cloud"]
@@ -1361,6 +1371,17 @@ class TestCoarsenDimsPoints:
     def test_explicit_names(self, tmp_path) -> None:
         grp = _build_4d(tmp_path, coarsen_dims=["x", "y", "z"])
         assert _coarse_barrier_purity(grp) < 1e-4
+
+    def test_auto_default_after_nonidentity_dim_order(self, tmp_path) -> None:
+        grp = _build_4d(
+            tmp_path,
+            n_per=300,
+            dim_order=["x", "y", "z", "coloring"],
+        )
+        assert _coarse_barrier_purity(grp) < 1e-4
+        assert int(grp["child_0"].attrs["n_splats"]) < int(
+            grp["child_3"].attrs["n_points"]
+        )
 
     def test_all_dims_blends_across_barrier(self, tmp_path) -> None:
         # Opting out of grouping ("all") reproduces the cross-coloring blend.

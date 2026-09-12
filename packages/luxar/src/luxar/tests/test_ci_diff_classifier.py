@@ -46,6 +46,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
 COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
+CUDA_WORKFLOW = REPO / ".github/workflows/cuda-nightly.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -59,6 +60,16 @@ COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
 #: than the single thing keeping their gate alive. Do not read the table as a list
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
+    (
+        ".github/workflows/cadence-liveness.yml",
+        "py",
+        "test_daily_workflow_has_the_permissions_and_token_to_enforce_the_table parses it",
+    ),
+    (
+        ".github/workflows/cuda-nightly.yml",
+        "py",
+        "test_cuda_cadence_is_dispatch_only_and_requires_two_gpus parses it",
+    ),
     # The native sources. `.cu`/`.cuh` already routed; the C++/ObjC++/shader
     # ones did NOT, so a change to any of these three reached no gate at all
     # until `check-native` existed to be reached (A15-03).
@@ -1687,6 +1698,61 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     }
     assert "not cancelling" in watchdog["steps"][1]["run"]
     assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
+
+
+def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
+    """CUDA parity must run only on its dedicated, two-GPU obsidian slot."""
+    # BaseLoader keeps YAML 1.1 from coercing the key ``on`` to boolean True.
+    parsed = yaml.load(
+        CUDA_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+    )
+    assert parsed["on"] == {"workflow_dispatch": ""}
+    assert parsed["concurrency"] == {
+        "group": "cuda-native-${{ github.sha }}",
+        "cancel-in-progress": "false",
+    }
+
+    assert set(parsed["jobs"]) == {"cuda-native"}
+    job = parsed["jobs"]["cuda-native"]
+    assert job["runs-on"] == ["self-hosted", "obsidian-cuda"]
+    assert job["permissions"] == {"contents": "read", "issues": "write"}
+    assert job["timeout-minutes"] == "75"
+    assert job["env"]["MAX_JOBS"] == "2"
+    assert job["env"]["LUXAR_REQUIRE_CUDA"] == "1"
+
+    steps = {step["name"]: step for step in job["steps"] if "name" in step}
+    assert steps["Install Hatch"]["timeout-minutes"] == "5"
+    assert steps["Require the two-GPU CUDA runner"]["timeout-minutes"] == "15"
+    assert steps["Compile-check CUDA translation units"]["timeout-minutes"] == "5"
+    assert steps["Build CUDA extensions"]["timeout-minutes"] == "20"
+    assert steps["Run CUDA parity suites"]["timeout-minutes"] == "20"
+    assert steps["Report cadence failure"]["timeout-minutes"] == "5"
+
+    run_steps = [step["run"] for step in steps.values() if "run" in step]
+    commands = "\n".join(run_steps)
+    assert "torch.cuda.device_count() >= 2" in commands
+    assert "hatch run check-native --only nvcc --require nvcc" in commands
+    assert "make build-cuda" in commands
+    assert "make build-nlm-cuda" in commands
+    assert "make test-cuda" in commands
+    assert "make test-nlm-cuda" in commands
+    report = steps["Report cadence failure"]
+    assert report["if"] == "${{ failure() || cancelled() }}"
+    assert re.fullmatch(r"actions/github-script@[0-9a-f]{40}", report["uses"])
+    assert report["with"]["github-token"] == "${{ github.token }}"
+    script = report["with"]["script"]
+    assert "CUDA native cadence failure" in script
+    assert "github.paginate(github.rest.issues.listForRepo" in script
+    assert "github.rest.issues.createComment" in script
+    assert "github.rest.issues.create" in script
+    assert 'assignees: ["royerloic"]' in script
+
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    assert "pytest $(CUDA_EXT_DIR)/tests/ -v -rs" in makefile
+    assert (
+        "pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v -rs"
+        in makefile
+    )
 
 
 def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:

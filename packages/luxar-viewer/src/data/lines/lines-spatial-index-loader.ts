@@ -32,6 +32,7 @@ import {
   getExpectedColorType,
   loadColorRanges,
   prefetchRangesIntoCache,
+  planChunkBoundaryViewStates,
   makeInitialLoaderMetrics,
   buildSpatialIndexMetrics,
   loadSliceWithCache,
@@ -856,36 +857,97 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    *
    * Mirrors the gsplats / points `prefetchChunks(viewState)` so a
    * dimension-animation hook can prefetch the next slice while the
-   * current frame renders. Lines need both the segment-level bounds
-   * (segments + widths + colors + sharpness keyed on segment range)
-   * and the vertex-level bounds (vertices keyed on the
-   * segment→vertex projection); this implementation keeps it simple
-   * by warming each available array over the queried segment ranges
-   * — the segment→vertex remap happens at demand time and the L0/L1
-   * cache absorbs the extra reads.
+   * current frame renders. Segments are keyed by segment ranges; vertices,
+   * widths, colors, sharpness, and scalars are keyed by vertex ranges. Querying both
+   * published indexes keeps speculative reads in the same row currency as
+   * the demand path instead of treating segment offsets as vertex offsets.
    */
   async prefetchChunks(viewState: LinesViewState): Promise<void> {
     await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.segments) return;
 
-    let ranges: SegmentRange[];
+    let segmentRanges: SegmentRange[];
+    let vertexRanges: SegmentRange[];
     try {
-      ranges = await this.queryVisibleSegmentRanges(viewState);
+      [segmentRanges, vertexRanges] = await Promise.all([
+        this.queryVisibleSegmentRanges(viewState),
+        this.queryVisibleVertexRanges(viewState),
+      ]);
     } catch {
       return;
     }
-    if (ranges.length === 0) return;
+    const vertexArrays = this.prefetchVertexArrays();
 
-    const arrays = [
+    await Promise.all([
+      prefetchRangesIntoCache([this.arrays.segments], segmentRanges),
+      prefetchRangesIntoCache(vertexArrays, vertexRanges),
+    ]);
+  }
+
+  async prefetchChunkBoundary(current: LinesViewState, predicted: LinesViewState): Promise<void> {
+    await this._onceInit.ensure(() => this.initialize());
+    if (!this.chunkIndex || !this.arrays.segments) {
+      await this.prefetchChunks(predicted);
+      return;
+    }
+    const segmentArrays = [this.arrays.segments];
+    const vertexArrays = this.prefetchVertexArrays();
+    let views: LinesViewState[];
+    try {
+      const segmentRanges = await this.queryVisibleSegmentRanges(current);
+      views = planChunkBoundaryViewStates(
+        current,
+        predicted,
+        segmentRanges,
+        this.chunkIndex.segmentIndex,
+        segmentArrays
+      );
+
+      const attrs = this.node.attrs as unknown as LinesMetadata;
+      if (attrs.vertex_ordering) {
+        const vertexIndex = this.vertexSpatialIndex(attrs);
+        const vertexRanges = await this.queryVisibleVertexRanges(current);
+        views.push(
+          ...planChunkBoundaryViewStates(
+            current,
+            predicted,
+            vertexRanges,
+            vertexIndex,
+            vertexArrays
+          )
+        );
+      }
+    } catch {
+      await this.prefetchChunks(predicted);
+      return;
+    }
+
+    const uniqueViews = new Map(views.map((view) => [view.slicePosition.join(','), view]));
+    const nearestViews = [...uniqueViews.values()]
+      .sort(
+        (left, right) => this.sliceDistance(left, predicted) - this.sliceDistance(right, predicted)
+      )
+      .slice(0, 2);
+    await Promise.all(nearestViews.map((view) => this.prefetchChunks(view)));
+  }
+
+  private prefetchVertexArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {
+    return [
       this.arrays.vertices,
-      this.arrays.segments,
       this.arrays.widths,
       this.arrays.colors,
       this.arrays.sharpness,
-    ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
+      this.arrays.scalars,
+    ].filter((array): array is zarr.Array<zarr.DataType, zarr.Readable> => array != null);
+  }
 
-    await prefetchRangesIntoCache(arrays, ranges);
+  private sliceDistance(left: LinesViewState, right: LinesViewState): number {
+    return left.slicePosition.reduce(
+      (distance, position, dimension) =>
+        distance + Math.abs(position - (right.slicePosition[dimension] ?? position)),
+      0
+    );
   }
 
   /**
@@ -897,6 +959,29 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   private async loadDualChunkBounds(attrs: LinesMetadata): Promise<LinesDualChunkIndex | null> {
     return loadLinesDualChunkIndex(this.zarrLocation, attrs);
+  }
+
+  private vertexSpatialIndex(attrs: LinesMetadata) {
+    return {
+      chunkBounds: this.chunkIndex!.vertexChunkBounds,
+      chunkCount: this.chunkIndex!.vertexChunkCount,
+      metadata: { ndim: attrs.ndim, chunk_size: attrs.vertex_ordering!.chunk_size },
+    };
+  }
+
+  private async queryVisibleVertexRanges(viewState: LinesViewState): Promise<SegmentRange[]> {
+    if (viewState.noPreimage) return [];
+    const attrs = this.node.attrs as unknown as LinesMetadata;
+    if (!this.chunkIndex || !attrs.vertex_ordering) {
+      return [{ start: 0, end: attrs.n_vertices }];
+    }
+    return new SpatialQueryBuilder(this.vertexSpatialIndex(attrs), viewState, {
+      geometryType: 'lines',
+      totalElements: attrs.n_vertices,
+      chunkSize: attrs.vertex_ordering.chunk_size,
+      extendDims: this.node.attrs.extend_to_all || [],
+      logModule: Modules.LINES_LOADER,
+    }).execute();
   }
 
   /**

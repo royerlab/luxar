@@ -754,6 +754,8 @@ describe('computeDebugState', () => {
       const lod = new THREE.Group();
       lod.name = '/lod';
       lod.userData.kind = 'lod';
+      lod.userData.lodSelector = 'screen-area';
+      lod.userData.footprintStamped = true;
       const l0 = new THREE.Group();
       const l1 = new THREE.Group();
       const l2 = new THREE.Group();
@@ -764,7 +766,15 @@ describe('computeDebugState', () => {
       scene.add(lod);
 
       const state = computeDebugState(makeContext(scene));
-      expect(state.lodGroups).toEqual([{ name: '/lod', levelCount: 3, activeLevel: 1 }]);
+      expect(state.lodGroups).toEqual([
+        {
+          name: '/lod',
+          levelCount: 3,
+          activeLevel: 1,
+          selector: 'screen-area',
+          footprintStamped: true,
+        },
+      ]);
       expect(state.partitions).toEqual([]);
     });
 

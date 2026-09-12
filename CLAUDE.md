@@ -26,7 +26,7 @@ hatch run test              # Run tests
 hatch run test-cov          # Tests with coverage
 hatch run python script.py  # Run script
 hatch run python -m ruff check .  # Lint
-hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py  # Type check
+hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py  # Type check
 ```
 
 The hatch env pins `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (see the note in
@@ -124,6 +124,15 @@ make check-docs   # REQUIRED gate mirror: completeness + TypeDoc ratchets +
 make check-docs-external-links  # opt-in external HTTP link audit (not a gate)
 make check-demo-links  # opt-in demo click-through audit (reports only; not a gate)
 make check-zenodo-live          # opt-in live Zenodo manifest-pin audit (not a gate)
+make check-record-attribution   # opt-in OFFLINE audit: does the captured Zenodo
+                  # record text still agree with the manifest's `attribution`?
+                  # Flags only a publication describing THE IMAGING — one describing
+                  # the INSTRUMENT or METHOD is the correct framing. Report-only BY
+                  # DESIGN: the wording is authored on Zenodo, so a finding is fixed
+                  # there and re-captured, never by regenerating the snapshot. Its
+                  # live-repo test is DELIBERATELY WEAK and must stay so — scripts/
+                  # tests runs in the REQUIRED python-tests job, so asserting what
+                  # the audit FINDS would gate on prose only Zenodo can change.
 make check-cold-fetch           # opt-in hosted demo cold-fetch gate before payload removal
 make check-external-references  # aggregate external audits (report-only, non-gating)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
@@ -323,7 +332,8 @@ luxar profiles                   # Network simulation profiles
 # partial hit vs `local`. Size up only when the access pattern is "load whole".
 # On an ANIMATED node judge the profile by FRAMES PER CHUNK (rows per chunk /
 # atom x the atom's hidden-axis span): a 1 MB chunk of a 250-frame un-laddered
-# Lines node holds ~6 frames and playback stalls at every chunk boundary (#2686);
+# Lines node holds ~6 frames; boundary prefetch now starts the next chunk while
+# preceding frames play, though its average lead is only about half a chunk (#2686);
 # a LADDERED played splat node wants 1 MB so its coarse rung stays resident
 # (#2377). The pass itself is per-array and hidden-dim blind — decide per node.
 luxar optimise scene.luxar.zarr out.luxar.zarr             # 64 KB default
@@ -336,15 +346,19 @@ luxar optimise arbitrary.zarr out.zarr --generic           # a plain (non-Luxar)
 # (or carrying no `selector`) gets screen-occupancy-halved thresholds and a
 # `screen-area` stamp; the fills-screen anchor only under a REAL (>1 part)
 # partition. An EXPLICIT opt-in and nothing else may trigger it: an authored
-# `coverage_fractions=[...]` list and a legacy derived one are indistinguishable
-# on disk, so this may override a deliberate choice — hence the printed old→new
-# audit line, `--dry-run`, and `--group`. A group already on `screen-area` is
-# skipped, so a second run changes nothing, `content_hash` included. Exits 1 when
-# a ladder was left alone (unsupported selector → `gsplat migrate-format` first;
+# `coverage_fractions=[...]` list and a derived one are indistinguishable on
+# disk, including a hand-authored ladder already stamped `screen-area`, so this
+# may override a deliberate choice — hence the printed old→new audit line,
+# `--dry-run`, and `--group`. A group already on `screen-area` is
+# skipped by default, so a second run changes nothing, `content_hash` included;
+# `--anchor` explicitly re-derives whole-object ladders, including legacy ones
+# being migrated, while partition-bound ladders stay at `1.0`. Exits 1 when a
+# ladder was left alone (unsupported selector → `gsplat migrate-format` first;
 # unresolvable finest element count).
 luxar restamp-lod scene.luxar.zarr                         # every legacy ladder
 luxar restamp-lod scene.luxar.zarr --dry-run               # report the old→new ladders
 luxar restamp-lod scene.luxar.zarr --group tiled/part_0    # one ladder (repeatable)
+luxar restamp-lod scene.luxar.zarr --anchor 0.25           # re-anchor whole-object ladders
 luxar export scene.luxar.zarr -o my_export/             # Export scene + viewer as standalone offline folder
 luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in browser
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export

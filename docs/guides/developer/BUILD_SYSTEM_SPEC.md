@@ -341,7 +341,8 @@ MIN_NODE_MINOR := 22
 | `make check-demo-links` | Opt-in demo click-through destination audit; reports request failures and human-only checks without failing the command |
 | `make check-zenodo-live` | Opt-in live Zenodo manifest-pin audit using the system Python; requires `ZENODO_TOKEN` and is deliberately not a required CI gate |
 | `make check-cold-fetch` | Opt-in pre-removal gate that downloads hosted demo datasets into a throwaway cache with in-repo payloads hidden, then verifies their hosted SHA-256 pins |
-| `make check-external-references` | Run all network-backed reference audits and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
+| `make check-record-attribution` | Opt-in offline audit comparing each Zenodo record's captured description with the manifest `attribution`; reports where a record asserts a publication describes *the imaging* while the imaging is unpublished (one describing the instrument or method is the correct framing and is never flagged). Report-only because the wording is authored on Zenodo, which is also why its live-repo test asserts only repository-controlled properties — `scripts/tests` runs in the required `python-tests` job |
+| `make check-external-references` | Run every external-reference audit — network-backed ones plus the offline record-attribution comparison — and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
 | `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
 ### Utilities
@@ -374,6 +375,40 @@ MIN_NODE_MINOR := 22
 | `make release-check` | Dry-run release: run ALL preflight checks, tag/push nothing |
 | `make release` | Cut release: validate main + CI green, tag `v<version>`, push (triggers PyPI publish) |
 | `make publish` / `make publish-test` | Disabled — use `make release` (tag-triggered OIDC publish via CI) |
+
+#### Native backend release verification
+
+The Linux compile gate cannot exercise the Objective-C++ binding, the Metal
+shader compiler, or the Metal parity suite. Hosted macOS CI and a dedicated Mac
+runner are not used today — they are deferred until a Mac runner exists.
+Every release candidate must therefore be checked manually on Apple silicon
+before it is tagged:
+
+```bash
+hatch run check-native --require cxx --require metal
+LUXAR_REQUIRE_METAL=1 hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests -v -rs
+```
+
+Without a CUDA toolkit, the compile check must report successful checks for
+`nlm/bindings.cpp`, `metal/bindings.mm`, and `metal/kernels.metal`, skip
+`cuda/bindings.cpp` because its headers are unavailable, report the `nvcc` arm
+as `SKIP`, and finish with `3/3 translation unit(s) compile-checked`. The parity
+command fails during pytest configuration if the Metal backend or MPS interop is
+unavailable, so a release check cannot pass with the Metal tests silently
+skipped.
+
+CUDA compile and parity coverage runs on a separate low-priority, dispatch-only
+cadence rather than in pull-request CI, because the device compile takes minutes
+and the workstation GPUs are shared with interactive work. The systemd timer in
+`royerlab/luxar-ci` dispatches `.github/workflows/cuda-nightly.yml` with
+`--ref dev`; a newly added dispatch workflow is unavailable until promotion
+first carries it to the default branch (`main`). The two-GPU job compile-checks
+both `nvcc` translation units, builds the splatting and NLM extensions, and runs
+both parity suites with `LUXAR_REQUIRE_CUDA=1`, so a missing backend fails during
+pytest configuration instead of silently skipping. A failure opens or updates
+the `CUDA native cadence failure` issue assigned to @royerloic. The daily
+`.github/workflows/cadence-liveness.yml` job separately fails when successful
+dispatches stop arriving within the cadence table's staleness window.
 
 ## Dependency Management
 
@@ -838,13 +873,15 @@ reads that same `CLAUDE.md` and skill page, and adds
 `.agents/skills/luxar-gsplat-pipeline/SKILL.md` and
 `docs/specs/GSPLATS_DIMENSION_MAPPING.md` to the Python-owned set.
 Consequently, every `CLAUDE.md` edit runs the Python matrix.
-Three workflow files, `.gitattributes`, and `.gitignore` are `dom_py` for the
+Five workflow files, `.gitattributes`, and `.gitignore` are `dom_py` for the
 same reason: `test_docs_workflow.py` reads `docs.yml` and `.gitattributes`,
 `test_run_external_reference_audits.py` asserts the schedule, permissions and
 token wiring of `external-reference-audits.yml`, the classifier test parses
-`coverage.yml`, and the wheel-completeness guard reads `.gitignore`. A workflow
-file matches no other domain on its own, so each has to be named or its guard
-never runs.
+`coverage.yml` and `cuda-nightly.yml`,
+`test_daily_workflow_has_the_permissions_and_token_to_enforce_the_table` parses
+`cadence-liveness.yml`, and the wheel-completeness guard reads `.gitignore`. A
+workflow file matches no other domain on its own, so each has to be named or its
+guard never runs.
 Viewer TypeScript sources read by Python contract tests are also `dom_py`.
 Those tests resolve files through the shared `viewer_source()` helper, and
 `test_ci_diff_classifier.py` statically scans every literal helper call: each

@@ -1810,6 +1810,79 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(mockExecute).not.toHaveBeenCalled();
       });
 
+      it('falls back to predicted-slice warming when boundary planning fails', async () => {
+        const current: ViewState = {
+          displayDims: [0, 1],
+          slicePosition: [0, 0, 1],
+          tolerance: [0, 0, 0],
+        };
+        const predicted = { ...current, slicePosition: [0, 0, 2] };
+        mockExecute.mockRejectedValueOnce(new Error('malformed current view'));
+        mockExecute.mockResolvedValueOnce([{ start: 100, end: 200 }]);
+
+        await expect(bodyLoader.prefetchChunkBoundary(current, predicted)).resolves.toBeUndefined();
+
+        const queriedPositions = (
+          SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls.map((call) => (call[1] as ViewState).slicePosition);
+        expect(queriedPositions).toEqual([
+          [0, 0, 1],
+          [0, 0, 2],
+        ]);
+        expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(6);
+      });
+
+      it('warms the predicted slice and only the nearest next chunk boundary', async () => {
+        bodyLoader.dispose();
+        chunkBoundsArray.shape = [50, 4, 2];
+        const chunkBounds = new Float32Array(50 * 4 * 2);
+        for (let atom = 0; atom < 50; atom++) {
+          const timeOffset = atom * 8 + 6;
+          chunkBounds[timeOffset] = atom;
+          chunkBounds[timeOffset + 1] = atom;
+        }
+        for (const array of Object.values(mockArrays)) {
+          array.chunks[0] = 400;
+        }
+        const zarrGet = zarr.get as unknown as ReturnType<typeof vi.fn>;
+        const originalGet = zarrGet.getMockImplementation() as (
+          array: unknown,
+          slices: unknown
+        ) => unknown;
+        zarrGet.mockImplementation((array: unknown, slices: unknown) => {
+          if (array === chunkBoundsArray) return Promise.resolve({ data: chunkBounds });
+          return originalGet(array, slices);
+        });
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              ndim: 4,
+              chunk_size: 100,
+            },
+          })
+        );
+        const current: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 1],
+          tolerance: [0, 0, 0, 0.1],
+        };
+        const predicted = { ...current, slicePosition: [0, 0, 0, 2] };
+        mockExecute.mockResolvedValue([{ start: 100, end: 200 }]);
+        await bodyLoader.prefetchChunks(current);
+
+        vi.clearAllMocks();
+        mockExecute.mockResolvedValue([{ start: 100, end: 200 }]);
+        await bodyLoader.prefetchChunkBoundary(current, predicted);
+
+        const queriedTimes = (
+          SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls.map((call) => (call[1] as ViewState).slicePosition[3]);
+        expect(queriedTimes).toEqual([1, 2, 4]);
+        expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(10);
+      });
+
       it('estimates the visible sliced working set from stored chunk dtypes', async () => {
         bodyLoader.dispose();
         mockArrays.centers.shape = [5_000_000, 3];

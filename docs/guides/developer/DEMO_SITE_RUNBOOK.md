@@ -720,13 +720,15 @@ blended.
 **Superseded at the SCENE level on 2026-09-10.** The pinned archive stays one
 laddered leaf, but `demo_gsplats_4d_h2afva_timelapse.py` now re-authors it at
 build time into a `kind=partition` of one part per TIMEPOINT (51 parts, each with
-a capped stream ladder: 20,833-splat first rung, doubling, 900 K cap), cached
-beside the download. Measured cold against the single leaf and against 44
-spatial parts at identical chunking: the single leaf's global ladder re-streamed
-from its bottom on every slice (3-27% of the frame resident while a step loads);
-spatial parts paid ~30 MB per step; time parts fetch exactly one part per step
-and never starve a slice. The "a partition buys nothing on a time-stacked node"
-rule above is about SPATIAL parts; time parts are a different structure.
+eight equal-count rungs: 277,131 splats in rung 0 for the 2,217,045-splat
+reference frame, with every increment under the 900 K cap), cached beside the
+download. Measured cold with the former capped-stream recipe against the single
+leaf and against 44 spatial parts at identical chunking: the single leaf's
+global ladder re-streamed from its bottom on every slice (3-27% of the frame
+resident while a step loads); spatial parts paid ~30 MB per step; time parts
+fetch exactly one part per step and never starve a slice. The "a partition buys
+nothing on a time-stacked node" rule above is about SPATIAL parts; time parts
+are a different structure.
 
 ### 3.18 A probe must emit the evidence that its own window was valid
 
@@ -1000,18 +1002,23 @@ failure rather than an ordinary `DatasetUnavailable` fallback. The live gallery
 tile is indifferent because it serves an already-derived scene and never
 consults the pin (3.10).
 
-### 3.21 `--profile archive` on an animated, un-laddered node stalls playback at every chunk boundary
+### 3.21 Animated, un-laddered nodes need chunk-boundary-aware prefetch
 
 The 2026-09-02 wave re-chunked every store with `optimise --profile archive`.
 On `collision_animated` (a 4.66 M-vertex Lines node over 250 frames, no ladder)
 that made a 1 MB vertex chunk hold ~6 frames; every ~6 frames the playhead
 crossed into the next chunk of each of the four arrays and waited for a
 0.25-0.85 MB fetch (0.4-0.9 s on a 7 Mbps link, cold cache, 40 steps = 65
-requests / 21 MB). The viewer's hidden-axis lookahead is one step deep, so it
-cannot hide a boundary that far ahead. Two things were NOT the cause, and the
-first version of #2686 wrongly blamed one of them: the ordering is already
-slice-major (compound ordering, `vertex_ordering.slice_dims == [3]`, every atom
-inside one frame), and the prefetcher does run — one step ahead.
+requests / 21 MB). The old hidden-axis lookahead was one step deep, so it could
+not hide a boundary that far ahead. The viewer now uses each array's zarr chunk
+shape plus the index atom bounds to prefetch the next boundary in playback
+direction (#2686). Two things were NOT the cause, and the first diagnosis
+wrongly blamed one of them: the ordering is already slice-major (compound
+ordering, `vertex_ordering.slice_dims == [3]`, every atom inside one frame), and
+the old prefetcher did run — only one step ahead.
+For this node the mean added lead is about 2.9 frames with `archive`, 1.2
+frames with `hosting`, and 1.0 frame with `local`; the profile choice still
+governs how much time the prefetch has to hide each request.
 
 Rules that fall out, alongside 3.17 and the #2377 residency finding:
 
@@ -1022,8 +1029,42 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   chunk. Un-laddered + played (animated lines/points): `hosting` (~1.5 frames per
   chunk) is the middle of the request/byte trade; `local` is 3,500 chunks
   against the Functions request cap. Not animated: smaller is a pure win.
-- `optimise` is per-array and hidden-dim blind; until #2686's per-node guard
-  lands, the operator decides per store.
+- `optimise` is per-array and hidden-dim blind; it cannot infer playback and
+  ladder-cache policy, so the operator still decides per store.
+- The `optimise` pass stays per-array blind by design; what is missing is a
+  warn-only guard on top of it, and #2686 landed boundary prefetch in the
+  viewer rather than that guard. So the gate described next is a spec, not
+  current behaviour: gate it on `viewer_config.animation` (`playing: true`),
+  not on "has a hidden axis" — a keypress-navigated axis is the refine case. The
+  measurements after it hold either way. A whole array in ONE chunk is
+  benign (no boundary to cross); the stall shape is many chunks of several
+  frames. Read the atom's hidden-axis span from `chunk_bounds` — a
+  store with one NODE per hidden coordinate (hilbert_curve_3d) misreads when
+  the scene range is divided by chunk count. Wave 2026-09-11:
+  `collision_animated` plays at 1.8 frames/chunk on `hosting`; `cloud` also
+  starts with playback enabled but has not yet been measured on its published
+  layout. Ocean's tentacles would be 28 frames/chunk on `archive` if that axis
+  were ever played.
+- For a TIME-PARTED store (h2afva) the profile rationale is request count, not
+  rung residency: each part is one frame loaded whole, so there is no
+  cross-timepoint rung to keep warm. Measured on the published `archive` layout
+  (2026-09-11, `chunk_layout` read first): 127,192 chunks at the writer default
+  -> 3,793 on `archive` (33.5x fewer); a coarsest-rung traverse of all 51 parts
+  is **255 requests** (5 chunks per part), the finest rung 1,020. The 30 B/splat
+  one-array-per-rung estimate (~1,400) was 5.5x pessimistic — a rung carries
+  five arrays and `archive` packs them far better than a per-array byte
+  calculation predicts — so treat that estimate as a safe go/no-go upper bound,
+  never as the expected cost. (A first "measurement" of 1,326 on this store was
+  the writer default, not `archive`.)
+- Read `chunk_layout` BEFORE measuring chunk cost, and check it on EVERY store
+  in a wave, not a sample: its absence is the only reliable sign that a scene
+  was never optimised, and stores built on another machine by another operator
+  are exactly the ones that slip through. A chunk-cost number without the
+  layout it was measured on is not a number.
+- Resolve demo ids versus store names through §8.1 before using any operator
+  list. Gallery capture selectors accept demo ids and only warn on unmatched
+  store names, so a mis-keyed pass can exit 0 with placeholder tiles and still
+  satisfy a tile-count guard.
 
 ### 3.22 Guard the artefact you ship, not only the inputs you fed it
 
@@ -1392,10 +1433,22 @@ python scripts/gallery/gen_redirects.py \
 
 Two things it handles that a reimplementation gets wrong:
 
-- **A demo key is not always its store name** — 8 of 90 manifest entries differ
-  (`cosmicflows_laniakea` → `cosmicflows_laniakea_full`, `nd_transforms` →
-  `nd_transforms_bench`, and six more). Take the store from the entry's
-  `dataset`, never from its `id`. Routes are emitted for both spellings.
+- **A demo key is not always its store name** — 7 of 88 manifest entries differ:
+  `cosmicflows_laniakea` → `cosmicflows_laniakea_full`; `nd_transforms` →
+  `nd_transforms_bench`; `ppi_flow_field` → `ppi_flow_field_full`;
+  `particle_collision_animated` → `collision_animated`;
+  `zebrahub_velocity_streamlines` →
+  `zebrahub_velocity_streamlines_standard`; `gsplats_interop_observatory` →
+  `gsplats_interop_observatory_rubin`; and `gsplats_interop_spz_scaniverse` →
+  `gsplats_interop_spz_hornedlizard`. The two interop demos also emit
+  `gsplats_interop_observatory_gemini-south` and
+  `gsplats_interop_spz_racoonfamily`, respectively; those secondary outputs
+  have no manifest entry and therefore no stable route, but still belong in
+  operator upload/rebuild lists. The retired `network_performance` demo likewise
+  served `performance_test`. Gallery capture/generation selectors use demo ids;
+  served R2 directories and operator upload/rebuild lists use store names. This
+  generator takes the store from the manifest entry's `dataset` field, never
+  its `id`, and emits routes for both spellings.
 - **`--check-contract`** fails the build naming any README-linked key without a
   route. The root README links 29 tile titles at these routes, so a key rename
   is a **breaking change**. If a rename is genuinely needed, add an alias route
