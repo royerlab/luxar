@@ -265,13 +265,26 @@ class TransformsMixin(_GSplatDataOps):
             >>> M = np.eye(4); M[:3, 3] = [10, 20, 30]
             >>> transformed = data.transform(M)
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
         from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
         # Multi-substitutive: transform every level and rebuild the pyramid
         # (mirrors filter_by/cull) rather than collapsing to the finest level.
         if self.n_substitutive > 1:
-            return self._map_substitutive(lambda lvl: lvl.transform(matrix))
+            transformed_levels = []
+            for source_level in self.substitutive_levels:
+                transformed_level = self._view_of_level(source_level).transform(matrix)
+                out_level = transformed_level.substitutive_levels[0]
+                transformed_levels.append(
+                    replace(
+                        source_level,
+                        additive_sublods=out_level.additive_sublods,
+                        stats=out_level.stats,
+                    )
+                )
+            return GSplatData.from_substitutive_levels(
+                transformed_levels, stats=dict(self.stats)
+            )
 
         matrix = np.asarray(matrix, dtype=np.float64)
         d = self.ndim
@@ -342,7 +355,34 @@ class TransformsMixin(_GSplatDataOps):
                 truncation_radius=lod.truncation_radius,
             )
 
-        return self._map_additive(_transform_lod)
+        transformed = self._map_additive(_transform_lod)
+        transformed_levels = []
+        for level in transformed.substitutive_levels:
+            stats = dict(level.stats)
+            footprint = stats.get("median_footprint")
+            footprint_dims = stats.get("footprint_dims")
+            if isinstance(footprint, (int, float)) and isinstance(footprint_dims, list):
+                axes = np.asarray(footprint_dims, dtype=int)
+                if axes.size and np.all((0 <= axes) & (axes < d)):
+                    spatial_transform = A[np.ix_(axes, axes)]
+                    scale = abs(float(np.linalg.det(spatial_transform))) ** (
+                        1.0 / axes.size
+                    )
+                    if np.isfinite(scale) and scale > 0:
+                        stats["median_footprint"] = float(footprint) * scale
+                    else:
+                        stats.pop("median_footprint", None)
+                        stats.pop("footprint_dims", None)
+                else:
+                    stats.pop("median_footprint", None)
+                    stats.pop("footprint_dims", None)
+            elif "median_footprint" in stats:
+                stats.pop("median_footprint", None)
+                stats.pop("footprint_dims", None)
+            transformed_levels.append(replace(level, stats=stats))
+        return transformed.__class__.from_substitutive_levels(
+            transformed_levels, stats=dict(transformed.stats)
+        )
 
     def translate(self, offset: np.ndarray) -> "GSplatData":
         """Translate all splat centers by an offset vector.

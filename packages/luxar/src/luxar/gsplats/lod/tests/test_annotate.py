@@ -320,6 +320,25 @@ def test_annotate_e_only_skips_quality(levels_store: Path) -> None:
         assert e[-1] == pytest.approx(1.0)
 
 
+def test_annotate_retrofits_spatial_footprint(levels_store: Path) -> None:
+    root = zc_open_group(str(levels_store), mode="r+")
+    for name in (key for key in root.group_keys() if key.startswith("child_")):
+        child = root[name]
+        stats = dict(child.attrs.get("level_stats", {}))
+        stats.pop("median_footprint", None)
+        stats.pop("footprint_dims", None)
+        child.attrs["level_stats"] = stats
+    zc_consolidate(root)
+
+    annotate_quality_store(levels_store, device="cpu")
+
+    root = zarr.open_group(str(levels_store), mode="r")
+    for name in (key for key in root.group_keys() if key.startswith("child_")):
+        stats = root[name].attrs["level_stats"]
+        assert stats["median_footprint"] > 0
+        assert stats["footprint_dims"] == [0, 1, 2]
+
+
 def test_annotate_dry_run_writes_nothing(levels_store: Path) -> None:
     _strip_quality_attrs(levels_store)
     before_hash = zarr.open_group(str(levels_store), mode="r").attrs["content_hash"]

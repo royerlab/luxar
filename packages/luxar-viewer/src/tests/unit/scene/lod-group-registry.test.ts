@@ -1597,7 +1597,7 @@ describe('LODGroupRegistry — auto evaluation', () => {
       const children = [0.1, 0.02, 0.005].map((medianFootprint, index) => ({
         ...makeChild([0, 0.25, 0.5][index]),
         positionBounds: bounds,
-        ...(completeStamps || index !== 1 ? { medianFootprint } : {}),
+        ...(completeStamps || index !== 1 ? { medianFootprint, footprintDims: [0, 1, 2] } : {}),
       }));
       const entry = makeEntry(children, 0, `/footprint-${lodBias}-${completeStamps}`);
       entry.selector = 'screen-area';
@@ -1609,6 +1609,33 @@ describe('LODGroupRegistry — auto evaluation', () => {
     expect(selectedAtBias(1)).toBe(1);
     expect(selectedAtBias(4)).toBe(2);
     expect(selectedAtBias(1, false)).toBe(0);
+  });
+
+  it('keeps authored coverage ladders and mismatched dimensions on occupancy', () => {
+    function selected(selector: 'coverage' | 'screen-area', displayDims: number[]): number {
+      const camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 100);
+      camera.updateMatrixWorld(true);
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => displayDims,
+      });
+      const bounds = { min: [-0.1, -0.1, -10.1], max: [0.1, 0.1, -9.9] };
+      const children = [0.1, 0.02, 0.005].map((medianFootprint, index) => ({
+        ...makeChild([0, 0.25, 0.5][index]),
+        positionBounds: bounds,
+        medianFootprint,
+        footprintDims: [0, 1, 2],
+      }));
+      const entry = makeEntry(children, 0, `/footprint-fallback-${selector}-${displayDims}`);
+      entry.selector = selector;
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      return entry.activeChildIndex;
+    }
+
+    expect(selected('coverage', [0, 1, 2])).toBe(0);
+    expect(selected('screen-area', [0, 1, 3])).toBe(0);
   });
 
   it("applies lod bias in area units to selector='screen-area'", () => {

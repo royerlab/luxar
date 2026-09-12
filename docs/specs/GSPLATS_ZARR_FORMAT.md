@@ -734,24 +734,19 @@ to counts.
   quality *Q* = `1 − ‖level − finest‖²/‖finest‖²` ∈ [0, 1] of the COMPLETE
   level vs its group's finest content (constant-cost sampled estimator, see
   `luxar.gsplats.lod.quality`). The finest side is 1.0 by definition
-
-- **`level_stats.median_footprint`** (per GSplat `kind=lod` child): median
-  isotropic-equivalent Gaussian sigma in node-local scene units,
-  `median(det(L)^(1/D))`. The viewer projects this through the node transform and
-  camera using logical CSS pixels, then selects the coarsest level at or below
-  1.5 px. A ladder with any missing or invalid footprint stamp keeps the
-  occupancy selector unchanged, so older stores and other geometries remain
-  compatible. `lod-bias` remains defined in area units and therefore scales the
-  accepted footprint by `1/sqrt(b)`.
   (including each part leaf of an `overview` fine partition).
 - **`level_stats.median_footprint`** (per GSplat `kind=lod` child): median
-  isotropic-equivalent sigma in node-local scene units,
-  `median(det(L)^(1/D))`. The viewer projects it in logical CSS pixels and
-  selects the coarsest level at or below 1.5 px. If any child lacks a valid
-  stamp, the whole ladder keeps the occupancy selector unchanged. `lod-bias`
-  remains an area factor, so the accepted footprint scales by `1/sqrt(b)`.
-  Content-changing rewrites drop this measured stamp rather than carrying a
-  stale value; rebuilding the ladder restores it.
+  geometric-mean marginal sigma across the columns named by sibling key
+  **`level_stats.footprint_dims`**, in node-local scene units. The viewer uses
+  it only for a derived `selector="screen-area"` ladder whose displayed columns
+  match those dimensions, projects it in logical CSS pixels, and selects the
+  coarsest level at or below 1.5 px. Missing, invalid, or mismatched stamps keep
+  the occupancy selector unchanged; explicit legacy `coverage_fractions` are
+  therefore never overridden. `lod-bias` remains an area factor, so the
+  accepted footprint scales by `1/sqrt(b)`. Content-changing rewrites drop both
+  measured keys rather than carrying stale values; rebuilding or running
+  `gsplat annotate-quality` restores them. Points and Lines have no equivalent
+  stamp yet and remain occupancy-selected.
 
 The viewer's recursive quality algebra: a leaf currently shows the estimate
 `q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its

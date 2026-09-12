@@ -128,7 +128,7 @@ function withMedianFootprint(node: SceneNode, value: unknown): SceneNode {
     ...node,
     attrs: {
       ...node.attrs,
-      level_stats: { median_footprint: value },
+      level_stats: { median_footprint: value, footprint_dims: [0, 1, 2] },
     } as SceneNode['attrs'],
   };
 }
@@ -354,6 +354,7 @@ describe('loadLodGroupNode — registry registration', () => {
       2.5,
       undefined,
     ]);
+    expect(reg.get('/lod')!.children[0]!.footprintDims).toEqual([0, 1, 2]);
   });
 
   it('whitelists unknown selector spellings to the legacy diagonal metric', async () => {

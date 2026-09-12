@@ -1073,10 +1073,12 @@ def make_substitutive_lod(
     def _stamp_footprint(level_stats: dict, level_data: GSplatData) -> None:
         if level_data.n_splats == 0:
             return
-        sigma_geo = np.sqrt(level_data.volumes())
+        footprint_dims = level_data._nondegenerate_axes()
+        sigma_geo = level_data.scale(footprint_dims.tolist())
         finite = sigma_geo[np.isfinite(sigma_geo) & (sigma_geo > 0)]
         if finite.size:
             level_stats["median_footprint"] = float(np.median(finite))
+            level_stats["footprint_dims"] = footprint_dims.tolist()
 
     # Collect per-level outputs and pack them as SubstitutiveLevels.
     finest_stats: dict = {"n_splats_total": int(src.n_splats)}

@@ -90,6 +90,7 @@ if TYPE_CHECKING:
 #: without importing the optional LOD package.
 _REDUCTION_LOD_LEVEL_STATS_KEYS = (
     "median_footprint",
+    "footprint_dims",
     "quality",
     "reference_energy",
     "n_splats_total",

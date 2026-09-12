@@ -322,8 +322,14 @@ export function pickChildWithHysteresis(
   return currentIdx;
 }
 
+/**
+ * Provisional median-sigma limit in logical CSS pixels. GSplats draw to about
+ * 3σ, so 1.5 px corresponds to a typical rendered blob about 9 px across;
+ * #2685 tracks the measurement sweep that may retune it.
+ */
 export const MAX_MEDIAN_FOOTPRINT_PX = 1.5;
 
+/** Pick the coarsest acceptable footprint, resisting only coarser downgrades. */
 export function pickChildByFootprintWithHysteresis(
   footprintsPx: readonly number[],
   currentIdx: number,
@@ -342,6 +348,11 @@ export function pickChildByFootprintWithHysteresis(
   return footprintsPx[natural] <= maxFootprintPx * (1 - hysteresisRatio) ? natural : currentIdx;
 }
 
+/**
+ * Project a node-local radius into logical CSS pixels. The caller divides the
+ * accepted radius by `sqrt(lodBias)` because the public bias remains an area
+ * factor while this metric is a length.
+ */
 export function projectWorldRadiusPx(
   radiusWorld: number,
   worldCenter: THREE.Vector3,

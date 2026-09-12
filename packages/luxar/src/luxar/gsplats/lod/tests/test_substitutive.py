@@ -600,9 +600,35 @@ class TestApiContract:
             device="cpu",
             seed=0,
         )
-        footprints = [lv.stats["median_footprint"] for lv in pyramid.substitutive_levels]
+        footprints = [
+            lv.stats["median_footprint"] for lv in pyramid.substitutive_levels
+        ]
         assert all(np.isfinite(value) and value > 0 for value in footprints)
+        assert footprints[0] == pytest.approx(1.0)
         assert footprints[0] < footprints[1]
+        assert all(
+            lv.stats["footprint_dims"] == [0, 1, 2]
+            for lv in pyramid.substitutive_levels
+        )
+
+    def test_median_footprint_ignores_stacked_categorical_axis(self):
+        data = GSplatData.combine_as_new_dimension(
+            [_make_isotropic_3d(n=16, seed=1), _make_isotropic_3d(n=16, seed=2)],
+            sigma=0.0,
+        )
+        pyramid = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        finest = pyramid.substitutive_levels[0].stats
+        assert finest["median_footprint"] == pytest.approx(1.0)
+        assert finest["footprint_dims"] == [0, 1, 2]
 
     def test_stats_recorded(self):
         data = _make_isotropic_3d(n=16, seed=0)

@@ -126,6 +126,13 @@ def add_gsplats_as_lod_group_impl(
     for child_idx, s in enumerate(order):
         child_name = f"child_{child_idx}"
         level_view = result.at_substitutive(s)
+        level_attrs = dict(child_attrs)
+        _, safe_level_stats = json_safe_value(result.substitutive_levels[s].stats)
+        _, safe_caller_stats = json_safe_value(level_attrs.get("level_stats") or {})
+        level_attrs["level_stats"] = {
+            **(safe_level_stats or {}),
+            **(safe_caller_stats or {}),
+        }
         # Recursive dispatch — but explicitly None on both LOD axes so
         # the resolvers no-op and we never re-enter the kind=lod branch.
         lod_group_node.add_gsplats_from_data(
@@ -147,7 +154,7 @@ def add_gsplats_as_lod_group_impl(
             # one node, i.e. the levels rescaled against each other and the
             # brightness pops at every LOD switch.
             normalize_amplitudes=False,
-            **child_attrs,
+            **level_attrs,
         )
 
     return lod_group_node

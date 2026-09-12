@@ -461,6 +461,24 @@ def _annotate_node(
                 dry_run=dry_run,
                 is_lod_child=True,
             )
+        if all(
+            child.attrs.get("kind") not in {"lod", "partition"} for child in children
+        ):
+            for child in children:
+                level = _load_flat(child, root, decoder)
+                footprint_dims = level._nondegenerate_axes()
+                footprints = level.scale(footprint_dims.tolist())
+                finite = footprints[np.isfinite(footprints) & (footprints > 0)]
+                if finite.size:
+                    _merge_attr_dict(
+                        child,
+                        "level_stats",
+                        {
+                            "median_footprint": float(np.median(finite)),
+                            "footprint_dims": footprint_dims.tolist(),
+                        },
+                        dry_run=dry_run,
+                    )
         if not with_quality or n == 0:
             return
 

@@ -371,13 +371,18 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    is applied between measurement and selection: `b` multiplies `screen-area`,
    while `sqrt(b)` multiplies legacy diagonal `coverage`, so both move by the
    same area factor. The neutral default is `b = 1`.
-5. When every child carries `level_stats.median_footprint`, project those
+5. For a derived `selector="screen-area"` ladder where every child carries
+   `level_stats.median_footprint` and matching `footprint_dims`, project those
    node-local scene-unit medians through the node transform and camera using
    logical CSS pixels. Pick the coarsest level whose typical footprint is at
    most 1.5 px, with a 10% downgrade deadband. This avoids an adaptive-DPR
    feedback loop. `lod-bias` keeps its area-unit meaning, so the footprint
-   limit is divided by `sqrt(b)`. Missing or invalid stamps fall through to
-   the occupancy path. Footprint-selected switches are hard swaps for now;
+   limit is divided by `sqrt(b)`. Missing, invalid, or display-dimension-
+   mismatched stamps fall through to the occupancy path, as do explicit
+   `coverage_fractions` ladders. Per-tile `adaptive` ladders are stamped, so
+   footprint selection supersedes their partition-bound occupancy anchor;
+   `overview` ladders are intentionally incomplete and remain on occupancy.
+   Footprint-selected switches are hard swaps even when `lodFade` is enabled;
    occupancy cross-fade bands are not reused with mismatched units.
 6. Otherwise, pick the finest child whose `coverageFraction` threshold (the
    per-child value read from the zarr attr `coverage_fraction`, in
@@ -411,7 +416,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    path beside the anonymous placeholder, so the loading monitor can show the
    missing branch and Retry can re-kick that exact child without assigning a
    duplicate name/kind to the placeholder.
-8. **Never-downgrade display gate**: a lazy level flips `ready` after
+9. **Never-downgrade display gate**: a lazy level flips `ready` after
    its _first_ additive chunk commits, so an ungated swap to a
    fresh-but-still-streaming aspiration would pop displayed quality
    down to chunk-1 (on zoom in, zoom out, or after a scrub settles)

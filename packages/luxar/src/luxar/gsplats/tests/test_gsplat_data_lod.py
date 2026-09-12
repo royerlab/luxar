@@ -746,6 +746,19 @@ class TestSubstitutivePreservation:
 
     def test_transform_preserves_pyramid(self):
         data = self._make_pyramid()
+        data = GSplatData.from_substitutive_levels(
+            [
+                replace(
+                    level,
+                    stats={
+                        **level.stats,
+                        "median_footprint": float(index + 1),
+                        "footprint_dims": [0, 1, 2],
+                    },
+                )
+                for index, level in enumerate(data.substitutive_levels)
+            ]
+        )
         out = data.transform(np.eye(3) * 2.0)
         assert out.n_substitutive == 3
         for s in range(3):
@@ -754,6 +767,9 @@ class TestSubstitutivePreservation:
                 data.at_substitutive(s).centers * 2.0,
                 atol=1e-4,
             )
+            assert out.substitutive_levels[s].stats[
+                "median_footprint"
+            ] == pytest.approx(2.0 * (s + 1))
 
     def test_without_label_ids_preserves_pyramid(self) -> None:
         data = self._make_pyramid(counts=(12, 5))
