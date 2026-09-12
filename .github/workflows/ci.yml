@@ -722,6 +722,14 @@ jobs:
         # types/format-contract.ts must match format-contract/contract.yaml.
         run: hatch run check-contract
 
+      - name: Control contract drift (Python <-> TypeScript <-> Go)
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        # The remote-control wire constants are implemented three times — the
+        # Python hub, the viewer's client, and the launcher's relay — and the
+        # Go one ships inside a native binary nobody rebuilds when a Python
+        # constant changes. This is what stops them drifting silently.
+        run: hatch run check-control-contract
+
       - name: Demo data manifest drift
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
         # demos/data_manifest.json must match the demos/data tree. Safe without

@@ -12,6 +12,7 @@
  * implementations behind one name.
  */
 
+import { NO_VIEWER } from '../../config/control-contract';
 import {
   decodeFrame,
   notificationFrame,
@@ -50,7 +51,10 @@ export class ControllerCallError extends Error {
 
   /** The hub's "nothing to drive" answer: wait for it, do not fail on it. */
   get noViewerAttached(): boolean {
-    return this.code === -32001;
+    // From the generated wire contract, not a literal: the Python hub and the
+    // Go relay both emit this code, and a panel that stopped recognising it
+    // would show "waiting for the display" forever.
+    return this.code === NO_VIEWER;
   }
 }
 

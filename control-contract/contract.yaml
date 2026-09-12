@@ -1,0 +1,64 @@
+# The remote-control wire contract: one source, three implementations.
+#
+# Every value here is something a hub and a client must AGREE on to interoperate
+# at all. They are projected mechanically into Python, TypeScript and Go, and a
+# drift gate fails the build if a committed projection stops matching this file
+# — because the alternative is a security policy maintained in three places, one
+# of which is a shipped native binary nobody rebuilds when the Python changes.
+#
+# What belongs here: values that appear on the wire, or that bound what the wire
+# may carry. What does NOT: anything one side decides alone (reconnect backoff,
+# UI timings, which methods a particular viewer exposes).
+#
+# Edit this file, then run `hatch run gen-control-contract`.
+
+# ── Roles ────────────────────────────────────────────────────────────────────
+# A socket declares which end of the relay it is, as `?role=`. An unknown role
+# is refused rather than defaulted: defaulting it once meant an unrecognised
+# value silently attached as a CONTROLLER, i.e. with authority.
+roles:
+  viewer: viewer
+  controller: controller
+
+# ── Query parameters ─────────────────────────────────────────────────────────
+query_params:
+  role: role
+  token: token
+
+# ── Close codes ──────────────────────────────────────────────────────────────
+# 1008 is RFC 6455's "policy violation", which is what a refused handshake is:
+# a bad role, a bad token, or a cross-origin browser page.
+close_codes:
+  policy_violation: 1008
+
+# ── JSON-RPC ─────────────────────────────────────────────────────────────────
+# The standard codes plus one of ours. `no_viewer` is in the implementation
+# -32000..-32099 reserved range, and means the relay is up but no display has
+# attached — something a kiosk script WAITS for, not an error to abort on.
+jsonrpc:
+  version: '2.0'
+  # The notification a viewer sends to fan an event out to controllers. Carries
+  # positional params `[name, payload]` and no id.
+  event_method: event
+  error_codes:
+    parse_error: -32700
+    invalid_request: -32600
+    method_not_found: -32601
+    internal_error: -32603
+    no_viewer: -32001
+
+# ── Limits ───────────────────────────────────────────────────────────────────
+# Each of these bounds something an untrusted peer controls, so each is a
+# refusal the other side has to expect rather than a local tuning knob.
+limits:
+  # Outstanding requests one controller may have in flight. Past it the oldest
+  # is evicted: a wedged viewer must not let one controller consume memory
+  # without bound.
+  max_pending_per_controller: 64
+  # Unread events a client buffers before dropping the OLDEST. The hub fans
+  # events to every controller regardless of who subscribed, so a client that
+  # never reads them would otherwise grow for the life of the process.
+  max_buffered_events: 1024
+  # Largest frame the relay will carry, in bytes. Sized to pass a display-sized
+  # PNG screenshot; symmetric on both directions.
+  max_frame_bytes: 16777216

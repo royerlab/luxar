@@ -4,7 +4,7 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest sync-demo-counts \
+.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-control-contract gen-data-manifest sync-demo-counts \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity check-lint-ratchet check-native \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-browsers test-e2e-mobile test-e2e-smoke test-e2e-smoke-strict test-perf-e2e \
@@ -632,6 +632,9 @@ format-all:  ## Format all code (Python, TypeScript, Rust, Go, CUDA)
 	$(MAKE) format-go
 	@echo ""
 	$(MAKE) format-cuda
+
+gen-control-contract:  ## Regenerate the Python + TS + Go control-contract projections
+	@hatch run gen-control-contract
 
 gen-contract:  ## Regenerate the Python + TS format-contract projections from contract.yaml
 	@echo "📄 Regenerating format-contract projections (Python + TypeScript)..."

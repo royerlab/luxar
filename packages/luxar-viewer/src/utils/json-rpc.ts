@@ -22,19 +22,40 @@
  * @see docs/guides/specs/REMOTE_CONTROL_SPEC.md §3.2
  */
 
+import {
+  INTERNAL_ERROR,
+  INVALID_REQUEST,
+  JSONRPC_VERSION,
+  METHOD_NOT_FOUND,
+  PARSE_ERROR,
+} from '../config/control-contract';
+
+// Re-exported from the GENERATED wire contract rather than written here.
+// Three implementations have to agree on these codes — this client, the Python
+// hub, and the Go launcher's relay — and a drift gate
+// (`hatch run check-control-contract`) is what makes the agreement checkable.
+// The names keep their `JSON_RPC_` prefix because that is what this module's
+// callers already import.
+
 /** The only protocol version accepted or emitted. */
-export const JSON_RPC_VERSION = '2.0';
+export const JSON_RPC_VERSION = JSONRPC_VERSION;
 
 /** Invalid JSON was received. */
-export const JSON_RPC_PARSE_ERROR = -32700;
+export const JSON_RPC_PARSE_ERROR = PARSE_ERROR;
 /** Well-formed JSON that is not a valid request object. */
-export const JSON_RPC_INVALID_REQUEST = -32600;
+export const JSON_RPC_INVALID_REQUEST = INVALID_REQUEST;
 /** The method does not exist, or policy refuses to expose it. */
-export const JSON_RPC_METHOD_NOT_FOUND = -32601;
-/** The method exists but the params do not fit it. */
+export const JSON_RPC_METHOD_NOT_FOUND = METHOD_NOT_FOUND;
+/**
+ * The method exists but the params do not fit it.
+ *
+ * NOT in the shared contract: nothing in this system emits it. It is here so a
+ * reader of a foreign peer's error frame can name the code, and putting it in
+ * the contract would imply the hub and relay handle it.
+ */
 export const JSON_RPC_INVALID_PARAMS = -32602;
 /** The method threw. */
-export const JSON_RPC_INTERNAL_ERROR = -32603;
+export const JSON_RPC_INTERNAL_ERROR = INTERNAL_ERROR;
 
 /**
  * A request identifier. `null` is legal in the spec but we never emit it as a

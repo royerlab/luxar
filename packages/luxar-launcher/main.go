@@ -24,6 +24,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -115,29 +116,94 @@ func withCachePolicy(next http.Handler) http.Handler {
 	})
 }
 
-// startServer binds a free localhost port and starts the file server on
-// it in a background goroutine. The returned URL is what the WebView (or
-// fallback browser) should load; the returned *http.Server is the handle
-// for graceful shutdown.
-func startServer(root string) (string, *http.Server, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+// bindHost is the address the app serves on.
+//
+// Loopback unless LUXAR_LAUNCHER_HOST says otherwise. A native app that
+// silently started listening on the network would be a surprise nobody asked
+// for — and this app has no token of its own, so the opt-in is also the
+// operator saying they accept that.
+func bindHost() string {
+	if v := strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_HOST")); v != "" {
+		return v
+	}
+	return "127.0.0.1"
+}
+
+// dialHost is the address to put in a URL for a server bound to `host`.
+//
+// A wildcard bind is not a destination: `http://0.0.0.0:PORT` is unreachable
+// from the tablet a kiosk panel runs on, so the URL needs a concrete address.
+// Asks the routing table which interface would carry outbound traffic; nothing
+// is sent, because connect() on a UDP socket only fixes a route.
+func dialHost(host string) string {
+	if host != "0.0.0.0" && host != "::" && host != "" {
+		return host
+	}
+	conn, err := net.Dial("udp", "192.0.2.1:9") // RFC 5737, never routed.
 	if err != nil {
-		return "", nil, fmt.Errorf("bind localhost: %w", err)
+		return "127.0.0.1"
+	}
+	defer conn.Close()
+	if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return addr.IP.String()
+	}
+	return "127.0.0.1"
+}
+
+// startServer binds a free port and starts the file server on it in a
+// background goroutine. The returned URL is what the WebView (or fallback
+// browser) should load; the returned *http.Server is the handle for graceful
+// shutdown.
+//
+// With LUXAR_LAUNCHER_CONTROL=1 it also mounts the remote-control relay at
+// /control and prints the touch-panel URL, so an exported app can run a kiosk
+// without a Python checkout.
+func startServer(root string) (string, *http.Server, error) {
+	host := bindHost()
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if err != nil {
+		return "", nil, fmt.Errorf("bind %s: %w", host, err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	dataURL := fmt.Sprintf("http://127.0.0.1:%d/data", port)
+	reachable := dialHost(host)
+	dataURL := fmt.Sprintf("http://%s:%d/data", reachable, port)
 	// Inject a cache budget: the viewer auto-sizes its in-memory caches from
 	// `performance.memory`, which WKWebView (WebKit) does not implement — so
 	// without this the app would fall back to a tiny fixed budget and re-decode
 	// timelapse frames every loop. We know this is a desktop app, so we supply a
 	// generous default the viewer splits across its cache tiers.
-	viewerURL := fmt.Sprintf("http://127.0.0.1:%d/viewer/?src=%s&cacheBudgetMB=%d", port, dataURL, cacheBudgetMB())
+	viewerURL := fmt.Sprintf("http://%s:%d/viewer/?src=%s&cacheBudgetMB=%d", reachable, port, dataURL, cacheBudgetMB())
 
 	// No CORS headers: the viewer (/viewer) and its data (/data) are served
 	// from this one origin, so same-origin fetches need none. A wildcard here
 	// would only let an unrelated web page read the locally-served scene.
+	// The relay shares this origin with both pages, so neither needs a URL to
+	// find the other and the same-host Origin check below is meaningful.
+	var handler http.Handler = withCachePolicy(http.FileServer(http.Dir(root)))
+	if os.Getenv("LUXAR_LAUNCHER_CONTROL") == "1" {
+		relay := newHub(strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN")))
+		mux := http.NewServeMux()
+		// Registered BEFORE the catch-all: Go's mux prefers the longer
+		// pattern, but keeping the order explicit matches the Python side,
+		// where a Mount at "/" would swallow the socket route entirely.
+		mux.HandleFunc("/control", relay.handler(fmt.Sprintf("%s:%d", reachable, port)))
+		mux.Handle("/", handler)
+		handler = mux
+		viewerURL += "&control"
+		panelURL := fmt.Sprintf("http://%s:%d/viewer/control.html?control", reachable, port)
+		if token := strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN")); token != "" {
+			viewerURL += "&controlToken=" + url.QueryEscape(token)
+			panelURL += "&controlToken=" + url.QueryEscape(token)
+		} else if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+			fmt.Fprintln(os.Stderr,
+				"warning: control relay reachable from the network without a token; "+
+					"set LUXAR_LAUNCHER_CONTROL_TOKEN to restrict it")
+		}
+		fmt.Fprintf(os.Stderr, "control panel: %s\n", panelURL)
+	}
+
 	srv := &http.Server{
-		Handler:           withCachePolicy(http.FileServer(http.Dir(root))),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
