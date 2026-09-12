@@ -407,12 +407,12 @@ describe('ControlClient lifecycle', () => {
     // error.
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const context = harness();
-    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION, reason: 'bad token' });
+    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION, reason: 'cross-origin handshake' });
     vi.advanceTimersByTime(CONTROL_RECONNECT_MAX_MS * 4);
 
     expect(warning).toHaveBeenCalledWith(
       Modules.APP,
-      'control: the hub refused this display (check the ?controlToken in its URL); not retrying'
+      'control: the hub refused this display (cross-origin handshake); not retrying'
     );
     expect(context.sockets).toHaveLength(1);
     warning.mockRestore();

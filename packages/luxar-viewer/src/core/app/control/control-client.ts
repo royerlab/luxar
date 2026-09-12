@@ -198,10 +198,8 @@ export class ControlClient {
         // here. Retrying cannot change who we are, and a display left doing it
         // reconnects into the same refusal for the life of the exhibit with
         // nothing but a generic socket warning to show for it.
-        log.warning(
-          Modules.APP,
-          'control: the hub refused this display (check the ?controlToken in its URL); not retrying'
-        );
+        const reason = event.reason || 'check the ?controlToken in its URL';
+        log.warning(Modules.APP, `control: the hub refused this display (${reason}); not retrying`);
         return;
       }
       const delay = this.reconnectDelayMs;
