@@ -975,6 +975,80 @@ def _validate_coarsen_dims_spec(value: Any) -> Any:
     )
 
 
+def _coarsen_data_to_scene(
+    dims: Any, n_cols: int, dim_order: Optional[Sequence[str]]
+) -> Optional[list[int]]:
+    """Return the scene-dimension index named by each input data column."""
+    if dim_order is not None:
+        if dims is None:
+            raise ValueError("dim_order requires scene dimensions")
+        if len(dim_order) != n_cols:
+            raise ValueError(
+                f"dim_order has {len(dim_order)} names but data has {n_cols} columns"
+            )
+        if len(set(dim_order)) != len(dim_order):
+            raise ValueError("dim_order has duplicate names")
+        data_to_scene = []
+        for name in dim_order:
+            try:
+                data_to_scene.append(int(dims.get_index(name)))
+            except (KeyError, ValueError) as exc:
+                raise ValueError(
+                    f"dim_order name {name!r} not found in scene dimensions"
+                ) from exc
+        return data_to_scene
+    return None
+
+
+def _displayed_data_columns(
+    dims: Any,
+    n_cols: int,
+    raw: Any,
+    data_to_scene: Optional[list[int]],
+) -> Optional[list[int]]:
+    """Resolve displayed scene dimensions to the input columns being reduced."""
+    if data_to_scene is not None:
+        displayed_scene = set(dims.displayed)
+        return [
+            data_col
+            for data_col, scene_dim in enumerate(data_to_scene)
+            if scene_dim in displayed_scene
+        ]
+    if dims is not None and int(dims.ndim) == int(n_cols):
+        return [d for d in dims.displayed if 0 <= d < n_cols]
+    if raw == "display":
+        raise ValueError(
+            "coarsen_dims='display' requires positions aligned with the "
+            f"scene dims (got {n_cols} columns, scene ndim "
+            f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
+        )
+    return None
+
+
+def _coarsen_name_to_data_column(
+    dims: Any,
+    n_cols: int,
+    name: str,
+    data_to_scene: Optional[list[int]],
+) -> int:
+    """Resolve one scene dimension name to an input data-column index."""
+    if data_to_scene is not None:
+        scene_idx = int(dims.get_index(name))
+        try:
+            return data_to_scene.index(scene_idx)
+        except ValueError as exc:
+            raise ValueError(
+                f"coarsen_dims name {name!r} is not mapped by dim_order"
+            ) from exc
+    if dims is None or int(dims.ndim) != int(n_cols):
+        raise ValueError(
+            "coarsen_dims by name requires positions aligned with the "
+            f"scene dims (got {n_cols} columns, scene ndim "
+            f"{getattr(dims, 'ndim', '?')}). Pass explicit column indices."
+        )
+    return int(dims.get_index(name))
+
+
 def resolve_coarsen_dims(
     scene: Any,
     n_cols: int,
@@ -999,26 +1073,7 @@ def resolve_coarsen_dims(
     column indices.
     """
     dims = getattr(scene, "_dimensions", None) if scene is not None else None
-    aligned = dims is not None and int(dims.ndim) == int(n_cols)
-
-    data_to_scene: Optional[list[int]] = None
-    if dim_order is not None:
-        if dims is None:
-            raise ValueError("dim_order requires scene dimensions")
-        if len(dim_order) != n_cols:
-            raise ValueError(
-                f"dim_order has {len(dim_order)} names but data has {n_cols} columns"
-            )
-        if len(set(dim_order)) != len(dim_order):
-            raise ValueError("dim_order has duplicate names")
-        data_to_scene = []
-        for name in dim_order:
-            try:
-                data_to_scene.append(int(dims.get_index(name)))
-            except (KeyError, ValueError) as exc:
-                raise ValueError(
-                    f"dim_order name {name!r} not found in scene dimensions"
-                ) from exc
+    data_to_scene = _coarsen_data_to_scene(dims, n_cols, dim_order)
 
     def _finalize(idxs: Any) -> Optional[tuple]:
         norm = sorted({int(i) for i in idxs})
@@ -1034,22 +1089,8 @@ def resolve_coarsen_dims(
     if raw == "all":
         return None
     if raw is None or raw == "display":
-        if data_to_scene is not None:
-            displayed_scene = set(dims.displayed)
-            displayed = [
-                data_col
-                for data_col, scene_dim in enumerate(data_to_scene)
-                if scene_dim in displayed_scene
-            ]
-        elif aligned:
-            displayed = [d for d in dims.displayed if 0 <= d < n_cols]
-        else:
-            if raw == "display":
-                raise ValueError(
-                    "coarsen_dims='display' requires positions aligned with the "
-                    f"scene dims (got {n_cols} columns, scene ndim "
-                    f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
-                )
+        displayed = _displayed_data_columns(dims, n_cols, raw, data_to_scene)
+        if displayed is None:
             return None  # Auto, unaligned -> safe all-dims fallback
         non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
         if not non_displayed:
@@ -1059,25 +1100,7 @@ def resolve_coarsen_dims(
     idxs: list[int] = []
     for x in raw:
         if isinstance(x, str):
-            if data_to_scene is not None:
-                scene_idx = int(dims.get_index(x))
-                try:
-                    idxs.append(data_to_scene.index(scene_idx))
-                except ValueError as exc:
-                    raise ValueError(
-                        f"coarsen_dims name {x!r} is not mapped by dim_order"
-                    ) from exc
-            elif not aligned:
-                # Names resolve to scene-dim indices, which only equal center
-                # columns when positions span the scene 1:1. Refuse rather than
-                # silently mapping a name to the wrong column.
-                raise ValueError(
-                    "coarsen_dims by name requires positions aligned with the "
-                    f"scene dims (got {n_cols} columns, scene ndim "
-                    f"{getattr(dims, 'ndim', '?')}). Pass explicit column indices."
-                )
-            else:
-                idxs.append(int(dims.get_index(x)))
+            idxs.append(_coarsen_name_to_data_column(dims, n_cols, x, data_to_scene))
         else:
             idxs.append(int(x))
     return _finalize(idxs)
