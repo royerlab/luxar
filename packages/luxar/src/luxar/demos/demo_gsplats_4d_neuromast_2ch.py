@@ -70,8 +70,8 @@ PIPELINE — reproducible per channel with ``--recompute``:
        stay in **lateral-pixel units**, NOT microns: 1 unit = 0.1083 um.
        (The 2026-08 pair on the record was transformed with the historical 2.5
        — an 8.3 % Z stretch — and stays pinned in ``data_manifest.json``;
-       correcting the published scene needs a re-fit and a re-upload to the
-       record, which this recipe change does not do.)
+       the corrected rebuild is ready, but publishing it still needs the record
+       upload and manifest repin, which this recipe change does not do.)
 
     Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
@@ -278,7 +278,8 @@ JOBS_PER_GPU = 12
 #: 0.25 um z-step and 0.1083 um pixels = 2.3084x (the paper registry records
 #: voxel_um=(0.25, 0.1083, 0.1083)). A RATIO, not a micron conversion: it only
 #: makes Z commensurate with X/Y, and the centres stay on the lateral-pixel grid.
-#: Kept as the computed quotient rather than a rounded literal.
+#: The 2026-08 pair on the record carries the historical 2.5 (step 7). Kept as
+#: the computed quotient rather than a rounded literal.
 VOXEL_SCALE = (0.25 / 0.1083, 1.0, 1.0, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
@@ -410,7 +411,8 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
         # published pair, and the display windows in ``CHANNELS`` plus the
         # bounding-sphere radii recorded there -- and tabulated in the neuromast
         # row of ``docs/guides/specs/LAYER_ORDER_SPEC.md`` -- were measured on
-        # the old geometry and want re-measuring at rebuild.
+        # the old geometry and want re-measuring before the corrected pair is
+        # repinned.
         run_luxar_cli(
             "gsplat",
             "transform",
@@ -538,6 +540,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         node, _ = load_gsplat_node(str(channel_paths[0]))
         bmin, bmax = center_bounds(node)
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
+        # The µm labels are aspirational: 1 unit = 0.1083 µm; see step 7 and #2723.
         dims = Dimensions(
             [
                 Dimension(
@@ -566,7 +569,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                 dimensions=dims,
                 # Exposure pulled down 3.4 stops (set by eye with the channel
                 # windows): at the default camera distance the rosette core
-                # otherwise saturates to white under both volumetric layers.
+                # otherwise saturates to white under both additive layers.
                 viewer_config=ViewerConfig(
                     cinematic_mode=True, tone_mapping="ACES", exposure=EXPOSURE_STOPS
                 ),
