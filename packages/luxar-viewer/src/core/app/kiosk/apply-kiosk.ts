@@ -24,11 +24,13 @@ export interface KioskPorts {
   /**
    * Enable or disable the CAMERA CONTROLS.
    *
-   * Separate from `setInputEnabled`, and necessarily so: the input handler
-   * gates the viewer's own shortcuts and picking, while orbit/fly controls
-   * listen on the canvas themselves. Disabling only the first left the camera
-   * fully draggable under `?kiosk` — measured at 46x the auto-rotate drift, so
-   * a visitor could still swing the view off the tour.
+   * Separate from `setKeyboardEnabled`, and necessarily so: that one reaches
+   * `InputContextManager.setEnabled`, whose entire effect is to drop keydown
+   * dispatch (`context-manager.ts`: `if (!this.enabled && type === 'down')`) —
+   * NOT pointer events, and not picking, which lives elsewhere. Orbit/fly
+   * controls listen on the canvas themselves, so disabling only the keyboard
+   * left the camera fully draggable under `?kiosk` — measured at 46x the
+   * auto-rotate drift, so a visitor could still swing the view off the tour.
    */
   setControlsEnabled?: (enabled: boolean) => void;
   /** Hide every panel and the rail. */

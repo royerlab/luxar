@@ -15,6 +15,7 @@
  * @see docs/guides/specs/REMOTE_CONTROL_SPEC.md §3.3
  */
 
+import { CLOSE_POLICY_VIOLATION } from '../../../config/control-contract';
 import { normalizeDataSourceUrl } from '../../../config/url-params';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import {
@@ -188,8 +189,21 @@ export class ControlClient {
       // `close` always follows, and that is where reconnect is scheduled.
       log.warning(Modules.APP, 'control: socket error');
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       this.socket = null;
+      if (event?.code === CLOSE_POLICY_VIOLATION) {
+        // Terminal, for the same reason as the panel's socket: the hub accepts
+        // a handshake it means to refuse and then closes it with this code, so
+        // a wrong ?controlToken, an unknown role or a foreign origin all land
+        // here. Retrying cannot change who we are, and a display left doing it
+        // reconnects into the same refusal for the life of the exhibit with
+        // nothing but a generic socket warning to show for it.
+        log.warning(
+          Modules.APP,
+          'control: the hub refused this display (check the ?controlToken in its URL); not retrying'
+        );
+        return;
+      }
       if (!this.disposed) this.scheduleReconnect();
     };
   }

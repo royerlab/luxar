@@ -461,9 +461,11 @@ is the least trustworthy input a kiosk has, and "anyone who can edit the query
 string can unlock the exhibit" is not a lock.
 
 **`setInputEnabled(false)` was not enough**, and it took a measurement to find
-out. It gates the viewer's own shortcuts and picking, while the orbit controls
-listen on the canvas themselves — so panels hid, the flag read as set, and the
-camera stayed fully draggable. The scene auto-rotates, which makes a plain
+out. Its whole effect is to drop keydown dispatch — `InputContextManager`
+returns early only for `type === 'down'`, so pointer events are untouched and
+picking is not in that path at all — while the orbit controls listen on the
+canvas themselves. So panels hid, the flag read as set, and the camera stayed
+fully draggable. The scene auto-rotates, which makes a plain
 before/after prove nothing; against a *control arm* the drag moved the camera
 62.3 units against 1.36 of idle drift, a factor of 46. Kiosk mode therefore
 also calls `ControlsManager.setEnabled(false)`.
@@ -516,6 +518,20 @@ from, for the same reason: no new strings were written for the panel.
 `url()`. The last one is not only a code-execution concern — every remote URL
 in a stylesheet is a beacon that reports the kiosk's address to whoever hosts
 it, each time the panel loads.
+
+Two things make that hold rather than merely discourage it. `control.html`
+carries a **`Content-Security-Policy` meta** (`default-src 'self'`, with
+`connect-src` widened to `ws:`/`wss:` for the hub and `img-src`/`font-src` to
+`data:`), which is the actual fetch boundary: a regex denylist over CSS has to
+anticipate every spelling of a URL, while the CSP refuses the request whatever
+the syntax. The strip stays as belt-and-braces, and because it runs first the
+beacon is never even attempted.
+
+And `validateControlPanelSettings` re-runs the cap and the sanitiser on the
+copy that arrives **over the wire**, not just on the one read from the store.
+The panel is a separate page that can be pointed at any hub, so trusting the
+`getViewerState` reply would mean trusting that hub's zarr bridge to have
+sanitised anything at all.
 
 **The panel fits one page.** It measures its own container and scores candidate
 grids on cell aspect against a target, plus a penalty for empty cells

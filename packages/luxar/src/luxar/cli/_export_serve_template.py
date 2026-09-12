@@ -338,7 +338,6 @@ class Relay:
         self._next_peer = 0
         # hub id -> (controller key, the id that controller used).
         self._pending: dict[int, tuple[int, Any]] = {}
-        self._pending_per: dict[int, int] = {}
         self._next_request = 0
 
     # ── attachment ──────────────────────────────────────────────────────────
@@ -452,7 +451,6 @@ class Relay:
             if pending is None:
                 return  # A duplicate, or the asker has gone.
             key, original_id = pending
-            self._pending_per[key] = max(0, self._pending_per.get(key, 0) - 1)
             target = self._controllers.get(key)
         if target is not None:
             target.send(json.dumps({**frame, "id": original_id}))
@@ -480,7 +478,6 @@ class Relay:
         """Forget a controller AND the replies it will never read."""
         with self._lock:
             self._controllers.pop(key, None)
-            self._pending_per.pop(key, None)
             for hub_id in [k for k, (c, _) in self._pending.items() if c == key]:
                 self._pending.pop(hub_id, None)
 
@@ -519,13 +516,17 @@ class Relay:
         Caller holds the lock. A wedged display never replies, and without a
         cap one dict entry leaks per tap for the lifetime of the process.
         Eviction drops a reply the controller was never going to receive.
+
+        The count is derived from ``_pending`` rather than tracked alongside
+        it. `hub.go` keeps a separate per-controller tally because Go has no
+        comprehension to recount with; carrying one here too meant four
+        maintenance sites for a number nothing read.
         """
         outstanding = sorted(k for k, (c, _) in self._pending.items() if c == key)
         while len(outstanding) >= MAX_PENDING_PER_CONTROLLER:
             self._pending.pop(outstanding.pop(0), None)
         self._next_request += 1
         self._pending[self._next_request] = (key, original_id)
-        self._pending_per[key] = len(outstanding) + 1
         return self._next_request
 
 
@@ -564,6 +565,13 @@ class ControlServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], handler: Any, relay: Relay | None):
+        # The family follows the bind host, because `ThreadingHTTPServer`
+        # hardcodes AF_INET and `find_port` already probes AF_INET6 for a
+        # colon-bearing host: without this, `--host ::1` passed the port probe
+        # and then died in this constructor with a bare `gaierror` traceback,
+        # AFTER the script looked like it was starting.
+        if ":" in address[0]:
+            self.address_family = socket.AF_INET6
         super().__init__(address, handler)
         self.relay = relay
 

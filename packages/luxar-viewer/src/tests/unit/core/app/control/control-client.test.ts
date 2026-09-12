@@ -1,3 +1,4 @@
+import { CLOSE_POLICY_VIOLATION } from '../../../../../config/control-contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -23,7 +24,7 @@ class FakeSocket implements ControlSocketLike {
   sent: string[] = [];
   closed = false;
   onopen: (() => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event?: { code?: number }) => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
 
@@ -395,6 +396,27 @@ describe('ControlClient lifecycle', () => {
     // Back to the base delay, not the doubled one.
     vi.advanceTimersByTime(CONTROL_RECONNECT_BASE_MS);
     expect(context.sockets).toHaveLength(3);
+  });
+
+  it('does not reconnect after the hub refuses the display', () => {
+    // The mirror of the panel socket's behaviour, and the reason
+    // `ControlSocketLike.onclose` carries a code at all: a display launched
+    // with a mistyped ?controlToken used to reconnect into the same 1008
+    // refusal for the life of the exhibit, logging only a generic socket
+    // error.
+    const context = harness();
+    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION });
+    vi.advanceTimersByTime(CONTROL_RECONNECT_MAX_MS * 4);
+    expect(context.sockets).toHaveLength(1);
+  });
+
+  it('still reconnects after a close that carries no code', () => {
+    // A dropped network is not a refusal, so the refusal short-circuit must
+    // not have swallowed the ordinary path.
+    const context = harness();
+    context.socket.onclose?.();
+    vi.advanceTimersByTime(CONTROL_RECONNECT_BASE_MS);
+    expect(context.sockets).toHaveLength(2);
   });
 
   it('does not reconnect after dispose', () => {

@@ -529,6 +529,34 @@ def test_urls_are_dialable() -> None:
     )
 
 
+def test_an_ipv6_bind_actually_serves(tmp_path: Path) -> None:
+    """`--host ::1` must bind, not just format a bracketed URL.
+
+    The bracketing test below only exercises string formatting, which is how
+    this got through the first time: `find_port` probes AF_INET6 for a
+    colon-bearing host and succeeds, then `ThreadingHTTPServer`'s hardcoded
+    AF_INET made the bind raise `gaierror` — a bare traceback AFTER the script
+    had printed nothing and looked like it was starting.
+    """
+    from urllib.request import urlopen
+
+    port = template.find_port("::1", start=free_port())
+    assert port is not None, "no IPv6 loopback port available"
+    (tmp_path / "marker.txt").write_text("served over v6")
+
+    handler = partial(template.LuxarHandler, directory=str(tmp_path))
+    server = template.ControlServer(("::1", port), handler, None)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"http://[::1]:{port}/marker.txt", timeout=5)
+        assert response.status == 200
+        assert b"served over v6" in response.read()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_ipv6_hosts_are_bracketed() -> None:
     """An unbracketed IPv6 address in a URL is not a URL."""
     (viewer,) = template.urls("::1", 8000, control=False, token=None)
