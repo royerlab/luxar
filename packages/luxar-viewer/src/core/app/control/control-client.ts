@@ -41,6 +41,11 @@ import { encodeBlobForWire, isBlobLike, sanitizeForWire } from './wire-values';
 export const CONTROL_RECONNECT_BASE_MS = 500;
 /** Ceiling for the doubling reconnect delay. */
 export const CONTROL_RECONNECT_MAX_MS = 30_000;
+
+function displayRefusalReason(reason: string | undefined): string {
+  return reason || 'check the ?controlToken in its URL';
+}
+
 /**
  * Minimum gap between forwarded `camera-changed` events (50 ms = 20 Hz).
  *
@@ -198,7 +203,7 @@ export class ControlClient {
         // here. Retrying cannot change who we are, and a display left doing it
         // reconnects into the same refusal for the life of the exhibit with
         // nothing but a generic socket warning to show for it.
-        const reason = event.reason || 'check the ?controlToken in its URL';
+        const reason = displayRefusalReason(event.reason);
         log.warning(Modules.APP, `control: the hub refused this display (${reason}); not retrying`);
         return;
       }
