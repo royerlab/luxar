@@ -452,6 +452,8 @@ def test_the_ok_line_claims_only_what_was_checked(tmp_path: Path) -> None:
         "SiMView instrument see Royer et al.",
         "Royer lab. The imaging has not been published.",
         "Royer lab. The imaging was not separately deposited.",
+        "Royer lab. Unpublished imaging from the Keller lab.",
+        "Royer lab. Unpublished imaging; for the instrument see Royer et al.",
     ],
 )
 def test_every_unpublished_imaging_phrasing_keeps_a_dataset_inspected(

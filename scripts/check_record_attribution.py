@@ -105,9 +105,12 @@ SNAPSHOT_DIR = REPO_ROOT / "scripts/zenodo_record_text"
 # applied to record bullets as well as to manifest attributions, so a one-sided
 # reword on either side cannot quietly drop a dataset out of the audit.
 _UNPUBLISHED_IMAGING = re.compile(
-    r"\bimaging\b[^.;]{0,60}?\b(?:"
+    r"\b(?:"
+    r"unpublished\s+imaging"
+    r"|imaging\b[^.;]{0,60}?\b(?:"
     r"unpublished"
     r"|(?:not|never)\s+(?:\w+\s+){0,3}?(?:published|deposited|released)"
+    r")"
     r")\b",
     re.IGNORECASE,
 )
