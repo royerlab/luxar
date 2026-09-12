@@ -8,7 +8,8 @@ rather than 404, so a reader gets a blank viewer and nothing goes red.
 
 ``/d/<demo-key>`` is an identity; the dated prefix is a location. This maps the
 former onto the latter and is regenerated at deploy, so the mapping updates
-itself and cannot drift from what is served.
+itself and cannot drift from what is served. Targets use the standalone viewer
+and percent-encode the source URL to match the deployed redirects.
 
 A static ``_redirects`` is deliberate: Cloudflare Pages serves it without putting
 a Function on the request path.
@@ -46,13 +47,14 @@ import re
 import sys
 from pathlib import Path
 from typing import Iterable, Sequence
+from urllib.parse import quote
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "scripts/gallery/manifest.json"
 MEDIA_MANIFEST_PATH = REPO_ROOT / "scripts/gallery/media-manifest.json"
 README_PATH = REPO_ROOT / "README.md"
 DEFAULT_DATA_HOST = "https://data.luxarviewer.dev"
-VIEWER_PATH = "/viewer/index.html"
+VIEWER_PATH = "https://luxarviewer.dev/"
 
 
 class RouteError(RuntimeError):
@@ -100,7 +102,8 @@ def build_routes(
         if store not in live_stores:
             skipped.append((key, store))
             continue
-        target = f"{VIEWER_PATH}?src={data_host}/data/{prefix}/{store}.luxar.zarr"
+        source = f"{data_host}/data/{prefix}/{store}.luxar.zarr"
+        target = f"{VIEWER_PATH}?src={quote(source, safe='')}"
         for route_key in (key, store) if store != key else (key,):
             if route_key in routed:
                 raise RouteError(f"duplicate route path: /d/{route_key}")
