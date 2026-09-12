@@ -1000,18 +1000,23 @@ failure rather than an ordinary `DatasetUnavailable` fallback. The live gallery
 tile is indifferent because it serves an already-derived scene and never
 consults the pin (3.10).
 
-### 3.21 `--profile archive` on an animated, un-laddered node stalls playback at every chunk boundary
+### 3.21 Animated, un-laddered nodes need chunk-boundary-aware prefetch
 
 The 2026-09-02 wave re-chunked every store with `optimise --profile archive`.
 On `collision_animated` (a 4.66 M-vertex Lines node over 250 frames, no ladder)
 that made a 1 MB vertex chunk hold ~6 frames; every ~6 frames the playhead
 crossed into the next chunk of each of the four arrays and waited for a
 0.25-0.85 MB fetch (0.4-0.9 s on a 7 Mbps link, cold cache, 40 steps = 65
-requests / 21 MB). The viewer's hidden-axis lookahead is one step deep, so it
-cannot hide a boundary that far ahead. Two things were NOT the cause, and the
-first version of #2686 wrongly blamed one of them: the ordering is already
-slice-major (compound ordering, `vertex_ordering.slice_dims == [3]`, every atom
-inside one frame), and the prefetcher does run — one step ahead.
+requests / 21 MB). The old hidden-axis lookahead was one step deep, so it could
+not hide a boundary that far ahead. The viewer now uses each array's zarr chunk
+shape plus the index atom bounds to prefetch the next boundary in playback
+direction (#2686). Two things were NOT the cause, and the first diagnosis
+wrongly blamed one of them: the ordering is already slice-major (compound
+ordering, `vertex_ordering.slice_dims == [3]`, every atom inside one frame), and
+the old prefetcher did run — only one step ahead.
+For this node the mean added lead is about 2.9 frames with `archive`, 1.2
+frames with `hosting`, and 1.0 frame with `local`; the profile choice still
+governs how much time the prefetch has to hide each request.
 
 Rules that fall out, alongside 3.17 and the #2377 residency finding:
 
@@ -1022,12 +1027,16 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   chunk. Un-laddered + played (animated lines/points): `hosting` (~1.5 frames per
   chunk) is the middle of the request/byte trade; `local` is 3,500 chunks
   against the Functions request cap. Not animated: smaller is a pure win.
-- `optimise` is per-array and hidden-dim blind; until #2686's per-node guard
-  lands, the operator decides per store.
-- Gate the check on `viewer_config.animation` (`playing: true`), not on "has a
-  hidden axis": a keypress-navigated axis is the refine case. A whole array in
-  ONE chunk is benign (no boundary to cross); the stall shape is many chunks of
-  several frames. Read the atom's hidden-axis span from `chunk_bounds` — a
+- `optimise` is per-array and hidden-dim blind; it cannot infer playback and
+  ladder-cache policy, so the operator still decides per store.
+- The `optimise` pass stays per-array blind by design; what is missing is a
+  warn-only guard on top of it, and #2686 landed boundary prefetch in the
+  viewer rather than that guard. So the gate described next is a spec, not
+  current behaviour: gate it on `viewer_config.animation` (`playing: true`),
+  not on "has a hidden axis" — a keypress-navigated axis is the refine case. The
+  measurements after it hold either way. A whole array in ONE chunk is
+  benign (no boundary to cross); the stall shape is many chunks of several
+  frames. Read the atom's hidden-axis span from `chunk_bounds` — a
   store with one NODE per hidden coordinate (hilbert_curve_3d) misreads when
   the scene range is divided by chunk count. Wave 2026-09-11:
   `collision_animated` plays at 1.8 frames/chunk on `hosting`; `cloud` also
