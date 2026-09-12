@@ -89,8 +89,16 @@ PIPELINE — reproducible with ``--recompute``:
        shape. Not ``gsplat slice``: that takes ranges, not a stride, and refuses
        a partition.
     3. ``gsplat flatten`` — collapse to one leaf, keeping the finest level.
-    4. ``gsplat lod --recipe stream --target-ms 200`` — put the progressive
-       ladder back (flatten drops it), sized for a ~200 ms first paint.
+    4. ``gsplat lod --recipe stream --n-lods 4`` — put the progressive ladder
+       back (flatten drops it): four equal-count rungs, so rung 0 is a quarter
+       of the node. The 2026-08 archive used ``--target-ms 200`` (12 rungs,
+       sized against the whole node); on a node the viewer slices per timepoint
+       a target-ms ladder starves rung 0 (whole-node sizing) or, sized per
+       slice as the CLI now does, leaves rung 0 under 1 % of the node, and
+       ``check-demo-ladders`` refuses both (10 % share floor on a sliced node).
+       Four rungs satisfy that floor, but the current gate still rejects the
+       ladder under its slice-unaware 1,000,000-element commit cap; #2699 tracks
+       that auditor defect.
     5. ``luxar optimise --profile archive`` — re-chunk. LAST, because step 4
        adds arrays that also want the 1 MB layout.
 
@@ -220,11 +228,10 @@ PARENT_FINEST_SPLATS = 602_580_152
 #: ladder built by a fixed rule), so unlike a refit this admits no drift
 #: tolerance. A mismatch means the parent or the stride changed.
 EXPECTED_SPLATS = 121_163_285
-#: Progressive rungs recorded on the shipped one-leaf archive.
-EXPECTED_RUNGS = 12
-#: Progressive-ladder budget: the first rung is sized to roughly this many
-#: milliseconds of download at the CLI's default assumed bandwidth.
-LADDER_TARGET_MS = 200
+#: Progressive rungs of the one-leaf archive (equal-count ladder, step 4).
+EXPECTED_RUNGS = 4
+#: Equal-count progressive ladder; see step 4 for why not a target-ms budget.
+LADDER_N_LODS = 4
 #: Chunk profile. `archive` (1 MB) rather than `hosting` (256 KB) because this
 #: node is read a whole timepoint at a time, and the measured cost of the
 #: as-built layout was 173 requests per timepoint step against 2 after.
@@ -265,7 +272,7 @@ LAYER_COLORMAP = "plasma"
 
 
 def _validate_rebuilt_archive(node: Any) -> int:
-    """Require the recorded one-leaf, twelve-rung archive shape."""
+    """Require the recorded one-leaf, four-rung archive shape."""
     leaves = list(iter_leaves(node))
     if len(leaves) != 1:
         raise RuntimeError(f"rebuild produced {len(leaves)} leaves, expected one")
@@ -396,8 +403,8 @@ def recompute_archive(work_dir: Path) -> Path:
             str(laddered),
             "--recipe",
             "stream",
-            "--target-ms",
-            str(LADDER_TARGET_MS),
+            "--n-lods",
+            str(LADDER_N_LODS),
         )
         # Re-chunk LAST: the ladder above adds arrays that also want the archive
         # layout, and leaving them as-built is the 173-requests-per-step case.
