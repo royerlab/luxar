@@ -980,6 +980,8 @@ def _coarsen_data_to_scene(
 ) -> Optional[list[int]]:
     """Return the scene-dimension index named by each input data column."""
     if dim_order is not None:
+        # Decline malformed specs so their established errors remain owned by
+        # from_data._reject_before_wrapper and the adders' apply_dim_order_positions.
         if (
             dims is None
             or len(dim_order) != n_cols
@@ -1087,7 +1089,9 @@ def resolve_coarsen_dims(
     a list resolves names through the same mapping and ints as direct input
     column indices. The mapping only changes the result when a non-displayed
     dimension occupies a different input and scene column; permutations solely
-    among displayed dimensions resolve to the same set.
+    among displayed dimensions resolve to the same set. Internally, ``None``
+    also means a malformed mapping was declined and left to
+    ``validate_dim_order_spec`` at the downstream write boundary.
     """
     dims = getattr(scene, "_dimensions", None) if scene is not None else None
     data_to_scene = _coarsen_data_to_scene(dims, n_cols, dim_order)
