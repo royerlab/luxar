@@ -1014,6 +1014,32 @@ def _displayed_data_columns(
     return None
 
 
+def _resolve_displayed_coarsen_dims(
+    dims: Any,
+    n_cols: int,
+    raw: Any,
+    data_to_scene: Optional[list[int]],
+) -> Optional[list[int]]:
+    """Resolve Auto/display specs, returning ``None`` for all-dims fallback."""
+    displayed = _displayed_data_columns(dims, n_cols, data_to_scene)
+    if displayed is None:
+        if raw == "display":
+            raise ValueError(
+                "coarsen_dims='display' requires positions aligned with the "
+                f"scene dims (got {n_cols} columns, scene ndim "
+                f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
+            )
+        return None
+    if not displayed and data_to_scene is not None:
+        if raw == "display":
+            raise ValueError(
+                "coarsen_dims='display': dim_order maps no displayed dimension"
+            )
+        return None
+    non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
+    return displayed if non_displayed else None
+
+
 def _coarsen_name_to_data_column(
     dims: Any,
     n_cols: int,
@@ -1080,24 +1106,9 @@ def resolve_coarsen_dims(
     if raw == "all":
         return None
     if raw is None or raw == "display":
-        displayed = _displayed_data_columns(dims, n_cols, data_to_scene)
+        displayed = _resolve_displayed_coarsen_dims(dims, n_cols, raw, data_to_scene)
         if displayed is None:
-            if raw == "display":
-                raise ValueError(
-                    "coarsen_dims='display' requires positions aligned with the "
-                    f"scene dims (got {n_cols} columns, scene ndim "
-                    f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
-                )
-            return None  # Auto, unaligned -> safe all-dims fallback
-        if not displayed and data_to_scene is not None:
-            if raw == "display":
-                raise ValueError(
-                    "coarsen_dims='display': dim_order maps no displayed dimension"
-                )
             return None
-        non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
-        if not non_displayed:
-            return None  # nothing to group by -> coarsen everything (no-op barrier)
         return _finalize(displayed)
     # Explicit list of names / indices.
     idxs: list[int] = []
