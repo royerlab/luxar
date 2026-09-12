@@ -81,10 +81,9 @@ export const CONTROL_FORWARDED_EVENTS: readonly string[] = [
 /**
  * The subset of `WebSocket` this client uses, so a test can supply a fake.
  *
- * The handlers take no arguments because nothing here reads the `Event`: the
- * only payload that matters is `MessageEvent.data`, which `onmessage` declares
- * explicitly. A real `WebSocket` therefore satisfies this structurally except
- * for its handler arity, which the module-private `openPlatformSocket` bridges.
+ * Only the event payloads this client reads are declared. A real `WebSocket`
+ * therefore satisfies this structurally except for its handler arity, which
+ * the module-private `openPlatformSocket` bridges.
  */
 export interface ControlSocketLike {
   send(data: string): void;
@@ -98,7 +97,7 @@ export interface ControlSocketLike {
    * that a client can tell "no hub here" from "your token is wrong". A handler
    * that ignored the code would make that choice pointless.
    */
-  onclose: ((event?: { code?: number }) => void) | null;
+  onclose: ((event?: { code?: number; reason?: string }) => void) | null;
   onerror: (() => void) | null;
   onmessage: ((event: { data: unknown }) => void) | null;
 }
@@ -167,10 +166,10 @@ export class ControlClient {
   /** Dial the hub. Safe to call once; reconnects are scheduled internally. */
   connect(): void {
     if (this.disposed || this.socket !== null) return;
-    const url = buildViewerSocketUrl(this.ports.socketUrl, this.ports.token);
     const open = this.ports.openSocket ?? openPlatformSocket;
     let socket: ControlSocketLike;
     try {
+      const url = buildViewerSocketUrl(this.ports.socketUrl, this.ports.token);
       socket = open(url);
     } catch (error) {
       log.warning(Modules.APP, 'control: could not open the socket:', error);
@@ -191,6 +190,7 @@ export class ControlClient {
     };
     socket.onclose = (event) => {
       this.socket = null;
+      if (this.disposed) return;
       if (event?.code === CLOSE_POLICY_VIOLATION) {
         // Terminal, for the same reason as the panel's socket: the hub accepts
         // a handshake it means to refuse and then closes it with this code, so
@@ -204,7 +204,15 @@ export class ControlClient {
         );
         return;
       }
-      if (!this.disposed) this.scheduleReconnect();
+      const delay = this.reconnectDelayMs;
+      if (event?.code !== 1000) {
+        const reason = event?.reason ? `: ${event.reason}` : '';
+        log.warning(
+          Modules.APP,
+          `control: socket closed (${event?.code ?? 'unknown'}${reason}); retrying in ${delay} ms`
+        );
+      }
+      this.scheduleReconnect();
     };
   }
 

@@ -5,13 +5,13 @@ A viewer launched with ``?control`` attaches to the hub that
 The method names are the viewer's own embedder API, so anything the browser's
 ``LuxarApp`` can do, a script here can ask for:
 
-```python
-from luxar.control import Viewer
+.. code-block:: python
 
-with Viewer("ws://kiosk.local:5173/control") as viewer:
-    story = viewer.dimension_index("story")   # by name, never a position
-    viewer.set_dimension_value(story, 3)      # fly to the fourth chapter
-```
+    from luxar.control import Viewer
+
+    with Viewer("ws://kiosk.local:5173/control") as viewer:
+        story = viewer.dimension_index("story")  # by name, never a position
+        viewer.set_dimension_value(story, 3)  # fly to the fourth chapter
 
 What it is for: scripted demos, reproducible screenshots, driving a kiosk from
 a cron job, and prototyping an agent. What it is not: a second API. If a call

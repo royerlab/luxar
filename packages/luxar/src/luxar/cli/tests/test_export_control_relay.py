@@ -540,6 +540,16 @@ def test_an_ipv6_bind_actually_serves(tmp_path: Path) -> None:
     """
     from urllib.request import urlopen
 
+    try:
+        probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    except OSError:
+        pytest.skip("no IPv6 support in this environment")
+    with probe:
+        try:
+            probe.bind(("::1", 0))
+        except OSError:
+            pytest.skip("IPv6 loopback is not bindable in this environment")
+
     port = template.find_port("::1", start=free_port())
     assert port is not None, "no IPv6 loopback port available"
     (tmp_path / "marker.txt").write_text("served over v6")

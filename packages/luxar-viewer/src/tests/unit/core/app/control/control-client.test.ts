@@ -18,13 +18,14 @@ import {
   notificationFrame,
   requestFrame,
 } from '../../../../../utils/json-rpc';
+import { log, Modules } from '../../../../../utils/log';
 
 /** A socket that records what was sent and lets a test push frames in. */
 class FakeSocket implements ControlSocketLike {
   sent: string[] = [];
   closed = false;
   onopen: (() => void) | null = null;
-  onclose: ((event?: { code?: number }) => void) | null = null;
+  onclose: ((event?: { code?: number; reason?: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
 
@@ -372,12 +373,12 @@ describe('ControlClient lifecycle', () => {
     const context = harness();
     expect(context.sockets).toHaveLength(1);
 
-    context.socket.onclose?.();
+    context.socket.onclose?.({ code: 1006, reason: '' });
     vi.advanceTimersByTime(CONTROL_RECONNECT_BASE_MS);
     expect(context.sockets).toHaveLength(2);
 
     // Second failure waits twice as long: not yet at the old delay.
-    context.sockets[1].onclose?.();
+    context.sockets[1].onclose?.({ code: 1006, reason: '' });
     vi.advanceTimersByTime(CONTROL_RECONNECT_BASE_MS);
     expect(context.sockets).toHaveLength(2);
     vi.advanceTimersByTime(CONTROL_RECONNECT_BASE_MS);
@@ -389,25 +390,32 @@ describe('ControlClient lifecycle', () => {
 
   it('resets the backoff once a connection opens', () => {
     const context = harness();
-    context.socket.onclose?.();
+    context.socket.onclose?.({ code: 1006, reason: '' });
     vi.advanceTimersByTime(CONTROL_RECONNECT_BASE_MS);
     context.sockets[1].onopen?.();
-    context.sockets[1].onclose?.();
+    context.sockets[1].onclose?.({ code: 1006, reason: '' });
     // Back to the base delay, not the doubled one.
     vi.advanceTimersByTime(CONTROL_RECONNECT_BASE_MS);
     expect(context.sockets).toHaveLength(3);
   });
 
-  it('does not reconnect after the hub refuses the display', () => {
+  it('reports a refused display and does not reconnect', () => {
     // The mirror of the panel socket's behaviour, and the reason
     // `ControlSocketLike.onclose` carries a code at all: a display launched
     // with a mistyped ?controlToken used to reconnect into the same 1008
     // refusal for the life of the exhibit, logging only a generic socket
     // error.
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const context = harness();
-    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION });
+    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION, reason: 'bad token' });
     vi.advanceTimersByTime(CONTROL_RECONNECT_MAX_MS * 4);
+
+    expect(warning).toHaveBeenCalledWith(
+      Modules.APP,
+      'control: the hub refused this display (check the ?controlToken in its URL); not retrying'
+    );
     expect(context.sockets).toHaveLength(1);
+    warning.mockRestore();
   });
 
   it('still reconnects after a close that carries no code', () => {
@@ -422,9 +430,44 @@ describe('ControlClient lifecycle', () => {
   it('does not reconnect after dispose', () => {
     const context = harness();
     context.client.dispose();
-    context.socket.onclose?.();
+    context.socket.onclose?.({ code: 1000, reason: '' });
     vi.advanceTimersByTime(CONTROL_RECONNECT_MAX_MS * 2);
     expect(context.sockets).toHaveLength(1);
+  });
+
+  it('does not warn when a socket closes normally', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const context = harness();
+
+    context.socket.onclose?.({ code: 1000, reason: 'normal closure' });
+
+    expect(warning).not.toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
+  it('treats an invalid configured URL as a reconnectable socket failure', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const openSocket = vi.fn();
+    const events = new EventGroup();
+    const client = new ControlClient({
+      socketUrl: 'not a url',
+      token: null,
+      invoke: () => undefined,
+      subscribe: () => () => {},
+      events,
+      openSocket,
+    });
+
+    expect(() => client.connect()).not.toThrow();
+    expect(openSocket).not.toHaveBeenCalled();
+    expect(warning).toHaveBeenCalledWith(
+      Modules.APP,
+      'control: could not open the socket:',
+      expect.any(TypeError)
+    );
+
+    client.dispose();
+    warning.mockRestore();
   });
 
   it('closes the socket and stops forwarding when the EventGroup disposes', async () => {

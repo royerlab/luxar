@@ -178,10 +178,7 @@ class Viewer:
             if not isinstance(frame, dict) or frame.get("id") != request_id:
                 continue
             if "error" in frame:
-                error = frame["error"]
-                raise ControlError(
-                    int(error.get("code", 0)), str(error.get("message", "refused"))
-                )
+                raise _control_error(frame["error"])
             return frame.get("result")
 
     def recv_event(
@@ -296,6 +293,24 @@ def _with_query(url: str, *, role: str, token: Optional[str]) -> str:
     if token:
         query["token"] = token
     return urlunparse(parts._replace(query=urlencode(query)))
+
+
+def _control_error(error: Any) -> ControlError:
+    """Turn even a malformed JSON-RPC error payload into ``ControlError``."""
+    if not isinstance(error, dict):
+        return ControlError(-32603, f"malformed error response: {error!r}")
+
+    raw_code = error.get("code", 0)
+    if type(raw_code) is int:
+        code = raw_code
+    elif isinstance(raw_code, str):
+        try:
+            code = int(raw_code)
+        except ValueError:
+            return ControlError(-32603, f"malformed error response: {error!r}")
+    else:
+        return ControlError(-32603, f"malformed error response: {error!r}")
+    return ControlError(code, str(error.get("message", "refused")))
 
 
 def _event_from_frame(frame: Any) -> Optional[Tuple[str, Any]]:

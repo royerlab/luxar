@@ -171,6 +171,9 @@ Append parameters to the viewer URL to control startup behavior.
 | `src` | string | Zarr dataset URL or local path. |
 | `theme` | string | Initial theme. One of: `light`, `dark`, `liquid-glass`, `frosted-glass`. |
 | `title` | string | Browser tab title (`document.title`). Serve-family commands derive it from the dataset file name; a scene's authored `viewer_config.title` overrides it. Dropped when you switch datasets in the viewer -- the tab is then named after the dataset you switched to. |
+| `control` | flag \| WebSocket URL | Attach this viewer to the serving app's control hub. A URL selects an explicit hub and must be same-origin unless `controlAllowCrossOrigin` is present. |
+| `controlToken` | string | Shared control-hub token, matching `luxar serve --control-token`. Query-string tokens are visible in browser history and are only a LAN convenience. |
+| `controlAllowCrossOrigin` | flag | Permit an explicit `control` URL to cross the page origin. Without this flag, explicit control sockets are same-origin only; use it only with an authenticated or explicitly origin-allow-listed hub. |
 | `debug` | flag | Enable the debug interface (developer use). |
 | `no-cache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
 | `no-slice-cache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
