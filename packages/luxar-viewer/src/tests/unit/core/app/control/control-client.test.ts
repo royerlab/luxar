@@ -418,6 +418,19 @@ describe('ControlClient lifecycle', () => {
     warning.mockRestore();
   });
 
+  it('retains token guidance when a refusal has no reason', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const context = harness();
+
+    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION });
+
+    expect(warning).toHaveBeenCalledWith(
+      Modules.APP,
+      'control: the hub refused this display (check the ?controlToken in its URL); not retrying'
+    );
+    warning.mockRestore();
+  });
+
   it('still reconnects after a close that carries no code', () => {
     // A dropped network is not a refusal, so the refusal short-circuit must
     // not have swallowed the ordinary path.
