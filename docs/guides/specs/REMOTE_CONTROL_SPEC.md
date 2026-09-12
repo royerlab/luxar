@@ -238,7 +238,7 @@ controller: `call(method, *params)` is the engine room and the escape hatch,
 with snake_case wrappers for the handful most used —
 `get_viewer_state`, `get_dimensions`, `set_dimension_value`, `get_camera_pose`,
 `fly_to`, `recenter_camera`, `subscribe` / `unsubscribe`, plus `recv_event` for
-reading subscribed notifications. A refusal arrives as `ControlError` carrying
+reading notifications. A refusal arrives as `ControlError` carrying
 the JSON-RPC code, and `ControlError.no_viewer_attached`
 distinguishes "nothing is listening yet" from "that failed" — a display that has
 not booted is something a kiosk script waits for, not an error to abort on.
