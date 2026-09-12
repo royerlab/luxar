@@ -320,6 +320,25 @@ def test_annotate_e_only_skips_quality(levels_store: Path) -> None:
         assert e[-1] == pytest.approx(1.0)
 
 
+def test_annotate_retrofits_spatial_footprint(levels_store: Path) -> None:
+    root = zc_open_group(str(levels_store), mode="r+")
+    for name in (key for key in root.group_keys() if key.startswith("child_")):
+        child = root[name]
+        stats = dict(child.attrs.get("level_stats", {}))
+        stats.pop("median_footprint", None)
+        stats.pop("footprint_dims", None)
+        child.attrs["level_stats"] = stats
+    zc_consolidate(root)
+
+    annotate_quality_store(levels_store, device="cpu")
+
+    root = zarr.open_group(str(levels_store), mode="r")
+    for name in (key for key in root.group_keys() if key.startswith("child_")):
+        stats = root[name].attrs["level_stats"]
+        assert stats["median_footprint"] > 0
+        assert stats["footprint_dims"] == [0, 1, 2]
+
+
 def test_annotate_dry_run_writes_nothing(levels_store: Path) -> None:
     _strip_quality_attrs(levels_store)
     before_hash = zarr.open_group(str(levels_store), mode="r").attrs["content_hash"]
@@ -330,6 +349,24 @@ def test_annotate_dry_run_writes_nothing(levels_store: Path) -> None:
     assert not _collect_quality_attrs(levels_store)
     after_hash = zarr.open_group(str(levels_store), mode="r").attrs["content_hash"]
     assert after_hash == before_hash
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_cheap_annotation_does_not_materialize_full_levels(
+    levels_store: Path, monkeypatch: pytest.MonkeyPatch, dry_run: bool
+) -> None:
+    def fail_load(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("default annotation must not load full splat levels")
+
+    monkeypatch.setattr("luxar.gsplats.lod.annotate._load_flat", fail_load)
+    annotate_quality_store(levels_store, device="cpu", dry_run=dry_run)
+
+    if not dry_run:
+        root = zarr.open_group(str(levels_store), mode="r")
+        for name in (key for key in root.group_keys() if key.startswith("child_")):
+            stats = root[name].attrs["level_stats"]
+            assert stats["median_footprint"] > 0
+            assert stats["footprint_dims"] == [0, 1, 2]
 
 
 def test_annotate_refreshes_content_hash(levels_store: Path) -> None:
@@ -564,6 +601,41 @@ def test_annotate_leaf_skips_nonfinite_energy_fraction() -> None:
 
     # total_raw=inf ⇒ fraction nan ⇒ skipped, matching the build (no 0.0 stamp).
     assert report.leaves[0].energy_fraction_cum == []
+
+
+def test_non_lod_annotation_never_decodes_cholesky_offdiag() -> None:
+    """Ordinary leaves keep the cheap diagonal-only annotation path."""
+    from luxar.gsplats.lod.annotate import AnnotateReport, _annotate_leaf
+
+    offdiag = object()
+
+    class _FakeGroup:
+        def __init__(self) -> None:
+            self._arrays: Dict[str, Any] = {
+                "amplitudes": np.ones(2, dtype=np.float64),
+                "cholesky_factors_diag": np.ones((2, 3), dtype=np.float64),
+                "cholesky_factors_offdiag": offdiag,
+            }
+            self.attrs: Dict[str, Any] = {}
+            self.path = "leaf"
+
+        def __contains__(self, key: str) -> bool:
+            return key in self._arrays
+
+        def __getitem__(self, key: str) -> Any:
+            return self._arrays[key]
+
+    class _FakeDecoder:
+        def decode(self, arr: Any, _root: Any) -> np.ndarray:
+            if arr is offdiag:
+                raise AssertionError("non-LOD annotation decoded off-diagonal factors")
+            return np.asarray(arr)
+
+    group = _FakeGroup()
+    report = AnnotateReport(path="mem", dry_run=True)
+    _annotate_leaf(group, group, _FakeDecoder(), report, dry_run=True)
+
+    assert report.leaves[0].n_splats == 2
 
 
 def test_annotate_is_idempotent(levels_store: Path) -> None:

@@ -24,12 +24,15 @@ def test_all_external_reference_audits_are_declared() -> None:
     assert [audit.name for audit in audit_module.AUDITS] == [
         "Documentation links",
         "Demo click-throughs",
+        "Zenodo record snapshots",
         "Zenodo manifest pins",
         "Hosted gallery media",
     ]
-    assert audit_module.AUDITS[2].required_env == ("ZENODO_TOKEN",)
-    assert audit_module.AUDITS[2].command == ("make", "check-zenodo-live")
-    assert audit_module.AUDITS[3].command == ("make", "check-gallery-media")
+    assert audit_module.AUDITS[2].required_env == ()
+    assert audit_module.AUDITS[2].command == ("make", "check-zenodo-snapshots")
+    assert audit_module.AUDITS[3].required_env == ("ZENODO_TOKEN",)
+    assert audit_module.AUDITS[3].command == ("make", "check-zenodo-live")
+    assert audit_module.AUDITS[4].command == ("make", "check-gallery-media")
 
 
 def test_make_targets_use_the_intended_python_environments() -> None:
@@ -39,6 +42,11 @@ def test_make_targets_use_the_intended_python_environments() -> None:
         "check-external-references:  ## Run all network-backed reference audits"
         " (report-only)\n\t$(HATCH) run python scripts/run_external_reference_audits.py"
         in makefile
+    )
+    assert (
+        "check-zenodo-snapshots:  ## Compare captured Zenodo record text with live"
+        " records (opt-in)\n\t$(HATCH) run python scripts/zenodo_record_text/capture.py"
+        " --check" in makefile
     )
     assert (
         "check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit"
@@ -126,7 +134,7 @@ def test_missing_configuration_is_a_notice_without_running(monkeypatch) -> None:
 
     monkeypatch.setattr(subprocess, "run", unexpected_run)
 
-    result = audit_module.run_audit(audit_module.AUDITS[2], env={})
+    result = audit_module.run_audit(audit_module.AUDITS[3], env={})
 
     assert result.level is audit_module.Level.NOTICE
     assert result.detail == "not configured; leg skipped: ZENODO_TOKEN"
@@ -154,6 +162,7 @@ def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) ->
             (2, "audit output"),
             (0, "[OK] host-a"),
             (1, "audit output"),
+            (1, "audit output"),
             (0, "gallery media verified"),
         )
     )
@@ -173,6 +182,7 @@ def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) ->
     assert [result.level for result in results] == [
         audit_module.Level.WARNING,
         audit_module.Level.PASS,
+        audit_module.Level.WARNING,
         audit_module.Level.WARNING,
         audit_module.Level.PASS,
     ]
@@ -229,7 +239,7 @@ def test_rejected_required_credential_is_a_configuration_error(
     )
 
     result = audit_module.run_audit(
-        audit_module.AUDITS[2], env={"ZENODO_TOKEN": "rejected-token"}
+        audit_module.AUDITS[3], env={"ZENODO_TOKEN": "rejected-token"}
     )
 
     assert result.level is audit_module.Level.ERROR
@@ -319,7 +329,7 @@ def test_zenodo_transport_failures_remain_warnings(monkeypatch, failure: str) ->
     )
 
     result = audit_module.run_audit(
-        audit_module.AUDITS[2], env={"ZENODO_TOKEN": "configured-token"}
+        audit_module.AUDITS[3], env={"ZENODO_TOKEN": "configured-token"}
     )
 
     assert result.level is audit_module.Level.WARNING

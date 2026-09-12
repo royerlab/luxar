@@ -788,6 +788,8 @@ def test_a_reduction_recomputes_energy_stamps_and_drops_quality(
         assert level.stats["n_splats_total"] == level.n_splats_total
         assert level.stats["reference_energy"] == pytest.approx(expected_w)
         assert "quality" not in level.stats
+        assert "median_footprint" not in level.stats
+        assert "footprint_dims" not in level.stats
         assert "refine_stats" not in level.stats
         assert "lod_cutpoints" not in level.stats
 
@@ -1043,6 +1045,9 @@ def test_tree_restamp_shares_finest_energy_and_drops_quality() -> None:
     from luxar.gsplats.tree import map_leaves
 
     source = _pyramid().tree
+    for child in source.children:
+        child.meta["stats"]["median_footprint"] = 4.0
+        child.meta["stats"]["footprint_dims"] = [0, 1, 2]
 
     def scale_leaf(leaf: Any) -> Any:
         return GSplatData.from_tree(leaf).scale_intensity(0.5).tree
@@ -1053,6 +1058,8 @@ def test_tree_restamp_shares_finest_energy_and_drops_quality() -> None:
     expected_w = total_self_energy(finest)
     for level in data.substitutive_levels:
         assert "quality" not in level.stats
+        assert "median_footprint" not in level.stats
+        assert "footprint_dims" not in level.stats
         assert level.stats["reference_energy"] == pytest.approx(expected_w)
 
 

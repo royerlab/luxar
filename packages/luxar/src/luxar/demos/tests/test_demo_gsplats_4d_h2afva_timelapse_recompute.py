@@ -129,8 +129,10 @@ class TestTheRecipeConstantsAgreeWithEachOther:
         read a whole timepoint at a time."""
         assert demo.CHUNK_PROFILE == "archive"
 
-    def test_the_progressive_ladder_has_the_recorded_twelve_rungs(self):
-        assert demo.EXPECTED_RUNGS == 12
+    def test_the_progressive_ladder_has_the_recorded_four_rungs(self):
+        assert (
+            demo.EXPECTED_RUNGS == 4
+        )  # equal-count --n-lods 4 (check-demo-ladders floor)
 
 
 class TestTheRecomputeCommandsAreRealCliPaths:

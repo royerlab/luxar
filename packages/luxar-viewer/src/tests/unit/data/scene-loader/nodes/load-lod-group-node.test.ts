@@ -123,6 +123,16 @@ function makeChildNode(
   };
 }
 
+function withMedianFootprint(node: SceneNode, value: unknown): SceneNode {
+  return {
+    ...node,
+    attrs: {
+      ...node.attrs,
+      level_stats: { median_footprint: value, footprint_dims: [0, 1, 2] },
+    } as SceneNode['attrs'],
+  };
+}
+
 /** A ``points`` leaf child (the finest level of a points-substitutive ladder). */
 function makePointsChildNode(
   path: string,
@@ -323,6 +333,28 @@ describe('loadLodGroupNode — registry registration', () => {
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
     expect(reg.get('/lod')!.selector).toBe('screen-area');
+  });
+
+  it('reads valid per-level median footprint stamps and ignores invalid ones', async () => {
+    attachStubChildren();
+    const reg = new LODGroupRegistry({
+      getCamera: () => new THREE.Camera(),
+      getViewportSize: () => ({ width: 100, height: 100 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode([
+      withMedianFootprint(makeChildNode('/lod/child_0', 0), 2.5),
+      withMedianFootprint(makeChildNode('/lod/child_1', 0.5), -1),
+    ]);
+
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    expect(reg.get('/lod')!.children.map((child) => child.medianFootprint)).toEqual([
+      2.5,
+      undefined,
+    ]);
+    expect(reg.get('/lod')!.children[0]!.footprintDims).toEqual([0, 1, 2]);
   });
 
   it('whitelists unknown selector spellings to the legacy diagonal metric', async () => {
