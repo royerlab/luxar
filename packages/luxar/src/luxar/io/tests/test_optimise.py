@@ -242,6 +242,69 @@ def build_scene(path: Path, **kwargs: Any) -> Path:
     return path
 
 
+def build_animated_lines_store(
+    path: Path,
+    *,
+    playing: bool = True,
+    laddered: bool = False,
+    n_frames: int = 8,
+    atoms_per_frame: int = 2,
+    node_type: str = "lines",
+) -> Path:
+    """A small slice-major indexed node with repeated atoms per frame."""
+    root = open_group(path, mode="w")
+    root.attrs.update(
+        {
+            "type": "scene",
+            "scene_dimensions": {
+                "dimensions": [
+                    {"name": "x", "display": True, "step": None},
+                    {"name": "y", "display": True, "step": None},
+                    {"name": "z", "display": True, "step": None},
+                    {"name": "time", "display": False, "step": 1.0},
+                ]
+            },
+            "viewer_config": {"animation": [{}, {}, {}, {"playing": playing}]},
+        }
+    )
+    node = root.create_group("tracks")
+    if laddered:
+        node.attrs.update({"kind": "lod", "type": "group"})
+        node = node.create_group("level_0")
+    atom = 10
+    n_atoms = n_frames * atoms_per_frame
+    ordering = {"ordering": "hilbert", "slice_dims": [3], "chunk_size": atom}
+    if node_type == "lines":
+        node.attrs.update({"type": node_type, "ndim": 4, "vertex_ordering": ordering})
+        bounds_name = "vertex_chunk_bounds"
+        array_name = "vertices"
+    else:
+        node.attrs.update({"type": node_type, **ordering})
+        bounds_name = "chunk_bounds"
+        array_name = "positions" if node_type == "points" else "centers"
+    bounds = np.zeros((n_atoms, 4, 2), dtype=np.float32)
+    frame_values = np.repeat(np.arange(n_frames), atoms_per_frame)
+    bounds[:, 3, 0] = frame_values
+    bounds[:, 3, 1] = frame_values
+    create_array(
+        node,
+        bounds_name,
+        data=bounds,
+        chunks=bounds.shape,
+        compressor=None,
+    )
+    vertices = np.zeros((n_atoms * atom, 4), dtype=np.uint16)
+    create_array(
+        node,
+        array_name,
+        data=vertices,
+        chunks=(atom, 4),
+        compressor=None,
+    )
+    consolidate(root)
+    return path
+
+
 #: A minimal valid PNG (1x1 red pixel) — an overlay payload without needing PIL.
 _TINY_PNG = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
@@ -1668,6 +1731,76 @@ class TestNeverShrink:
             plan = plan_optimisation(root, target_bytes=target)
             for a in plan.arrays:
                 assert a.target_n_chunks <= a.source_n_chunks, (a.path, target)
+
+
+class TestPlaybackWarnings:
+    @pytest.mark.parametrize(
+        ("node_type", "array_name"),
+        [("lines", "vertices"), ("points", "positions"), ("gsplats", "centers")],
+    )
+    def test_playing_flat_node_reports_frames_per_chunk(
+        self, tmp_path: Path, node_type: str, array_name: str
+    ) -> None:
+        src = build_animated_lines_store(
+            tmp_path / f"animated-{node_type}.luxar.zarr", node_type=node_type
+        )
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+
+        assert len(plan.playback_warnings) == 1
+        warning = plan.playback_warnings[0]
+        assert warning.node_path == "tracks"
+        assert warning.array_path == f"tracks/{array_name}"
+        assert warning.dimension_name == "time"
+        assert warning.frames_per_chunk == pytest.approx(3.0)
+        assert warning.n_chunks == 3
+
+        if node_type != "lines":
+            return
+        result = _run(str(src), "--target-bytes", "480", "--dry-run")
+        assert result.exit_code == 0, result.output
+        assert "tracks/vertices would span up to 3.0 time frames/chunk" in result.output
+
+        output = tmp_path / "out.luxar.zarr"
+        result = _run(str(src), str(output), "--target-bytes", "480")
+        assert result.exit_code == 0, result.output
+        assert "tracks/vertices would span up to 3.0 time frames/chunk" in result.output
+
+    @pytest.mark.parametrize(
+        ("playing", "laddered", "n_frames", "target_bytes"),
+        [
+            (False, False, 8, 240),
+            (True, True, 8, 240),
+            (True, False, 2, 240),
+            (True, False, 8, 240),
+        ],
+    )
+    def test_benign_or_non_playback_layouts_do_not_warn(
+        self,
+        tmp_path: Path,
+        playing: bool,
+        laddered: bool,
+        n_frames: int,
+        target_bytes: int,
+    ) -> None:
+        src = build_animated_lines_store(
+            tmp_path / "quiet.luxar.zarr",
+            playing=playing,
+            laddered=laddered,
+            n_frames=n_frames,
+        )
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=target_bytes)
+
+        assert plan.playback_warnings == []
+
+    def test_missing_bounds_metadata_is_silent(self, tmp_path: Path) -> None:
+        src = build_animated_lines_store(tmp_path / "unsupported.luxar.zarr")
+        root = open_group(src, mode="a")
+        del root["tracks/vertex_chunk_bounds"]
+        consolidate(root)
+
+        plan = plan_optimisation(root, target_bytes=480)
+
+        assert plan.playback_warnings == []
 
 
 # --------------------------------------------------------------------------

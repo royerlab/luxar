@@ -321,12 +321,14 @@ luxar profiles                   # Network simulation profiles
 # `--profile hosting` (256 KB) trades PARTIAL-QUERY bytes for full-load
 # requests: a Points/GSplats node the viewer SLICES into pays 4.5x the bytes per
 # partial hit vs `local`. Size up only when the access pattern is "load whole".
-# On an ANIMATED node judge the profile by FRAMES PER CHUNK (rows per chunk /
-# atom x the atom's hidden-axis span): a 1 MB chunk of a 250-frame un-laddered
+# On an ANIMATED node judge the profile by FRAMES PER CHUNK (group consecutive
+# bounds atoms as planned zarr chunks, then measure each group's axis span):
+# a 1 MB chunk of a 250-frame un-laddered
 # Lines node holds ~6 frames; boundary prefetch now starts the next chunk while
 # preceding frames play, though its average lead is only about half a chunk (#2686);
 # a LADDERED played splat node wants 1 MB so its coarse rung stays resident
-# (#2377). The pass itself is per-array and hidden-dim blind — decide per node.
+# (#2377). The pass warns when enabled playback on an un-laddered node would
+# exceed two frames per chunk across multiple chunks; decide the final trade per node.
 luxar optimise scene.luxar.zarr out.luxar.zarr             # 64 KB default
 luxar optimise scene.luxar.zarr --dry-run                  # report the plan, write nothing
 luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB

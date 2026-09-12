@@ -470,8 +470,9 @@ worse than a partitioned store's re-chunked 12. Additive-only and re-chunking
 are a package, not alternatives.
 
 **But judge a chunk profile on the node's ACCESS PATTERN, not on the store.**
-`optimise` sizes chunks per array from a byte budget only; it knows nothing
-about hidden dimensions. Three regimes (2026-08-30 and 2026-09-10 measurements):
+`optimise` sizes each array from a byte budget, then uses scene animation and
+index metadata for a warn-only playback check. Three regimes (2026-08-30 and
+2026-09-10 measurements):
 
 - *Laddered, played* (drosophila, h2afva): a coarse rung that fits ONE chunk
   stays cache-resident and the viewer serves every later timepoint from it
@@ -481,12 +482,13 @@ about hidden dimensions. Three regimes (2026-08-30 and 2026-09-10 measurements):
   frames the playhead crosses into the next chunk of each array. The viewer now
   prefetches the nearest next chunk boundary while the preceding frames play,
   adding about 2.9 frames of mean lead at 1 MB on this node. Here the number to
-  compute is
-  **frames-per-chunk** = (rows per zarr chunk / `chunk_size` atom) x the atom's
-  hidden-axis span from `chunk_bounds`. `hosting` (~1.5 frames per chunk) is the
+  compute is **frames-per-chunk**: group consecutive `chunk_bounds` atoms as the
+  planned zarr chunks will group them, then measure each group's inclusive
+  hidden-axis span. `hosting` (~1.5 frames per chunk) is the
   middle of the request/byte trade; the request cap of the hosted site
-  (Cloudflare Functions) rules out `local`'s 3,500 chunks. Issue #2686 landed
-  that viewer-side boundary prefetch rather than the proposed per-node guard.
+  (Cloudflare Functions) rules out `local`'s 3,500 chunks. `optimise` now warns
+  when an actively played, un-laddered node would exceed two frames per chunk
+  across multiple chunks.
 - *Not animated* (keypress-navigated, refine pass): smaller is a pure win.
 
 The slice-major ordering is NOT something to add — it already exists
