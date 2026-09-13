@@ -166,7 +166,8 @@ MAX_ELEMENTS = 50_000
 # anchor without zooming; the fix that stays within the recipes' own contract
 # is a shallower, gentler ladder: K=4 and TWO levels gives N/4 and N/16, so the
 # opening pose shows ~19K splats per embryo and one zoom step reaches N/4.
-# The general "finer levels should trigger sooner" question is #2685.
+# The #2685 corpus sweep retained the general half-screen anchor; `lod-bias`
+# remains the explicit session override for users who want earlier refinement.
 FACTOR = 4
 LEVELS = 2
 # NB: the overview coarse↔fine switch uses viewport-relative coverage_fraction

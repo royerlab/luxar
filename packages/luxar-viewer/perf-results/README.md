@@ -54,6 +54,42 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
   arm, not a genuine-Lines-levels arm. Active-level strings record the selector
   units and whether footprint stamps are present; stamp presence does not imply
   the footprint selector applies to the current display dimensions.
+
+### LOD-bias decision (#2685)
+
+The final three-repeat sweep ran on September 13, 2026 at `666172e44` with
+bundled Chromium, WebGL over ANGLE/Vulkan, and an NVIDIA RTX PRO 6000 Blackwell.
+The selected required-store corpus covered both selector paths: two occupancy
+fallback examples, dense real-scale fallback Lines, one fully stamped GSplat
+example, and the mixed stamped/fallback Tribolium recipes contract. Every
+headline frame spread was at most `0.006`; median frame cadence was `16.7 ms`
+at both viewpoints in every arm, so the decision rests on deterministic level,
+residency, request, and byte changes rather than a frame delta hidden by noise.
+
+| Scene              | Selector provenance     | Bias 1 opening / 4x elements |                Bias 2 |                Bias 4 |        Requests / bytes, bias 1 → 2 |
+| ------------------ | ----------------------- | ---------------------------: | --------------------: | --------------------: | ----------------------------------: |
+| Lines LOD example  | occupancy fallback      |               1,735 / 27,835 |         6,948 / 8,000 |        27,835 / 8,000 |         77 / 1.20 MB → 86 / 1.29 MB |
+| ZebraHub Lines     | occupancy fallback      |        1,078,802 / 4,324,178 | 4,324,178 / 4,324,178 | 4,324,178 / 4,324,178 | 1,357 / 22.33 MB → 3,620 / 34.57 MB |
+| Zebrafish 4D       | occupancy fallback      |                  341 / 1,369 |         1,369 / 1,369 |         1,369 / 1,369 |       121 / 2.04 MB → 121 / 1.99 MB |
+| GSplat LOD example | footprint stamped       |                      45 / 45 |               45 / 45 |               45 / 45 |            59 / 1.05 MB → unchanged |
+| Tribolium recipes  | mixed; `levels` stamped |            111,029 / 152,791 |     111,029 / 152,791 |     111,029 / 375,263 |          930 / 16.73 MB → unchanged |
+
+Decision:
+
+- Keep `WHOLE_OBJECT_FINEST_ANCHOR = 0.5`. Bias 2 promotes ZebraHub's opening
+  pose from 1.08M to 4.32M committed elements, adds 2,263 requests, and transfers
+  55% more bytes. That is exactly the eager-finest dense-Line regime the anchor
+  exists to prevent; the high-end benchmark GPU absorbing it at 60 fps is not a
+  reason to make every client pay the residency and network cost.
+- Keep `lod-bias` available to both occupancy and footprint selection. It is a
+  no-op when a stamped ladder is already saturated at the finest level, but the
+  stamped Tribolium `levels` ladder changes from level 1 to level 2 after the 4x
+  dolly at bias 4, raising committed scene elements 2.46x without changing its
+  coarse opening contract. The knob therefore remains a useful explicit quality
+  override rather than a fallback-store compatibility switch.
+- Keep the `1.5 px` median-footprint limit. The sweep found no unstable selector
+  or frame behaviour that justifies retuning it independently of the retained
+  bias override.
 - A separate `audit-dense-points-adaptive` row runs WITHOUT the `dpr=1` pin and
   records where the adaptive-DPR controller settles after 30 s.
 - A `spread` above ~0.15 on a headline metric means the host was busy; re-run

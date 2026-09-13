@@ -742,9 +742,11 @@ to counts.
   viewer uses it only for a derived `selector="screen-area"` ladder whose
   displayed columns match those dimensions, projects it in logical CSS pixels,
   and selects the coarsest level at or below 1.5 px. This holds the finest level
-  much longer than occupancy selection and can multiply resident geometry (up
-  to 16.7x in the representative #2685 measurement); the 1.5 px policy remains
-  provisional pending the full scene sweep. Missing, invalid, or mismatched
+  much longer than occupancy selection and can multiply resident geometry. The
+  final #2685 stamped/fallback corpus sweep retained the 1.5 px policy and kept
+  `lod-bias` on stamped selection: the knob is inert when a ladder is already
+  finest, but a non-saturated stamped ladder still uses it as an explicit
+  quality override. Missing, invalid, or mismatched
   stamps keep the occupancy selector unchanged; explicit legacy
   `coverage_fractions` are therefore never overridden. `lod-bias` remains an
   area factor, so the accepted footprint scales by `1/sqrt(b)`.
