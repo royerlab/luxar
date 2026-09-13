@@ -323,9 +323,9 @@ export function pickChildWithHysteresis(
 }
 
 /**
- * Median-sigma limit in logical CSS pixels. GSplats draw to about 3σ, so 1.5 px
- * corresponds to a typical rendered blob about 9 px across. The stamped and
- * fallback corpus sweep in #2685 retained this limit.
+ * Current viewer median-sigma limit in logical CSS pixels. GSplats draw to about
+ * 3σ, so 1.5 px corresponds to a typical rendered blob about 9 px across. The
+ * #2685 sweep retained this policy.
  */
 export const MAX_MEDIAN_FOOTPRINT_PX = 1.5;
 

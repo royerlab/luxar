@@ -741,15 +741,15 @@ to counts.
   name the node's stored columns (after any scene `dim_order` mapping). The
   viewer uses it only for a derived `selector="screen-area"` ladder whose
   displayed columns match those dimensions, projects it in logical CSS pixels,
-  and selects the coarsest level at or below 1.5 px. This holds the finest level
-  much longer than occupancy selection and can multiply resident geometry. The
-  final #2685 stamped/fallback corpus sweep retained the 1.5 px policy and kept
-  `lod-bias` on stamped selection: the knob is inert when a ladder is already
-  finest, but a non-saturated stamped ladder still uses it as an explicit
-  quality override. Missing, invalid, or mismatched
-  stamps keep the occupancy selector unchanged; explicit legacy
-  `coverage_fractions` are therefore never overridden. `lod-bias` remains an
-  area factor, so the accepted footprint scales by `1/sqrt(b)`.
+  and selects the coarsest level at or below the viewer's current 1.5 px policy.
+  This holds the finest level much longer than occupancy selection and can
+  multiply resident geometry (up to 16.7x in the representative #2685
+  measurement). The viewer retained that policy after the #2685 sweep.
+  Missing, invalid, or mismatched stamps keep the occupancy selector unchanged;
+  explicit legacy `coverage_fractions` are therefore never overridden.
+  `lod-bias` remains an area factor, so the accepted footprint scales by
+  `1/sqrt(b)`; for bias ≥ 1 it is inert once the finest stamped level is
+  selected, while bias below 1 can select a coarser level.
   Content-changing rewrites drop both measured keys rather than carrying stale
   values; rebuilding or running `gsplat annotate-quality` restores them. Points
   and Lines have no equivalent stamp yet and remain occupancy-selected.

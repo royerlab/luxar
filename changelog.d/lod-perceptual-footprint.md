@@ -7,5 +7,5 @@
   swaps rather than the occupancy selector's cross-fade band. This deliberately
   holds fine geometry much longer than occupancy selection: in a representative
   300k-splat ladder it committed up to 16.7x as many splats across the
-  multi-object viewing range. The 1.5 px limit is provisional pending the
-  scene-by-scene performance sweep tracked in #2685.
+  multi-object viewing range. The #2685 scene sweep retained the current 1.5 px
+  viewer policy and the explicit `lod-bias` override.
