@@ -63,13 +63,18 @@ after eviction.
 Reproduces a single pinned-depth timelapse transition while sweeping the
 page-wide OPFS read cap. Generate the 51-frame H2AFVA scene with
 `hatch run python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --no-serve`,
-serve `datasets/demos/gsplats_4d_h2afva_timelapse.luxar.zarr` with
-`hatch run luxar serve ... --port 9011`, and run the viewer dev server on port 5198. Use a persistent Chrome profile and run the harness twice: the first pass
+serve the resulting store on port 9011, and run the viewer dev server on port 5198. Use a persistent Chrome profile and run the harness twice: the first pass
 fills missing L2 entries; only compare the second pass when every arm reports
 `misses=0`. As with the timelapse navigation bench, verify that neither port has
 a stale listener from another checkout before recording results.
 
 ```bash
+(cd <repo-root> && \
+  hatch run python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --no-serve)
+(cd <repo-root> && \
+  hatch run luxar serve datasets/demos/gsplats_4d_h2afva_timelapse.luxar.zarr --port 9011)
+pnpm dev --port 5198
+
 node scripts/perf/opfs-deep-pass-bench.mjs \
   --url 'http://127.0.0.1:5198/?src=http://127.0.0.1:9011' \
   --profile-dir /tmp/luxar-opfs-profile \

@@ -398,8 +398,11 @@ export async function main(argv = process.argv) {
     failure = error instanceof Error ? (error.stack ?? error.message) : String(error);
     throw error;
   } finally {
-    writeResults(options, results, failure);
-    await context.close();
+    try {
+      writeResults(options, results, failure);
+    } finally {
+      await context.close();
+    }
   }
   console.error(`wrote ${options.out}`);
 }
