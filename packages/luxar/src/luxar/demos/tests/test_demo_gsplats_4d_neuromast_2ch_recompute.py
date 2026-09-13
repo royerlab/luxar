@@ -295,7 +295,7 @@ def test_compiled_scene_dimensions_cover_both_channels(tmp_path) -> None:
         ),
         _tiny_gsplat_store(
             tmp_path / "nuclei.gsplats.zarr",
-            [[0, 1, 2, 0], [11, 21, 31, 1]],
+            [[0.9999, 1.9999, 2.9999, 0], [10.0001, 20.0001, 30.0001, 1]],
         ),
     ]
 
@@ -303,10 +303,26 @@ def test_compiled_scene_dimensions_cover_both_channels(tmp_path) -> None:
     dimensions = dict(open_group(output, mode="r").attrs)["scene_dimensions"]
     by_name = {dimension["name"]: dimension for dimension in dimensions["dimensions"]}
 
-    assert by_name["Z"]["range"] == [0.0, 11.0]
-    assert by_name["Y"]["range"] == [1.0, 21.0]
-    assert by_name["X"]["range"] == [2.0, 31.0]
+    assert by_name["Z"]["range"] == pytest.approx([0.9999, 10.0001])
+    assert by_name["Y"]["range"] == pytest.approx([1.9999, 20.0001])
+    assert by_name["X"]["range"] == pytest.approx([2.9999, 30.0001])
     assert all(by_name[name]["unit"] == "µm" for name in ("Z", "Y", "X"))
+
+
+def test_compiled_scene_rejects_channels_with_divergent_bounds(tmp_path) -> None:
+    channel_paths = [
+        _tiny_gsplat_store(
+            tmp_path / "membranes.gsplats.zarr",
+            [[1, 2, 3, 0], [10, 20, 30, 1]],
+        ),
+        _tiny_gsplat_store(
+            tmp_path / "nuclei.gsplats.zarr",
+            [[2, 2, 3, 0], [11, 20, 30, 1]],
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="co-register"):
+        demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
 
 
 class TestTheRecipeConstantsMatchTheRecordedRun:

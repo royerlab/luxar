@@ -536,8 +536,23 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
             if bounds is None:
                 raise ValueError(f"Channel has no centre bounds: {path}")
             channel_bounds.append(bounds)
-        bmin = np.min([bounds[0] for bounds in channel_bounds], axis=0)
-        bmax = np.max([bounds[1] for bounds in channel_bounds], axis=0)
+        channel_mins = np.stack([bounds[0] for bounds in channel_bounds])
+        channel_maxs = np.stack([bounds[1] for bounds in channel_bounds])
+        bmin = np.min(channel_mins, axis=0)
+        bmax = np.max(channel_maxs, axis=0)
+        endpoint_delta = np.maximum(
+            np.ptp(channel_mins, axis=0), np.ptp(channel_maxs, axis=0)
+        )
+        quantization_step = np.nextafter((bmax - bmin) / 65535, np.inf)
+        divergent = endpoint_delta > quantization_step
+        if np.any(divergent):
+            axes = np.asarray(("Z", "Y", "X", "Time"))[divergent]
+            raise ValueError(
+                "Neuromast channels do not co-register within one uint16 "
+                f"coordinate step on axes {', '.join(axes)}: "
+                f"endpoint deltas={endpoint_delta[divergent]}, "
+                f"tolerances={quantization_step[divergent]}"
+            )
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
         dims = Dimensions(
             [
