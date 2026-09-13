@@ -1005,6 +1005,22 @@ describe('MultiLevelCachingStore', () => {
       expect(l1.chunksSize).toBe(0);
     });
 
+    it('stops at L2 when a queued OPFS read is canceled', async () => {
+      await store.init();
+      const controller = new AbortController();
+      const l2Store = (store as any).l2Store as OPFSStore;
+      vi.spyOn(l2Store, 'get').mockImplementation(async () => {
+        controller.abort();
+        return undefined;
+      });
+      const sourceGet = vi.spyOn((store as any).source, 'get');
+
+      const outcome = await (store as any).fetchKeyChain('queued.chunk', controller.signal);
+
+      expect(outcome).toEqual({ result: { ok: false, error: { kind: 'Aborted' } }, source: 'l2' });
+      expect(sourceGet).not.toHaveBeenCalled();
+    });
+
     it('should bypass cache when validating content_hash (critical fix)', async () => {
       // This test verifies the fix for the cache validation bug where
       // validation was reading .zattrs from cache, comparing cached hash

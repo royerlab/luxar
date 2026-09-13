@@ -605,6 +605,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
         this.l1Cache.set(key, l2Hit);
         return { result: ok(l2Hit), source: 'l2' };
       }
+      if (sharedSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+        return { result: err({ kind: 'Aborted' }), source: 'l2' };
+      }
     }
 
     // L3: Remote fetch (~100ms)
