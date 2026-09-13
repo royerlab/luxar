@@ -12,10 +12,12 @@ let active = 0;
 let epoch = 0;
 const queue: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
 
+/** Return the page-wide OPFS read gate occupancy. */
 export function getOpfsReadGateStats(): { active: number; queued: number } {
   return { active, queued: queue.length };
 }
 
+/** Reset gate state and reject queued readers. Intended for test isolation. */
 export function resetOpfsReadGate(): void {
   epoch += 1;
   active = 0;
@@ -32,7 +34,6 @@ export function withOpfsReadGate<T>(run: () => Promise<T>): Promise<T> {
       : new Promise<void>((resolve, reject) =>
           queue.push({
             resolve: () => {
-              if (acquiredEpoch !== epoch) return;
               active += 1;
               resolve();
             },
