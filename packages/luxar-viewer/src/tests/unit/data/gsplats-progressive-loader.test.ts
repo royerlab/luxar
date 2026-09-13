@@ -319,6 +319,26 @@ describe('GSplatsProgressiveLoader', () => {
       expect(restored.amplitudes[0]).toBeCloseTo(1.0);
     });
 
+    it('does not mark pinned scrubs as sequential cache scans', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const setSpy = vi.spyOn(sc, 'set');
+      const l = new GSplatsProgressiveLoader(
+        [lodA, lodB] as unknown as GSplatsSpatialIndexLoader[],
+        2,
+        '/g',
+        undefined,
+        sc
+      );
+
+      await l.updateView({ ...viewA, ladderDepth: 2 });
+      sc.clear();
+      setSpy.mockClear();
+      await l.updateView({ ...viewB, ladderDepth: 2 });
+
+      expect(setSpy).toHaveBeenCalledTimes(2);
+      for (const call of setSpy.mock.calls) expect(call[2]?.scan).toBe(false);
+    });
+
     it('is a no-op (no restore, always re-streams) when no SliceCache is supplied', async () => {
       const a = makeSubLoader(makeLodData(100, 3, { color: 'uint8' }));
       const b = makeSubLoader(makeLodData(50, 3, { color: 'uint8' }));

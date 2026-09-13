@@ -267,6 +267,26 @@ describe('PointsProgressiveLoader', () => {
       const restored = await l.loadPoints(viewA);
       expect(restored.positions[0]).toBeCloseTo(0.5);
     });
+
+    it('does not mark pinned scrubs as sequential cache scans', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const setSpy = vi.spyOn(sc, 'set');
+      const l = new PointsProgressiveLoader(
+        [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+        2,
+        '/p',
+        undefined,
+        sc
+      );
+
+      await l.updateView({ ...viewA, ladderDepth: 2 });
+      sc.clear();
+      setSpy.mockClear();
+      await l.updateView({ ...viewB, ladderDepth: 2 });
+
+      expect(setSpy).toHaveBeenCalledTimes(2);
+      for (const call of setSpy.mock.calls) expect(call[2]?.scan).toBe(false);
+    });
   });
 
   describe('initial load', () => {

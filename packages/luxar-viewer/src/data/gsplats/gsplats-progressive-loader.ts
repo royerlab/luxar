@@ -560,7 +560,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // ladders never complete between navigations. Mirrors Points/Lines.
       if (this.lastViewState && this._loadedLODCount > 0) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
-          scan: this._frameBudgetMs !== null || this._ladderDepth !== null,
+          scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
           ladderDepth: this._loadedLODCount,
           totalLODCount: this.nLods,
@@ -739,7 +739,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       this._ladderDepth !== null
     ) {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
-        scan: this._frameBudgetMs !== null || this._ladderDepth !== null,
+        scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,
         ladderDepth: this._loadedLODCount,
         totalLODCount: this.nLods,
