@@ -164,4 +164,4 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 
 ---
 
-_Excludes: `node_modules`, `__pycache__`, `coverage`, `dist`, `build`, `target`, `_build`, `playwright-report`, `datasets`, `delme`, `.venv`. Source: `stats/generate_stats.py`._
+_Excludes: `node_modules`, `__pycache__`, `coverage`, `dist`, `build`, `target`, `_build`, `playwright-report`, `datasets`, `delme`, `.venv`, array stores (`*.zarr/`). Source: `stats/generate_stats.py`._

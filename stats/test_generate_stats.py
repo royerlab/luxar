@@ -149,6 +149,17 @@ def test_html_report_formats_markdown_file_counts_with_thousands_separators(
     assert "1,001 markdown files" in html_report
 
 
+def test_report_footers_list_excluded_zarr_stores(tmp_path: Path) -> None:
+    html_file = tmp_path / "stats.html"
+    markdown_file = tmp_path / "stats.md"
+
+    gs.generate_html_report(_report_stats(), html_file)
+    gs.generate_markdown_report(_report_stats(), markdown_file)
+
+    assert "array stores (*.zarr/)" in html_file.read_text()
+    assert "array stores (`*.zarr/`)" in markdown_file.read_text()
+
+
 def test_html_report_does_not_treat_skipped_tests_as_failures(tmp_path: Path) -> None:
     report_stats = _report_stats()
     report_stats["tests"]["python"]["test_count"] = 101
