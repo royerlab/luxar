@@ -4,6 +4,7 @@ import { config } from '../../../config';
 import {
   getOpfsReadGateStats,
   resetOpfsReadGate,
+  withOpfsReadGate,
 } from '../../../cache/multi-level-caching-store/opfs-read-gate';
 
 // Mock File System Access API
@@ -381,6 +382,75 @@ describe('OPFSStore', () => {
       releaseReads();
       await Promise.all(reads);
       expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
+    });
+
+    it('does not start an OPFS timeout while a read waits for a slot', async () => {
+      await store.set('queued-timeout', new Uint8Array([1]));
+      let releaseSlots!: () => void;
+      const slotsBlocked = new Promise<void>((resolve) => {
+        releaseSlots = resolve;
+      });
+      const blockers = Array.from({ length: config.cache.opfsReadConcurrency }, () =>
+        withOpfsReadGate(() => slotsBlocked)
+      );
+      const originalTimeout = config.cache.opfsOperationTimeoutMs;
+      config.cache.opfsOperationTimeoutMs = 50;
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        const queuedRead = store.get('queued-timeout');
+        let settled = false;
+        void queuedRead.finally(() => {
+          settled = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 75));
+
+        expect(settled).toBe(false);
+        expect(store.getStats().breakerTripped).toBe(false);
+        expect(warnSpy.mock.calls.flat().join(' ')).not.toContain('OPFS timeout');
+
+        releaseSlots();
+        await Promise.all(blockers);
+        expect(await queuedRead).toEqual(new Uint8Array([1]));
+      } finally {
+        config.cache.opfsOperationTimeoutMs = originalTimeout;
+        releaseSlots();
+        await Promise.all(blockers);
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('re-checks the index after queueing before touching the filesystem', async () => {
+      await store.set('evicted-while-queued', new Uint8Array([1]));
+      let releaseSlots!: () => void;
+      const slotsBlocked = new Promise<void>((resolve) => {
+        releaseSlots = resolve;
+      });
+      const blockers = Array.from({ length: config.cache.opfsReadConcurrency }, () =>
+        withOpfsReadGate(() => slotsBlocked)
+      );
+      let fileReads = 0;
+      const originalGetFileHandle = mockFS.mockDirHandle.getFileHandle.bind(mockFS.mockDirHandle);
+      mockFS.mockDirHandle.getFileHandle = async (...args: unknown[]) => {
+        const handle = await originalGetFileHandle(...args);
+        const originalGetFile = handle.getFile.bind(handle);
+        return {
+          ...handle,
+          async getFile() {
+            fileReads++;
+            return originalGetFile();
+          },
+        };
+      };
+
+      const queuedRead = store.get('evicted-while-queued');
+      await vi.waitFor(() => expect(getOpfsReadGateStats().queued).toBe(1));
+      await store.delete('evicted-while-queued');
+      releaseSlots();
+      await Promise.all(blockers);
+
+      expect(await queuedRead).toBeUndefined();
+      expect(fileReads).toBe(0);
     });
 
     it('should retrieve stored data', async () => {
