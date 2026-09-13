@@ -288,6 +288,8 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
 
 
 def test_compiled_scene_dimensions_cover_both_channels(tmp_path) -> None:
+    # Keep the endpoint offsets below one uint16 step of the union extent so
+    # this test reaches the union assertion rather than the co-registration guard.
     channel_paths = [
         _tiny_gsplat_store(
             tmp_path / "membranes.gsplats.zarr",
