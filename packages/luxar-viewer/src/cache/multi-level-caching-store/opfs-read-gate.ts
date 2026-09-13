@@ -2,10 +2,9 @@
  * Maximum OPFS chunk reads running concurrently across the page.
  *
  * Deep progressive passes can request several hundred cached chunks at once.
- * Chromium's main-thread OPFS promises become pathologically slow under that
- * fan-out even though the same files are fast in smaller batches. Sixty-four
- * keeps the local tier well above the network lane's concurrency while
- * preventing the browser-level stampede.
+ * Reads were the last unbounded path to the browser filesystem after writes
+ * gained their own concurrency cap. The reported multi-second L2 stall remains
+ * unattributed; this gate provides a bounded, observable point for diagnosis.
  */
 export const MAX_CONCURRENT_OPFS_READS = 64;
 
