@@ -509,4 +509,7 @@ def test_high_quality_flag_is_spelled_in_main_and_documented() -> None:
     module_doc = demo.__doc__ or ""
     assert "--high-quality" in module_doc
     assert "95% dolly" in module_doc
+    touch_panel = module_doc.index("Touch panel (off by default):")
+    assert module_doc.index("--high-quality") < touch_panel
+    assert module_doc.index("--coords X.parquet --annotations Y.parquet") < touch_panel
     assert "95% dolly swing" in (demo.build_universe_scene.__doc__ or "")

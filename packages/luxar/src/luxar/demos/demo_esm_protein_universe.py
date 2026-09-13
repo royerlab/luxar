@@ -57,6 +57,8 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe
     python -m luxar.demos.demo_esm_protein_universe --no-serve
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
+    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR + 95% dolly
+    python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 
 Touch panel (off by default):
     A kiosk can be driven from a tablet — a full-screen matrix of one tile per
@@ -67,8 +69,6 @@ Touch panel (off by default):
 
     python -m luxar.demos.demo_esm_protein_universe --control
     python -m luxar.demos.demo_esm_protein_universe --control --host 0.0.0.0 --control-token SECRET
-    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR + 95% dolly
-    python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 """
 
 from __future__ import annotations
