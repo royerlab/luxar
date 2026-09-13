@@ -213,8 +213,7 @@ CHANNELS = [
         # infer: containment goes by bounding-sphere radius, and the hosted fit
         # gives the nuclei channel a 1.7 % larger sphere (a property of where the
         # splats landed, not of the anatomy), so the inference draws nuclei first.
-        # A membrane shell
-        # enclosing nuclei is the biology; state it.
+        # A membrane shell enclosing nuclei is the biology; state it.
         "layer_order": 10,
         # ---- recompute recipe, per channel ----
         #: ``--source-<name> PATH``: the assembled (time, z, y, x) array.
