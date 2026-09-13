@@ -370,6 +370,18 @@ describe('SceneLoader', () => {
       expect(sceneLoader.isAtViewState(stored)).toBe(true);
     });
 
+    it('does not report a pinned-depth pass as the settled view either', async () => {
+      const committed = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.5],
+      } satisfies ViewState;
+
+      await sceneLoader.updateView({ ...committed, ladderDepth: 2 });
+      const stored = (sceneLoader as unknown as { viewState: ViewState }).viewState;
+      expect(sceneLoader.isAtViewState(stored)).toBe(false);
+    });
+
     beforeEach(async () => {
       // Load a scene first
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
@@ -1296,6 +1308,23 @@ describe('SceneLoader', () => {
       await sceneLoader.updateView({ slicePosition: [0, 0, 0, 4], prefetch: true });
       const vs = (sceneLoader as unknown as { viewState: { prefetch?: boolean } }).viewState;
       expect(vs.prefetch).toBeUndefined();
+    });
+
+    it('does NOT persist the transient `ladderDepth` directive into the view state', async () => {
+      // A pinned playback depth is a per-pass directive like `frameBudgetMs`:
+      // leaking it would keep every later foreground pass pinned (and idle the
+      // refinement scheduler) after playback ends.
+      await sceneLoader.updateView({ slicePosition: [0, 0, 0, 4], ladderDepth: 3 });
+      const vs = (sceneLoader as unknown as { viewState: { ladderDepth?: number } }).viewState;
+      expect(vs.ladderDepth).toBeUndefined();
+    });
+
+    it('prefetchSlice strips an incoming ladderDepth rider and passes the explicit one through', () => {
+      const before = JSON.stringify((sceneLoader as unknown as { viewState: unknown }).viewState);
+      sceneLoader.prefetchSlice({ slicePosition: [9, 9, 9, 9], ladderDepth: 99 }, 10, 4);
+      expect(JSON.stringify((sceneLoader as unknown as { viewState: unknown }).viewState)).toBe(
+        before
+      );
     });
   });
 

@@ -1364,6 +1364,59 @@ export class DimensionSliders {
       );
     });
 
+    // Detail section: the playback "detail" — a pinned additive-ladder depth
+    // (rungs) every frame is drawn at while this dimension plays. Auto keeps
+    // the time-budgeted streaming (whatever is resident within the tick);
+    // a pinned depth makes every frame wait for exactly that many rungs, so a
+    // heavy time-lapse plays at a consistent quality and an adaptive rate
+    // instead of flickering between coarse and fine frames.
+    const currentLadderDepth = state?.ladderDepth ?? null;
+    const detailAside =
+      currentLadderDepth === null
+        ? 'auto'
+        : currentLadderDepth === Infinity
+          ? 'all'
+          : `${currentLadderDepth} rung${currentLadderDepth === 1 ? '' : 's'}`;
+    const detailChips = makeSection('Detail', detailAside);
+    detailChips.appendChild(
+      makeChip(
+        'Auto',
+        currentLadderDepth === null,
+        () => {
+          this.animationManager?.setLadderDepth(dimIndex, null);
+          this.closeContextMenu();
+        },
+        { tooltip: 'Stream whatever is resident within each tick' }
+      )
+    );
+    for (const depth of config.dimensionAnimation.presets.ladderDepths) {
+      detailChips.appendChild(
+        makeChip(
+          String(depth),
+          currentLadderDepth === depth,
+          () => {
+            this.animationManager?.setLadderDepth(dimIndex, depth);
+            this.closeContextMenu();
+          },
+          {
+            tooltip: `Draw every frame at ${depth} ladder rung${depth === 1 ? '' : 's'}`,
+            mono: true,
+          }
+        )
+      );
+    }
+    detailChips.appendChild(
+      makeChip(
+        'All',
+        currentLadderDepth === Infinity,
+        () => {
+          this.animationManager?.setLadderDepth(dimIndex, Infinity);
+          this.closeContextMenu();
+        },
+        { tooltip: 'Draw every frame at its full ladder (waits for the data)' }
+      )
+    );
+
     // Step section: the per-tick quantum for animation AND the [ / ] keys.
     // Presets are multipliers of the dimension's BASE step (authored step,
     // else 1% of the range); Auto restores the historical behavior

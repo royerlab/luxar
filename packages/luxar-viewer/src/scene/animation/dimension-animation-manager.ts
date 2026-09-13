@@ -51,6 +51,11 @@ export interface PlayOptions {
   targetFPS?: number;
   loopMode?: LoopMode;
   direction?: AnimationDirection;
+  /**
+   * Playback "detail": pin the additive-ladder depth (rungs) for every frame;
+   * null = Auto (time-budgeted). See `DimensionAnimationState.ladderDepth`.
+   */
+  ladderDepth?: number | null;
 }
 
 /**
@@ -410,6 +415,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         if (options?.targetFPS !== undefined) state.targetFPS = options.targetFPS;
         if (options?.loopMode !== undefined) state.loopMode = options.loopMode;
         if (options?.direction !== undefined) state.direction = options.direction;
+        if (options?.ladderDepth !== undefined) state.ladderDepth = options.ladderDepth;
         this.animationStates.set(dimIndex, state);
       } else {
         // Update existing state
@@ -421,6 +427,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         }
         if (options?.direction !== undefined) {
           state.direction = options.direction;
+        }
+        if (options?.ladderDepth !== undefined) {
+          state.ladderDepth = options.ladderDepth;
         }
       }
 
@@ -516,6 +525,44 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     // whole window minus a fixed projection/commit/render reserve — a 1 fps
     // tick should stream ~950ms of levels, not idle 40% of every second.
     return Math.max(frameWindow * budgetFraction, frameWindow - overheadReserveMs, minBudgetMs);
+  }
+
+  /**
+   * Playback "detail" for the current tick: the pinned additive-ladder depth
+   * (rungs) the progressive loaders must load for every frame, or null when no
+   * playing dimension pins one (time-budgeted streaming). With several playing
+   * dimensions the DEEPEST pin wins — a pinned dim must never be drawn below
+   * its setting because another dim plays on Auto. Threaded to the loaders as
+   * `ViewState.ladderDepth` by `updateAllNDNodes`, and to the t+1 shadow
+   * prefetch, so the next frame's S-cache entry carries the pinned prefix.
+   */
+  getPlaybackLadderDepth(): number | null {
+    let depth: number | null = null;
+    for (const state of this.animationStates.values()) {
+      if (!state.isPlaying || state.ladderDepth === null) continue;
+      depth = depth === null ? state.ladderDepth : Math.max(depth, state.ladderDepth);
+    }
+    return depth;
+  }
+
+  /**
+   * Set the playback detail for a dimension: the pinned additive-ladder depth
+   * (rungs, `Infinity` = whole ladder) every frame is drawn at while it plays,
+   * or null for Auto (time-budgeted streaming). Takes effect on the next tick.
+   */
+  setLadderDepth(dimIndex: number, ladderDepth: number | null): void {
+    let state = this.animationStates.get(dimIndex);
+    if (!state) {
+      state = this.createDefaultState();
+      this.animationStates.set(dimIndex, state);
+    }
+    const normalized = ladderDepth === null || !(ladderDepth >= 1) ? null : Math.floor(ladderDepth);
+    state.ladderDepth = normalized;
+    this.dispatchEvent({ type: 'ladderDepthChange', dimIndex, ladderDepth: normalized });
+    log.info(
+      Modules.ANIMATION,
+      `Set dimension ${dimIndex} playback detail to ${normalized === null ? 'auto' : normalized === Infinity ? 'all rungs' : `${normalized} rungs`}`
+    );
   }
 
   /**
@@ -651,6 +698,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       loopMode: config.dimensionAnimation.defaults.loop,
       direction: config.dimensionAnimation.defaults.direction,
       stepSize: config.dimensionAnimation.defaults.stepSize,
+      ladderDepth: config.dimensionAnimation.defaults.ladderDepth,
       lastUpdateTime: currentTime,
       frameCount: 0,
       lastFPSMeasurementTime: currentTime,

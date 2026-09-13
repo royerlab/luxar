@@ -24,6 +24,23 @@ export interface DimensionLoadingContext {
 }
 
 /**
+ * The per-pass playback directives the loaders receive: the per-tick LOD time
+ * budget, and the playback "detail" — a pinned rung count that makes the
+ * loaders load exactly that many rungs per frame (cold or not) instead of
+ * whatever fits the budget, the tick waiting for it (consistent frames at an
+ * adaptive rate). Both undefined outside playback.
+ */
+function playbackDirectives(anim: DimensionAnimationManager | undefined): {
+  frameBudgetMs: number | undefined;
+  ladderDepth: number | undefined;
+} {
+  return {
+    frameBudgetMs: anim?.getFrameBudgetMs() ?? undefined,
+    ladderDepth: anim?.getPlaybackLadderDepth() ?? undefined,
+  };
+}
+
+/**
  * Update all nD nodes (points, lines, splats) for the current slice.
  * Called from the scene-dims listener and once after dimension UI setup.
  */
@@ -37,7 +54,7 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
   // per-tick LOD time budget so each update pass fits the animation frame
   // window (they stream sub-LODs until the budget runs out, then commit).
   // Null/undefined outside playback → normal full-refinement behavior.
-  const frameBudgetMs = ctx.getAnimationManager()?.getFrameBudgetMs() ?? undefined;
+  const { frameBudgetMs, ladderDepth } = playbackDirectives(ctx.getAnimationManager());
 
   // Use the new loader architecture's update mechanism
   await updateSceneForDimensions(
@@ -46,6 +63,7 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
     undefined,
     {
       frameBudgetMs,
+      ladderDepth,
     }
   );
   // Once per load: the first slice update after `loadScene` has landed.
@@ -74,7 +92,7 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
         { ...dims, currentStep: nextStep },
         ctx.sceneManager.scene as unknown as THREE.Group,
         undefined,
-        { budgetMs }
+        { budgetMs, ladderDepth }
       );
     }
   } else {

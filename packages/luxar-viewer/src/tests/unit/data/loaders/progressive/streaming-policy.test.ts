@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyStreamingPass,
+  normalizeLadderDepth,
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../../../../../data/loaders/progressive/streaming-policy';
@@ -117,5 +118,52 @@ describe('shouldStopAfterLevel', () => {
     // prefix is already showable, so its first new level may stop the pass.
     expect(shouldStopAfterLevel('playback', 0, 0, false, slow)).toBe(false);
     expect(shouldStopAfterLevel('playback', 4, 4, false, slow)).toBe(true);
+  });
+});
+
+describe('pinned pass (ViewState.ladderDepth — the playback "detail" setting)', () => {
+  it('classifies as pinned whenever a ladder depth is set, over prefetch and playback', () => {
+    expect(classifyStreamingPass(true, false, true)).toBe('pinned');
+    expect(classifyStreamingPass(true, true, true)).toBe('pinned');
+    expect(classifyStreamingPass(false, false, true)).toBe('pinned');
+    // Unpinned classification is unchanged.
+    expect(classifyStreamingPass(true, true, false)).toBe('prefetch');
+    expect(classifyStreamingPass(true, false, false)).toBe('playback');
+  });
+
+  it('never stops before a level on an expired deadline (the loop bound is the pinned depth)', () => {
+    expect(shouldStopBeforeLevel('pinned', 3, 3, 11, 10)).toBe(false);
+    expect(shouldStopBeforeLevel('pinned', 4, 0, 11, 10)).toBe(false);
+  });
+
+  it('never stops after a cold or slow level — a pinned frame waits for its rungs', () => {
+    expect(shouldStopAfterLevel('pinned', 1, 0, false, 1)).toBe(false);
+    expect(shouldStopAfterLevel('pinned', 1, 0, true, CACHE_HIT_THRESHOLD_MS * 100)).toBe(false);
+    expect(shouldStopAfterLevel('pinned', 5, 4, false, 5000)).toBe(false);
+  });
+
+  it('still honours a spent refinement residency allowance', () => {
+    expect(shouldStopAfterLevel('pinned', 1, 0, true, 1, 100, 50)).toBe(true);
+  });
+});
+
+describe('normalizeLadderDepth', () => {
+  it('is null when no depth is pinned or the request is not a usable rung count', () => {
+    expect(normalizeLadderDepth(undefined, 9)).toBeNull();
+    expect(normalizeLadderDepth(null, 9)).toBeNull();
+    expect(normalizeLadderDepth(Number.NaN, 9)).toBeNull();
+    expect(normalizeLadderDepth(0, 9)).toBeNull();
+    expect(normalizeLadderDepth(0.5, 9)).toBeNull();
+    expect(normalizeLadderDepth(-3, 9)).toBeNull();
+  });
+
+  it('floors fractional depths and clamps to the ladder length', () => {
+    expect(normalizeLadderDepth(2.7, 9)).toBe(2);
+    expect(normalizeLadderDepth(1, 9)).toBe(1);
+    expect(normalizeLadderDepth(99, 9)).toBe(9);
+  });
+
+  it('treats Infinity as the whole ladder', () => {
+    expect(normalizeLadderDepth(Number.POSITIVE_INFINITY, 9)).toBe(9);
   });
 });

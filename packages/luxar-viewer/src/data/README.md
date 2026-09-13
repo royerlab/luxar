@@ -318,7 +318,7 @@ export async function updateSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId?: string,
-  opts?: { frameBudgetMs?: number }
+  opts?: { frameBudgetMs?: number; ladderDepth?: number }
 ): Promise<void>;
 ```
 

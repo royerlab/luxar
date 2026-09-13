@@ -150,6 +150,19 @@ describe('SlicePrefetcher', () => {
     expect(foregroundLoader.updateView).not.toHaveBeenCalled();
   });
 
+  it('forwards a pinned playback ladder depth to the shadow pass, and omits it otherwise', async () => {
+    prefetcher.prefetch(view, 42, 5);
+    await flushAsync();
+    const shadow = shadowLoaders.get('/splats')!;
+    expect(shadow.updateView.mock.calls[0][0].ladderDepth).toBe(5);
+    expect(shadow.updateView.mock.calls[0][0].frameBudgetMs).toBe(42);
+
+    prefetcher.prefetch({ ...view, slicePosition: [0, 0, 0, 8] }, 42);
+    await flushAsync();
+    expect(shadow.updateView).toHaveBeenCalledTimes(2);
+    expect('ladderDepth' in shadow.updateView.mock.calls[1][0]).toBe(false);
+  });
+
   it('does not build or run shadows for culled or hidden loader paths', async () => {
     objects.get('/pts')!.userData.partitionFrustumVisible = false;
     prefetcher = new SlicePrefetcher({

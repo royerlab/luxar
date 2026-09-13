@@ -36,6 +36,13 @@ export interface DimensionAnimationState {
   /** Measured actual FPS (may differ from target) */
   actualFPS: number;
   /**
+   * Playback "detail": pinned additive-ladder depth (rungs) for every frame
+   * while this dimension plays; null = Auto (time-budgeted streaming, whatever
+   * is resident within the tick). `Infinity` = the whole ladder. Threaded to the
+   * progressive loaders as `ViewState.ladderDepth`.
+   */
+  ladderDepth: number | null;
+  /**
    * Explicit per-tick step size in dimension units; null = Auto (continuous
    * dims derive the increment from fps + the range-traversal time, discrete
    * dims use their authored step). Also consumed by the [ / ] keyboard
@@ -61,6 +68,8 @@ export interface DimensionAnimationEvents {
   loopModeChange: { dimIndex: number; loopMode: LoopMode };
   /** Emitted when the per-dimension step override changes (null = Auto) */
   stepChange: { dimIndex: number; stepSize: number | null };
+  /** Emitted when the playback detail (pinned ladder depth) changes (null = Auto) */
+  ladderDepthChange: { dimIndex: number; ladderDepth: number | null };
   /** Emitted when direction changes (bounce mode) */
   directionChange: { dimIndex: number; direction: AnimationDirection };
   /**

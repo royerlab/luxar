@@ -76,6 +76,7 @@ describe('updateAllNDNodes', () => {
       return {
         dispose: vi.fn(),
         getFrameBudgetMs: vi.fn(() => 60),
+        getPlaybackLadderDepth: vi.fn(() => null),
         isAnyPlaying: vi.fn(() => true),
         getPlayingDimIndices: vi.fn(() => [3]),
         peekNextValue: vi.fn(() => 6),
@@ -104,6 +105,21 @@ describe('updateAllNDNodes', () => {
       expect(loaderId).toBeUndefined();
       expect(opts).toEqual({ budgetMs: 60 });
       expect(releasePrefetchResources).not.toHaveBeenCalled();
+    });
+
+    it('threads a pinned playback ladder depth to BOTH the foreground update and the t+1 prefetch', async () => {
+      const ctx = makeCtx({
+        getAnimationManager: () => makePlayingAnim({ getPlaybackLadderDepth: vi.fn(() => 6) }),
+      });
+
+      await updateAllNDNodes(ctx);
+
+      expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
+        frameBudgetMs: 60,
+        ladderDepth: 6,
+      });
+      const [, , , opts] = (prefetchSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(opts).toEqual({ budgetMs: 60, ladderDepth: 6 });
     });
 
     it('not playing: releases prefetch resources and does not prefetch', async () => {

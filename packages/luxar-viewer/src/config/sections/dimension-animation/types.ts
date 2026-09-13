@@ -9,6 +9,12 @@ export interface DimensionAnimationConfig {
     direction: 'forward' | 'backward';
     /** Per-tick step override; null = Auto (fps-derived / authored step). */
     stepSize: number | null;
+    /**
+     * Playback detail: pinned additive-ladder depth (rungs) per frame while
+     * playing; null = Auto (time-budgeted streaming). See
+     * `DimensionAnimationState.ladderDepth`.
+     */
+    ladderDepth: number | null;
   };
   presets: {
     fps: number[];
@@ -19,6 +25,11 @@ export interface DimensionAnimationConfig {
      * of the dimension's BASE step (authored step, else 1% of the range).
      */
     stepMultipliers: number[];
+    /**
+     * Detail-section choices in the per-dimension context menu: pinned rung
+     * counts offered between Auto and All (the whole ladder).
+     */
+    ladderDepths: number[];
   };
   timing: {
     minFrameTimeMs: number;

@@ -77,6 +77,7 @@ import {
 } from '../scene-loader/progressive/residency-budget';
 import {
   classifyStreamingPass,
+  normalizeLadderDepth,
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
@@ -362,6 +363,14 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private _retryFoldedPass = false;
   /** Per-pass playback budget from the CURRENT `updateView`; null outside playback. */
   private _frameBudgetMs: number | null = null;
+  /**
+   * Pinned rung count for the current pass (`ViewState.ladderDepth`, the
+   * playback "detail" setting), resolved through `normalizeLadderDepth`; null
+   * when the pass is not pinned. A pinned pass loads exactly this many rungs,
+   * cold or not, and reports `hasMoreLODs === false` like a budgeted one — the
+   * pinned prefix IS the target.
+   */
+  private _ladderDepth: number | null = null;
   private _lastAllResident = true;
   /** Monitor telemetry, rolled up over the levels — see the surface below. */
   private readonly monitor: ProgressiveMonitorAdapter;
@@ -392,6 +401,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // While a playback frame budget is active the budgeted prefix IS the target:
     // no background refinement between animation ticks.
     if (this._frameBudgetMs !== null) return false;
+    if (this._ladderDepth !== null) return false;
     return this._loadedLODCount < this.nLods;
   }
 
@@ -664,6 +674,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // Record the per-pass playback budget FIRST: a pause re-trigger arrives with
     // the same view state and must still clear the budget.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    this._ladderDepth = normalizeLadderDepth(viewState.ladderDepth, this.nLods);
     this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
@@ -685,13 +696,20 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // pass with a full concat.
     const isPrefetch = viewState.prefetch === true;
 
-    const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
+    const pass = classifyStreamingPass(
+      budgetDeadline !== null,
+      isPrefetch,
+      this._ladderDepth !== null
+    );
     const startLevel = this._loadedLODCount;
     const residentBytesAtPassStart = ladderResidentBytes(this.ladderResidency());
     this._levelsAtPassStart = startLevel;
     this._payloadsAtPassStart = this.loadedLODs.length;
 
-    for (let level = startLevel; level < this.nLods; level++) {
+    // A pinned pass bounds the loop at the pinned rung count; the policy's
+    // `pinned` kind disables the deadline / cold-level brakes.
+    const targetLevels = this._ladderDepth ?? this.nLods;
+    for (let level = startLevel; level < targetLevels; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so the
       // next iteration would TypeError — a teardown mis-counted as a refinement
       // failure. Stop streaming instead.

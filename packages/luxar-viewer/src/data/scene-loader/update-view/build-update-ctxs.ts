@@ -40,6 +40,8 @@ export interface UpdateCtxsInput {
    * never persisted on the scene loader.
    */
   frameBudgetMs?: number;
+  /** Pinned playback ladder depth (see `ViewState.ladderDepth`); same contract. */
+  ladderDepth?: number;
   deriveNodeViewState(
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,
@@ -65,6 +67,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     extendedToleranceCache: input.extendedToleranceCache,
     signal: input.signal,
     frameBudgetMs: input.frameBudgetMs,
+    ladderDepth: input.ladderDepth,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   const linesCtx: LinesHandlerCtx = {
@@ -75,6 +78,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     updateVersion: input.updateVersion,
     signal: input.signal,
     frameBudgetMs: input.frameBudgetMs,
+    ladderDepth: input.ladderDepth,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   const gsplatsCtx: GSplatsHandlerCtx = {
@@ -86,6 +90,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     extendedToleranceCache: input.extendedToleranceCache,
     signal: input.signal,
     frameBudgetMs: input.frameBudgetMs,
+    ladderDepth: input.ladderDepth,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   const meshCtx: MeshHandlerCtx = {
@@ -95,6 +100,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     extendedToleranceCache: input.extendedToleranceCache,
     signal: input.signal,
     frameBudgetMs: input.frameBudgetMs,
+    ladderDepth: input.ladderDepth,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   return { pointsCtx, linesCtx, gsplatsCtx, meshCtx };
