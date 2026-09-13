@@ -5,7 +5,7 @@ import { config } from '../../config';
 import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
 import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
 import { withTimeout } from './opfs-store/opfs-timeout';
-import { withOpfsReadGate } from './opfs-read-gate';
+import { getOpfsReadGateStats, withOpfsReadGate } from './opfs-read-gate';
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -1030,6 +1030,8 @@ export class OPFSStore {
     writes: number;
     misses: number;
     canceledReads: number;
+    activeReads: number;
+    queuedReads: number;
     oversizedWriteSkipped: number;
     quotaWriteSkipped: number;
     evictions: number;
@@ -1054,6 +1056,7 @@ export class OPFSStore {
      */
     breakerTripped: boolean;
   } {
+    const readGate = getOpfsReadGateStats();
     return {
       size: this.totalSize,
       count: this.index.size,
@@ -1061,6 +1064,8 @@ export class OPFSStore {
       writes: this.writeCount,
       misses: this.missCount,
       canceledReads: this.canceledReadCount,
+      activeReads: readGate.active,
+      queuedReads: readGate.queued,
       oversizedWriteSkipped: this.oversizedWriteSkipped,
       quotaWriteSkipped: this.quotaWriteSkipped,
       evictions: this.evictions,

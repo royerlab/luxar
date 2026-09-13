@@ -106,6 +106,8 @@ export interface MultiLevelCacheStats {
     misses: number;
     /** Reads canceled before filesystem I/O; excluded from the hit-rate denominator. */
     canceledReads: number;
+    activeReads: number;
+    queuedReads: number;
     /** Configured byte budget (fixed OPFS/disk cap). */
     maxSize?: number;
     oversizedWriteSkipped?: number;

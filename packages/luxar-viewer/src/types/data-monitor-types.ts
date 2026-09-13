@@ -319,6 +319,8 @@ export interface CacheMetrics {
     misses: number;
     /** Reads canceled before filesystem I/O. */
     canceledReads?: number;
+    activeReads?: number;
+    queuedReads?: number;
     /**
      * R3: surface OPFS health counters so the cache tab can render
      * them inline (rather than only signalling them via the

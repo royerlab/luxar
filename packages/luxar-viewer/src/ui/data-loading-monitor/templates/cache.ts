@@ -702,7 +702,7 @@ export function renderCacheContent(
             {
               label: 'HIT RATE',
               value: l2Total > 0 ? `${l2HitRate.toFixed(1)}%` : '—',
-              subtitle: `${formatNumber(cacheMetrics.l2!.reads)} hits · ${formatNumber(cacheMetrics.l2!.misses)} miss`,
+              subtitle: `${formatNumber(cacheMetrics.l2!.reads)} hits · ${formatNumber(cacheMetrics.l2!.misses)} miss · ${formatNumber(cacheMetrics.l2!.canceledReads ?? 0)} canceled`,
               tooltip: `Of the requests that missed the memory caches and fell through to disk, the share found there (${cacheMetrics.l2!.reads.toLocaleString()} of ${l2Total.toLocaleString()}). An L2 miss is the only case that costs a network download. "—" = nothing has fallen through to L2 yet`,
               colorClass: l2HitRateColorClass,
               dataField: 'l2-hitrate',
@@ -710,9 +710,9 @@ export function renderCacheContent(
             {
               label: 'I/O',
               value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
-              subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes · ${formatNumber(cacheMetrics.l2!.canceledReads ?? 0)} canceled`,
+              subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes · ${formatNumber(cacheMetrics.l2!.activeReads ?? 0)} active · ${formatNumber(cacheMetrics.l2!.queuedReads ?? 0)} queued`,
               tooltip:
-                'Disk traffic: reads = chunks served from the on-disk cache; writes = freshly downloaded chunks saved to disk so future sessions can skip the download',
+                'Disk traffic and live read backpressure: reads = chunks served from the on-disk cache; writes = freshly downloaded chunks saved to disk; active/queued show the page-wide OPFS read gate',
               colorClass: countColorClass(cacheMetrics.l2!.reads + cacheMetrics.l2!.writes),
               dataField: 'l2-io',
             },

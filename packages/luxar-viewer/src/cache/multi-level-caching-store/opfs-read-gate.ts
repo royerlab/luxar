@@ -1,3 +1,5 @@
+import { config } from '../../config';
+
 /**
  * Maximum OPFS chunk reads running concurrently across the page.
  *
@@ -7,17 +9,34 @@
  * unattributed; this gate provides a bounded, observable point for diagnosis.
  */
 let active = 0;
-const queue: Array<() => void> = [];
+let epoch = 0;
+const queue: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+
+export function getOpfsReadGateStats(): { active: number; queued: number } {
+  return { active, queued: queue.length };
+}
+
+export function resetOpfsReadGate(): void {
+  epoch += 1;
+  active = 0;
+  const error = new Error('OPFS read gate reset');
+  for (const waiter of queue.splice(0)) waiter.reject(error);
+}
 
 /** Run one OPFS read under the page-wide FIFO concurrency cap. */
 export function withOpfsReadGate<T>(run: () => Promise<T>): Promise<T> {
+  const acquiredEpoch = epoch;
   const acquire =
     active < config.cache.opfsReadConcurrency
       ? ((active += 1), Promise.resolve())
-      : new Promise<void>((resolve) =>
-          queue.push(() => {
-            active += 1;
-            resolve();
+      : new Promise<void>((resolve, reject) =>
+          queue.push({
+            resolve: () => {
+              if (acquiredEpoch !== epoch) return;
+              active += 1;
+              resolve();
+            },
+            reject,
           })
         );
 
@@ -25,9 +44,10 @@ export function withOpfsReadGate<T>(run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } finally {
-      active -= 1;
-      queue.shift()?.();
+      if (acquiredEpoch === epoch) {
+        active -= 1;
+        queue.shift()?.resolve();
+      }
     }
   });
 }
-import { config } from '../../config';

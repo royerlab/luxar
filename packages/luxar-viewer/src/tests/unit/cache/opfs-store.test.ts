@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 import { config } from '../../../config';
+import {
+  getOpfsReadGateStats,
+  resetOpfsReadGate,
+} from '../../../cache/multi-level-caching-store/opfs-read-gate';
 
 // Mock File System Access API
 const createMockFileSystem = () => {
@@ -102,6 +106,7 @@ describe('OPFSStore', () => {
   });
 
   afterEach(async () => {
+    resetOpfsReadGate();
     // [cache.md/O5][P10] Explicitly unstub globals so tests that re-stub
     // navigator mid-test (e.g. 'slow set + concurrent clear') do not bleed
     // into subsequent tests if test order changes. beforeEach also re-stubs,
@@ -284,6 +289,10 @@ describe('OPFSStore', () => {
 
       const reads = keys.map((key) => store.get(key));
       await vi.waitFor(() => expect(activeReads).toBe(config.cache.opfsReadConcurrency));
+      expect(getOpfsReadGateStats()).toEqual({
+        active: config.cache.opfsReadConcurrency,
+        queued: 32,
+      });
       releaseReads();
       const results = await Promise.all(reads);
 
@@ -339,6 +348,39 @@ describe('OPFSStore', () => {
       expect(fileReads).toBe(config.cache.opfsReadConcurrency);
       expect(store.getStats().canceledReads).toBe(queuedKeys.length);
       expect(store.getStats().misses).toBe(0);
+    });
+
+    it('reset clears queued gate state without corrupting later releases', async () => {
+      const keys = Array.from(
+        { length: config.cache.opfsReadConcurrency + 1 },
+        (_, index) => `reset-wave/${index}`
+      );
+      await Promise.all(keys.map((key) => store.set(key, new Uint8Array([1]))));
+
+      let releaseReads!: () => void;
+      const readsBlocked = new Promise<void>((resolve) => {
+        releaseReads = resolve;
+      });
+      const originalGetFileHandle = mockFS.mockDirHandle.getFileHandle.bind(mockFS.mockDirHandle);
+      mockFS.mockDirHandle.getFileHandle = async (...args: unknown[]) => {
+        const handle = await originalGetFileHandle(...args);
+        const originalGetFile = handle.getFile.bind(handle);
+        return {
+          ...handle,
+          async getFile() {
+            await readsBlocked;
+            return originalGetFile();
+          },
+        };
+      };
+
+      const reads = keys.map((key) => store.get(key));
+      await vi.waitFor(() => expect(getOpfsReadGateStats().queued).toBe(1));
+      resetOpfsReadGate();
+      expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
+      releaseReads();
+      await Promise.all(reads);
+      expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
     });
 
     it('should retrieve stored data', async () => {
