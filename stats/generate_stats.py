@@ -1795,7 +1795,7 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
     out.append(f"""<section><h2>Documentation &amp; Configuration</h2><div class="two-column">
 <div><h3>Documentation</h3><table>
 <tr><th>Type</th><th class="number">Files</th><th class="number">Lines</th></tr>
-<tr><td>Markdown (.md)</td><td class="number">{md["files"]}</td><td class="number">{md["total_lines"]:,}</td></tr>
+<tr><td>Markdown (.md)</td><td class="number">{md["files"]:,}</td><td class="number">{md["total_lines"]:,}</td></tr>
 <tr><td>HTML</td><td class="number">{html_lang["files"]}</td><td class="number">{html_lang["total_lines"]:,}</td></tr>
 <tr><td>CHANGELOG entries (## headings)</td><td class="number">{extras["changelog_versions"]}</td><td class="number">&mdash;</td></tr>
 </table></div>
@@ -1836,7 +1836,7 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
 <div class="insight"><strong>Architecture:</strong> {arch_text}</div>
 <div class="insight"><strong>Test health:</strong> {total_tests:,} tests across {total_test_files:,} files with {weighted_cov:.1f}% weighted coverage</div>
 <div class="insight"><strong>Project activity:</strong> {git["commits_last_30_days"]:,} commits and {git["files_changed_last_30_days"]:,} files touched in the last 30 days by {git["contributors"]} contributor(s).</div>
-<div class="insight"><strong>Documentation:</strong> {md["files"]} markdown files with {md["total_lines"]:,} lines.</div>
+<div class="insight"><strong>Documentation:</strong> {md["files"]:,} markdown files with {md["total_lines"]:,} lines.</div>
 </section>
 </div>
 <footer>

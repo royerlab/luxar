@@ -135,6 +135,20 @@ def test_reports_format_test_file_counts_with_thousands_separators(
         assert count in markdown_report
 
 
+def test_html_report_formats_markdown_file_counts_with_thousands_separators(
+    tmp_path: Path,
+) -> None:
+    report_stats = _report_stats()
+    report_stats["languages"]["markdown"]["files"] = 1_001
+    html_file = tmp_path / "stats.html"
+
+    gs.generate_html_report(report_stats, html_file)
+
+    html_report = html_file.read_text()
+    assert '<td>Markdown (.md)</td><td class="number">1,001</td>' in html_report
+    assert "1,001 markdown files" in html_report
+
+
 def test_html_report_does_not_treat_skipped_tests_as_failures(tmp_path: Path) -> None:
     report_stats = _report_stats()
     report_stats["tests"]["python"]["test_count"] = 101
