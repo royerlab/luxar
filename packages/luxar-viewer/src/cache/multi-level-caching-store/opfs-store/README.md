@@ -98,6 +98,16 @@ exceeded <ms>ms')`. The timer is always cleared in `finally`.
   the cache indefinitely — every call in `OPFSStore` that touches the
   filesystem goes through this helper.
 
+### `opfs-read-gate.ts` — bounded read fan-out
+
+- **`withOpfsReadGate(run)`** — page-wide FIFO gate for chunk reads. Deep
+  progressive passes can fan out several hundred L2 hits at once; Chromium's
+  main-thread OPFS path stalls under that pressure even when smaller batches
+  read the same files quickly. The 64-slot cap preserves local parallelism
+  without stampeding the browser backend. Queue wait is outside each
+  operation's timeout, so healthy backpressure is never misclassified as hung
+  I/O.
+
 ## Invariants
 
 - **Bucket hash is part of the on-disk format.** Changing `getBucket`

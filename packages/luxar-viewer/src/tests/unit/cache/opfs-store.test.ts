@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { MAX_CONCURRENT_OPFS_READS } from '../../../cache/multi-level-caching-store/opfs-read-gate';
 
 // Mock File System Access API
 const createMockFileSystem = () => {
@@ -249,6 +250,49 @@ describe('OPFSStore', () => {
   });
 
   describe('Get Operations', () => {
+    it('caps simultaneous file reads during a deep chunk wave', async () => {
+      const keys = Array.from(
+        { length: MAX_CONCURRENT_OPFS_READS + 32 },
+        (_, index) => `deep-wave/${index}`
+      );
+      await Promise.all(keys.map((key) => store.set(key, new Uint8Array([1]))));
+
+      const originalGetFileHandle = mockFS.mockDirHandle.getFileHandle.bind(mockFS.mockDirHandle);
+      let activeReads = 0;
+      let peakReads = 0;
+      let releaseReads!: () => void;
+      const readsBlocked = new Promise<void>((resolve) => {
+        releaseReads = resolve;
+      });
+      mockFS.mockDirHandle.getFileHandle = async (...args: unknown[]) => {
+        const handle = await originalGetFileHandle(...args);
+        const originalGetFile = handle.getFile.bind(handle);
+        return {
+          ...handle,
+          async getFile() {
+            activeReads++;
+            peakReads = Math.max(peakReads, activeReads);
+            await readsBlocked;
+            try {
+              return await originalGetFile();
+            } finally {
+              activeReads--;
+            }
+          },
+        };
+      };
+
+      const reads = keys.map((key) => store.get(key));
+      await vi.waitFor(() => expect(activeReads).toBeGreaterThan(0));
+      await Promise.resolve();
+      await Promise.resolve();
+      releaseReads();
+      const results = await Promise.all(reads);
+
+      expect(peakReads).toBe(MAX_CONCURRENT_OPFS_READS);
+      expect(results.every((result) => result?.[0] === 1)).toBe(true);
+    });
+
     it('should retrieve stored data', async () => {
       const data = new Uint8Array([1, 2, 3, 4, 5]);
       await store.set('test.key', data);

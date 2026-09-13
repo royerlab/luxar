@@ -5,6 +5,7 @@ import { config } from '../../config';
 import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
 import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
 import { withTimeout } from './opfs-store/opfs-timeout';
+import { withOpfsReadGate } from './opfs-read-gate';
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -454,14 +455,23 @@ export class OPFSStore {
     }
 
     try {
-      const data = await this.timed(
-        (async () => {
-          const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, false);
-          const file = await fileHandle.getFile();
-          return new Uint8Array(await file.arrayBuffer());
-        })(),
-        `get(${key})`
-      );
+      const data = await withOpfsReadGate(async () => {
+        if (this.disposed || !this.opfsRoot || !this.index.has(key)) return undefined;
+        const root = this.opfsRoot;
+        return this.timed(
+          (async () => {
+            const fileHandle = await this.buckets.navigateToFile(root, key, false);
+            const file = await fileHandle.getFile();
+            return new Uint8Array(await file.arrayBuffer());
+          })(),
+          `get(${key})`
+        );
+      });
+
+      if (!data) {
+        this.missCount++;
+        return undefined;
+      }
 
       // Verify size matches metadata
       const entry = this.index.get(key);
