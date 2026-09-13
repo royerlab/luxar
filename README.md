@@ -1105,10 +1105,10 @@ Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Gala
 
 The Python package does not ship these artifacts. The demos consume **derived
 products** — Gaussian-splat fits and point catalogues computed from the datasets
-credited above — archived on Zenodo in four records. The ShareAlike files need a
-separate record because a Zenodo record carries a single licence field; the two
-large timelapses each have their own record so the data collector is credited on
-the recording itself:
+credited above — archived on Zenodo in four demo-data records. The ShareAlike
+files need a separate record because a Zenodo record carries a single licence
+field; the two large timelapses each have their own record so the data collector
+is credited on the recording itself:
 
 | Record | Contents | Cite |
 |---|---|---|
