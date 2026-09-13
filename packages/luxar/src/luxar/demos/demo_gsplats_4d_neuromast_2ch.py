@@ -515,19 +515,17 @@ def resolve_channel_paths() -> list[Path]:
 # =============================================================================
 # Scene construction
 # =============================================================================
-# AUTO/MEMORY stores centres as per-axis uint16 fixed point, so extent / 65535
-# is one representable coordinate step. The pinned channels' largest endpoint
-# difference is 2.5e-5 on Y: 4.35e-8 of its 575.54 extent, or 0.3 % of one step.
 def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     """Build the 4D two-channel scene: one layer-enabled gsplats node per marker.
 
-    The gsplats are pre-fit 4D (``z, y, x, time``), already scaled to microns and
-    intensity-normalised, so we simply graft each channel with its LUT and
-    ``layer=True``. The pinned pair was scaled by the historical Z-only 2.5, not
-    ``VOXEL_SCALE`` (step 7), so its spatial coordinates remain in lateral-pixel
-    units and Z is also stretched by 8.3 %; a ``--recompute`` build has physical
-    spatial units. Both channels' centre bounds must agree within one uint16
-    coordinate step; they co-register and animate over the Time dimension.
+    The gsplats are pre-fit 4D (``z, y, x, time``), already spatially scaled
+    (microns after a ``--recompute`` build) and intensity-normalised, so we simply
+    graft each channel with its LUT and ``layer=True``. The pinned pair was scaled
+    by the historical Z-only 2.5, not ``VOXEL_SCALE`` (step 7), so its spatial
+    coordinates remain in lateral-pixel units and Z is also stretched by 8.3 %;
+    a ``--recompute`` build has physical spatial units. Both channels' centre
+    bounds must agree within one uint16 coordinate step; they co-register and
+    animate over the Time dimension.
     """
     with asection("Creating 4D two-channel neuromast scene"):
         # Explicit, named 4D dims (not the generic dim0..dim3 from
@@ -550,6 +548,10 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         endpoint_delta = np.maximum(
             np.ptp(channel_mins, axis=0), np.ptp(channel_maxs, axis=0)
         )
+        # These archives' centres use per-axis uint16 fixed point
+        # (linear_perchannel_u16), so extent / 65535 is one coordinate step. The
+        # largest endpoint difference is 2.5e-5 on Y: 4.35e-8 of its 579.00 extent,
+        # or 0.3 % of one step.
         quantization_step = (bmax - bmin) / 65535
         divergent = endpoint_delta > quantization_step
         if np.any(divergent):
