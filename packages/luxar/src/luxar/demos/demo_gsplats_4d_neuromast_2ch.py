@@ -67,11 +67,9 @@ PIPELINE — reproducible per channel with ``--recompute``:
        --normalize-intensity 1.0`` → convert the three spatial centre and
        covariance axes from voxels to microns using the measured MetaMorph
        voxel size; amplitudes stay on a 0-1 scale.
-       (The 2026-08 pair on the record was transformed with the historical 2.5,
-       leaving its spatial coordinates in lateral-pixel units and stretching Z
-       by 8.3 %. It stays pinned in ``data_manifest.json``; the corrected rebuild
-       is ready, but publishing it still needs the record upload and manifest
-       repin, which this recipe change does not do.)
+       (The mirrored pair pinned in ``data_manifest.json`` predates this physical-
+       micron rebuild. It uses equivalent lateral-pixel units with the measured
+       Z/Y anisotropy, 0.25 / 0.1083 = 2.3084.)
 
     Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
@@ -80,10 +78,11 @@ PIPELINE — reproducible per channel with ``--recompute``:
 
 DATA STORAGE:
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
-    repo**. Both channels live on the published ``cc-by`` Zenodo record as the
-    130 MB ``.gsplats.zarr.zip`` pair, pinned by SHA-256 in
-    ``demos/data_manifest.json``, so ``resolve_channel_paths`` fetches them on
-    demand through ``ensure_dataset("gsplats_4d_neuromast_2ch")``: the pair is
+    repo**. Both channels use the published ``cc-by`` record for provenance, but
+    the corrected 136 MB ``.gsplats.zarr.zip`` pair is mirrored on R2 through a
+    dataset-level ``base_url`` in ``demos/data_manifest.json``. Thus
+    ``resolve_channel_paths`` fetches them on demand through
+    ``ensure_dataset("gsplats_4d_neuromast_2ch")``: the pair is
     verified against those digests, cached under ``~/.cache/luxar/`` and
     expanded to a temporary directory on read. The ``.zip`` suffix is why
     fetched paths differ from each channel's ``file`` key, which names the
@@ -116,7 +115,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 130,  # the zipped pair on the cc-by record
+        "download_mb": 136,  # the corrected zipped pair on the R2 mirror
         "compute": "medium",
         "gpu": "none",
         "local_data": None,
@@ -201,7 +200,7 @@ CHANNELS = [
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
         # Display window (Layers-panel range) and gamma, set by eye on the pinned
-        # historical-2.5, lateral-pixel-unit store (re-tuned 2026-09-10 under
+        # Z-corrected lateral-pixel-unit store (re-tuned 2026-09-10 under
         # ADDITIVE compositing, see the graft).
         # The window is authored as intensity/offset: intensity = 1 / (hi - lo),
         # offset = -lo / (hi - lo), which the viewer maps back to [lo, hi] on a
@@ -277,7 +276,7 @@ JOBS_PER_GPU = 12
 #: Physical voxel size in fitted-axis order (Z, Y, X, Time). The raw MetaMorph
 #: headers and paper registry record voxel_um=(0.25, 0.1083, 0.1083); the
 #: stacked time coordinate is already in frames and must not be scaled.
-#: The 2026-08 pair on the record carries the historical Z-only 2.5 (step 7).
+#: The mirrored pair uses the equivalent relative scale (2.3084, 1, 1, 1).
 VOXEL_SCALE = (0.25, 0.1083, 0.1083, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
@@ -520,10 +519,10 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
 
     The gsplats are pre-fit 4D (``z, y, x, time``), already spatially scaled
     (microns after a ``--recompute`` build) and intensity-normalised, so we simply
-    graft each channel with its LUT and ``layer=True``. The pinned pair was scaled
-    by the historical Z-only 2.5, not ``VOXEL_SCALE`` (step 7), so its spatial
-    coordinates remain in lateral-pixel units and Z is also stretched by 8.3 %;
-    a ``--recompute`` build has physical spatial units. Both channels' centre
+    graft each channel with its LUT and ``layer=True``. The pinned pair predates
+    the physical-micron rebuild and remains in lateral-pixel units, with Z scaled
+    by the measured 2.3084 anisotropy; a ``--recompute`` build has physical
+    spatial units. Both channels' centre
     bounds must agree within one uint16 coordinate step; they co-register and
     animate over the Time dimension.
     """
