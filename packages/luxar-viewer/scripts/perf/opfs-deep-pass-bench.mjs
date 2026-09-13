@@ -8,34 +8,43 @@
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const arg = (name, fallback) => {
-  const index = process.argv.indexOf(`--${name}`);
-  return index >= 0 ? process.argv[index + 1] : fallback;
+export const arg = (name, fallback, argv = process.argv) => {
+  const index = argv.indexOf(`--${name}`);
+  const value = index >= 0 ? argv[index + 1] : undefined;
+  return value === undefined || value.startsWith('--') ? fallback : value;
 };
 
-const viewerDir = path.resolve(arg('viewer-dir', '.'));
-const baseUrl = arg('url', 'http://127.0.0.1:5198/?src=http://127.0.0.1:9011');
-const profileDir = path.resolve(arg('profile-dir', '/tmp/luxar-opfs-deep-pass'));
-const out = path.resolve(arg('out', 'opfs-deep-pass.json'));
-const ladderDepth = Number(arg('ladder-depth', '6'));
-const targetFps = Number(arg('target-fps', '2'));
-const startFrame = Number(arg('start-frame', '49'));
-const headless = arg('headless', 'false') === 'true';
-const clearFirst = arg('clear-first', 'false') === 'true';
-const concurrencyValues = arg('concurrency', '8,64,512,4096').split(',').map(Number);
+export const flag = (name, argv = process.argv) => argv.includes(`--${name}`);
 
-const require = createRequire(path.join(viewerDir, 'package.json'));
-const { chromium } = require('@playwright/test');
-const gpuArgs =
-  process.platform === 'darwin'
-    ? ['--use-angle=metal']
-    : process.platform === 'linux'
-      ? ['--ozone-platform=x11', '--use-angle=vulkan', '--enable-features=Vulkan']
-      : [];
+function parsePositiveNumber(name, value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`--${name} must be a positive number, got ${value}`);
+  }
+  return parsed;
+}
 
-function collectStageDurations(node, name, durations = []) {
-  if (!node) return durations;
+function parseOptionalNumber(name, value) {
+  if (value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`--${name} must be a finite number, got ${value}`);
+  }
+  return parsed;
+}
+
+export function parseConcurrencyValues(value) {
+  const values = value.split(',').map((part) => Number(part));
+  if (values.length === 0 || values.some((item) => !Number.isInteger(item) || item <= 0)) {
+    throw new Error(`--concurrency must contain positive integers, got ${value}`);
+  }
+  return values;
+}
+
+export function collectStageDurations(node, name, durations = []) {
+  if (!node || node.stale) return durations;
   if (node.name === name) durations.push(node.lastMs);
   for (const child of node.children ?? []) {
     collectStageDurations(child, name, durations);
@@ -43,29 +52,26 @@ function collectStageDurations(node, name, durations = []) {
   return durations;
 }
 
-const context = await chromium.launchPersistentContext(profileDir, {
-  channel: 'chrome',
-  headless,
-  viewport: { width: 1280, height: 720 },
-  args: [
-    '--disable-web-security',
-    '--ignore-gpu-blocklist',
-    '--no-sandbox',
-    '--disable-background-timer-throttling',
-    '--disable-renderer-backgrounding',
-    '--disable-backgrounding-occluded-windows',
-    ...gpuArgs,
-  ],
-});
+export function resolveStartCoordinate(range, step, requestedStart) {
+  const start = requestedStart ?? range[1] - step;
+  if (start >= range[1]) {
+    throw new Error(`start ${start} leaves no forward transition within [${range.join(', ')}]`);
+  }
+  return start;
+}
 
-async function openViewer(concurrency) {
+function buildViewerUrl(baseUrl, concurrency, prefetch) {
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  const noPrefetch = prefetch ? '' : '&no-prefetch';
+  return `${baseUrl}${separator}debug&dpr=1${noPrefetch}&opfsReadConcurrency=${concurrency}`;
+}
+
+async function openViewer(context, options, concurrency) {
   const page = await context.newPage();
   page.on('pageerror', (error) => console.error('[pageerror]', error.message));
-  const separator = baseUrl.includes('?') ? '&' : '?';
-  await page.goto(
-    `${baseUrl}${separator}debug&dpr=1&no-prefetch&opfsReadConcurrency=${concurrency}`,
-    { waitUntil: 'domcontentloaded' }
-  );
+  await page.goto(buildViewerUrl(options.baseUrl, concurrency, options.prefetch), {
+    waitUntil: 'domcontentloaded',
+  });
   await page.waitForFunction(() => window.__luxarDebug?.getState?.().initialized, undefined, {
     timeout: 120_000,
   });
@@ -98,7 +104,7 @@ async function waitForIdle(page, quietMs = 500, timeoutMs = 120_000) {
           debug.getSceneLoader().getProfiler().getTimings().count,
           stats.l2?.activeReads ?? 0,
           stats.l2?.queuedReads ?? 0,
-          stats.l2WriteQueue?.queued ?? 0,
+          stats.l2WriteQueue?.depth ?? 0,
           stats.l2WriteQueue?.inFlight ?? 0,
         ]);
       };
@@ -121,65 +127,101 @@ async function waitForIdle(page, quietMs = 500, timeoutMs = 120_000) {
   );
 }
 
-async function runPass(page, concurrency) {
+async function preparePass(page, requestedStart) {
+  const dimension = await page.evaluate(() => {
+    const debug = window.__luxarDebug;
+    const manager = debug.inputHandler.getAnimationManager();
+    if (!manager) throw new Error('dimension animation manager is unavailable');
+    const dimensions = debug.app.getDimensions();
+    const metadata = dimensions.metadata ?? [];
+    let timeIndex = metadata.findIndex((dimension) => /^t(ime)?$/i.test(dimension?.name ?? ''));
+    if (timeIndex < 0) timeIndex = metadata.findIndex((dimension) => dimension?.display === false);
+    if (timeIndex < 0) throw new Error('no non-displayed time dimension found');
+
+    const dimension = metadata[timeIndex];
+    const range = dimension?.range;
+    if (!range) throw new Error('time dimension has no range metadata');
+    const step = dimension.step && dimension.step > 0 ? dimension.step : 1;
+    return { timeIndex, step, range };
+  });
+  const start = resolveStartCoordinate(dimension.range, dimension.step, requestedStart);
+  const actualStart = await page.evaluate(
+    async ({ timeIndex, start }) => {
+      const debug = window.__luxarDebug;
+      debug.sceneDimsManager.setDimensionValue(timeIndex, start);
+      await debug.sceneDimsManager.waitForUpdate();
+      return debug.app.getDimensions().currentStep[timeIndex];
+    },
+    { timeIndex: dimension.timeIndex, start }
+  );
+  resolveStartCoordinate(dimension.range, dimension.step, actualStart);
   await waitForIdle(page);
+  return { ...dimension, start: actualStart };
+}
+
+async function measurePass(page, options, prepared, concurrency) {
   return page.evaluate(
-    async ({ ladderDepth, targetFps, startFrame, concurrency }) => {
+    async ({ ladderDepth, targetFps, prepared, concurrency }) => {
       const debug = window.__luxarDebug;
       const sceneLoader = debug.getSceneLoader();
       const loader = sceneLoader.getDefaultLoader();
       const profiler = sceneLoader.getProfiler();
-      const manager = debug.app.inputHandler.getAnimationManager();
-      const dimensions = debug.app.getDimensions();
-      const metadata = dimensions.metadata ?? [];
-      let timeIndex = metadata.findIndex((dimension) => /^t(ime)?$/i.test(dimension?.name ?? ''));
-      if (timeIndex < 0) {
-        timeIndex = metadata.findIndex((dimension) => dimension?.display === false);
-      }
-      if (timeIndex < 0) throw new Error('no non-displayed time dimension found');
-
-      debug.sceneDimsManager.setDimensionValue(timeIndex, startFrame);
-      await debug.sceneDimsManager.waitForUpdate();
-
+      const manager = debug.inputHandler.getAnimationManager();
+      if (!manager) throw new Error('dimension animation manager is unavailable');
       const before = structuredClone(loader.getCacheStats());
-      const initialCount = profiler.getTimings().count;
       const updates = [];
+      const refinements = [];
+      let lastCount = profiler.getTimings().count;
+      let lastRefinementCount = profiler.getRefinementTimings().count;
       let maxActiveReads = 0;
       let maxQueuedReads = 0;
       let maxWriteQueue = 0;
-      let lastCount = initialCount;
-      const started = performance.now();
 
-      manager.play(timeIndex, { targetFPS: targetFps, loopMode: 'once', ladderDepth });
-      while (manager.isAnimating(timeIndex)) {
+      const sample = () => {
         const timings = profiler.getTimings();
+        const refinement = profiler.getRefinementTimings();
         const stats = loader.getCacheStats();
         maxActiveReads = Math.max(maxActiveReads, stats.l2?.activeReads ?? 0);
         maxQueuedReads = Math.max(maxQueuedReads, stats.l2?.queuedReads ?? 0);
-        maxWriteQueue = Math.max(maxWriteQueue, stats.l2WriteQueue?.queued ?? 0);
+        maxWriteQueue = Math.max(maxWriteQueue, stats.l2WriteQueue?.depth ?? 0);
         if (timings.count !== lastCount) {
           updates.push(structuredClone(timings));
           lastCount = timings.count;
         }
+        if (refinement.count !== lastRefinementCount) {
+          refinements.push(structuredClone(refinement));
+          lastRefinementCount = refinement.count;
+        }
+        return stats;
+      };
+
+      const started = performance.now();
+      const played = manager.play(prepared.timeIndex, {
+        targetFPS: targetFps,
+        loopMode: 'once',
+        ladderDepth,
+      });
+      if (!played) throw new Error('dimension animation did not start');
+      while (manager.isAnimating(prepared.timeIndex)) {
+        sample();
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
+      sample();
+      const animationMs = performance.now() - started;
+      const transitionUpdateCount = updates.length;
+      const transitionRefinementCount = refinements.length;
 
       let quietSince = performance.now();
       while (performance.now() - quietSince < 1500) {
-        const timings = profiler.getTimings();
-        const stats = loader.getCacheStats();
-        maxActiveReads = Math.max(maxActiveReads, stats.l2?.activeReads ?? 0);
-        maxQueuedReads = Math.max(maxQueuedReads, stats.l2?.queuedReads ?? 0);
-        maxWriteQueue = Math.max(maxWriteQueue, stats.l2WriteQueue?.queued ?? 0);
-        if (timings.count !== lastCount) {
-          updates.push(structuredClone(timings));
-          lastCount = timings.count;
-          quietSince = performance.now();
-        }
+        const previousUpdateCount = updates.length;
+        const previousRefinementCount = refinements.length;
+        const stats = sample();
         if (
+          updates.length !== previousUpdateCount ||
+          refinements.length !== previousRefinementCount ||
           (stats.l2?.activeReads ?? 0) > 0 ||
           (stats.l2?.queuedReads ?? 0) > 0 ||
-          (stats.l2WriteQueue?.queued ?? 0) > 0 ||
+          (stats.l2WriteQueue?.depth ?? 0) > 0 ||
           (stats.l2WriteQueue?.inFlight ?? 0) > 0
         ) {
           quietSince = performance.now();
@@ -187,56 +229,181 @@ async function runPass(page, concurrency) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
 
-      const after = structuredClone(loader.getCacheStats());
+      const wallMs = performance.now() - started;
+      const finalPosition = debug.app.getDimensions().currentStep[prepared.timeIndex];
+      if (finalPosition === prepared.start || transitionUpdateCount === 0) {
+        throw new Error(
+          `measured pass did not advance: start=${prepared.start}, end=${finalPosition}, updates=${transitionUpdateCount}`
+        );
+      }
       return {
         concurrency,
         ladderDepth,
-        timeIndex,
-        wallMs: performance.now() - started,
+        timeIndex: prepared.timeIndex,
+        start: prepared.start,
+        end: finalPosition,
+        step: prepared.step,
+        range: prepared.range,
+        animationMs,
+        settleMs: wallMs - animationMs,
+        wallMs,
+        transitionUpdateCount,
+        transitionRefinementCount,
         maxActiveReads,
         maxQueuedReads,
         maxWriteQueue,
         before,
-        after,
+        after: structuredClone(loader.getCacheStats()),
         updates,
+        refinements,
         renderer: (() => {
-          const canvas = document.createElement('canvas');
-          const gl = canvas.getContext('webgl2');
-          const extension = gl?.getExtension('WEBGL_debug_renderer_info');
-          return extension ? gl?.getParameter(extension.UNMASKED_RENDERER_WEBGL) : null;
+          const renderer = debug.renderer;
+          const backend = renderer.backend;
+          const context = renderer.getContext?.();
+          const extension = context?.getExtension?.('WEBGL_debug_renderer_info');
+          const adapter = backend?.device?.adapterInfo;
+          return {
+            type: renderer.constructor?.name ?? null,
+            backend: backend?.isWebGPUBackend
+              ? 'webgpu'
+              : backend?.isWebGLBackend || renderer.isWebGLRenderer
+                ? 'webgl'
+                : null,
+            gpu: extension
+              ? context.getParameter(extension.UNMASKED_RENDERER_WEBGL)
+              : adapter
+                ? {
+                    vendor: adapter.vendor,
+                    architecture: adapter.architecture,
+                    device: adapter.device,
+                    description: adapter.description,
+                  }
+                : null,
+          };
         })(),
         userAgent: navigator.userAgent,
       };
     },
-    { ladderDepth, targetFps, startFrame, concurrency }
+    { ladderDepth: options.ladderDepth, targetFps: options.targetFps, prepared, concurrency }
   );
 }
 
-const results = [];
-for (let index = 0; index < concurrencyValues.length; index += 1) {
-  const concurrency = concurrencyValues[index];
-  console.error(`[opfs=${concurrency}] opening viewer`);
-  const page = await openViewer(concurrency);
-  if (index === 0 && clearFirst) {
-    await page.evaluate(async () => {
-      const loader = window.__luxarDebug.getSceneLoader().getDefaultLoader();
-      loader.clearL1Cache();
-      await loader.clearL2Cache();
-    });
+async function runPass(page, options, concurrency) {
+  await waitForIdle(page);
+  const prepared = await preparePass(page, options.startFrame);
+  return measurePass(page, options, prepared, concurrency);
+}
+
+export function enrichResult(result) {
+  const transitionUpdates = result.updates.slice(0, result.transitionUpdateCount);
+  const settleUpdates = result.updates.slice(result.transitionUpdateCount);
+  result.loadArraysMs = {
+    transition: transitionUpdates.map((timings) => collectStageDurations(timings, 'Load Arrays')),
+    settle: settleUpdates.map((timings) => collectStageDurations(timings, 'Load Arrays')),
+  };
+  return result;
+}
+
+function writeResults(options, results, error = null) {
+  writeFileSync(
+    options.out,
+    JSON.stringify(
+      {
+        baseUrl: options.baseUrl,
+        prefetch: options.prefetch,
+        ...(error ? { error } : {}),
+        results,
+      },
+      null,
+      2
+    )
+  );
+}
+
+function parseOptions(argv) {
+  const viewerDir = path.resolve(arg('viewer-dir', '.', argv));
+  const startValue = arg('start-frame', undefined, argv);
+  return {
+    viewerDir,
+    baseUrl: arg('url', 'http://127.0.0.1:5198/?src=http://127.0.0.1:9011', argv),
+    profileDir: path.resolve(arg('profile-dir', '/tmp/luxar-opfs-deep-pass', argv)),
+    out: path.resolve(arg('out', 'opfs-deep-pass.json', argv)),
+    ladderDepth: parsePositiveNumber('ladder-depth', arg('ladder-depth', '6', argv)),
+    targetFps: parsePositiveNumber('target-fps', arg('target-fps', '2', argv)),
+    startFrame: parseOptionalNumber('start-frame', startValue),
+    headless: arg('headless', 'false', argv) === 'true',
+    clearFirst: arg('clear-first', 'false', argv) === 'true',
+    prefetch: flag('prefetch', argv),
+    concurrencyValues: parseConcurrencyValues(arg('concurrency', '8,64,512,4096', argv)),
+  };
+}
+
+export async function main(argv = process.argv) {
+  const options = parseOptions(argv);
+  const require = createRequire(path.join(options.viewerDir, 'package.json'));
+  const { chromium } = require('@playwright/test');
+  const gpuArgs =
+    process.platform === 'darwin'
+      ? ['--use-angle=metal']
+      : process.platform === 'linux'
+        ? ['--ozone-platform=x11', '--use-angle=vulkan', '--enable-features=Vulkan']
+        : [];
+  const context = await chromium.launchPersistentContext(options.profileDir, {
+    channel: 'chrome',
+    headless: options.headless,
+    viewport: { width: 1280, height: 720 },
+    args: [
+      '--disable-web-security',
+      '--ignore-gpu-blocklist',
+      '--no-sandbox',
+      '--disable-background-timer-throttling',
+      '--disable-renderer-backgrounding',
+      '--disable-backgrounding-occluded-windows',
+      ...gpuArgs,
+    ],
+  });
+  const results = [];
+  let failure = null;
+  try {
+    for (let index = 0; index < options.concurrencyValues.length; index += 1) {
+      const concurrency = options.concurrencyValues[index];
+      console.error(`[opfs=${concurrency}] opening viewer`);
+      const page = await openViewer(context, options, concurrency);
+      try {
+        if (index === 0 && options.clearFirst) {
+          await page.evaluate(async () => {
+            await window.__luxarDebug.getSceneLoader().getDefaultLoader().clearAllCaches();
+          });
+        }
+        const result = enrichResult(await runPass(page, options, concurrency));
+        results.push(result);
+        writeResults(options, results);
+        const misses = (result.after.l2?.misses ?? 0) - (result.before.l2?.misses ?? 0);
+        console.error(
+          `[opfs=${concurrency}] animation=${result.animationMs.toFixed(0)}ms ` +
+            `settle=${result.settleMs.toFixed(0)}ms updates=${result.transitionUpdateCount}+` +
+            `${result.updates.length - result.transitionUpdateCount} active=${result.maxActiveReads} ` +
+            `queued=${result.maxQueuedReads} misses=${misses}`
+        );
+        if (result.maxActiveReads > concurrency) {
+          throw new Error(
+            `observed ${result.maxActiveReads} active OPFS reads with concurrency ${concurrency}`
+          );
+        }
+      } finally {
+        await page.close();
+      }
+    }
+  } catch (error) {
+    failure = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    throw error;
+  } finally {
+    writeResults(options, results, failure);
+    await context.close();
   }
-  const result = await runPass(page, concurrency);
-  result.loadArraysMs = result.updates.map((timings) =>
-    collectStageDurations(timings, 'Load Arrays')
-  );
-  results.push(result);
-  console.error(
-    `[opfs=${concurrency}] wall=${result.wallMs.toFixed(0)}ms ` +
-      `updates=${result.updates.length} active=${result.maxActiveReads} queued=${result.maxQueuedReads} ` +
-      `misses=${result.after.l2.misses - result.before.l2.misses}`
-  );
-  await page.close();
+  console.error(`wrote ${options.out}`);
 }
 
-writeFileSync(out, JSON.stringify({ baseUrl, results }, null, 2));
-await context.close();
-console.error(`wrote ${out}`);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}
