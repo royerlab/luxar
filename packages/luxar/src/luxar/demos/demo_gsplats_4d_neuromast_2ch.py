@@ -200,8 +200,9 @@ CHANNELS = [
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
         # Display window (Layers-panel range) and gamma, set by eye on the pinned
-        # Z-corrected lateral-pixel-unit store (re-tuned 2026-09-10 under
-        # ADDITIVE compositing, see the graft).
+        # historical-2.5 lateral-pixel-unit store (re-tuned 2026-09-10 under
+        # ADDITIVE compositing, see the graft). The corrected pair has not yet
+        # had its appearance re-validated; see #2739.
         # The window is authored as intensity/offset: intensity = 1 / (hi - lo),
         # offset = -lo / (hi - lo), which the viewer maps back to [lo, hi] on a
         # colormapped node. A gamma below 1 lifts the dim membrane shell.
