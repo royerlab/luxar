@@ -516,6 +516,9 @@ def resolve_channel_paths() -> list[Path]:
 # =============================================================================
 # Scene construction
 # =============================================================================
+# AUTO/MEMORY stores centres as per-axis uint16 fixed point, so extent / 65535
+# is one representable coordinate step. The pinned channels' largest endpoint
+# difference is 2.5e-5 on Y: 4.35e-8 of its 575.54 extent, or 0.3 % of one step.
 def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     """Build the 4D two-channel scene: one layer-enabled gsplats node per marker.
 
@@ -524,7 +527,8 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     ``layer=True``. The pinned pair was scaled by the historical Z-only 2.5, not
     ``VOXEL_SCALE`` (step 7), so its spatial coordinates remain in lateral-pixel
     units and Z is also stretched by 8.3 %; a ``--recompute`` build has physical
-    spatial units. Both channels co-register and animate over the Time dimension.
+    spatial units. Both channels' centre bounds must agree within one uint16
+    coordinate step; they co-register and animate over the Time dimension.
     """
     with asection("Creating 4D two-channel neuromast scene"):
         # Explicit, named 4D dims (not the generic dim0..dim3 from
