@@ -66,6 +66,25 @@ def _healthy_stats() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# File scanning
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_language_skips_zarr_store_contents(tmp_path: Path) -> None:
+    source_file = tmp_path / "config.json"
+    source_file.write_text('{"tracked": true}\n')
+    generated_file = tmp_path / "fixtures" / "scene.luxar.zarr" / ".zattrs.json"
+    generated_file.parent.mkdir(parents=True)
+    generated_file.write_text('{"generated": true}\n')
+
+    stats = gs.analyze_language(tmp_path, "json")
+
+    assert stats.files == 1
+    assert stats.total_lines == 1
+    assert stats.largest_files == [("config.json", 1)]
+
+
+# ---------------------------------------------------------------------------
 # validate_measurements
 # ---------------------------------------------------------------------------
 

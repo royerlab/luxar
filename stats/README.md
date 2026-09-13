@@ -114,6 +114,7 @@ inflate the counts. The skipped names include:
 - Build & coverage output: `dist/`, `build/`, `_build/`, `target/`, `coverage/`,
   `htmlcov/`, `playwright-report/`, `test-results/`, `.playwright-mcp/`
 - Data & scratch: `datasets/`, `delme/`, `build-cuda-logs/`, `cuda-build-logs/`
+- Array stores: any directory whose name ends in `.zarr/`
 - VCS & tooling: `.git/`, `.idea/`, `.vscode/`, `.claude/`
 
 ## Technical Details
