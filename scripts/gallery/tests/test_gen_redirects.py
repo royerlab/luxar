@@ -53,6 +53,16 @@ def test_route_targets_the_store_not_the_key():
     assert routed >= {"lorenz", "cosmicflows_laniakea"}
 
 
+def test_route_targets_the_standalone_viewer_with_encoded_source():
+    lines, _, _ = gen.build_routes(DEMOS, LIVE, "2026-09-02")
+    lorenz = next(line for line in lines if line.startswith("/d/lorenz "))
+    assert lorenz == (
+        "/d/lorenz  https://luxarviewer.dev/?src="
+        "https%3A%2F%2Fdata.luxarviewer.dev%2Fdata%2F2026-09-02%2F"
+        "lorenz.luxar.zarr  302"
+    )
+
+
 def test_store_spelling_gets_an_alias():
     lines, routed, _ = gen.build_routes(DEMOS, LIVE, "2026-09-02")
     assert any(ln.startswith("/d/cosmicflows_laniakea_full ") for ln in lines)

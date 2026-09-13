@@ -53,8 +53,9 @@
         "azimuth": 90,
         "elevation": 8
       },
-      "distance": 32,
-      "exposure": 1.2
+      "distance": 60,
+      "exposure": 1.2,
+      "note": "distance 32 -> 60: the orbitals overflowed the frame at distance 32; the live still shows two small lobes with wide margin. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | The abandoned fillTarget 0.55 attempt was a no-op because fillTarget is INERT when `distance` is set; the 86.6% -> 90.0% border-lit change was run variance. | KEEP dimensionNav steps:2 AND distance 60; measured 2026-09-12. The obvious-looking edit is to raise steps to 4 because the demo bakes OPENING_ORBITAL='3pz' (current_step=[0,0,0,4] of 8 categories) - do NOT. The capture does not start from the baked step (#2733), so steps:4 renders a small single-phase sphere (span 8.3% at d=60, 56.8% at d=9) instead of a dumbbell. Measured at d=40, steps 4/6/5/3/1/2 give span 12.3/39.5/59.8/86.8/90.0/92.8% - an apparent-size ordering in which no steps value reaches 3pz. Removing dimensionNav entirely renders EVERY slice at once (border-lit 100% at d=9, identical at d=12 and identical to steps:8). steps:2 + d=60 gives coverage 64.5%, border-lit 0.1%, and the two-lobed warm/cool dumbbell the live tile shows. Also: border-lit alone cannot validate this tile - a subject shrunk to ~1% of frame scores a perfect 0.0%; read the harness's own `under-filled?` warning."
     },
     {
       "id": "desi_galaxies",
@@ -182,7 +183,9 @@
       "viewAngle": {
         "azimuth": 90,
         "elevation": 0
-      }
+      },
+      "fillTarget": 0.45,
+      "note": "fillTarget 0.95 -> 0.45: 77.3% border-lit at 0.95; became an unrecognisable close-up. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | The intermediate 0.65 moved border-lit 77.3% -> 41.1%, right direction but not far enough for a subject this diffuse. The under-fill warning at 0.45 is expected and deliberate; raising the target restores the worse crop."
     },
     {
       "id": "gsplats_4d_celegans_tracking",
@@ -387,7 +390,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_bioluminescent_ocean.py",
-      "dataset": "datasets/demos/ocean.luxar.zarr"
+      "dataset": "datasets/demos/ocean.luxar.zarr",
+      "fillTarget": 0.7,
+      "note": "fillTarget 0.7 (was default 0.95): 81.8% border-lit at 0.95; jellyfish tentacles cut off at the edges. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "caida_as_topology",
@@ -629,7 +634,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_volumetric_cloud.py",
-      "dataset": "datasets/demos/cloud.luxar.zarr"
+      "dataset": "datasets/demos/cloud.luxar.zarr",
+      "fillTarget": 0.7,
+      "note": "fillTarget 0.7 (was default 0.95): 83.4% border-lit at 0.95; cloud filled the frame edge to edge. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "zebrahub_multiome",
@@ -689,7 +696,9 @@
       "category": "embeddings",
       "script": "demo_zebrahub_velocity_streamlines.py",
       "dataset": "datasets/demos/zebrahub_velocity_streamlines_standard.luxar.zarr",
-      "citation": "Lange et al. 2024 (Zebrahub)"
+      "citation": "Lange et al. 2024 (Zebrahub)",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65 (was default 0.95): 73.2% border-lit at 0.95; streamlines overflowed the frame. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "gsplats_2d_cmu1_pathology",
@@ -858,7 +867,8 @@
         "framePoint": 0.9
       },
       "citation": "Lange et al. 2024 (Zebrahub)",
-      "fillTarget": 0.9
+      "fillTarget": 0.6,
+      "note": "fillTarget 0.9 -> 0.60: the 51-time-part rebuild frames late in the series (framePoint 0.9), where the embryo is large; at 0.90 it filled the frame with 88.1% border-lit and read as blown out. 0.60 brings it to 7.7%."
     },
     {
       "id": "gsplats_3d_decimation_study",

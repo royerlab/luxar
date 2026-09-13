@@ -23,6 +23,13 @@ def test_counts_tiles_by_viewer_link():
     assert audit_mod.count_tiles("<p>no tiles here</p>") == 0
 
 
+def test_counts_tiles_by_standalone_viewer_link():
+    page = "\n".join(
+        f'<a href="https://luxarviewer.dev/?src=x{i}">t</a>' for i in range(86)
+    )
+    assert audit_mod.count_tiles(page) == 86
+
+
 def test_matching_counts_report_no_staleness():
     tiles, claims, stale = audit_mod.audit(PAGE, README_OK)
     assert tiles == 86
