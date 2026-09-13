@@ -728,6 +728,9 @@ export interface CacheStatsProvider {
       reads: number;
       writes: number;
       misses: number;
+      canceledReads?: number;
+      activeReads?: number;
+      queuedReads?: number;
       /** Fixed OPFS/disk byte budget. */
       maxSize?: number;
       /**
