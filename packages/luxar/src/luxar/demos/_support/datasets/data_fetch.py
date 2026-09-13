@@ -11,10 +11,11 @@ excluded from the wheel and sdist (~450 MB of git-LFS payload), so a manifest
 kept there would be missing for exactly the installed users this module serves.
 
 Current ``zenodo`` entries carry one checksum contract: ``sha256`` and ``bytes``
-describe what the record serves. The optional ``hosted_sha256`` and
-``hosted_bytes`` fields remain supported for legacy manifests where an in-repo
-copy differed from the record copy; in that shape the hosted fields are
-authoritative for downloads.
+describe what the record serves, or what a dataset-level ``base_url`` mirror
+serves when one is declared. The optional ``hosted_sha256`` and ``hosted_bytes``
+fields remain supported for legacy manifests where an in-repo copy differed
+from the record copy; in that shape the hosted fields are authoritative for
+downloads.
 
 Resolution order for a ``zenodo`` dataset (per file). A checksum is the authority
 at every step. Bytes matching neither live contract are quarantined unless they
@@ -269,6 +270,16 @@ def declared_file_names(
     return {entry["name"] for entry in files}
 
 
+def resolved_record(manifest: Manifest, spec: Manifest) -> Manifest:
+    """Return the dataset's effective download record without shared mutation."""
+    # The dataset mirror deliberately outranks the provenance record URL. Copy
+    # first because many datasets may share the same manifest record object.
+    record = dict(manifest.get("records", {}).get(spec.get("record", ""), {}))
+    if spec.get("base_url"):
+        record["base_url"] = spec["base_url"]
+    return record
+
+
 def _select_files(
     name: str,
     files: list[Manifest],
@@ -338,6 +349,8 @@ def ensure_dataset(
             so the caller takes its own build path (mirrors the demos' ``--recompute``).
         cache_root: Override the cache root (tests). Defaults to ``~/.cache/luxar``.
         manifest: Pre-loaded manifest (tests); defaults to the packaged one.
+            A dataset-level ``base_url`` overrides its provenance record's
+            download URL without changing that shared record.
 
     Returns:
         Cache paths in manifest order, with a canonical ``input_digests`` map.
@@ -390,9 +403,7 @@ def ensure_dataset(
     subdir = spec.get("dir", name)
     parts = [p for p in (subdir, variant_name) if p]
     lfs_dir = _DEMOS_DATA_DIR.joinpath(*parts)
-    record = dict(m["records"].get(spec.get("record", ""), {}))
-    if spec.get("base_url"):
-        record["base_url"] = spec["base_url"]
+    record = resolved_record(m, spec)
     label = f"{name}:{variant_name}" if variant_name else name
     positional_fallbacks = _positional_superseded_fallbacks(
         files, cache_dir, lfs_dir, record, dataset_label=label
