@@ -1097,10 +1097,10 @@ Two guards, and the pairing is the point:
 - **Tile count, after the render.** Count
   `href="https://luxarviewer.dev/?src="` occurrences and require one per store;
   also accept legacy `href="/viewer/index.html?src="` links while `/viewer/`
-  remains served. Separately require every tile to reference a prefix published
-  by the wave, since a stale-prefix tile passes a bare count; an incremental wave
-  can legitimately leave unchanged tiles on older prefixes. This one says
-  *that*, and is the last line before deploy.
+  remains served. Separately require every tile to reference a prefix that is
+  still live — either the wave's new prefix or an earlier one still serving —
+  since a stale-prefix tile passes a bare count. This one says *that*, and is
+  the last line before deploy.
 
 Verify a new guard against the broken artefact, not only the fixed one. Both were
 run against the page that actually deployed: 9 vs 85, abort. A guard only tested
