@@ -23,6 +23,12 @@ import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-drive
 import { ControlClient } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
+import { resolveKioskMode } from '../config/kiosk';
+import { applyKioskMode } from './app/kiosk/apply-kiosk';
+import {
+  extractControlPanelConfig,
+  type ControlPanelSettings,
+} from '../config/zarr-bridge/control-panel';
 import type { AudioEngine } from '../audio/audio-engine';
 import type { AudioPatch, AudioState } from '../types/audio';
 import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
@@ -171,6 +177,21 @@ export class LuxarApp {
   private waypointDriver?: WaypointDriver;
   /** Remote-control channel, present only when `options.control` is set. */
   private controlClient?: ControlClient;
+  /**
+   * The scene's authored control-panel block, as last loaded.
+   *
+   * Held for `getViewerState()` alone: the touch panel is a separate page and
+   * cannot read the store's attributes itself. Reset on every dataset load, so
+   * switching scenes cannot leave the previous scene's panel authoring behind.
+   */
+  private controlPanelConfig: ControlPanelSettings | null = null;
+  /**
+   * Teardown for the kiosk watchdog, if one is running.
+   *
+   * Held so `switchDataset` cannot leave the previous scene's watchdog
+   * listening on a canvas whose context state it no longer describes.
+   */
+  private kioskTeardown: (() => void) | null = null;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -530,6 +551,40 @@ export class LuxarApp {
     // AFTER the waypoints: the opening slice is final, so the first slab
     // evaluation starts exactly the sounds the opening story owns.
     this.installAudio(viewerConfig?.audio);
+    // Kept rather than applied: nothing in THIS page reads it. The control
+    // panel is a separate page and asks for it over the wire, so the display's
+    // only job is to remember what the store said.
+    this.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
+    this.applyKiosk(viewerConfig);
+  }
+
+  /**
+   * Lock the display down when the scene or the URL asks for it.
+   *
+   * Resolved from BOTH the authored `ui.kiosk` block and `?kiosk`, with the URL
+   * winning — see `config/kiosk.ts`. Re-applied on every dataset load, and the
+   * previous watchdog torn down first, so switching scenes cannot accumulate
+   * listeners on a long-running exhibit.
+   */
+  private applyKiosk(viewerConfig: ZarrViewerConfig | undefined): void {
+    this.kioskTeardown?.();
+    this.kioskTeardown = null;
+    // `this.options?` because this now runs inside the viewer-config pass,
+    // which a partially-constructed app can reach before its options are set —
+    // and a missing option means "no ?kiosk", not a crash that aborts the rest
+    // of the load (theme, dimension state, the render loop after it).
+    const mode = resolveKioskMode(viewerConfig?.ui?.kiosk, this.options?.kiosk === true);
+    if (!mode.enabled) return;
+    this.kioskTeardown = applyKioskMode(mode, {
+      setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
+      setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
+      hidePanels: () => {
+        this.renderingControls.hide();
+        this.scaleBar?.hide();
+        this.layersPanel?.hide();
+      },
+      canvas: this.sceneManager.renderer?.domElement,
+    });
   }
 
   /**
@@ -1283,11 +1338,16 @@ export class LuxarApp {
     }
     return {
       src: this.currentDatasetSrc ?? this.options.src ?? null,
+      // Read from the document rather than kept as a field: the authored
+      // title, the `?title=` parameter and the built-in default all land
+      // there already, so this reports what is actually on the tab.
+      title: document.title,
       camera: this.getCameraPose(),
       dimensions: this.getDimensions(),
       rendering: this.getRenderingSettings(),
       layers: this.getLayers(),
       audio: this.getAudioState(),
+      controlPanel: this.controlPanelConfig,
     };
   }
 

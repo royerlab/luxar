@@ -90,7 +90,7 @@ google-chrome --kiosk --autoplay-policy=no-user-gesture-required "http://host:51
 ```
 
 The context then starts on load and the gate never appears. See
-`docs/guides/specs/REMOTE_CONTROL_SPEC.md` §4.2 for the rest of the kiosk block.
+`docs/guides/specs/REMOTE_CONTROL_SPEC.md` §4.3 for the rest of the kiosk block.
 
 ## Waypoint triggers
 

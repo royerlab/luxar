@@ -57,6 +57,7 @@ from .serving import (
 )
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
+    advertised_host,
     append_title_param,
     check_viewer_built,
     dataset_title,
@@ -344,12 +345,17 @@ def serve(
             )
 
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
-        _add_cors(api, cors_origin)
+        _add_cors(api, cors_origin, bind_host=host)
+
+        # `host` may be a wildcard bind, which is not a destination. Everything
+        # that goes into a URL — printed, opened, or handed to the viewer as
+        # ?src= — uses the resolved address instead.
+        reachable = advertised_host(host)
 
         # Mount the static files handler with directory listing
         api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
 
-        aprint(f"🛰️  Serving {serve_path} at http://{host}:{actual_port}")
+        aprint(f"🛰️  Serving {serve_path} at http://{reachable}:{actual_port}")
 
         # Also serve viewer if requested
         if viewer:
@@ -357,7 +363,7 @@ def serve(
                 aprint("⚠️  Skipping viewer serving.")
             else:
                 # Start viewer in a separate thread
-                data_url = f"http://{host}:{actual_port}"  # No trailing slash
+                data_url = f"http://{reachable}:{actual_port}"  # No trailing slash
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
                     args=(host, actual_viewer_port, data_url, False, cors_origin),
@@ -375,7 +381,7 @@ def serve(
                     aprint("⚠️  Viewer server did not become ready.")
         else:
             hint_url = append_title_param(
-                f"http://localhost:{viewer_port}/?src=http://{host}:{actual_port}",
+                f"http://localhost:{viewer_port}/?src=http://{reachable}:{actual_port}",
                 dataset_title(serve_path),
             )
             aprint(f"📊 Viewer URL: {hint_url}")
@@ -387,7 +393,7 @@ def serve(
             elif not viewer_served:
                 aprint("⚠️  Viewer not served; skipping --open.")
             else:
-                data_url = f"http://{host}:{actual_port}"
+                data_url = f"http://{reachable}:{actual_port}"
                 viewer_url = _build_viewer_url(
                     host,
                     actual_viewer_port,
@@ -520,7 +526,8 @@ def viewer(
 
             # The data server mounts the dataset itself at its root, so the
             # URL carries no store-name suffix. No trailing slash!
-            data_url = f"http://{host}:{actual_data_port}"
+            # `advertised_host` because a wildcard bind is not dialable.
+            data_url = f"http://{advertised_host(host)}:{actual_data_port}"
 
         # Find available port for viewer
         actual_viewer_port = pick_port(port, host, label="viewer")

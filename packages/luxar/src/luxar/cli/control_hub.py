@@ -41,10 +41,23 @@ from arbol import aprint
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
+from . import _control_contract as _contract
+
+# The wire vocabulary is GENERATED, from `control-contract/contract.yaml`, and
+# re-exported here under the names this module has always used. Three
+# implementations have to agree on these values — this hub, the viewer's
+# client, and the Go launcher's relay — and the third ships inside a native
+# binary nobody rebuilds when a Python constant changes. A drift gate
+# (`hatch run check-control-contract`) is what makes that agreement checkable
+# instead of hopeful.
+#
+# The reasoning behind each value lives in the contract; the notes below are the
+# ones specific to how THIS hub uses them.
+
 #: Query value attaching a socket as the party being driven.
-ROLE_VIEWER = "viewer"
+ROLE_VIEWER = _contract.ROLE_VIEWER
 #: Query value attaching a socket as the party doing the driving.
-ROLE_CONTROLLER = "controller"
+ROLE_CONTROLLER = _contract.ROLE_CONTROLLER
 #: The only roles that may attach. Anything else is refused rather than
 #: defaulted: a typo'd ``?role=viewr`` silently attaching as a CONTROLLER would
 #: leave a display that never receives a call and reports no error.
@@ -54,31 +67,36 @@ ROLES = (ROLE_VIEWER, ROLE_CONTROLLER)
 #: ``accept()`` on purpose: closing before the handshake completes surfaces at
 #: the client as a bare HTTP 403 with no code, so a controller could not tell
 #: "no hub here" from "your token is wrong".
-CLOSE_POLICY_VIOLATION = 1008
+CLOSE_POLICY_VIOLATION = _contract.CLOSE_POLICY_VIOLATION
 
 #: Requests in flight per controller before the oldest is evicted. A wedged
 #: viewer — or a scene mid-load, where every embedder method throws — never
 #: replies, and without a cap one dict entry leaks per tap for the lifetime of
 #: the process. Eviction drops a reply the controller was never going to get.
-MAX_PENDING_PER_CONTROLLER = 64
+MAX_PENDING_PER_CONTROLLER = _contract.MAX_PENDING_PER_CONTROLLER
 
 #: JSON-RPC reserved codes, plus one of ours for "nothing to drive".
-_PARSE_ERROR = -32700
-_INVALID_REQUEST = -32600
-_NO_VIEWER = -32001
+_PARSE_ERROR = _contract.PARSE_ERROR
+_INVALID_REQUEST = _contract.INVALID_REQUEST
+_NO_VIEWER = _contract.NO_VIEWER
 
 
 def _origin_host(origin: str) -> str:
-    """The ``host:port`` of an ``Origin`` header, lowercased.
+    """The ``host:port`` of an ``Origin`` header, lowercased, ``""`` if malformed.
 
     Parsed rather than string-matched so `http://kiosk.local:5173` and
     `https://kiosk.local:5173` both reduce to the host the `Host` header
     carries — and so an origin like `null` (a sandboxed iframe) reduces to
     something that can never match one.
-    """
-    from urllib.parse import urlparse
 
-    return urlparse(origin.strip()).netloc.lower()
+    Strictly, via :func:`~luxar.cli.utils.origin_authority`: a plain
+    ``urlparse`` RAISES ``ValueError("Invalid IPv6 URL")`` on an unterminated
+    bracket like ``http://[::1``, which any unauthenticated client could send
+    to crash this handshake before the token is ever checked.
+    """
+    from .utils import origin_authority
+
+    return origin_authority(origin)
 
 
 def _normalize_origin(origin: str) -> str:

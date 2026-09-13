@@ -5,6 +5,8 @@
  * eliminating the need for 'as any' type assertions throughout the codebase.
  */
 
+import type { ZarrKioskConfig } from '../config/kiosk';
+
 /**
  * Per-dimension affine transform for continuous/discrete dimensions.
  * Applied as: effective_value = scale * original_value + offset
@@ -252,6 +254,10 @@ export interface ZarrViewerConfig {
     show_scale_bar?: boolean;
     show_layers?: boolean;
     show_overlays?: boolean;
+    // Unattended-display lockdown. Resolved (with `?kiosk`) by
+    // `config/kiosk.ts::resolveKioskMode`, which validates the shape — so
+    // this mirrors the writer's field names and nothing more.
+    kiosk?: ZarrKioskConfig;
   };
 
   // Theme
@@ -278,6 +284,12 @@ export interface ZarrViewerConfig {
 
   // Sound layer defaults (master gain, buses, ducking, panning).
   audio?: ZarrAudioConfig;
+
+  // Touch-panel authoring: heading, which dimension the tiles walk, per-chapter
+  // overrides, author CSS. `unknown` on purpose — the shape is validated by
+  // `config/zarr-bridge/control-panel.ts`, and declaring it structurally here
+  // would let a caller read a field the validator has not checked.
+  control_panel?: unknown;
 }
 
 /**

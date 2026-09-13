@@ -247,4 +247,14 @@ export interface LuxarAppOptions {
    * --control-token`). Mirrors `UrlParams.controlToken`.
    */
   controlToken?: string | null;
+
+  /**
+   * Lock the display down for unattended public use (`?kiosk`).
+   *
+   * A HARD override over the scene's authored `ui.kiosk` block: this is the
+   * operator's channel, so a store that predates the block — or one borrowed
+   * for an exhibit it was never authored for — is still lockable from the
+   * launch command. See `config/kiosk.ts`.
+   */
+  kiosk?: boolean;
 }

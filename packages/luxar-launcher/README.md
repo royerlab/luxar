@@ -21,6 +21,42 @@ re-decode timelapse
 frames on every loop. Override with `LUXAR_CACHE_BUDGET_MB=<N>` on a
 memory-constrained machine (e.g. `=512`).
 
+## Kiosk mode (remote control)
+
+The app can host the remote-control relay, so an exported scene drives a kiosk
+without a Python checkout. Off by default, because a native app that silently
+started listening would be a surprise nobody asked for:
+
+```bash
+# Loopback only — useful for a second browser window on the same machine.
+LUXAR_LAUNCHER_CONTROL=1 ./luxar-launcher
+
+# A tablet on the LAN. The token is strongly advised: without one, anything
+# that can reach this machine can drive the display.
+LUXAR_LAUNCHER_CONTROL=1 \
+  LUXAR_LAUNCHER_HOST=0.0.0.0 \
+  LUXAR_LAUNCHER_CONTROL_TOKEN=$(openssl rand -hex 8) \
+  ./luxar-launcher
+```
+
+The app prints the touch-panel URL on stderr. `LUXAR_LAUNCHER_HOST` resolves a
+wildcard bind to a concrete address before printing, because `http://0.0.0.0:PORT`
+is not something a tablet can dial.
+
+`hub.go` is the relay, and it is the **second** implementation of one — the
+first is `luxar.cli.control_hub`. Everything the two must agree on (roles, the
+close code for a refused handshake, the JSON-RPC error codes, the pending cap)
+is generated into `control_contract.go` from `control-contract/contract.yaml`;
+`hatch run check-control-contract` fails the build if this copy drifts from the
+Python one. Do not edit the generated file.
+
+The relay refuses three things, mirroring the Python hub: an unknown `?role=`
+(refused rather than defaulted, since a typo attaching as a *controller* would
+attach with authority), a wrong token (compared in constant time), and a
+cross-origin browser handshake — a WebSocket handshake is not subject to the
+same-origin policy and has no CORS preflight, so without that check any page a
+visitor opened could drive the display, and binding loopback would not help.
+
 ## Build
 
 From the project root:

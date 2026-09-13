@@ -1,3 +1,4 @@
+import { CLOSE_POLICY_VIOLATION } from '../../../../../config/control-contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -24,7 +25,7 @@ class FakeSocket implements ControlSocketLike {
   sent: string[] = [];
   closed = false;
   onopen: (() => void) | null = null;
-  onclose: ((event: { code?: number; reason?: string }) => void) | null = null;
+  onclose: ((event?: { code?: number; reason?: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
 
@@ -398,25 +399,53 @@ describe('ControlClient lifecycle', () => {
     expect(context.sockets).toHaveLength(3);
   });
 
+  it('reports a refused display and does not reconnect', () => {
+    // The mirror of the panel socket's behaviour, and the reason
+    // `ControlSocketLike.onclose` carries a code at all: a display launched
+    // with a mistyped ?controlToken used to reconnect into the same 1008
+    // refusal for the life of the exhibit, logging only a generic socket
+    // error.
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const context = harness();
+    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION, reason: 'cross-origin handshake' });
+    vi.advanceTimersByTime(CONTROL_RECONNECT_MAX_MS * 4);
+
+    expect(warning).toHaveBeenCalledWith(
+      Modules.APP,
+      'control: the hub refused this display (cross-origin handshake); not retrying'
+    );
+    expect(context.sockets).toHaveLength(1);
+    warning.mockRestore();
+  });
+
+  it('retains token guidance when a refusal has no reason', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const context = harness();
+
+    context.socket.onclose?.({ code: CLOSE_POLICY_VIOLATION, reason: '' });
+
+    expect(warning).toHaveBeenCalledWith(
+      Modules.APP,
+      'control: the hub refused this display (check the ?controlToken in its URL); not retrying'
+    );
+    warning.mockRestore();
+  });
+
+  it('still reconnects after a close that carries no code', () => {
+    // A dropped network is not a refusal, so the refusal short-circuit must
+    // not have swallowed the ordinary path.
+    const context = harness();
+    context.socket.onclose?.();
+    vi.advanceTimersByTime(CONTROL_RECONNECT_BASE_MS);
+    expect(context.sockets).toHaveLength(2);
+  });
+
   it('does not reconnect after dispose', () => {
     const context = harness();
     context.client.dispose();
     context.socket.onclose?.({ code: 1000, reason: '' });
     vi.advanceTimersByTime(CONTROL_RECONNECT_MAX_MS * 2);
     expect(context.sockets).toHaveLength(1);
-  });
-
-  it('warns with the close reason and retry delay after a refused handshake', () => {
-    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
-    const context = harness();
-
-    context.socket.onclose?.({ code: 1008, reason: 'bad token' });
-
-    expect(warning).toHaveBeenCalledWith(
-      Modules.APP,
-      `control: socket closed (1008: bad token); retrying in ${CONTROL_RECONNECT_BASE_MS} ms`
-    );
-    warning.mockRestore();
   });
 
   it('does not warn when a socket closes normally', () => {
@@ -426,6 +455,19 @@ describe('ControlClient lifecycle', () => {
     context.socket.onclose?.({ code: 1000, reason: 'normal closure' });
 
     expect(warning).not.toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
+  it('warns with the close reason and retry delay after a transient close', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const context = harness();
+
+    context.socket.onclose?.({ code: 1006, reason: 'network lost' });
+
+    expect(warning).toHaveBeenCalledWith(
+      Modules.APP,
+      `control: socket closed (1006: network lost); retrying in ${CONTROL_RECONNECT_BASE_MS} ms`
+    );
     warning.mockRestore();
   });
 

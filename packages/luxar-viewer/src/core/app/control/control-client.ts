@@ -15,6 +15,7 @@
  * @see docs/guides/specs/REMOTE_CONTROL_SPEC.md §3.3
  */
 
+import { CLOSE_POLICY_VIOLATION } from '../../../config/control-contract';
 import { normalizeDataSourceUrl } from '../../../config/url-params';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import {
@@ -40,6 +41,11 @@ import { encodeBlobForWire, isBlobLike, sanitizeForWire } from './wire-values';
 export const CONTROL_RECONNECT_BASE_MS = 500;
 /** Ceiling for the doubling reconnect delay. */
 export const CONTROL_RECONNECT_MAX_MS = 30_000;
+
+function displayRefusalReason(reason: string | undefined): string {
+  return reason || 'check the ?controlToken in its URL';
+}
+
 /**
  * Minimum gap between forwarded `camera-changed` events (50 ms = 20 Hz).
  *
@@ -88,7 +94,15 @@ export interface ControlSocketLike {
   send(data: string): void;
   close(): void;
   onopen: (() => void) | null;
-  onclose: ((event: { code?: number; reason?: string }) => void) | null;
+  /**
+   * Close handler.
+   *
+   * The `code` is optional in the type and load-bearing in practice: the hub
+   * accepts a handshake it means to refuse and then closes it with a code, so
+   * that a client can tell "no hub here" from "your token is wrong". A handler
+   * that ignored the code would make that choice pointless.
+   */
+  onclose: ((event?: { code?: number; reason?: string }) => void) | null;
   onerror: (() => void) | null;
   onmessage: ((event: { data: unknown }) => void) | null;
 }
@@ -182,12 +196,23 @@ export class ControlClient {
     socket.onclose = (event) => {
       this.socket = null;
       if (this.disposed) return;
+      if (event?.code === CLOSE_POLICY_VIOLATION) {
+        // Terminal, for the same reason as the panel's socket: the hub accepts
+        // a handshake it means to refuse and then closes it with this code, so
+        // a wrong ?controlToken, an unknown role or a foreign origin all land
+        // here. Retrying cannot change who we are, and a display left doing it
+        // reconnects into the same refusal for the life of the exhibit with
+        // nothing but a generic socket warning to show for it.
+        const reason = displayRefusalReason(event.reason);
+        log.warning(Modules.APP, `control: the hub refused this display (${reason}); not retrying`);
+        return;
+      }
       const delay = this.reconnectDelayMs;
-      if (event.code !== 1000) {
-        const reason = event.reason ? `: ${event.reason}` : '';
+      if (event?.code !== 1000) {
+        const reason = event?.reason ? `: ${event.reason}` : '';
         log.warning(
           Modules.APP,
-          `control: socket closed (${event.code ?? 'unknown'}${reason}); retrying in ${delay} ms`
+          `control: socket closed (${event?.code ?? 'unknown'}${reason}); retrying in ${delay} ms`
         );
       }
       this.scheduleReconnect();

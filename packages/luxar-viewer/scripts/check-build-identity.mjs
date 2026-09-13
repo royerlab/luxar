@@ -129,32 +129,36 @@ export function check(
     }
   }
 
-  // Only the application build emits an index.html; the library build has none.
-  const indexHtml = join(distDir, 'index.html');
-  if (existsSync(indexHtml)) {
-    const meta = findMetaStamp(readFileSync(indexHtml, 'utf8'));
+  // Only the application build emits HTML; the library build has none. Every
+  // page is checked, not just index.html: `buildIdentityHtmlPlugin` uses
+  // `transformIndexHtml`, which Vite runs for EVERY entry, so a second page is
+  // stamped automatically — and would therefore go unpoliced automatically too.
+  const pages = readdirSync(distDir).filter((name) => name.endsWith('.html'));
+  for (const page of pages) {
+    const pagePath = join(distDir, page);
+    const meta = findMetaStamp(readFileSync(pagePath, 'utf8'));
     if (!meta) {
       problems.push(
-        `index.html carries no <meta name="${META_NAME}"> — it is the only surface that ` +
+        `${page} carries no <meta name="${META_NAME}"> — it is the only surface that ` +
           'survives a bundle that fails to boot'
       );
-    } else if (meta.version !== version) {
-      problems.push(`index.html stamp says version ${meta.version}, package.json says ${version}`);
-    } else if (requireCommit && meta.commit === UNKNOWN) {
-      problems.push('index.html stamp has no commit, but this tree has git history');
+      continue;
     }
-    if (meta) {
-      for (const { file, stamp } of stamped) {
-        if (
-          stamp.version !== meta.version ||
-          stamp.commit !== meta.commit ||
-          stamp.buildTime !== meta.buildTime
-        ) {
-          problems.push(
-            `${indexHtml} stamp ${JSON.stringify(meta)} disagrees with ` +
-              `${file} stamp ${JSON.stringify(stamp)}`
-          );
-        }
+    if (meta.version !== version) {
+      problems.push(`${page} stamp says version ${meta.version}, package.json says ${version}`);
+    } else if (requireCommit && meta.commit === UNKNOWN) {
+      problems.push(`${page} stamp has no commit, but this tree has git history`);
+    }
+    for (const { file, stamp } of stamped) {
+      if (
+        stamp.version !== meta.version ||
+        stamp.commit !== meta.commit ||
+        stamp.buildTime !== meta.buildTime
+      ) {
+        problems.push(
+          `${pagePath} stamp ${JSON.stringify(meta)} disagrees with ` +
+            `${file} stamp ${JSON.stringify(stamp)}`
+        );
       }
     }
   }

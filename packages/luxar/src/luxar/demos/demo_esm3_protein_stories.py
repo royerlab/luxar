@@ -36,6 +36,16 @@ Usage:
     python -m luxar.demos.demo_esm3_protein_stories --no-auto-rotate
     python -m luxar.demos.demo_esm3_protein_stories --no-audio
 
+Touch panel (off by default):
+    A kiosk can be driven from a tablet — a full-screen matrix of one tile per
+    story, derived from the tour itself. ``--control`` exposes it; loopback
+    alone is not reachable from a tablet, so a real kiosk also needs
+    ``--host 0.0.0.0`` and, because that opens the display to the network, a
+    ``--control-token``. The command prints both URLs.
+
+    python -m luxar.demos.demo_esm3_protein_stories --control
+    python -m luxar.demos.demo_esm3_protein_stories --control --host 0.0.0.0 --control-token SECRET
+
 Sound (``docs/guides/specs/SOUND_SPEC.md``): a CC0 ambient bed plays under the
 whole tour and each story is narrated on arrival. Narration is synthesised when
 the scene is BUILT — OpenAI TTS when ``OPENAI_API_KEY`` is set, the macOS
@@ -95,11 +105,13 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import (
     AudioConfig,
     CameraConfig,
+    Chapter,
+    ControlPanelConfig,
     EnvironmentConfig,
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import cached_download, launch_viewer
+from luxar.demos import cached_download, control_serve_args, launch_viewer
 from luxar.demos._audio_synth import synthesise_foa_from_clip
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -1334,7 +1346,28 @@ def build_stories_scene(
                 )
             )
 
+        # The touch panel, authored from the SAME `STORIES` tuple the tour is
+        # built from — so a story added, removed or reworded cannot leave the
+        # panel describing the old tour. The tile labels themselves still come
+        # from the dimension's `categories` (each story's short `key`); this
+        # only adds the evocative second line, which the tour already wrote.
+        control_panel = ControlPanelConfig(
+            chapter_dimension=STORY_DIM,
+            chapters={
+                # +1: slot 0 is the Overview, so story k sits at k+1.
+                index + 1: Chapter(sublabel=story.subtitle)
+                for index, story in enumerate(stories)
+            },
+        )
+
         viewer_config = ViewerConfig(
+            # Names the browser tab AND the control panel's header (the panel
+            # reads it out of `getViewerState().title` — its own page title is
+            # the bundle's generic string). Without this both read
+            # "esm3_protein_stories", which is a filename, not a title, and
+            # this scene goes in front of an audience.
+            title="Eleven stories in the protein universe",
+            control_panel=control_panel,
             cinematic_mode=True,
             camera=CameraConfig(position=overview_position, target=(0.0, 0.0, 0.0)),
             # The turntable is the point: a story step keeps the spin and moves
@@ -1666,7 +1699,9 @@ def main() -> None:
         aprint(f"  Total proteins: {n:,}")
         aprint("")
 
-        launch_viewer(output_path)
+        # Remote control is OFF unless asked for: `--control`, plus
+        # `--control-token` and `--host 0.0.0.0` for a tablet on the LAN.
+        launch_viewer(output_path, serve_args=control_serve_args())
 
     aprint("Cleanup complete")
 

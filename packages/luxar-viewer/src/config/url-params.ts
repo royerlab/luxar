@@ -137,7 +137,14 @@ export function normalizeControlSocketUrl(
   return acceptControlSocketUrl(url, origin, secure, allowCrossOrigin) ? url.href : null;
 }
 
-/** String-level checks, then a parse. `null` for anything not worth inspecting. */
+/**
+ * String-level checks, then a parse. `null` for anything not worth inspecting.
+ *
+ * Shared by the two control-related validators — the socket URL and the
+ * `?panel=` module — because the string-level hazards are identical (length,
+ * control characters, a protocol-relative address that would silently inherit
+ * our origin). Only the per-scheme rules afterwards differ.
+ */
 function parseControlSocketUrl(value: string, base: string): URL | null {
   if (value.length > MAX_CONTROL_URL_LENGTH) return null;
   if (hasUnsafeSrcCharacter(value)) return null;
@@ -202,6 +209,33 @@ function resolvePageOrigin(origin?: ControlSocketOrigin): ControlSocketOrigin {
   return { protocol: location.protocol, host: location.host };
 }
 
+/**
+ * Resolve `?panel=<url>` — an alternative control-panel module.
+ *
+ * The documented escape hatch, so the first exhibit that outgrows CSS has a
+ * supported path instead of forking `control.html` out of the viewer package.
+ * The module is `import()`ed and handed the already-connected socket, so it is
+ * **executable code**: hence same-origin only, with no opt-out. A cross-origin
+ * module would be arbitrary remote code running on a kiosk, which is a
+ * different feature and not one anybody asked for. Within our own origin it is
+ * no more trusted than the page that loads it.
+ */
+export function normalizePanelModuleUrl(
+  raw: string | null,
+  origin: ControlSocketOrigin
+): string | null {
+  if (raw === null) return null;
+  const value = raw.trim();
+  // Empty must be refused explicitly: `new URL('', base)` resolves to the base
+  // itself, so a blank `?panel=` would otherwise import the origin root.
+  if (value.length === 0) return null;
+  const url = parseControlSocketUrl(value, `${origin.protocol}//${origin.host}/`);
+  if (url === null) return null;
+  if (url.protocol !== origin.protocol || url.host !== origin.host) return null;
+  if (url.username.length > 0 || url.password.length > 0) return null;
+  return url.href;
+}
+
 /** A trimmed query value, or null when absent or blank. */
 function trimmedParam(params: URLSearchParams, key: string): string | null {
   const raw = params.get(key);
@@ -252,8 +286,25 @@ export interface UrlParams {
    * default so a crafted link cannot point the display at someone else's hub.
    */
   controlAllowCrossOrigin: boolean;
+  /**
+   * Alternative control-panel module (`?panel=/my-panel.js`), resolved and
+   * validated same-origin. Null when absent or refused.
+   *
+   * Read only by `control.html`; the viewer itself ignores it. See
+   * {@link normalizePanelModuleUrl}.
+   */
+  panel: string | null;
   /** Enable the `window.__luxarDebug` interface (`?debug`). */
   debug: boolean;
+  /**
+   * `?kiosk` — lock this display down for unattended public use.
+   *
+   * A hard override over the scene's authored `ui.kiosk` block, because this
+   * is the OPERATOR's channel: a store that predates the block, or one
+   * borrowed for an exhibit it was never authored for, still has to be
+   * lockable from the launch command. See `config/kiosk.ts`.
+   */
+  kiosk: boolean;
   /** Disable all cache layers (`?no-cache`). */
   noCache: boolean;
   /** Disable only the SliceCache / S-cache (`?no-slice-cache`). */
@@ -503,7 +554,9 @@ export function readUrlParams(search?: string, origin?: ControlSocketOrigin): Ur
     control: normalizeControlSocketUrl(params.get('control'), pageOrigin, allowCrossOriginControl),
     controlToken: trimmedParam(params, 'controlToken'),
     controlAllowCrossOrigin: allowCrossOriginControl,
+    panel: normalizePanelModuleUrl(params.get('panel'), pageOrigin),
     debug: params.has('debug'),
+    kiosk: params.has('kiosk'),
     noCache: params.has('no-cache'),
     noSliceCache: params.has('no-slice-cache'),
     noOpfs: params.has('no-opfs'),

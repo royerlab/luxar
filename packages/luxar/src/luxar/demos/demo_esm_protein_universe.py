@@ -59,6 +59,16 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
     python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR + 95% dolly
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
+
+Touch panel (off by default):
+    A kiosk can be driven from a tablet — a full-screen matrix of one tile per
+    story, derived from the tour itself. ``--control`` exposes it; loopback
+    alone is not reachable from a tablet, so a real kiosk also needs
+    ``--host 0.0.0.0`` and, because that opens the display to the network, a
+    ``--control-token``. The command prints both URLs.
+
+    python -m luxar.demos.demo_esm_protein_universe --control
+    python -m luxar.demos.demo_esm_protein_universe --control --host 0.0.0.0 --control-token SECRET
 """
 
 from __future__ import annotations
@@ -123,11 +133,13 @@ from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.viewer_config import (
     AudioConfig,
     CameraConfig,
+    Chapter,
+    ControlPanelConfig,
     EnvironmentConfig,
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import launch_viewer, parse_path_arg
+from luxar.demos import control_serve_args, launch_viewer, parse_path_arg
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._dependencies import require_module
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -1469,11 +1481,16 @@ def _viewer_config(
     auto_rotate: bool,
     audio: bool,
     high_quality: bool = False,
+    control_panel: ControlPanelConfig | None = None,
 ) -> ViewerConfig:
     # Mirrors the Swiss-Prot tour's kiosk settings (see its build for the why),
     # except for render quality: see `high_quality` below. `overview` is the raw
     # distance-tuned pose; `pull_in` carries it to the cinematic 63° lens.
     return ViewerConfig(
+        # Names the browser tab AND the control panel's header — see the same
+        # note in demo_esm3_protein_stories. A filename is not a title.
+        title="The protein universe",
+        control_panel=control_panel,
         cinematic_mode=True,
         camera=CameraConfig(position=pull_in(overview), target=(0.0, 0.0, 0.0)),
         # Authored, not left to the slider (see the BRIGHTNESS note by
@@ -1814,6 +1831,18 @@ def build_universe_scene(
         viewer_config = _viewer_config(
             waypoints,
             overview_raw,
+            # The touch panel, authored from the SAME `stories` the waypoints
+            # above were built from, so the panel cannot drift from the tour.
+            # Tile labels still come from the dimension's `categories` (each
+            # story's short `key`); this adds the second line the tour wrote.
+            control_panel=ControlPanelConfig(
+                chapter_dimension=STORY_DIM,
+                chapters={
+                    # +1: slot 0 is the Overview, so story k sits at k+1.
+                    index + 1: Chapter(sublabel=story.subtitle)
+                    for index, story in enumerate(stories)
+                },
+            ),
             auto_rotate=auto_rotate,
             audio=audio,
             high_quality=high_quality,
@@ -1956,7 +1985,9 @@ def main() -> None:
         aprint("")
         aprint("  Press '1' to select the STORY slider, then '[' / ']' to step.")
         aprint(f"  Total clusters: {n:,}")
-        launch_viewer(output_path)
+        # Remote control is OFF unless asked for: `--control`, plus
+        # `--control-token` and `--host 0.0.0.0` for a tablet on the LAN.
+        launch_viewer(output_path, serve_args=control_serve_args())
 
     aprint("Cleanup complete")
 
