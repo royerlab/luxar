@@ -354,6 +354,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "the source of truth `hatch run check-contract` compares both halves to",
     ),
     (
+        "control-contract/contract.yaml",
+        "py",
+        "the source of truth `hatch run check-control-contract` projects from",
+    ),
+    (
         "packages/luxar/src/luxar/demos/data_manifest.json",
         "py",
         "`hatch run check-data-manifest` compares it against the demos/data tree",
@@ -471,6 +476,16 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "the generated TypeScript half `check-contract` judges",
     ),
     (
+        "packages/luxar-viewer/src/config/control-contract.ts",
+        "py",
+        "a generated TypeScript projection `check-control-contract` judges",
+    ),
+    (
+        "packages/luxar-launcher/control_contract.go",
+        "py",
+        "a generated Go projection `check-control-contract` judges",
+    ),
+    (
         "packages/luxar-viewer/src/tests/global-setup.ts",
         "py",
         "test_fixture_environment.py checks its fixture-generator invocation",
@@ -561,6 +576,9 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     ),
     "packages/luxar-viewer/src/types/format-contract.ts": (
         "generated and checked by scripts/gen_format_contract.py"
+    ),
+    "packages/luxar-viewer/src/config/control-contract.ts": (
+        "generated and checked by scripts/gen_control_contract.py"
     ),
     "packages/luxar-viewer/src/tests/global-setup.ts": (
         "matched by test_fixture_environment.py through git grep"
