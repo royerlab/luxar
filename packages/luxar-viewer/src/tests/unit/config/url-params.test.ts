@@ -22,6 +22,7 @@ describe('readUrlParams', () => {
       noCache: false,
       noSliceCache: false,
       noOpfs: false,
+      opfsReadConcurrency: null,
       cacheDebug: false,
       clearCache: false,
       lodFade: true,
@@ -193,6 +194,13 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?cacheBudgetMB=-5').cacheBudgetMB).toBeNull();
     expect(readUrlParams('?cacheBudgetMB=abc').cacheBudgetMB).toBeNull();
     expect(readUrlParams('').cacheBudgetMB).toBeNull();
+  });
+
+  it('parses opfsReadConcurrency as a positive integer', () => {
+    expect(readUrlParams('?opfsReadConcurrency=16').opfsReadConcurrency).toBe(16);
+    expect(readUrlParams('?opfsReadConcurrency=0').opfsReadConcurrency).toBeNull();
+    expect(readUrlParams('?opfsReadConcurrency=1.5').opfsReadConcurrency).toBeNull();
+    expect(readUrlParams('?opfsReadConcurrency=abc').opfsReadConcurrency).toBeNull();
   });
 
   it('parses and trims valid src and theme strings', () => {

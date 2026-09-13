@@ -317,6 +317,10 @@ export interface CacheMetrics {
     writes: number;
     /** Failed gets (file not present, size mismatch, I/O error). */
     misses: number;
+    /** Reads canceled before filesystem I/O. */
+    canceledReads?: number;
+    activeReads?: number;
+    queuedReads?: number;
     /**
      * R3: surface OPFS health counters so the cache tab can render
      * them inline (rather than only signalling them via the
@@ -724,6 +728,9 @@ export interface CacheStatsProvider {
       reads: number;
       writes: number;
       misses: number;
+      canceledReads?: number;
+      activeReads?: number;
+      queuedReads?: number;
       /** Fixed OPFS/disk byte budget. */
       maxSize?: number;
       /**

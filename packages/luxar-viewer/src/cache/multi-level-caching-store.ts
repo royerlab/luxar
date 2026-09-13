@@ -524,7 +524,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // network requests; the underlying network counter (incremented
     // inside fetchKeyChain) only bumped once per actual fetch.
     if (isDemand) {
-      if (outcome.source === 'l2') this.l2HitCount++;
+      if (outcome.source === 'l2' && outcome.result.ok) this.l2HitCount++;
       else if (outcome.source === 'network') this.demandNetworkRequestCount++;
       // Count delivered bytes for any tier that actually returned data
       // (L2 or network). L1 hits are counted on their fast-path return
@@ -592,7 +592,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private async fetchKeyChain(key: string, sharedSignal?: AbortSignal): Promise<PendingGetOutcome> {
     // L2: OPFS check (~1ms)
     if (this.enabled && this.l2Store) {
-      const l2Hit = await this.l2Store.get(key);
+      const l2Hit = await this.l2Store.get(key, { signal: sharedSignal });
       if (l2Hit) {
         this.log(`L2 hit: ${key}`, 'info');
         // CRIT-5: if validateCache aborted this in-flight get during the
@@ -604,6 +604,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
         return { result: ok(l2Hit), source: 'l2' };
+      }
+      if (sharedSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+        return { result: err({ kind: 'Aborted' }), source: 'l2' };
       }
     }
 
@@ -889,6 +892,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
           reads: 0,
           writes: 0,
           misses: 0,
+          canceledReads: 0,
+          activeReads: 0,
+          queuedReads: 0,
         }),
         // Fixed OPFS/disk budget — surfaced so the monitor's memory gauge has a
         // real per-tier limit to sum (L2 is disk, not heap, but it is a tier).

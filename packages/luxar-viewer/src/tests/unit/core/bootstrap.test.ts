@@ -76,6 +76,7 @@ vi.mock('zarrita', () => ({
 }));
 
 import { buildInfo, buildInfoLine } from '../../../config/build-info';
+import { config } from '../../../config';
 import { bootstrapStandalone } from '../../../core/bootstrap';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
@@ -104,6 +105,7 @@ const EMPTY_PARAMS: UrlParams = {
   noCache: false,
   noSliceCache: false,
   noOpfs: false,
+  opfsReadConcurrency: null,
   cacheDebug: false,
   clearCache: false,
   lodFade: true,
@@ -149,6 +151,19 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('session overrides', () => {
+    it('applies the OPFS read concurrency URL override', async () => {
+      const original = config.cache.opfsReadConcurrency;
+      try {
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: { ...EMPTY_PARAMS, opfsReadConcurrency: 16 },
+        });
+        expect(config.cache.opfsReadConcurrency).toBe(16);
+      } finally {
+        config.cache.opfsReadConcurrency = original;
+      }
+    });
+
     it('installs the ?linePrimitive= and ?lineJoin= overrides before returning', async () => {
       // These installs are load-bearing (both backends bake at material
       // construction) and were previously mutation-survivable: deleting the

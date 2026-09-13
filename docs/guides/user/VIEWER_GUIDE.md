@@ -180,6 +180,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `no-cache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
 | `no-slice-cache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
 | `no-opfs` | flag | Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache stay on. For environments whose OPFS stalls — the deterministic sibling of the automatic circuit breaker. |
+| `opfsReadConcurrency` | positive integer | Override the page-wide concurrent OPFS read cap (default 64) for diagnosis. |
 | `cache-debug` | flag | Enable cache debug logging to the browser console. |
 | `clear-cache` | flag | Clear all caches on startup. |
 | `no-prefetch` | flag | Disable adjacent-chunk prefetching. |

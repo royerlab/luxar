@@ -315,6 +315,8 @@ export interface UrlParams {
    * it in environments whose OPFS is known to stall (automated Chromium).
    */
   noOpfs: boolean;
+  /** Override the page-wide OPFS read cap (`?opfsReadConcurrency=N`). */
+  opfsReadConcurrency: number | null;
   /** Verbose cache logging (`?cache-debug`). */
   cacheDebug: boolean;
   /** Clear caches on init (`?clear-cache`). */
@@ -560,6 +562,7 @@ export function readUrlParams(search?: string, origin?: ControlSocketOrigin): Ur
     noCache: params.has('no-cache'),
     noSliceCache: params.has('no-slice-cache'),
     noOpfs: params.has('no-opfs'),
+    opfsReadConcurrency: parsePositiveInt(params.get('opfsReadConcurrency')),
     cacheDebug: params.has('cache-debug'),
     clearCache: params.has('clear-cache'),
     lodFade: !params.has('no-lod-fade'),
@@ -625,6 +628,12 @@ function parseNonNegativeInt(raw: string | null): number | null {
   if (raw === null) return null;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function parsePositiveInt(raw: string | null): number | null {
+  if (raw === null) return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : null;
 }
 
 /**

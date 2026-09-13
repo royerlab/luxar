@@ -817,6 +817,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?no-cache` — Disable all cache tiers (S-cache + L0 + L1 + L2) for this session
 - `?no-slice-cache` — Disable only S-cache; L0/L1/L2 remain active
 - `?no-opfs` — Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache remain active. For environments whose OPFS stalls; the automatic circuit breaker covers the un-flagged case
+- `?opfsReadConcurrency=<N>` — Override the page-wide concurrent OPFS read cap (default 64) for diagnosis
 - `?cache-debug` — Verbose cache logging
 - `?clear-cache` — Clear stored cache tiers before loading; the per-load S-cache starts empty
 - `?cache-stats` — Open the data-loading monitor on its Cache tab after initialization

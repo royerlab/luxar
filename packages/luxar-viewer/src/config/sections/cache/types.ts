@@ -38,6 +38,8 @@ export interface CacheConfig {
    * targets stalls, not error rate. Default: 3.
    */
   opfsTimeoutTripThreshold: number;
+  /** Max page-wide L2 (OPFS) reads running concurrently. Default: 64. */
+  opfsReadConcurrency: number;
   /**
    * Max L2 (OPFS) writes running concurrently in the background write queue.
    * L2 writes are deferred off the fetch critical path; this caps how many run

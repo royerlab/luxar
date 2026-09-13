@@ -130,6 +130,7 @@ Override cache behavior via URL parameters:
 - `?no-cache` - Disable all caching (S-cache + L0 + L1 + L2) for this session
 - `?no-slice-cache` - Disable only the SliceCache (S-cache); L0/L1/L2 stay on
 - `?no-opfs` - Disable only the L2 OPFS tier; L0/L1/S-cache stay on. The deterministic sibling of the OPFS circuit breaker, for environments whose OPFS is known to stall (automated Chromium). A deliberate disable does NOT raise the `opfs-unavailable` badge
+- `?opfsReadConcurrency=<N>` - Override the page-wide concurrent OPFS read cap (default 64) for diagnosis
 - `?cache-debug` - Enable verbose cache logging for all layers
 - `?clear-cache` - Clear all persistent/persisted caches (L0 + L1 + L2) before loading dataset (the in-memory S-cache is created fresh per load)
 - `?no-prefetch` - Disable prefetching (caches still active)
@@ -506,7 +507,10 @@ data-loading monitor, debug overlay, and cache E2E suite:
     count: number,           // Total files in OPFS
     reads: number,           // Total reads from L2
     writes: number,          // Total writes to L2
-    misses: number           // L2 lookup misses
+    misses: number,          // L2 lookup misses
+    canceledReads: number,   // Reads canceled before filesystem I/O
+    activeReads: number,     // Reads holding a page-wide OPFS gate slot
+    queuedReads: number      // Reads waiting for a page-wide OPFS gate slot
     // plus health counters: available, oversizedWriteSkipped,
     // quotaWriteSkipped, evictions, writeFailures,
     // corruptedEntries, metadataParseFailures, orphanedFilesRemoved

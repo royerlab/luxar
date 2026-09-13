@@ -129,6 +129,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // Standalone-only — library embedders configure via LuxarAppOptions.
   const userSettings = initUserSettings();
 
+  if (urlParams.opfsReadConcurrency !== null) {
+    config.cache.opfsReadConcurrency = urlParams.opfsReadConcurrency;
+  }
+
   // Pin the input profile (`?input=touch|mouse`) BEFORE anything reads it:
   // the GPU byte budget below, the cache pool's device class, gesture routing
   // and the touch UI all derive from `getInputProfile()`, and it memoises on
