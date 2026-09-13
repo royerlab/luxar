@@ -437,29 +437,15 @@ export class OPFSStore {
    * Get a file from OPFS and update LRU order.
    */
   async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
-    if (this.disposed || !this.opfsRoot || options?.signal?.aborted) {
-      this.missCount++;
-      return undefined;
-    }
-
-    // The index is the source of truth for what's cached. A key absent
-    // from it is either genuinely uncached or an orphaned file — e.g. a
-    // generation-skipped write whose best-effort delete failed, leaving
-    // bytes on disk that a content-hash invalidation meant to drop.
-    // Serving such a file could resurrect stale data, so treat an
-    // unindexed key as a miss. Bonus: skips an OPFS read for uncached
-    // keys (the common cold-miss path).
-    if (!this.index.has(key)) {
+    if (!this.readableRoot(key, options?.signal)) {
       this.missCount++;
       return undefined;
     }
 
     try {
       const data = await withOpfsReadGate(async () => {
-        if (this.disposed || !this.opfsRoot || !this.index.has(key) || options?.signal?.aborted) {
-          return undefined;
-        }
-        const root = this.opfsRoot;
+        const root = this.readableRoot(key, options?.signal);
+        if (!root) return undefined;
         return this.timed(
           (async () => {
             const fileHandle = await this.buckets.navigateToFile(root, key, false);
@@ -501,6 +487,11 @@ export class OPFSStore {
       this.missCount++;
       return undefined;
     }
+  }
+
+  private readableRoot(key: string, signal?: AbortSignal): FileSystemDirectoryHandle | null {
+    if (this.disposed || signal?.aborted || !this.index.has(key)) return null;
+    return this.opfsRoot;
   }
 
   /**
