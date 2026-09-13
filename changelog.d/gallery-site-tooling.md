@@ -6,11 +6,14 @@ One of them is load-bearing: `gen_redirects.py` generates the stable
 losing it means nobody can regenerate a public contract.
 
 `scripts/gallery/gen_redirects.py` emits a static Cloudflare Pages `_redirects`
-mapping each demo key onto the current dated data prefix. `/d/<key>` is an
-identity; the prefix is a location, so anything durable — README, papers, issues
-— links to the former and survives the next deploy. It matters that this fails
-loudly: the origin answers a missing store with `200 text/html`, so a broken link
-renders a blank viewer rather than a 404.
+mapping each demo key onto the dated data prefix where its store is live. It
+accepts a bounded recursive listing spanning multiple prefixes, chooses the
+newest dated prefix when a store remains at both, and reports only prefixes used
+by emitted routes. `/d/<key>` is an identity; the prefix is a location, so
+anything durable — README, papers, issues — links to the former and survives the
+next deploy. It matters that this fails loudly: the origin answers a missing
+store with `200 text/html`, so a broken link renders a blank viewer rather than a
+404.
 
 Two behaviours are deliberate and easy to lose in a rewrite:
 

@@ -1432,22 +1432,35 @@ which writes a static Pages `_redirects`. Regenerate it on **every** deploy or
 the routes rot exactly like the links they replace:
 
 ```bash
-rclone lsf r2:luxar-demos/data/<prefix> --dirs-only > /tmp/live_stores.txt
+rclone lsf r2:luxar-demos/data \
+    --recursive --max-depth 2 --dirs-only > /tmp/live_stores.txt
 python scripts/gallery/gen_redirects.py \
-    --prefix <prefix> --live-stores /tmp/live_stores.txt \
+    --prefix <newest-prefix> --live-stores /tmp/live_stores.txt \
     -o <deploy-tree>/_redirects --check-contract
 ```
 
-The generator currently accepts one prefix. After an incremental publish,
-generate one fragment per live prefix and stitch each store's routes from the
-prefix where that store is live. Omit `--check-contract` from the fragment
-invocations: it is a whole-table check, so run it once on a disposable invocation
-over the union of live stores, then splice in the correctly prefixed fragment
-lines. The generated warning banner and `# prefix:` line also describe only one
-invocation; replace them with an explicit note listing every live prefix in the
-stitched table. Replacing the whole table with one single-prefix invocation
-breaks every store left on another prefix. #2736 tracks making multi-prefix
-generation native.
+The recursive listing supplies `<prefix>/<store>` entries across every live
+prefix. `--max-depth 2` stops at the store directory instead of walking every
+group, array, and chunk directory inside each Zarr store. `--prefix` is the
+fallback only for bare store names in a hand-authored list. After an incremental
+publish, a store may appear under both its old and new dated prefixes; the
+lexicographically newest dated prefix wins, matching the deployment convention,
+and the older copy remains the rollback. Prefixes must be one path segment, so
+running the command from one level above `data/` fails rather than generating
+targets containing a doubled `data/` segment.
+
+Before publishing, verify that the generated `# prefixes:` header lists the live
+prefixes actually used by routes and spot-check every newly published demo's
+encoded target:
+
+```bash
+grep '^# prefixes:' <deploy-tree>/_redirects
+grep '^/d/<demo-key> ' <deploy-tree>/_redirects
+```
+
+The header intentionally uses `# prefixes:` (plural); update any deploy-side
+verification that still matches the former singular key. Do not hand-stitch
+fragments or replace this with a single-prefix union invocation.
 
 Two things it handles that a reimplementation gets wrong:
 
