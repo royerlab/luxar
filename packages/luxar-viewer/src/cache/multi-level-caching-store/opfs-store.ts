@@ -438,12 +438,8 @@ export class OPFSStore {
    * Get a file from OPFS and update LRU order.
    */
   async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
-    if (options?.signal?.aborted) {
-      this.canceledReadCount++;
-      return undefined;
-    }
     if (!this.readableRoot(key, options?.signal)) {
-      this.missCount++;
+      this.countUnavailableRead(options?.signal);
       return undefined;
     }
 
@@ -462,14 +458,12 @@ export class OPFSStore {
       });
 
       if (!data) {
-        if (options?.signal?.aborted) this.canceledReadCount++;
-        else this.missCount++;
+        this.countUnavailableRead(options?.signal);
         return undefined;
       }
 
       // Verify size matches metadata
-      const entry = this.index.get(key);
-      if (entry && entry.size !== data.byteLength) {
+      if (this.hasSizeMismatch(key, data)) {
         log.warning(Modules.CACHE, `OPFSStore size mismatch for ${key}, removing corrupted entry`);
         this.corruptedEntries++;
         await this.delete(key);
@@ -498,6 +492,16 @@ export class OPFSStore {
   private readableRoot(key: string, signal?: AbortSignal): FileSystemDirectoryHandle | null {
     if (this.disposed || signal?.aborted || !this.index.has(key)) return null;
     return this.opfsRoot;
+  }
+
+  private countUnavailableRead(signal?: AbortSignal): void {
+    if (signal?.aborted) this.canceledReadCount++;
+    else this.missCount++;
+  }
+
+  private hasSizeMismatch(key: string, data: Uint8Array): boolean {
+    const entry = this.index.get(key);
+    return entry !== undefined && entry.size !== data.byteLength;
   }
 
   /**
