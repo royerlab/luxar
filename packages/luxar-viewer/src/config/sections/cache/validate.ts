@@ -57,6 +57,13 @@ export function validateCache(config: AppConfig, errors: string[], _warnings: st
     );
   }
 
+  const readConcurrency = cache.opfsReadConcurrency;
+  if (!Number.isInteger(readConcurrency) || readConcurrency < 1) {
+    errors.push(
+      `Invalid cache.opfsReadConcurrency: ${readConcurrency} (must be an integer >= 1; 64 recommended)`
+    );
+  }
+
   // R1: the background L2 write queue caps. Concurrency 0/negative would stall
   // all persistence; a 0/negative depth would drop every write. NaN passes
   // `<= 0` (always false), so reject it explicitly.
