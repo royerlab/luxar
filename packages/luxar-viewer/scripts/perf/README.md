@@ -57,3 +57,30 @@ grow permanently pins the replaced buffer generation (+5 views/gen,
 never reclaimed — +23.4 MB after 5 doublings of a 64K node); post-fix
 (grow = release + reacquire), everything returns to the clean floor
 after eviction.
+
+## opfs-deep-pass-bench.mjs
+
+Reproduces a single pinned-depth timelapse transition while sweeping the
+page-wide OPFS read cap. Point it at an already-served 4D scene, use a
+persistent Chrome profile, and run it twice: the first pass fills missing
+L2 entries; only compare the second pass when every arm reports
+`misses=0`.
+
+```bash
+node scripts/perf/opfs-deep-pass-bench.mjs \
+  --url 'http://127.0.0.1:5198/?src=http://127.0.0.1:9011' \
+  --profile-dir /tmp/luxar-opfs-profile \
+  --out /tmp/opfs-warmup.json --concurrency 64
+
+node scripts/perf/opfs-deep-pass-bench.mjs \
+  --url 'http://127.0.0.1:5198/?src=http://127.0.0.1:9011' \
+  --profile-dir /tmp/luxar-opfs-profile \
+  --out /tmp/opfs-sweep.json --concurrency 8,64,512,4096
+```
+
+The harness disables predictive prefetch, moves to `--start-frame`
+(default 49), then plays exactly one transition at `--ladder-depth`
+(default 6). It records the update-profiler tree, L2 hit/miss deltas,
+read-gate occupancy, and the actual GPU renderer. Chrome runs headed by
+default so Linux does not silently benchmark SwiftShader; pass
+`--headless true` when the host's accelerated headless path is known.
