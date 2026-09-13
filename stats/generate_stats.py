@@ -1297,6 +1297,11 @@ def generate_html_report(stats: dict[str, Any], output_file: Path) -> None:
         + tests["typescript"]["test_passed"]
         + tests["rust"]["test_passed"]
     )
+    total_failed = (
+        tests["python"]["test_failed"]
+        + tests["typescript"]["test_failed"]
+        + tests["rust"]["test_failed"]
+    )
 
     py = langs["python"]
     ts = langs["typescript"]
@@ -1658,7 +1663,7 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
     total_tpk = total_tests / (total_code_lines / 1000) if total_code_lines else 0
     pass_status = (
         '<span class="health-indicator health-good">All Passing</span>'
-        if total_tests and total_passed == total_tests
+        if total_tests and total_failed == 0
         else '<span class="health-indicator health-warning">Some Failures</span>'
         if total_tests
         else '<span class="health-indicator health-warning">Not Run</span>'

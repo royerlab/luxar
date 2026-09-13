@@ -137,6 +137,19 @@ def test_reports_format_test_file_counts_with_thousands_separators(
         assert count in markdown_report
 
 
+def test_html_report_does_not_treat_skipped_tests_as_failures(tmp_path: Path) -> None:
+    report_stats = _report_stats()
+    report_stats["tests"]["python"]["test_count"] = 101
+    report_stats["tests"]["python"]["test_passed"] = 100
+    html_file = tmp_path / "stats.html"
+
+    gs.generate_html_report(report_stats, html_file)
+
+    html_report = html_file.read_text()
+    assert "All Passing" in html_report
+    assert "Some Failures" not in html_report
+
+
 # ---------------------------------------------------------------------------
 # validate_measurements
 # ---------------------------------------------------------------------------
