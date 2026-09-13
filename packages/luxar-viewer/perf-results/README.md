@@ -78,10 +78,10 @@ the general capture-discipline rule below; that does not affect these rows becau
 ladders. Every headline frame spread was at most `0.006`, but median rAF cadence
 was exactly `16.7 ms` at both viewpoints in every arm. The rig was vsync-bound at
 60 Hz, so this run could not resolve frame-cost differences or headroom above
-60 fps; the decision therefore rests on selected levels, residency, requests,
-and bytes.
+60 fps; the decision therefore rests on selected levels, residency, and
+opening-load requests and bytes.
 
-| Scene              | Selector provenance                  | Bias 1 opening / 4x elements | Bias 2 opening / 4x elements | Bias 4 opening / 4x elements |                      Requests / bytes (bias 1; 2; 4) |
+| Scene              | Selector provenance                  | Bias 1 opening / 4x elements | Bias 2 opening / 4x elements | Bias 4 opening / 4x elements |         Opening-load requests / bytes (bias 1; 2; 4) |
 | ------------------ | ------------------------------------ | ---------------------------: | ---------------------------: | ---------------------------: | ---------------------------------------------------: |
 | Lines LOD example  | occupancy; coarse GSplat beads       |               1,735 / 27,835 |                6,948 / 8,000 |               27,835 / 8,000 |             77 / 1.20 MB; 86 / 1.29 MB; 99 / 1.49 MB |
 | ZebraHub Lines     | occupancy; Lines have no stamps      |        1,078,802 / 4,324,178 |        4,324,178 / 4,324,178 |        4,324,178 / 4,324,178 | 1,357 / 22.33 MB; 3,620 / 34.57 MB; 3,620 / 34.57 MB |
@@ -91,25 +91,27 @@ and bytes.
 
 The Lines example changes from 27,835 GSplat beads at level 2 to the original
 8,000-segment Lines node at level 3 after the dolly, so its falling element count
-is a geometry switch, not coarsening. Zebrafish's equal 121-request arms select a
-different level sequence across the opening pose and dolly; that different chunk
-mix is consistent with the finer bias-2 arm being 43 KB smaller, so transfer is
-not monotonic with selected element count.
+is a geometry switch, not coarsening. At the opening load, Zebrafish's equal
+121-request arms select different levels while the finer bias-2 arm transfers
+about 50 KB less (2.04 MB versus 1.99 MB), so load bytes are not monotonic with
+the selected opening-level count.
 The GSplat example is a 45-splat toy already pinned at its finest level in every
 arm and does not discriminate the footprint policy. Tribolium `levels` is the
 only stamped ladder that moves; its `footprint_dims` matched the displayed
 dimensions, confirming that footprint selection, not occupancy fallback, made
-the level 1 → 2 switch at bias 4.
+the level 1 → 2 switch at bias 4. That switch occurs after the dolly, outside the
+opening-load request and byte snapshot.
 
 Decision:
 
 - Keep `WHOLE_OBJECT_FINEST_ANCHOR = 0.5`. Bias 2 promotes ZebraHub's opening
-  pose from 1.08M to 4.32M committed elements, adds 2,263 requests, and transfers
-  55% more bytes. That is exactly the eager-finest dense-Line regime the anchor
-  exists to prevent; the high-end benchmark GPU absorbing it at 60 fps is not a
-  reason to make every client pay the residency and network cost. Bias 2 is the
-  decision-relevant transfer arm because ZebraHub is already finest there; bias
-  4 selects the same levels and has identical request and byte totals.
+  pose from 1.08M to 4.32M committed elements, adds 2,263 opening-load requests,
+  and transfers 55% more opening-load bytes. That is exactly the eager-finest
+  dense-Line regime the anchor exists to prevent; the high-end benchmark GPU
+  absorbing it at 60 fps is not a reason to make every client pay the residency
+  and network cost. Bias 2 is the decision-relevant transfer arm because
+  ZebraHub is already finest there; bias 4 selects the same levels and has
+  identical opening-load request and byte totals.
 - Keep `lod-bias` available to both occupancy and footprint selection. It is a
   no-op for bias ≥ 1 when a stamped ladder is already saturated at the finest
   level, but the stamped Tribolium `levels` ladder changes from level 1 to level
