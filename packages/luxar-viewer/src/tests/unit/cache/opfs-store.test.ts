@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
-import { MAX_CONCURRENT_OPFS_READS } from '../../../cache/multi-level-caching-store/opfs-read-gate';
+import { config } from '../../../config';
 
 // Mock File System Access API
 const createMockFileSystem = () => {
@@ -252,7 +252,7 @@ describe('OPFSStore', () => {
   describe('Get Operations', () => {
     it('caps simultaneous file reads during a deep chunk wave', async () => {
       const keys = Array.from(
-        { length: MAX_CONCURRENT_OPFS_READS + 32 },
+        { length: config.cache.opfsReadConcurrency + 32 },
         (_, index) => `deep-wave/${index}`
       );
       await Promise.all(keys.map((key) => store.set(key, new Uint8Array([1]))));
@@ -283,19 +283,17 @@ describe('OPFSStore', () => {
       };
 
       const reads = keys.map((key) => store.get(key));
-      await vi.waitFor(() => expect(activeReads).toBeGreaterThan(0));
-      await Promise.resolve();
-      await Promise.resolve();
+      await vi.waitFor(() => expect(activeReads).toBe(config.cache.opfsReadConcurrency));
       releaseReads();
       const results = await Promise.all(reads);
 
-      expect(peakReads).toBe(MAX_CONCURRENT_OPFS_READS);
+      expect(peakReads).toBe(config.cache.opfsReadConcurrency);
       expect(results.every((result) => result?.[0] === 1)).toBe(true);
     });
 
     it('drops canceled reads while they are waiting for an OPFS slot', async () => {
       const activeKeys = Array.from(
-        { length: MAX_CONCURRENT_OPFS_READS },
+        { length: config.cache.opfsReadConcurrency },
         (_, index) => `active-wave/${index}`
       );
       const queuedKeys = Array.from({ length: 32 }, (_, index) => `canceled-wave/${index}`);
@@ -329,17 +327,18 @@ describe('OPFSStore', () => {
       };
 
       const active = activeKeys.map((key) => store.get(key));
-      await vi.waitFor(() => expect(activeReads).toBe(MAX_CONCURRENT_OPFS_READS));
+      await vi.waitFor(() => expect(activeReads).toBe(config.cache.opfsReadConcurrency));
 
       const abort = new AbortController();
       const queued = queuedKeys.map((key) => store.get(key, { signal: abort.signal }));
-      await Promise.resolve();
       abort.abort();
       releaseReads();
 
       await Promise.all(active);
       expect(await Promise.all(queued)).toEqual(queuedKeys.map(() => undefined));
-      expect(fileReads).toBe(MAX_CONCURRENT_OPFS_READS);
+      expect(fileReads).toBe(config.cache.opfsReadConcurrency);
+      expect(store.getStats().canceledReads).toBe(queuedKeys.length);
+      expect(store.getStats().misses).toBe(0);
     });
 
     it('should retrieve stored data', async () => {

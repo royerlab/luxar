@@ -153,6 +153,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       reads: stats.l2.reads,
       writes: stats.l2.writes,
       misses: stats.l2.misses,
+      canceledReads: stats.l2.canceledReads,
       // R3: pass through OPFS health counters so the cache tab can
       // render them inline. Undefined entries from older providers
       // stay undefined.

@@ -710,7 +710,7 @@ export function renderCacheContent(
             {
               label: 'I/O',
               value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
-              subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
+              subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes · ${formatNumber(cacheMetrics.l2!.canceledReads ?? 0)} canceled`,
               tooltip:
                 'Disk traffic: reads = chunks served from the on-disk cache; writes = freshly downloaded chunks saved to disk so future sessions can skip the download',
               colorClass: countColorClass(cacheMetrics.l2!.reads + cacheMetrics.l2!.writes),

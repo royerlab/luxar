@@ -889,6 +889,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
           reads: 0,
           writes: 0,
           misses: 0,
+          canceledReads: 0,
         }),
         // Fixed OPFS/disk budget — surfaced so the monitor's memory gauge has a
         // real per-tier limit to sum (L2 is disk, not heap, but it is a tier).

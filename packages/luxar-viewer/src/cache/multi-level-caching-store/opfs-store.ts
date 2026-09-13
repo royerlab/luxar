@@ -73,11 +73,12 @@ export class OPFSStore {
   // Read/write tracking for monitoring. `readCount` is the L2 hit
   // counter — only incremented when get() returns a value. `missCount`
   // counts get() calls that returned undefined (file not present /
-  // size mismatch / I/O error). Together they let consumers compute
-  // an L2 hit rate without separate plumbing.
+  // size mismatch / I/O error). Canceled reads are tracked separately
+  // because they do not fall through to a network download.
   private readCount = 0;
   private writeCount = 0;
   private missCount = 0;
+  private canceledReadCount = 0;
 
   // Health counters surfaced via getStats().
   // `oversizedWriteSkipped`: doSet() rejected an entry larger than
@@ -437,6 +438,10 @@ export class OPFSStore {
    * Get a file from OPFS and update LRU order.
    */
   async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
+    if (options?.signal?.aborted) {
+      this.canceledReadCount++;
+      return undefined;
+    }
     if (!this.readableRoot(key, options?.signal)) {
       this.missCount++;
       return undefined;
@@ -457,7 +462,8 @@ export class OPFSStore {
       });
 
       if (!data) {
-        this.missCount++;
+        if (options?.signal?.aborted) this.canceledReadCount++;
+        else this.missCount++;
         return undefined;
       }
 
@@ -1023,6 +1029,7 @@ export class OPFSStore {
     reads: number;
     writes: number;
     misses: number;
+    canceledReads: number;
     oversizedWriteSkipped: number;
     quotaWriteSkipped: number;
     evictions: number;
@@ -1053,6 +1060,7 @@ export class OPFSStore {
       reads: this.readCount,
       writes: this.writeCount,
       misses: this.missCount,
+      canceledReads: this.canceledReadCount,
       oversizedWriteSkipped: this.oversizedWriteSkipped,
       quotaWriteSkipped: this.quotaWriteSkipped,
       evictions: this.evictions,
