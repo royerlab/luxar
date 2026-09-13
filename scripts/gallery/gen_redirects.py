@@ -35,11 +35,12 @@ land on the gallery, because that hides a typo behind a page that looks fine.
 Usage::
 
     gen_redirects.py --prefix 2026-09-02 --live-stores stores.txt -o _redirects
-    rclone lsf r2:luxar-demos/data --recursive --dirs-only | \\
+    rclone lsf r2:luxar-demos/data --recursive --max-depth 2 --dirs-only | \\
         gen_redirects.py --prefix 2026-09-02 --live-stores - -o _redirects
 
 ``--live-stores`` accepts either bare store names, which use ``--prefix``, or
-``<prefix>/<store>`` lines for stores that remain live at an earlier prefix.
+``<prefix>/<store>`` lines. If a store exists at multiple dated prefixes, the
+newest prefix wins and the older copy remains available for rollback.
 """
 
 from __future__ import annotations
