@@ -761,6 +761,9 @@ export class LuxarApp {
           manager?.setStepSize(dim, options.stepSize);
         }
       },
+      setDefaultLadderDepth: (ladderDepth) => {
+        this.inputHandler.getAnimationManager()?.setDefaultLadderDepth(ladderDepth);
+      },
     });
   }
 

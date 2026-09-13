@@ -564,7 +564,11 @@ export class SceneLoader {
    * must not move the real view; see the stuck-display hazard in
    * slice-prefetcher.ts).
    */
-  prefetchSlice(viewState: Partial<ViewState>, budgetMs: number): void {
+  prefetchSlice(
+    viewState: Partial<ViewState>,
+    budgetMs: number,
+    ladderDepth?: number | 'auto'
+  ): void {
     if (this._disposed || this._archiveFault || !this._sceneGraph) return;
     if (!this._slicePrefetcher) {
       this._slicePrefetcher = new SlicePrefetcher({
@@ -579,7 +583,8 @@ export class SceneLoader {
     // exactly `budgetMs` (the prefetcher injects it post-derive).
     const incoming = { ...viewState };
     delete incoming.frameBudgetMs;
-    this._slicePrefetcher.prefetch({ ...this.viewState, ...incoming }, budgetMs);
+    delete incoming.ladderDepth;
+    this._slicePrefetcher.prefetch({ ...this.viewState, ...incoming }, budgetMs, ladderDepth);
   }
 
   /**
@@ -1292,7 +1297,7 @@ export class SceneLoader {
       // linger in `this.viewState` (which refinement/retry re-derive from)
       // and leave the loaders capped after playback ends. It flows to the
       // loaders only via the per-type handler ctxs (buildUpdateCtxs).
-      const { frameBudgetMs, ...incomingViewState } = viewState;
+      const { frameBudgetMs, ladderDepth, ...incomingViewState } = viewState;
       // `prefetch` is likewise a transient directive (set only on the
       // SlicePrefetcher's shadow passes); strip it too so it can never persist
       // into `this.viewState` and pin every subsequent foreground store.
@@ -1324,7 +1329,9 @@ export class SceneLoader {
       // `isAtViewState` cannot skip the real re-run a budget-truncated playback
       // pass still owes. A changed view is always a full sweep, even if stale
       // resync options reached this call through a delayed queue hand-off.
-      if (!resyncPaths) this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined;
+      if (!resyncPaths) {
+        this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined || ladderDepth !== undefined;
+      }
       this.viewState = nextViewState;
       if (viewChanged) this._updateVersion++;
       const currentVersion = this._updateVersion;
@@ -1375,6 +1382,7 @@ export class SceneLoader {
         extendedToleranceCache,
         signal: updateController.signal,
         frameBudgetMs,
+        ladderDepth,
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       });
 

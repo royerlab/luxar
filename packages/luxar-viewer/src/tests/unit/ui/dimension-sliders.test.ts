@@ -656,6 +656,8 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       getState: vi.fn(() => undefined),
       isAnimating: vi.fn(() => false),
       getStepSize: vi.fn((): number | null => null),
+      getDefaultLadderDepth: vi.fn(() => 'auto'),
+      setLadderDepth: vi.fn(),
       setStepSize: vi.fn(),
       setTargetFPS: vi.fn(),
       setLoopMode: vi.fn(),
@@ -776,8 +778,14 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     expect(headers).toContain('Speed');
     expect(headers).toContain('Loop Mode');
 
-    const items = Array.from(document.querySelectorAll('.luxar-dimension-slider__context-item'));
-    const auto = items.find((el) => el.textContent?.includes('Auto'))!;
+    const stepSection = Array.from(
+      document.querySelectorAll('.luxar-dimension-slider__context-section')
+    ).find(
+      (section) =>
+        section.querySelector('.luxar-dimension-slider__context-header')?.textContent === 'Step'
+    )!;
+    const items = Array.from(stepSection.querySelectorAll('.luxar-dimension-slider__context-item'));
+    const auto = items.find((el) => el.textContent === 'Auto')!;
     expect(auto.classList.contains('luxar-dimension-slider__context-item--selected')).toBe(true);
 
     // ×2 of base 0.5 → 1; the computed value lives in the chip tooltip.
@@ -785,6 +793,46 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     expect((x2 as HTMLElement).title).toContain('= 1');
     (x2 as HTMLElement).click();
     expect(stub.setStepSize).toHaveBeenCalledWith(3, 1);
+    sliders.dispose();
+  });
+
+  it('context menu Detail section shows the current mode and updates ladder depth', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+
+    const openMenu = () => {
+      document
+        .querySelector('.luxar-dimension-slider__play-btn')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      return Array.from(document.querySelectorAll('.luxar-dimension-slider__context-section')).find(
+        (section) =>
+          section.querySelector('.luxar-dimension-slider__context-header')?.textContent === 'Detail'
+      )!;
+    };
+
+    let detailSection = openMenu();
+    expect(detailSection.querySelector('.luxar-dimension-slider__context-aside')?.textContent).toBe(
+      'auto'
+    );
+    expect(
+      Array.from(detailSection.querySelectorAll('.luxar-dimension-slider__context-item'))
+        .find((item) => item.textContent === 'Auto')
+        ?.classList.contains('luxar-dimension-slider__context-item--selected')
+    ).toBe(true);
+
+    for (const [label, depth] of [
+      ['6', 6],
+      ['All', Infinity],
+      ['Fast', null],
+    ] as const) {
+      detailSection = openMenu();
+      const chip = Array.from(
+        detailSection.querySelectorAll<HTMLButtonElement>('.luxar-dimension-slider__context-item')
+      ).find((item) => item.textContent === label)!;
+      chip.click();
+      expect(stub.setLadderDepth).toHaveBeenLastCalledWith(3, depth);
+    }
     sliders.dispose();
   });
 
@@ -1160,6 +1208,8 @@ describe('DimensionSliders - coarse pointer affordances', () => {
       getState: vi.fn(() => undefined),
       isAnimating: vi.fn(() => false),
       getStepSize: vi.fn(() => 2),
+      getDefaultLadderDepth: vi.fn(() => 'auto'),
+      setLadderDepth: vi.fn(),
       play: vi.fn(),
       pause: vi.fn(),
     } as never);
@@ -1185,6 +1235,8 @@ describe('DimensionSliders - coarse pointer affordances', () => {
       getState: vi.fn(() => undefined),
       isAnimating: vi.fn(() => false),
       getStepSize: vi.fn(() => null),
+      getDefaultLadderDepth: vi.fn(() => 'auto'),
+      setLadderDepth: vi.fn(),
       play: vi.fn(),
       pause: vi.fn(),
     } as never);

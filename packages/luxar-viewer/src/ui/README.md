@@ -258,6 +258,19 @@ micro-header row over one wrapping row of selectable chips.
   - `Bounce`: Ping-pong back and forth
   - Single-select chips with the current mode marked
 
+- **Detail Section**: The playback detail — how many additive-ladder rungs
+  every frame is drawn at while the dimension plays
+  - `Auto` (default, or the scene's authored `playback_lod_depth`): each ladder
+    is pinned at the first rung whose energy stamp reaches the configured
+    threshold; ladders without stamps stream time-budgeted
+  - `1` … `8` / `All`: pin the rung count; every frame waits for exactly that
+    many rungs (or the whole ladder), so quality is constant and the frame rate
+    adapts to the data
+  - `Fast`: time-budgeted streaming — each tick shows whatever rungs were
+    resident within its budget (fast cadence, quality varies frame to frame).
+    The active setting shows as the muted header readout; scrubbing uses the
+    same detail, with an unpinned refine once the scrub settles.
+
 - **Step Section**: The per-tick quantum for playback **and** the `[` / `]`
   keys — FPS then only decides how often a step lands
   - `Auto` (default): the historical behavior — continuous dimensions traverse

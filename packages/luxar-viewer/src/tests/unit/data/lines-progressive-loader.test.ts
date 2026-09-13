@@ -235,6 +235,26 @@ describe('LinesProgressiveLoader', () => {
       const restored = await l.loadLines(viewA);
       expect(restored.positions[0]).toBeCloseTo(0.5);
     });
+
+    it('does not mark pinned scrubs as sequential cache scans', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const setSpy = vi.spyOn(sc, 'set');
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/l',
+        undefined,
+        sc
+      );
+
+      await l.updateView({ ...viewA, ladderDepth: 2 });
+      sc.clear();
+      setSpy.mockClear();
+      await l.updateView({ ...viewB, ladderDepth: 2 });
+
+      expect(setSpy).toHaveBeenCalledTimes(2);
+      for (const call of setSpy.mock.calls) expect(call[2]?.scan).toBe(false);
+    });
   });
 
   describe('initial load', () => {
@@ -751,6 +771,121 @@ describe('LinesProgressiveLoader', () => {
       await loader.updateView(baseViewState, undefined, undefined, 1);
       expect(loader.loadedLODCount).toBe(1);
       expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("'auto' playback detail (energy rule)", () => {
+    // Mirrored across gsplats / points / lines (geometry symmetry). The mesh
+    // reveal ladder has no energy stamps, so 'auto' leaves it time-budgeted.
+    let now: number;
+    let nowSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      now = 0;
+      nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockImplementation(async () => {
+          now += 30;
+          return { data: makeLodData(10, 5, 3, { color: 'uint8' }), allResident: false };
+        });
+      }
+    });
+
+    afterEach(() => {
+      nowSpy.mockRestore();
+    });
+
+    it('pins the first rung whose cumulative energy reaches the configured threshold', async () => {
+      // e(1) = 0.5, e(2) = 0.95, e(3) = 1.0 with the default threshold 0.9 -> depth 2.
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as never,
+        3,
+        '/auto_lines',
+        [0.5, 0.95, 1.0]
+      );
+      await l.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: 'auto' });
+      expect(l.loadedLODCount).toBe(2);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.hasMoreLODs).toBe(false);
+    });
+
+    it('an unstamped ladder stays time-budgeted under auto (first cold level stops the pass)', async () => {
+      const l = new LinesProgressiveLoader([lodA, lodB, lodC] as never, 3, '/auto_lines');
+      await l.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: 'auto' });
+      // Budget 10ms < one 30ms cold level: only the first-paint floor loads.
+      expect(l.loadedLODCount).toBe(1);
+      expect(l.hasMoreLODs).toBe(false);
+    });
+  });
+
+  describe('pinned playback ladder depth (ladderDepth)', () => {
+    // Mirrored across gsplats / points / lines / mesh (geometry symmetry).
+    let now: number;
+    let nowSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      now = 0;
+      nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockImplementation(async () => {
+          now += 30;
+          return { data: makeLodData(10, 5, 3, { color: 'uint8' }), allResident: true };
+        });
+      }
+    });
+
+    afterEach(() => {
+      nowSpy.mockRestore();
+    });
+
+    it('loads exactly the pinned rung count whatever the time budget, and reports hasMoreLODs=false', async () => {
+      // A 10ms budget fits no 30ms level, yet the pinned depth of 2 is honoured.
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: 2 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(2);
+      // The pinned prefix IS the target: no background refinement between ticks.
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('does not stop at a cold level before the pinned depth — the frame waits for its rungs', async () => {
+      lodB.updateViewWithResidency.mockImplementation(async () => {
+        now += 300;
+        return { data: makeLodData(10, 5, 3, { color: 'uint8' }), allResident: false };
+      });
+
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: 3 });
+
+      expect(lodC.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(loader.loadedLODCount).toBe(3);
+    });
+
+    it('clamps the pinned depth to the ladder (Infinity = whole ladder)', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: Infinity });
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('a shadow PREFETCH pass deepens to exactly the pinned depth', async () => {
+      await loader.updateView({
+        ...baseViewState,
+        frameBudgetMs: 10,
+        prefetch: true,
+        ladderDepth: 2,
+      });
+      expect(loader.loadedLODCount).toBe(2);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+
+    it('an unpinned pass after a pinned one resumes normal refinement from the prefix', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: 1 });
+      expect(loader.hasMoreLODs).toBe(false);
+      // Refine-on-pause: same view, no directives → the ladder is loadable again.
+      await loader.updateView(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
     });
   });
 

@@ -27,9 +27,11 @@ import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapte
 import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
+  resolveLadderDepth,
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
+import { config } from '../../config';
 import {
   deleteLadder,
   measureLodBytes,
@@ -286,6 +288,14 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   // directive (never part of lastViewState / viewStatesEqual / cache keys).
   // Mirrors GSplatsProgressiveLoader.
   private _frameBudgetMs: number | null = null;
+  /**
+   * Pinned rung count for the current pass (`ViewState.ladderDepth`, the
+   * playback "detail" setting), resolved through `resolveLadderDepth`; null
+   * when the pass is not pinned. A pinned pass loads exactly this many rungs,
+   * cold or not, and reports `hasMoreLODs === false` like a budgeted one — the
+   * pinned prefix IS the target.
+   */
+  private _ladderDepth: number | null = null;
 
   constructor(
     lodLoaders: LinesSpatialIndexLoader[],
@@ -319,6 +329,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // target: no background refinement between animation ticks; the commit
     // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
     if (this._frameBudgetMs !== null) return false;
+    if (this._ladderDepth !== null) return false;
     return this._loadedLODCount < this.nLods;
   }
 
@@ -441,6 +452,12 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // a pause re-trigger arrives with the SAME view state — it must still
     // clear the budget). Mirrors GSplatsProgressiveLoader.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    this._ladderDepth = resolveLadderDepth(
+      viewState.ladderDepth,
+      this.nLods,
+      this.energyTable,
+      config.dimensionAnimation.playback.autoEnergyThreshold
+    );
     this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
@@ -513,14 +530,21 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // prefix while budget remains; `prefetch` deepens toward the
     // full decoded ladder (abort-safe, stored per level); `refine` stops at the
     // first cold/slow level. Mirrors GSplatsProgressiveLoader.
-    const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
+    const pass = classifyStreamingPass(
+      budgetDeadline !== null,
+      isPrefetch,
+      this._ladderDepth !== null
+    );
     const startLevel = this._loadedLODCount;
     const residentBytesAtPassStart = ladderResidentBytes(this.ladderResidency());
     this._levelsAtPassStart = startLevel;
     this._payloadsAtPassStart = this.loadedLODs.length;
     this._restoredFullLadderAtPassStart = false;
 
-    for (let level = startLevel; level < this.nLods; level++) {
+    // A pinned pass bounds the loop at the pinned rung count; the policy's
+    // `pinned` kind disables the deadline / cold-level brakes.
+    const targetLevels = this._ladderDepth ?? this.nLods;
+    for (let level = startLevel; level < targetLevels; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so
       // the next iteration would TypeError on `this.lodLoaders[level]` — a
       // teardown mis-counted as a real refinement failure (recordFailure +
@@ -611,7 +635,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // GSplatsProgressiveLoader.
     const result = finish();
 
-    if (this._loadedLODCount === this.nLods || this._frameBudgetMs !== null) {
+    if (
+      this._loadedLODCount === this.nLods ||
+      this._frameBudgetMs !== null ||
+      this._ladderDepth !== null
+    ) {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,

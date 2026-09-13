@@ -497,6 +497,16 @@ Animation loops according to the configured loop mode: `once` (stop at end),
 The loop mode and direction can be set through `ViewerConfig` in Python (see
 below).
 
+The **Detail** section of the same menu decides how deep each frame's additive
+ladder is loaded while a dimension plays or is scrubbed. `Auto` (the default)
+pins every ladder at the first rung whose energy stamp reaches the viewer's
+threshold, so a heavy time-lapse reads consistently and the frame rate adapts
+to the data; a rung count or `All` pins the depth explicitly; `Fast` streams
+whatever is resident within each tick (quick cadence, quality varies from frame
+to frame). Scenes can author the default with
+`ViewerConfig(playback_lod_depth=...)` — an integer rung count, `"all"`,
+`"auto"` or `"fast"`.
+
 ---
 
 ## Screenshots and Recording

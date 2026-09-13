@@ -6,6 +6,7 @@ import { getViewerContainer } from '../utils/viewer-container';
 import { getInputProfile } from '../utils/input-capabilities';
 import { normalizeWheelDeltaWithAxisFallback } from '../utils/wheel-delta';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
+import { describeLadderDepth } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
@@ -1272,7 +1273,7 @@ export class DimensionSliders {
     // micro-header row (title + an optional right-aligned muted readout)
     // over one WRAPPING row of selectable chips — the sanctioned
     // "active chip/segment" idiom — instead of a tall radio list. Header
-    // TEXT stays exactly 'Speed' / 'Loop Mode' / 'Step' (E2E-pinned); the
+    // TEXT stays exactly 'Speed' / 'Loop Mode' / 'Detail' / 'Step' (E2E-pinned); the
     // uppercase rendering comes from CSS.
     const makeSection = (title: string, aside?: string): HTMLDivElement => {
       const section = document.createElement('div');
@@ -1363,6 +1364,67 @@ export class DimensionSliders {
         )
       );
     });
+
+    // Detail section: the playback "detail" — how deep every frame's additive
+    // ladder is loaded while this dimension plays or scrubs. Auto pins each
+    // ladder at the rung its energy stamps single out; a number or All pins the
+    // depth explicitly (every frame waits for exactly that many rungs, so a heavy
+    // time-lapse plays at a consistent quality and an adaptive rate); Fast keeps
+    // the time-budgeted streaming (whatever is resident within the tick).
+    const currentLadderDepth =
+      state?.ladderDepth ??
+      this.animationManager?.getDefaultLadderDepth() ??
+      config.dimensionAnimation.defaults.ladderDepth;
+    const detailChips = makeSection('Detail', describeLadderDepth(currentLadderDepth));
+    detailChips.appendChild(
+      makeChip(
+        'Auto',
+        currentLadderDepth === 'auto',
+        () => {
+          this.animationManager?.setLadderDepth(dimIndex, 'auto');
+          this.closeContextMenu();
+        },
+        { tooltip: 'Pin each ladder at the rung where its energy stamps say the frame reads well' }
+      )
+    );
+    for (const depth of config.dimensionAnimation.presets.ladderDepths) {
+      detailChips.appendChild(
+        makeChip(
+          String(depth),
+          currentLadderDepth === depth,
+          () => {
+            this.animationManager?.setLadderDepth(dimIndex, depth);
+            this.closeContextMenu();
+          },
+          {
+            tooltip: `Draw every frame at ${depth} ladder rung${depth === 1 ? '' : 's'}`,
+            mono: true,
+          }
+        )
+      );
+    }
+    detailChips.appendChild(
+      makeChip(
+        'All',
+        currentLadderDepth === Infinity,
+        () => {
+          this.animationManager?.setLadderDepth(dimIndex, Infinity);
+          this.closeContextMenu();
+        },
+        { tooltip: 'Draw every frame at its full ladder (waits for the data)' }
+      )
+    );
+    detailChips.appendChild(
+      makeChip(
+        'Fast',
+        currentLadderDepth === null,
+        () => {
+          this.animationManager?.setLadderDepth(dimIndex, null);
+          this.closeContextMenu();
+        },
+        { tooltip: 'Stream whatever is resident within each tick (quality varies frame to frame)' }
+      )
+    );
 
     // Step section: the per-tick quantum for animation AND the [ / ] keys.
     // Presets are multipliers of the dimension's BASE step (authored step,

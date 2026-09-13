@@ -24,6 +24,9 @@ from ..validation.overlays import validate_visible_range
 
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
+# Playback detail keywords (`ViewerConfig.playback_lod_depth`); an int >= 1 pins
+# that many additive-ladder rungs instead.
+VALID_PLAYBACK_LOD_DEPTHS = ("auto", "all", "fast")
 VALID_CONTROL_TYPES = ("orbit", "fly", "ortho")
 # Turntable axis. Two families. CAMERA frame, named for what the viewer sees:
 # "vertical" = screen-up (the historical and default behavior), "horizontal" =
@@ -66,6 +69,19 @@ MAX_ENVIRONMENT_URL_CHARS = 2048
 ENVIRONMENT_RESOLUTION_MIN = 16
 ENVIRONMENT_RESOLUTION_MAX = 1024
 ENVIRONMENT_NODE_PROBE_PREFIX = "node:"
+
+
+def _validate_playback_lod_depth(depth: Optional[Union[int, str]]) -> None:
+    if depth is None:
+        return
+    if isinstance(depth, bool) or not (
+        (isinstance(depth, int) and depth >= 1)
+        or (isinstance(depth, str) and depth in VALID_PLAYBACK_LOD_DEPTHS)
+    ):
+        raise ValueError(
+            "playback_lod_depth must be an int >= 1 or one of "
+            f"{VALID_PLAYBACK_LOD_DEPTHS}, got {depth!r}"
+        )
 
 
 @dataclass
@@ -1168,6 +1184,18 @@ class ViewerConfig:
     # macOS, false elsewhere) and persists the user's choice per-scene.
     natural_drag: Optional[bool] = None
 
+    # Playback detail: how deep every additive ladder is loaded per frame while
+    # a dimension plays or is scrubbed. An int >= 1 pins that many rungs (every
+    # frame waits for exactly that depth, so quality is constant and the frame
+    # rate adapts to the data); "all" pins the whole ladder; "auto" (the viewer
+    # default) pins each ladder at the first rung whose cumulative energy stamp
+    # e(k) reaches the viewer's threshold, falling back to time-budgeted
+    # streaming on unstamped ladders; "fast" streams whatever is resident within
+    # each tick (the pre-2026-09 behaviour: quick cadence, quality varies frame
+    # to frame). Choose a number when you know the ladder: on a 2 M-splat
+    # time-lapse frame with eight equal rungs, 3-4 rungs read well at ~1 fps.
+    playback_lod_depth: Optional[Union[int, str]] = None
+
     # Cinematic effects. `cinematic_mode=True` is not just a checkbox: the
     # viewer expands the full preset (ACES tone mapping, subtle wide bloom,
     # detector noise, vignette, 35 mm chromatic lens + FOV) for every field
@@ -1298,6 +1326,8 @@ class ViewerConfig:
                 f"tone_mapping must be one of {VALID_TONE_MAPPINGS}, got '{self.tone_mapping}'"
             )
 
+        _validate_playback_lod_depth(self.playback_lod_depth)
+
         if (
             self.control_type is not None
             and self.control_type not in VALID_CONTROL_TYPES
@@ -1385,6 +1415,7 @@ class ViewerConfig:
         "auto_dolly_amplitude_percent",
         "auto_dolly_period",
         "natural_drag",
+        "playback_lod_depth",
         "cinematic_mode",
         "vignette_enabled",
         "vignette_darkness",
@@ -1423,7 +1454,9 @@ class ViewerConfig:
     # `extractRenderingOverrides` reads. Scene identity and theme are not
     # per-waypoint state.
     _RENDERING_FIELDS = frozenset(
-        f for f in _SIMPLE_FIELDS if f not in ("title", "background_color", "theme")
+        f
+        for f in _SIMPLE_FIELDS
+        if f not in ("title", "background_color", "theme", "playback_lod_depth")
     )
 
     def to_dict(self) -> Dict[str, Any]:

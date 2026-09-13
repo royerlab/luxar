@@ -160,7 +160,7 @@ export class SlicePrefetcher {
    *   lands, so an abort (playback end / dataset switch) keeps the depth
    *   already reached.
    */
-  prefetch(viewState: ViewState, budgetMs: number): void {
+  prefetch(viewState: ViewState, budgetMs: number, ladderDepth?: number | 'auto'): void {
     if (this.disposed) return;
     if (this.inFlight > 0) {
       // A batch is still deepening — let it finish (persist across ticks) so a
@@ -180,7 +180,7 @@ export class SlicePrefetcher {
 
     const { registry } = this.ctx;
     const tasks: Array<Promise<void>> = [];
-    const request = { viewState, budgetMs, signal: controller.signal };
+    const request = { viewState, budgetMs, ladderDepth, signal: controller.signal };
     const objects = new Map<string, THREE.Object3D | null | undefined>();
     const resolveObject = (path: string): THREE.Object3D | null | undefined => {
       if (!objects.has(path)) objects.set(path, this.ctx.resolveObject(path));
@@ -234,7 +234,12 @@ export class SlicePrefetcher {
     tasks: Array<Promise<void>>,
     loaders: ReadonlyMap<string, unknown>,
     kind: GeometryKind,
-    request: { viewState: ViewState; budgetMs: number; signal: AbortSignal },
+    request: {
+      viewState: ViewState;
+      budgetMs: number;
+      ladderDepth?: number | 'auto';
+      signal: AbortSignal;
+    },
     resolveObject: (path: string) => THREE.Object3D | null | undefined
   ): void {
     for (const path of loaders.keys()) {
@@ -258,11 +263,13 @@ export class SlicePrefetcher {
     request: {
       viewState: ViewState;
       budgetMs: number;
+      /** Pinned playback ladder depth, forwarded so the t+1 entry carries the pinned prefix. */
+      ladderDepth?: number | 'auto';
       signal: AbortSignal;
       object: THREE.Object3D | null | undefined;
     }
   ): Promise<void> {
-    const { viewState, budgetMs, signal, object } = request;
+    const { viewState, budgetMs, ladderDepth, signal, object } = request;
     const graph = this.ctx.getSceneGraph();
     const node = findNodeByPath(graph, path);
     if (!node) return Promise.resolve();
@@ -298,6 +305,7 @@ export class SlicePrefetcher {
       ...derived.viewState,
       frameBudgetMs: budgetMs,
       prefetch: true, // deepen mode: store each level, pin until foreground restores
+      ...(ladderDepth !== undefined ? { ladderDepth } : {}),
     };
 
     return this.getShadow(path, kind, node)

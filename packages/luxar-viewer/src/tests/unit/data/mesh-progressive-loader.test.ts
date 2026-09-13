@@ -443,6 +443,23 @@ describe('MeshProgressiveLoader', () => {
     expect(loader.hasMoreLODs).toBe(false);
   });
 
+  it('a pinned playback ladder depth loads exactly that many levels, cold or not, under any budget', async () => {
+    // Mirrors the gsplats / points / lines pinned-depth tests (geometry symmetry).
+    const { loader, subs } = makeLadder(
+      [level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])],
+      { resident: false }
+    );
+
+    await loader.updateView({ ...VIEW, frameBudgetMs: 0, ladderDepth: 2 });
+
+    expect(loader.loadedLODCount).toBe(2);
+    expect(subs[2].calls).toBe(0);
+    expect(loader.hasMoreLODs).toBe(false);
+
+    await loader.updateView({ ...VIEW, frameBudgetMs: 0, ladderDepth: Infinity });
+    expect(loader.loadedLODCount).toBe(3);
+  });
+
   it('stops a warmed-cache refinement pass after spending its residency allowance', async () => {
     const { loader, subs } = makeLadder([
       level(4, [0, 1, 2]),
