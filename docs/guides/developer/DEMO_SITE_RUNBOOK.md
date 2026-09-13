@@ -97,6 +97,10 @@ the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
 exchange for far fewer stored objects. Re-measure browser traffic and request
 cost before changing that tradeoff.
 
+Read any playback warning after the `optimise` step. For an un-laddered played
+store, re-run at `hosting` and re-measure requests and per-step bytes before
+publishing; §3.21 records the current exception and measurement procedure.
+
 `make generate-gallery-datasets` automatically runs both built-scene auditors
 against only the stores it generated in that invocation, then reports on the
 complete local inventory. Scene-credit failures gate a rebuild without letting
@@ -1023,22 +1027,19 @@ governs how much time the prefetch has to hide each request.
 Rules that fall out, alongside 3.17 and the #2377 residency finding:
 
 - Compute **frames-per-chunk** before choosing a profile for an animated node:
-  rows per zarr chunk / `chunk_size` atom x the atom's time span from the
-  bounds array.
+  group consecutive `chunk_bounds` atoms exactly as each planned zarr chunk
+  will group them, then measure the inclusive time span of each group.
 - Laddered + played (splat timelapses): 1 MB, so the coarse rung is one resident
   chunk. Un-laddered + played (animated lines/points): `hosting` (~1.5 frames per
   chunk) is the middle of the request/byte trade; `local` is 3,500 chunks
   against the Functions request cap. Not animated: smaller is a pure win.
-- `optimise` is per-array and hidden-dim blind; it cannot infer playback and
-  ladder-cache policy, so the operator still decides per store.
-- The `optimise` pass stays per-array blind by design; what is missing is a
-  warn-only guard on top of it, and #2686 landed boundary prefetch in the
-  viewer rather than that guard. So the gate described next is a spec, not
-  current behaviour: gate it on `viewer_config.animation` (`playing: true`),
-  not on "has a hidden axis" — a keypress-navigated axis is the refine case. The
-  measurements after it hold either way. A whole array in ONE chunk is
-  benign (no boundary to cross); the stall shape is many chunks of several
-  frames. Read the atom's hidden-axis span from `chunk_bounds` — a
+- `optimise` keeps each array's byte-based chunk planner, then adds a warn-only
+  per-node check for the playback/cache policy it can verify. The check is gated
+  on `viewer_config.animation` (`playing: true`), not on "has a hidden axis" — a
+  keypress-navigated axis is the refine case. It warns when an un-laddered
+  spatial-index node would exceed two frames per chunk across multiple chunks;
+  a whole array in ONE chunk is benign because there is no boundary to cross.
+  Read the atom's hidden-axis span from `chunk_bounds` — a
   store with one NODE per hidden coordinate (hilbert_curve_3d) misreads when
   the scene range is divided by chunk count. Wave 2026-09-11:
   `collision_animated` plays at 1.8 frames/chunk on `hosting`; `cloud` also

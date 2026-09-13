@@ -29,6 +29,8 @@ def _report_dry_run(plan: OptimisePlan, path: Path) -> None:
     """Print what would change, most-improved array first."""
     aprint(f"\n🔎 Dry run: {path}")
     aprint(f"  Target chunk: {plan.target_bytes / 1024:.0f} KB")
+    for warning in plan.playback_warnings:
+        aprint(f"  ⚠ {warning.message}")
     changed = sorted(
         (a for a in plan.arrays if a.rechunked),
         key=lambda a: a.source_n_chunks - a.target_n_chunks,

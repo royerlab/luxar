@@ -134,6 +134,7 @@ __all__ = [
     "ArrayPlan",
     "ChunkLayoutSummary",
     "OptimisePlan",
+    "PlaybackChunkWarning",
     "optimise_store",
     "plan_optimisation",
     "resolve_target_bytes",
@@ -163,18 +164,19 @@ __all__ = [
 #: slicing into a large one.
 #:
 #: On an ANIMATED node (a non-displayed axis the user plays) the useful measure
-#: is frames-per-chunk: rows per zarr chunk divided by the ``chunk_size`` atom,
-#: times the atom's hidden-axis span read off the bounds array. The writer
-#: already orders slice-major, so a 1 MB ``archive`` chunk of a 250-frame Lines
-#: node holds ~6 frames. The viewer now prefetches the nearest next zarr chunk
+#: is frames-per-chunk: group the ordered ``chunk_bounds`` atoms exactly as the
+#: planned zarr chunks will group them, then measure each group's inclusive
+#: hidden-axis span. The writer already orders slice-major, so a 1 MB
+#: ``archive`` chunk of a 250-frame Lines node holds ~6 frames. The viewer now
+#: prefetches the nearest next zarr chunk
 #: boundary across a node's arrays while those preceding frames play (#2686);
 #: before that, every boundary produced a measured 0.4-0.9 s stall on a 7 Mbps
 #: link.
 #: A LADDERED played node is the opposite case: a coarse rung that fits one
 #: chunk stays cache-resident and serves every timepoint (#2377), which is why
-#: the 4D splat demos ship at 1 MB. This pass still plans per array from bytes
-#: alone and cannot infer the viewer's playback/cache policy, so the caller
-#: decides per node.
+#: the 4D splat demos ship at 1 MB. The per-array planner therefore stays byte
+#: based, while the whole-store plan warns when an actively played, un-laddered
+#: node would exceed two frames per chunk across multiple chunks.
 CHUNK_PROFILES: dict[str, int] = {
     "local": TARGET_CHUNK_BYTES,
     "hosting": MAX_CHUNK_BYTES,
@@ -197,6 +199,13 @@ _SEGMENT_ARRAY = "segments"
 #: syscall-bound, small enough that a 629 MB array (one exists in the demo
 #: corpus) never lands in memory whole.
 _SLAB_BYTES = 64 * 1024 * 1024
+
+#: More than two played frames per chunk creates the bursty boundary-crossing
+#: shape measured in #2686. Two or fewer retains at least one frame of lead from
+#: the viewer's boundary-aware prefetch and is not worth warning about.
+_PLAYBACK_WARNING_FRAMES = 2.0
+
+_SPATIALLY_INDEXED_TYPES = frozenset({"points", "lines", "gsplats"})
 
 
 # --------------------------------------------------------------------------
@@ -257,6 +266,7 @@ class OptimisePlan:
     target_bytes: int
     profile: str | None
     arrays: list[ArrayPlan] = field(default_factory=list)
+    playback_warnings: list[PlaybackChunkWarning] = field(default_factory=list)
 
     @property
     def n_rechunked(self) -> int:
@@ -272,6 +282,27 @@ class OptimisePlan:
     def target_n_chunks(self) -> int:
         """Chunk files the output will hold — the requests it will cost instead."""
         return sum(a.target_n_chunks for a in self.arrays)
+
+
+@dataclass(frozen=True)
+class PlaybackChunkWarning:
+    """An animated flat node whose planned chunks span several frames."""
+
+    node_path: str
+    array_path: str
+    dimension_name: str
+    frames_per_chunk: float
+    n_chunks: int
+
+    @property
+    def message(self) -> str:
+        """Human-facing warning shared by dry-run and real-copy narration."""
+        return (
+            f"{self.node_path}: {self.array_path} would span up to "
+            f"{self.frames_per_chunk:.1f} {self.dimension_name} frames/chunk "
+            f"across {self.n_chunks} chunks while playback starts enabled; "
+            "consider a smaller target if playback stalls"
+        )
 
 
 @dataclass(frozen=True)
@@ -595,7 +626,233 @@ def plan_optimisation(
                     is_environment_map=is_environment_map,
                 )
             )
-    return OptimisePlan(target_bytes=target_bytes, profile=profile, arrays=plans)
+    by_path = {plan.path: plan for plan in plans}
+    warnings = _plan_playback_warnings(root, by_path)
+    return OptimisePlan(
+        target_bytes=target_bytes,
+        profile=profile,
+        arrays=plans,
+        playback_warnings=warnings,
+    )
+
+
+def _playing_dimensions(root: zarr.Group) -> list[tuple[int, str, float]]:
+    """Played dimensions as ``(index, name, positive tick step)`` tuples.
+
+    Only auto playback on a continuous dimension lacks a fixed tick step and
+    is therefore not diagnosable unless the animation supplies ``step_size``.
+    """
+    attrs = dict(root.attrs)
+    viewer_config = attrs.get("viewer_config")
+    scene_dimensions = attrs.get("scene_dimensions")
+    if not isinstance(viewer_config, dict) or not isinstance(scene_dimensions, dict):
+        return []
+    animations = viewer_config.get("animation")
+    dimensions = scene_dimensions.get("dimensions")
+    if not isinstance(animations, list) or not isinstance(dimensions, list):
+        return []
+    played: list[tuple[int, str, float]] = []
+    for index, animation in enumerate(animations):
+        if not isinstance(animation, dict) or animation.get("playing") is not True:
+            continue
+        if index >= len(dimensions) or not isinstance(dimensions[index], dict):
+            continue
+        dimension = dimensions[index]
+        base_step = _positive_float(dimension.get("step"))
+        numeric_step = _positive_float(animation.get("step_size"))
+        if numeric_step is not None and dimension.get("discrete") is True:
+            grid_step = base_step or 1.0
+            cells = math.floor(numeric_step / grid_step + 0.5)
+            numeric_step = max(grid_step, cells * grid_step)
+        elif numeric_step is None:
+            numeric_step = base_step
+            if numeric_step is None and dimension.get("discrete") is True:
+                numeric_step = 1.0
+        if numeric_step is None:
+            continue
+        name = dimension.get("name")
+        played.append(
+            (index, name if isinstance(name, str) else str(index), numeric_step)
+        )
+    return played
+
+
+def _positive_float(raw: Any) -> float | None:
+    """A finite positive float, or ``None`` when ``raw`` is not one."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def _is_ladder(attrs: dict[str, Any]) -> bool:
+    """Whether this group starts either supported LOD ladder shape."""
+    if attrs.get("kind") == "lod":
+        return True
+    try:
+        return int(attrs.get("n_additive_sublods", 1)) > 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _ordering_for_array(
+    attrs: dict[str, Any], array_name: str, dimension: int
+) -> tuple[str, tuple[int, ...]] | None:
+    """Bounds array and bounds dimensions for one played scene dimension."""
+    if array_name == _SEGMENT_ARRAY:
+        ordering = attrs.get("segment_ordering")
+        raw_ndim = attrs.get("ndim")
+        if not isinstance(raw_ndim, (int, str)):
+            return None
+        try:
+            ndim = int(raw_ndim)
+        except (TypeError, ValueError):
+            return None
+        # ``slice_dims`` addresses the 2×D segment endpoint coordinates, while
+        # ``segment_chunk_bounds`` stores one D-wide union bound per atom.
+        bounds_dims: tuple[int, ...] = (dimension, dimension + ndim)
+        bounds_name = "segment_chunk_bounds"
+    else:
+        ordering = attrs.get("vertex_ordering", attrs)
+        bounds_dims = (dimension,)
+        bounds_name = (
+            "vertex_chunk_bounds"
+            if isinstance(attrs.get("vertex_ordering"), dict)
+            else "chunk_bounds"
+        )
+    if not isinstance(ordering, dict):
+        return None
+    slice_dims = ordering.get("slice_dims")
+    if not isinstance(slice_dims, list) or not any(
+        dim in slice_dims for dim in bounds_dims
+    ):
+        return None
+    return bounds_name, bounds_dims
+
+
+def _chunk_frame_span(
+    group: zarr.Group,
+    bounds_name: str,
+    bounds_dims: tuple[int, ...],
+    step: float,
+    atoms_per_chunk: int,
+) -> float | None:
+    """Largest inclusive frame span of one planned first-axis chunk."""
+    if atoms_per_chunk < 1:
+        return None
+    if bounds_name not in frozenset(array_keys(group)):
+        return None
+    bounds = group[bounds_name]
+    if len(bounds.shape) != 3 or bounds.shape[2] != 2:
+        return None
+    valid_dims = tuple(dim for dim in bounds_dims if 0 <= dim < bounds.shape[1])
+    if not valid_dims:
+        return None
+    values = np.asarray(bounds[...], dtype=np.float64)[:, valid_dims, :]
+    if values.size == 0 or not np.isfinite(values).all():
+        return None
+    lows = values[..., 0].min(axis=1)
+    highs = values[..., 1].max(axis=1)
+    spans = [
+        (
+            highs[start : start + atoms_per_chunk].max()
+            - lows[start : start + atoms_per_chunk].min()
+        )
+        / step
+        + 1.0
+        for start in range(0, len(lows), atoms_per_chunk)
+    ]
+    return float(max(spans)) if spans else None
+
+
+def _group_playback_warning(
+    group_path: str,
+    group: zarr.Group,
+    plans: dict[str, ArrayPlan],
+    played: list[tuple[int, str, float]],
+) -> PlaybackChunkWarning | None:
+    """Worst multi-frame planned array for one flat indexed node."""
+    attrs = dict(group.attrs)
+    if attrs.get("type") not in _SPATIALLY_INDEXED_TYPES:
+        return None
+    candidates: list[PlaybackChunkWarning] = []
+    span_cache: dict[tuple[str, tuple[int, ...], float, int], float | None] = {}
+    for dimension, dimension_name, step in played:
+        for array_name in sorted(array_keys(group)):
+            path = f"{group_path}/{array_name}" if group_path else array_name
+            plan = plans.get(path)
+            if plan is None or not plan.shape or plan.atom is None:
+                continue
+            n_chunks = -(-plan.shape[0] // plan.target_chunks[0])
+            if n_chunks <= 1:
+                continue
+            resolved = _ordering_for_array(attrs, array_name, dimension)
+            if resolved is None:
+                continue
+            bounds_name, bounds_dims = resolved
+            atoms_per_chunk = plan.target_chunks[0] // plan.atom
+            key = (bounds_name, bounds_dims, step, atoms_per_chunk)
+            if key not in span_cache:
+                span_cache[key] = _chunk_frame_span(
+                    group, bounds_name, bounds_dims, step, atoms_per_chunk
+                )
+            frames = span_cache[key]
+            if frames is None:
+                continue
+            if frames <= _PLAYBACK_WARNING_FRAMES:
+                continue
+            candidates.append(
+                PlaybackChunkWarning(
+                    node_path=group_path or "/",
+                    array_path=path,
+                    dimension_name=dimension_name,
+                    frames_per_chunk=frames,
+                    n_chunks=n_chunks,
+                )
+            )
+    return max(candidates, key=lambda warning: warning.frames_per_chunk, default=None)
+
+
+def _plan_playback_warnings(
+    root: zarr.Group, plans: dict[str, ArrayPlan]
+) -> list[PlaybackChunkWarning]:
+    """Warn once per un-laddered node or partition root for wide chunks."""
+    played = _playing_dimensions(root)
+    if not played:
+        return []
+    warnings: dict[tuple[str, str], PlaybackChunkWarning] = {}
+
+    def visit(
+        group: zarr.Group,
+        path: str,
+        inside_ladder: bool,
+        partition_root: str | None,
+    ) -> None:
+        attrs = dict(group.attrs)
+        laddered = inside_ladder or _is_ladder(attrs)
+        if partition_root is None and attrs.get("kind") == "partition":
+            partition_root = path or "/"
+        if not laddered:
+            warning = _group_playback_warning(path, group, plans, played)
+            if warning is not None:
+                key = (
+                    ("partition", partition_root)
+                    if partition_root is not None
+                    else ("node", path)
+                )
+                previous = warnings.get(key)
+                if (
+                    previous is None
+                    or warning.frames_per_chunk > previous.frames_per_chunk
+                ):
+                    warnings[key] = warning
+        for name in sorted(group_keys(group)):
+            child_path = f"{path}/{name}" if path else name
+            visit(group[name], child_path, laddered, partition_root)
+
+    visit(root, "", False, None)
+    return list(warnings.values())
 
 
 def _walk_groups(group: zarr.Group, path: str = "") -> Iterator[tuple[str, zarr.Group]]:
@@ -1302,6 +1559,8 @@ def optimise_store(
                 + (f" (profile {profile})" if profile else "")
                 + f", zarr format {source_format} preserved"
             )
+            for warning in plan.playback_warnings:
+                aprint(f"⚠ {warning.message}")
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             staging = _staging_path(dest_path)
             # Computed BEFORE anything is written, so the cleanup below can
