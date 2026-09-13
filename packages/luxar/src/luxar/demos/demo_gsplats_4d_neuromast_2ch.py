@@ -257,6 +257,7 @@ RECOMPUTE = FLAGS["recompute"]
 CAMERA_ANGLE_DEG = 37.5
 CAMERA_RADIUS_PERCENTILE = 95.0
 CAMERA_FRAME_FILL = 0.62
+CAMERA_FRAME_TOLERANCE = 0.25
 
 #: Per-channel ``--source-*`` paths, resolved once at import like the other flags.
 SOURCE_ARGS = {ch["name"]: parse_path_arg(str(ch["source_flag"])) for ch in CHANNELS}
@@ -525,18 +526,13 @@ def _reference_frame_samples(
     node: Any, bounds: tuple[np.ndarray, np.ndarray]
 ) -> tuple[np.ndarray, np.ndarray]:
     reference_time = np.floor((bounds[0][3] + bounds[1][3]) / 2.0 + 0.5)
-    nearest = min(
-        float(np.min(np.abs(sub.centers[:, 3] - reference_time)))
-        for leaf in iter_leaves(node)
-        for sub in leaf.additive_sublods
-        if sub.n_splats
-    )
     centers = []
     amplitudes = []
     for leaf in iter_leaves(node):
         for sub in leaf.additive_sublods:
-            distances = np.abs(sub.centers[:, 3] - reference_time)
-            selected = np.isclose(distances, nearest, rtol=0.0, atol=1e-6)
+            selected = (
+                np.abs(sub.centers[:, 3] - reference_time) <= CAMERA_FRAME_TOLERANCE
+            )
             positive = selected & (sub.amplitudes > 0)
             if np.any(positive):
                 centers.append(sub.centers[positive, :3])
