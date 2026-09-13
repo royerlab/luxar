@@ -37,15 +37,6 @@
       "zenodo_conceptdoi": "10.5281/zenodo.22118694",
       "base_url": null,
       "published": true
-    },
-    "neuromast-z": {
-      "title": "Neuromast 2-channel light-sheet timelapse as Gaussian splats (Z-corrected, isotropy 2.31)",
-      "license": "cc-by-4.0",
-      "zenodo_doi": "10.5281/zenodo.21912280",
-      "zenodo_record": "21912280",
-      "zenodo_conceptdoi": "10.5281/zenodo.21912279",
-      "base_url": "https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
-      "published": true
     }
   },
   "datasets": {
@@ -463,7 +454,8 @@
     },
     "gsplats_4d_neuromast_2ch": {
       "bucket": "zenodo",
-      "record": "neuromast-z",
+      "record": "cc-by",
+      "base_url": "https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
       "license": "cc-by-4.0",
       "source": "Neuromast 2-channel light-sheet timelapse (iSIM)",
       "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). The imaging itself is unpublished; for the biology of this organ see Erzberger et al. (2020), co-authored by the data author: Erzberger, A., Jacobo, A., Dasgupta, A. & Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949-957 (2020). doi:10.1038/s41567-020-0894-9.",

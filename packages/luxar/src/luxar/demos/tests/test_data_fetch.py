@@ -1847,6 +1847,52 @@ def test_base_url_is_not_gated_by_published():
     )
 
 
+def test_dataset_base_url_overrides_only_its_record_download(tmp_path, monkeypatch):
+    payload = b"mirrored dataset bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest = {
+        "schema_version": 1,
+        "records": {
+            "cc-by": {
+                "zenodo_record": "21912280",
+                "base_url": None,
+                "published": True,
+            }
+        },
+        "datasets": {
+            "mirrored": {
+                "bucket": "zenodo",
+                "record": "cc-by",
+                "base_url": "https://example.org/mirrored/",
+                "license": "cc-by-4.0",
+                "files": [
+                    {"name": "data.zip", "sha256": digest, "bytes": len(payload)}
+                ],
+            }
+        },
+    }
+    requested: list[tuple[str, str]] = []
+
+    def _fake_download(url, dest, *, expected_sha256):
+        requested.append((url, expected_sha256))
+        dest.write_bytes(payload)
+        return dest
+
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "repo")
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.download_with_checksum",
+        _fake_download,
+    )
+
+    (path,) = ensure_dataset(
+        "mirrored", manifest=manifest, cache_root=tmp_path / "cache", verbose=False
+    )
+
+    assert path.read_bytes() == payload
+    assert requested == [("https://example.org/mirrored/data.zip?download=1", digest)]
+    assert manifest["records"]["cc-by"]["base_url"] is None
+
+
 def test_record_without_ids_builds_no_url():
     assert data_fetch.zenodo_file_url({}, "a.zip") is None
 

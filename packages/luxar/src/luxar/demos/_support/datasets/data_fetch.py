@@ -26,8 +26,8 @@ download leg remains strict on the record digest:
        is the manifest ``dir`` field. Current ``zenodo`` entries have no such
        payload; the only retained demo payload is the ``regenerate``-bucket Dip-C
        file, outside this fetch path.
-    3. Download from the dataset's Zenodo record (checksum-verified), if the
-       record has a resolvable URL.
+    3. Download from the dataset's record or explicit ``base_url`` override
+       (checksum-verified), if either has a resolvable URL.
     4. Otherwise a clear error (data neither cached, in-repo, nor hosted yet).
 
 ``local-compute`` and ``regenerate`` datasets are NOT fetched here — they raise
@@ -390,7 +390,9 @@ def ensure_dataset(
     subdir = spec.get("dir", name)
     parts = [p for p in (subdir, variant_name) if p]
     lfs_dir = _DEMOS_DATA_DIR.joinpath(*parts)
-    record = m["records"].get(spec.get("record", ""), {})
+    record = dict(m["records"].get(spec.get("record", ""), {}))
+    if spec.get("base_url"):
+        record["base_url"] = spec["base_url"]
     label = f"{name}:{variant_name}" if variant_name else name
     positional_fallbacks = _positional_superseded_fallbacks(
         files, cache_dir, lfs_dir, record, dataset_label=label

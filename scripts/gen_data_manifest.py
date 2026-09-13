@@ -165,25 +165,6 @@ RECORDS = {
         "base_url": None,
         "published": True,
     },
-    # The Z-corrected neuromast fits (#2713): same recording and licence as the
-    # `cc-by` record, but the anisotropy was refit from 2.5 to the measured 2.31,
-    # so the two channel archives are DIFFERENT bytes. They are served from R2
-    # (`base_url`) rather than a new Zenodo deposition; `base_url` outranks the
-    # zenodo ids in `zenodo_file_url`, so reusing the cc-by record id keeps
-    # `test_every_shipped_record_agrees_with_its_published_flag` satisfied without
-    # publishing anything new to Zenodo. The pins live in the manifest (below).
-    "neuromast-z": {
-        "title": (
-            "Neuromast 2-channel light-sheet timelapse as Gaussian splats "
-            "(Z-corrected, isotropy 2.31)"
-        ),
-        "license": "cc-by-4.0",
-        "zenodo_doi": "10.5281/zenodo.21912280",
-        "zenodo_record": "21912280",
-        "zenodo_conceptdoi": "10.5281/zenodo.21912279",
-        "base_url": "https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
-        "published": True,
-    },
 }
 
 # Curated per-dataset metadata. `dir` is the demos/data subdir (or "" for
@@ -480,7 +461,12 @@ DATASETS: dict[str, dict] = {
     # -- Heavy timelapses computed on obsidian -------------------------------
     "gsplats_4d_neuromast_2ch": dict(
         bucket="zenodo",
-        record="neuromast-z",
+        record="cc-by",
+        # The corrected pair is mirrored on R2 rather than published as a new
+        # Zenodo deposition. A dataset-level override keeps the real cc-by
+        # deposition as the provenance identity without routing this pair to its
+        # superseded files.
+        base_url="https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
         license="cc-by-4.0",
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
         attribution=(
