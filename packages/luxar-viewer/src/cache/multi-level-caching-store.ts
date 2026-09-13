@@ -524,7 +524,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // network requests; the underlying network counter (incremented
     // inside fetchKeyChain) only bumped once per actual fetch.
     if (isDemand) {
-      if (outcome.source === 'l2') this.l2HitCount++;
+      if (outcome.source === 'l2' && outcome.result.ok) this.l2HitCount++;
       else if (outcome.source === 'network') this.demandNetworkRequestCount++;
       // Count delivered bytes for any tier that actually returned data
       // (L2 or network). L1 hits are counted on their fast-path return
