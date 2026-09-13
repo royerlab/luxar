@@ -1158,7 +1158,9 @@ class ViewerConfig:
     # `extractRenderingOverrides` reads. Scene identity and theme are not
     # per-waypoint state.
     _RENDERING_FIELDS = frozenset(
-        f for f in _SIMPLE_FIELDS if f not in ("title", "background_color", "theme")
+        f
+        for f in _SIMPLE_FIELDS
+        if f not in ("title", "background_color", "theme", "playback_lod_depth")
     )
 
     def to_dict(self) -> Dict[str, Any]:

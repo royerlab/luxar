@@ -416,7 +416,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         if (options?.targetFPS !== undefined) state.targetFPS = options.targetFPS;
         if (options?.loopMode !== undefined) state.loopMode = options.loopMode;
         if (options?.direction !== undefined) state.direction = options.direction;
-        if (options?.ladderDepth !== undefined) state.ladderDepth = options.ladderDepth;
+        if (options?.ladderDepth !== undefined) {
+          state.ladderDepth = normalizeLadderDepthSetting(options.ladderDepth);
+        }
         this.animationStates.set(dimIndex, state);
       } else {
         // Update existing state
@@ -430,7 +432,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
           state.direction = options.direction;
         }
         if (options?.ladderDepth !== undefined) {
-          state.ladderDepth = options.ladderDepth;
+          state.ladderDepth = normalizeLadderDepthSetting(options.ladderDepth);
         }
       }
 
@@ -583,9 +585,10 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   }
 
   /**
-   * Set the playback detail for a dimension: the pinned additive-ladder depth
-   * (rungs, `Infinity` = whole ladder) every frame is drawn at while it plays,
-   * or null for Auto (time-budgeted streaming). Takes effect on the next tick.
+   * Set the playback detail for a dimension: a pinned additive-ladder depth
+   * (rungs, `Infinity` = whole ladder) every frame is drawn at while it plays or
+   * scrubs, `'auto'` for the energy rule, or null for Fast (time-budgeted
+   * streaming). Takes effect on the next tick.
    */
   setLadderDepth(dimIndex: number, ladderDepth: number | 'auto' | null): void {
     let state = this.animationStates.get(dimIndex);

@@ -1365,12 +1365,12 @@ export class DimensionSliders {
       );
     });
 
-    // Detail section: the playback "detail" — a pinned additive-ladder depth
-    // (rungs) every frame is drawn at while this dimension plays. Auto keeps
-    // the time-budgeted streaming (whatever is resident within the tick);
-    // a pinned depth makes every frame wait for exactly that many rungs, so a
-    // heavy time-lapse plays at a consistent quality and an adaptive rate
-    // instead of flickering between coarse and fine frames.
+    // Detail section: the playback "detail" — how deep every frame's additive
+    // ladder is loaded while this dimension plays or scrubs. Auto pins each
+    // ladder at the rung its energy stamps single out; a number or All pins the
+    // depth explicitly (every frame waits for exactly that many rungs, so a heavy
+    // time-lapse plays at a consistent quality and an adaptive rate); Fast keeps
+    // the time-budgeted streaming (whatever is resident within the tick).
     const currentLadderDepth =
       state?.ladderDepth ??
       this.animationManager?.getDefaultLadderDepth() ??

@@ -71,7 +71,7 @@ export interface DimensionAnimationEvents {
   loopModeChange: { dimIndex: number; loopMode: LoopMode };
   /** Emitted when the per-dimension step override changes (null = Auto) */
   stepChange: { dimIndex: number; stepSize: number | null };
-  /** Emitted when the playback detail (pinned ladder depth) changes (null = Auto) */
+  /** Emitted when the playback detail changes: rungs, `'auto'`, or null (Fast) */
   ladderDepthChange: { dimIndex: number; ladderDepth: number | 'auto' | null };
   /** Emitted when direction changes (bounce mode) */
   directionChange: { dimIndex: number; direction: AnimationDirection };

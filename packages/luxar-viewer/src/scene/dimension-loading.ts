@@ -72,10 +72,22 @@ function scheduleScrubSettle(ctx: DimensionLoadingContext): void {
     if (ctx.getAnimationManager()?.isAnyPlaying()) return;
     const dims = sceneDimsManager.getDims();
     if (!dims || dims.ndim === 0) return;
+    // Re-notify through a NON-displayed dimension (the one that was scrubbed, in
+    // the common case): a same-value write to a displayed axis would be a no-op
+    // for the slice but still fan out to its UI. setDimensionValue notifies the
+    // listeners synchronously and unconditionally, so the flag below is read
+    // before it is cleared.
+    const displayed = new Set(dims.displayed ?? []);
+    let dim = 0;
+    for (let d = 0; d < dims.ndim; d++) {
+      if (!displayed.has(d)) {
+        dim = d;
+        break;
+      }
+    }
     scrubSettlePassPending = true;
     try {
-      // Same-value write: setDimensionValue notifies listeners unconditionally.
-      sceneDimsManager.setDimensionValue(0, dims.currentStep[0]);
+      sceneDimsManager.setDimensionValue(dim, dims.currentStep[dim]);
     } finally {
       // The listener ran synchronously up to its first await and has already
       // read the (empty) directives; clear for the next scrub.
