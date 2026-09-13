@@ -1,6 +1,6 @@
 """Tests for the neuromast demo's recompute and scene-compilation paths.
 
-Six things here are worth pinning, each with a quiet failure mode:
+Seven things here are worth pinning, each with a quiet failure mode:
 
 1. **The source contract.** The fit reads the RAW assembled array (the camera
    pedestal is kept, see the demo docstring's step 2), so the only thing between
@@ -18,6 +18,8 @@ Six things here are worth pinning, each with a quiet failure mode:
    or metadata can silently drift when either channel is re-uploaded.
 6. **The shipped appearance.** The compiled scene must preserve the tuned
    additive blending, windows, gamma, opacity, order, and exposure.
+7. **The opening camera.** It must look from the low-depth side at the
+   amplitude-weighted middle frame and scale with the archive coordinates.
 """
 
 import json

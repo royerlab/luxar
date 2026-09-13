@@ -564,7 +564,8 @@ def _opening_camera(
     projected_radius = np.hypot(centered[:, 1], centered @ screen_right)
     radius = _weighted_percentile(projected_radius, weights, CAMERA_RADIUS_PERCENTILE)
     if radius <= 0:
-        radius = float(np.linalg.norm(spatial_extent[1:]) / 2.0)
+        half_extent = spatial_extent / 2.0
+        radius = float(np.hypot(half_extent[1], np.abs(screen_right) @ half_extent))
     half_fov = np.radians(VIEWER_DEFAULT_FOV_DEG / 2.0)
     distance = (radius / CAMERA_FRAME_FILL) / float(np.tan(half_fov))
     target = tuple(float(value) for value in target_array)
@@ -663,7 +664,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
                 dimensions=dims,
                 # Exposure pulled down 3.4 stops (set by eye with the channel
-                # windows): at the default camera distance the rosette core
+                # windows): at the authored opening distance the rosette core
                 # otherwise saturates to white under both additive layers.
                 viewer_config=ViewerConfig(
                     cinematic_mode=True,
