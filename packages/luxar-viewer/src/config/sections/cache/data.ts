@@ -14,6 +14,7 @@ export const cacheConfig: CacheConfig = {
   opfsOperationTimeoutMs: 10_000,
   opfsTimeoutTripThreshold: 3, // consecutive timeouts before the L2 circuit breaker trips (sticky)
   opfsReadConcurrency: 64, // page-wide L2 reads (diagnostic override: ?opfsReadConcurrency=N)
+  opfsReadConcurrency: 64, // page-wide L2 reads (diagnostic override: ?opfsReadConcurrency=N)
   opfsWriteConcurrency: 4, // background L2 writes run at most 4-wide (bounds OPFS contention)
   // Pending L2 write depth cap; an ARRIVING write is dropped past this and the
   // already-pending ones drain in order (best-effort tier). Retained chunk

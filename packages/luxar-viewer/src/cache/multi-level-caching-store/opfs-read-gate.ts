@@ -6,15 +6,13 @@
  * gained their own concurrency cap. The reported multi-second L2 stall remains
  * unattributed; this gate provides a bounded, observable point for diagnosis.
  */
-export const MAX_CONCURRENT_OPFS_READS = 64;
-
 let active = 0;
 const queue: Array<() => void> = [];
 
 /** Run one OPFS read under the page-wide FIFO concurrency cap. */
 export function withOpfsReadGate<T>(run: () => Promise<T>): Promise<T> {
   const acquire =
-    active < MAX_CONCURRENT_OPFS_READS
+    active < config.cache.opfsReadConcurrency
       ? ((active += 1), Promise.resolve())
       : new Promise<void>((resolve) =>
           queue.push(() => {
@@ -32,3 +30,4 @@ export function withOpfsReadGate<T>(run: () => Promise<T>): Promise<T> {
     }
   });
 }
+import { config } from '../../config';
