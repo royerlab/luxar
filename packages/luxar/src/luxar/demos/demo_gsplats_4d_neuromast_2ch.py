@@ -67,10 +67,11 @@ PIPELINE — reproducible per channel with ``--recompute``:
        --normalize-intensity 1.0`` → convert the three spatial centre and
        covariance axes from voxels to microns using the measured MetaMorph
        voxel size; amplitudes stay on a 0-1 scale.
-       (The 2026-08 pair on the record was transformed with the historical 2.5
-       — an 8.3 % Z stretch — and stays pinned in ``data_manifest.json``;
-       the corrected rebuild is ready, but publishing it still needs the record
-       upload and manifest repin, which this recipe change does not do.)
+       (The 2026-08 pair on the record was transformed with the historical 2.5,
+       leaving its spatial coordinates in lateral-pixel units and stretching Z
+       by 8.3 %. It stays pinned in ``data_manifest.json``; the corrected rebuild
+       is ready, but publishing it still needs the record upload and manifest
+       repin, which this recipe change does not do.)
 
     Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
