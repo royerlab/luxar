@@ -26,7 +26,10 @@ DEMOS = [
     },
     {"id": "not_published", "dataset": "datasets/demos/not_published.luxar.zarr"},
 ]
-LIVE = {"lorenz", "cosmicflows_laniakea_full"}
+LIVE = {
+    "lorenz": "2026-09-02",
+    "cosmicflows_laniakea_full": "2026-09-02",
+}
 
 
 def test_store_comes_from_dataset_not_id():
@@ -40,11 +43,13 @@ def test_store_comes_from_dataset_not_id():
 def test_store_suffix_is_removed_only_at_the_end():
     entry = {"dataset": "d/my.luxar.zarr.backup"}
     assert gen.store_of(entry) == "my.luxar.zarr.backup"
-    assert gen.normalise_stores(["my.luxar.zarr.backup"]) == {"my.luxar.zarr.backup"}
+    assert gen.normalise_stores(["my.luxar.zarr.backup"], "2026-09-02") == {
+        "my.luxar.zarr.backup": "2026-09-02"
+    }
 
 
 def test_route_targets_the_store_not_the_key():
-    lines, routed, _ = gen.build_routes(DEMOS, LIVE, "2026-09-02")
+    lines, routed, _, _ = gen.build_routes(DEMOS, LIVE)
     laniakea = [ln for ln in lines if ln.startswith("/d/cosmicflows_laniakea ")]
     assert len(laniakea) == 1
     # the mistake this guards: pointing /d/<id> at <id>.luxar.zarr
@@ -54,7 +59,7 @@ def test_route_targets_the_store_not_the_key():
 
 
 def test_route_targets_the_standalone_viewer_with_encoded_source():
-    lines, _, _ = gen.build_routes(DEMOS, LIVE, "2026-09-02")
+    lines, _, _, _ = gen.build_routes(DEMOS, LIVE)
     lorenz = next(line for line in lines if line.startswith("/d/lorenz "))
     assert lorenz == (
         "/d/lorenz  https://luxarviewer.dev/?src="
@@ -64,7 +69,7 @@ def test_route_targets_the_standalone_viewer_with_encoded_source():
 
 
 def test_store_spelling_gets_an_alias():
-    lines, routed, _ = gen.build_routes(DEMOS, LIVE, "2026-09-02")
+    lines, routed, _, _ = gen.build_routes(DEMOS, LIVE)
     assert any(ln.startswith("/d/cosmicflows_laniakea_full ") for ln in lines)
     assert "cosmicflows_laniakea_full" in routed
     # ...and a demo whose id already equals its store gets exactly one route
@@ -72,7 +77,7 @@ def test_store_spelling_gets_an_alias():
 
 
 def test_demo_without_a_live_store_is_reported_not_emitted():
-    lines, routed, skipped = gen.build_routes(DEMOS, LIVE, "2026-09-02")
+    lines, routed, skipped, _ = gen.build_routes(DEMOS, LIVE)
     assert not any("/d/not_published " in ln for ln in lines)
     assert "not_published" not in routed
     assert ("not_published", "not_published") in skipped
@@ -84,21 +89,90 @@ def test_duplicate_route_path_is_rejected():
         {"id": "a_full", "dataset": "a_full.luxar.zarr"},
     ]
     with pytest.raises(gen.RouteError, match=r"duplicate route path: /d/a_full"):
-        gen.build_routes(demos, {"a_full"}, "2026-09-02")
+        gen.build_routes(demos, {"a_full": "2026-09-02"})
 
 
 def test_normalise_stores_accepts_rclone_spellings():
     assert gen.normalise_stores(
-        ["lorenz.luxar.zarr/", "  ocean.luxar.zarr", "", "cloud/"]
-    ) == {"lorenz", "ocean", "cloud"}
+        ["lorenz.luxar.zarr/", "  ocean.luxar.zarr", "", "cloud/"],
+        "2026-09-02",
+    ) == {
+        "lorenz": "2026-09-02",
+        "ocean": "2026-09-02",
+        "cloud": "2026-09-02",
+    }
+
+
+def test_normalise_stores_retains_per_store_prefixes_and_falls_back():
+    assert gen.normalise_stores(
+        [
+            "2026-09-12/ocean.luxar.zarr/",
+            "2026-09-13/esm3_protein_stories.luxar.zarr/",
+            "lorenz.luxar.zarr/",
+        ],
+        "2026-09-14",
+    ) == {
+        "ocean": "2026-09-12",
+        "esm3_protein_stories": "2026-09-13",
+        "lorenz": "2026-09-14",
+    }
+
+
+def test_normalise_stores_accepts_recursive_rclone_paths():
+    assert gen.normalise_stores(
+        [
+            "2026-09-12/ocean.luxar.zarr/",
+            "2026-09-12/ocean.luxar.zarr/points/",
+            "2026-09-12/ocean.luxar.zarr/points/positions/",
+        ],
+        "2026-09-13",
+    ) == {"ocean": "2026-09-12"}
+
+
+def test_normalise_stores_uses_newest_prefix_for_duplicate_store():
+    entries = [
+        "2026-09-13/ocean.luxar.zarr/",
+        "2026-09-12/ocean.luxar.zarr/",
+    ]
+    assert gen.normalise_stores(entries, "2026-09-14") == {"ocean": "2026-09-13"}
+    assert gen.normalise_stores(reversed(entries), "2026-09-14") == {
+        "ocean": "2026-09-13"
+    }
+
+
+def test_normalise_stores_rejects_prefix_with_multiple_path_segments():
+    with pytest.raises(
+        gen.RouteError,
+        match="prefix must be one path segment: data/2026-09-13",
+    ):
+        gen.normalise_stores(
+            ["data/2026-09-13/ocean.luxar.zarr/"],
+            "2026-09-14",
+        )
+
+
+def test_routes_use_each_stores_prefix():
+    lines, _, _, _ = gen.build_routes(
+        DEMOS,
+        {
+            "lorenz": "2026-09-12",
+            "cosmicflows_laniakea_full": "2026-09-13",
+        },
+    )
+    lorenz = next(line for line in lines if line.startswith("/d/lorenz "))
+    laniakea = next(
+        line for line in lines if line.startswith("/d/cosmicflows_laniakea ")
+    )
+    assert "%2Fdata%2F2026-09-12%2Florenz.luxar.zarr" in lorenz
+    assert "%2Fdata%2F2026-09-13%2Fcosmicflows_laniakea_full.luxar.zarr" in laniakea
 
 
 def test_rendered_file_has_no_catch_all():
-    lines, _, _ = gen.build_routes(DEMOS, LIVE, "2026-09-02")
-    body = gen.render(lines, "2026-09-02")
+    lines, _, _, _ = gen.build_routes(DEMOS, LIVE)
+    body = gen.render(lines, set(LIVE.values()))
     # a /d/* fallback would hide a typo'd link behind a page that looks fine
     assert "/d/*" not in body
-    assert "prefix: 2026-09-02" in body
+    assert "prefixes: 2026-09-02" in body
 
 
 def _write_inputs(tmp_path, linked_keys):
@@ -170,6 +244,99 @@ def test_contract_check_passes_and_writes(tmp_path, capsys):
     body = out.read_text()
     assert "/d/lorenz" in body and "/d/cosmicflows_laniakea" in body
     assert "no live store" in capsys.readouterr().out  # not_published reported
+
+
+def test_cli_round_trips_multiple_prefixes_and_default(tmp_path):
+    manifest, stores, media, readme = _write_inputs(
+        tmp_path, ["lorenz", "cosmicflows_laniakea"]
+    )
+    stores.write_text(
+        "2026-09-12/lorenz.luxar.zarr/\ncosmicflows_laniakea_full.luxar.zarr/\n"
+    )
+    out = tmp_path / "_redirects"
+    assert (
+        gen.main(
+            [
+                "--prefix",
+                "2026-09-13",
+                "--live-stores",
+                str(stores),
+                "-o",
+                str(out),
+                "--manifest",
+                str(manifest),
+                "--media-manifest",
+                str(media),
+                "--readme",
+                str(readme),
+                "--check-contract",
+            ]
+        )
+        == 0
+    )
+    body = out.read_text()
+    assert "# prefixes: 2026-09-12, 2026-09-13" in body
+    assert "%2Fdata%2F2026-09-12%2Florenz.luxar.zarr" in body
+    assert "%2Fdata%2F2026-09-13%2Fcosmicflows_laniakea_full.luxar.zarr" in body
+
+
+def test_cli_uses_newest_prefix_when_store_is_listed_twice(tmp_path):
+    manifest, stores, media, readme = _write_inputs(tmp_path, ["lorenz"])
+    stores.write_text("2026-09-12/lorenz.luxar.zarr/\n2026-09-13/lorenz.luxar.zarr/\n")
+    out = tmp_path / "_redirects"
+    assert (
+        gen.main(
+            [
+                "--prefix",
+                "2026-09-13",
+                "--live-stores",
+                str(stores),
+                "-o",
+                str(out),
+                "--manifest",
+                str(manifest),
+                "--media-manifest",
+                str(media),
+                "--readme",
+                str(readme),
+                "--check-contract",
+            ]
+        )
+        == 0
+    )
+    body = out.read_text()
+    assert "# prefixes: 2026-09-13" in body
+    assert "%2Fdata%2F2026-09-13%2Florenz.luxar.zarr" in body
+    assert "%2Fdata%2F2026-09-12%2Florenz.luxar.zarr" not in body
+
+
+def test_cli_header_lists_only_prefixes_used_by_routes(tmp_path):
+    manifest, stores, media, readme = _write_inputs(tmp_path, ["lorenz"])
+    stores.write_text(
+        "2026-09-13/lorenz.luxar.zarr/\n2026-09-11/stale_store.luxar.zarr/\n"
+    )
+    out = tmp_path / "_redirects"
+    assert (
+        gen.main(
+            [
+                "--prefix",
+                "2026-09-13",
+                "--live-stores",
+                str(stores),
+                "-o",
+                str(out),
+                "--manifest",
+                str(manifest),
+                "--media-manifest",
+                str(media),
+                "--readme",
+                str(readme),
+                "--check-contract",
+            ]
+        )
+        == 0
+    )
+    assert "# prefixes: 2026-09-13\n" in out.read_text()
 
 
 @pytest.mark.parametrize("empty_sources", [False, True])
