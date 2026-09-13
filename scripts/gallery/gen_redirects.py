@@ -72,7 +72,7 @@ def store_of(entry: dict) -> str | None:
 
 
 def normalise_stores(names: Iterable[str], default_prefix: str) -> dict[str, str]:
-    """Map stores to prefixes from bare or ``<prefix>/<store>`` spellings."""
+    """Map stores to one-segment prefixes, preferring the newest duplicate."""
     out: dict[str, str] = {}
     for raw in names:
         name = raw.strip().rstrip("/")
@@ -85,14 +85,11 @@ def normalise_stores(names: Iterable[str], default_prefix: str) -> dict[str, str
         )
         store = parts[store_index]
         prefix = "/".join(parts[:store_index]) or default_prefix
+        if not prefix or "/" in prefix:
+            raise RouteError(f"prefix must be one path segment: {prefix or '<empty>'}")
         store = store.removesuffix(".luxar.zarr")
         previous = out.get(store)
-        if previous is not None and previous != prefix:
-            prefixes = ", ".join(sorted((previous, prefix)))
-            raise RouteError(
-                f"store {store} is claimed live at multiple prefixes: {prefixes}"
-            )
-        out[store] = prefix
+        out[store] = max(previous, prefix) if previous is not None else prefix
     return out
 
 
@@ -100,8 +97,8 @@ def build_routes(
     demos: Sequence[dict],
     live_stores: Mapping[str, str],
     data_host: str = DEFAULT_DATA_HOST,
-) -> tuple[list[str], set[str], list[tuple[str, str]]]:
-    """Return ``(lines, routed_keys, skipped)``.
+) -> tuple[list[str], set[str], list[tuple[str, str]], set[str]]:
+    """Return ``(lines, routed_keys, skipped, routed_prefixes)``.
 
     ``skipped`` holds ``(key, store)`` for manifest entries with no live store —
     reported rather than silently dropped, since that is how a missing tile hides.
@@ -109,6 +106,7 @@ def build_routes(
     lines: list[str] = []
     routed: set[str] = set()
     skipped: list[tuple[str, str]] = []
+    routed_prefixes: set[str] = set()
 
     for entry in sorted(demos, key=lambda d: d.get("id") or ""):
         key = entry.get("id")
@@ -119,6 +117,7 @@ def build_routes(
             skipped.append((key, store))
             continue
         prefix = live_stores[store]
+        routed_prefixes.add(prefix)
         source = f"{data_host}/data/{prefix}/{store}.luxar.zarr"
         target = f"{VIEWER_PATH}?src={quote(source, safe='')}"
         for route_key in (key, store) if store != key else (key,):
@@ -126,7 +125,7 @@ def build_routes(
                 raise RouteError(f"duplicate route path: /d/{route_key}")
             lines.append(f"/d/{route_key}  {target}  302")
             routed.add(route_key)
-    return lines, routed, skipped
+    return lines, routed, skipped, routed_prefixes
 
 
 def readme_linked_keys(
@@ -208,7 +207,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     demos = json.loads(args.manifest.read_text())["demos"]
-    lines, routed, skipped = build_routes(demos, live, args.data_host)
+    lines, routed, skipped, routed_prefixes = build_routes(demos, live, args.data_host)
     if not lines:
         raise RouteError("no routes generated; check --prefix and --live-stores")
 
@@ -222,7 +221,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "render a blank viewer with HTTP 200: " + ", ".join(missing)
             )
 
-    args.output.write_text(render(lines, live.values()))
+    args.output.write_text(render(lines, routed_prefixes))
     print(f"{len(lines)} routes for {len(routed)} keys -> {args.output}")
     if linked:
         print(f"README-linked keys checked: {len(linked)}")
