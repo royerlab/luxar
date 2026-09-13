@@ -61,10 +61,13 @@ after eviction.
 ## opfs-deep-pass-bench.mjs
 
 Reproduces a single pinned-depth timelapse transition while sweeping the
-page-wide OPFS read cap. Point it at an already-served 4D scene, use a
-persistent Chrome profile, and run it twice: the first pass fills missing
-L2 entries; only compare the second pass when every arm reports
-`misses=0`.
+page-wide OPFS read cap. Generate the 51-frame H2AFVA scene with
+`hatch run python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --no-serve`,
+serve `datasets/demos/gsplats_4d_h2afva_timelapse.luxar.zarr` with
+`hatch run luxar serve ... --port 9011`, and run the viewer dev server on port 5198. Use a persistent Chrome profile and run the harness twice: the first pass
+fills missing L2 entries; only compare the second pass when every arm reports
+`misses=0`. As with the timelapse navigation bench, verify that neither port has
+a stale listener from another checkout before recording results.
 
 ```bash
 node scripts/perf/opfs-deep-pass-bench.mjs \
@@ -78,9 +81,32 @@ node scripts/perf/opfs-deep-pass-bench.mjs \
   --out /tmp/opfs-sweep.json --concurrency 8,64,512,4096
 ```
 
-The harness disables predictive prefetch, moves to `--start-frame`
-(default 49), then plays exactly one transition at `--ladder-depth`
-(default 6). It records the update-profiler tree, L2 hit/miss deltas,
-read-gate occupancy, and the actual GPU renderer. Chrome runs headed by
-default so Linux does not silently benchmark SwiftShader; pass
+The harness disables predictive prefetch by default; pass `--prefetch`
+to reproduce production scheduling. It moves to `--start-frame` when supplied,
+or otherwise derives the penultimate coordinate from the time dimension's
+`range` and `step`, then plays exactly one transition at `--ladder-depth`
+(default 6). It records transition and settle timings separately, update and
+LOD-refinement profiler trees, L2 hit/miss deltas, read-gate occupancy, write
+queue `depth`/`inFlight`, and the live viewer renderer/backend. Chrome runs
+headed by default so Linux does not silently benchmark SwiftShader; pass
 `--headless true` when the host's accelerated headless path is known.
+
+The exploratory trace behind #2731 reported a mixed-cache wave with 339 L2
+misses: cap 512 showed 9.884 s wall / 6.011 s aggregate `Load Arrays`, while
+cap 64 showed 2.941 s / 0.802 s. Those absolute numbers are provenance only:
+the old harness included settle/refinement work in wall time and stale profiler
+rows in the aggregate. The cross-arm result remained useful: once warm
+(`misses=0`), five cap-64 passes were 4.99–5.79 s and five unbounded-ish passes
+were 3.72–5.24 s, with no 6–30 s tail or cap-dependent trend.
+`ValidationQueue` runs only during store initialization, not per read. The
+evidence attributes the reported stall to mixed L2-miss fan-out/browser
+contention; the cap added in #2732 is sufficient, with no additional scheduling
+change justified. New artifacts expose `animationMs`, `settleMs`,
+transition/settle updates, and refinement roots separately.
+
+This untyped harness depends on the debug surface names
+`getSceneLoader`, `getDefaultLoader`, `getProfiler`, `inputHandler`,
+`sceneDimsManager`, and `renderer`; cache stats `l2.activeReads`,
+`l2.queuedReads`, `l2.misses`, `l2WriteQueue.depth`, and
+`l2WriteQueue.inFlight`; and profiler methods `getTimings` and
+`getRefinementTimings`. Keep this list in sync when those typed APIs change.
