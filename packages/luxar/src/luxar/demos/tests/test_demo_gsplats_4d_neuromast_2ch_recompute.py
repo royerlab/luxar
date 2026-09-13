@@ -134,16 +134,19 @@ def _leaf_with_rungs(rungs, *, splats_per_rung=1):
     return GSplatLeaf(additive_sublods=[sublod] * rungs, meta={})
 
 
-def _tiny_gsplat_store(path: Path, centers=None) -> Path:
+def _tiny_gsplat_store(path: Path, centers=None, amplitudes=None) -> Path:
     if centers is None:
         centers = np.array([[0, 0, 0, 0], [1, 1, 1, 1]], dtype=np.float32)
+    centers = np.asarray(centers, dtype=np.float32)
+    if amplitudes is None:
+        amplitudes = np.ones(len(centers), dtype=np.float32)
     save_gsplats(
         path,
-        centers=np.asarray(centers, dtype=np.float32),
-        amplitudes=np.ones(2, dtype=np.float32),
-        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1, 0, 0, 0, 1], (2, 1)).astype(
-            np.float32
-        ),
+        centers=centers,
+        amplitudes=np.asarray(amplitudes, dtype=np.float32),
+        cholesky_factors=np.tile(
+            [1, 0, 1, 0, 0, 1, 0, 0, 0, 1], (len(centers), 1)
+        ).astype(np.float32),
         ordering="none",
     )
     return path
@@ -258,16 +261,16 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
     output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
     root = open_group(output, mode="r")
 
-    # Retuned on 2026-09-10 against the archives currently pinned in the manifest.
+    # Validated on 2026-09-13 against the archives currently pinned in the manifest.
     expected = {
         "membranes": {
-            "window": (0.0, 1.719),
+            "window": (0.0, 0.101),
             "gamma": 0.71,
             "opacity": 0.5,
             "layer_order": 10,
         },
         "nuclei": {
-            "window": (0.0, 0.459),
+            "window": (0.0, 0.05),
             "gamma": 0.69,
             "opacity": 0.47,
             "layer_order": 20,
@@ -285,6 +288,62 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
         assert attrs["offset"] == pytest.approx(-lo / (hi - lo))
 
     assert dict(root.attrs)["viewer_config"]["exposure"] == pytest.approx(-3.4)
+
+
+def test_compiled_scene_authors_a_signal_derived_scale_independent_camera(
+    tmp_path,
+) -> None:
+    centers = np.array(
+        [
+            [0, 0, 0, 0],
+            [10, 100, 100, 2],
+            [2, 20, 30, 1],
+            [4, 40, 70, 1],
+            [3, 60, 50, 1],
+        ],
+        dtype=np.float32,
+    )
+    amplitudes = (
+        np.array([0, 0, 1, 3, 0], dtype=np.float32),
+        np.array([0, 0, 0, 0, 2], dtype=np.float32),
+    )
+
+    def compile_camera(scale: float, suffix: str) -> dict:
+        scaled = centers.copy()
+        scaled[:, :3] *= scale
+        channel_paths = [
+            _tiny_gsplat_store(
+                tmp_path / f"{channel['name']}_{suffix}.gsplats.zarr",
+                scaled,
+                amplitudes[index],
+            )
+            for index, channel in enumerate(demo.CHANNELS)
+        ]
+        output = demo.create_luxar_scene(
+            channel_paths, tmp_path / f"scene_{suffix}.luxar.zarr"
+        )
+        return dict(open_group(output, mode="r").attrs)["viewer_config"]["camera"]
+
+    camera = compile_camera(1.0, "pixels")
+    scaled_camera = compile_camera(0.1083, "microns")
+
+    target = np.asarray(camera["target"])
+    position = np.asarray(camera["position"])
+    direction = position - target
+    distance = np.linalg.norm(direction)
+    angle_from_low_depth_normal = np.degrees(
+        np.arccos(np.clip(-direction[0] / distance, -1.0, 1.0))
+    )
+
+    assert target == pytest.approx([20 / 6, 260 / 6, 340 / 6], abs=5e-4)
+    assert position[0] < centers[:, 0].min()
+    assert position[2] > target[2]
+    assert 35.0 <= angle_from_low_depth_normal <= 40.0
+    assert camera["up"] == pytest.approx([0.0, 1.0, 0.0])
+    assert scaled_camera["target"] == pytest.approx(target * 0.1083, rel=1e-4, abs=1e-5)
+    assert scaled_camera["position"] == pytest.approx(
+        position * 0.1083, rel=1e-4, abs=1e-5
+    )
 
 
 def test_compiled_scene_dimensions_cover_both_channels(tmp_path) -> None:

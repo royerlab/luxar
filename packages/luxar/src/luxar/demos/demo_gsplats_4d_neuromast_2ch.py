@@ -140,7 +140,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
     add_demo_caption,
@@ -151,6 +151,7 @@ from luxar.demos import (
     run_luxar_cli,
     stamp_input_digests,
 )
+from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
@@ -200,13 +201,13 @@ CHANNELS = [
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
-        # Display window (Layers-panel range) and gamma, set by eye on the pinned
-        # historical-2.5, lateral-pixel-unit store (re-tuned 2026-09-10 under
-        # ADDITIVE compositing, see the graft).
+        # Display window (Layers-panel range) and gamma, validated on the pinned
+        # historical-2.5, lateral-pixel-unit pair at -3.4 stops (2026-09-13,
+        # ADDITIVE compositing). The micron repin must re-check exposure only.
         # The window is authored as intensity/offset: intensity = 1 / (hi - lo),
         # offset = -lo / (hi - lo), which the viewer maps back to [lo, hi] on a
         # colormapped node. A gamma below 1 lifts the dim membrane shell.
-        "window": (0.0, 1.719),
+        "window": (0.0, 0.101),
         "gamma": 0.71,
         # The enclosing structure, so it composites FIRST and the nuclei read on
         # top of it. This deliberately does NOT match the order the viewer would
@@ -235,7 +236,7 @@ CHANNELS = [
         "colormap": "bop_orange",  # GFP nuclei, iSIM 488/525
         "marker": "she:GFP (nuclei)",
         "opacity": 0.47,
-        "window": (0.0, 0.459),
+        "window": (0.0, 0.05),
         "gamma": 0.69,
         #: Inside the membrane shell, so it composites last (on top).
         "layer_order": 20,
@@ -251,6 +252,11 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+
+#: Opening pose measured from the middle timepoint, where the rosette is stable.
+CAMERA_ANGLE_DEG = 37.5
+CAMERA_RADIUS_PERCENTILE = 95.0
+CAMERA_FRAME_FILL = 0.62
 
 #: Per-channel ``--source-*`` paths, resolved once at import like the other flags.
 SOURCE_ARGS = {ch["name"]: parse_path_arg(str(ch["source_flag"])) for ch in CHANNELS}
@@ -515,6 +521,67 @@ def resolve_channel_paths() -> list[Path]:
 # =============================================================================
 # Scene construction
 # =============================================================================
+def _reference_frame_samples(
+    node: Any, bounds: tuple[np.ndarray, np.ndarray]
+) -> tuple[np.ndarray, np.ndarray]:
+    reference_time = np.floor((bounds[0][3] + bounds[1][3]) / 2.0 + 0.5)
+    nearest = min(
+        float(np.min(np.abs(sub.centers[:, 3] - reference_time)))
+        for leaf in iter_leaves(node)
+        for sub in leaf.additive_sublods
+        if sub.n_splats
+    )
+    centers = []
+    amplitudes = []
+    for leaf in iter_leaves(node):
+        for sub in leaf.additive_sublods:
+            distances = np.abs(sub.centers[:, 3] - reference_time)
+            selected = np.isclose(distances, nearest, rtol=0.0, atol=1e-6)
+            positive = selected & (sub.amplitudes > 0)
+            if np.any(positive):
+                centers.append(sub.centers[positive, :3])
+                amplitudes.append(sub.amplitudes[positive])
+    if not centers:
+        raise ValueError("Neuromast reference frame has no positive-amplitude splats")
+    return np.concatenate(centers), np.concatenate(amplitudes)
+
+
+def _weighted_percentile(
+    values: np.ndarray, weights: np.ndarray, percentile: float
+) -> float:
+    order = np.argsort(values)
+    ordered_values = values[order]
+    cumulative = np.cumsum(weights[order], dtype=np.float64)
+    threshold = percentile / 100.0 * cumulative[-1]
+    return float(ordered_values[np.searchsorted(cumulative, threshold, side="left")])
+
+
+def _opening_camera(
+    centers: np.ndarray, amplitudes: np.ndarray, spatial_extent: np.ndarray
+) -> CameraConfig:
+    weights = amplitudes.astype(np.float64, copy=False)
+    target_array = np.average(centers, axis=0, weights=weights)
+    angle = np.radians(CAMERA_ANGLE_DEG)
+    eye_direction = np.array([-np.cos(angle), 0.0, np.sin(angle)])
+    screen_right = np.array([np.sin(angle), 0.0, np.cos(angle)])
+    centered = centers - target_array
+    projected_radius = np.hypot(centered[:, 1], centered @ screen_right)
+    radius = _weighted_percentile(projected_radius, weights, CAMERA_RADIUS_PERCENTILE)
+    if radius <= 0:
+        radius = float(np.linalg.norm(spatial_extent[1:]) / 2.0)
+    half_fov = np.radians(VIEWER_DEFAULT_FOV_DEG / 2.0)
+    distance = (radius / CAMERA_FRAME_FILL) / float(np.tan(half_fov))
+    target = tuple(float(value) for value in target_array)
+    default_fov_eye = tuple(
+        float(value) for value in target_array + eye_direction * distance
+    )
+    return CameraConfig(
+        position=pull_in(default_fov_eye, target),
+        target=target,
+        up=(0.0, 1.0, 0.0),
+    )
+
+
 def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     """Build the 4D two-channel scene: one layer-enabled gsplats node per marker.
 
@@ -535,12 +602,17 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         # spatial axes are displayed; Time is a DISCRETE (step=1) hidden axis
         # that drives the playback slider.
         channel_bounds = []
+        camera_centers = []
+        camera_amplitudes = []
         for path in channel_paths:
             node, _ = load_gsplat_node(str(path))
             bounds = center_bounds(node)
             if bounds is None:
                 raise ValueError(f"Channel has no centre bounds: {path}")
             channel_bounds.append(bounds)
+            centers, amplitudes = _reference_frame_samples(node, bounds)
+            camera_centers.append(centers)
+            camera_amplitudes.append(amplitudes)
         channel_mins = np.stack([bounds[0] for bounds in channel_bounds])
         channel_maxs = np.stack([bounds[1] for bounds in channel_bounds])
         bmin = np.min(channel_mins, axis=0)
@@ -563,6 +635,11 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                 f"tolerances={quantization_step[divergent]}"
             )
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
+        camera = _opening_camera(
+            np.concatenate(camera_centers),
+            np.concatenate(camera_amplitudes),
+            bmax[:3] - bmin[:3],
+        )
         dims = Dimensions(
             [
                 Dimension(
@@ -593,7 +670,10 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                 # windows): at the default camera distance the rosette core
                 # otherwise saturates to white under both additive layers.
                 viewer_config=ViewerConfig(
-                    cinematic_mode=True, tone_mapping="ACES", exposure=EXPOSURE_STOPS
+                    cinematic_mode=True,
+                    tone_mapping="ACES",
+                    exposure=EXPOSURE_STOPS,
+                    camera=camera,
                 ),
             )
             stamp_input_digests(scene)
