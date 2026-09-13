@@ -59,6 +59,72 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
 - A `spread` above ~0.15 on a headline metric means the host was busy; re-run
   before reading deltas.
 
+### LOD-bias decision (#2685)
+
+The final three-repeat sweep ran on September 13, 2026 at `666172e44` with
+bundled Chromium, WebGL over ANGLE/Vulkan, and an NVIDIA RTX PRO 6000 Blackwell.
+The filtered run included Lines LOD example, ZebraHub Lines, Zebrafish 4D,
+GSplat LOD example, and Tribolium recipes: five of the catalog's six
+substitutive-ladder scenes. CMU-1 2D, the other stamped ladder and only other
+non-toy stamped arm, was unavailable because its pinned archive endpoint returned
+HTTP 504. The remaining seven catalog scenes have no substitutive ladder, so the
+bias axis does not cross them. `LUXAR_PERF_AUDIT_REQUIRE_SCENES=1` required this
+filtered set, not all thirteen catalog scenes.
+
+The examples were rebuilt at or after #2718, so the GSplat example carried its
+footprint stamps. The code checkout predates the #2658 corpus rebuild required by
+the general capture-discipline rule below; that does not affect these rows because
+#2658 changes different scenes and gives them additive rather than substitutive
+ladders. Every headline frame spread was at most `0.006`, but median rAF cadence
+was exactly `16.7 ms` at both viewpoints in every arm. The rig was vsync-bound at
+60 Hz, so this run could not resolve frame-cost differences or headroom above
+60 fps; the decision therefore rests on selected levels, residency, and
+opening-load requests and bytes.
+
+| Scene              | Selector provenance                  | Bias 1 opening / 4x elements | Bias 2 opening / 4x elements | Bias 4 opening / 4x elements |         Opening-load requests / bytes (bias 1; 2; 4) |
+| ------------------ | ------------------------------------ | ---------------------------: | ---------------------------: | ---------------------------: | ---------------------------------------------------: |
+| Lines LOD example  | occupancy; coarse GSplat beads       |               1,735 / 27,835 |                6,948 / 8,000 |               27,835 / 8,000 |             77 / 1.20 MB; 86 / 1.29 MB; 99 / 1.49 MB |
+| ZebraHub Lines     | occupancy; Lines have no stamps      |        1,078,802 / 4,324,178 |        4,324,178 / 4,324,178 |        4,324,178 / 4,324,178 | 1,357 / 22.33 MB; 3,620 / 34.57 MB; 3,620 / 34.57 MB |
+| Zebrafish 4D       | occupancy; store predates its stamps |                  341 / 1,369 |                1,369 / 1,369 |                1,369 / 1,369 |          121 / 2.04 MB; 121 / 1.99 MB; 121 / 1.99 MB |
+| GSplat LOD example | footprint; toy pinned at finest      |                      45 / 45 |                      45 / 45 |                      45 / 45 |             59 / 1.05 MB; 59 / 1.05 MB; 59 / 1.05 MB |
+| Tribolium recipes  | mixed; `levels` uses footprint       |            111,029 / 152,791 |            111,029 / 152,791 |            111,029 / 375,263 |       930 / 16.73 MB; 930 / 16.73 MB; 930 / 16.73 MB |
+
+The Lines example changes from 27,835 GSplat beads at level 2 to the original
+8,000-segment Lines node at level 3 after the dolly, so its falling element count
+is a geometry switch, not coarsening. At the opening load, Zebrafish's equal
+121-request arms select different levels while the finer bias-2 arm transfers
+about 50 KB less (2.04 MB versus 1.99 MB), so load bytes are not monotonic with
+the selected opening-level count.
+The GSplat example is a 45-splat toy already pinned at its finest level in every
+arm and does not discriminate the footprint policy. Tribolium `levels` is the
+only stamped ladder that moves; its `footprint_dims` matched the displayed
+dimensions, confirming that footprint selection, not occupancy fallback, made
+the level 1 → 2 switch at bias 4. That switch occurs after the dolly, outside the
+opening-load request and byte snapshot.
+
+Decision:
+
+- Keep `WHOLE_OBJECT_FINEST_ANCHOR = 0.5`. Bias 2 promotes ZebraHub's opening
+  pose from 1.08M to 4.32M committed elements, adds 2,263 opening-load requests,
+  and transfers 55% more opening-load bytes. That is exactly the eager-finest
+  dense-Line regime the anchor exists to prevent; the high-end benchmark GPU
+  absorbing it at 60 fps is not a reason to make every client pay the residency
+  and network cost. Bias 2 is the decision-relevant transfer arm because
+  ZebraHub is already finest there; bias 4 selects the same levels and has
+  identical opening-load request and byte totals.
+- Keep `lod-bias` available to both occupancy and footprint selection. It is a
+  no-op for bias ≥ 1 when a stamped ladder is already saturated at the finest
+  level, but the stamped Tribolium `levels` ladder changes from level 1 to level
+  2 after the 4x dolly at bias 4, raising committed scene elements 2.46x without
+  changing its coarse opening contract. Bias below 1 can instead coarsen a
+  footprint-selected ladder. The knob therefore remains a useful explicit
+  quality override rather than a fallback-store compatibility switch.
+- Keep the current viewer policy of a `1.5 px` median-footprint limit. The moving
+  stamped evidence is the single real Tribolium `levels` ladder; CMU-1 was not
+  available and the checked-in GSplat toy was already finest. Revisit this limit
+  with #2734: its population at the 0.5-voxel initialization scale can bias the
+  stored median footprint low and make the selector accept a coarser level.
+
 ## Running the bench reliably
 
 - **Headless on a Linux/NVIDIA box**: `LUXAR_PERF_HEADLESS=1` alone silently lands

@@ -384,6 +384,11 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    `overview` ladders are intentionally incomplete and remain on occupancy.
    Footprint-selected switches are hard swaps even when `lodFade` is enabled;
    occupancy cross-fade bands are not reused with mismatched units.
+   The #2685 corpus sweep retained both the 1.5 px limit and bias on this path:
+   for bias ≥ 1 it is inert when a stamped ladder is already finest, but it still
+   advances a non-saturated stamped ladder. Bias below 1 can coarsen the selected
+   level. It therefore remains an explicit quality override rather than a
+   fallback-store-only compatibility knob.
 6. Otherwise, pick the finest child whose `coverageFraction` threshold (the
    per-child value read from the zarr attr `coverage_fraction`, in
    whichever units step 4's `selector` names) is satisfied by that
