@@ -502,9 +502,7 @@ def count_css_definitions(filepath: Path) -> dict[str, int]:
 
 
 def _is_skipped(path: Path) -> bool:
-    return any(
-        part in SKIP_DIR_NAMES or part.endswith(".zarr") for part in path.parts
-    )
+    return any(part in SKIP_DIR_NAMES or part.endswith(".zarr") for part in path.parts)
 
 
 def _iter_files_for_extension(root: Path, ext: str) -> Iterator[Path]:

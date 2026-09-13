@@ -66,9 +66,7 @@ def _healthy_stats() -> dict[str, Any]:
 
 
 def _report_stats() -> dict[str, Any]:
-    languages = {
-        name: gs.LanguageStats().as_dict() for name in gs.LANGUAGE_CONFIG
-    }
+    languages = {name: gs.LanguageStats().as_dict() for name in gs.LANGUAGE_CONFIG}
     languages["python"]["code_lines"] = 1
     languages["typescript"]["code_lines"] = 1
     tests = _healthy_stats()

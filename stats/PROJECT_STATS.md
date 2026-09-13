@@ -1,6 +1,6 @@
 # Luxar Project Statistics
 
-_Generated 2026-09-13 04:14 &middot; For the styled report with progress bars and per-language detail, open [`project_stats.html`](./project_stats.html) locally._
+_Generated 2026-09-13 04:16 &middot; For the styled report with progress bars and per-language detail, open [`project_stats.html`](./project_stats.html) locally._
 
 _To refresh both this file and the HTML report, run `make stats` from the project root._
 
@@ -9,14 +9,14 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 | Metric | Value |
 | --- | ---: |
 | Total files | 3,952 |
-| Lines of code (executable) | 825,137 |
-| Total lines | 1,270,290 |
+| Lines of code (executable) | 825,133 |
+| Total lines | 1,270,286 |
 | Active languages | 14 |
 | Test files | 1,311 |
 | Tests collected | 33,492 |
 | Coverage (Py/TS weighted) | 90.9% |
-| Total commits | 3,362 |
-| Commits in last 30 days | 657 |
+| Total commits | 3,363 |
+| Commits in last 30 days | 658 |
 | Project size | 128.5 MB |
 | CI workflows | 8 |
 
@@ -24,7 +24,7 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 
 | Language | Files | Code | Total | Comments | Share |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Python | 1,231 | 354,112 | 581,591 | 142,003 | 42.9% |
+| Python | 1,231 | 354,108 | 581,587 | 142,003 | 42.9% |
 | TypeScript | 1,630 | 334,674 | 521,494 | 136,701 | 40.6% |
 | Rust | 9 | 3,487 | 5,500 | 1,526 | 0.4% |
 | CUDA | 9 | 1,375 | 2,385 | 723 | 0.2% |
@@ -41,7 +41,7 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 
 ## Primary Languages
 
-- **Python** &mdash; 1,231 files, 354,112 LOC, 1,995 classes, 11,436 functions, 9,352 methods (coverage 93.0%, tests 18,051).
+- **Python** &mdash; 1,231 files, 354,108 LOC, 1,995 classes, 11,436 functions, 9,352 methods (coverage 93.0%, tests 18,051).
 - **TypeScript** &mdash; 1,630 files, 334,674 LOC, 239 classes, 3,727 functions, 1,025 interfaces, 346 types (coverage 88.8%, tests 15,323).
 - **Rust (WASM)** &mdash; 9 files, 3,487 LOC, 166 functions (tests 118).
 - **CUDA** &mdash; 9 files, 1,375 LOC, 2 kernels.
@@ -104,10 +104,10 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 
 | Metric | Value |
 | --- | ---: |
-| Total commits | 3,362 |
+| Total commits | 3,363 |
 | Contributors (all-time) | 6 |
 | Tags | 0 |
-| Commits (last 30 days) | 657 |
+| Commits (last 30 days) | 658 |
 | Files changed (last 30 days) | 3,179 |
 | First commit | 2025-08-04 |
 | Last commit | 2026-09-13 |
@@ -120,7 +120,7 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 | royer | 1,376 |
 | Loic A. Royer (obsidian) | 209 |
 | dependabot[bot] | 84 |
-| Loic Royer | 48 |
+| Loic Royer | 49 |
 
 ## Dependencies
 
