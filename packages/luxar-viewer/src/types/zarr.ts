@@ -200,6 +200,14 @@ export interface ZarrViewerConfig {
   // Cinematic
   cinematic_mode?: boolean;
 
+  /**
+   * Authored playback detail for every dimension: how deep additive ladders are
+   * loaded per frame while playing or scrubbing. A positive integer pins that
+   * many rungs, `'all'` the whole ladder, `'auto'` the energy rule (default),
+   * `'fast'` the time-budgeted streaming. Python: `ViewerConfig.playback_lod_depth`.
+   */
+  playback_lod_depth?: number | 'auto' | 'all' | 'fast';
+
   // Vignette
   vignette_enabled?: boolean;
   vignette_darkness?: number;

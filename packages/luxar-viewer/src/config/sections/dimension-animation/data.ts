@@ -9,7 +9,7 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
     loop: 'loop' as const,
     direction: 'forward' as const,
     stepSize: null, // Auto: fps-derived (continuous) / authored step (discrete)
-    ladderDepth: null, // Auto: time-budgeted streaming; N pins N rungs per frame
+    ladderDepth: 'auto', // 'auto' = energy rule; N pins N rungs; null = time-budgeted ('Fast')
   },
   presets: {
     fps: [0.5, 1, 2, 5, 10, 15, 30, 60, 120],
@@ -30,5 +30,6 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
     budgetFraction: 0.6, // 60% of the frame window for LOD streaming
     minBudgetMs: 8, // even at 60fps targets, give loaders ≥8ms
     overheadReserveMs: 50, // slow FPS: budget = window − reserve (see types.ts)
+    autoEnergyThreshold: 0.9, // 'auto' detail: pin the first rung whose e(k) reaches this
   },
 };

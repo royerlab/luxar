@@ -44,10 +44,11 @@ import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapte
 import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
-  normalizeLadderDepth,
+  resolveLadderDepth,
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
+import { config } from '../../config';
 import {
   deleteLadder,
   measureLodBytes,
@@ -437,7 +438,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   private _frameBudgetMs: number | null = null;
   /**
    * Pinned rung count for the current pass (`ViewState.ladderDepth`, the
-   * playback "detail" setting), resolved through `normalizeLadderDepth`; null
+   * playback "detail" setting), resolved through `resolveLadderDepth`; null
    * when the pass is not pinned. A pinned pass loads exactly this many rungs,
    * cold or not, and reports `hasMoreLODs === false` like a budgeted one — the
    * pinned prefix IS the target.
@@ -593,7 +594,12 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // a pause re-trigger arrives with the SAME view state — it must still
     // clear the budget). Mirrors GSplatsProgressiveLoader.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
-    this._ladderDepth = normalizeLadderDepth(viewState.ladderDepth, this.nLods);
+    this._ladderDepth = resolveLadderDepth(
+      viewState.ladderDepth,
+      this.nLods,
+      this.energyTable,
+      config.dimensionAnimation.playback.autoEnergyThreshold
+    );
     this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;

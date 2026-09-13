@@ -116,7 +116,7 @@ export async function updateSceneForDimensions(
      * Pinned playback ladder depth (see `ViewState.ladderDepth`). Per-pass,
      * like `frameBudgetMs`.
      */
-    ladderDepth?: number;
+    ladderDepth?: number | 'auto';
   }
 ): Promise<void> {
   const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
@@ -164,7 +164,7 @@ export function prefetchSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId: string | undefined,
-  opts: { budgetMs: number; ladderDepth?: number }
+  opts: { budgetMs: number; ladderDepth?: number | 'auto' }
 ): void {
   const manager = SceneLoaderManager.getInstance();
   const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();

@@ -398,6 +398,18 @@ class TestViewerConfig:
         for tm in ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral"):
             assert ViewerConfig(tone_mapping=tm).tone_mapping == tm
 
+    def test_playback_lod_depth_accepts_rung_counts_and_keywords(self) -> None:
+        assert ViewerConfig(playback_lod_depth=4).playback_lod_depth == 4
+        for kw in ("auto", "all", "fast"):
+            assert ViewerConfig(playback_lod_depth=kw).playback_lod_depth == kw
+        assert ViewerConfig(playback_lod_depth=3).to_dict()["playback_lod_depth"] == 3
+        assert "playback_lod_depth" not in ViewerConfig().to_dict()
+
+    @pytest.mark.parametrize("bad", [0, -2, 2.5, True, "deep", "ALL", ""])
+    def test_playback_lod_depth_rejects_other_values(self, bad: object) -> None:
+        with pytest.raises(ValueError, match="playback_lod_depth must be"):
+            ViewerConfig(playback_lod_depth=bad)  # type: ignore[arg-type]
+
     def test_invalid_control_type(self) -> None:
         with pytest.raises(ValueError, match="control_type must be one of"):
             ViewerConfig(control_type="trackball")

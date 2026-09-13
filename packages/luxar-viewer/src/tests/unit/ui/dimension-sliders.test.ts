@@ -656,6 +656,8 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       getState: vi.fn(() => undefined),
       isAnimating: vi.fn(() => false),
       getStepSize: vi.fn((): number | null => null),
+      getDefaultLadderDepth: vi.fn(() => 'auto'),
+      setLadderDepth: vi.fn(),
       setStepSize: vi.fn(),
       setTargetFPS: vi.fn(),
       setLoopMode: vi.fn(),
@@ -1160,6 +1162,8 @@ describe('DimensionSliders - coarse pointer affordances', () => {
       getState: vi.fn(() => undefined),
       isAnimating: vi.fn(() => false),
       getStepSize: vi.fn(() => 2),
+      getDefaultLadderDepth: vi.fn(() => 'auto'),
+      setLadderDepth: vi.fn(),
       play: vi.fn(),
       pause: vi.fn(),
     } as never);
@@ -1185,6 +1189,8 @@ describe('DimensionSliders - coarse pointer affordances', () => {
       getState: vi.fn(() => undefined),
       isAnimating: vi.fn(() => false),
       getStepSize: vi.fn(() => null),
+      getDefaultLadderDepth: vi.fn(() => 'auto'),
+      setLadderDepth: vi.fn(),
       play: vi.fn(),
       pause: vi.fn(),
     } as never);

@@ -1212,9 +1212,10 @@ _For implementation details, see the source files in this directory._
   and lazy-Proxy singleton `sceneDimsManager`).
 - `dimension-loading.ts` — Applies the current scene-dimension selection,
   propagates the animation frame budget and the pinned playback ladder depth
-  (`getPlaybackLadderDepth`, the "Detail" setting), warms the projected next
-  slice during playback with the same directives, and releases shadow-loader
-  resources after playback stops.
+  (`getPlaybackLadderDepth` while playing, `getScrubLadderDepth` for a slice
+  change while paused, the "Detail" setting), warms the projected next slice
+  during playback with the same directives, schedules the unpinned settle pass
+  after a pinned scrub, and releases shadow-loader resources after playback stops.
 - `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
   child selector (pick on the group's screen-area or legacy diagonal
   metric + frustum off-screen gate

@@ -564,7 +564,11 @@ export class SceneLoader {
    * must not move the real view; see the stuck-display hazard in
    * slice-prefetcher.ts).
    */
-  prefetchSlice(viewState: Partial<ViewState>, budgetMs: number, ladderDepth?: number): void {
+  prefetchSlice(
+    viewState: Partial<ViewState>,
+    budgetMs: number,
+    ladderDepth?: number | 'auto'
+  ): void {
     if (this._disposed || this._archiveFault || !this._sceneGraph) return;
     if (!this._slicePrefetcher) {
       this._slicePrefetcher = new SlicePrefetcher({

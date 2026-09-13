@@ -77,7 +77,7 @@ import {
 } from '../scene-loader/progressive/residency-budget';
 import {
   classifyStreamingPass,
-  normalizeLadderDepth,
+  resolveLadderDepth,
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
@@ -365,7 +365,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private _frameBudgetMs: number | null = null;
   /**
    * Pinned rung count for the current pass (`ViewState.ladderDepth`, the
-   * playback "detail" setting), resolved through `normalizeLadderDepth`; null
+   * playback "detail" setting), resolved through `resolveLadderDepth`; null
    * when the pass is not pinned. A pinned pass loads exactly this many rungs,
    * cold or not, and reports `hasMoreLODs === false` like a budgeted one — the
    * pinned prefix IS the target.
@@ -674,7 +674,9 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // Record the per-pass playback budget FIRST: a pause re-trigger arrives with
     // the same view state and must still clear the budget.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
-    this._ladderDepth = normalizeLadderDepth(viewState.ladderDepth, this.nLods);
+    // The mesh reveal ladder carries no energy stamps, so 'auto' resolves to
+    // time-budgeted streaming (null); a numeric pin is honoured.
+    this._ladderDepth = resolveLadderDepth(viewState.ladderDepth, this.nLods, null, 1);
     this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;

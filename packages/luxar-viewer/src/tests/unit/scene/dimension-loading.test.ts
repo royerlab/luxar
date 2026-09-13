@@ -2,11 +2,12 @@
  * Unit tests for scene-owned nD dimension loading orchestration.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../scene/scene-dims-manager', () => ({
   sceneDimsManager: {
     getDims: vi.fn(),
+    setDimensionValue: vi.fn(),
   },
 }));
 
@@ -16,7 +17,12 @@ vi.mock('../../../data', () => ({
   releasePrefetchResources: vi.fn(),
 }));
 
-import { updateAllNDNodes, type DimensionLoadingContext } from '../../../scene/dimension-loading';
+import {
+  SCRUB_SETTLE_MS,
+  cancelScrubSettleForTests,
+  updateAllNDNodes,
+  type DimensionLoadingContext,
+} from '../../../scene/dimension-loading';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import {
   prefetchSceneForDimensions,
@@ -38,6 +44,7 @@ beforeEach(() => {
   (updateSceneForDimensions as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
   (prefetchSceneForDimensions as ReturnType<typeof vi.fn>).mockReset();
   (releasePrefetchResources as ReturnType<typeof vi.fn>).mockReset();
+  cancelScrubSettleForTests();
 });
 
 describe('updateAllNDNodes', () => {
@@ -77,6 +84,7 @@ describe('updateAllNDNodes', () => {
         dispose: vi.fn(),
         getFrameBudgetMs: vi.fn(() => 60),
         getPlaybackLadderDepth: vi.fn(() => null),
+        getScrubLadderDepth: vi.fn(() => null),
         isAnyPlaying: vi.fn(() => true),
         getPlayingDimIndices: vi.fn(() => [3]),
         peekNextValue: vi.fn(() => 6),
@@ -152,5 +160,92 @@ describe('updateAllNDNodes', () => {
       expect(prefetchSceneForDimensions).not.toHaveBeenCalled();
       expect(releasePrefetchResources).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('scrub pinning (not playing)', () => {
+  const dims = { ndim: 4, displayed: [0, 1, 2], currentStep: [0, 0, 0, 5], metadata: undefined };
+
+  function makeIdleAnim(scrubDepth: number | 'auto' | null) {
+    return {
+      dispose: vi.fn(),
+      getFrameBudgetMs: vi.fn(() => null),
+      getPlaybackLadderDepth: vi.fn(() => null),
+      getScrubLadderDepth: vi.fn(() => scrubDepth),
+      isAnyPlaying: vi.fn(() => false),
+      getPlayingDimIndices: vi.fn(() => []),
+      peekNextValue: vi.fn(() => null),
+    } as never;
+  }
+
+  beforeEach(() => {
+    (sceneDimsManager.getDims as ReturnType<typeof vi.fn>).mockReturnValue(dims);
+    (sceneDimsManager as unknown as { setDimensionValue?: unknown }).setDimensionValue = vi.fn();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('pins a scrub pass to the scrub detail without a frame budget, then schedules an unpinned settle pass', async () => {
+    const ctx = makeCtx({ getAnimationManager: () => makeIdleAnim(6) });
+
+    await updateAllNDNodes(ctx);
+
+    expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
+      frameBudgetMs: undefined,
+      ladderDepth: 6,
+    });
+    expect(prefetchSceneForDimensions).not.toHaveBeenCalled();
+    const setValue = sceneDimsManager.setDimensionValue as ReturnType<typeof vi.fn>;
+    expect(setValue).not.toHaveBeenCalled();
+
+    // The settle pass re-notifies at the current position once the scrub is quiet...
+    vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
+    expect(setValue).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('a settle pass carries no directive (the listener runs while the settle flag is set)', async () => {
+    let listener: (() => Promise<void>) | undefined;
+    (sceneDimsManager.setDimensionValue as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      void listener?.();
+    });
+    const ctx = makeCtx({ getAnimationManager: () => makeIdleAnim('auto') });
+    listener = () => updateAllNDNodes(ctx);
+
+    await updateAllNDNodes(ctx);
+    expect((updateSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[0][3]).toEqual({
+      frameBudgetMs: undefined,
+      ladderDepth: 'auto',
+    });
+
+    vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
+    expect((updateSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[1][3]).toEqual({
+      frameBudgetMs: undefined,
+      ladderDepth: undefined,
+    });
+  });
+
+  it('a Fast (null) scrub detail pins nothing and schedules no settle pass', async () => {
+    const ctx = makeCtx({ getAnimationManager: () => makeIdleAnim(null) });
+    await updateAllNDNodes(ctx);
+    expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
+      frameBudgetMs: undefined,
+      ladderDepth: undefined,
+    });
+    vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
+    expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
+  });
+
+  it('a re-scrub within the quiet period postpones the settle pass', async () => {
+    const ctx = makeCtx({ getAnimationManager: () => makeIdleAnim(4) });
+    await updateAllNDNodes(ctx);
+    vi.advanceTimersByTime(SCRUB_SETTLE_MS - 50);
+    await updateAllNDNodes(ctx);
+    vi.advanceTimersByTime(SCRUB_SETTLE_MS - 50);
+    expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledTimes(1);
   });
 });

@@ -41,7 +41,7 @@ export interface UpdateCtxsInput {
    */
   frameBudgetMs?: number;
   /** Pinned playback ladder depth (see `ViewState.ladderDepth`); same contract. */
-  ladderDepth?: number;
+  ladderDepth?: number | 'auto';
   deriveNodeViewState(
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,

@@ -224,6 +224,7 @@ describe('DimensionAnimationManager', () => {
   describe('playback detail (ladderDepth / getPlaybackLadderDepth)', () => {
     it('is null when nothing is playing or no playing dimension pins a depth', () => {
       expect(manager.getPlaybackLadderDepth()).toBeNull();
+      manager.setDefaultLadderDepth(null);
       manager.play(3);
       expect(manager.getPlaybackLadderDepth()).toBeNull();
       manager.pause(3);
@@ -253,7 +254,7 @@ describe('DimensionAnimationManager', () => {
     });
 
     it('normalises a non-positive or fractional depth and emits ladderDepthChange', () => {
-      const events: Array<{ dimIndex: number; ladderDepth: number | null }> = [];
+      const events: Array<{ dimIndex: number; ladderDepth: number | 'auto' | null }> = [];
       manager.addEventListener('ladderDepthChange', (e) =>
         events.push({ dimIndex: e.dimIndex, ladderDepth: e.ladderDepth })
       );
@@ -266,9 +267,42 @@ describe('DimensionAnimationManager', () => {
       expect(manager.getState(3)?.ladderDepth).toBeNull();
     });
 
-    it('a fresh state starts on the config default (Auto)', () => {
+    it("a fresh state starts on the config default ('auto', the energy rule)", () => {
       manager.setTargetFPS(3, 5);
-      expect(manager.getState(3)?.ladderDepth).toBeNull();
+      expect(manager.getState(3)?.ladderDepth).toBe('auto');
+      manager.play(3);
+      expect(manager.getPlaybackLadderDepth()).toBe('auto');
+    });
+
+    it("explicit pins win over 'auto' when several dimensions play; 'auto' wins over Fast", () => {
+      manager.play(3, { ladderDepth: 'auto' });
+      manager.play(4, { ladderDepth: 4 });
+      expect(manager.getPlaybackLadderDepth()).toBe(4);
+      manager.setLadderDepth(4, null);
+      expect(manager.getPlaybackLadderDepth()).toBe('auto');
+      manager.setLadderDepth(3, null);
+      expect(manager.getPlaybackLadderDepth()).toBeNull();
+    });
+
+    it('the scene default (setDefaultLadderDepth) seeds new states and updates untouched ones', () => {
+      manager.setTargetFPS(3, 5); // state on the default ('auto')
+      manager.setLadderDepth(4, 2); // explicit pin must survive
+      manager.setDefaultLadderDepth(6);
+      expect(manager.getDefaultLadderDepth()).toBe(6);
+      expect(manager.getState(3)?.ladderDepth).toBe(6);
+      expect(manager.getState(4)?.ladderDepth).toBe(2);
+      manager.setLoopMode(2, 'loop'); // a state created after the default was set
+      expect(manager.getState(2)?.ladderDepth).toBe(6);
+    });
+
+    it('scrub detail: deepest explicit pin across all dimensions, else auto, else the default', () => {
+      expect(manager.getScrubLadderDepth()).toBe('auto'); // no states yet -> default
+      manager.setDefaultLadderDepth(null);
+      expect(manager.getScrubLadderDepth()).toBeNull();
+      manager.setLadderDepth(3, 'auto');
+      expect(manager.getScrubLadderDepth()).toBe('auto');
+      manager.setLadderDepth(4, 3);
+      expect(manager.getScrubLadderDepth()).toBe(3);
     });
   });
 

@@ -52,6 +52,7 @@ vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
     // the playing set / next-value peek — default: nothing playing.
     getFrameBudgetMs: vi.fn(() => null),
     getPlaybackLadderDepth: vi.fn(() => null),
+    getScrubLadderDepth: vi.fn(() => null),
     isAnyPlaying: vi.fn(() => false),
     getPlayingDimIndices: vi.fn(() => []),
     peekNextValue: vi.fn(() => null),

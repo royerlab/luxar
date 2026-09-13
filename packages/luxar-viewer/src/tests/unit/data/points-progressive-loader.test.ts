@@ -815,6 +815,50 @@ describe('PointsProgressiveLoader', () => {
     });
   });
 
+  describe("'auto' playback detail (energy rule)", () => {
+    // Mirrored across gsplats / points / lines (geometry symmetry). The mesh
+    // reveal ladder has no energy stamps, so 'auto' leaves it time-budgeted.
+    let now: number;
+    let nowSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      now = 0;
+      nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockImplementation(async () => {
+          now += 30;
+          return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: false };
+        });
+      }
+    });
+
+    afterEach(() => {
+      nowSpy.mockRestore();
+    });
+
+    it('pins the first rung whose cumulative energy reaches the configured threshold', async () => {
+      // e(1) = 0.5, e(2) = 0.95, e(3) = 1.0 with the default threshold 0.9 -> depth 2.
+      const l = new PointsProgressiveLoader(
+        [lodA, lodB, lodC] as never,
+        3,
+        '/auto_points',
+        [0.5, 0.95, 1.0]
+      );
+      await l.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: 'auto' });
+      expect(l.loadedLODCount).toBe(2);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.hasMoreLODs).toBe(false);
+    });
+
+    it('an unstamped ladder stays time-budgeted under auto (first cold level stops the pass)', async () => {
+      const l = new PointsProgressiveLoader([lodA, lodB, lodC] as never, 3, '/auto_points');
+      await l.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: 'auto' });
+      // Budget 10ms < one 30ms cold level: only the first-paint floor loads.
+      expect(l.loadedLODCount).toBe(1);
+      expect(l.hasMoreLODs).toBe(false);
+    });
+  });
+
   describe('pinned playback ladder depth (ladderDepth)', () => {
     // Mirrored across gsplats / points / lines / mesh (geometry symmetry).
     let now: number;

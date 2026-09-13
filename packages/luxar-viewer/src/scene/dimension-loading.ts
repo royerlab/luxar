@@ -32,12 +32,63 @@ export interface DimensionLoadingContext {
  */
 function playbackDirectives(anim: DimensionAnimationManager | undefined): {
   frameBudgetMs: number | undefined;
-  ladderDepth: number | undefined;
+  ladderDepth: number | 'auto' | undefined;
 } {
-  return {
-    frameBudgetMs: anim?.getFrameBudgetMs() ?? undefined,
-    ladderDepth: anim?.getPlaybackLadderDepth() ?? undefined,
-  };
+  if (!anim) return { frameBudgetMs: undefined, ladderDepth: undefined };
+  const frameBudgetMs = anim.getFrameBudgetMs() ?? undefined;
+  if (frameBudgetMs !== undefined) {
+    return { frameBudgetMs, ladderDepth: anim.getPlaybackLadderDepth() ?? undefined };
+  }
+  // Not playing: a SCRUB (slider drag, keyboard step, pause re-trigger). Pin it
+  // to the scrub detail so a heavy time-lapse reads consistently while it is
+  // dragged; the settle pass below refines to the full ladder once quiet. The
+  // settle pass itself carries no directive.
+  if (scrubSettlePassPending) return { frameBudgetMs: undefined, ladderDepth: undefined };
+  return { frameBudgetMs: undefined, ladderDepth: anim.getScrubLadderDepth() ?? undefined };
+}
+
+/**
+ * Quiet period after the last scrub before the unpinned settle pass fires.
+ * Long enough to swallow a slider drag's event stream, short enough that a
+ * paused view starts refining to its full ladder almost immediately.
+ */
+export const SCRUB_SETTLE_MS = 400;
+
+let scrubSettleTimer: ReturnType<typeof setTimeout> | null = null;
+/** True while the settle pass's own dimension notification is being served. */
+let scrubSettlePassPending = false;
+
+/**
+ * Schedule the unpinned settle pass that follows a pinned scrub pass: after
+ * `SCRUB_SETTLE_MS` without another slice change, re-notify the dimension
+ * listeners at the current position with no playback directive, so the normal
+ * refine pass and refinement run complete the ladder. Skipped if playback has
+ * started meanwhile (the pause re-trigger covers that path).
+ */
+function scheduleScrubSettle(ctx: DimensionLoadingContext): void {
+  if (scrubSettleTimer !== null) clearTimeout(scrubSettleTimer);
+  scrubSettleTimer = setTimeout(() => {
+    scrubSettleTimer = null;
+    if (ctx.getAnimationManager()?.isAnyPlaying()) return;
+    const dims = sceneDimsManager.getDims();
+    if (!dims || dims.ndim === 0) return;
+    scrubSettlePassPending = true;
+    try {
+      // Same-value write: setDimensionValue notifies listeners unconditionally.
+      sceneDimsManager.setDimensionValue(0, dims.currentStep[0]);
+    } finally {
+      // The listener ran synchronously up to its first await and has already
+      // read the (empty) directives; clear for the next scrub.
+      scrubSettlePassPending = false;
+    }
+  }, SCRUB_SETTLE_MS);
+}
+
+/** Test hook: drop a pending settle timer. */
+export function cancelScrubSettleForTests(): void {
+  if (scrubSettleTimer !== null) clearTimeout(scrubSettleTimer);
+  scrubSettleTimer = null;
+  scrubSettlePassPending = false;
 }
 
 /**
@@ -55,6 +106,7 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
   // window (they stream sub-LODs until the budget runs out, then commit).
   // Null/undefined outside playback → normal full-refinement behavior.
   const { frameBudgetMs, ladderDepth } = playbackDirectives(ctx.getAnimationManager());
+  const pinnedScrub = frameBudgetMs === undefined && ladderDepth !== undefined;
 
   // Use the new loader architecture's update mechanism
   await updateSceneForDimensions(
@@ -99,6 +151,7 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
     // Playback ended (this branch includes the pause refine re-trigger
     // pass): free the shadow loaders' accumulators until the next play.
     releasePrefetchResources();
+    if (pinnedScrub) scheduleScrubSettle(ctx);
   }
 
   // Trigger re-render after update

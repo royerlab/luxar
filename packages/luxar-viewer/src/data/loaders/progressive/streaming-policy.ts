@@ -162,3 +162,27 @@ export function normalizeLadderDepth(
   if (ladderDepth < 1) return null;
   return Math.min(nLods, Math.floor(ladderDepth));
 }
+
+/**
+ * Resolve a pass's requested playback detail (`ViewState.ladderDepth`) to a
+ * loop bound for THIS ladder. A number goes through {@link normalizeLadderDepth};
+ * `'auto'` pins the first rung whose cumulative energy fraction e(k) reaches
+ * `energyThreshold` (the `energy_fraction_cum` build stamps, one per rung, in
+ * `[0, 1]`, non-decreasing), or the whole ladder if none does; a ladder without
+ * stamps cannot be judged and returns `null` (time-budgeted streaming). Shared
+ * by the four geometry loaders so `'auto'` means the same thing everywhere.
+ */
+export function resolveLadderDepth(
+  ladderDepth: number | 'auto' | undefined | null,
+  nLods: number,
+  energyTable: readonly number[] | null | undefined,
+  energyThreshold: number
+): number | null {
+  if (ladderDepth !== 'auto') return normalizeLadderDepth(ladderDepth, nLods);
+  if (!energyTable || energyTable.length === 0 || nLods < 1) return null;
+  const n = Math.min(nLods, energyTable.length);
+  for (let k = 0; k < n; k++) {
+    if (energyTable[k] >= energyThreshold) return k + 1;
+  }
+  return nLods;
+}

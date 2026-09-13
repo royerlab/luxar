@@ -52,7 +52,7 @@ export interface PointsHandlerCtx {
    * Pinned playback ladder depth (see `ViewState.ladderDepth`). Same per-pass
    * contract as `frameBudgetMs`: injected into the DERIVED view state only.
    */
-  ladderDepth?: number;
+  ladderDepth?: number | 'auto';
 }
 
 /**

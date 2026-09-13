@@ -160,7 +160,7 @@ export class SlicePrefetcher {
    *   lands, so an abort (playback end / dataset switch) keeps the depth
    *   already reached.
    */
-  prefetch(viewState: ViewState, budgetMs: number, ladderDepth?: number): void {
+  prefetch(viewState: ViewState, budgetMs: number, ladderDepth?: number | 'auto'): void {
     if (this.disposed) return;
     if (this.inFlight > 0) {
       // A batch is still deepening — let it finish (persist across ticks) so a
@@ -234,7 +234,12 @@ export class SlicePrefetcher {
     tasks: Array<Promise<void>>,
     loaders: ReadonlyMap<string, unknown>,
     kind: GeometryKind,
-    request: { viewState: ViewState; budgetMs: number; ladderDepth?: number; signal: AbortSignal },
+    request: {
+      viewState: ViewState;
+      budgetMs: number;
+      ladderDepth?: number | 'auto';
+      signal: AbortSignal;
+    },
     resolveObject: (path: string) => THREE.Object3D | null | undefined
   ): void {
     for (const path of loaders.keys()) {
@@ -259,7 +264,7 @@ export class SlicePrefetcher {
       viewState: ViewState;
       budgetMs: number;
       /** Pinned playback ladder depth, forwarded so the t+1 entry carries the pinned prefix. */
-      ladderDepth?: number;
+      ladderDepth?: number | 'auto';
       signal: AbortSignal;
       object: THREE.Object3D | null | undefined;
     }

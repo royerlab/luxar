@@ -18,6 +18,7 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyStreamingPass,
   normalizeLadderDepth,
+  resolveLadderDepth,
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../../../../../data/loaders/progressive/streaming-policy';
@@ -165,5 +166,36 @@ describe('normalizeLadderDepth', () => {
 
   it('treats Infinity as the whole ladder', () => {
     expect(normalizeLadderDepth(Number.POSITIVE_INFINITY, 9)).toBe(9);
+  });
+});
+
+describe("resolveLadderDepth ('auto' = the energy rule)", () => {
+  const energies = [0.5, 0.8, 0.95, 0.99, 1.0];
+
+  it('passes numbers through normalizeLadderDepth', () => {
+    expect(resolveLadderDepth(3, 5, energies, 0.9)).toBe(3);
+    expect(resolveLadderDepth(Infinity, 5, energies, 0.9)).toBe(5);
+    expect(resolveLadderDepth(undefined, 5, energies, 0.9)).toBeNull();
+    expect(resolveLadderDepth(null, 5, energies, 0.9)).toBeNull();
+  });
+
+  it("'auto' pins the FIRST rung whose cumulative energy reaches the threshold", () => {
+    expect(resolveLadderDepth('auto', 5, energies, 0.9)).toBe(3);
+    expect(resolveLadderDepth('auto', 5, energies, 0.6)).toBe(2);
+    expect(resolveLadderDepth('auto', 5, energies, 0.5)).toBe(1);
+  });
+
+  it("'auto' pins the whole ladder when no rung reaches the threshold", () => {
+    expect(resolveLadderDepth('auto', 5, [0.1, 0.2, 0.3, 0.4, 0.5], 0.9)).toBe(5);
+  });
+
+  it("'auto' on an unstamped ladder is not pinned (time-budgeted streaming)", () => {
+    expect(resolveLadderDepth('auto', 5, null, 0.9)).toBeNull();
+    expect(resolveLadderDepth('auto', 5, undefined, 0.9)).toBeNull();
+    expect(resolveLadderDepth('auto', 5, [], 0.9)).toBeNull();
+  });
+
+  it('never exceeds the ladder even when the stamp table is longer', () => {
+    expect(resolveLadderDepth('auto', 2, energies, 0.99)).toBe(2);
   });
 });

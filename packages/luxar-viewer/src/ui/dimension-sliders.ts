@@ -6,6 +6,7 @@ import { getViewerContainer } from '../utils/viewer-container';
 import { getInputProfile } from '../utils/input-capabilities';
 import { normalizeWheelDeltaWithAxisFallback } from '../utils/wheel-delta';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
+import { describeLadderDepth } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
@@ -1370,23 +1371,20 @@ export class DimensionSliders {
     // a pinned depth makes every frame wait for exactly that many rungs, so a
     // heavy time-lapse plays at a consistent quality and an adaptive rate
     // instead of flickering between coarse and fine frames.
-    const currentLadderDepth = state?.ladderDepth ?? null;
-    const detailAside =
-      currentLadderDepth === null
-        ? 'auto'
-        : currentLadderDepth === Infinity
-          ? 'all'
-          : `${currentLadderDepth} rung${currentLadderDepth === 1 ? '' : 's'}`;
-    const detailChips = makeSection('Detail', detailAside);
+    const currentLadderDepth =
+      state?.ladderDepth ??
+      this.animationManager?.getDefaultLadderDepth() ??
+      config.dimensionAnimation.defaults.ladderDepth;
+    const detailChips = makeSection('Detail', describeLadderDepth(currentLadderDepth));
     detailChips.appendChild(
       makeChip(
         'Auto',
-        currentLadderDepth === null,
+        currentLadderDepth === 'auto',
         () => {
-          this.animationManager?.setLadderDepth(dimIndex, null);
+          this.animationManager?.setLadderDepth(dimIndex, 'auto');
           this.closeContextMenu();
         },
-        { tooltip: 'Stream whatever is resident within each tick' }
+        { tooltip: 'Pin each ladder at the rung where its energy stamps say the frame reads well' }
       )
     );
     for (const depth of config.dimensionAnimation.presets.ladderDepths) {
@@ -1414,6 +1412,17 @@ export class DimensionSliders {
           this.closeContextMenu();
         },
         { tooltip: 'Draw every frame at its full ladder (waits for the data)' }
+      )
+    );
+    detailChips.appendChild(
+      makeChip(
+        'Fast',
+        currentLadderDepth === null,
+        () => {
+          this.animationManager?.setLadderDepth(dimIndex, null);
+          this.closeContextMenu();
+        },
+        { tooltip: 'Stream whatever is resident within each tick (quality varies frame to frame)' }
       )
     );
 

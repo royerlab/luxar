@@ -388,12 +388,14 @@ export interface ViewState {
   frameBudgetMs?: number;
 
   /**
-   * Pinned additive-ladder depth (number of rungs) for progressive loaders
-   * during dimension-animation playback — the "playback detail" setting. When
-   * set, a pass loads EXACTLY `min(ladderDepth, nLods)` rungs, cold or not,
-   * ignoring the time budget, so every frame of a time-lapse is drawn at the
-   * same rung and the tick waits for the data instead of showing whatever
-   * happened to be resident. Absent = the time-budgeted behaviour.
+   * Pinned additive-ladder depth for progressive loaders during dimension
+   * playback and scrubbing — the "playback detail" setting. A number makes a
+   * pass load EXACTLY `min(ladderDepth, nLods)` rungs, cold or not, ignoring the
+   * time budget, so every frame of a time-lapse is drawn at the same rung and
+   * the tick waits for the data instead of showing whatever happened to be
+   * resident. `'auto'` lets each loader resolve its own depth from its energy
+   * stamps (`resolveLadderDepth`); a ladder without stamps stays time-budgeted.
+   * Absent = the time-budgeted behaviour.
    *
    * Like `frameBudgetMs` this is a **PER-PASS DIRECTIVE, not state**: the scene
    * loader strips it before persisting the view state, threads it through the
@@ -402,7 +404,7 @@ export interface ViewState {
    * the pinned prefix. It must never enter `viewStatesEqual` nor the SliceCache
    * key.
    */
-  ladderDepth?: number;
+  ladderDepth?: number | 'auto';
 
   /**
    * Set only on the SlicePrefetcher's shadow pass: marks stores as PREFETCH so

@@ -10,11 +10,13 @@ export interface DimensionAnimationConfig {
     /** Per-tick step override; null = Auto (fps-derived / authored step). */
     stepSize: number | null;
     /**
-     * Playback detail: pinned additive-ladder depth (rungs) per frame while
-     * playing; null = Auto (time-budgeted streaming). See
-     * `DimensionAnimationState.ladderDepth`.
+     * Playback detail: `'auto'` pins each ladder at the first rung whose
+     * cumulative energy e(k) reaches `playback.autoEnergyThreshold` (stamped
+     * ladders; unstamped ones fall back to time-budgeted streaming), a number
+     * pins that many rungs, `null` streams whatever fits the tick ("Fast").
+     * See `DimensionAnimationState.ladderDepth`.
      */
-    ladderDepth: number | null;
+    ladderDepth: number | 'auto' | null;
   };
   presets: {
     fps: number[];
@@ -58,5 +60,11 @@ export interface DimensionAnimationConfig {
      * quality below what the window could deliver.
      */
     overheadReserveMs: number;
+    /**
+     * The `'auto'` playback detail pins a ladder at the FIRST rung whose
+     * cumulative energy fraction e(k) (the `energy_fraction_cum` build stamps)
+     * reaches this value; a ladder without stamps is left time-budgeted.
+     */
+    autoEnergyThreshold: number;
   };
 }
