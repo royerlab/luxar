@@ -63,15 +63,15 @@ PIPELINE — reproducible per channel with ``--recompute``:
     6. ``batch-fit run --merge-recipe stream --merge-n-lods 8`` merges the
        (unculled) tiles into ONE leaf with the recorded 8-rung progressive
        ladder (the run's own merge; the run's default would be 4 rungs).
-    7. ``gsplat transform --scale 2.308402585410896,1.0,1.0,1.0
-       --normalize-intensity 1.0`` → the factor is the measured 0.25 um z-step
-       over the 0.1083 um lateral pitch, which removes the voxel anisotropy so
-       Z becomes commensurate with X/Y; amplitudes on a 0-1 scale. The centres
-       stay in **lateral-pixel units**, NOT microns: 1 unit = 0.1083 um.
-       (The 2026-08 pair on the record was transformed with the historical 2.5
-       — an 8.3 % Z stretch — and stays pinned in ``data_manifest.json``;
-       the corrected rebuild is ready, but publishing it still needs the record
-       upload and manifest repin, which this recipe change does not do.)
+    7. ``gsplat transform --scale 0.25,0.1083,0.1083,1.0
+       --normalize-intensity 1.0`` → convert the three spatial centre and
+       covariance axes from voxels to microns using the measured MetaMorph
+       voxel size; amplitudes stay on a 0-1 scale.
+       (The 2026-08 pair on the record was transformed with the historical 2.5,
+       leaving its spatial coordinates in lateral-pixel units and stretching Z
+       by 8.3 %. It stays pinned in ``data_manifest.json``; the corrected rebuild
+       is ready, but publishing it still needs the record upload and manifest
+       repin, which this recipe change does not do.)
 
     Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
@@ -200,8 +200,9 @@ CHANNELS = [
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
-        # Display window (Layers-panel range) and gamma, set by eye on the shipped
-        # store (re-tuned 2026-09-10 under ADDITIVE compositing, see the graft).
+        # Display window (Layers-panel range) and gamma, set by eye on the pinned
+        # historical-2.5, lateral-pixel-unit store (re-tuned 2026-09-10 under
+        # ADDITIVE compositing, see the graft).
         # The window is authored as intensity/offset: intensity = 1 / (hi - lo),
         # offset = -lo / (hi - lo), which the viewer maps back to [lo, hi] on a
         # colormapped node. A gamma below 1 lifts the dim membrane shell.
@@ -209,11 +210,10 @@ CHANNELS = [
         "gamma": 0.71,
         # The enclosing structure, so it composites FIRST and the nuclei read on
         # top of it. This deliberately does NOT match the order the viewer would
-        # infer: containment goes by bounding-sphere radius, and this fit gives
-        # the nuclei channel the marginally LARGER sphere (555.5 vs 546.4, a 1.6%
-        # difference that is a property of where the splats landed, not of the
-        # anatomy), so the inference draws nuclei first. A membrane shell
-        # enclosing nuclei is the biology; state it.
+        # infer: containment goes by bounding-sphere radius, and the hosted fit
+        # gives the nuclei channel a 1.7 % larger sphere (a property of where the
+        # splats landed, not of the anatomy), so the inference draws nuclei first.
+        # A membrane shell enclosing nuclei is the biology; state it.
         "layer_order": 10,
         # ---- recompute recipe, per channel ----
         #: ``--source-<name> PATH``: the assembled (time, z, y, x) array.
@@ -274,13 +274,11 @@ PRESET = "n2s"
 TILE_SIZE = 640
 #: Concurrent fit workers per GPU. NOT `auto` — see the docstring's warning.
 JOBS_PER_GPU = 12
-#: Voxel anisotropy: z step / lateral pitch. The raw MetaMorph headers give a
-#: 0.25 um z-step and 0.1083 um pixels = 2.3084x (the paper registry records
-#: voxel_um=(0.25, 0.1083, 0.1083)). A RATIO, not a micron conversion: it only
-#: makes Z commensurate with X/Y, and the centres stay on the lateral-pixel grid.
-#: The 2026-08 pair on the record carries the historical 2.5 (step 7). Kept as
-#: the computed quotient rather than a rounded literal.
-VOXEL_SCALE = (0.25 / 0.1083, 1.0, 1.0, 1.0)
+#: Physical voxel size in fitted-axis order (Z, Y, X, Time). The raw MetaMorph
+#: headers and paper registry record voxel_um=(0.25, 0.1083, 0.1083); the
+#: stacked time coordinate is already in frames and must not be scaled.
+#: The 2026-08 pair on the record carries the historical Z-only 2.5 (step 7).
+VOXEL_SCALE = (0.25, 0.1083, 0.1083, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
 NORMALIZE_INTENSITY = 1.0
@@ -404,15 +402,13 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
         if not merged.exists():
             raise SystemExit(f"merge produced no {merged}")
 
-        # Anisotropy + normalisation LAST: this is what takes the archive off the
-        # voxel grid, and the fit's PSNR stamps are only comparable to the source
-        # before it happens. The factor is the measured 2.3084 rather than the 2.5
-        # the pinned archives carry, so a rebuild is 7.7% shorter in Z than the
-        # published pair, and the display windows in ``CHANNELS`` plus the
-        # bounding-sphere radii recorded there -- and tabulated in the neuromast
-        # row of ``docs/guides/specs/LAYER_ORDER_SPEC.md`` -- were measured on
-        # the old geometry and want re-measuring before the corrected pair is
-        # repinned.
+        # Physical voxel scaling + normalisation LAST: the fit's PSNR stamps are
+        # only comparable to the voxel-grid source before this conversion. The
+        # uniform 0.1083x shrink relative to the anisotropy-corrected rebuild
+        # leaves the amplitude-space window/gamma and post-multiply opacity
+        # unchanged. Additive ray integration is world-scale dependent, however:
+        # the micron rebuild is 9.23x dimmer (-3.21 stops). Keep -3.4 for the
+        # pinned pixel-unit pair; the repin must render-check roughly -0.2.
         run_luxar_cli(
             "gsplat",
             "transform",
@@ -522,13 +518,14 @@ def resolve_channel_paths() -> list[Path]:
 def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     """Build the 4D two-channel scene: one layer-enabled gsplats node per marker.
 
-    The gsplats are pre-fit 4D (``z, y, x, time``), already Z-scaled and
-    intensity-normalised, so we simply graft each channel with its LUT and
-    ``layer=True``. The pinned pair was scaled by the historical 2.5, not
-    ``VOXEL_SCALE`` (step 7), so a scene built from the downloaded archives is
-    8.3 % stretched in Z; one built by ``--recompute`` is not.
-    Both channels share identical 4D bounds → they co-register and animate
-    together over the Time dimension.
+    The gsplats are pre-fit 4D (``z, y, x, time``), already spatially scaled
+    (microns after a ``--recompute`` build) and intensity-normalised, so we simply
+    graft each channel with its LUT and ``layer=True``. The pinned pair was scaled
+    by the historical Z-only 2.5, not ``VOXEL_SCALE`` (step 7), so its spatial
+    coordinates remain in lateral-pixel units and Z is also stretched by 8.3 %;
+    a ``--recompute`` build has physical spatial units. Both channels' centre
+    bounds must agree within one uint16 coordinate step; they co-register and
+    animate over the Time dimension.
     """
     with asection("Creating 4D two-channel neuromast scene"):
         # Explicit, named 4D dims (not the generic dim0..dim3 from
@@ -537,10 +534,35 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         # so the Dimensions list must follow that exact order. The three
         # spatial axes are displayed; Time is a DISCRETE (step=1) hidden axis
         # that drives the playback slider.
-        node, _ = load_gsplat_node(str(channel_paths[0]))
-        bmin, bmax = center_bounds(node)
+        channel_bounds = []
+        for path in channel_paths:
+            node, _ = load_gsplat_node(str(path))
+            bounds = center_bounds(node)
+            if bounds is None:
+                raise ValueError(f"Channel has no centre bounds: {path}")
+            channel_bounds.append(bounds)
+        channel_mins = np.stack([bounds[0] for bounds in channel_bounds])
+        channel_maxs = np.stack([bounds[1] for bounds in channel_bounds])
+        bmin = np.min(channel_mins, axis=0)
+        bmax = np.max(channel_maxs, axis=0)
+        endpoint_delta = np.maximum(
+            np.ptp(channel_mins, axis=0), np.ptp(channel_maxs, axis=0)
+        )
+        # These archives' centres use per-axis uint16 fixed point
+        # (linear_perchannel_u16), so extent / 65535 is one coordinate step. The
+        # largest endpoint difference is 2.5e-5 on Y: 4.35e-8 of its 579.00 extent,
+        # or 0.3 % of one step.
+        quantization_step = (bmax - bmin) / 65535
+        divergent = endpoint_delta > quantization_step
+        if np.any(divergent):
+            axes = np.asarray(("Z", "Y", "X", "Time"))[divergent]
+            raise ValueError(
+                "Neuromast channels do not co-register within one uint16 "
+                f"coordinate step on axes {', '.join(axes)}: "
+                f"endpoint deltas={endpoint_delta[divergent]}, "
+                f"tolerances={quantization_step[divergent]}"
+            )
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
-        # The µm labels are aspirational: 1 unit = 0.1083 µm; see step 7 and #2723.
         dims = Dimensions(
             [
                 Dimension(
