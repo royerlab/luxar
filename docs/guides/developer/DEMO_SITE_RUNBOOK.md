@@ -1439,7 +1439,12 @@ python scripts/gallery/gen_redirects.py \
 
 The generator currently accepts one prefix. After an incremental publish,
 generate one fragment per live prefix and stitch each store's routes from the
-prefix where that store is live; replacing the whole table with one invocation
+prefix where that store is live. Omit `--check-contract` from the fragment
+invocations: it is a whole-table check, so run it once on a disposable invocation
+over the union of live stores, then splice in the correctly prefixed fragment
+lines. The generated warning banner and `# prefix:` line also describe only one
+invocation; replace them with an explicit note listing every live prefix in the
+stitched table. Replacing the whole table with one single-prefix invocation
 breaks every store left on another prefix. #2736 tracks making multi-prefix
 generation native.
 
