@@ -98,15 +98,6 @@ exceeded <ms>ms')`. The timer is always cleared in `finally`.
   the cache indefinitely — every call in `OPFSStore` that touches the
   filesystem goes through this helper.
 
-### `opfs-read-gate.ts` — bounded read fan-out
-
-- **`withOpfsReadGate(run)`** — page-wide FIFO gate for chunk reads. Deep
-  progressive passes can fan out several hundred L2 hits at once, and reads
-  were the last unbounded browser-filesystem path after writes gained their own
-  cap. The reported multi-second L2 stall remains unattributed. Queue wait is
-  outside each operation's timeout, so healthy backpressure is never
-  misclassified as hung I/O.
-
 ## Invariants
 
 - **Bucket hash is part of the on-disk format.** Changing `getBucket`

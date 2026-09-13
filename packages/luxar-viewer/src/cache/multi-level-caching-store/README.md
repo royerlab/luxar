@@ -35,6 +35,7 @@ the OPFS store's own helpers).
 multi-level-caching-store/
 ├── segmented-lru-cache.ts    # L1 routing: metadata segment + chunks segment
 ├── opfs-store.ts             # L2 OPFS persistence with bucketing and LRU
+├── opfs-read-gate.ts         # Page-wide FIFO read cap + live backpressure stats
 ├── opfs-store/               # Subpackage: OPFS layout, metadata, timeout
 ├── fetch-retry.ts            # HTTP retry/abort/backoff + URL build + URL hash
 ├── bandwidth-window.ts       # Sliding-window bytes/sec tracker
@@ -42,6 +43,19 @@ multi-level-caching-store/
 ```
 
 ## Components
+
+### `opfs-read-gate.ts` — bounded read fan-out
+
+- **`withOpfsReadGate(run)`** — page-wide FIFO gate for chunk reads. Deep
+  progressive passes can fan out several hundred L2 hits at once, and reads
+  were the last unbounded browser-filesystem path after writes gained their own
+  cap. The reported multi-second L2 stall remains unattributed. Queue wait is
+  outside each operation's timeout, so healthy backpressure is never
+  misclassified as hung I/O.
+- **`getOpfsReadGateStats()`** — exposes active and queued reads to the cache
+  monitor so a live stall distinguishes backend work from gate backpressure.
+- **`resetOpfsReadGate()`** — clears module-global gate state for test isolation;
+  releases from the prior epoch cannot corrupt the new counters.
 
 ### `segmented-lru-cache.ts` — L1 router
 
