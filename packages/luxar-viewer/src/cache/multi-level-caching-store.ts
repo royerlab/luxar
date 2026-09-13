@@ -592,7 +592,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private async fetchKeyChain(key: string, sharedSignal?: AbortSignal): Promise<PendingGetOutcome> {
     // L2: OPFS check (~1ms)
     if (this.enabled && this.l2Store) {
-      const l2Hit = await this.l2Store.get(key);
+      const l2Hit = await this.l2Store.get(key, { signal: sharedSignal });
       if (l2Hit) {
         this.log(`L2 hit: ${key}`, 'info');
         // CRIT-5: if validateCache aborted this in-flight get during the

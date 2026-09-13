@@ -436,8 +436,8 @@ export class OPFSStore {
   /**
    * Get a file from OPFS and update LRU order.
    */
-  async get(key: string): Promise<Uint8Array | undefined> {
-    if (this.disposed || !this.opfsRoot) {
+  async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
+    if (this.disposed || !this.opfsRoot || options?.signal?.aborted) {
       this.missCount++;
       return undefined;
     }
@@ -456,7 +456,9 @@ export class OPFSStore {
 
     try {
       const data = await withOpfsReadGate(async () => {
-        if (this.disposed || !this.opfsRoot || !this.index.has(key)) return undefined;
+        if (this.disposed || !this.opfsRoot || !this.index.has(key) || options?.signal?.aborted) {
+          return undefined;
+        }
         const root = this.opfsRoot;
         return this.timed(
           (async () => {

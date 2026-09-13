@@ -293,6 +293,55 @@ describe('OPFSStore', () => {
       expect(results.every((result) => result?.[0] === 1)).toBe(true);
     });
 
+    it('drops canceled reads while they are waiting for an OPFS slot', async () => {
+      const activeKeys = Array.from(
+        { length: MAX_CONCURRENT_OPFS_READS },
+        (_, index) => `active-wave/${index}`
+      );
+      const queuedKeys = Array.from({ length: 32 }, (_, index) => `canceled-wave/${index}`);
+      await Promise.all(
+        [...activeKeys, ...queuedKeys].map((key) => store.set(key, new Uint8Array([1])))
+      );
+
+      const originalGetFileHandle = mockFS.mockDirHandle.getFileHandle.bind(mockFS.mockDirHandle);
+      let activeReads = 0;
+      let fileReads = 0;
+      let releaseReads!: () => void;
+      const readsBlocked = new Promise<void>((resolve) => {
+        releaseReads = resolve;
+      });
+      mockFS.mockDirHandle.getFileHandle = async (...args: unknown[]) => {
+        const handle = await originalGetFileHandle(...args);
+        const originalGetFile = handle.getFile.bind(handle);
+        return {
+          ...handle,
+          async getFile() {
+            activeReads++;
+            fileReads++;
+            await readsBlocked;
+            try {
+              return await originalGetFile();
+            } finally {
+              activeReads--;
+            }
+          },
+        };
+      };
+
+      const active = activeKeys.map((key) => store.get(key));
+      await vi.waitFor(() => expect(activeReads).toBe(MAX_CONCURRENT_OPFS_READS));
+
+      const abort = new AbortController();
+      const queued = queuedKeys.map((key) => store.get(key, { signal: abort.signal }));
+      await Promise.resolve();
+      abort.abort();
+      releaseReads();
+
+      await Promise.all(active);
+      expect(await Promise.all(queued)).toEqual(queuedKeys.map(() => undefined));
+      expect(fileReads).toBe(MAX_CONCURRENT_OPFS_READS);
+    });
+
     it('should retrieve stored data', async () => {
       const data = new Uint8Array([1, 2, 3, 4, 5]);
       await store.set('test.key', data);
