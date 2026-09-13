@@ -209,10 +209,10 @@ CHANNELS = [
         "gamma": 0.71,
         # The enclosing structure, so it composites FIRST and the nuclei read on
         # top of it. This deliberately does NOT match the order the viewer would
-        # infer: containment goes by bounding-sphere radius, and this fit gives
-        # the nuclei channel the marginally LARGER sphere (60.17 vs 59.17 µm, a 1.7%
-        # difference that is a property of where the splats landed, not of the
-        # anatomy), so the inference draws nuclei first. A membrane shell
+        # infer: containment goes by bounding-sphere radius, and the hosted fit
+        # gives the nuclei channel a 1.7 % larger sphere (a property of where the
+        # splats landed, not of the anatomy), so the inference draws nuclei first.
+        # A membrane shell
         # enclosing nuclei is the biology; state it.
         "layer_order": 10,
         # ---- recompute recipe, per channel ----

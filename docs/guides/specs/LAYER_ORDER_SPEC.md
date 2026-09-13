@@ -27,16 +27,17 @@ scale, `renderOrder` 1..M, farthest first, by three rules (full prose at
 
 Rule 3 is why the two multichannel bioimaging demos do **not** pop today.
 Measured 2026-09-01 on the hosted build, `volumetric` forced on every layer,
-8 camera angles spanning 300°. The neuromast radii were re-measured 2026-09-12
-on the physical-micron rebuild; its uniform scale leaves the ordering unchanged:
+8 camera angles spanning 300°. Converting an anisotropy-corrected neuromast
+rebuild from lateral-pixel units to microns is a uniform scale, so it leaves the
+containment edge and `DISTINCT_ORDERINGS = 1` unchanged:
 
 | demo | fixed order | radius | contains the next? |
 | --- | --- | --- | --- |
 | acto3d heart | `vasculature` @1 | 1130.74 | yes — margin **2.2** |
 | | `tnni3` @2 | 1126.79 | yes — margin 49.7 |
 | | `nuclei` @3 | 1064.67 | — |
-| neuromast | `nuclei` @1 | 60.17 µm | yes — margin **0.99 µm** |
-| | `membranes` @2 | 59.17 µm | — |
+| neuromast | `nuclei` @1 | 555.54 | yes — margin **1.7 %** |
+| | `membranes` @2 | 546.39 | — |
 
 `DISTINCT_ORDERINGS = 1` for both, and the order is exactly by **decreasing
 radius** — the signature of a containment DAG, whose edges always point large →
