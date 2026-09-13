@@ -185,11 +185,9 @@ Use it to:
 ## Example Output
 
 Typical statistics for Luxar (run `make stats` for current values):
-- **~2,500 files** across all supported languages (the exact count varies by revision)
-- **~65,000+ lines of code** (executable)
-- **Primary code mix**: Python (~60%), TypeScript (~30%), Rust (~5%), CUDA (~2%)
-- **~300+ classes/structs** total
-- **~600+ functions** total
+- File and executable-line counts across all supported languages
+- Primary-language code distribution
+- Class, interface, function, kernel, and other definition counts
 - **Comprehensive test coverage** with Python/TypeScript/Rust tests
 
 See `project_stats.html` for the full interactive report with charts and detailed breakdowns!
