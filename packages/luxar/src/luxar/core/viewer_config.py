@@ -71,6 +71,19 @@ ENVIRONMENT_RESOLUTION_MAX = 1024
 ENVIRONMENT_NODE_PROBE_PREFIX = "node:"
 
 
+def _validate_playback_lod_depth(depth: Optional[Union[int, str]]) -> None:
+    if depth is None:
+        return
+    if isinstance(depth, bool) or not (
+        (isinstance(depth, int) and depth >= 1)
+        or (isinstance(depth, str) and depth in VALID_PLAYBACK_LOD_DEPTHS)
+    ):
+        raise ValueError(
+            "playback_lod_depth must be an int >= 1 or one of "
+            f"{VALID_PLAYBACK_LOD_DEPTHS}, got {depth!r}"
+        )
+
+
 @dataclass
 class CameraConfig:
     """Initial camera configuration for the viewer.
@@ -1021,16 +1034,7 @@ class ViewerConfig:
                 f"tone_mapping must be one of {VALID_TONE_MAPPINGS}, got '{self.tone_mapping}'"
             )
 
-        if self.playback_lod_depth is not None:
-            depth = self.playback_lod_depth
-            if isinstance(depth, bool) or not (
-                (isinstance(depth, int) and depth >= 1)
-                or (isinstance(depth, str) and depth in VALID_PLAYBACK_LOD_DEPTHS)
-            ):
-                raise ValueError(
-                    "playback_lod_depth must be an int >= 1 or one of "
-                    f"{VALID_PLAYBACK_LOD_DEPTHS}, got {depth!r}"
-                )
+        _validate_playback_lod_depth(self.playback_lod_depth)
 
         if (
             self.control_type is not None
