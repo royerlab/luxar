@@ -551,7 +551,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         endpoint_delta = np.maximum(
             np.ptp(channel_mins, axis=0), np.ptp(channel_maxs, axis=0)
         )
-        quantization_step = np.nextafter((bmax - bmin) / 65535, np.inf)
+        quantization_step = (bmax - bmin) / 65535
         divergent = endpoint_delta > quantization_step
         if np.any(divergent):
             axes = np.asarray(("Z", "Y", "X", "Time"))[divergent]
