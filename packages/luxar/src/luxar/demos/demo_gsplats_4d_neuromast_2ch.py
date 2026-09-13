@@ -199,8 +199,9 @@ CHANNELS = [
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
-        # Display window (Layers-panel range) and gamma, set by eye on the shipped
-        # store (re-tuned 2026-09-10 under ADDITIVE compositing, see the graft).
+        # Display window (Layers-panel range) and gamma, set by eye on the pinned
+        # historical-2.5, lateral-pixel-unit store (re-tuned 2026-09-10 under
+        # ADDITIVE compositing, see the graft).
         # The window is authored as intensity/offset: intensity = 1 / (hi - lo),
         # offset = -lo / (hi - lo), which the viewer maps back to [lo, hi] on a
         # colormapped node. A gamma below 1 lifts the dim membrane shell.
@@ -404,8 +405,10 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
         # Physical voxel scaling + normalisation LAST: the fit's PSNR stamps are
         # only comparable to the voxel-grid source before this conversion. The
         # uniform 0.1083x shrink relative to the anisotropy-corrected rebuild
-        # leaves amplitudes unchanged, and cinematic auto-framing follows the
-        # bounds, so the measured ``CHANNELS`` appearance remains valid.
+        # leaves the amplitude-space window/gamma and post-multiply opacity
+        # unchanged. Additive ray integration is world-scale dependent, however:
+        # the micron rebuild is 9.23x dimmer (-3.21 stops). Keep -3.4 for the
+        # pinned pixel-unit pair; the repin must render-check roughly -0.2.
         run_luxar_cli(
             "gsplat",
             "transform",
