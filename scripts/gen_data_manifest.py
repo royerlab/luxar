@@ -485,8 +485,8 @@ DATASETS: dict[str, dict] = {
         # first-author role. It is his data, so it is his call.
         #
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
-        # the cc-by record and pinned below (md5 verified against Zenodo). Those
-        # pins became the active fetch contract when the record was published.
+        # the cc-by record (md5 verified against Zenodo). Their digests are retained
+        # as superseded pins; the active pins describe the R2 mirror above.
     ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",
