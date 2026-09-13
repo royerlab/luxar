@@ -65,6 +65,43 @@ def _healthy_stats() -> dict[str, Any]:
     }
 
 
+def _report_stats() -> dict[str, Any]:
+    languages = {
+        name: gs.LanguageStats().as_dict() for name in gs.LANGUAGE_CONFIG
+    }
+    languages["python"]["code_lines"] = 1
+    languages["typescript"]["code_lines"] = 1
+    tests = _healthy_stats()
+    tests["python"]["test_files"] = 1_001
+    tests["typescript"]["test_files"] = 2_002
+    tests["rust"]["test_files"] = 3_003
+    tests["e2e"]["test_files"] = 4_004
+    return {
+        "languages": languages,
+        "tests": tests,
+        "git": {
+            "total_commits": 0,
+            "contributors": 0,
+            "tags": 0,
+            "commits_last_30_days": 0,
+            "files_changed_last_30_days": 0,
+            "first_commit_date": None,
+            "last_commit_date": None,
+            "top_contributors": [],
+        },
+        "dependencies": {
+            ecosystem: {"production": 0, "dev": 0, "groups": {}, "packages": []}
+            for ecosystem in ("python", "node", "rust")
+        },
+        "extras": {
+            "project_size_bytes": 0,
+            "ci_workflows": 0,
+            "changelog_versions": 0,
+        },
+        "package_breakdown": {"python": [], "typescript": []},
+    }
+
+
 # ---------------------------------------------------------------------------
 # File scanning
 # ---------------------------------------------------------------------------
@@ -82,6 +119,22 @@ def test_analyze_language_skips_zarr_store_contents(tmp_path: Path) -> None:
     assert stats.files == 1
     assert stats.total_lines == 1
     assert stats.largest_files == [("config.json", 1)]
+
+
+def test_reports_format_test_file_counts_with_thousands_separators(
+    tmp_path: Path,
+) -> None:
+    html_file = tmp_path / "stats.html"
+    markdown_file = tmp_path / "stats.md"
+
+    gs.generate_html_report(_report_stats(), html_file)
+    gs.generate_markdown_report(_report_stats(), markdown_file)
+
+    html_report = html_file.read_text()
+    markdown_report = markdown_file.read_text()
+    for count in ("1,001", "2,002", "3,003", "4,004", "10,010"):
+        assert count in html_report
+        assert count in markdown_report
 
 
 # ---------------------------------------------------------------------------

@@ -1682,11 +1682,11 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
 <table>
 <tr><th>Metric</th><th class="number">Python</th><th class="number">TypeScript</th><th class="number">Rust</th><th class="number">E2E</th><th class="number">Total</th><th>Status</th></tr>
 <tr><td>Test Files</td>
-    <td class="number">{tests["python"]["test_files"]}</td>
-    <td class="number">{tests["typescript"]["test_files"]}</td>
-    <td class="number">{tests["rust"]["test_files"]}</td>
-    <td class="number">{tests["e2e"]["test_files"]}</td>
-    <td class="number">{total_test_files}</td>
+    <td class="number">{tests["python"]["test_files"]:,}</td>
+    <td class="number">{tests["typescript"]["test_files"]:,}</td>
+    <td class="number">{tests["rust"]["test_files"]:,}</td>
+    <td class="number">{tests["e2e"]["test_files"]:,}</td>
+    <td class="number">{total_test_files:,}</td>
     <td><span class="health-indicator health-good">Good</span></td></tr>
 <tr><td>Test Count</td>
     <td class="number">{tests["python"]["test_count"]:,}</td>
@@ -1831,7 +1831,7 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
 <div class="insight"><strong>Code density:</strong> {code_density:.1f}% executable code, {comment_density:.1f}% comments, blanks account for the rest.</div>
 <div class="insight"><strong>Language mix (primary):</strong> {mix_text}</div>
 <div class="insight"><strong>Architecture:</strong> {arch_text}</div>
-<div class="insight"><strong>Test health:</strong> {total_tests:,} tests across {total_test_files} files with {weighted_cov:.1f}% weighted coverage</div>
+<div class="insight"><strong>Test health:</strong> {total_tests:,} tests across {total_test_files:,} files with {weighted_cov:.1f}% weighted coverage</div>
 <div class="insight"><strong>Project activity:</strong> {git["commits_last_30_days"]:,} commits and {git["files_changed_last_30_days"]:,} files touched in the last 30 days by {git["contributors"]} contributor(s).</div>
 <div class="insight"><strong>Documentation:</strong> {md["files"]} markdown files with {md["total_lines"]:,} lines.</div>
 </section>
@@ -2026,10 +2026,10 @@ def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
     lines.append("| Metric | Python | TypeScript | Rust | E2E | Total |")
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
     lines.append(
-        f"| Test files | {tests['python']['test_files']} | "
-        f"{tests['typescript']['test_files']} | "
-        f"{tests['rust']['test_files']} | "
-        f"{tests['e2e']['test_files']} | {total_test_files} |"
+        f"| Test files | {tests['python']['test_files']:,} | "
+        f"{tests['typescript']['test_files']:,} | "
+        f"{tests['rust']['test_files']:,} | "
+        f"{tests['e2e']['test_files']:,} | {total_test_files:,} |"
     )
     lines.append(
         f"| Tests collected | {tests['python']['test_count']:,} | "
