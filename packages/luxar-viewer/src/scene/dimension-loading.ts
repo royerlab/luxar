@@ -72,11 +72,12 @@ function scheduleScrubSettle(ctx: DimensionLoadingContext): void {
     if (ctx.getAnimationManager()?.isAnyPlaying()) return;
     const dims = sceneDimsManager.getDims();
     if (!dims || dims.ndim === 0) return;
-    // Re-notify through a NON-displayed dimension (the one that was scrubbed, in
-    // the common case): a same-value write to a displayed axis would be a no-op
-    // for the slice but still fan out to its UI. setDimensionValue notifies the
-    // listeners synchronously and unconditionally, so the flag below is read
-    // before it is cleared.
+    // Prefer a non-displayed dimension (the one that was scrubbed, in the common
+    // case) so the same-value write does not fan out to a displayed-axis UI. If
+    // every dimension is displayed, fall back to dimension 0: the notification
+    // is still required to release the pinned loader into normal refinement.
+    // setDimensionValue notifies listeners synchronously and unconditionally, so
+    // the flag below is read before it is cleared.
     const displayed = new Set(dims.displayed ?? []);
     let dim = 0;
     for (let d = 0; d < dims.ndim; d++) {

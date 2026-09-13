@@ -70,7 +70,7 @@ function dimsQuerySig(view: ViewState): string {
  * the prefix lineage so the append gate full-rewrites. Any new
  * query-affecting field added to {@link ViewState} MUST be compared
  * here, or the skip serves stale data. Per-pass directives that are NOT
- * part of the query (e.g. `frameBudgetMs`, `prefetch`) must NOT be
+ * part of the query (e.g. `frameBudgetMs`, `prefetch`, `ladderDepth`) must NOT be
  * compared — they would defeat the memoization. If a geometry ever
  * specializes its `*ViewState` alias (today all three are plain
  * aliases of {@link ViewState}) with its own query-affecting field,

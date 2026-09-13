@@ -1273,7 +1273,7 @@ export class DimensionSliders {
     // micro-header row (title + an optional right-aligned muted readout)
     // over one WRAPPING row of selectable chips — the sanctioned
     // "active chip/segment" idiom — instead of a tall radio list. Header
-    // TEXT stays exactly 'Speed' / 'Loop Mode' / 'Step' (E2E-pinned); the
+    // TEXT stays exactly 'Speed' / 'Loop Mode' / 'Detail' / 'Step' (E2E-pinned); the
     // uppercase rendering comes from CSS.
     const makeSection = (title: string, aside?: string): HTMLDivElement => {
       const section = document.createElement('div');

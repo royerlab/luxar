@@ -124,7 +124,7 @@ ladder depth pinned?):
 | `pinned`   | `ViewState.ladderDepth` set     | **Load exactly the pinned rung count**, cold or not — the loader bounds its loop at `resolveLadderDepth(depth, nLods, energyTable, threshold)` and neither the deadline nor a cache miss stops it. Foreground or shadow; takes precedence over the other three. `'auto'` resolves to the first rung whose energy stamp reaches `config.dimensionAnimation.playback.autoEnergyThreshold` (an unstamped ladder is left unpinned). |
 
 When the refinement sweep supplies a residency allowance, it overrides all
-three disciplines: the level that spends the allowance is kept, then the pass
+four disciplines: the level that spends the allowance is kept, then the pass
 stops before appending another cached level.
 
 ```typescript

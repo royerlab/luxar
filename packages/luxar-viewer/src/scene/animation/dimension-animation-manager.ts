@@ -72,6 +72,10 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /** Cached dimension ranges for performance */
   private dimensionRanges: [number, number][] | null = null;
 
+  /** The detail a fresh dimension state starts with (see {@link setDefaultLadderDepth}). */
+  private defaultLadderDepth: number | 'auto' | null =
+    config.dimensionAnimation.defaults.ladderDepth;
+
   /** Per-dimension update tracking — prevents advancing faster than data loads */
   private pendingUpdates = new Set<number>();
 
@@ -655,10 +659,6 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   getState(dimIndex: number): DimensionAnimationState | undefined {
     return this.animationStates.get(dimIndex);
   }
-
-  /** The detail a fresh dimension state starts with (see {@link setDefaultLadderDepth}). */
-  private defaultLadderDepth: number | 'auto' | null =
-    config.dimensionAnimation.defaults.ladderDepth;
 
   /**
    * Set target FPS for a dimension

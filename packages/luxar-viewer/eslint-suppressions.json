@@ -1139,7 +1139,7 @@
   },
   "src/tests/unit/data/gsplats-progressive-loader.test.ts": {
     "@typescript-eslint/no-misused-promises": {
-      "count": 10
+      "count": 13
     }
   },
   "src/tests/unit/data/gsplats/spatial-index-loader.test.ts": {
@@ -1149,7 +1149,7 @@
   },
   "src/tests/unit/data/lines-progressive-loader.test.ts": {
     "@typescript-eslint/no-misused-promises": {
-      "count": 9
+      "count": 12
     }
   },
   "src/tests/unit/data/lines/spatial-index-loader.test.ts": {
@@ -1169,7 +1169,7 @@
   },
   "src/tests/unit/data/points-progressive-loader.test.ts": {
     "@typescript-eslint/no-misused-promises": {
-      "count": 10
+      "count": 13
     }
   },
   "src/tests/unit/data/points/spatial-extend-dims.test.ts": {
