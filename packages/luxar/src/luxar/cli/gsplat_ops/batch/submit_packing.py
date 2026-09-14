@@ -21,6 +21,8 @@ def resolve_tasks_per_job(
         max_safe = math.prod(max_shape) if max_shape else tile_voxels
 
         if parallel:
+            # Local worker sizing uses the shared policy in gsplats/utils/device.py;
+            # Slurm packing needs allocation-aware limits tracked in #2756.
             # Each concurrent fit holds the volume tensor + model params
             # + optimizer state. ~2× the raw volume is a safe estimate.
             packing = max(1, int(max_safe / max(tile_voxels * 2, 1)))

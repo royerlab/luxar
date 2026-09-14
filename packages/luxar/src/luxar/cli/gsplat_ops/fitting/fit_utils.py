@@ -623,7 +623,7 @@ def dispatch_parallel_tiled(
         fit_tiled_parallel,
         luxar_argv0,
         report_auto_jobs,
-        resolve_jobs_with_limit,
+        resolve_jobs,
     )
     from luxar.gsplats.fitting.downscale import downscale_volume, normalize_downscale
     from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
@@ -647,7 +647,7 @@ def dispatch_parallel_tiled(
     tile_voxels = max((int(math.prod(s.shape)) for s in specs), default=1)
 
     try:
-        worker_limit = resolve_jobs_with_limit(
+        worker_limit = resolve_jobs(
             ctx.jobs,
             tile_voxels=tile_voxels,
             num_tiles=n_tiles,

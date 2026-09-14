@@ -222,32 +222,14 @@ def resolve_jobs(
     num_tiles: int,
     device: Optional[str] = None,
     dtype_bytes: int = 4,
-) -> int:
-    """Resolve the ``--jobs`` option to a concrete worker count.
+) -> "WorkerLimit":
+    """Resolve ``--jobs`` and report the resource that limited auto sizing.
 
     Explicit integers pass through (clamped to ``>= 1``). ``"auto"`` accounts
     for the per-tile working set plus fixed CUDA-process overhead, then applies
     free host RAM, CPU-count, and hard caps. CPU / MPS use the host limits only.
     The result is always clamped to ``num_tiles``.
     """
-    return resolve_jobs_with_limit(
-        jobs,
-        tile_voxels=tile_voxels,
-        num_tiles=num_tiles,
-        device=device,
-        dtype_bytes=dtype_bytes,
-    ).count
-
-
-def resolve_jobs_with_limit(
-    jobs: str | int,
-    *,
-    tile_voxels: int,
-    num_tiles: int,
-    device: Optional[str] = None,
-    dtype_bytes: int = 4,
-) -> "WorkerLimit":
-    """Resolve ``--jobs`` and report the resource that limited auto sizing."""
     from luxar.gsplats.utils.device import (
         WorkerLimit,
         resolve_auto_worker_limit,
@@ -286,9 +268,11 @@ def resolve_jobs_with_limit(
 def report_auto_jobs(jobs: str | int, worker_limit: "WorkerLimit") -> None:
     """Print the resolved count and limiter for an automatic jobs request."""
     if isinstance(jobs, str) and jobs.strip().lower() == "auto":
+        from luxar.gsplats.utils.device import format_worker_limit
+
         aprint(
             f"Auto jobs: {worker_limit.count} worker(s), "
-            f"limited by {worker_limit.limit}"
+            f"{format_worker_limit(worker_limit.limit)}"
         )
 
 

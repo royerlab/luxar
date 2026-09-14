@@ -34,8 +34,10 @@ from luxar.gsplats.merged_quality import (
     QUALITY_WORKERS_PER_HOST_ENV,
 )
 from luxar.gsplats.utils.device import (
+    WorkerLimitReason,
+    format_worker_limit,
     resolve_gpu_selection,
-    resolve_jobs_per_gpu_with_limit,
+    resolve_jobs_per_gpu,
 )
 
 
@@ -135,13 +137,13 @@ def _auto_limit_suffix(
     jobs_per_gpu: str | int,
     n_run: int,
     workers: dict[int, int],
-    limiting_resource: str,
+    limiting_resource: WorkerLimitReason,
 ) -> str:
     """Describe the effective limiter for an automatic local worker count."""
     if not (isinstance(jobs_per_gpu, str) and jobs_per_gpu.strip().lower() == "auto"):
         return ""
     limit = "task count" if n_run < sum(workers.values()) else limiting_resource
-    return f", auto limit: {limit}"
+    return f", {format_worker_limit(limit)}"
 
 
 def _staging_path(out: Path, token: str | int) -> Path:
@@ -266,7 +268,8 @@ def run_batch_local(
         ``--gpus`` spec: ``auto`` (cards above a VRAM floor) / ``all`` / ``cpu`` /
         ``'0,1,3'``.
     jobs_per_gpu
-        Concurrent fit workers per GPU (``auto`` sizes from each card's free VRAM).
+        Concurrent fit workers per GPU. ``auto`` applies shared GPU-memory, host
+        RAM, CPU-thread, and configurable hard-cap limits.
     resume
         Skip tasks whose output (or ``.empty`` marker) already exists.
     channel_colors, recipe, recipe_params
@@ -289,7 +292,7 @@ def run_batch_local(
 
     gpu_indices = resolve_gpu_selection(gpus)
     task_ids = [j.task_id for j in manifest.jobs]
-    worker_plan = resolve_jobs_per_gpu_with_limit(
+    worker_plan = resolve_jobs_per_gpu(
         gpu_indices,
         task_voxels=_task_voxels(manifest),
         jobs_per_gpu=jobs_per_gpu,

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
+from typing import Literal, Optional
 
 import torch
 
@@ -30,6 +31,17 @@ _AUTO_VRAM_FLOOR_BYTES = 12 * 1024**3
 _AUTO_CUDA_WORKER_OVERHEAD_BYTES = 512 * 1024**2
 _AUTO_HOST_WORKER_OVERHEAD_BYTES = 1024**3
 _AUTO_WORKER_HARD_CAP = 8
+
+WorkerLimitReason = Literal[
+    "CPU count",
+    "GPU memory",
+    "GPU memory unavailable",
+    "hard cap",
+    "host RAM",
+    "requested count",
+    "selected GPU count",
+    "task count",
+]
 
 
 def is_mps_available() -> bool:
@@ -89,7 +101,7 @@ class WorkerLimit:
     """Resolved worker count and the resource that limited it."""
 
     count: int
-    limit: str
+    limit: WorkerLimitReason
 
 
 @dataclass(frozen=True)
@@ -97,11 +109,40 @@ class WorkerAllocation:
     """Per-device worker allocation and its limiting resource."""
 
     workers: dict[int, int]
-    limit: str
+    limit: WorkerLimitReason
+
+
+def format_worker_limit(limit: WorkerLimitReason) -> str:
+    """Format a worker-limiting reason consistently for user-facing output."""
+    return f"limited by {limit}"
+
+
+def _linux_available_memory_bytes() -> Optional[int]:
+    """Read Linux ``MemAvailable`` in bytes, or return ``None``."""
+    try:
+        meminfo = Path("/proc/meminfo").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):  # pragma: no cover - non-Linux/platform
+        return None
+    for line in meminfo.splitlines():
+        key, separator, value = line.partition(":")
+        if key != "MemAvailable" or not separator:
+            continue
+        fields = value.split()
+        if not fields:
+            return None
+        try:
+            available_kib = int(fields[0])
+        except ValueError:
+            return None
+        return available_kib * 1024
+    return None
 
 
 def available_host_memory_bytes() -> Optional[int]:
-    """Return free physical host memory in bytes, or ``None`` if unavailable."""
+    """Return allocatable host memory in bytes, or ``None`` if unavailable."""
+    linux_available = _linux_available_memory_bytes()
+    if linux_available is not None:
+        return linux_available
     try:
         pages = os.sysconf("SC_AVPHYS_PAGES")
         page_size = os.sysconf("SC_PAGE_SIZE")
@@ -112,6 +153,41 @@ def available_host_memory_bytes() -> Optional[int]:
     return int(pages * page_size)
 
 
+def _effective_cpu_count() -> int:
+    """Return CPUs available to this process, respecting affinity/cgroups."""
+    process_cpu_count = getattr(os, "process_cpu_count", None)
+    if process_cpu_count is not None:
+        count = process_cpu_count()
+        if count is not None:
+            return max(1, int(count))
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):  # pragma: no cover - platform
+        return max(1, os.cpu_count() or 1)
+
+
+def _intraop_thread_count() -> int:
+    """Return the largest configured per-worker BLAS/OpenMP thread count."""
+    counts = [1]
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        try:
+            counts.append(max(1, int(os.environ.get(name, "1"))))
+        except ValueError:
+            continue
+    return max(counts)
+
+
+def _auto_worker_hard_cap(minimum: int = 1) -> int:
+    """Return the configurable auto-worker cap, never below ``minimum``."""
+    override = os.environ.get("LUXAR_AUTO_WORKER_HARD_CAP")
+    if override:
+        try:
+            return max(minimum, int(override))
+        except ValueError:
+            pass
+    return max(minimum, _AUTO_WORKER_HARD_CAP)
+
+
 def _task_working_set_bytes(
     task_voxels: int, dtype_bytes: int, safety_factor: float
 ) -> int:
@@ -119,9 +195,10 @@ def _task_working_set_bytes(
 
 
 def _host_worker_limit(task_bytes: int) -> WorkerLimit:
-    candidates = [
-        (max(1, os.cpu_count() or 1), "CPU count"),
-        (_AUTO_WORKER_HARD_CAP, "hard cap"),
+    cpu_workers = max(1, _effective_cpu_count() // max(2, _intraop_thread_count()))
+    candidates: list[tuple[int, WorkerLimitReason]] = [
+        (cpu_workers, "CPU count"),
+        (_auto_worker_hard_cap(), "hard cap"),
     ]
     available = available_host_memory_bytes()
     if available is not None:
@@ -148,16 +225,26 @@ def resolve_auto_worker_limit(
 ) -> WorkerLimit:
     """Resolve safe host concurrency for one device and report its limiter."""
     task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
-    candidates = [_host_worker_limit(task_bytes)]
-    if require_device_memory:
-        candidates.append(_gpu_worker_capacity(free_device_memory, task_bytes))
-    return min(candidates, key=lambda item: item.count)
+    host_limit = _host_worker_limit(task_bytes)
+    if not require_device_memory:
+        return host_limit
+    if free_device_memory is None:
+        return WorkerLimit(host_limit.count, "GPU memory unavailable")
+    return min(
+        (host_limit, _gpu_worker_capacity(free_device_memory, task_bytes)),
+        key=lambda item: item.count,
+    )
 
 
 def _allocate_workers(capacities: dict[int, int], total: int) -> dict[int, int]:
     """Distribute a host-wide worker budget proportionally across devices."""
-    allocation = {gpu: 0 for gpu in capacities}
-    for _ in range(max(1, total)):
+    if total >= len(capacities):
+        allocation = {gpu: 1 for gpu in capacities}
+        remaining = total - len(capacities)
+    else:
+        allocation = {gpu: 0 for gpu in capacities}
+        remaining = max(1, total)
+    for _ in range(remaining):
         eligible = [gpu for gpu, cap in capacities.items() if allocation[gpu] < cap]
         if not eligible:
             break
@@ -284,7 +371,7 @@ def resolve_jobs_per_gpu(
     jobs_per_gpu: str | int = "auto",
     dtype_bytes: int = 4,
     safety_factor: float = 2.0,
-) -> dict[int, int]:
+) -> WorkerAllocation:
     """Per-device concurrent-worker count for the local runner.
 
     Mirrors :func:`luxar.gsplats.fit_tiled_parallel.resolve_jobs` but sizes each
@@ -295,23 +382,6 @@ def resolve_jobs_per_gpu(
     ``gpu_indices == []`` means CPU: returns ``{-1: n}`` where ``n`` is the
     explicit count or the same host-level auto limit.
     """
-    return resolve_jobs_per_gpu_with_limit(
-        gpu_indices,
-        task_voxels=task_voxels,
-        jobs_per_gpu=jobs_per_gpu,
-        dtype_bytes=dtype_bytes,
-        safety_factor=safety_factor,
-    ).workers
-
-
-def resolve_jobs_per_gpu_with_limit(
-    gpu_indices: list[int],
-    *,
-    task_voxels: int,
-    jobs_per_gpu: str | int = "auto",
-    dtype_bytes: int = 4,
-    safety_factor: float = 2.0,
-) -> WorkerAllocation:
     """Resolve per-device workers and the limiting resource."""
     explicit: Optional[int] = None
     if not (isinstance(jobs_per_gpu, str) and jobs_per_gpu.strip().lower() == "auto"):
@@ -343,12 +413,13 @@ def resolve_jobs_per_gpu_with_limit(
 
     host_limit = _host_worker_limit(task_bytes)
     device_total = sum(capacities.values())
-    total = min(device_total, host_limit.count)
-    if device_total <= host_limit.count:
+    unconstrained_total = min(device_total, host_limit.count)
+    total = max(len(capacities), unconstrained_total)
+    if unconstrained_total < len(capacities):
+        limiting_resource: WorkerLimitReason = "selected GPU count"
+    elif device_total <= host_limit.count:
         limiting_resource = (
-            "GPU memory unavailable"
-            if unknown_device_memory == len(gpu_indices)
-            else "GPU memory"
+            "GPU memory unavailable" if unknown_device_memory > 0 else "GPU memory"
         )
     else:
         limiting_resource = host_limit.limit

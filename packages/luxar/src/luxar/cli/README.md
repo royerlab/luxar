@@ -560,7 +560,7 @@ luxar gsplat benchmark --list                         # Show profiled GPUs
 The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared. Content planning rejects on-the-fly `--denoise` and `--progressive` because content-box workers do not implement them; `batch-fit submit --preprocess` is the supported denoising route because it denoises to a store before the boxes fit.
 
 #### `luxar gsplat batch-fit run`
-Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. One worker is pinned per GPU via `CUDA_VISIBLE_DEVICES`; per-GPU concurrency is sized from each card's free VRAM. Resumable — re-running skips tiles already on disk.
+Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. Workers are pinned per GPU via `CUDA_VISIBLE_DEVICES`; automatic concurrency accounts for GPU memory and shared host RAM/CPU limits. Resumable — re-running skips tiles already on disk.
 ```bash
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256                  # uniform, every GPU
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto # content plan

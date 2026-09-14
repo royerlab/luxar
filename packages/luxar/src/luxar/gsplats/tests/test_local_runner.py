@@ -485,7 +485,7 @@ def test_run_batch_local_reports_auto_worker_limit(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(
         device_mod, "available_host_memory_bytes", lambda: 125 * 1024**3
     )
-    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 32)
+    monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 32)
 
     lr.run_batch_local(
         manifest,
@@ -498,7 +498,7 @@ def test_run_batch_local_reports_auto_worker_limit(tmp_path: Path, monkeypatch) 
 
     assert sections[0] == (
         "Local batch fit: 10/10 tasks on CPU, 8 concurrent worker(s), "
-        "auto limit: hard cap"
+        "limited by hard cap"
     )
 
 

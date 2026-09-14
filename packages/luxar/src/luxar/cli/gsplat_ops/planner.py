@@ -510,13 +510,13 @@ def run_content_fit(
     # ── fit (sequential or parallel box subprocesses); partition unless --flat ──
     from luxar.gsplats.fit_tiled_parallel import (
         report_auto_jobs,
-        resolve_jobs_with_limit,
+        resolve_jobs,
     )
     from luxar.gsplats.planner.fit_planned_parallel import max_padded_box_voxels
 
     n_budgeted = sum(1 for b in fitplan.boxes if b.budget > 0)
     try:
-        worker_limit = resolve_jobs_with_limit(
+        worker_limit = resolve_jobs(
             jobs,
             tile_voxels=max_padded_box_voxels(fitplan),
             num_tiles=max(1, n_budgeted),

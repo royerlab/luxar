@@ -251,7 +251,8 @@ def run_fit_volume(
         "-j",
         help="With --tiling uniform/content: number of tiles/boxes to fit "
         "concurrently as subprocesses "
-        "on one GPU (int, or 'auto' to size from free VRAM). Default 1 = "
+        "on one GPU (int, or 'auto' to size from GPU memory, host RAM, and "
+        "available CPU threads). Default 1 = "
         "sequential. Ignored with --tiling none or --tile.",
         rich_help_panel="Tiling",
     ),
