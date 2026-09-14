@@ -683,26 +683,88 @@ def test_docs_gate_rejects_every_invalid_changelog_fragment(tmp_path: Path) -> N
     root = _make_project(tmp_path, with_defect=False)
     fragment_dir = root / "changelog.d"
     fragment_dir.mkdir()
-    (fragment_dir / "1.md").write_text("### Fixed\n\n- Bullet.\n")
+    (fragment_dir / "bad fragment.md").write_text("### Fixed\n\n- Bullet.\n")
     (fragment_dir / "2.md").write_text("\n")
     script_copy, _ = _install_script(root)
 
     proc = _run(script_copy)
 
     assert proc.returncode == 1
-    assert "2 invalid changelog fragments" in proc.stderr
-    assert "fragment 1.md must start" in proc.stderr
-    assert "fragment 2.md is empty" in proc.stderr
+    assert proc.stderr == ""
+    assert proc.stdout.count("fragment bad fragment.md must start") == 1
+    assert proc.stdout.count("fragment 2.md is empty") == 1
 
     json_proc = _run(script_copy, "--json")
     assert json_proc.returncode == 1
     report = json.loads(json_proc.stdout)
-    failures = [item for item in report["findings"] if not item["passed"]]
-    changelog_failure = next(
-        item for item in failures if item["check_name"] == "Changelog fragment format"
+    changelog_failures = [
+        item
+        for item in report["findings"]
+        if item["check_name"] == "Changelog fragment format"
+    ]
+    assert [item["key"] for item in changelog_failures] == [
+        "Changelog fragment format::changelog.d::2.md",
+        "Changelog fragment format::changelog.d::bad fragment.md",
+    ]
+    assert "fragment 2.md is empty" in changelog_failures[0]["message"]
+    assert "fragment bad fragment.md must start" in changelog_failures[1]["message"]
+
+
+def test_docs_gate_reports_invalid_utf8_without_traceback(tmp_path: Path) -> None:
+    root = _make_project(tmp_path, with_defect=False)
+    fragment_dir = root / "changelog.d"
+    fragment_dir.mkdir()
+    (fragment_dir / "bad.md").write_bytes(b"#### Caf\xe9\n\nBody.\n")
+    script_copy, _ = _install_script(root)
+
+    proc = _run(script_copy)
+
+    assert proc.returncode == 1
+    assert "fragment bad.md is not valid UTF-8" in proc.stdout
+    assert "Traceback" not in proc.stdout + proc.stderr
+
+
+def test_docs_gate_reports_passing_fragment_check_in_verbose_and_json(
+    tmp_path: Path,
+) -> None:
+    root = _make_project(tmp_path, with_defect=False)
+    fragment_dir = root / "changelog.d"
+    fragment_dir.mkdir()
+    (fragment_dir / "1.md").write_text("#### Valid\n\nBody.\n")
+    script_copy, baseline_path = _install_script(root)
+    cd.save_baseline(baseline_path, set())
+
+    verbose_proc = _run(script_copy, "--verbose")
+    assert verbose_proc.returncode == 0
+    assert verbose_proc.stdout.count("validated 1 changelog fragment") == 1
+
+    json_proc = _run(script_copy, "--json")
+    assert json_proc.returncode == 0
+    report = json.loads(json_proc.stdout)
+    changelog_results = [
+        item
+        for item in report["findings"]
+        if item["check_name"] == "Changelog fragment format"
+    ]
+    assert len(changelog_results) == 1
+    assert changelog_results[0]["passed"] is True
+
+
+def test_invalid_fragment_cannot_be_added_to_docs_baseline(tmp_path: Path) -> None:
+    root = _make_project(tmp_path, with_defect=False)
+    fragment_dir = root / "changelog.d"
+    fragment_dir.mkdir()
+    (fragment_dir / "bad.md").write_text("### Fixed\n\n- Bullet.\n")
+    script_copy, baseline_path = _install_script(root)
+    cd.save_baseline(
+        baseline_path,
+        {"Changelog fragment format::changelog.d::bad.md"},
     )
-    assert "fragment 1.md must start" in changelog_failure["message"]
-    assert "fragment 2.md is empty" in changelog_failure["message"]
+
+    proc = _run(script_copy)
+
+    assert proc.returncode == 1
+    assert "cannot be baselined" in proc.stdout
 
 
 def test_update_baseline_cli(tmp_path: Path) -> None:

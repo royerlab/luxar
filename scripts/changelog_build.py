@@ -77,17 +77,36 @@ def _fragments() -> list[Path]:
     )
 
 
-def _read_block(p: Path) -> str:
-    text = p.read_text(encoding="utf-8").strip("\n")
+def _validate_block(p: Path) -> str | None:
+    """Return a fragment validation error, or None when it is valid."""
+    try:
+        text = p.read_text(encoding="utf-8").strip("\n")
+    except UnicodeDecodeError:
+        return f"fragment {p.name} is not valid UTF-8"
+    except OSError as exc:
+        return f"fragment {p.name} could not be read: {exc}"
+
     if not text.strip():
-        raise SystemExit(f"✗ fragment {p.name} is empty")
+        return f"fragment {p.name} is empty"
     first = text.lstrip().splitlines()[0]
     if not first.startswith("#### "):
-        raise SystemExit(
-            f"✗ fragment {p.name} must start with a '#### Title' heading "
+        return (
+            f"fragment {p.name} must start with a '#### Title' heading "
             f"(house style); got: {first!r}"
         )
-    return text
+    return None
+
+
+def _read_block(p: Path) -> str:
+    failure = _validate_block(p)
+    if failure:
+        raise SystemExit(f"✗ {failure}")
+    try:
+        return p.read_text(encoding="utf-8").strip("\n")
+    except UnicodeDecodeError:
+        raise SystemExit(f"✗ fragment {p.name} is not valid UTF-8") from None
+    except OSError as exc:
+        raise SystemExit(f"✗ fragment {p.name} could not be read: {exc}") from None
 
 
 def _read_blocks(frags: list[Path]) -> dict[Path, str]:
@@ -95,10 +114,11 @@ def _read_blocks(frags: list[Path]) -> dict[Path, str]:
     blocks: dict[Path, str] = {}
     failures: list[str] = []
     for fragment in frags:
-        try:
-            blocks[fragment] = _read_block(fragment)
-        except SystemExit as exc:
-            failures.append(str(exc).removeprefix("✗ "))
+        failure = _validate_block(fragment)
+        if failure:
+            failures.append(failure)
+            continue
+        blocks[fragment] = _read_block(fragment)
 
     if failures:
         noun = "fragment" if len(failures) == 1 else "fragments"

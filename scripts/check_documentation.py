@@ -768,23 +768,70 @@ def build_json_report(
 # ---------------------------------------------------------------------------
 
 
-def _check_changelog_fragments(project_root: Path) -> tuple[bool, str]:
-    """Run the git-free changelog fragment validator used by docs-quality."""
+def _check_changelog_fragments(
+    project_root: Path,
+) -> tuple[bool, List[CheckResult]]:
+    """Run the git-free fragment validator and return reportable results.
+
+    Failed result keys are structurally baselineable like every other finding.
+    The returned validity flag is therefore load-bearing: every exit path must
+    also consult it so a manually added baseline entry cannot silence this gate.
+    """
     validator = project_root / "scripts" / "changelog_build.py"
+    fragment_dir = project_root / "changelog.d"
+    check_name = "Changelog fragment format"
     if not validator.is_file():
-        return False, f"Changelog fragment validator not found: {validator}"
+        return False, [
+            CheckResult(
+                passed=False,
+                file_path=str(fragment_dir),
+                check_name=check_name,
+                message=f"Changelog fragment validator not found: {validator}",
+            )
+        ]
 
     proc = subprocess.run(
         [sys.executable, str(validator), "--check"],
         cwd=project_root,
         capture_output=True,
         text=True,
+        errors="replace",
         check=False,
     )
     if proc.returncode == 0:
-        return True, proc.stdout.strip()
+        return True, [
+            CheckResult(
+                passed=True,
+                file_path=str(fragment_dir),
+                check_name=check_name,
+                message=proc.stdout.strip(),
+            )
+        ]
 
-    return False, (proc.stderr or proc.stdout).strip()
+    message = (proc.stderr or proc.stdout).strip()
+    failures: List[CheckResult] = []
+    for line in message.splitlines():
+        match = re.match(r"\s*-\s+(fragment (?P<name>.+?\.md) .+)", line)
+        if match:
+            failures.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(fragment_dir),
+                    check_name=check_name,
+                    message=match.group(1),
+                    key_detail=match.group("name"),
+                )
+            )
+    if failures:
+        return False, failures
+    return False, [
+        CheckResult(
+            passed=False,
+            file_path=str(fragment_dir),
+            check_name=check_name,
+            message=message,
+        )
+    ]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -812,7 +859,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--update-baseline",
         action="store_true",
-        help="(Re)write the baseline from current failures and exit 0",
+        help=(
+            "(Re)write the baseline from current failures; exits 1 instead "
+            "when a changelog fragment is invalid"
+        ),
     )
     return parser.parse_args()
 
@@ -923,12 +973,7 @@ def main() -> None:
     # Find project root
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
-    fragments_valid, fragment_message = _check_changelog_fragments(project_root)
-    if not args.json:
-        print(
-            fragment_message,
-            file=sys.stdout if fragments_valid else sys.stderr,
-        )
+    fragments_valid, fragment_results = _check_changelog_fragments(project_root)
 
     baseline_path = (
         Path(args.baseline)
@@ -938,15 +983,7 @@ def main() -> None:
 
     checker = DocumentationChecker(project_root, verbose=args.verbose)
     checker.check_all(quiet=args.json)
-    if not fragments_valid:
-        checker.results.append(
-            CheckResult(
-                passed=False,
-                file_path=str(project_root / "changelog.d"),
-                check_name="Changelog fragment format",
-                message=fragment_message,
-            )
-        )
+    checker.results.extend(fragment_results)
     current = failure_keys(checker.results, project_root)
 
     if args.update_baseline:

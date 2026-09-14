@@ -89,6 +89,30 @@ def test_read_block_accepts_heading(tmp_path):
     assert cb._read_block(frag).startswith("#### Title")
 
 
+def test_validate_block_returns_error_without_raising(tmp_path):
+    frag = tmp_path / "1.md"
+    frag.write_text("### Fixed\n\n- Bullet.\n", encoding="utf-8")
+
+    assert cb._validate_block(frag) == (
+        "fragment 1.md must start with a '#### Title' heading "
+        "(house style); got: '### Fixed'"
+    )
+
+
+def test_read_blocks_reports_invalid_utf8_and_unreadable_fragment(tmp_path):
+    invalid_utf8 = tmp_path / "1.md"
+    unreadable = tmp_path / "2.md"
+    invalid_utf8.write_bytes(b"#### Caf\xe9\n\nBody.\n")
+    unreadable.mkdir()
+
+    with pytest.raises(SystemExit) as exc_info:
+        cb._read_blocks([invalid_utf8, unreadable])
+
+    message = str(exc_info.value)
+    assert "fragment 1.md is not valid UTF-8" in message
+    assert "fragment 2.md could not be read" in message
+
+
 def test_read_blocks_reports_every_invalid_fragment(tmp_path):
     good = tmp_path / "1.md"
     bad_heading = tmp_path / "2.md"
