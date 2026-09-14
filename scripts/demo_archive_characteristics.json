@@ -145,19 +145,13 @@
       "quality_caveat": "No reconstruction quality was recorded at fit time for this timelapse, and the published archive carries no stamps to recover one from -- verified by reading the hosted bytes rather than inferred. An honest figure needs either a refit that stamps quality as it fits, or a scoring run against the full 500-timepoint source recording, which is 77 GB of raw voxels and is not redistributed here. The compression ratio is against that raw voxel total and is exact."
     },
     "gsplats_4d_neuromast_2ch/neuromast_membranes.gsplats.zarr.zip": {
-      "n_splats": 5864440,
-      "ndim": null,
-      "format_version": null,
-      "topology": null,
-      "psnr_db": [
-        45.85,
-        50.92
-      ],
-      "foreground_psnr_db": [
-        45.93,
-        50.68
-      ],
-      "foreground_fraction": 0.0735,
+      "n_splats": 6400000,
+      "ndim": 4,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 8 steps",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
       "source_shape": [
         100,
         84,
@@ -167,24 +161,20 @@
       "source_dtype": "float32",
       "source_bytes": 11225088000,
       "frames": 100,
-      "measured_from": null,
-      "measured_sha256": null,
-      "quality_note": "measured 2026-08-25 PER TIMEPOINT against the background-subtracted volume the fit consumed; range is over frames 0/25/50/75/99. A stacked archive cannot be scored whole -- its time axis is last and the source's is first, which understates foreground PSNR by ~33 dB"
+      "quality_quotable": false,
+      "measured_from": "staged",
+      "measured_sha256": "b272a271f2cd8383e65933d9bec1e07c80b1078b86ec899417cab8604cc43b22",
+      "quality_note": "Archive metadata read 2026-09-13 from the checksum-matched R2 bytes. The 2026-08 per-timepoint PSNR ranges belonged to the superseded redundancy-culled build and were retired rather than attributed to this 6.4M-splat archive.",
+      "quality_caveat": "No reconstruction quality is published for this corrected archive. Its metadata carries no quotable fit-time score, and the prior per-timepoint ranges were measured from superseded bytes; an honest figure requires re-scoring this generation against the preprocessed source volumes."
     },
     "gsplats_4d_neuromast_2ch/neuromast_nuclei.gsplats.zarr.zip": {
-      "n_splats": 5530300,
-      "ndim": null,
-      "format_version": null,
-      "topology": null,
-      "psnr_db": [
-        53.57,
-        57.97
-      ],
-      "foreground_psnr_db": [
-        50.93,
-        55.83
-      ],
-      "foreground_fraction": 0.0259,
+      "n_splats": 6400000,
+      "ndim": 4,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 8 steps",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
       "source_shape": [
         100,
         84,
@@ -194,9 +184,11 @@
       "source_dtype": "float32",
       "source_bytes": 11225088000,
       "frames": 100,
-      "measured_from": null,
-      "measured_sha256": null,
-      "quality_note": "measured 2026-08-25 PER TIMEPOINT against the background-subtracted volume the fit consumed; range is over frames 0/25/50/75/99. A stacked archive cannot be scored whole -- its time axis is last and the source's is first, which understates foreground PSNR by ~33 dB"
+      "quality_quotable": false,
+      "measured_from": "staged",
+      "measured_sha256": "6453283f2f4031fa7a99d82fc03ce6fa5f38438a86cd9fc3e1bfd3be362228b0",
+      "quality_note": "Archive metadata read 2026-09-13 from the checksum-matched R2 bytes. The 2026-08 per-timepoint PSNR ranges belonged to the superseded redundancy-culled build and were retired rather than attributed to this 6.4M-splat archive.",
+      "quality_caveat": "No reconstruction quality is published for this corrected archive. Its metadata carries no quotable fit-time score, and the prior per-timepoint ranges were measured from superseded bytes; an honest figure requires re-scoring this generation against the preprocessed source volumes."
     },
     "gsplats_celegans/celegans_s1.gsplats.zarr.zip": {
       "n_splats": 5640070,

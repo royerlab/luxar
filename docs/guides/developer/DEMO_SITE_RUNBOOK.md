@@ -21,7 +21,7 @@ Three hostnames on the `luxarviewer.dev` zone, each serving a different thing:
 |---|---|---|
 | `luxarviewer.dev` | The viewer alone, at the root | Cloudflare Pages project `luxar-viewer` |
 | `demos.luxarviewer.dev` | The gallery page, its media, and its viewer | Cloudflare Pages project `luxar-demos` |
-| `data.luxarviewer.dev` | The `.luxar.zarr` stores and content-addressed root-README media | Cloudflare R2 bucket `luxar-demos`, **direct** |
+| `data.luxarviewer.dev` | The `.luxar.zarr` stores, content-addressed root-README media, and `inputs/<slug>/` source archives | Cloudflare R2 bucket `luxar-demos`, **direct** |
 
 **Neither Pages project has a `functions/` directory or an R2 binding.** Both
 are pure static assets. This is the single most important property of the
@@ -41,6 +41,8 @@ Instead:
 - **Root-README media** (`data.luxarviewer.dev/media/<sha256-prefix>.<ext>`) are
   direct R2 objects. Their content-addressed keys are immutable and are recorded
   in `scripts/gallery/media-manifest.json`.
+- **Source archives** (`data.luxarviewer.dev/inputs/<slug>/`) may be the only
+  copy of a demo's pinned inputs. They are not disposable scene-build outputs.
 - **Stable demo deep links** (`demos.luxarviewer.dev/d/<demo-key>`) redirect to
   that scene under the current dated data prefix. The root README's gallery
   titles depend on these routes, so every publish wave must preserve and update
@@ -1517,9 +1519,12 @@ file. Their `.webm` objects were deleted from both the deploy tree and R2.
 
 ### 8.3 Build from the record archives — and distrust the cache
 
-The site must be built from the **Zenodo record generation**, held at
-`~/luxar-zenodo-archives/` (52 files, `MANIFEST.json`, `SHA256SUMS`). Verify
-before use — it takes seconds and the whole failure below came from not doing it:
+The site is normally built from the **Zenodo record generation**, held at
+`~/luxar-zenodo-archives/` (52 files, `MANIFEST.json`, `SHA256SUMS`). Datasets
+with a manifest `base_url` instead use their pinned mirror archives under
+`inputs/<slug>/`; preserve those objects because they may have no Zenodo or Git
+LFS copy. Verify the local record archive before use — it takes seconds and the
+whole failure below came from not doing it:
 
 ```bash
 cd ~/luxar-zenodo-archives && shasum -c SHA256SUMS    # expect: 52 OK, 0 failed
