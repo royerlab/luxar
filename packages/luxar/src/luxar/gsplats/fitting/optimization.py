@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
 from luxar.gsplats.fitting.config import (
+    _EMPTY_RELOCATION_STATISTICS,
     FitConfig,
     ModelComponents,
     OptimizationResults,
@@ -59,7 +60,7 @@ def _completed_relocation_statistics(
 ) -> dict[str, int]:
     """Return persisted relocation counters without transient cooldown state."""
     if relocation_tracker is None:
-        return {"total_relocations": 0, "unique_splats": 0}
+        return _EMPTY_RELOCATION_STATISTICS.copy()
     tracker_statistics = relocation_tracker.get_statistics()
     return {
         "total_relocations": tracker_statistics["total_relocations"],
