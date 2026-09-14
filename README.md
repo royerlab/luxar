@@ -74,7 +74,7 @@ is the slow exception).
 | **Interoperable** | Reads classical 3D-Gaussian-splatting captures (INRIA, `.splat`, `.spz`, SuperSplat, PlayCanvas SOG); writes INRIA PLY |
 | **Shareable** | `luxar export` produces a standalone offline folder, or a native bundle — a double-clickable macOS `.app`, a portable Linux folder — that opens with no Luxar install |
 
-> **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support. Chromium, Firefox and WebKit are all tested — see [Browser Compatibility](#browser-compatibility) for what was measured and what was not. Touch/mobile devices are not currently supported.
+> **Requirements:** The Luxar viewer needs a browser with **WebGL2** support. Chromium, Firefox and WebKit are all tested — see [Browser Compatibility](#browser-compatibility) for what was measured and what was not. Touch input is implemented (one- and two-finger orbit/fly gestures, tap-to-pick, long-press menus, a coarse-pointer layout) and exercised by an emulated iPhone/iPad/Pixel Playwright suite; performance on real phones and tablets has not been benchmarked, so treat mobile as supported but unmeasured.
 
 ---
 
