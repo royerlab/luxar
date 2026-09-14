@@ -13,6 +13,7 @@ from luxar.gsplats.utils.device import (
     is_mps_available,
     resolve_gpu_selection,
     resolve_jobs_per_gpu,
+    resolve_jobs_per_gpu_with_limit,
     resolve_torch_device,
 )
 
@@ -202,14 +203,80 @@ def test_resolve_jobs_per_gpu_cpu(monkeypatch) -> None:
     assert set(auto) == {-1} and auto[-1] >= 1
 
 
+def test_resolve_jobs_per_gpu_auto_caps_reported_small_task(monkeypatch) -> None:
+    free = {0: int(7.5 * _GB)}
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: free[dev.index])
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: 125 * _GB)
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 32)
+
+    plan = resolve_jobs_per_gpu_with_limit(
+        [0], task_voxels=41 * 512 * 512, jobs_per_gpu="auto"
+    )
+
+    assert plan.workers == {0: 8}
+    assert plan.limit == "hard cap"
+
+
 def test_resolve_jobs_per_gpu_auto_scales_with_vram(monkeypatch) -> None:
-    # 40 GB vs 8 GB free -> the big card gets ~5x the workers.
+    # The host-wide cap is weighted toward the card with more free VRAM.
     free = {0: 40 * _GB, 1: 8 * _GB}
     monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: free[dev.index])
-    # ~256^3 voxels working set.
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: 125 * _GB)
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 32)
     workers = resolve_jobs_per_gpu([0, 1], task_voxels=256**3, jobs_per_gpu="auto")
+    assert sum(workers.values()) == 8
     assert workers[0] > workers[1] >= 1
-    assert 4 <= workers[0] / workers[1] <= 6
+
+
+def test_resolve_jobs_per_gpu_applies_host_ram_once_across_gpus(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: 40 * _GB)
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: 4 * _GB)
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 32)
+
+    plan = resolve_jobs_per_gpu_with_limit(
+        [0, 1], task_voxels=1000, jobs_per_gpu="auto"
+    )
+
+    assert sum(plan.workers.values()) == 3
+    assert set(plan.workers) == {0, 1}
+    assert plan.limit == "host RAM"
+
+
+def test_resolve_jobs_per_gpu_applies_cpu_count_across_gpus(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: 40 * _GB)
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: 125 * _GB)
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 4)
+
+    plan = resolve_jobs_per_gpu_with_limit(
+        [0, 1], task_voxels=1000, jobs_per_gpu="auto"
+    )
+
+    assert sum(plan.workers.values()) == 4
+    assert plan.limit == "CPU count"
+
+
+def test_resolve_jobs_per_gpu_unknown_gpu_memory_is_conservative(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: None)
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: 125 * _GB)
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 32)
+
+    plan = resolve_jobs_per_gpu_with_limit(
+        [0, 1], task_voxels=1000, jobs_per_gpu="auto"
+    )
+
+    assert plan.workers == {0: 1, 1: 1}
+    assert plan.limit == "GPU memory unavailable"
+
+
+def test_resolve_jobs_per_gpu_unknown_host_memory_still_hard_caps(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: 40 * _GB)
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: None)
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 32)
+
+    plan = resolve_jobs_per_gpu_with_limit([0], task_voxels=1000, jobs_per_gpu="auto")
+
+    assert plan.workers == {0: 8}
+    assert plan.limit == "hard cap"
 
 
 def test_resolve_jobs_per_gpu_explicit_uniform() -> None:

@@ -429,7 +429,7 @@ def test_finalize_real_promotion_clears_stale_empty_marker(tmp_path: Path) -> No
     assert not Path(str(out) + ".empty").exists()
 
 
-def _plan_single_tile_manifest(tmp_path: Path):  # type: ignore[no-untyped-def]
+def _plan_single_tile_manifest(tmp_path: Path, n_t: int = 1):  # type: ignore[no-untyped-def]
     from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
@@ -439,7 +439,7 @@ def _plan_single_tile_manifest(tmp_path: Path):  # type: ignore[no-untyped-def]
     )
 
     src = tmp_path / "vol.zarr"
-    _make_4d_zarr(src, n_t=1)
+    _make_4d_zarr(src, n_t=n_t)
     out_dir = tmp_path / "out"
     manifest = plan_batch(
         input_path=src,
@@ -458,6 +458,48 @@ def _plan_single_tile_manifest(tmp_path: Path):  # type: ignore[no-untyped-def]
         merge_recipe_args={},
     ).manifest
     return manifest, out_dir
+
+
+def test_run_batch_local_reports_auto_worker_limit(tmp_path: Path, monkeypatch) -> None:
+    """The resolved host-wide count and limiter are visible before launch."""
+    from contextlib import contextmanager
+
+    import luxar.gsplats.batch.local_runner as lr
+    import luxar.gsplats.utils.device as device_mod
+
+    manifest, out_dir = _plan_single_tile_manifest(tmp_path, n_t=10)
+    sections: list[str] = []
+
+    @contextmanager
+    def _capture_section(title: str):
+        sections.append(title)
+        yield
+
+    monkeypatch.setattr(lr, "asection", _capture_section)
+    monkeypatch.setattr(lr, "run_task_pool", lambda *a, **k: [])
+    monkeypatch.setattr(
+        lr,
+        "merge_batch_results",
+        lambda **kw: out_dir / "merged" / "final.gsplats.zarr",
+    )
+    monkeypatch.setattr(
+        device_mod, "available_host_memory_bytes", lambda: 125 * 1024**3
+    )
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 32)
+
+    lr.run_batch_local(
+        manifest,
+        out_dir,
+        gpus="cpu",
+        jobs_per_gpu="auto",
+        resume=False,
+        verbose=False,
+    )
+
+    assert sections[0] == (
+        "Local batch fit: 10/10 tasks on CPU, 8 concurrent worker(s), "
+        "auto limit: hard cap"
+    )
 
 
 def test_no_resume_replaces_stale_output_only_after_successful_refit(

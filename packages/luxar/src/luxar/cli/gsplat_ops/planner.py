@@ -508,20 +508,26 @@ def run_content_fit(
         raise typer.BadParameter("content fit requires --output/-o")
 
     # ── fit (sequential or parallel box subprocesses); partition unless --flat ──
-    from luxar.gsplats.fit_tiled_parallel import resolve_jobs
+    from luxar.gsplats.fit_tiled_parallel import (
+        report_auto_jobs,
+        resolve_jobs_with_limit,
+    )
     from luxar.gsplats.planner.fit_planned_parallel import max_padded_box_voxels
 
     n_budgeted = sum(1 for b in fitplan.boxes if b.budget > 0)
     try:
-        n_jobs = resolve_jobs(
+        worker_limit = resolve_jobs_with_limit(
             jobs,
             tile_voxels=max_padded_box_voxels(fitplan),
             num_tiles=max(1, n_budgeted),
             device=device,
         )
+        n_jobs = worker_limit.count
     except ValueError:
         aprint(f"Error: --jobs must be an integer or 'auto', got '{jobs}'")
         raise typer.Exit(1)
+
+    report_auto_jobs(jobs, worker_limit)
 
     partition = not flat
     t0 = time.perf_counter()

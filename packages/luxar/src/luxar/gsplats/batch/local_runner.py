@@ -6,8 +6,8 @@ The local counterpart of the Slurm fit array + merge: given a planned
 subprocess pool, then run the existing streaming merge to a ``kind=partition``
 ``.gsplats.zarr``.  The :mod:`task_pool` env hook pins GPU workers via
 ``CUDA_VISIBLE_DEVICES`` and exposes their host/device quality-memory shares;
-per-GPU concurrency is sized from each card's free VRAM.  Resumable: a task
-whose output already exists is skipped.
+auto concurrency is sized from per-card VRAM plus host RAM, CPU count, and a
+hard cap. Resumable: a task whose output already exists is skipped.
 
 This engine consumes only the manifest + already-parsed merge options, so it has
 no dependency on the CLI layer.
@@ -33,7 +33,10 @@ from luxar.gsplats.merged_quality import (
     QUALITY_WORKERS_PER_DEVICE_ENV,
     QUALITY_WORKERS_PER_HOST_ENV,
 )
-from luxar.gsplats.utils.device import resolve_gpu_selection, resolve_jobs_per_gpu
+from luxar.gsplats.utils.device import (
+    resolve_gpu_selection,
+    resolve_jobs_per_gpu_with_limit,
+)
 
 
 def _task_voxels(manifest: BatchManifest) -> int:
@@ -126,6 +129,19 @@ def _active_worker_counts(
 def _active_host_workers(active_workers: dict[int, int], n_run: int) -> int:
     """Count workers sharing host RAM, capped by runnable tasks."""
     return max(1, min(sum(active_workers.values()), n_run))
+
+
+def _auto_limit_suffix(
+    jobs_per_gpu: str | int,
+    n_run: int,
+    workers: dict[int, int],
+    limiting_resource: str,
+) -> str:
+    """Describe the effective limiter for an automatic local worker count."""
+    if not (isinstance(jobs_per_gpu, str) and jobs_per_gpu.strip().lower() == "auto"):
+        return ""
+    limit = "task count" if n_run < sum(workers.values()) else limiting_resource
+    return f", auto limit: {limit}"
 
 
 def _staging_path(out: Path, token: str | int) -> Path:
@@ -273,14 +289,13 @@ def run_batch_local(
 
     gpu_indices = resolve_gpu_selection(gpus)
     task_ids = [j.task_id for j in manifest.jobs]
-    workers = resolve_jobs_per_gpu(
+    worker_plan = resolve_jobs_per_gpu_with_limit(
         gpu_indices,
         task_voxels=_task_voxels(manifest),
         jobs_per_gpu=jobs_per_gpu,
     )
+    workers = worker_plan.workers
     assignment = build_device_assignment(task_ids, workers)
-    global_workers = max(1, min(sum(workers.values()), len(task_ids)))
-
     job_by_id = {j.task_id: j for j in manifest.jobs}
 
     # Per-invocation staging token: host + pid. Two concurrent run_batch_local()
@@ -300,6 +315,7 @@ def run_batch_local(
     active_workers = _active_worker_counts(task_ids, assignment, workers, _skip)
     n_run = sum(0 if _skip(task_id) else 1 for task_id in task_ids)
     active_host_workers = _active_host_workers(active_workers, n_run)
+    global_workers = max(1, min(sum(workers.values()), n_run))
 
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
@@ -321,10 +337,12 @@ def run_batch_local(
         gpu = assignment.get(task_id, -1)
         return _worker_env(gpu, active_workers, active_host_workers)
 
-    dev_desc = "CPU" if not gpu_indices else f"GPU(s) {gpu_indices}"
+    active_gpu_indices = [gpu for gpu in workers if gpu >= 0]
+    dev_desc = "CPU" if not active_gpu_indices else f"GPU(s) {active_gpu_indices}"
+    auto_limit = _auto_limit_suffix(jobs_per_gpu, n_run, workers, worker_plan.limit)
     with asection(
         f"Local batch fit: {n_run}/{len(task_ids)} tasks on {dev_desc}, "
-        f"{global_workers} concurrent worker(s)"
+        f"{global_workers} concurrent worker(s){auto_limit}"
     ):
         if verbose and n_run < len(task_ids):
             aprint(f"Resuming: {len(task_ids) - n_run} task(s) already complete")

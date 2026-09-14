@@ -55,14 +55,12 @@ QUALITY_WORKERS_PER_HOST_ENV = "LUXAR_QUALITY_WORKERS_PER_HOST"
 
 def _available_ram_gb() -> "float | None":
     """Free physical memory in GiB, or ``None`` where it cannot be measured."""
-    try:
-        pages = os.sysconf("SC_AVPHYS_PAGES")
-        page_size = os.sysconf("SC_PAGE_SIZE")
-    except (AttributeError, OSError, ValueError):  # pragma: no cover - platform
+    from luxar.gsplats.utils.device import available_host_memory_bytes
+
+    available = available_host_memory_bytes()
+    if available is None:
         return None
-    if pages <= 0 or page_size <= 0:  # pragma: no cover - platform
-        return None
-    return pages * page_size / 1024**3
+    return available / 1024**3
 
 
 def _default_quality_budget_gb() -> float:

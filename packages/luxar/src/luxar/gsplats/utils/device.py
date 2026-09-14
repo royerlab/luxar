@@ -23,6 +23,14 @@ import torch
 # Override with the ``LUXAR_GPU_VRAM_FLOOR_GB`` environment variable.
 _AUTO_VRAM_FLOOR_BYTES = 12 * 1024**3
 
+# ``auto`` concurrency must account for the fixed cost of a worker process, not
+# only the bytes in its tile.  A CUDA context plus library handles is hundreds
+# of MiB even for a tiny task; host RSS has a similar floor once Python, torch,
+# and the fit stack are imported.
+_AUTO_CUDA_WORKER_OVERHEAD_BYTES = 512 * 1024**2
+_AUTO_HOST_WORKER_OVERHEAD_BYTES = 1024**3
+_AUTO_WORKER_HARD_CAP = 8
+
 
 def is_mps_available() -> bool:
     """Return True when PyTorch's MPS backend is available.
@@ -66,14 +74,99 @@ class GpuInfo:
     """A visible CUDA device and its memory.
 
     ``free_mem`` is ``None`` when ``torch.cuda.mem_get_info`` is unavailable for
-    the device (rare; treated as "unknown" by selection/sizing, which then fall
-    back to ``total_mem``).
+    the device (rare). GPU selection falls back to ``total_mem``; auto worker
+    sizing conservatively assigns one worker to an unqueryable device.
     """
 
     index: int
     name: str
     total_mem: int  # bytes
     free_mem: Optional[int]  # bytes, or None if unqueryable
+
+
+@dataclass(frozen=True)
+class WorkerLimit:
+    """Resolved worker count and the resource that limited it."""
+
+    count: int
+    limit: str
+
+
+@dataclass(frozen=True)
+class WorkerAllocation:
+    """Per-device worker allocation and its limiting resource."""
+
+    workers: dict[int, int]
+    limit: str
+
+
+def available_host_memory_bytes() -> Optional[int]:
+    """Return free physical host memory in bytes, or ``None`` if unavailable."""
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):  # pragma: no cover - platform
+        return None
+    if pages <= 0 or page_size <= 0:  # pragma: no cover - platform
+        return None
+    return int(pages * page_size)
+
+
+def _task_working_set_bytes(
+    task_voxels: int, dtype_bytes: int, safety_factor: float
+) -> int:
+    return max(1, int(safety_factor * task_voxels * dtype_bytes))
+
+
+def _host_worker_limit(task_bytes: int) -> WorkerLimit:
+    candidates = [
+        (max(1, os.cpu_count() or 1), "CPU count"),
+        (_AUTO_WORKER_HARD_CAP, "hard cap"),
+    ]
+    available = available_host_memory_bytes()
+    if available is not None:
+        per_worker = task_bytes + _AUTO_HOST_WORKER_OVERHEAD_BYTES
+        candidates.append((max(1, available // per_worker), "host RAM"))
+    count, limit = min(candidates, key=lambda item: item[0])
+    return WorkerLimit(int(count), limit)
+
+
+def _gpu_worker_capacity(free_memory: Optional[int], task_bytes: int) -> WorkerLimit:
+    if free_memory is None:
+        return WorkerLimit(1, "GPU memory unavailable")
+    per_worker = task_bytes + _AUTO_CUDA_WORKER_OVERHEAD_BYTES
+    return WorkerLimit(max(1, int(free_memory // per_worker)), "GPU memory")
+
+
+def resolve_auto_worker_limit(
+    *,
+    task_voxels: int,
+    free_device_memory: Optional[int] = None,
+    require_device_memory: bool = False,
+    dtype_bytes: int = 4,
+    safety_factor: float = 2.0,
+) -> WorkerLimit:
+    """Resolve safe host concurrency for one device and report its limiter."""
+    task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
+    candidates = [_host_worker_limit(task_bytes)]
+    if require_device_memory:
+        candidates.append(_gpu_worker_capacity(free_device_memory, task_bytes))
+    return min(candidates, key=lambda item: item.count)
+
+
+def _allocate_workers(capacities: dict[int, int], total: int) -> dict[int, int]:
+    """Distribute a host-wide worker budget proportionally across devices."""
+    allocation = {gpu: 0 for gpu in capacities}
+    for _ in range(max(1, total)):
+        eligible = [gpu for gpu, cap in capacities.items() if allocation[gpu] < cap]
+        if not eligible:
+            break
+        gpu = max(
+            eligible,
+            key=lambda idx: (capacities[idx] / (allocation[idx] + 1), -idx),
+        )
+        allocation[gpu] += 1
+    return {gpu: count for gpu, count in allocation.items() if count > 0}
 
 
 def enumerate_gpus() -> list[GpuInfo]:
@@ -196,29 +289,67 @@ def resolve_jobs_per_gpu(
 
     Mirrors :func:`luxar.gsplats.fit_tiled_parallel.resolve_jobs` but sizes each
     selected GPU independently from *its own* free VRAM (so a small card gets
-    fewer workers than a large one).  ``"auto"`` divides free VRAM by a
-    conservative per-task working-set estimate (``safety_factor`` x the task's
-    voxel bytes); an explicit int applies uniformly to every device.
+    fewer workers than a large one), then applies host RAM, CPU-count, and hard
+    caps to their summed concurrency. An explicit int applies uniformly.
 
     ``gpu_indices == []`` means CPU: returns ``{-1: n}`` where ``n`` is the
-    explicit count or half the CPU count.
+    explicit count or the same host-level auto limit.
     """
+    return resolve_jobs_per_gpu_with_limit(
+        gpu_indices,
+        task_voxels=task_voxels,
+        jobs_per_gpu=jobs_per_gpu,
+        dtype_bytes=dtype_bytes,
+        safety_factor=safety_factor,
+    ).workers
+
+
+def resolve_jobs_per_gpu_with_limit(
+    gpu_indices: list[int],
+    *,
+    task_voxels: int,
+    jobs_per_gpu: str | int = "auto",
+    dtype_bytes: int = 4,
+    safety_factor: float = 2.0,
+) -> WorkerAllocation:
+    """Resolve per-device workers and the limiting resource."""
     explicit: Optional[int] = None
     if not (isinstance(jobs_per_gpu, str) and jobs_per_gpu.strip().lower() == "auto"):
         explicit = max(1, int(jobs_per_gpu))
 
     if not gpu_indices:  # CPU sentinel
-        n = explicit if explicit is not None else max(1, (os.cpu_count() or 2) // 2)
-        return {-1: n}
+        if explicit is not None:
+            return WorkerAllocation({-1: explicit}, "requested count")
+        task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
+        host_limit = _host_worker_limit(task_bytes)
+        return WorkerAllocation({-1: host_limit.count}, host_limit.limit)
 
     from luxar.gsplats.metrics import _gpu_free_memory
 
-    per_task = max(1, int(safety_factor * task_voxels * dtype_bytes))
-    result: dict[int, int] = {}
+    if explicit is not None:
+        return WorkerAllocation(
+            {idx: explicit for idx in gpu_indices}, "requested count"
+        )
+
+    task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
+    capacities: dict[int, int] = {}
+    unknown_device_memory = 0
     for idx in gpu_indices:
-        if explicit is not None:
-            result[idx] = explicit
-            continue
         free = _gpu_free_memory(torch.device(f"cuda:{idx}"))
-        result[idx] = 1 if free is None else max(1, int(free // per_task))
-    return result
+        capacity = _gpu_worker_capacity(free, task_bytes)
+        capacities[idx] = capacity.count
+        if free is None:
+            unknown_device_memory += 1
+
+    host_limit = _host_worker_limit(task_bytes)
+    device_total = sum(capacities.values())
+    total = min(device_total, host_limit.count)
+    if device_total <= host_limit.count:
+        limiting_resource = (
+            "GPU memory unavailable"
+            if unknown_device_memory == len(gpu_indices)
+            else "GPU memory"
+        )
+    else:
+        limiting_resource = host_limit.limit
+    return WorkerAllocation(_allocate_workers(capacities, total), limiting_resource)
