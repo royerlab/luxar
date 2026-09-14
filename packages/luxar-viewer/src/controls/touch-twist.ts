@@ -6,7 +6,9 @@
  * as the user sees it, so the scene turns counter-clockwise; negating the input
  * makes the scene follow the fingers. Shift+wheel adopts that same direction.
  * Orbit and fly apply the rotation about the same axis with the same
- * premultiplication order, so the sign is one law.
+ * premultiplication order, so the sign is one law. This convention governs
+ * gesture input only; orbit auto-rotation and fly's Q/E keyboard roll retain
+ * their independent signs.
  *
  * Controller-specific gains intentionally stay at their call sites: orbit's
  * touch gain is a dimensionless angle multiplier, while fly's touch gain feeds
