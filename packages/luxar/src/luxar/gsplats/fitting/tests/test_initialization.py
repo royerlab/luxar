@@ -223,6 +223,23 @@ def test_fresh_seed_sigma_branches_and_floor(
     )
 
 
+def test_fresh_seed_verbose_reports_pre_floor_sigma_and_clamp(
+    basic_config, basic_preprocessed_data, capsys
+) -> None:
+    """Verbose initialization distinguishes auto scale from the applied floor."""
+    basic_config.init_sigma_vox = None
+    basic_config.voxel_size = None
+    basic_config.sigma_min_diag = [3.0, 3.0]
+    basic_config.verbose = True
+
+    components = initialize_optimization(basic_config, basic_preprocessed_data)
+    assert components.model is not None
+
+    output = capsys.readouterr().out
+    assert "Auto-computed init sigma diag=[1.600000" in output
+    assert "Clamped L0 diagonal to >= sigma_min_diag + 0.1" in output
+
+
 def test_initialization_3d(basic_config) -> None:
     """Test initialization works for 3D data."""
     # Create 3D config and data

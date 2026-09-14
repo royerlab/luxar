@@ -1306,6 +1306,42 @@ def test_finalize_reports_uniform_precomputed_fit_initialization(
     assert stats["splats_near_fit_init_sigma_fraction"] == 1.0
 
 
+def test_finalize_applies_sigma_floor_to_precomputed_fit_initialization(
+    basic_config, basic_preprocessed_data
+) -> None:
+    """Fit diagnostics use the same active floor as model initialization."""
+    basic_config.init_sigma_vox = 0.5
+    basic_config.sigma_min_diag = [1.0, 1.0]
+    basic_config.clip_to_bounds = False
+    basic_preprocessed_data.init_L = np.tile(
+        np.diag([0.2, 0.2]).astype(np.float32), (5, 1, 1)
+    )
+    fitted_Ls = np.tile(np.diag([1.1, 1.1]).astype(np.float32), (5, 1, 1))
+    optimization_results = OptimizationResults(
+        centers=torch.full((5, 2), 16.0),
+        Ls=torch.tensor(fitted_Ls),
+        amps=torch.ones(5),
+        converged_early=False,
+        early_stopped=False,
+        actual_iters=10,
+        best_iteration=10,
+        best_loss=0.01,
+        best_max_abs_error=0.05,
+        best_rel_l2=0.1,
+        movie_frames=None,
+        start_time=0.0,
+        end_time=1.0,
+    )
+
+    stats = finalize_results(
+        optimization_results, basic_config, basic_preprocessed_data
+    ).stats
+
+    assert stats["fit_init_sigma_diag_vox"] == pytest.approx([1.1, 1.1])
+    assert stats["splats_near_fit_init_sigma_count"] == 5
+    assert stats["splats_near_fit_init_sigma_fraction"] == 1.0
+
+
 def test_finalize_summarizes_per_splat_fit_initialization(
     basic_config, basic_preprocessed_data
 ) -> None:
@@ -1342,9 +1378,7 @@ def test_finalize_summarizes_per_splat_fit_initialization(
     assert stats["fit_init_sigma_vox"] is None
     assert stats["fit_init_sigma_diag_vox"] is None
     assert stats["fit_init_marginal_sigma_diag_vox_min"] == pytest.approx([0.5, 0.7])
-    assert stats["fit_init_marginal_sigma_diag_vox_median"] == pytest.approx(
-        [0.7, 0.9]
-    )
+    assert stats["fit_init_marginal_sigma_diag_vox_median"] == pytest.approx([0.7, 0.9])
     assert stats["fit_init_marginal_sigma_diag_vox_max"] == pytest.approx([0.9, 1.1])
     assert stats["splats_near_fit_init_sigma_count"] is None
     assert stats["splats_near_fit_init_sigma_fraction"] is None

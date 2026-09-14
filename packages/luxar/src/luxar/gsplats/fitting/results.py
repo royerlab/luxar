@@ -18,7 +18,10 @@ from luxar.gsplats.fitting.config import (
     OptimizationResults,
     PreprocessedData,
 )
-from luxar.gsplats.fitting.initialization import resolve_fit_initial_sigma_diag
+from luxar.gsplats.fitting.initialization import (
+    apply_sigma_min_diag_floor,
+    resolve_fit_initial_sigma_diag,
+)
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import pack_tril
 
@@ -254,10 +257,11 @@ def _fit_diagnostic_stats(
         else:
             initial_Ls = preprocessed_data.init_L.astype(np.float32, copy=True)
             if sigma_min is not None:
+                clamped_diagonal = apply_sigma_min_diag_floor(
+                    np.diagonal(initial_Ls, axis1=1, axis2=2), sigma_min
+                )
                 for axis in range(preprocessed_data.d):
-                    initial_Ls[:, axis, axis] = np.maximum(
-                        initial_Ls[:, axis, axis], sigma_min[axis] + 0.1
-                    )
+                    initial_Ls[:, axis, axis] = clamped_diagonal[:, axis]
             initial_marginal_sigmas = np.sqrt(
                 np.einsum("nij,nij->ni", initial_Ls, initial_Ls, optimize=True)
             )

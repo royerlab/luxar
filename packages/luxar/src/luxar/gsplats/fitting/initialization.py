@@ -13,38 +13,50 @@ from luxar.gsplats.fitting.config import FitConfig, ModelComponents, Preprocesse
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.optim import create_optimizer_and_scheduler
 
+_SIGMA_MIN_DIAG_MARGIN = 0.1
 
-def resolve_fit_initial_sigma_diag(
+
+def apply_sigma_min_diag_floor(
+    sigma_diag: np.ndarray, sigma_min_diag: Sequence[float]
+) -> np.ndarray:
+    """Apply the fitter's gradient-safety floor to Cholesky diagonals."""
+    return np.maximum(
+        np.asarray(sigma_diag, dtype=np.float32),
+        np.asarray(sigma_min_diag, dtype=np.float32) + _SIGMA_MIN_DIAG_MARGIN,
+    )
+
+
+def _resolve_unfloored_fit_initial_sigma_diag(
     config: FitConfig, preprocessed_data: PreprocessedData
-) -> Optional[np.ndarray]:
-    """Return the uniform voxel-space sigma vector used for fresh seeds.
-
-    A caller-supplied ``init_L`` may contain a different covariance per splat,
-    so it has no single fit-initialization scale to diagnose.
-    """
-    if preprocessed_data.init_L is not None:
-        return None
-
+) -> np.ndarray:
+    """Return the fresh-seed sigma vector before the gradient-safety floor."""
     opt_shape = tuple(preprocessed_data.V_tensor.shape)
     if config.init_sigma_vox is not None:
-        sigma_diag = np.full(
+        return np.full(
             preprocessed_data.d, config.init_sigma_vox, dtype=np.float32
         )
-    elif config.voxel_size is not None:
+    if config.voxel_size is not None:
         phys_dims = np.array(opt_shape, dtype=np.float32) * config.voxel_size
         init_sigma_phys = max(
             1.5 * float(config.voxel_size.min()), float(phys_dims.min()) * 0.05
         )
-        sigma_diag = np.asarray(init_sigma_phys / config.voxel_size, dtype=np.float32)
-    else:
-        init_sigma = max(1.5, float(min(opt_shape)) * 0.05)
-        sigma_diag = np.full(preprocessed_data.d, init_sigma, dtype=np.float32)
+        return np.asarray(init_sigma_phys / config.voxel_size, dtype=np.float32)
+    init_sigma = max(1.5, float(min(opt_shape)) * 0.05)
+    return np.full(preprocessed_data.d, init_sigma, dtype=np.float32)
 
+
+def resolve_fit_initial_sigma_diag(
+    config: FitConfig, preprocessed_data: PreprocessedData
+) -> np.ndarray:
+    """Return the uniform voxel-space sigma vector used for fresh seeds.
+
+    Callers use this only when ``preprocessed_data.init_L`` is absent; supplied
+    covariances may contain a different initialization for every splat.
+    """
+    sigma_diag = _resolve_unfloored_fit_initial_sigma_diag(config, preprocessed_data)
     if config.sigma_min_diag is not None:
-        sigma_diag = np.maximum(
-            sigma_diag, np.asarray(config.sigma_min_diag, dtype=np.float32) + 0.1
-        )
-    return np.asarray(sigma_diag, dtype=np.float32)
+        sigma_diag = apply_sigma_min_diag_floor(sigma_diag, config.sigma_min_diag)
+    return sigma_diag
 
 
 def initialize_optimization(
@@ -90,24 +102,32 @@ def initialize_optimization(
             aprint(f"Using pre-initialized Cholesky factors: {L0.shape}")
     else:
         # Fallback: isotropic Gaussians with init_sigma_vox or auto-computed sigma
-        sigma_diag = resolve_fit_initial_sigma_diag(config, preprocessed_data)
-        assert sigma_diag is not None
+        sigma_diag = _resolve_unfloored_fit_initial_sigma_diag(
+            config, preprocessed_data
+        )
         L0 = np.zeros((N, d, d), dtype=np.float32)
         for i in range(d):
             L0[:, i, i] = sigma_diag[i]
 
         if config.verbose and config.init_sigma_vox is None:
-            units = "physical-derived voxel" if config.voxel_size is not None else "voxel"
+            units = (
+                "physical-derived voxel" if config.voxel_size is not None else "voxel"
+            )
             aprint(f"Auto-computed init sigma diag={sigma_diag.tolist()} ({units})")
 
     # Ensure diagonal values are at least sigma_min_diag to prevent gradient death
     # (inverse_softplus of values near 0 causes gradients to vanish)
-    if config.sigma_min_diag is not None and preprocessed_data.init_L is not None:
-        sigma_min = np.asarray(config.sigma_min_diag, dtype=np.float32)
+    if config.sigma_min_diag is not None:
+        clamped_diagonal = apply_sigma_min_diag_floor(
+            np.diagonal(L0, axis1=1, axis2=2), config.sigma_min_diag
+        )
         for i in range(d):
-            L0[:, i, i] = np.maximum(L0[:, i, i], sigma_min[i] + 0.1)
+            L0[:, i, i] = clamped_diagonal[:, i]
         if config.verbose:
-            aprint("Clamped L0 diagonal to >= sigma_min_diag + 0.1")
+            aprint(
+                "Clamped L0 diagonal to >= sigma_min_diag "
+                f"+ {_SIGMA_MIN_DIAG_MARGIN:g}"
+            )
 
     if preprocessed_data.init_amps is not None:
         # Use pre-computed amplitudes (already normalized to [0,1] in preprocessing)
