@@ -26,8 +26,9 @@ _FIT_REFERENCE_KINDS = frozenset(("acquisition", "preprocessed", "synthetic"))
 #: written on and not the one running the fit.
 _QUALITY_BUDGET_GB = 24.0
 
-#: Share of currently-free host memory or CUDA memory the default budget will
-#: commit to a score. Deliberately well under 1: the peaks below are estimates,
+#: Share of currently-allocatable host memory or free CUDA memory the default
+#: budget will commit to a score. Deliberately well under 1: the peaks below are
+#: estimates,
 #: the fit process is holding the merged splats too, and being wrong in this
 #: direction costs a metric while being wrong in the other costs the whole fit.
 _QUALITY_BUDGET_MEM_FRACTION = 0.5
@@ -54,7 +55,7 @@ QUALITY_WORKERS_PER_HOST_ENV = "LUXAR_QUALITY_WORKERS_PER_HOST"
 
 
 def _available_ram_gb() -> "float | None":
-    """Free physical memory in GiB, or ``None`` where it cannot be measured."""
+    """Allocatable host memory in GiB, or ``None`` where it cannot be measured."""
     from luxar.gsplats.utils.device import available_host_memory_bytes
 
     available = available_host_memory_bytes()

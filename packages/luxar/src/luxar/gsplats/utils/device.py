@@ -30,6 +30,7 @@ _AUTO_VRAM_FLOOR_BYTES = 12 * 1024**3
 # and the fit stack are imported.
 _AUTO_CUDA_WORKER_OVERHEAD_BYTES = 512 * 1024**2
 _AUTO_HOST_WORKER_OVERHEAD_BYTES = 1024**3
+# Override with the ``LUXAR_AUTO_WORKER_HARD_CAP`` environment variable.
 _AUTO_WORKER_HARD_CAP = 8
 
 WorkerLimitReason = Literal[
@@ -87,7 +88,7 @@ class GpuInfo:
 
     ``free_mem`` is ``None`` when ``torch.cuda.mem_get_info`` is unavailable for
     the device (rare). GPU selection falls back to ``total_mem``; auto worker
-    sizing conservatively assigns one worker to an unqueryable device.
+    sizing falls back to the shared host limit for an unqueryable device.
     """
 
     index: int
@@ -238,12 +239,9 @@ def resolve_auto_worker_limit(
 
 def _allocate_workers(capacities: dict[int, int], total: int) -> dict[int, int]:
     """Distribute a host-wide worker budget proportionally across devices."""
-    if total >= len(capacities):
-        allocation = {gpu: 1 for gpu in capacities}
-        remaining = total - len(capacities)
-    else:
-        allocation = {gpu: 0 for gpu in capacities}
-        remaining = max(1, total)
+    total = max(total, len(capacities))
+    allocation = {gpu: 1 for gpu in capacities}
+    remaining = total - len(capacities)
     for _ in range(remaining):
         eligible = [gpu for gpu, cap in capacities.items() if allocation[gpu] < cap]
         if not eligible:
@@ -377,12 +375,12 @@ def resolve_jobs_per_gpu(
     Mirrors :func:`luxar.gsplats.fit_tiled_parallel.resolve_jobs` but sizes each
     selected GPU independently from *its own* free VRAM (so a small card gets
     fewer workers than a large one), then applies host RAM, CPU-count, and hard
-    caps to their summed concurrency. An explicit int applies uniformly.
+    caps to their summed concurrency. An explicit int applies uniformly. The
+    returned :class:`WorkerAllocation` also carries the limiting resource.
 
     ``gpu_indices == []`` means CPU: returns ``{-1: n}`` where ``n`` is the
     explicit count or the same host-level auto limit.
     """
-    """Resolve per-device workers and the limiting resource."""
     explicit: Optional[int] = None
     if not (isinstance(jobs_per_gpu, str) and jobs_per_gpu.strip().lower() == "auto"):
         explicit = max(1, int(jobs_per_gpu))
@@ -402,25 +400,26 @@ def resolve_jobs_per_gpu(
         )
 
     task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
+    host_limit = _host_worker_limit(task_bytes)
     capacities: dict[int, int] = {}
     unknown_device_memory = 0
     for idx in gpu_indices:
         free = _gpu_free_memory(torch.device(f"cuda:{idx}"))
-        capacity = _gpu_worker_capacity(free, task_bytes)
-        capacities[idx] = capacity.count
         if free is None:
+            capacities[idx] = host_limit.count
             unknown_device_memory += 1
+        else:
+            capacities[idx] = _gpu_worker_capacity(free, task_bytes).count
 
-    host_limit = _host_worker_limit(task_bytes)
     device_total = sum(capacities.values())
     unconstrained_total = min(device_total, host_limit.count)
     total = max(len(capacities), unconstrained_total)
     if unconstrained_total < len(capacities):
         limiting_resource: WorkerLimitReason = "selected GPU count"
+    elif unknown_device_memory > 0:
+        limiting_resource = "GPU memory unavailable"
     elif device_total <= host_limit.count:
-        limiting_resource = (
-            "GPU memory unavailable" if unknown_device_memory > 0 else "GPU memory"
-        )
+        limiting_resource = "GPU memory"
     else:
         limiting_resource = host_limit.limit
     return WorkerAllocation(_allocate_workers(capacities, total), limiting_resource)

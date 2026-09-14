@@ -19,6 +19,12 @@ from luxar.gsplats.utils.device import (
 _GB = 1024**3
 
 
+@pytest.fixture(autouse=True)
+def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.setenv("MKL_NUM_THREADS", "1")
+
+
 class _FakeMPSBackend:
     def __init__(self, available: bool) -> None:
         self._available = available
@@ -250,14 +256,14 @@ def test_resolve_jobs_per_gpu_applies_cpu_count_across_gpus(monkeypatch) -> None
     assert plan.limit == "CPU count"
 
 
-def test_resolve_jobs_per_gpu_unknown_gpu_memory_is_conservative(monkeypatch) -> None:
+def test_resolve_jobs_per_gpu_unknown_gpu_memory_uses_host_limit(monkeypatch) -> None:
     monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: None)
     monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: 125 * _GB)
     monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 32)
 
-    plan = resolve_jobs_per_gpu([0, 1], task_voxels=1000, jobs_per_gpu="auto")
+    plan = resolve_jobs_per_gpu([0], task_voxels=1000, jobs_per_gpu="auto")
 
-    assert plan.workers == {0: 1, 1: 1}
+    assert plan.workers == {0: 8}
     assert plan.limit == "GPU memory unavailable"
 
 
@@ -286,6 +292,14 @@ def test_resolve_jobs_per_gpu_keeps_every_selected_device(monkeypatch) -> None:
 
     assert plan.workers == {index: 1 for index in range(16)}
     assert plan.limit == "selected GPU count"
+
+
+def test_allocate_workers_never_drops_selected_devices() -> None:
+    assert device_mod._allocate_workers({0: 5, 1: 5, 2: 5}, 2) == {
+        0: 1,
+        1: 1,
+        2: 1,
+    }
 
 
 def test_resolve_jobs_per_gpu_reports_partial_probe_failure(monkeypatch) -> None:

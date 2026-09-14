@@ -25,6 +25,13 @@ from luxar.gsplats.merged_quality import (
     QUALITY_WORKERS_PER_HOST_ENV,
 )
 
+
+@pytest.fixture(autouse=True)
+def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.setenv("MKL_NUM_THREADS", "1")
+
+
 # ---------------------------------------------------------------------------
 # Device assignment (weighted round-robin)
 # ---------------------------------------------------------------------------

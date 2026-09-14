@@ -27,6 +27,13 @@ from luxar.gsplats.tiling import compute_tile_specs
 # slow"`; the full suite runs locally pre-push.
 pytestmark = pytest.mark.slow
 
+
+@pytest.fixture(autouse=True)
+def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.setenv("MKL_NUM_THREADS", "1")
+
+
 # ── A fake worker: writes a deterministic tiny gsplats per tile ──────────────
 
 

@@ -569,7 +569,7 @@ luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --mer
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                                  # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run   # plan only
 ```
-`--gpus` SELECTS devices here: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`. Not to be confused with `submit --gpus-per-task`, which is a COUNT.
+`--gpus` SELECTS devices here: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`. `LUXAR_AUTO_WORKER_HARD_CAP` overrides the automatic host-wide concurrency cap. Not to be confused with `submit --gpus-per-task`, which is a COUNT.
 
 #### `luxar gsplat batch-fit submit`
 Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by default; pass `--dry-run` to plan without submitting.
