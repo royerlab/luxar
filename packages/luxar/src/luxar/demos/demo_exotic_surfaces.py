@@ -211,12 +211,13 @@ def family_ladder(n_points: int) -> dict[str, Any]:
     232,033 — inside the gate's 0.6 degeneracy bound and its 1,000,000 absolute
     commit cap.
 
-    THE FLOOR IS APPLIED BY HAND RATHER THAN BY ``slices=``. Passing
-    ``slices=len(FAMILY_NAMES)`` arms the same floor (``sliced_ladder_first_chunk``
-    takes ``slices`` as a predicate), but ``stream_ladder`` ALSO reads it as a
-    divisor for the commit ceiling — ``DEFAULT_MAX_ADDITIVE_COMMIT * slices`` —
-    and these nodes have no second slice to spend that on. It is inert at the
-    authored ``RESOLUTION`` but not at every one: counts scale about as
+    THE FLOOR IS ARMED THROUGH ``sliced_ladder_first_chunk``, NOT THROUGH
+    ``stream_ladder(slices=)``. Passing ``slices=len(FAMILY_NAMES)`` arms the
+    same floor in the standalone helper, which reads ``slices`` only as a
+    predicate. ``stream_ladder`` ALSO reads it as a divisor for the commit
+    ceiling — ``DEFAULT_MAX_ADDITIVE_COMMIT * slices`` — and these nodes have no
+    second slice to spend that on. It is inert at the authored ``RESOLUTION``
+    but not at every one: counts scale about as
     ``resolution**2`` (measured: the minimal family is 857,226 points at 112 and
     2,023,609 at 172), and above 2,000,005 points the relaxed 1,800,000 ceiling
     authors an increment over the gate's 1,000,000 cap — 1,011,801 at
