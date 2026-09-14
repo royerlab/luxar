@@ -86,9 +86,12 @@ export function missedPollEvents(totalEvents, capturedEvents) {
 }
 
 export function resolveStartCoordinate(range, step, requestedStart) {
-  const start = requestedStart ?? range[1] - step;
-  if (start >= range[1]) {
-    throw new Error(`start ${start} leaves no forward transition within [${range.join(', ')}]`);
+  const penultimate = range[1] - step;
+  const start = requestedStart ?? penultimate;
+  if (start !== penultimate) {
+    throw new Error(
+      `start ${start} must equal the penultimate coordinate ${penultimate} for one transition`
+    );
   }
   return start;
 }

@@ -88,9 +88,9 @@ node scripts/perf/opfs-deep-pass-bench.mjs \
 ```
 
 The harness disables predictive prefetch by default; pass `--prefetch`
-to reproduce production scheduling. It moves to `--start-frame` when supplied,
-or otherwise derives the penultimate coordinate from the time dimension's
-`range` and `step`, requires that dimension to be discrete, then plays exactly
+to reproduce production scheduling. It derives the penultimate coordinate from
+the discrete time dimension's `range` and `step`; an explicit `--start-frame`
+must equal that coordinate so the measurement remains exactly
 one transition at integer `--ladder-depth` (default 6). Pass `--clear-first` to
 clear every cache level before the first arm. It records transition and settle timings separately, update and
 LOD-refinement profiler trees, L2 hit/miss deltas, read-gate occupancy, write

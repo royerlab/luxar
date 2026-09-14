@@ -66,10 +66,11 @@ describe('opfs deep-pass benchmark helpers', () => {
     expect(collectStageDurations(tree, 'Load Arrays')).toEqual([5]);
   });
 
-  it('derives a penultimate coordinate and rejects a clamped last-frame start', () => {
+  it('requires the penultimate coordinate for exactly one transition', () => {
     expect(resolveStartCoordinate([10, 20], 2, null)).toBe(18);
-    expect(resolveStartCoordinate([10, 20], 2, 16)).toBe(16);
-    expect(() => resolveStartCoordinate([10, 20], 2, 20)).toThrow(/no forward transition/);
+    expect(resolveStartCoordinate([10, 20], 2, 18)).toBe(18);
+    expect(() => resolveStartCoordinate([10, 20], 2, 16)).toThrow(/penultimate coordinate/);
+    expect(() => resolveStartCoordinate([10, 20], 2, 20)).toThrow(/penultimate coordinate/);
   });
 
   it('keeps transition and settle stage timings separate', () => {
