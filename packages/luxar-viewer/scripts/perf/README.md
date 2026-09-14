@@ -57,3 +57,78 @@ grow permanently pins the replaced buffer generation (+5 views/gen,
 never reclaimed — +23.4 MB after 5 doublings of a 64K node); post-fix
 (grow = release + reacquire), everything returns to the clean floor
 after eviction.
+
+## opfs-deep-pass-bench.mjs
+
+Reproduces a single pinned-depth timelapse transition while sweeping the
+page-wide OPFS read cap. Generate the 51-frame H2AFVA scene with
+`hatch run python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --no-serve`,
+serve the resulting store on port 9011, and run the viewer dev server on port 5198. Use a persistent Chrome profile and run the harness twice: the first pass
+fills missing L2 entries; only compare the second pass when every arm reports
+`misses=0`. As with the timelapse navigation bench, verify that neither port has
+a stale listener from another checkout before recording results. Run each server
+command below in its own terminal, then run the harness from the viewer directory.
+
+```bash
+(cd <repo-root> && \
+  hatch run python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --no-serve)
+(cd <repo-root> && \
+  hatch run luxar serve datasets/demos/gsplats_4d_h2afva_timelapse.luxar.zarr --port 9011)
+pnpm dev --port 5198
+
+node scripts/perf/opfs-deep-pass-bench.mjs \
+  --url 'http://127.0.0.1:5198/?src=http://127.0.0.1:9011' \
+  --profile-dir /tmp/luxar-opfs-profile \
+  --out /tmp/opfs-warmup.json --concurrency 64
+
+node scripts/perf/opfs-deep-pass-bench.mjs \
+  --url 'http://127.0.0.1:5198/?src=http://127.0.0.1:9011' \
+  --profile-dir /tmp/luxar-opfs-profile \
+  --out /tmp/opfs-sweep.json --concurrency 8,64,512,4096
+```
+
+The harness disables predictive prefetch by default; pass `--prefetch` or
+`--prefetch true` to reproduce production scheduling. In `once` mode playback
+does not apply the tick that reaches or crosses `range[1]`, so the harness
+mirrors that boundary and discrete grid snapping to derive the coordinate that
+leaves exactly one applied advance. An explicit `--start-frame` must equal that
+coordinate so the measurement remains exactly one transition at integer
+`--ladder-depth` (default 6). Pass `--clear-first` to
+clear every cache level before the first arm. It records transition and settle timings separately, update and
+LOD-refinement profiler trees, L2 hit/miss deltas, read-gate occupancy, write
+queue `depth`/`inFlight`, and the live viewer renderer/backend. Chrome runs
+headed by default so Linux does not silently benchmark SwiftShader; pass
+`--headless` or `--headless true` when the host's accelerated headless path is known.
+
+The exploratory trace behind #2731 reported a mixed-cache wave with 339 L2
+misses: cap 512 showed 9.884 s wall / 6.011 s aggregate `Load Arrays`, while
+cap 64 showed 2.941 s / 0.802 s. Those absolute numbers are provenance only:
+the old harness included settle/refinement work in wall time and stale profiler
+rows in the aggregate. The cross-arm result remained useful: once warm
+(`misses=0`), the pre-fix harness reported five wall-time passes at 4.99–5.79 s
+for cap 64 and 3.72–5.24 s for the unbounded-ish arm, with no 6–30 s tail. Those
+ranges include the pre-fix settle/quiet-window tax.
+`ValidationQueue` runs only during store initialization, not per read. The
+evidence attributes the reported stall to mixed L2-miss fan-out/browser
+contention; the cap added in #2732 is sufficient, with no additional scheduling
+change justified. New artifacts expose `animationMs`, `settleMs`,
+transition/settle updates, and refinement roots separately.
+
+The corrected September 13, 2026 baseline used `Time range=[0,50]`, `step=1`,
+and 51 timepoints. One warm sweep used the regenerated store from the setup
+above; three used a separate archived store with identical declared `Time`
+metadata. Because `once` stops one coordinate short of `range[1]`, all four
+measured 48→49. Across them, cap 64 reported `animationMs` 0.121–2.923 s and
+`settleMs` 0.187–1.744 s; cap 4096 reported `animationMs` 0.103–0.131 s and
+`settleMs` 0.064–1.555 s. Three cap-4096 arms stamped `missedUpdates=1` (cap 64
+stamped 0–1), so the phase split remains diagnostic for the fastest arms. The
+2.923 s cap-64 arm is a 22× excursion over the cap-4096 maximum; with only four
+arms per cap, the sample does not resolve a cap-dependent difference, but it
+does show no 6–30 s warm tail.
+
+This untyped harness depends on the debug surface names
+`getSceneLoader`, `getDefaultLoader`, `getProfiler`, `inputHandler`,
+`sceneDimsManager`, and `renderer`; cache stats `l2.activeReads`,
+`l2.queuedReads`, `l2.misses`, `l2WriteQueue.depth`, and
+`l2WriteQueue.inFlight`; and profiler methods `getTimings` and
+`getRefinementTimings`. Keep this list in sync when those typed APIs change.
