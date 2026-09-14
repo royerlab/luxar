@@ -190,16 +190,16 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
 
 LEAF_EXEMPT: dict[str, str] = {
     "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_0": (
-        "published 51-timepoint archive; republishing is tracked separately"
+        "published 51-timepoint archive cannot be changed by the scene generator"
     ),
     "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_1": (
-        "published 51-timepoint archive; republishing is tracked separately"
+        "published 51-timepoint archive cannot be changed by the scene generator"
     ),
     "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_2": (
-        "published 51-timepoint archive; republishing is tracked separately"
+        "published 51-timepoint archive cannot be changed by the scene generator"
     ),
     "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_3": (
-        "published 51-timepoint archive; republishing is tracked separately"
+        "published 51-timepoint archive cannot be changed by the scene generator"
     ),
     "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
         "intentional flat control in the six-recipe LOD comparison"

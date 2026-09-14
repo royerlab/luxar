@@ -64,6 +64,7 @@ def test_biodiversity_ladder_opens_at_one_quarter_and_conserves_rows() -> None:
         "method": "random",
         "seed": 0,
     }
+    assert biodiversity_ladder(1)["counts"] == [1]
 
 
 def test_keep_stale_reuses_an_existing_scene_with_a_mismatched_marker(

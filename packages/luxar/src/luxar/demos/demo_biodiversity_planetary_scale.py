@@ -388,6 +388,8 @@ CACHE_DIR: Final = Path.home() / ".cache" / "luxar" / DEMO_NAME
 
 def biodiversity_ladder(n_rows: int) -> dict[str, Any]:
     """Open the sparse taxon/period cube at one quarter of its rows."""
+    if n_rows < 4:
+        return stream_ladder(n_rows)
     quarter = math.ceil(n_rows / 4)
     return {
         "counts": [quarter, min(2 * quarter, n_rows), n_rows],
