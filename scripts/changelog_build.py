@@ -77,36 +77,38 @@ def _fragments() -> list[Path]:
     )
 
 
-def _validate_block(p: Path) -> str | None:
-    """Return a fragment validation error, or None when it is valid."""
+def _read_and_validate_block(p: Path) -> tuple[str | None, str | None]:
+    """Return the fragment text and validation error, with exactly one populated."""
     try:
         text = p.read_text(encoding="utf-8").strip("\n")
     except UnicodeDecodeError:
-        return f"fragment {p.name} is not valid UTF-8"
+        return None, f"fragment {p.name} is not valid UTF-8"
     except OSError as exc:
-        return f"fragment {p.name} could not be read: {exc}"
+        return None, f"fragment {p.name} could not be read: {exc}"
 
     if not text.strip():
-        return f"fragment {p.name} is empty"
+        return None, f"fragment {p.name} is empty"
     first = text.lstrip().splitlines()[0]
     if not first.startswith("#### "):
-        return (
+        return None, (
             f"fragment {p.name} must start with a '#### Title' heading "
             f"(house style); got: {first!r}"
         )
-    return None
+    return text, None
+
+
+def _validate_block(p: Path) -> str | None:
+    """Return a fragment validation error, or None when it is valid."""
+    _, failure = _read_and_validate_block(p)
+    return failure
 
 
 def _read_block(p: Path) -> str:
-    failure = _validate_block(p)
+    text, failure = _read_and_validate_block(p)
     if failure:
         raise SystemExit(f"✗ {failure}")
-    try:
-        return p.read_text(encoding="utf-8").strip("\n")
-    except UnicodeDecodeError:
-        raise SystemExit(f"✗ fragment {p.name} is not valid UTF-8") from None
-    except OSError as exc:
-        raise SystemExit(f"✗ fragment {p.name} could not be read: {exc}") from None
+    assert text is not None
+    return text
 
 
 def _read_blocks(frags: list[Path]) -> dict[Path, str]:
@@ -114,11 +116,12 @@ def _read_blocks(frags: list[Path]) -> dict[Path, str]:
     blocks: dict[Path, str] = {}
     failures: list[str] = []
     for fragment in frags:
-        failure = _validate_block(fragment)
+        text, failure = _read_and_validate_block(fragment)
         if failure:
             failures.append(failure)
             continue
-        blocks[fragment] = _read_block(fragment)
+        assert text is not None
+        blocks[fragment] = text
 
     if failures:
         noun = "fragment" if len(failures) == 1 else "fragments"
