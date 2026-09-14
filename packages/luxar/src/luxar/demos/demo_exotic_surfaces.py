@@ -125,11 +125,12 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import pull_in
-from luxar.demos._lod_policy import SLICED_LADDER_MAX_DEPTH, stream_ladder
+from luxar.demos._lod_policy import stream_ladder
 from luxar.shading import bake_ambient_occlusion
 from luxar.utils.lod_breakpoints import (
     DEFAULT_MAX_ADDITIVE_COMMIT,
     capped_stream_cuts,
+    sliced_ladder_first_chunk,
 )
 from luxar.utils.paths import get_demos_output_dir
 
@@ -238,7 +239,9 @@ def family_ladder(n_points: int) -> dict[str, Any]:
     ladder = stream_ladder(n_points)
     ladder["counts"] = capped_stream_cuts(
         n_points,
-        max(ladder["counts"][0], -(-n_points // SLICED_LADDER_MAX_DEPTH)),
+        sliced_ladder_first_chunk(
+            ladder["counts"][0], elements=n_points, slices=len(FAMILY_NAMES)
+        ),
         DEFAULT_MAX_ADDITIVE_COMMIT,
     )
     return ladder
