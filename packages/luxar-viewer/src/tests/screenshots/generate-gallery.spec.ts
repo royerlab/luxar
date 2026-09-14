@@ -85,6 +85,11 @@ import {
 import { mediaKeyIndex, requireMediaBaseUrl, resolveGalleryOnly } from './gallery-selection';
 import { resolveTimelapseSettleMs, waitForTimelapseSliceSettled } from './gallery-timelapse-settle';
 import {
+  hasNonZeroDimensionStep,
+  isGalleryDataReady,
+  readBakedDimensionStep,
+} from './gallery-dimension-readiness';
+import {
   checkGalleryMediaSize,
   collectGalleryMediaSizeIssues,
   formatGalleryCaptureMetrics,
@@ -200,6 +205,7 @@ interface DemoEntry {
   // right for compact subjects, but diffuse clouds / survey cones (DESI) want a
   // wider framing so the whole structure reads instead of zooming into the core.
   fillTarget?: number;
+  // Relative override applied after the scene reaches its baked opening step.
   dimensionNav?: { key: string; steps: number };
   // Initial view orientation (degrees), applied after F and before fill: orbit
   // the camera to this azimuth/elevation around the target so the subject is
@@ -304,27 +310,26 @@ async function waitForLuxarReady(page: any, timeout = 60000): Promise<void> {
 
 async function waitForDataLoaded(
   page: any,
-  timeout = 60000,
-  requireElements = true
+  {
+    timeout = 60000,
+    requireElements = true,
+    expectedDimensionStep = null,
+  }: {
+    timeout?: number;
+    requireElements?: boolean;
+    expectedDimensionStep?: number[] | null;
+  } = {}
 ): Promise<void> {
   // Geometry-agnostic: totalElements sums points + gsplats + lines + triangles,
   // so this works for all four geometry types and mixed scenes (totalPoints alone
   // stays 0 for a pure Lines demo like dipc_3d_genome, or a pure Mesh one).
   //
-  // `requireElements = false` waits only for the loader to go idle. That is the
-  // pre-`dimensionNav` gate: a scene whose DEFAULT slice is empty (an nD demo
-  // parked on a hidden-axis position that holds nothing) has zero elements until
-  // the dimension is stepped, so insisting on elements here would time out before
-  // the navigation that fills the scene ever runs.
+  // `requireElements = false` permits an empty initial slice while still waiting
+  // for the authored dimension step. A scene whose index-zero slice is empty may
+  // not have elements until its baked opening step or dimensionNav override runs.
   await page.waitForFunction(
-    (needElements: boolean) => {
-      const debug = (window as any).__luxarDebug;
-      if (!debug || !debug.getState) return false;
-      const state = debug.getState();
-      if (!state || state.isLoading) return false;
-      return needElements ? state.totalElements > 0 : true;
-    },
-    requireElements,
+    isGalleryDataReady,
+    { requireElements, expectedDimensionStep },
     { timeout }
   );
 }
@@ -1361,6 +1366,7 @@ for (const demo of DEMOS) {
     }
 
     const dataUrl = `${DATA_SERVER}/${demo.dataset}`;
+    const bakedDimensionStep = await readBakedDimensionStep(dataUrl);
     // &lod-finest forces the finest LOD level regardless of screen coverage —
     // a coarse level looks blurry in a hero still even when the subject is small.
     // Opt out (lodFinest:false) for a very heavy scene where forcing every
@@ -1372,14 +1378,19 @@ for (const demo of DEMOS) {
     await installChromeHider(page); // survives Vite reloads (must precede goto)
     await page.goto(viewerUrl, { waitUntil: 'networkidle' });
     await waitForLuxarReady(page);
-    // A dimensionNav demo may be EMPTY at its default slice, so only require a
-    // settled loader until after the navigation has run.
+    // An nD demo may be empty at index zero. Permit that until the baked opening
+    // step (or a subsequent dimensionNav override) has had a chance to populate it.
     const needsNav = Boolean(demo.dimensionNav);
-    await waitForDataLoaded(page, 60000, !needsNav);
+    const opensAwayFromDefault = hasNonZeroDimensionStep(bakedDimensionStep);
+    const initialLoadOptions = {
+      requireElements: !(needsNav || opensAwayFromDefault),
+      expectedDimensionStep: bakedDimensionStep,
+    };
+    await waitForDataLoaded(page, initialLoadOptions);
     // Settle: a Vite "re-optimizing deps" full reload can fire right after first
     // paint; wait out any in-flight reload and re-confirm the scene is loaded.
     await page.waitForTimeout(1500);
-    await waitForDataLoaded(page, 60000, !needsNav);
+    await waitForDataLoaded(page, initialLoadOptions);
     console.log(`[${demo.id}] data loaded`);
 
     if (demo.dimensionNav) {
