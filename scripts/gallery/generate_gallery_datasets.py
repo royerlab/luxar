@@ -6,14 +6,14 @@ and, for every entry that declares a generator ``script``, runs that demo with
 ``--no-serve`` to produce its ``.luxar.zarr`` under ``datasets/demos/`` — unless
 the dataset already exists (idempotent / resumable). Every store produced by
 this run is then checked for LOD-ladder quality and embedded scene credits before
-the gallery capture can proceed. Scene credits gate the build; ladder findings
-are report-only until the demo corpus has been laddered. A second report-only
-pass covers the complete local inventory, so already-present neighbours remain
-visible without deciding whether a newly generated store may proceed. A store
-that fails the generated-store credit gate is not re-gated on a later
-idempotent run; fix the demo and regenerate it with ``--force`` (or delete the
-store first). The direct full-inventory credit audit before upload is the
-backstop and must exit zero.
+the gallery capture can proceed. Both audits gate: the demo generators now author
+explicit ladders, so a newly generated store has to satisfy the ladder check as
+well as the credit one. A second report-only pass covers the complete local
+inventory, so already-present neighbours remain visible without deciding whether
+a newly generated store may proceed. A store that fails a generated-store gate is
+not re-gated on a later idempotent run; fix the demo and regenerate it with
+``--force`` (or delete the store first). The direct full-inventory credit audit
+before upload is the backstop and must exit zero.
 
 Entries with ``script: null`` live only on a feature branch; their dataset must
 already be present (typically generated once, then committed/kept locally). Such
@@ -95,8 +95,13 @@ LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 # gone — the demo is then generated like any other.
 UNBUILDABLE_IDS: dict[str, str] = {}
 
+# The built-scene auditors, each with whether it GATES the stores this run
+# generated. Both gate since the demo generators author explicit ladders (#2657):
+# a fresh store failing either audit is a new regression, not inherited corpus
+# debt. The whole-inventory pass is report-only by construction (see
+# `report_local_scene_inventory`), so a stale neighbour still cannot red a build.
 SCENE_AUDITOR_NAMES = (
-    ("check_demo_ladders.py", False),
+    ("check_demo_ladders.py", True),
     ("check_scene_credits.py", True),
 )
 

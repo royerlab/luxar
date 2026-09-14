@@ -461,12 +461,17 @@ def test_newly_generated_stores_are_audited_by_explicit_path(
 
 
 @pytest.mark.parametrize(
-    ("failed_auditor", "expected_code"),
-    [("check_demo_ladders.py", 0), ("check_scene_credits.py", 1)],
+    "failed_auditor", ["check_demo_ladders.py", "check_scene_credits.py"]
 )
-def test_only_gating_generated_store_audits_fail_the_gallery_build(
-    tmp_path, monkeypatch, capsys, failed_auditor, expected_code
+def test_either_failing_generated_store_audit_fails_the_gallery_build(
+    tmp_path, monkeypatch, capsys, failed_auditor
 ) -> None:
+    """Both registered auditors gate the stores this run generated (#2657).
+
+    The ladder arm was report-only while the demo corpus was un-laddered; the
+    corpus generators now author explicit ladders, so it gates like the credit
+    arm and the remaining asymmetry lives only in the inventory pass below.
+    """
     calls = _setup(
         tmp_path,
         monkeypatch,
@@ -480,11 +485,34 @@ def test_only_gating_generated_store_audits_fail_the_gallery_build(
     code = _run_main(monkeypatch)
     out = capsys.readouterr().out
 
-    assert code == expected_code
+    stem = failed_auditor.removesuffix(".py")
+    assert code == 1
     assert len(calls.audit_invocations) == 4
-    assert failed_auditor.removesuffix(".py") in out
-    next_step = "Next: cd packages/luxar-viewer && pnpm gallery"
-    assert (next_step in out) is (expected_code == 0)
+    # Reported twice: enforced on the generated-store pass (bare) and
+    # report-only on the whole-inventory pass. An arm flipped back to
+    # report-only would carry the suffix both times and return 0.
+    assert out.count(f"{stem} failed with exit 1") == 2
+    assert out.count(f"{stem} failed with exit 1 (report-only)") == 1
+    assert "Next: cd packages/luxar-viewer && pnpm gallery" not in out
+
+
+def test_every_registered_scene_auditor_gates_generated_output() -> None:
+    """Pin the gate POLICY at its declaration site (#2657).
+
+    The behavioural tests around this one drive the flag's *effect* through
+    stubbed auditor exits; this one pins the declaration, so an arm quietly set
+    back to report-only — or a future auditor registered that way — fails here
+    naming the entry instead of only as an exit-status assertion elsewhere. That
+    silent flip is the regression #2657 is about: the build stays green while a
+    newly generated store ships without the ladder its generator authors.
+    """
+    registered = dict(gen.SCENE_AUDITOR_NAMES)
+    assert len(registered) == len(gen.SCENE_AUDITOR_NAMES), "duplicate auditor name"
+    assert {"check_demo_ladders.py", "check_scene_credits.py"} <= set(registered)
+    report_only = sorted(
+        name for name, gates in registered.items() if gates is not True
+    )
+    assert not report_only, f"built-scene auditors left report-only: {report_only}"
 
 
 def test_an_idempotent_run_reports_on_the_complete_local_inventory(
@@ -507,17 +535,22 @@ def test_an_idempotent_run_reports_on_the_complete_local_inventory(
         assert kwargs == {"cwd": tmp_path, "timeout": gen.AUDIT_TIMEOUT_S}
 
 
+@pytest.mark.parametrize(
+    "failed_auditor", ["check_demo_ladders.py", "check_scene_credits.py"]
+)
 def test_a_failing_neighbour_is_report_only_on_an_idempotent_run(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, failed_auditor
 ) -> None:
+    # Parametrized over both arms: gating generated output (#2657) must not
+    # promote a stale already-present store into a build failure.
     calls = _setup(
         tmp_path,
         monkeypatch,
         [("stale", None, "ok")],
         present=("stale",),
         audit_outcomes={
-            "check_demo_ladders.py": 0,
-            "check_scene_credits.py": 1,
+            "check_demo_ladders.py": int(failed_auditor == "check_demo_ladders.py"),
+            "check_scene_credits.py": int(failed_auditor == "check_scene_credits.py"),
         },
     )
 
@@ -526,19 +559,23 @@ def test_a_failing_neighbour_is_report_only_on_an_idempotent_run(
 
     assert code == 0
     assert not calls
-    assert "check_scene_credits failed with exit 1 (report-only)" in out
+    stem = failed_auditor.removesuffix(".py")
+    assert f"{stem} failed with exit 1 (report-only)" in out
 
 
+@pytest.mark.parametrize(
+    "timed_out_auditor", ["check_demo_ladders.py", "check_scene_credits.py"]
+)
 def test_a_gating_auditor_timeout_fails_the_gallery_build(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, timed_out_auditor
 ) -> None:
     _setup(
         tmp_path,
         monkeypatch,
         [("fresh", None, "ok")],
         audit_outcomes={
-            "check_demo_ladders.py": 0,
-            "check_scene_credits.py": "timeout",
+            name: ("timeout" if name == timed_out_auditor else 0)
+            for name in ("check_demo_ladders.py", "check_scene_credits.py")
         },
     )
 
@@ -546,7 +583,7 @@ def test_a_gating_auditor_timeout_fails_the_gallery_build(
     out = capsys.readouterr().out
 
     assert code == 1
-    assert "check_scene_credits timed out" in out
+    assert f"{timed_out_auditor.removesuffix('.py')} timed out" in out
 
 
 def test_parent_output_is_flushed_before_each_auditor(tmp_path, monkeypatch) -> None:
