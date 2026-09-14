@@ -17,7 +17,7 @@ scripts/
 
 | Script | Purpose |
 |--------|---------|
-| `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings) |
+| `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage, with an unbaselineable changelog-fragment format check (JSON output) |
 | `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
 | `check_cadence_liveness.py` | Check GitHub Actions workflow cadences for missing or stale successes using an `actions: read` token; only workflow cadences are visible to this check |
 | `check_layer_order.py` | Assert the `Subpackage layering` order is still the measured minimum and that its dated debt list has not grown |
@@ -126,6 +126,7 @@ path-like references in tracked package READMEs.
 - Require a README for each top-level package under `luxar/` and viewer `src/`
 - Require Quick Start/Getting Started headings and code examples in Python package READMEs
 - Flag low Python docstring and TypeScript JSDoc coverage
+- Reject every pending changelog fragment outside the `#### Title` + prose format
 - Fail the required PR documentation gate on any new finding
 
 **Usage:**
@@ -156,13 +157,15 @@ hatch run docs:python scripts/check_documentation.py --no-baseline
 - Python modules, functions, classes and methods carry docstrings (AST-parsed, exact)
 - Exported TypeScript declarations have nearby JSDoc (heuristic)
 - A Python file that cannot be parsed is reported as a `Python syntax` finding (the run continues rather than crashing)
+- Pending changelog fragments all use the required `#### Title` + prose format
 
 Existing documentation debt is captured in `scripts/docs_baseline.json`. A
 flagless run tolerates every baselined finding and fails (exit 1) only on new
-missing READMEs/docstrings/JSDoc or broken README path references. It is the
-completeness stage of `make check-docs` and the required `docs-quality` CI job.
-As debt is paid down, regenerate/tighten the baseline with `--update-baseline`
-and commit the smaller file. See
+missing READMEs/docstrings/JSDoc or broken README path references. Invalid
+changelog fragments always fail and cannot be added to the baseline. This is
+the completeness stage of `make check-docs` and the required `docs-quality` CI
+job. As debt is paid down, regenerate/tighten the baseline with
+`--update-baseline` and commit the smaller file. See
 `docs/guides/developer/DOCUMENTATION_QUALITY.md` for the full model.
 
 ---

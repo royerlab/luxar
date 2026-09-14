@@ -21,6 +21,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 _SCRIPT = REPO_ROOT / "scripts" / "check_documentation.py"
+_CHANGELOG_SCRIPT = REPO_ROOT / "scripts" / "changelog_build.py"
 
 pytestmark = pytest.mark.skipif(
     not _SCRIPT.exists(),
@@ -666,6 +667,7 @@ def _install_script(root: Path) -> tuple[Path, Path]:
     scripts_dir.mkdir(exist_ok=True)
     script_copy = scripts_dir / "check_documentation.py"
     script_copy.write_text(_SCRIPT.read_text())
+    (scripts_dir / "changelog_build.py").write_text(_CHANGELOG_SCRIPT.read_text())
     return script_copy, scripts_dir / "docs_baseline.json"
 
 
@@ -675,6 +677,32 @@ def _run(script: Path, *args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
     )
+
+
+def test_docs_gate_rejects_every_invalid_changelog_fragment(tmp_path: Path) -> None:
+    root = _make_project(tmp_path, with_defect=False)
+    fragment_dir = root / "changelog.d"
+    fragment_dir.mkdir()
+    (fragment_dir / "1.md").write_text("### Fixed\n\n- Bullet.\n")
+    (fragment_dir / "2.md").write_text("\n")
+    script_copy, _ = _install_script(root)
+
+    proc = _run(script_copy)
+
+    assert proc.returncode == 1
+    assert "2 invalid changelog fragments" in proc.stderr
+    assert "fragment 1.md must start" in proc.stderr
+    assert "fragment 2.md is empty" in proc.stderr
+
+    json_proc = _run(script_copy, "--json")
+    assert json_proc.returncode == 1
+    report = json.loads(json_proc.stdout)
+    failures = [item for item in report["findings"] if not item["passed"]]
+    changelog_failure = next(
+        item for item in failures if item["check_name"] == "Changelog fragment format"
+    )
+    assert "fragment 1.md must start" in changelog_failure["message"]
+    assert "fragment 2.md is empty" in changelog_failure["message"]
 
 
 def test_update_baseline_cli(tmp_path: Path) -> None:

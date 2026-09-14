@@ -32,6 +32,7 @@ writes — because the release version is a DATE that is deliberately set last.
 
 Usage::
 
+    python scripts/changelog_build.py --check                 # validate fragments only
     python scripts/changelog_build.py --draft                 # preview; change nothing
     python scripts/changelog_build.py                         # fold in + delete fragments
     python scripts/changelog_build.py --month "August 2026"   # pin every entry to one month
@@ -87,6 +88,23 @@ def _read_block(p: Path) -> str:
             f"(house style); got: {first!r}"
         )
     return text
+
+
+def _read_blocks(frags: list[Path]) -> dict[Path, str]:
+    """Read every fragment, reporting all invalid entries in one failure."""
+    blocks: dict[Path, str] = {}
+    failures: list[str] = []
+    for fragment in frags:
+        try:
+            blocks[fragment] = _read_block(fragment)
+        except SystemExit as exc:
+            failures.append(str(exc).removeprefix("✗ "))
+
+    if failures:
+        noun = "fragment" if len(failures) == 1 else "fragments"
+        details = "\n".join(f"  - {failure}" for failure in failures)
+        raise SystemExit(f"✗ {len(failures)} invalid changelog {noun}:\n{details}")
+    return blocks
 
 
 def _authored_month(p: Path) -> str | None:
@@ -233,11 +251,16 @@ def _fold(changelog: str, month: str, blocks: list[str]) -> str:
     return "\n".join(new) + "\n"
 
 
-def main() -> int:
+def _parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--draft", action="store_true", help="preview only; change nothing")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="validate every fragment without reading git history or CHANGELOG.md",
+    )
     ap.add_argument(
         "--month",
         default=None,
@@ -250,27 +273,35 @@ def main() -> int:
         help="rename '## [Unreleased]' to the current __version__ and open a "
         "fresh empty one; refuses while fragments are still pending",
     )
-    args = ap.parse_args()
+    return ap, ap.parse_args()
 
-    if not CHANGELOG.is_file():
-        raise SystemExit("✗ CHANGELOG.md not found")
 
-    if args.release:
-        return _run_release(args.draft)
+def _run_check(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    """Validate fragments without touching git history or CHANGELOG.md."""
+    if args.draft or args.month or args.release:
+        ap.error("--check cannot be combined with --draft, --month, or --release")
+    blocks = _read_blocks(_fragments())
+    noun = "fragment" if len(blocks) == 1 else "fragments"
+    print(f"✓ validated {len(blocks)} changelog {noun}")
+    return 0
 
+
+def _run_fold(args: argparse.Namespace) -> int:
+    """Fold all pending fragments into CHANGELOG.md."""
     frags = _fragments()
     if not frags:
         print("• no changelog fragments in changelog.d/ — nothing to assemble")
         return 0
 
+    blocks = _read_blocks(frags)
     groups = _group_by_month(frags, args.month)
     # Oldest month first: `_fold` mints a new section directly under
     # [Unreleased], so folding in chronological order leaves the newest on top.
     folded = CHANGELOG.read_text(encoding="utf-8")
     summary = []
     for month, month_frags in groups.items():
-        blocks = [_read_block(p) for p in month_frags]
-        folded = _fold(folded, month, blocks)
+        month_blocks = [blocks[p] for p in month_frags]
+        folded = _fold(folded, month, month_blocks)
         summary.append(f"{len(month_frags)} into '### {month}'")
 
     detail = "; ".join(summary)
@@ -281,7 +312,7 @@ def main() -> int:
         print("─" * 72)
         for month, month_frags in groups.items():
             print(f"### {month}\n")
-            print("\n\n".join(_read_block(p) for p in month_frags))
+            print("\n\n".join(blocks[p] for p in month_frags))
             print()
         print("─" * 72)
         return 0
@@ -291,6 +322,17 @@ def main() -> int:
         p.unlink()
     print(f"✓ folded {len(frags)} fragment(s) and removed them — {detail}")
     return 0
+
+
+def main() -> int:
+    ap, args = _parse_args()
+    if args.check:
+        return _run_check(ap, args)
+    if not CHANGELOG.is_file():
+        raise SystemExit("✗ CHANGELOG.md not found")
+    if args.release:
+        return _run_release(args.draft)
+    return _run_fold(args)
 
 
 def _run_release(draft: bool) -> int:

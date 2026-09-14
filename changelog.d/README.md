@@ -30,6 +30,7 @@ or a short slug also works. Numeric names are folded in ascending order.
 At release-prep, fold every fragment into `CHANGELOG.md` and delete the fragments:
 
 ```bash
+python3 scripts/changelog_build.py --check  # validate every fragment; no git history needed
 make changelog-draft          # preview what would be written; changes nothing
 make changelog                # fold fragments under ## [Unreleased] / ### <Month> and remove them
 make changelog MONTH="August 2026"   # pin the month heading explicitly
@@ -41,8 +42,9 @@ before tagging the release (`make release`).
 ## Notes
 
 - Fragments are **Markdown** and touch no source domain, so a fragment-only PR runs
-  no code test suite (only the fast docs gate) — see the `changes` job in
-  `.github/workflows/ci.yml`.
+  no code test suite (only the fast docs gate). That gate runs the git-free
+  fragment validator and reports every malformed entry in one pass — see the
+  `changes` job in `.github/workflows/ci.yml`.
 - `CHANGELOG.md` also carries a `merge=union` attribute (`.gitattributes`) so any
   direct edit during the transition still auto-resolves on rebase.
 - Not every PR needs a fragment (pure refactors, test-only changes, trivial fixes

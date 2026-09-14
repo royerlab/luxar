@@ -89,6 +89,42 @@ def test_read_block_accepts_heading(tmp_path):
     assert cb._read_block(frag).startswith("#### Title")
 
 
+def test_read_blocks_reports_every_invalid_fragment(tmp_path):
+    good = tmp_path / "1.md"
+    bad_heading = tmp_path / "2.md"
+    empty = tmp_path / "3.md"
+    good.write_text("#### Valid\n\nBody.\n", encoding="utf-8")
+    bad_heading.write_text("### Fixed\n\n- Bullet.\n", encoding="utf-8")
+    empty.write_text("\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cb._read_blocks([good, bad_heading, empty])
+
+    message = str(exc_info.value)
+    assert "2 invalid changelog fragments" in message
+    assert "fragment 2.md must start" in message
+    assert "fragment 3.md is empty" in message
+
+
+def test_check_mode_is_git_free_and_does_not_require_changelog(
+    tmp_path, monkeypatch, capsys
+):
+    frag_dir = tmp_path / "changelog.d"
+    frag_dir.mkdir()
+    (frag_dir / "7.md").write_text("#### Valid\n\nBody.\n", encoding="utf-8")
+    monkeypatch.setattr(cb, "FRAG_DIR", frag_dir)
+    monkeypatch.setattr(cb, "CHANGELOG", tmp_path / "missing-CHANGELOG.md")
+    monkeypatch.setattr(
+        cb,
+        "_authored_month",
+        lambda _path: pytest.fail("--check must not inspect git history"),
+    )
+    monkeypatch.setattr("sys.argv", ["changelog_build.py", "--check"])
+
+    assert cb.main() == 0
+    assert "validated 1 changelog fragment" in capsys.readouterr().out
+
+
 def test_natural_key_orders_numeric_before_slug_ascending(tmp_path):
     p9 = tmp_path / "9.md"
     p100 = tmp_path / "100.md"
@@ -117,6 +153,28 @@ def test_end_to_end_folds_and_deletes_fragments(tmp_path, monkeypatch):
     # The fragment is consumed; the README is left alone.
     assert not (frag_dir / "42.md").exists()
     assert (frag_dir / "README.md").exists()
+
+
+def test_fold_reports_every_invalid_fragment_before_mutating(tmp_path, monkeypatch):
+    frag_dir = tmp_path / "changelog.d"
+    frag_dir.mkdir()
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(CHANGELOG_TEMPLATE, encoding="utf-8")
+    (frag_dir / "1.md").write_text("### Fixed\n\n- Bullet.\n", encoding="utf-8")
+    (frag_dir / "2.md").write_text("\n", encoding="utf-8")
+
+    monkeypatch.setattr(cb, "FRAG_DIR", frag_dir)
+    monkeypatch.setattr(cb, "CHANGELOG", changelog)
+    monkeypatch.setattr("sys.argv", ["changelog_build.py", "--month", "August 2026"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cb.main()
+
+    message = str(exc_info.value)
+    assert "fragment 1.md must start" in message
+    assert "fragment 2.md is empty" in message
+    assert changelog.read_text(encoding="utf-8") == CHANGELOG_TEMPLATE
+    assert sorted(path.name for path in frag_dir.glob("*.md")) == ["1.md", "2.md"]
 
 
 def test_draft_changes_nothing(tmp_path, monkeypatch, capsys):
