@@ -203,7 +203,7 @@ jobs:
           # the gate. Any deletion also runs it because package READMEs may name
           # tracked files of any type; --no-renames makes a rename include a
           # deletion. Empty change output is treated as relevant (fail-safe).
-          docs_pattern='(^docs/|\.[Mm][Dd]$|\.[Rr][Ss][Tt]$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/(check-overrides\.mjs|check-typedoc-warnings(-tests)?\.mjs))$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
+          docs_pattern='(^docs/|\.[Mm][Dd]$|\.[Rr][Ss][Tt]$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|changelog_build\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/(check-overrides\.mjs|check-typedoc-warnings(-tests)?\.mjs))$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
           if [ -z "$changed" ] || [ -n "$deleted" ] || printf '%s\n' "$changed" | grep -qE "$docs_pattern"; then
             echo "-> documentation-relevant changes: RUN docs-quality"
             echo "docs_relevant=true" >> "$GITHUB_OUTPUT"
