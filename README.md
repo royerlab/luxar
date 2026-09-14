@@ -315,7 +315,7 @@ The *C. elegans* fit is bundled under `packages/luxar/src/luxar/demos/data/`;
 the Tribolium fit is produced locally because its source is not redistributable.
 Both use full source resolution, and the single-file Tribolium fit works out to
 about 7 bytes per splat on disk. They then
-render in any WebGL2 desktop browser: no 3D textures, no ray-marching, and no CUDA
+render in any WebGL2 browser: no 3D textures, no ray-marching, and no CUDA
 on the viewing machine.
 
 This is lossy, so fidelity is measured rather than asserted. Across a 13-dataset
