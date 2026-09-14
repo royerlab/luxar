@@ -275,8 +275,9 @@ AGE_BIN_LABELS = (
 FIRST_RUNG_ROWS_PER_FRAME = 300
 
 #: The two ``scripts/check_demo_ladders.py`` thresholds the floor above has to
-#: stay inside, mirrored here because that script is not importable from the
-#: package (``DEFAULT_MIN_ELEMENTS`` and ``DEFAULT_MAX_SHARE`` there).
+#: stay inside, mirrored here because production code must not import a script
+#: (``DEFAULT_MIN_ELEMENTS`` and ``DEFAULT_MAX_SHARE`` there). A package test
+#: pins these copies to the script's values.
 #:
 #: An absolute per-frame budget is a share of ``stars_in_bin``, not of the node,
 #: so on a thin enough bin it can ask for more of the node than a ladder may
@@ -296,11 +297,12 @@ FIRST_RUNG_ROWS_PER_FRAME = 300
 #: exactly when the unclamped floor would have authored a failing ladder (``300 /
 #: stars_in_bin > 0.6``, i.e. under 500 stars) and never otherwise, so it cannot
 #: coarsen a rung that was doing its job. It is a no-op on every node of the
-#: default build. Below the 200,000-row threshold the gate audits neither arm, and
-#: leaving the floor unclamped there is what keeps a small played layer usable —
-#: e.g. ``--stars 50000`` leaves 512 stars x 241 = 123,392 rows in
-#: ``50-300 Myr``, whose p05 frame is a measured 145 at the share rung and 282 at
-#: the unclamped floor.
+#: default build. Below the 200,000-row threshold only the no-ladder and
+#: degeneracy/share checks switch off; the sliced absolute arm still audits any
+#: laddered node. The clamp starts binding below 500 stars, where the absolute
+#: arm can remain red because 0.6 of a thin frame is still too little — e.g. 400
+#: stars x 241 = 96,400 rows clamp the 72,300-row floor to 57,840, averaging 240
+#: rows per frame before the sparsest-frame reduction.
 #:
 #: What the clamp does NOT buy. At the 0.6 bound rung 0 holds 0.6 rows per star
 #: per frame, so a bin under about 450 stars still lands under the 250-row
