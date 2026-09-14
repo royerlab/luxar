@@ -39,6 +39,7 @@ import {
 } from './luxar-orbit-controls/input/pointer';
 import { handleTouchStart, handleTouchMove } from './luxar-orbit-controls/input/touch';
 import { attachKeyboardPan } from './luxar-orbit-controls/input/keyboard';
+import { VIEW_AXIS_ROLL_SIGN } from './touch-twist';
 
 /**
  * Re-export of the pointer-interaction state discriminant used internally by
@@ -504,7 +505,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       if (delta === 0) return;
 
       // Accumulate into rollDelta — damping is applied in update().
-      this.rollDelta += delta * speed;
+      this.rollDelta += VIEW_AXIS_ROLL_SIGN * delta * speed;
 
       // Wake up animation loop (rollDelta is applied in update())
       this.dispatchEvent({ type: 'change' });

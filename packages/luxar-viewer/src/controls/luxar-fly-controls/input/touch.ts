@@ -23,6 +23,7 @@
 
 import * as THREE from 'three';
 import type { LuxarCamera } from '../../../utils/camera-utils';
+import { VIEW_AXIS_ROLL_SIGN, wrapAngle } from '../../touch-twist';
 
 // Module-local scratch vectors to avoid per-event allocation.
 const _x = new THREE.Vector3();
@@ -73,21 +74,6 @@ export const TOUCH_STRAFE_SCALE = 0.005;
 export const PINCH_THRUST_GAIN = 2.0;
 /** Radians of roll impulse per radian of two-finger twist. */
 export const FLY_TWIST_ROLL_GAIN = 1.0;
-/**
- * Sign that makes the SCENE follow the fingers (same reasoning as the orbit
- * twist): y-down screen `atan2` grows clockwise, a positive rotation about the
- * forward axis turns the camera clockwise as the user sees it.
- */
-export const FLY_TWIST_ROLL_SIGN = -1;
-
-/** Wrap an angle difference into (-π, π] so a twist across ±π does not jump. */
-function wrapAngle(delta: number): number {
-  if (!Number.isFinite(delta)) return 0;
-  let d = delta;
-  while (d > Math.PI) d -= 2 * Math.PI;
-  while (d <= -Math.PI) d += 2 * Math.PI;
-  return d;
-}
 
 function firstTwo(ctx: FlyTouchCtx): [THREE.Vector2, THREE.Vector2] | null {
   if (ctx.pointers.size < 2) return null;
@@ -147,7 +133,7 @@ function thrustAndRoll(ctx: FlyTouchCtx, prev: FlyPinchState, next: FlyPinchStat
   }
   const twist = wrapAngle(next.angle - prev.angle);
   if (twist !== 0) {
-    ctx.angularVelocity.addScaledVector(_fwd, FLY_TWIST_ROLL_SIGN * FLY_TWIST_ROLL_GAIN * twist);
+    ctx.angularVelocity.addScaledVector(_fwd, VIEW_AXIS_ROLL_SIGN * FLY_TWIST_ROLL_GAIN * twist);
     changed = true;
   }
   return changed;

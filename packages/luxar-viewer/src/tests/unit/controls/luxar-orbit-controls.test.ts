@@ -599,6 +599,10 @@ describe('LuxarOrbitControls', () => {
       return delta;
     };
 
+    it('#2593 uses the touch-twist roll direction for Shift+wheel', () => {
+      expect(roll(100, WheelEvent.DOM_DELTA_PIXEL)).toBeCloseTo(-100 * 0.0005, 12);
+    });
+
     it('#2531 normalizes deltaMode: a line-mode notch rolls as far as its pixel equivalent', () => {
       // jsdom defaults deltaMode to 0, so the other wheel tests here only
       // ever built pixel-mode events. Firefox reports 3 LINES where Chromium
@@ -612,8 +616,8 @@ describe('LuxarOrbitControls', () => {
       expect(lineMode).not.toBe(0);
       // Far more than the pre-fix value, which consumed the raw 3 as pixels.
       expect(Math.abs(lineMode)).toBeGreaterThan(Math.abs(roll(3, 0)) * 10);
-      // Pixel mode itself is unchanged (default speed 0.0005).
-      expect(roll(100, 0)).toBeCloseTo(100 * 0.0005, 12);
+      // Pixel-mode magnitude itself is unchanged (default speed 0.0005).
+      expect(roll(100, 0)).toBeCloseTo(-100 * 0.0005, 12);
     });
 
     it('#2531 page mode scales by domElement.clientHeight (pins the element argument)', () => {
@@ -628,8 +632,8 @@ describe('LuxarOrbitControls', () => {
       // neither is the clamp.
       Object.defineProperty(domElement, 'clientHeight', { configurable: true, get: () => 600 });
 
-      expect(roll(0.2, 2)).toBeCloseTo(120 * 0.0005, 12);
-      expect(roll(0.2, 2)).not.toBeCloseTo(160 * 0.0005, 6);
+      expect(roll(0.2, 2)).toBeCloseTo(-120 * 0.0005, 12);
+      expect(roll(0.2, 2)).not.toBeCloseTo(-160 * 0.0005, 6);
     });
 
     it('#2565 reads deltaX when Shift+wheel arrives on the horizontal axis', () => {
@@ -643,7 +647,7 @@ describe('LuxarOrbitControls', () => {
           cancelable: true,
         })
       );
-      expect((controls as any).rollDelta).toBeCloseTo(100 * 0.0005, 12);
+      expect((controls as any).rollDelta).toBeCloseTo(-100 * 0.0005, 12);
     });
 
     it('#2565 normalizes a line-mode deltaX fallback at the orbit call site', () => {
@@ -658,7 +662,7 @@ describe('LuxarOrbitControls', () => {
           cancelable: true,
         })
       );
-      expect((controls as any).rollDelta).toBeCloseTo(48 * 0.0005, 12);
+      expect((controls as any).rollDelta).toBeCloseTo(-48 * 0.0005, 12);
     });
 
     it('#2565 does not dispatch change when both wheel axes are zero', () => {

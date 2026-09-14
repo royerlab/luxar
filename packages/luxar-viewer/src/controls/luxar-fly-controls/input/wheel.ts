@@ -16,6 +16,7 @@ import {
   normalizeWheelDelta,
   normalizeWheelDeltaWithAxisFallback,
 } from '../../../utils/wheel-delta';
+import { VIEW_AXIS_ROLL_SIGN } from '../../touch-twist';
 
 // Module-local scratch to avoid per-event allocation.
 const _v0 = new THREE.Vector3();
@@ -71,13 +72,13 @@ export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
   const wheelDelta = event.shiftKey
     ? normalizeWheelDeltaWithAxisFallback(event)
     : normalizeWheelDelta(event);
-  const delta = -Math.sign(wheelDelta);
-  if (delta === 0) return;
+  const direction = Math.sign(wheelDelta);
+  if (direction === 0) return;
 
   if (event.shiftKey) {
     // Shift+scroll: roll around viewing axis
     _v0.set(0, 0, -1).applyQuaternion(ctx.orientation);
-    const rollImpulse = delta * ctx.rotationSpeed * 0.06;
+    const rollImpulse = VIEW_AXIS_ROLL_SIGN * direction * ctx.rotationSpeed * 0.06;
 
     if (ctx.inertialMode) {
       ctx.angularVelocity.addScaledVector(_v0, rollImpulse);
@@ -90,7 +91,7 @@ export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
   } else {
     // Plain scroll: move forward/backward
     _v0.set(0, 0, -1).applyQuaternion(ctx.orientation);
-    const impulse = delta * ctx.movementSpeed * ctx.wheelZoomSensitivity * 0.3;
+    const impulse = -direction * ctx.movementSpeed * ctx.wheelZoomSensitivity * 0.3;
 
     if (ctx.inertialMode) {
       ctx.velocity.addScaledVector(_v0, impulse);
