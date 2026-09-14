@@ -64,6 +64,10 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.lod.group import (
+    DEFAULT_LADDER_BYTES_PER_ELEMENT,
+    DEFAULT_LADDER_TARGET_MS,
+)
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
 from luxar.demos import (
     FlowField,
@@ -77,6 +81,12 @@ from luxar.demos import (
 from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import get_categorical_color
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_MAX_ADDITIVE_COMMIT,
+    capped_stream_cuts,
+    streaming_chunk_splats,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -88,6 +98,11 @@ DRIVE_FOLDER_URL: Final = (
     "https://drive.google.com/drive/folders/1kWWqy38ZKU_-dpVPO8Bh5TjPcmly8qvW"
 )
 CACHE_VERSION: Final = "v1"
+FIRST_RUNG_LINE_VERTICES: Final = streaming_chunk_splats(
+    DEFAULT_LADDER_TARGET_MS,
+    DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_LADDER_BYTES_PER_ELEMENT,
+)
 
 # obsm keys: required for the 3D RNA-velocity vectors and a 3D UMAP layout.
 # The atlas h5ad uses ``velocity_umap`` for the 3D velocity; the position key
@@ -217,6 +232,33 @@ class StreamlineGeometry:
     segments: np.ndarray
     colors: np.ndarray
     streamline_count: int
+
+
+def streamline_ladder(
+    n_polylines: int, max_vertices_per_polyline: int
+) -> dict[str, Any]:
+    """Bound a large Lines ladder in whole-polylines and vertex work.
+
+    The Lines string spelling is an uncapped vertex-count doubling ladder and
+    raises on the 4,444,978-vertex hifi set. Explicit counts are polyline counts,
+    so size them conservatively with the preset's maximum vertices per path;
+    every resulting commit is then bounded by the 900,000-vertex ceiling.
+    """
+    if n_polylines < 1:
+        raise ValueError(f"n_polylines must be >= 1; got {n_polylines}")
+    if max_vertices_per_polyline < 1:
+        raise ValueError(
+            f"max_vertices_per_polyline must be >= 1; got {max_vertices_per_polyline}"
+        )
+    return {
+        "counts": capped_stream_cuts(
+            n_polylines,
+            max(1, FIRST_RUNG_LINE_VERTICES // max_vertices_per_polyline),
+            max(1, DEFAULT_MAX_ADDITIVE_COMMIT // max_vertices_per_polyline),
+        ),
+        "method": "random",
+        "seed": 0,
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -999,8 +1041,9 @@ def write_scene(
                     intensity=STREAMLINE_INTENSITY,
                     layer=True,
                     substitutive_lod=streamline_lod,
-                    additive_lod=stream_ladder(
-                        len(streamlines.vertices), geometry="lines"
+                    additive_lod=streamline_ladder(
+                        streamlines.streamline_count,
+                        preset.streamline_steps + 1,
                     ),
                 )
 

@@ -83,6 +83,7 @@ DEMO_META = {
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
@@ -91,6 +92,12 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import DimensionsConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_int_arg
 from luxar.demos._lod_policy import stream_ladder
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_MAX_ADDITIVE_COMMIT,
+    parse_stream_chunk,
+    sliced_ladder_first_chunk,
+    stream_cuts,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -99,6 +106,35 @@ from luxar.utils.paths import get_demos_output_dir
 
 DEFAULT_MAX_ORDER = 6  # Order 6 = 262,144 vertices (largest comfortable size)
 LINE_WIDTH = 0.0015  # In normalized cube units; thin enough not to drown the curve
+
+
+def hilbert_ladder(n_vertices: int) -> dict[str, Any]:
+    """Give each hidden-order curve a useful first frame.
+
+    Each leaf occupies one ``order`` coordinate, so a measured stop count is 1,
+    but stepping the hidden dimension still replaces the whole curve and resets
+    it to rung 0. Arm the sliced policy's 1/8 share explicitly: order 6 opens at
+    65,536 of 524,286 segment vertices (12.5%), and its largest increment stays
+    below the 900,000-vertex whole-node cap.
+    """
+    ladder = stream_ladder(n_vertices, geometry="lines")
+    first_chunk = sliced_ladder_first_chunk(
+        parse_stream_chunk(ladder["counts"]),
+        elements=n_vertices,
+        slices=2,
+    )
+    cuts = stream_cuts(n_vertices, first_chunk)
+    largest_increment = max(
+        (cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts, strict=True)),
+        default=0,
+    )
+    if largest_increment > DEFAULT_MAX_ADDITIVE_COMMIT:
+        raise ValueError(
+            f"Hilbert ladder resolves a {largest_increment:,}-vertex commit, above "
+            f"the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-vertex ceiling"
+        )
+    ladder["counts"] = f"stream:{first_chunk}"
+    return ladder
 
 
 # -----------------------------------------------------------------------------
@@ -292,7 +328,7 @@ def build_scene(output_path: Path, max_order: int) -> int:
                     intensity=0.55,
                     blending_mode="luminous",
                     layer=True,
-                    additive_lod=stream_ladder(len(segment_vertices), geometry="lines"),
+                    additive_lod=hilbert_ladder(len(segment_vertices)),
                 )
                 total_pts += len(xyz)
 

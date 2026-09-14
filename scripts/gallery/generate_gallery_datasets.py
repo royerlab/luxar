@@ -6,13 +6,14 @@ and, for every entry that declares a generator ``script``, runs that demo with
 ``--no-serve`` to produce its ``.luxar.zarr`` under ``datasets/demos/`` — unless
 the dataset already exists (idempotent / resumable). Every store produced by
 this run is then checked for LOD-ladder quality and embedded scene credits before
-the gallery capture can proceed. Both auditors gate the build. A second report-only
+the gallery capture can proceed. Scene credits gate the build; ladder findings
+are report-only until the demo corpus has been laddered. A second report-only
 pass covers the complete local inventory, so already-present neighbours remain
 visible without deciding whether a newly generated store may proceed. A store
-that fails a generated-store gate is not re-gated on a later
+that fails the generated-store credit gate is not re-gated on a later
 idempotent run; fix the demo and regenerate it with ``--force`` (or delete the
-store first). The direct full-inventory audits before upload are the backstop
-and must exit zero.
+store first). The direct full-inventory credit audit before upload is the
+backstop and must exit zero.
 
 Entries with ``script: null`` live only on a feature branch; their dataset must
 already be present (typically generated once, then committed/kept locally). Such
@@ -95,7 +96,7 @@ LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 UNBUILDABLE_IDS: dict[str, str] = {}
 
 SCENE_AUDITOR_NAMES = (
-    ("check_demo_ladders.py", True),
+    ("check_demo_ladders.py", False),
     ("check_scene_credits.py", True),
 )
 

@@ -189,20 +189,8 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
 }
 
 LEAF_EXEMPT: dict[str, str] = {
-    "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_0": (
-        "published 51-timepoint archive cannot be changed by the scene generator"
-    ),
-    "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_1": (
-        "published 51-timepoint archive cannot be changed by the scene generator"
-    ),
-    "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_2": (
-        "published 51-timepoint archive cannot be changed by the scene generator"
-    ),
-    "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_3": (
-        "published 51-timepoint archive cannot be changed by the scene generator"
-    ),
     "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
-        "intentional flat control in the six-recipe LOD comparison"
+        "intentional flat control in the 6-recipe LOD comparison"
     ),
 }
 
@@ -389,7 +377,12 @@ def _first_rung_histogram(
         rung = leaf["additive_0"]
     except KeyError:
         return Counter()
-    dims = [int(dim) for dim in rung.attrs.get("slice_dims", [])]
+    ordering = (
+        rung.attrs.get("vertex_ordering", {})
+        if attrs["type"] == "lines"
+        else rung.attrs
+    )
+    dims = [int(dim) for dim in ordering.get("slice_dims", [])]
     if not dims:
         return None
     coordinate_array = {
@@ -558,6 +551,8 @@ def _record_sliced_verdicts(
         partitioned,
         worst_part,
     ) in sliced_rung_measurements(root):
+        if f"{scene_name}{path}" in LEAF_EXEMPT:
+            continue
         count = sparsest_slice_elements(histogram)
         coverage = len(histogram)
         where = (
@@ -818,11 +813,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _record_stale_leaf_exemptions(
+    inspected_scenes: set[str],
+    matched_exemptions: set[str],
+    counts: dict[str, int],
+    failures: list[str],
+) -> None:
+    """Fail exact exemptions whose scene exists but whose leaf no longer does."""
+    stale_exemptions = sorted(
+        key
+        for key in LEAF_EXEMPT
+        if key.split("/", 1)[0] in inspected_scenes and key not in matched_exemptions
+    )
+    for key in stale_exemptions:
+        aprint(f"❌ stale leaf exemption matched no leaf: {key}")
+        counts["fail"] += 1
+        failures.append(key)
+
+
 def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
     """Run the streaming-ladder and sliced-first-rung audits."""
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
     icons = {"ok": "✅", "warn": "⚠️ ", "fail": "❌", "skip": "· "}
     failures: list[str] = []
+    matched_exemptions: set[str] = set()
+    inspected_scenes: set[str] = set()
 
     for scene in paths:
         try:
@@ -832,11 +847,13 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             counts["fail"] += 1
             failures.append(scene.name)
             continue
+        inspected_scenes.add(scene.name)
 
         results: list[tuple[str, str, str]] = []
         for leaf_path, leaf in walk_leaves(root):
             exemption = LEAF_EXEMPT.get(f"{scene.name}{leaf_path}")
             if exemption is not None:
+                matched_exemptions.add(f"{scene.name}{leaf_path}")
                 results.append((leaf_path, "warn", f"exempt: {exemption}"))
                 counts["warn"] += 1
                 continue
@@ -871,6 +888,10 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             with asection(scene.name):
                 for leaf_path, status, message in visible_results:
                     aprint(f"{icons[status]} {leaf_path}: {message}")
+
+    _record_stale_leaf_exemptions(
+        inspected_scenes, matched_exemptions, counts, failures
+    )
 
     aprint(
         f"{counts['ok']} ok, {counts['warn']} warned, {counts['fail']} failed, "

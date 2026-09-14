@@ -703,6 +703,32 @@ def _sliced_node(
     return root
 
 
+def _sliced_lines_node(path: Path, per_coordinate: dict[int, int]):
+    """A Lines leaf whose nested vertex ordering records the hidden axis."""
+    root = zarr.open_group(path, mode="w")
+    leaf = root.create_group("leaf")
+    rows = np.asarray(
+        [[coord] for coord, count in per_coordinate.items() for _ in range(count)],
+        dtype=np.uint16,
+    ).reshape(-1, 1)
+    leaf.attrs.update(
+        {"type": "lines", "n_vertices": len(rows) * 2, "n_additive_sublods": 2}
+    )
+    rung = leaf.create_group("additive_0")
+    rung.attrs.update(
+        {
+            "type": "lines",
+            "n_vertices": len(rows),
+            "vertex_ordering": {"slice_dims": [0]},
+        }
+    )
+    rung.create_array("vertices", data=rows)
+    leaf.create_group("additive_1").attrs.update(
+        {"type": "lines", "n_vertices": len(rows)}
+    )
+    return root
+
+
 def _sliced_verdicts(root, **overrides):
     results: list[tuple[str, str, str]] = []
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
@@ -745,6 +771,14 @@ def test_one_busy_coordinate_does_not_mask_starved_ones(tmp_path: Path) -> None:
     assert (path, status) == ("/leaf", "fail")
     assert "sparsest rung-0 slices hold 5 elements" in message
     assert "covers 40 coordinates" in message
+
+
+def test_sliced_lines_histogram_reads_vertex_ordering(tmp_path: Path) -> None:
+    root = _sliced_lines_node(tmp_path / "lines.zarr", {0: 3, 1: 2})
+
+    histogram = checker._node_slice_histogram(root["leaf"], root)
+
+    assert histogram == Counter({(0,): 3, (1,): 2})
 
 
 def test_a_uniformly_healthy_sliced_node_passes(tmp_path: Path) -> None:
@@ -941,10 +975,54 @@ def test_every_share_arm_exemption_carries_a_measured_reason() -> None:
 
 
 def test_every_leaf_exemption_is_exact_and_explained() -> None:
-    assert checker.LEAF_EXEMPT
+    assert checker.LEAF_EXEMPT, "an empty allowlist should be deleted, not kept"
     for key, reason in checker.LEAF_EXEMPT.items():
         assert ".luxar.zarr/" in key
-        assert len(reason) >= 40
+        assert re.search(r"\d|#[0-9]+", reason), f"{key}: reason cites no evidence"
+
+
+def test_stale_leaf_exemption_fails_when_its_scene_is_inspected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scene = tmp_path / "stale.luxar.zarr"
+    _make_leaf(scene, [20, 20, 60])
+    monkeypatch.setattr(
+        checker,
+        "LEAF_EXEMPT",
+        {"stale.luxar.zarr/missing": "measured 123 rows in the legacy leaf"},
+    )
+
+    assert checker.main([str(scene)]) == 1
+    output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "stale leaf exemption matched no leaf" in output
+
+
+def test_leaf_exemption_covers_structural_and_sliced_arms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scene = tmp_path / "legacy.luxar.zarr"
+    _sliced_node(
+        scene,
+        {coordinate: 7 for coordinate in range(40)},
+        node_total=83_221_420,
+        node_name="legacy_leaf",
+    )
+    monkeypatch.setattr(
+        checker,
+        "LEAF_EXEMPT",
+        {
+            "legacy.luxar.zarr/legacy_leaf": (
+                "pinned legacy archive has a measured 37,930,613-element level"
+            )
+        },
+    )
+
+    assert checker.main([str(scene)]) == 0
+    output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "legacy_leaf: exempt:" in output
+    assert "sparsest rung-0 slices" not in output
 
 
 def test_calibrated_sliced_defaults_and_cli_exemption_are_pinned(

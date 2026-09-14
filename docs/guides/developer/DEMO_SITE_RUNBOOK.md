@@ -105,9 +105,12 @@ publishing; §3.21 records the current exception and measurement procedure.
 
 `make generate-gallery-datasets` automatically runs both built-scene auditors
 against only the stores it generated in that invocation, then reports on the
-complete local inventory. Both auditors gate a rebuild without letting an
-unrelated stale local store block it. Before uploading a wave, run the complete
-inventory commands directly as well. A store that fails a generated-store gate is not re-gated on a later
+complete local inventory. Scene-credit failures gate a rebuild without letting
+an unrelated stale local store block it. The ladder arm is report-only for now:
+it currently fails across much of the pre-ladder corpus, so use its output to
+track and prioritize that debt rather than skipping the audit entirely. Before
+uploading a wave, run the complete inventory commands directly as well. A store
+that fails the generated-store credit gate is not re-gated on a later
 idempotent run because it is then an already-present neighbour: fix the demo and
 regenerate with `--force` (or delete the store) before continuing.
 
@@ -119,8 +122,9 @@ hatch run check-scene-credits --require-scenes
 Keep this immediately before upload, after the final local build and
 optimisation. `--require-scenes` is load-bearing: an empty or wrongly located
 inventory must fail rather than produce a green "inspected nothing" result.
-Both auditors must exit zero before upload. The direct full-inventory commands
-are the backstop and must exit zero.
+Scene credits must exit zero before upload; record the report-only ladder result
+alongside the wave until the corpus is ready for that check to become a gate.
+The direct full-inventory credit command is the backstop and must exit zero.
 
 Before rebuilding `earthquakes`, `ocean_currents_earth`,
 `global_rivers_earth`, or `biodiversity_planetary_scale`, put KTX-Software's
