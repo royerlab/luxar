@@ -88,10 +88,12 @@ node scripts/perf/opfs-deep-pass-bench.mjs \
 ```
 
 The harness disables predictive prefetch by default; pass `--prefetch` or
-`--prefetch true` to reproduce production scheduling. It derives the penultimate coordinate from
-the discrete time dimension's `range` and `step`; an explicit `--start-frame`
-must equal that coordinate so the measurement remains exactly
-one transition at integer `--ladder-depth` (default 6). Pass `--clear-first` to
+`--prefetch true` to reproduce production scheduling. In `once` mode playback
+does not apply the tick that reaches or crosses `range[1]`, so the harness
+mirrors that boundary and discrete grid snapping to derive the coordinate that
+leaves exactly one applied advance. An explicit `--start-frame` must equal that
+coordinate so the measurement remains exactly one transition at integer
+`--ladder-depth` (default 6). Pass `--clear-first` to
 clear every cache level before the first arm. It records transition and settle timings separately, update and
 LOD-refinement profiler trees, L2 hit/miss deltas, read-gate occupancy, write
 queue `depth`/`inFlight`, and the live viewer renderer/backend. Chrome runs
@@ -112,15 +114,14 @@ contention; the cap added in #2732 is sufficient, with no additional scheduling
 change justified. New artifacts expose `animationMs`, `settleMs`,
 transition/settle updates, and refinement roots separately.
 
-A September 13, 2026 diagnostic used a separate archived H2AFVA store that
-declared `Time range=[0,50]`, `step=1`, and 51 timepoints, matching the generated
-store's metadata, but playback from `--start-frame 48` stopped at 49 instead of
-continuing to 50. Its three warm sweeps therefore measured the 48→49 transition,
-not the documented 49→50 transition: cap 64 reported `animationMs` 0.121–2.923 s
-and `settleMs` 0.305–1.744 s; cap 4096 reported 0.103–0.131 s and 0.093–1.555 s.
-The cap-4096 arms all stamped `missedUpdates=1` (cap 64 stamped 0–1), so these
-non-reproducible archive numbers are retained only as diagnostic provenance, not
-as a baseline for the setup above. They still show no 6–30 s warm tail.
+The corrected September 13, 2026 baseline used the setup above with
+`Time range=[0,50]`, `step=1`, and 51 timepoints. Because `once` stops one
+coordinate short of `range[1]`, each of the four warm sweeps measured 48→49:
+cap 64 reported `animationMs` 0.121–2.923 s and `settleMs` 0.187–1.744 s; cap
+4096 reported `animationMs` 0.103–0.131 s and `settleMs` 0.064–1.555 s. Three
+cap-4096 arms stamped `missedUpdates=1` (cap 64 stamped 0–1), so the phase split
+remains diagnostic for the fastest arms, but the baseline still shows no 6–30 s
+warm tail or cap-dependent trend.
 
 This untyped harness depends on the debug surface names
 `getSceneLoader`, `getDefaultLoader`, `getProfiler`, `inputHandler`,
