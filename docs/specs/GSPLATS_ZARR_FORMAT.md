@@ -811,6 +811,19 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 1. Always read common fields from `fitting/.zattrs`
 2. Only interpret `fitting/config/.zattrs` if they recognize the `fitter_name`
 
+Luxar fits also store relocation and scale diagnostics in `fitting/.zattrs`:
+the configured iteration and dynamic-ops cadence, relocation event and distinct-
+splat counts, the relocation and sigma-floor candidates, and final best-state
+populations within `scale_diagnostic_tolerance_vox` of those candidates. These
+sigmas are in optimization-space voxels before output transforms. A uniform
+precomputed seed covariance is recorded as `fit_init_sigma_diag_vox`; genuinely
+per-splat covariances record that key and the near-count/fraction as `null`, plus
+per-axis min/median/max summaries under
+`fit_init_marginal_sigma_diag_vox_{min,median,max}`. `fit_init_sigma_vox` is
+`null` whenever precomputed covariances made that fallback config value unused.
+Relocation counts cover the full run, while scale populations describe the
+selected best iteration.
+
 **Source grid** (fitting/.zattrs, optional) — what the splats are a
 representation *of*, so that "how much did this compress?" is answerable from
 the artifact alone:

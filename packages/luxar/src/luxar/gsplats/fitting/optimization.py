@@ -54,6 +54,19 @@ def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:
     return torch.max(torch.abs(pred - target)).item()
 
 
+def _completed_relocation_statistics(
+    relocation_tracker: Optional[RecentlyRelocatedTracker],
+) -> dict[str, int]:
+    """Return persisted relocation counters without transient cooldown state."""
+    if relocation_tracker is None:
+        return {"total_relocations": 0, "unique_splats": 0}
+    tracker_statistics = relocation_tracker.get_statistics()
+    return {
+        "total_relocations": tracker_statistics["total_relocations"],
+        "unique_splats": tracker_statistics["unique_splats"],
+    }
+
+
 def _compute_eval_metrics(
     pred: torch.Tensor, target: torch.Tensor
 ) -> tuple[float, float]:
@@ -446,12 +459,7 @@ def run_optimization_loop(
             pred_final = model()
             best_max_abs_error, best_rel_l2 = _compute_eval_metrics(pred_final, V_t)
 
-    relocation_statistics = (
-        relocation_tracker.get_statistics()
-        if relocation_tracker is not None
-        else {"total_relocations": 0, "unique_splats": 0}
-    )
-    relocation_statistics.pop("currently_on_cooldown", None)
+    relocation_statistics = _completed_relocation_statistics(relocation_tracker)
 
     return OptimizationResults(
         centers=centers,

@@ -186,6 +186,43 @@ def test_sigma_initialization(basic_config, basic_preprocessed_data) -> None:
         assert np.all(diag > 0)
 
 
+@pytest.mark.parametrize(
+    ("branch", "sigma_min_diag", "expected"),
+    [
+        ("explicit", [0.0, 0.0], [0.5, 0.5]),
+        ("explicit", [1.0, 1.0], [1.1, 1.1]),
+        ("physical", [0.0, 0.0], [1.6, 0.8]),
+        ("physical", [1.0, 1.0], [1.6, 1.1]),
+        ("auto", [0.0, 0.0], [1.6, 1.6]),
+        ("auto", [2.0, 2.0], [2.1, 2.1]),
+    ],
+)
+def test_fresh_seed_sigma_branches_and_floor(
+    basic_config, basic_preprocessed_data, branch, sigma_min_diag, expected
+) -> None:
+    """Fresh-seed initialization preserves every scale branch and floor clamp."""
+    basic_config.sigma_min_diag = sigma_min_diag
+    if branch == "explicit":
+        basic_config.init_sigma_vox = 0.5
+        basic_config.voxel_size = None
+    elif branch == "physical":
+        basic_config.init_sigma_vox = None
+        basic_config.voxel_size = np.array([1.0, 2.0], dtype=np.float32)
+    else:
+        basic_config.init_sigma_vox = None
+        basic_config.voxel_size = None
+
+    components = initialize_optimization(basic_config, basic_preprocessed_data)
+    assert components.model is not None
+    _, Ls, _ = components.model.current_params()
+
+    np.testing.assert_allclose(
+        torch.diagonal(Ls, dim1=1, dim2=2).detach().cpu().numpy(),
+        np.tile(expected, (basic_preprocessed_data.N, 1)),
+        atol=1e-6,
+    )
+
+
 def test_initialization_3d(basic_config) -> None:
     """Test initialization works for 3D data."""
     # Create 3D config and data

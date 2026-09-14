@@ -18,6 +18,7 @@ from luxar.gsplats.fitting.config import (
     OptimizationResults,
     PreprocessedData,
 )
+from luxar.gsplats.fitting.initialization import resolve_fit_initial_sigma_diag
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import pack_tril
 
@@ -213,8 +214,6 @@ def _fit_diagnostic_stats(
     Ls: np.ndarray,
 ) -> dict[str, Any]:
     """Build reproducibility and candidate-scale diagnostics for one fit."""
-    from luxar.gsplats.fitting.initialization import _resolve_fit_initial_sigma_diag
-
     marginal_sigmas = np.sqrt(np.einsum("nij,nij->ni", Ls, Ls, optimize=True))
     relocation_sigma = np.full(
         preprocessed_data.d, config.dynamic_config.init_sigma_vox, dtype=np.float32
@@ -231,7 +230,9 @@ def _fit_diagnostic_stats(
         "dynamic_ops_relocation_events": relocation_statistics["total_relocations"],
         "dynamic_ops_unique_splats_relocated": relocation_statistics["unique_splats"],
         "scale_diagnostic_tolerance_vox": _SCALE_DIAGNOSTIC_TOLERANCE_VOX,
-        "fit_init_sigma_vox": config.init_sigma_vox,
+        "fit_init_sigma_vox": (
+            config.init_sigma_vox if preprocessed_data.init_L is None else None
+        ),
         "relocation_init_sigma_vox": config.dynamic_config.init_sigma_vox,
         "splats_near_relocation_init_sigma_count": relocation_count,
         "splats_near_relocation_init_sigma_fraction": relocation_fraction,
@@ -245,11 +246,29 @@ def _fit_diagnostic_stats(
     candidates_match_dimensions = sigma_min is None or sigma_min.shape == (
         preprocessed_data.d,
     )
-    fit_sigma = (
-        _resolve_fit_initial_sigma_diag(config, preprocessed_data)
-        if candidates_match_dimensions
-        else None
-    )
+    fit_sigma: Optional[np.ndarray] = None
+    initial_marginal_sigmas: Optional[np.ndarray] = None
+    if candidates_match_dimensions:
+        if preprocessed_data.init_L is None:
+            fit_sigma = resolve_fit_initial_sigma_diag(config, preprocessed_data)
+        else:
+            initial_Ls = preprocessed_data.init_L.astype(np.float32, copy=True)
+            if sigma_min is not None:
+                for axis in range(preprocessed_data.d):
+                    initial_Ls[:, axis, axis] = np.maximum(
+                        initial_Ls[:, axis, axis], sigma_min[axis] + 0.1
+                    )
+            initial_marginal_sigmas = np.sqrt(
+                np.einsum("nij,nij->ni", initial_Ls, initial_Ls, optimize=True)
+            )
+            if len(initial_marginal_sigmas) > 0 and np.allclose(
+                initial_marginal_sigmas,
+                initial_marginal_sigmas[0],
+                rtol=1e-6,
+                atol=1e-6,
+            ):
+                fit_sigma = initial_marginal_sigmas[0]
+
     if fit_sigma is not None:
         fit_count, fit_fraction = _near_sigma_statistics(marginal_sigmas, fit_sigma)
         stats.update(
@@ -257,6 +276,30 @@ def _fit_diagnostic_stats(
                 "fit_init_sigma_diag_vox": fit_sigma.tolist(),
                 "splats_near_fit_init_sigma_count": fit_count,
                 "splats_near_fit_init_sigma_fraction": fit_fraction,
+            }
+        )
+    elif initial_marginal_sigmas is not None:
+        has_initial_splats = len(initial_marginal_sigmas) > 0
+        stats.update(
+            {
+                "fit_init_sigma_diag_vox": None,
+                "fit_init_marginal_sigma_diag_vox_min": (
+                    initial_marginal_sigmas.min(axis=0).tolist()
+                    if has_initial_splats
+                    else None
+                ),
+                "fit_init_marginal_sigma_diag_vox_median": (
+                    np.median(initial_marginal_sigmas, axis=0).tolist()
+                    if has_initial_splats
+                    else None
+                ),
+                "fit_init_marginal_sigma_diag_vox_max": (
+                    initial_marginal_sigmas.max(axis=0).tolist()
+                    if has_initial_splats
+                    else None
+                ),
+                "splats_near_fit_init_sigma_count": None,
+                "splats_near_fit_init_sigma_fraction": None,
             }
         )
 

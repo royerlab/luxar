@@ -1268,3 +1268,120 @@ def test_finalize_reports_relocation_and_candidate_scale_diagnostics(
     assert result.stats["splats_near_relocation_init_sigma_fraction"] == 0.4
     assert result.stats["splats_near_sigma_min_count"] == 1
     assert result.stats["splats_near_sigma_min_fraction"] == 0.2
+
+
+def test_finalize_reports_uniform_precomputed_fit_initialization(
+    basic_config, basic_preprocessed_data
+) -> None:
+    """Auto-seeded fits diagnose the covariance that was actually supplied."""
+    basic_config.init_sigma_vox = 0.5
+    basic_config.sigma_min_diag = [0.3, 0.3]
+    basic_config.clip_to_bounds = False
+    basic_preprocessed_data.init_L = np.tile(
+        np.diag([0.7, 0.9]).astype(np.float32), (5, 1, 1)
+    )
+    optimization_results = OptimizationResults(
+        centers=torch.full((5, 2), 16.0),
+        Ls=torch.tensor(basic_preprocessed_data.init_L),
+        amps=torch.ones(5),
+        converged_early=False,
+        early_stopped=False,
+        actual_iters=10,
+        best_iteration=10,
+        best_loss=0.01,
+        best_max_abs_error=0.05,
+        best_rel_l2=0.1,
+        movie_frames=None,
+        start_time=0.0,
+        end_time=1.0,
+    )
+
+    stats = finalize_results(
+        optimization_results, basic_config, basic_preprocessed_data
+    ).stats
+
+    assert stats["fit_init_sigma_vox"] is None
+    assert stats["fit_init_sigma_diag_vox"] == pytest.approx([0.7, 0.9])
+    assert stats["splats_near_fit_init_sigma_count"] == 5
+    assert stats["splats_near_fit_init_sigma_fraction"] == 1.0
+
+
+def test_finalize_summarizes_per_splat_fit_initialization(
+    basic_config, basic_preprocessed_data
+) -> None:
+    """Per-splat seed covariances remain explicit rather than looking like zero."""
+    basic_config.clip_to_bounds = False
+    basic_config.sigma_min_diag = None
+    initial_diags = np.array(
+        [[0.5, 0.7], [0.6, 0.8], [0.7, 0.9], [0.8, 1.0], [0.9, 1.1]],
+        dtype=np.float32,
+    )
+    basic_preprocessed_data.init_L = np.zeros((5, 2, 2), dtype=np.float32)
+    basic_preprocessed_data.init_L[:, 0, 0] = initial_diags[:, 0]
+    basic_preprocessed_data.init_L[:, 1, 1] = initial_diags[:, 1]
+    optimization_results = OptimizationResults(
+        centers=torch.full((5, 2), 16.0),
+        Ls=torch.tensor(basic_preprocessed_data.init_L),
+        amps=torch.ones(5),
+        converged_early=False,
+        early_stopped=False,
+        actual_iters=10,
+        best_iteration=10,
+        best_loss=0.01,
+        best_max_abs_error=0.05,
+        best_rel_l2=0.1,
+        movie_frames=None,
+        start_time=0.0,
+        end_time=1.0,
+    )
+
+    stats = finalize_results(
+        optimization_results, basic_config, basic_preprocessed_data
+    ).stats
+
+    assert stats["fit_init_sigma_vox"] is None
+    assert stats["fit_init_sigma_diag_vox"] is None
+    assert stats["fit_init_marginal_sigma_diag_vox_min"] == pytest.approx([0.5, 0.7])
+    assert stats["fit_init_marginal_sigma_diag_vox_median"] == pytest.approx(
+        [0.7, 0.9]
+    )
+    assert stats["fit_init_marginal_sigma_diag_vox_max"] == pytest.approx([0.9, 1.1])
+    assert stats["splats_near_fit_init_sigma_count"] is None
+    assert stats["splats_near_fit_init_sigma_fraction"] is None
+
+
+def test_fit_diagnostics_handle_empty_precomputed_initialization(
+    basic_config, basic_preprocessed_data
+) -> None:
+    """An empty seed set records unknown summaries instead of reducing empties."""
+    from luxar.gsplats.fitting.results import _fit_diagnostic_stats
+
+    basic_preprocessed_data.N = 0
+    basic_preprocessed_data.init_L = np.empty((0, 2, 2), dtype=np.float32)
+    optimization_results = OptimizationResults(
+        centers=torch.empty((0, 2)),
+        Ls=torch.empty((0, 2, 2)),
+        amps=torch.empty(0),
+        converged_early=False,
+        early_stopped=False,
+        actual_iters=0,
+        best_iteration=0,
+        best_loss=0.0,
+        best_max_abs_error=0.0,
+        best_rel_l2=0.0,
+        movie_frames=None,
+        start_time=0.0,
+        end_time=0.0,
+    )
+
+    stats = _fit_diagnostic_stats(
+        optimization_results,
+        basic_config,
+        basic_preprocessed_data,
+        np.empty((0, 2, 2), dtype=np.float32),
+    )
+
+    assert stats["fit_init_sigma_diag_vox"] is None
+    assert stats["fit_init_marginal_sigma_diag_vox_min"] is None
+    assert stats["fit_init_marginal_sigma_diag_vox_median"] is None
+    assert stats["fit_init_marginal_sigma_diag_vox_max"] is None

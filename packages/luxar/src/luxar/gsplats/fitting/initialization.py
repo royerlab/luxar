@@ -14,7 +14,7 @@ from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.optim import create_optimizer_and_scheduler
 
 
-def _resolve_fit_initial_sigma_diag(
+def resolve_fit_initial_sigma_diag(
     config: FitConfig, preprocessed_data: PreprocessedData
 ) -> Optional[np.ndarray]:
     """Return the uniform voxel-space sigma vector used for fresh seeds.
@@ -90,14 +90,15 @@ def initialize_optimization(
             aprint(f"Using pre-initialized Cholesky factors: {L0.shape}")
     else:
         # Fallback: isotropic Gaussians with init_sigma_vox or auto-computed sigma
-        sigma_diag = _resolve_fit_initial_sigma_diag(config, preprocessed_data)
+        sigma_diag = resolve_fit_initial_sigma_diag(config, preprocessed_data)
         assert sigma_diag is not None
         L0 = np.zeros((N, d, d), dtype=np.float32)
         for i in range(d):
             L0[:, i, i] = sigma_diag[i]
 
         if config.verbose and config.init_sigma_vox is None:
-            aprint(f"Auto-computed init sigma diag={sigma_diag.tolist()} voxels")
+            units = "physical-derived voxel" if config.voxel_size is not None else "voxel"
+            aprint(f"Auto-computed init sigma diag={sigma_diag.tolist()} ({units})")
 
     # Ensure diagonal values are at least sigma_min_diag to prevent gradient death
     # (inverse_softplus of values near 0 causes gradients to vanish)

@@ -4203,3 +4203,43 @@ def test_finite_fit_metrics_still_round_trip(tmp_path: Path) -> None:
         "foreground_fraction": 0.0221,
         "source_shape": [24, 32, 32],
     }
+
+
+def test_fit_scale_diagnostics_save_in_fitting_group_and_round_trip(
+    tmp_path: Path,
+) -> None:
+    """Fit diagnostics stay out of topology provenance and preserve nulls."""
+    from luxar.gsplats.io.load_gsplats import load_gsplats
+    from luxar.gsplats.io.save_gsplats import split_fitting_info
+
+    diagnostics = {
+        "configured_iterations": 20_000,
+        "dynamic_ops_relocation_events": 17,
+        "fit_init_sigma_vox": None,
+        "fit_init_sigma_diag_vox": None,
+        "fit_init_marginal_sigma_diag_vox_min": [0.5, 0.7, 0.9],
+        "fit_init_marginal_sigma_diag_vox_median": [0.8, 1.0, 1.2],
+        "fit_init_marginal_sigma_diag_vox_max": [1.1, 1.3, 1.5],
+        "splats_near_fit_init_sigma_count": None,
+        "splats_near_fit_init_sigma_fraction": None,
+    }
+    fitting_info, fitting_config, provenance, pipeline = split_fitting_info(diagnostics)
+    assert fitting_info == diagnostics
+    assert fitting_config is None
+    assert provenance is None
+    assert pipeline is None
+
+    path = tmp_path / "diagnostics.gsplats.zarr"
+    save_gsplats(
+        path=path,
+        **create_test_splats_3d(5),
+        fitting_info=fitting_info,
+        ordering="none",
+    )
+
+    root = zarr.open_group(str(path), mode="r")
+    assert "pipeline" not in root
+    assert dict(root["fitting"].attrs).items() >= diagnostics.items()
+    loaded = load_gsplats(path, include_stats=True)
+    for key, value in diagnostics.items():
+        assert loaded.stats[key] == value

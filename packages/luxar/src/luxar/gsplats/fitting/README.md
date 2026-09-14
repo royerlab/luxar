@@ -271,7 +271,10 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 - Fit stats also preserve dynamic-ops event/distinct-splat relocation counts and
   count final splats within 0.01 voxel of the resolved fit initialization,
   relocation initialization, and sigma-floor candidates. These diagnostics use
-  marginal sigmas from the selected best state before output-space transforms.
+  optimization-space voxel marginal sigmas from the selected best state before
+  output-space transforms. Relocation counts cover the full optimization run, so
+  they may include events after that selected best iteration. Per-splat seed
+  covariances are summarized by axis because they have no single candidate scale.
 
 ### `visualization.py` - Display Helpers
 **Purpose:** Optional visualization of results.
