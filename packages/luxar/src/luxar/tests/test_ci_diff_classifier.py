@@ -1610,6 +1610,10 @@ def test_the_docs_gate_names_its_own_checkers_and_baselines(workflow: str) -> No
         "scripts/check_documentation.py",
         "scripts/changelog_build.py",
         "scripts/docs_baseline.json",
+        "packages/luxar-viewer/scripts/check-overrides.mjs",
+        "packages/luxar-viewer/scripts/check-typedoc-warnings.mjs",
+        "packages/luxar-viewer/scripts/check-typedoc-warnings-tests.mjs",
+        "packages/luxar-viewer/typedoc.json",
         "packages/luxar-viewer/typedoc-warnings-baseline.json",
     ):
         assert (REPO / path).exists(), f"{path} moved; update this test"
