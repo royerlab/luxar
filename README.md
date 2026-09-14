@@ -74,7 +74,7 @@ is the slow exception).
 | **Interoperable** | Reads classical 3D-Gaussian-splatting captures (INRIA, `.splat`, `.spz`, SuperSplat, PlayCanvas SOG); writes INRIA PLY |
 | **Shareable** | `luxar export` produces a standalone offline folder, or a native bundle — a double-clickable macOS `.app`, a portable Linux folder — that opens with no Luxar install |
 
-> **Requirements:** The Luxar viewer needs a browser with **WebGL2** support. Chromium, Firefox and WebKit are all tested — see [Browser Compatibility](#browser-compatibility) for what was measured and what was not. Touch input is implemented (one- and two-finger orbit/fly gestures, tap-to-pick, long-press menus, a coarse-pointer layout) and exercised by an emulated iPhone/iPad/Pixel Playwright suite; performance on real phones and tablets has not been benchmarked, so treat mobile as supported but unmeasured.
+> **Requirements:** The Luxar viewer needs a browser with **WebGL2** support. Chromium, Firefox and WebKit are all tested — see [Browser Compatibility](#browser-compatibility) for what was measured and what was not. Touch input is implemented (one- and two-finger orbit/fly gestures, tap-to-pick, long-press menus, a coarse-pointer layout) and exercised by a Chromium-emulated iPhone/iPad/Pixel Playwright suite; performance on real phones and tablets has not been benchmarked, so treat mobile as supported but unmeasured.
 
 ---
 
@@ -1023,9 +1023,10 @@ run `pnpm test:e2e:browsers`. The checked-in visual snapshot corpus is
 Chromium-only, so this command ignores snapshot assertions and compares
 functional behavior rather than pixels.
 
-Not verified: the full E2E suite on any engine but Chromium; **Safari and Edge
-themselves** — Playwright's WebKit is a WebKit build, not Safari, and Edge is
-Chromium-based but untested; and any performance comparison between engines.
+Not verified: the full E2E suite on any engine but Chromium; real phones and
+tablets, including touch behaviour in iOS Safari; **Safari and Edge themselves**
+— Playwright's WebKit is a WebKit build, not Safari, and Edge is Chromium-based
+but untested; and any performance comparison between engines.
 WebKit lacks main-thread `FileSystemFileHandle.createWritable()`, so Safari and
 the native WKWebView launcher fall back to L1-only caching; see the
 [`opfs-unavailable` cache badge](packages/luxar-viewer/src/cache/README.md#cache-status-badges).
