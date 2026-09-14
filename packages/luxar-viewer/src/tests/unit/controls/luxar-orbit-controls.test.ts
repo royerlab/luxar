@@ -609,6 +609,11 @@ describe('LuxarOrbitControls', () => {
     });
 
     it('#2593 composes the same Shift+wheel gesture in the same direction across controllers', () => {
+      camera.position.set(3, 2, 5);
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld();
+      const orbitForward = camera.getWorldDirection(new THREE.Vector3());
+      const orbitUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
       controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
       controls.enableViewAxisRotation();
       domElement.dispatchEvent(
@@ -617,19 +622,45 @@ describe('LuxarOrbitControls', () => {
       controls.update();
 
       const flyCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-      flyCamera.position.set(0, 0, 5);
+      flyCamera.position.set(3, 2, 5);
       flyCamera.lookAt(0, 0, 0);
+      flyCamera.updateMatrixWorld();
+      const flyForward = flyCamera.getWorldDirection(new THREE.Vector3());
+      const flyUp = new THREE.Vector3(0, 1, 0).applyQuaternion(flyCamera.quaternion);
       const flyElement = document.createElement('div');
       document.body.appendChild(flyElement);
-      const flyControls = new LuxarFlyControls(flyCamera, flyElement, { inertialMode: false });
+      const flyControls = new LuxarFlyControls(flyCamera, flyElement, {
+        inertialMode: true,
+        rotationSpeed: 1,
+      });
       flyElement.dispatchEvent(
         new WheelEvent('wheel', { deltaY: 100, shiftKey: true, cancelable: true })
       );
-      flyControls.update(0);
+      flyControls.update(1);
 
-      expect(camera.up.x).toBeLessThan(0);
-      expect(flyCamera.up.x).toBeLessThan(0);
-      expect(Math.sign(camera.up.x)).toBe(Math.sign(flyCamera.up.x));
+      const signedRoll = (
+        beforeUp: THREE.Vector3,
+        forward: THREE.Vector3,
+        afterUp: THREE.Vector3
+      ) =>
+        Math.atan2(
+          forward.dot(new THREE.Vector3().crossVectors(beforeUp, afterUp)),
+          beforeUp.dot(afterUp)
+        );
+      const orbitRoll = signedRoll(orbitUp, orbitForward, camera.up);
+      const flyRoll = signedRoll(flyUp, flyForward, flyCamera.up);
+
+      expect(orbitRoll).toBeCloseTo(VIEW_AXIS_ROLL_SIGN * 0.05, 12);
+      expect(flyRoll).toBeCloseTo(VIEW_AXIS_ROLL_SIGN * 0.06, 12);
+      expect(Math.sign(orbitRoll)).toBe(Math.sign(flyRoll));
+      expect(camera.getWorldDirection(new THREE.Vector3()).angleTo(orbitForward)).toBeCloseTo(
+        0,
+        12
+      );
+      expect(flyCamera.getWorldDirection(new THREE.Vector3()).angleTo(flyForward)).toBeCloseTo(
+        0,
+        12
+      );
 
       flyControls.dispose();
       document.body.removeChild(flyElement);
