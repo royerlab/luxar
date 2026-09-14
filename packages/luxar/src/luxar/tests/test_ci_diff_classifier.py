@@ -1596,18 +1596,19 @@ def test_mobile_e2e_suite_is_enabled_in_ci(workflow: str) -> None:
     )
 
 
-def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> None:
+def test_the_docs_gate_names_its_own_checkers_and_baselines(workflow: str) -> None:
     """The sibling invariant that made the complexity hole visible.
 
-    ``docs_pattern`` already names both halves of its gate — the checker and the
-    ratchet files it compares against — which is exactly what the complexity
-    ratchet was missing. Pinning it keeps the precedent from eroding. The TypeDoc
-    warning baseline belongs here, not in the language table: no ``typescript-tests``
-    step reads it, the ratchet that does runs inside ``docs-quality``.
+    ``docs_pattern`` names its checkers and the ratchet files they compare against,
+    which is exactly what the complexity ratchet was missing. Pinning it keeps the
+    precedent from eroding. The TypeDoc warning baseline belongs here, not in the
+    language table: no ``typescript-tests`` step reads it, the ratchet that does runs
+    inside ``docs-quality``.
     """
     pattern = _docs_pattern(workflow)
     for path in (
         "scripts/check_documentation.py",
+        "scripts/changelog_build.py",
         "scripts/docs_baseline.json",
         "packages/luxar-viewer/typedoc-warnings-baseline.json",
     ):
