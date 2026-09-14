@@ -61,11 +61,16 @@ _CONVERTED_ADDITIVE_TARGETS = {
 #: a resident count against a per-geometry cap, or a correctness constraint, is.
 JUSTIFIED: dict[str, str] = {
     "demo_4d_fractals.py": (
-        "44,469,233 points span 300 hidden (fractal, w) coordinates. A single "
-        "slice-aware ladder would need a 5,558,655-point first rung to meet the "
-        "12.5% opening-share floor, which cannot fit the 900,000-point commit "
-        "ceiling. Partition children capped at the authored 150,000 points per plane "
-        "bound every commit while remaining far below the 5,591,040 Points cap."
+        "44,469,233 points span 300 hidden (fractal, w) coordinates, and NO single "
+        "leaf can satisfy scripts/check_demo_ladders.py: un-laddered it fails the "
+        "no-ladder arm above 200,000, while laddered its rung 0 must be at least "
+        "10% of the node (4,446,924 points) AND every increment must clear the "
+        "1,000,000 absolute commit cap. The cap's per-coordinate relaxation needs "
+        "EXACTLY ONE slice dim, so this leaf's TWO hidden columns leave the whole "
+        "node-level cap in force and the 300 stops buy nothing: 4,446,924 > "
+        "1,000,000, jointly unsatisfiable. The 297 partition children capped at the "
+        "authored 150,000 points per plane fall under the gate's 200,000 threshold "
+        "outright, and 37x below the 5,591,040 Points cap."
     ),
     "demo_esm_protein_universe.py": (
         "7,714,508 points RESIDENT in the backdrop (one hidden story coordinate, "

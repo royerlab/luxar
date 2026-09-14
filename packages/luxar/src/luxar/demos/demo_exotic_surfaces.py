@@ -125,7 +125,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import pull_in
-from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
+from luxar.demos._lod_policy import stream_ladder
 from luxar.shading import bake_ambient_occlusion
 from luxar.utils.paths import get_demos_output_dir
 
@@ -846,6 +846,29 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) ->
                 ),
             )
 
+            # LADDER DEPTH: pass the AXIS's stop count, not the node's own.
+            #
+            # Each family node carries only its own `family` coordinate, so
+            # `hidden_axis_stops(nd, dims.non_displayed)` reports 1 and
+            # `stream_ladder` would keep the unsliced 39,062-element download
+            # budget as rung 0. Nothing is DIVIDED here — one stop means the
+            # resident slice is the whole node — but the reset the sliced share
+            # contract exists for is real: stepping `family` swaps the entire
+            # wall, and the incoming node starts again from rung 0 every time.
+            # `scripts/check_demo_ladders.py` reads it the same way, auditing its
+            # share arm on any leaf whose rung 0 records a `slice_dims` (which
+            # both nodes do — `family` is non-displayed), and the budget rung
+            # measures 39,062 of 857,226 = 4.56% on Minimal surfaces and 39,062
+            # of 464,073 = 8.42% on Algebraic surfaces, under its 10% floor.
+            #
+            # `slices` is a PREDICATE and not a divisor (see
+            # `sliced_ladder_first_chunk`), so handing it the two stops the axis
+            # actually has applies the n/8 = 12.5% share floor: rung 0 becomes
+            # 107,154 and 58,010 points, with largest increments of 428,610 and
+            # 232,033 — half the node, inside the gate's 0.6 degeneracy bound
+            # and its 1,000,000 absolute commit cap.
+            family_stops = len(FAMILY_NAMES)
+
             for family, entries in families.items():
                 if not entries:
                     continue
@@ -880,9 +903,7 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) ->
                     gamma=1.0,
                     blending_mode="volumetric",
                     intensity=intensity,
-                    additive_lod=stream_ladder(
-                        len(nd), slices=hidden_axis_stops(nd, dims.non_displayed)
-                    ),
+                    additive_lod=stream_ladder(len(nd), slices=family_stops),
                     extend_to_all=[],
                     layer=True,
                 )
