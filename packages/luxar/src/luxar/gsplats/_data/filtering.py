@@ -203,6 +203,15 @@ _CONTENT_SCOPED_STATS_KEYS = (
     "final_loss",
     "final_rel_l2",
     "final_max_abs_error",
+    # Final best-state populations measured against candidate scales. The
+    # candidate/config values and initial-covariance summaries remain run-scoped,
+    # but these counts and fractions describe the exact splat set being reduced.
+    "splats_near_fit_init_sigma_count",
+    "splats_near_fit_init_sigma_fraction",
+    "splats_near_relocation_init_sigma_count",
+    "splats_near_relocation_init_sigma_fraction",
+    "splats_near_sigma_min_count",
+    "splats_near_sigma_min_fraction",
     # Progressive fit, per additive sub-LOD: the PSNR of the prefix up to and
     # including this pass, and its increment. Persisted as the leaf's
     # `lod_stats` and read back by `GSplatData.lod_psnrs`, so a cull that fixed
