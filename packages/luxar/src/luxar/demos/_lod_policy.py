@@ -327,8 +327,9 @@ def stream_ladder(
     ladder on a PLAIN leaf is strictly opt-in. So dropping ``substitutive_lod=``
     from a demo silently drops its ladder too unless this is passed; that is the
     single easiest mistake to make in this rework, and
-    ``scripts/check_demo_ladders.py`` is the backstop (it fails an un-laddered
-    leaf above 200,000).
+    ``scripts/check_demo_ladders.py`` is the backstop (it fails an unladdered
+    leaf whose declared total, or busiest resident coordinate fetch when sliced,
+    exceeds 200,000).
 
     Two numbers, and both are chosen rather than inherited:
 
@@ -429,7 +430,8 @@ def stream_ladder(
     level, and writes **no rungs at all** — no error, no warning. The same node
     with ``"stream:39062"`` gets three rungs of 39,069 / 39,069 / 29,862
     vertices. (``scripts/check_demo_ladders.py`` is the only thing that catches
-    the silent case, and only above 200,000.)
+    the silent case, and only when the declared total or busiest resident
+    coordinate fetch exceeds 200,000.)
 
     So for ``geometry="lines"`` this returns the STRING form, which is the one
     whose unit matches the ``n`` a caller naturally has. The cost is that the
