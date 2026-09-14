@@ -6,8 +6,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { config } from '../../../config';
+import { LuxarFlyControls } from '../../../controls/luxar-fly-controls';
 import { LuxarOrbitControls } from '../../../controls/luxar-orbit-controls';
 import { projectOnTrackball } from '../../../controls/luxar-orbit-controls/math/trackball';
+import { VIEW_AXIS_ROLL_SIGN } from '../../../controls/touch-twist';
 import {
   mouseAction,
   type OrbitInputCtx,
@@ -600,7 +602,37 @@ describe('LuxarOrbitControls', () => {
     };
 
     it('#2593 uses the touch-twist roll direction for Shift+wheel', () => {
-      expect(roll(100, WheelEvent.DOM_DELTA_PIXEL)).toBeCloseTo(-100 * 0.0005, 12);
+      expect(roll(100, WheelEvent.DOM_DELTA_PIXEL)).toBeCloseTo(
+        VIEW_AXIS_ROLL_SIGN * 100 * 0.0005,
+        12
+      );
+    });
+
+    it('#2593 composes the same Shift+wheel gesture in the same direction across controllers', () => {
+      controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
+      controls.enableViewAxisRotation();
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 100, shiftKey: true, cancelable: true })
+      );
+      controls.update();
+
+      const flyCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+      flyCamera.position.set(0, 0, 5);
+      flyCamera.lookAt(0, 0, 0);
+      const flyElement = document.createElement('div');
+      document.body.appendChild(flyElement);
+      const flyControls = new LuxarFlyControls(flyCamera, flyElement, { inertialMode: false });
+      flyElement.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 100, shiftKey: true, cancelable: true })
+      );
+      flyControls.update(0);
+
+      expect(camera.up.x).toBeLessThan(0);
+      expect(flyCamera.up.x).toBeLessThan(0);
+      expect(Math.sign(camera.up.x)).toBe(Math.sign(flyCamera.up.x));
+
+      flyControls.dispose();
+      document.body.removeChild(flyElement);
     });
 
     it('#2531 normalizes deltaMode: a line-mode notch rolls as far as its pixel equivalent', () => {
