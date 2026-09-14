@@ -172,6 +172,16 @@ def test_busiest_slice_measurement_supports_two_hidden_axes(tmp_path: Path) -> N
     assert "largest coordinate fetch 80 elements" in message
 
 
+def test_unladdered_two_axis_leaf_fails_on_busiest_coordinate(tmp_path: Path) -> None:
+    leaf = _make_leaf(tmp_path / "two-axis-large.zarr", None, declared_total=180)
+    _add_two_axis_slice_bounds(leaf, chunk_size=60)
+
+    status, message = _check(leaf, min_elements=100)
+
+    assert status == "fail"
+    assert "120 elements in one coordinate fetch" in message
+
+
 def test_unladdered_leaf_without_slice_metadata_uses_declared_total(
     tmp_path: Path,
 ) -> None:
