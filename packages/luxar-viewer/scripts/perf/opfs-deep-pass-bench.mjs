@@ -16,8 +16,6 @@ export const arg = (name, fallback, argv = process.argv) => {
   return value === undefined || value.startsWith('--') ? fallback : value;
 };
 
-export const flag = (name, argv = process.argv) => argv.includes(`--${name}`);
-
 export function booleanOption(name, argv = process.argv) {
   const index = argv.indexOf(`--${name}`);
   if (index < 0) return false;
@@ -399,7 +397,7 @@ function writeResults(options, results, error = null) {
   );
 }
 
-function parseOptions(argv) {
+export function parseOptions(argv) {
   const viewerDir = path.resolve(arg('viewer-dir', '.', argv));
   const startValue = arg('start-frame', undefined, argv);
   return {
@@ -412,7 +410,7 @@ function parseOptions(argv) {
     startFrame: parseOptionalNumber('start-frame', startValue),
     headless: booleanOption('headless', argv),
     clearFirst: booleanOption('clear-first', argv),
-    prefetch: flag('prefetch', argv),
+    prefetch: booleanOption('prefetch', argv),
     concurrencyValues: parseConcurrencyValues(arg('concurrency', '8,64,512,4096', argv)),
   };
 }

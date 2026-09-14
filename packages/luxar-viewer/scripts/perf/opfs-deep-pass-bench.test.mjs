@@ -6,9 +6,9 @@ import {
   collectStageDurations,
   deriveMeasuredDurations,
   enrichResult,
-  flag,
   missedPollEvents,
   parseConcurrencyValues,
+  parseOptions,
   parsePositiveInteger,
   resolveStartCoordinate,
 } from './opfs-deep-pass-bench.mjs';
@@ -20,11 +20,6 @@ describe('opfs deep-pass benchmark helpers', () => {
     expect(arg('concurrency', '64', ['node', 'bench', '--concurrency', '--headless'])).toBe('64');
   });
 
-  it('recognizes bare boolean flags', () => {
-    expect(flag('prefetch', ['node', 'bench', '--prefetch'])).toBe(true);
-    expect(flag('prefetch', ['node', 'bench'])).toBe(false);
-  });
-
   it('accepts bare and explicit boolean options', () => {
     expect(booleanOption('clear-first', ['node', 'bench', '--clear-first'])).toBe(true);
     expect(booleanOption('headless', ['node', 'bench', '--headless', 'true'])).toBe(true);
@@ -33,6 +28,12 @@ describe('opfs deep-pass benchmark helpers', () => {
     expect(() => booleanOption('headless', ['node', 'bench', '--headless', 'sometimes'])).toThrow(
       /true or false/
     );
+  });
+
+  it('parses explicit false for prefetch', () => {
+    expect(parseOptions(['node', 'bench', '--prefetch']).prefetch).toBe(true);
+    expect(parseOptions(['node', 'bench', '--prefetch', 'true']).prefetch).toBe(true);
+    expect(parseOptions(['node', 'bench', '--prefetch', 'false']).prefetch).toBe(false);
   });
 
   it('requires a positive integer ladder depth', () => {

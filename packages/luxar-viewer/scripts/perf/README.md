@@ -87,8 +87,8 @@ node scripts/perf/opfs-deep-pass-bench.mjs \
   --out /tmp/opfs-sweep.json --concurrency 8,64,512,4096
 ```
 
-The harness disables predictive prefetch by default; pass `--prefetch`
-to reproduce production scheduling. It derives the penultimate coordinate from
+The harness disables predictive prefetch by default; pass `--prefetch` or
+`--prefetch true` to reproduce production scheduling. It derives the penultimate coordinate from
 the discrete time dimension's `range` and `step`; an explicit `--start-frame`
 must equal that coordinate so the measurement remains exactly
 one transition at integer `--ladder-depth` (default 6). Pass `--clear-first` to
