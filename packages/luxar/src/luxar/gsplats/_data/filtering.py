@@ -9,13 +9,16 @@ predicate covers more than one:
   an amplitude threshold leaves the represented region exactly as it was.
   Predicate: :func:`_is_crop`.
 * :data:`_CONTENT_SCOPED_STATS_KEYS` — MEASURED reconstruction scores of the
-  splat set against the SOURCE VOLUME (the PSNR family), plus the
+  splat set against the SOURCE VOLUME (the PSNR family), final populations
+  measured against candidate scales, plus the
   :data:`_CONTENT_SCOPED_OP_RECORD_KEYS` record of the reduction that produced
   the artifact. Invalidated whenever the splat set changes, spatially or not: an
   amplitude-threshold cull leaves the region untouched while changing the
   reconstruction completely, and a merge-family reduction can hit the requested
   count exactly while replacing every splat with a representative. Predicate:
-  "did the content change" — :func:`_stats_after_content_change`.
+  "did the content change" — :func:`_stats_after_content_change`. The final
+  populations are the one subset the producer-side score exemption does not
+  restore after a closing trim.
 * :data:`_STRUCTURE_SCOPED_STATS_KEYS` — the artifact's OWN TOPOLOGY: which LOD
   mechanism built it, how many substitutive levels and additive rungs it has,
   where the ladder cutpoints fall, which recipe was run. Invalidated when a
@@ -522,7 +525,21 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     }
     for key in _NESTED_STATS_LIST_KEYS:
         if key in stats:
-            snapshot[key] = copy.deepcopy(stats[key])
+            nested = copy.deepcopy(stats[key])
+            if isinstance(nested, list):
+                nested = [
+                    (
+                        {
+                            k: v
+                            for k, v in entry.items()
+                            if k not in _FINAL_SCALE_POPULATION_STATS_KEYS
+                        }
+                        if isinstance(entry, dict)
+                        else entry
+                    )
+                    for entry in nested
+                ]
+            snapshot[key] = nested
     return snapshot
 
 
@@ -574,7 +591,27 @@ def restore_measured_stats(
         data.stats.update(snapshot[0])
         return data
     for target, saved in zip(targets, snapshot):
-        target.update(saved)
+        restored = dict(saved)
+        for key in _NESTED_STATS_LIST_KEYS:
+            target_nested = target.get(key)
+            saved_nested = saved.get(key)
+            if (
+                isinstance(target_nested, list)
+                and isinstance(saved_nested, list)
+                and len(target_nested) == len(saved_nested)
+            ):
+                restored[key] = [
+                    (
+                        {**target_entry, **saved_entry}
+                        if isinstance(target_entry, dict)
+                        and isinstance(saved_entry, dict)
+                        else saved_entry
+                    )
+                    for target_entry, saved_entry in zip(
+                        target_nested, saved_nested, strict=True
+                    )
+                ]
+        target.update(restored)
     return data
 
 

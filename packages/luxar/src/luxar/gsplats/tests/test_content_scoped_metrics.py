@@ -1245,6 +1245,12 @@ def test_the_fitters_keep_the_score_across_their_own_closing_trim() -> None:
     )
 
     fitted = _laddered()
+    fitted.stats["pass_stats"][0].update(
+        {
+            "splats_near_sigma_min_count": fitted.n_splats,
+            "splats_near_sigma_min_fraction": 1.0,
+        }
+    )
     saved = measured_stats_snapshot(fitted)
     trimmed = fitted.cull(method="cumulative", retention=0.5)
     assert not _metric_keys_present(trimmed.stats), "the cull itself must still scrub"
@@ -1263,12 +1269,24 @@ def test_the_fitters_keep_the_score_across_their_own_closing_trim() -> None:
     # The nested per-pass dicts are deep-copied into the snapshot, or the scrub
     # would have emptied them in place before the restore could read them.
     assert trimmed.stats["pass_stats"][0]["cumulative_psnr_db"] == 40.0
+    assert "splats_near_sigma_min_count" not in trimmed.stats["pass_stats"][0]
+    assert "splats_near_sigma_min_fraction" not in trimmed.stats["pass_stats"][0]
     # The trim's OWN record shows through — the snapshot deliberately does not
     # carry the reduction record, so restoring cannot resurrect an older cull's
     # `n_original` / `amplitude_retention` over the one that just ran (a tiled fit
     # culls each tile, then culls the merge).
     assert trimmed.stats["culling_method"] == "cumulative"
     assert trimmed.stats["n_original"] == fitted.n_splats
+
+    unchanged = fitted.cull(method="cumulative", retention=1.0)
+    restore_measured_stats(unchanged, saved)
+    assert (
+        unchanged.stats["splats_near_sigma_min_count"]
+        == _METRICS["splats_near_sigma_min_count"]
+    )
+    assert unchanged.stats["pass_stats"][0]["splats_near_sigma_min_count"] == (
+        fitted.n_splats
+    )
 
     # A pyramid round-trips too, on the branch that rebuilds the top level itself.
     pyr = _pyramid()
