@@ -46,6 +46,17 @@ describe('gallery baked dimension metadata', () => {
     ]);
   });
 
+  it('returns no expected step when the scene does not author one', async () => {
+    const fetchRoot = vi.fn().mockResolvedValue(
+      response(true, {
+        zarr_format: 3,
+        attributes: { viewer_config: { camera: { fov: 50 } } },
+      })
+    );
+
+    await expect(readBakedDimensionStep('http://data/scene.zarr', fetchRoot)).resolves.toBeNull();
+  });
+
   it('rejects a malformed authored step instead of silently skipping the gate', async () => {
     const fetchRoot = vi.fn().mockResolvedValue(
       response(true, {
@@ -75,6 +86,12 @@ describe('gallery data readiness', () => {
 
   it('accepts an idle matching slice with content', () => {
     setState({ isLoading: false, totalElements: 100, dimensions: { currentStep: [0, 4] } });
+
+    expect(isGalleryDataReady({ requireElements: true, expectedDimensionStep: [0, 4] })).toBe(true);
+  });
+
+  it('matches only the dimension prefix authored by the scene', () => {
+    setState({ isLoading: false, totalElements: 100, dimensions: { currentStep: [0, 4, 9] } });
 
     expect(isGalleryDataReady({ requireElements: true, expectedDimensionStep: [0, 4] })).toBe(true);
   });
