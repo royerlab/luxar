@@ -36,9 +36,10 @@ properties at runtime as a sanity check.
 
 VISUAL ENCODING
 ---------------
-- Each order is a single ``polyline`` Lines node — one continuous strand,
-  no breaks. Vertex positions are scaled to the unit cube and centered at
-  the origin so all orders share a common viewing volume.
+- Each order is stored as explicit ``segments`` in one Lines node. The segments
+  preserve one continuous strand while giving the additive ladder legal cut
+  points; vertex positions are scaled to the unit cube and centered at the
+  origin so all orders share a common viewing volume.
 - Color: HSV hue swept from 0° to 360° along the traversal index, so the
   curve fades smoothly through red → yellow → green → cyan → blue →
   magenta → red as it fills space.
@@ -89,14 +90,18 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.lod.group import (
+    DEFAULT_LADDER_BYTES_PER_ELEMENT,
+    DEFAULT_LADDER_TARGET_MS,
+)
 from luxar.core.viewer_config import DimensionsConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_int_arg
-from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.lod_breakpoints import (
+    DEFAULT_BANDWIDTH_MBPS,
     DEFAULT_MAX_ADDITIVE_COMMIT,
-    parse_stream_chunk,
+    capped_stream_cuts,
     sliced_ladder_first_chunk,
-    stream_cuts,
+    streaming_chunk_splats,
 )
 from luxar.utils.paths import get_demos_output_dir
 
@@ -106,6 +111,11 @@ from luxar.utils.paths import get_demos_output_dir
 
 DEFAULT_MAX_ORDER = 6  # Order 6 = 262,144 vertices (largest comfortable size)
 LINE_WIDTH = 0.0015  # In normalized cube units; thin enough not to drown the curve
+FIRST_RUNG_LINE_VERTICES = streaming_chunk_splats(
+    DEFAULT_LADDER_TARGET_MS,
+    DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_LADDER_BYTES_PER_ELEMENT,
+)
 
 
 def hilbert_ladder(n_vertices: int) -> dict[str, Any]:
@@ -117,24 +127,20 @@ def hilbert_ladder(n_vertices: int) -> dict[str, Any]:
     65,536 of 524,286 segment vertices (12.5%), and its largest increment stays
     below the 900,000-vertex whole-node cap.
     """
-    ladder = stream_ladder(n_vertices, geometry="lines")
     first_chunk = sliced_ladder_first_chunk(
-        parse_stream_chunk(ladder["counts"]),
+        FIRST_RUNG_LINE_VERTICES,
         elements=n_vertices,
         slices=2,
     )
-    cuts = stream_cuts(n_vertices, first_chunk)
-    largest_increment = max(
-        (cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts, strict=True)),
-        default=0,
-    )
-    if largest_increment > DEFAULT_MAX_ADDITIVE_COMMIT:
-        raise ValueError(
-            f"Hilbert ladder resolves a {largest_increment:,}-vertex commit, above "
-            f"the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-vertex ceiling"
-        )
-    ladder["counts"] = f"stream:{first_chunk}"
-    return ladder
+    return {
+        "counts": capped_stream_cuts(
+            n_vertices // 2,
+            max(1, first_chunk // 2),
+            DEFAULT_MAX_ADDITIVE_COMMIT // 2,
+        ),
+        "method": "random",
+        "seed": 0,
+    }
 
 
 # -----------------------------------------------------------------------------

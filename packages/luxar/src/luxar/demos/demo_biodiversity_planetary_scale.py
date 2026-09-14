@@ -563,27 +563,6 @@ GLOBE_BLENDING: Final = "opaque"
 #: pixel. A no-op recorded for intent / in case the mode changes. The panel
 #: reading was 1.00.
 RECORDS_OPACITY: Final = 1.0
-
-
-def biodiversity_ladder(n_rows: int, stops: int) -> dict[str, Any]:
-    """Open the sparse taxon/period cube at one quarter of its rows.
-
-    ``stream_ladder``'s 1/8 share leaves the sparsest rung-0 slices at 152
-    records across the 139 populated taxon/period coordinates, below the
-    auditor's 250-record floor. A quarter projects p05 to about 325 records,
-    with two coordinates of headroom, while the 1,055,941-row largest increment
-    remains far below the slice-scaled commit ceiling (27,300 rows in the
-    largest measured coordinate fetch).
-    """
-    ladder = stream_ladder(n_rows, slices=stops)
-    ladder["counts"] = capped_stream_cuts(
-        n_rows,
-        max(ladder["counts"][0], math.ceil(n_rows / 4)),
-        DEFAULT_MAX_ADDITIVE_COMMIT * stops,
-    )
-    return ladder
-
-
 #: Occurrences: DISPLAY RANGE 0-0.004 -> 1/0.004 = 250, GAMMA 0.82.
 #:
 #: Written as 100.0, not 250.0, because `validate_intensity` caps the attr at
@@ -741,6 +720,25 @@ N_POINTS = parse_int_arg("n-points", DEFAULT_N_POINTS)
 N_PARTS = parse_int_arg("n-parts", 0)  # 0 -> derived from N_POINTS
 
 Arbol.max_depth = 5
+
+
+def biodiversity_ladder(n_rows: int, stops: int) -> dict[str, Any]:
+    """Open the sparse taxon/period cube at one quarter of its rows.
+
+    ``stream_ladder``'s 1/8 share leaves the sparsest rung-0 slices at 152
+    records across the 139 populated taxon/period coordinates, below the
+    auditor's 250-record floor. A quarter projects p05 to about 325 records,
+    with two coordinates of headroom, while the 1,055,941-row largest increment
+    remains far below the slice-scaled commit ceiling (27,300 rows in the
+    largest measured coordinate fetch).
+    """
+    ladder = stream_ladder(n_rows, slices=stops)
+    ladder["counts"] = capped_stream_cuts(
+        n_rows,
+        max(ladder["counts"][0], math.ceil(n_rows / 4)),
+        DEFAULT_MAX_ADDITIVE_COMMIT * stops,
+    )
+    return ladder
 
 
 # =============================================================================

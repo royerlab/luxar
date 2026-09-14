@@ -79,7 +79,7 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
 
 #: Sliced Points/Lines calls whose additive ladder does not paint first, and why.
 _SLICED_ADDITIVE_LOD_EXEMPTIONS = {
-    ("demo_biodiversity_planetary_scale.py", 2681): (
+    ("demo_biodiversity_planetary_scale.py", 2679): (
         "the eager coarsest substitutive level paints first; the additive ladder "
         "only refines that already-visible partition in the background"
     ),
@@ -1684,7 +1684,7 @@ scene.add_gsplats_from_data(
             "additive_lod",
             "streamline_ladder",
         ),
-        # These use a named module helper because the ladder they need is
+        # These six use a named module helper because the ladder they need is
         # not the one `stream_ladder` returns unmodified. The helper's docstring
         # carries the measured reason and its arithmetic is covered
         # behaviourally in the corresponding demo test. Naming the helper is
@@ -1702,13 +1702,6 @@ scene.add_gsplats_from_data(
             "additive_lod",
             "biodiversity_ladder",
         ),
-        # These two wrap `stream_ladder` in a named module helper, because the
-        # ladder they need is not the one the policy returns unmodified: the
-        # helper's docstring carries the measured reason and its arithmetic is
-        # covered behaviourally (`family_ladder` in
-        # `tests/test_demo_exotic_surfaces.py`, `played_layer_ladder` in
-        # `tests/test_demo_galaxy_simulation.py`). Naming the helper is what this
-        # arm can check; that the helper is right is what those tests check.
         (
             "demo_exotic_surfaces.py",
             "FAMILY_NAMES[family]",

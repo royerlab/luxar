@@ -190,7 +190,7 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
 
 LEAF_EXEMPT: dict[str, str] = {
     "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
-        "intentional flat control in the 6-recipe LOD comparison"
+        "control: intentional flat control in the six-recipe LOD comparison"
     ),
 }
 
@@ -526,6 +526,7 @@ def _record_sliced_verdicts(
     results: list[tuple[str, str, str]],
     counts: dict[str, int],
     failures: list[str],
+    matched_exemptions: set[str],
     min_rung_share: float = DEFAULT_MIN_SLICE_RUNG_SHARE,
 ) -> None:
     """Append scene-level sliced-rung failures without inflating ``run_gate``.
@@ -551,7 +552,9 @@ def _record_sliced_verdicts(
         partitioned,
         worst_part,
     ) in sliced_rung_measurements(root):
-        if f"{scene_name}{path}" in LEAF_EXEMPT:
+        exemption_key = f"{scene_name}{path}"
+        if exemption_key in LEAF_EXEMPT:
+            matched_exemptions.add(exemption_key)
             continue
         count = sparsest_slice_elements(histogram)
         coverage = len(histogram)
@@ -816,9 +819,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _record_stale_leaf_exemptions(
     inspected_scenes: set[str],
     matched_exemptions: set[str],
-    counts: dict[str, int],
-    failures: list[str],
-) -> None:
+) -> list[str]:
     """Fail exact exemptions whose scene exists but whose leaf no longer does."""
     stale_exemptions = sorted(
         key
@@ -827,8 +828,7 @@ def _record_stale_leaf_exemptions(
     )
     for key in stale_exemptions:
         aprint(f"❌ stale leaf exemption matched no leaf: {key}")
-        counts["fail"] += 1
-        failures.append(key)
+    return stale_exemptions
 
 
 def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
@@ -876,6 +876,7 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             results,
             counts,
             failures,
+            matched_exemptions,
             args.min_slice_rung_share,
         )
 
@@ -889,20 +890,21 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
                 for leaf_path, status, message in visible_results:
                     aprint(f"{icons[status]} {leaf_path}: {message}")
 
-    _record_stale_leaf_exemptions(
-        inspected_scenes, matched_exemptions, counts, failures
+    stale_exemptions = _record_stale_leaf_exemptions(
+        inspected_scenes, matched_exemptions
     )
 
     aprint(
         f"{counts['ok']} ok, {counts['warn']} warned, {counts['fail']} failed, "
-        f"{counts['skip']} below threshold"
+        f"{counts['skip']} below threshold, "
+        f"{len(stale_exemptions)} stale exemption"
+        f"{'s' if len(stale_exemptions) != 1 else ''}"
     )
     if failures:
         with asection("Failed leaves"):
             for name in failures:
                 aprint(name)
-        return 1
-    return 0
+    return int(bool(failures or stale_exemptions))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -8,8 +8,6 @@ from pathlib import Path
 
 import zarr
 
-from luxar.utils.lod_breakpoints import parse_stream_chunk, stream_cuts
-
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_hilbert_curve_3d.py"
 
 
@@ -39,15 +37,16 @@ def test_opening_slot_is_order_four_when_available() -> None:
 
 def test_hidden_order_ladder_opens_on_an_eighth_and_bounds_commits() -> None:
     demo = _load()
-    n_vertices = 524_286
-    first_chunk = parse_stream_chunk(demo.hilbert_ladder(n_vertices)["counts"])
-    cuts = stream_cuts(n_vertices, first_chunk)
-    increments = [
-        count - previous for previous, count in zip([0, *cuts[:-1]], cuts, strict=True)
-    ]
+    for n_vertices in (524_286, 4_194_302):
+        counts = demo.hilbert_ladder(n_vertices)["counts"]
+        increments = [
+            2 * (count - previous)
+            for previous, count in zip([0, *counts[:-1]], counts, strict=True)
+        ]
 
-    assert first_chunk == 65_536
-    assert max(increments) <= 900_000
+        assert counts[0] * 2 == max(65_536, (n_vertices + 7) // 8)
+        assert counts[-1] * 2 == n_vertices
+        assert max(increments) <= 900_000
 
 
 def test_scene_opens_on_order_four(tmp_path) -> None:
