@@ -9,6 +9,10 @@ viewer folds completed rungs into one cumulative payload, avoiding the former
 second retained copy. This walks built scenes and reports, per laddered leaf,
 whether the ladder is actually *useful*.
 
+An unladdered sliced leaf is judged by its busiest resident coordinate fetch,
+not by its declared all-slices total; leaves without usable slice metadata keep
+the declared-total fallback.
+
 A ladder can exist and still be worthless. For example,
 ``global_rivers_earth/terrain`` once shipped levels of 8 / 56 / 272 / 1174 /
 7,998,490 over 8M points: 99.98% of the data remained in one commit. A large
@@ -89,8 +93,9 @@ DEFAULT_SCREEN_ASPECT_SPEC = ",".join(
     f"{label}={value!r}" for label, value in DEFAULT_ASPECTS
 )
 
-#: Leaves at or below this element count are reported but never failed — a small
-#: leaf commits fast enough that an all-at-once load is invisible.
+#: Unsliced leaves at or below this total, and sliced leaves whose busiest
+#: resident coordinate fetch is at or below it, are reported but never failed.
+#: Such a commit is small enough that an all-at-once load is invisible.
 DEFAULT_MIN_ELEMENTS = 200_000
 
 #: A ladder whose largest level exceeds this share of the total is not a
