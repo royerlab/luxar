@@ -1328,29 +1328,36 @@ scene.add_gsplats_from_data(
         ("demo_lorenz.py", "'LorenzAttractor'", "additive_lod", "stream_ladder"),
         ("demo_mandelbulb.py", "'Mandelbulb'", "additive_lod", "stream_ladder"),
         ("demo_rainbow_sphere.py", "'RainbowSphere'", "additive_lod", "stream_ladder"),
+        # These four wrap `stream_ladder` in a named module helper, because the
+        # ladder they need is not the one the policy returns unmodified: the
+        # helper's docstring carries the measured reason and its arithmetic is
+        # covered behaviourally (`family_ladder` in
+        # `tests/test_demo_exotic_surfaces.py`, `played_layer_ladder` in
+        # `tests/test_demo_galaxy_simulation.py`). Naming the helper is what this
+        # arm can check; that the helper is right is what those tests check.
         (
             "demo_exotic_surfaces.py",
             "FAMILY_NAMES[family]",
             "additive_lod",
-            "stream_ladder",
+            "family_ladder",
         ),
         (
             "demo_galaxy_simulation.py",
             "f'Disc {label}'",
             "additive_lod",
-            "stream_ladder",
+            "played_layer_ladder",
         ),
         (
             "demo_galaxy_simulation.py",
             "'HII regions'",
             "additive_lod",
-            "stream_ladder",
+            "played_layer_ladder",
         ),
         (
             "demo_galaxy_simulation.py",
             "'Bulge'",
             "additive_lod",
-            "stream_ladder",
+            "played_layer_ladder",
         ),
         (
             "demo_ppi_flow_field.py",

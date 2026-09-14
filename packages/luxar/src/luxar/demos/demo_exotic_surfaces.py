@@ -116,7 +116,7 @@ import tempfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Tuple
+from typing import Any, Callable, List, Tuple
 
 import numpy as np
 from arbol import aprint, asection
@@ -125,8 +125,12 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import pull_in
-from luxar.demos._lod_policy import stream_ladder
+from luxar.demos._lod_policy import SLICED_LADDER_MAX_DEPTH, stream_ladder
 from luxar.shading import bake_ambient_occlusion
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_MAX_ADDITIVE_COMMIT,
+    capped_stream_cuts,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -182,6 +186,62 @@ FAMILY_NAMES = ("Minimal surfaces", "Algebraic surfaces")
 #: Viewer display-window maxima measured for the two baked-RGB families at the
 #: authored ``RESOLUTION``. With a zero offset, intensity is 1 / max.
 FAMILY_DISPLAY_MAXIMA = (2.177, 2.085)
+
+
+def family_ladder(n_points: int) -> dict[str, Any]:
+    """The additive ladder one family node should carry.
+
+    LADDER DEPTH: the ``1/8`` resident share, not the download budget.
+
+    Each family node carries only its own ``family`` coordinate, so
+    ``hidden_axis_stops`` would report 1 for it and ``stream_ladder`` alone
+    keeps the unsliced 39,062-element download budget as rung 0. Nothing is
+    DIVIDED here — one stop means the resident slice IS the whole node — but the
+    reset the sliced share contract exists for is real: stepping ``family`` swaps
+    the entire wall, and the incoming node starts again from rung 0 every time.
+    ``scripts/check_demo_ladders.py`` reads it the same way, auditing its share
+    arm on any leaf whose rung 0 records a ``slice_dims`` (which both nodes do —
+    ``family`` is non-displayed), and the budget rung measures 39,062 of 857,226 =
+    4.56% on Minimal surfaces and 39,062 of 464,073 = 8.42% on Algebraic
+    surfaces, under its 10% floor.
+
+    So rung 0 is floored at the policy's own ``n / SLICED_LADDER_MAX_DEPTH`` =
+    12.5% share: 107,154 and 58,010 points, with largest increments of 428,610 and
+    232,033 — inside the gate's 0.6 degeneracy bound and its 1,000,000 absolute
+    commit cap.
+
+    THE FLOOR IS APPLIED BY HAND RATHER THAN BY ``slices=``. Passing
+    ``slices=len(FAMILY_NAMES)`` arms the same floor (``sliced_ladder_first_chunk``
+    takes ``slices`` as a predicate), but ``stream_ladder`` ALSO reads it as a
+    divisor for the commit ceiling — ``DEFAULT_MAX_ADDITIVE_COMMIT * slices`` —
+    and these nodes have no second slice to spend that on. It is inert at the
+    authored ``RESOLUTION`` but not at every one: counts scale about as
+    ``resolution**2`` (measured: the minimal family is 857,226 points at 112 and
+    2,023,609 at 172), and above 2,000,005 points the relaxed 1,800,000 ceiling
+    authors an increment over the gate's 1,000,000 cap — 1,011,801 at
+    ``--resolution=172``, against 900,000 under the ceiling used here.
+
+    THE COST IS REAL AND IS ACCEPTED. Rung 0 on Minimal surfaces goes from 39,062
+    to 107,154 points, so first paint goes from the policy's 200 ms budget to 549
+    ms at its own 25 Mbps and 16 B/element assumptions (Algebraic: 39,062 ->
+    58,010, 200 -> 297 ms). That is 2.7x on a demo whose resident slice is its
+    whole node, paid to satisfy a share arm that cannot bite here — the frame
+    never arrives divided. It buys the thing the arm is a proxy for: a ``family``
+    step lands on 12.5% of the incoming wall instead of 4.56%.
+
+    Args:
+        n_points: Points in this family's node.
+
+    Returns:
+        A spec for ``additive_lod=`` on :meth:`Group.add_points`.
+    """
+    ladder = stream_ladder(n_points)
+    ladder["counts"] = capped_stream_cuts(
+        n_points,
+        max(ladder["counts"][0], -(-n_points // SLICED_LADDER_MAX_DEPTH)),
+        DEFAULT_MAX_ADDITIVE_COMMIT,
+    )
+    return ladder
 
 
 # =============================================================================
@@ -846,29 +906,6 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) ->
                 ),
             )
 
-            # LADDER DEPTH: pass the AXIS's stop count, not the node's own.
-            #
-            # Each family node carries only its own `family` coordinate, so
-            # `hidden_axis_stops(nd, dims.non_displayed)` reports 1 and
-            # `stream_ladder` would keep the unsliced 39,062-element download
-            # budget as rung 0. Nothing is DIVIDED here — one stop means the
-            # resident slice is the whole node — but the reset the sliced share
-            # contract exists for is real: stepping `family` swaps the entire
-            # wall, and the incoming node starts again from rung 0 every time.
-            # `scripts/check_demo_ladders.py` reads it the same way, auditing its
-            # share arm on any leaf whose rung 0 records a `slice_dims` (which
-            # both nodes do — `family` is non-displayed), and the budget rung
-            # measures 39,062 of 857,226 = 4.56% on Minimal surfaces and 39,062
-            # of 464,073 = 8.42% on Algebraic surfaces, under its 10% floor.
-            #
-            # `slices` is a PREDICATE and not a divisor (see
-            # `sliced_ladder_first_chunk`), so handing it the two stops the axis
-            # actually has applies the n/8 = 12.5% share floor: rung 0 becomes
-            # 107,154 and 58,010 points, with largest increments of 428,610 and
-            # 232,033 — half the node, inside the gate's 0.6 degeneracy bound
-            # and its 1,000,000 absolute commit cap.
-            family_stops = len(FAMILY_NAMES)
-
             for family, entries in families.items():
                 if not entries:
                     continue
@@ -903,7 +940,9 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) ->
                     gamma=1.0,
                     blending_mode="volumetric",
                     intensity=intensity,
-                    additive_lod=stream_ladder(len(nd), slices=family_stops),
+                    # Rung 0 floored at the 12.5% resident share, and capped at
+                    # the UNRELAXED 900,000 commit ceiling — see `family_ladder`.
+                    additive_lod=family_ladder(len(nd)),
                     extend_to_all=[],
                     layer=True,
                 )
