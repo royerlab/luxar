@@ -170,6 +170,20 @@ def stamp_region_scoped_stats(
         stats["voxels_per_splat"] = float(fitted_voxels / n_splats)
 
 
+#: Final best-state populations measured against candidate scales. They are
+#: content-scoped, but unlike reconstruction scores they are cheap counts rather
+#: than expensive renders, so the fitters' closing-trim snapshot must not carry
+#: them onto a different splat set.
+_FINAL_SCALE_POPULATION_STATS_KEYS = (
+    "splats_near_fit_init_sigma_count",
+    "splats_near_fit_init_sigma_fraction",
+    "splats_near_relocation_init_sigma_count",
+    "splats_near_relocation_init_sigma_fraction",
+    "splats_near_sigma_min_count",
+    "splats_near_sigma_min_fraction",
+)
+
+
 #: MEASURED reconstruction scores — every number that was obtained by rendering
 #: a specific splat set and comparing it to the source volume. They describe the
 #: SPLATS, not the source and not the run, so any operation that changes which
@@ -206,12 +220,7 @@ _CONTENT_SCOPED_STATS_KEYS = (
     # Final best-state populations measured against candidate scales. The
     # candidate/config values and initial-covariance summaries remain run-scoped,
     # but these counts and fractions describe the exact splat set being reduced.
-    "splats_near_fit_init_sigma_count",
-    "splats_near_fit_init_sigma_fraction",
-    "splats_near_relocation_init_sigma_count",
-    "splats_near_relocation_init_sigma_fraction",
-    "splats_near_sigma_min_count",
-    "splats_near_sigma_min_fraction",
+    *_FINAL_SCALE_POPULATION_STATS_KEYS,
     # Progressive fit, per additive sub-LOD: the PSNR of the prefix up to and
     # including this pass, and its increment. Persisted as the leaf's
     # `lod_stats` and read back by `GSplatData.lod_psnrs`, so a cull that fixed
@@ -493,10 +502,12 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     get no such exemption — carrying the score across an arbitrary retention the
     user picked is #1600 itself.
 
-    Covers the measured SCORES only, not :data:`_CONTENT_SCOPED_OP_RECORD_KEYS`:
-    the op that scrubbed them re-stamps its own record right after, and restoring
-    an older cull's ``n_original`` / ``amplitude_retention`` over it would publish
-    the wrong reduction (a tiled fit culls each tile, then culls the merge).
+    Covers the measured SCORES only, not final scale populations or
+    :data:`_CONTENT_SCOPED_OP_RECORD_KEYS`: restoring populations would attach
+    pre-trim counts to a different splat set, and the op that scrubbed the record
+    re-stamps its own right after. Restoring an older cull's ``n_original`` /
+    ``amplitude_retention`` over it would publish the wrong reduction (a tiled
+    fit culls each tile, then culls the merge).
 
     The nested per-pass lists are deep-copied so the snapshot is independent of
     the dataset it was taken from — a later edit of the source (or of the trimmed
@@ -504,7 +515,11 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     """
     import copy
 
-    snapshot = {key: stats[key] for key in _CONTENT_SCOPED_STATS_KEYS if key in stats}
+    snapshot = {
+        key: stats[key]
+        for key in _CONTENT_SCOPED_STATS_KEYS
+        if key in stats and key not in _FINAL_SCALE_POPULATION_STATS_KEYS
+    }
     for key in _NESTED_STATS_LIST_KEYS:
         if key in stats:
             snapshot[key] = copy.deepcopy(stats[key])

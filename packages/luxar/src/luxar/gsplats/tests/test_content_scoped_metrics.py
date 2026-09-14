@@ -26,6 +26,7 @@ import pytest
 from luxar.gsplats._data.filtering import (
     _CONTENT_SCOPED_OP_RECORD_KEYS,
     _CONTENT_SCOPED_STATS_KEYS,
+    _FINAL_SCALE_POPULATION_STATS_KEYS,
     _REGION_SCOPED_STATS_KEYS,
 )
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
@@ -1235,7 +1236,8 @@ def test_the_fitters_keep_the_score_across_their_own_closing_trim() -> None:
     would leave every default fit with no ``psnr_db`` at all — a worse answer than
     one taken before a trim that drops 5% of the amplitude, and re-scoring costs a
     second full render. The per-pass ladder scores live in the sub-LOD dicts, so
-    the snapshot reaches those too — it is the exact inverse of the scrub.
+    the snapshot reaches those too. Final scale populations stay scrubbed because
+    their pre-trim counts cannot describe the delivered splat set.
     """
     from luxar.gsplats._data.filtering import (
         measured_stats_snapshot,
@@ -1249,7 +1251,10 @@ def test_the_fitters_keep_the_score_across_their_own_closing_trim() -> None:
 
     restore_measured_stats(trimmed, saved)
     for key, value in _METRICS.items():
-        assert trimmed.stats[key] == value, f"{key!r} was not restored"
+        if key in _FINAL_SCALE_POPULATION_STATS_KEYS:
+            assert key not in trimmed.stats, f"stale population {key!r} was restored"
+        else:
+            assert trimmed.stats[key] == value, f"{key!r} was not restored"
     for i, lod in enumerate(trimmed.additive_sublods):
         assert lod.stats["cumulative_psnr_db"] == _METRICS["cumulative_psnr_db"], (
             f"sub-LOD {i}'s ladder score was not restored"
@@ -1272,7 +1277,14 @@ def test_the_fitters_keep_the_score_across_their_own_closing_trim() -> None:
     assert not _metric_keys_present(trimmed.stats)
     restore_measured_stats(trimmed, saved)
     for key, value in _METRICS.items():
-        assert trimmed.stats[key] == value, f"{key!r} was not restored on the pyramid"
+        if key in _FINAL_SCALE_POPULATION_STATS_KEYS:
+            assert key not in trimmed.stats, (
+                f"stale population {key!r} was restored on the pyramid"
+            )
+        else:
+            assert trimmed.stats[key] == value, (
+                f"{key!r} was not restored on the pyramid"
+            )
 
 
 def test_fitter_score_restore_refuses_a_pruned_ladder_shape() -> None:
@@ -1321,8 +1333,14 @@ def test_a_real_fit_still_publishes_its_psnr() -> None:
     assert result.stats.get("culled") is True, (
         "the fit did not reach its closing trim — the test proves nothing"
     )
+    assert result.stats["n_original"] > result.n_splats, (
+        "the closing trim removed no splats — the population scrub proves nothing"
+    )
     assert "psnr_db" in result.stats, "a default fit lost its own measured PSNR"
     assert "final_max_abs_error" in result.stats
+    assert not _FINAL_SCALE_POPULATION_STATS_KEYS & result.stats.keys(), (
+        "a default fit published pre-trim scale populations for its trimmed splat set"
+    )
 
 
 @pytest.mark.slow

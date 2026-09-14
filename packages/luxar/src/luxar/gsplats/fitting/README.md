@@ -269,12 +269,15 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
   overall stats can say what was subtracted (#1175). See
   `docs/specs/GSPLATS_ZARR_FORMAT.md` for the per-writer-path table.
 - Fit stats also preserve dynamic-ops event/distinct-splat relocation counts and
-  count final splats within 0.01 voxel of the resolved fit initialization,
-  relocation initialization, and sigma-floor candidates. These diagnostics use
-  optimization-space voxel marginal sigmas from the selected best state before
-  output-space transforms. Relocation counts cover the full optimization run, so
-  they may include events after that selected best iteration. Per-splat seed
-  covariances are summarized by axis because they have no single candidate scale.
+  count best-state splats within 0.01 voxel of the resolved fit initialization,
+  relocation initialization, and sigma-floor candidates before the optional
+  closing amplitude trim. If that trim changes the splat set, those populations
+  are omitted rather than carried onto the delivered artifact. These diagnostics
+  use optimization-space voxel marginal sigmas from the selected best state
+  before output-space transforms. Relocation counts cover the full optimization
+  run, so they may include events after that selected best iteration. Per-splat
+  seed covariances are summarized by axis because they have no single candidate
+  scale.
 
 ### `visualization.py` - Display Helpers
 **Purpose:** Optional visualization of results.

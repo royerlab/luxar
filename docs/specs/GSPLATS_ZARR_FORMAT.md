@@ -823,9 +823,11 @@ near-count/fraction as `null`, plus per-axis min/median/max summaries under
 `fit_init_marginal_sigma_diag_vox_{min,median,max}`. `fit_init_sigma_vox` is
 `null` whenever precomputed covariances made that fallback config value unused.
 Relocation counts cover the full run, while scale populations describe the
-selected best iteration. Content-changing rewrites drop those population counts
-and fractions, while retaining the run configuration, candidate scales, and
-initial-covariance summaries.
+selected best iteration before any optional closing amplitude trim. If that trim
+changes the splat set, the fit drops those population counts and fractions rather
+than attaching pre-trim values to the delivered artifact. Later content-changing
+rewrites do the same, while retaining the run configuration, candidate scales,
+and initial-covariance summaries.
 
 **Source grid** (fitting/.zattrs, optional) — what the splats are a
 representation *of*, so that "how much did this compress?" is answerable from
