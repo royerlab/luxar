@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { advanceDimensionValue } from '../../src/scene/animation/advance-value';
+import { snapDiscreteValue } from '../../src/scene/scene-dims-manager';
 import {
   arg,
   booleanOption,
@@ -67,11 +69,54 @@ describe('opfs deep-pass benchmark helpers', () => {
     expect(collectStageDurations(tree, 'Load Arrays')).toEqual([5]);
   });
 
-  it('requires the penultimate coordinate for exactly one transition', () => {
-    expect(resolveStartCoordinate([10, 20], 2, null)).toBe(18);
-    expect(resolveStartCoordinate([10, 20], 2, 18)).toBe(18);
-    expect(() => resolveStartCoordinate([10, 20], 2, 16)).toThrow(/penultimate coordinate/);
-    expect(() => resolveStartCoordinate([10, 20], 2, 20)).toThrow(/penultimate coordinate/);
+  it('starts one grid step before the last coordinate reachable in once mode', () => {
+    expect(resolveStartCoordinate([10, 20], 2, null)).toBe(16);
+    expect(resolveStartCoordinate([10, 20], 2, 16)).toBe(16);
+    expect(() => resolveStartCoordinate([10, 20], 2, 18)).toThrow(/one reachable advance/);
+    expect(() => resolveStartCoordinate([10, 20], 2, 20)).toThrow(/one reachable advance/);
+  });
+
+  it('anchors fractional and offset starts to the discrete grid', () => {
+    expect(resolveStartCoordinate([0, 3], 0.3, null)).toBeCloseTo(2.7, 10);
+    expect(resolveStartCoordinate([0, 3], 0.3, 2.7)).toBeCloseTo(2.7, 10);
+    expect(resolveStartCoordinate([100, 200], 7, null)).toBe(191);
+  });
+
+  it.each([
+    { range: [0, 50], step: 1 },
+    { range: [0, 3], step: 0.3 },
+    { range: [100, 200], step: 7 },
+  ])('leaves exactly one applied once-mode advance on $range/$step', ({ range, step }) => {
+    const [min, max] = range;
+    const start = resolveStartCoordinate(range, step, null);
+    const first = advanceDimensionValue({
+      current: start,
+      min,
+      max,
+      step,
+      direction: 'forward',
+      loopMode: 'once',
+      targetFPS: 2,
+      continuousTraverseMs: 1000,
+    });
+    expect(first.shouldStop).toBe(false);
+
+    const landed = snapDiscreteValue(first.value, step, min, max);
+    const second = advanceDimensionValue({
+      current: landed,
+      min,
+      max,
+      step,
+      direction: 'forward',
+      loopMode: 'once',
+      targetFPS: 2,
+      continuousTraverseMs: 1000,
+    });
+    expect(second.shouldStop).toBe(true);
+  });
+
+  it('rejects a range with no reachable once-mode transition', () => {
+    expect(() => resolveStartCoordinate([0, 1], 1, null)).toThrow(/no reachable transition/);
   });
 
   it('keeps transition and settle stage timings separate', () => {

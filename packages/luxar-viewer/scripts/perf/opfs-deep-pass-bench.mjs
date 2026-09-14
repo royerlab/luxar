@@ -84,14 +84,21 @@ export function missedPollEvents(totalEvents, capturedEvents) {
 }
 
 export function resolveStartCoordinate(range, step, requestedStart) {
-  const penultimate = range[1] - step;
-  const start = requestedStart ?? penultimate;
-  if (start !== penultimate) {
+  const epsilon = step * 1e-9;
+  const coordinateAt = (index) => range[0] + index * step;
+  let stopIndex = Math.max(0, Math.ceil((range[1] - range[0]) / step) - 1);
+  while (coordinateAt(stopIndex) + step < range[1]) stopIndex += 1;
+  while (stopIndex > 0 && coordinateAt(stopIndex - 1) + step >= range[1]) stopIndex -= 1;
+  if (stopIndex < 1) {
+    throw new Error(`time range [${range}] has no reachable transition in once mode`);
+  }
+  const expectedStart = coordinateAt(stopIndex - 1);
+  if (requestedStart !== null && Math.abs(requestedStart - expectedStart) > epsilon) {
     throw new Error(
-      `start ${start} must equal the penultimate coordinate ${penultimate} for one transition`
+      `start ${requestedStart} must equal ${expectedStart} to leave one reachable advance in once mode`
     );
   }
-  return start;
+  return expectedStart;
 }
 
 function buildViewerUrl(baseUrl, concurrency, prefetch) {
@@ -189,7 +196,9 @@ async function preparePass(page, requestedStart) {
     },
     { timeIndex: dimension.timeIndex, start }
   );
-  resolveStartCoordinate(dimension.range, dimension.step, actualStart);
+  if (Math.abs(actualStart - start) > dimension.step * 1e-9) {
+    throw new Error(`dimension manager resolved start ${actualStart}, expected ${start}`);
+  }
   await waitForIdle(page);
   return { ...dimension, start: actualStart };
 }
