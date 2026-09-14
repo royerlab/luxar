@@ -66,7 +66,8 @@ page-wide OPFS read cap. Generate the 51-frame H2AFVA scene with
 serve the resulting store on port 9011, and run the viewer dev server on port 5198. Use a persistent Chrome profile and run the harness twice: the first pass
 fills missing L2 entries; only compare the second pass when every arm reports
 `misses=0`. As with the timelapse navigation bench, verify that neither port has
-a stale listener from another checkout before recording results.
+a stale listener from another checkout before recording results. Run each server
+command below in its own terminal, then run the harness from the viewer directory.
 
 ```bash
 (cd <repo-root> && \
@@ -89,25 +90,36 @@ node scripts/perf/opfs-deep-pass-bench.mjs \
 The harness disables predictive prefetch by default; pass `--prefetch`
 to reproduce production scheduling. It moves to `--start-frame` when supplied,
 or otherwise derives the penultimate coordinate from the time dimension's
-`range` and `step`, then plays exactly one transition at `--ladder-depth`
-(default 6). It records transition and settle timings separately, update and
+`range` and `step`, requires that dimension to be discrete, then plays exactly
+one transition at integer `--ladder-depth` (default 6). Pass `--clear-first` to
+clear every cache level before the first arm. It records transition and settle timings separately, update and
 LOD-refinement profiler trees, L2 hit/miss deltas, read-gate occupancy, write
 queue `depth`/`inFlight`, and the live viewer renderer/backend. Chrome runs
 headed by default so Linux does not silently benchmark SwiftShader; pass
-`--headless true` when the host's accelerated headless path is known.
+`--headless` or `--headless true` when the host's accelerated headless path is known.
 
 The exploratory trace behind #2731 reported a mixed-cache wave with 339 L2
 misses: cap 512 showed 9.884 s wall / 6.011 s aggregate `Load Arrays`, while
 cap 64 showed 2.941 s / 0.802 s. Those absolute numbers are provenance only:
 the old harness included settle/refinement work in wall time and stale profiler
 rows in the aggregate. The cross-arm result remained useful: once warm
-(`misses=0`), five cap-64 passes were 4.99–5.79 s and five unbounded-ish passes
-were 3.72–5.24 s, with no 6–30 s tail or cap-dependent trend.
+(`misses=0`), the pre-fix harness reported five wall-time passes at 4.99–5.79 s
+for cap 64 and 3.72–5.24 s for the unbounded-ish arm, with no 6–30 s tail or
+cap-dependent trend. Those ranges include the pre-fix settle/quiet-window tax.
 `ValidationQueue` runs only during store initialization, not per read. The
 evidence attributes the reported stall to mixed L2-miss fan-out/browser
 contention; the cap added in #2732 is sufficient, with no additional scheduling
 change justified. New artifacts expose `animationMs`, `settleMs`,
 transition/settle updates, and refinement roots separately.
+
+A corrected three-sweep validation on September 13, 2026 used an archived
+51-part H2AFVA store whose effective last playable coordinate was 49, so it
+passed `--start-frame 48`. Every arm was warm (`misses=0`) and none timed out.
+Cap 64 reported `animationMs` 0.121–2.923 s and `settleMs` 0.305–1.744 s; cap
+4096 reported 0.103–0.131 s and 0.093–1.555 s respectively. The cap-4096 arms
+all stamped `missedUpdates=1` (cap 64 stamped 0–1), so those transition/settle
+splits are explicitly incomplete and are diagnostic rather than a new
+cap-effect conclusion. The corrected artifacts still show no 6–30 s warm tail.
 
 This untyped harness depends on the debug surface names
 `getSceneLoader`, `getDefaultLoader`, `getProfiler`, `inputHandler`,

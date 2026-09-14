@@ -18,10 +18,28 @@ export const arg = (name, fallback, argv = process.argv) => {
 
 export const flag = (name, argv = process.argv) => argv.includes(`--${name}`);
 
+export function booleanOption(name, argv = process.argv) {
+  const index = argv.indexOf(`--${name}`);
+  if (index < 0) return false;
+  const value = argv[index + 1];
+  if (value === undefined || value.startsWith('--')) return true;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`--${name} must be true or false, got ${value}`);
+}
+
 function parsePositiveNumber(name, value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`--${name} must be a positive number, got ${value}`);
+  }
+  return parsed;
+}
+
+export function parsePositiveInteger(name, value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`--${name} must be a positive integer, got ${value}`);
   }
   return parsed;
 }
@@ -50,6 +68,21 @@ export function collectStageDurations(node, name, durations = []) {
     collectStageDurations(child, name, durations);
   }
   return durations;
+}
+
+export function deriveMeasuredDurations({
+  transitionStartedMs,
+  transitionCompletedMs,
+  lastActivityMs,
+}) {
+  return {
+    animationMs: Math.max(0, transitionCompletedMs - transitionStartedMs),
+    settleMs: Math.max(0, lastActivityMs - transitionCompletedMs),
+  };
+}
+
+export function missedPollEvents(totalEvents, capturedEvents) {
+  return Math.max(0, totalEvents - capturedEvents);
 }
 
 export function resolveStartCoordinate(range, step, requestedStart) {
@@ -141,8 +174,9 @@ async function preparePass(page, requestedStart) {
     const dimension = metadata[timeIndex];
     const range = dimension?.range;
     if (!range) throw new Error('time dimension has no range metadata');
+    if (dimension.discrete !== true) throw new Error('time dimension must be discrete');
     const step = dimension.step && dimension.step > 0 ? dimension.step : 1;
-    return { timeIndex, step, range };
+    return { timeIndex, step, range, discrete: true };
   });
   const start = resolveStartCoordinate(dimension.range, dimension.step, requestedStart);
   const actualStart = await page.evaluate(
@@ -171,13 +205,20 @@ async function measurePass(page, options, prepared, concurrency) {
       const before = structuredClone(loader.getCacheStats());
       const updates = [];
       const refinements = [];
-      let lastCount = profiler.getTimings().count;
+      const initialUpdateCount = profiler.getTimings().count;
+      let lastCount = initialUpdateCount;
       let lastRefinementCount = profiler.getRefinementTimings().count;
       let maxActiveReads = 0;
       let maxQueuedReads = 0;
       let maxWriteQueue = 0;
+      let transitionStartedAt = null;
+      let transitionCompletedAt = null;
+      let transitionUpdateCount = null;
+      let transitionRefinementCount = null;
+      let lastActivityAt = null;
 
       const sample = () => {
+        const now = performance.now();
         const timings = profiler.getTimings();
         const refinement = profiler.getRefinementTimings();
         const stats = loader.getCacheStats();
@@ -187,10 +228,26 @@ async function measurePass(page, options, prepared, concurrency) {
         if (timings.count !== lastCount) {
           updates.push(structuredClone(timings));
           lastCount = timings.count;
+          lastActivityAt = now;
+          if (transitionCompletedAt === null) {
+            transitionStartedAt = now - timings.lastMs;
+            transitionCompletedAt = now;
+            transitionUpdateCount = updates.length;
+            transitionRefinementCount = refinements.length;
+          }
         }
         if (refinement.count !== lastRefinementCount) {
           refinements.push(structuredClone(refinement));
           lastRefinementCount = refinement.count;
+          lastActivityAt = now;
+        }
+        if (
+          (stats.l2?.activeReads ?? 0) > 0 ||
+          (stats.l2?.queuedReads ?? 0) > 0 ||
+          (stats.l2WriteQueue?.depth ?? 0) > 0 ||
+          (stats.l2WriteQueue?.inFlight ?? 0) > 0
+        ) {
+          lastActivityAt = now;
         }
         return stats;
       };
@@ -207,12 +264,16 @@ async function measurePass(page, options, prepared, concurrency) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       sample();
-      const animationMs = performance.now() - started;
-      const transitionUpdateCount = updates.length;
-      const transitionRefinementCount = refinements.length;
 
       let quietSince = performance.now();
+      const settleStarted = performance.now();
+      const settleTimeoutMs = 120_000;
+      let settleTimedOut = false;
       while (performance.now() - quietSince < 1500) {
+        if (performance.now() - settleStarted >= settleTimeoutMs) {
+          settleTimedOut = true;
+          break;
+        }
         const previousUpdateCount = updates.length;
         const previousRefinementCount = refinements.length;
         const stats = sample();
@@ -231,11 +292,20 @@ async function measurePass(page, options, prepared, concurrency) {
 
       const wallMs = performance.now() - started;
       const finalPosition = debug.app.getDimensions().currentStep[prepared.timeIndex];
-      if (finalPosition === prepared.start || transitionUpdateCount === 0) {
+      if (
+        finalPosition === prepared.start ||
+        transitionUpdateCount === null ||
+        transitionStartedAt === null ||
+        transitionCompletedAt === null
+      ) {
         throw new Error(
-          `measured pass did not advance: start=${prepared.start}, end=${finalPosition}, updates=${transitionUpdateCount}`
+          `measured pass did not advance: start=${prepared.start}, end=${finalPosition}, updates=${transitionUpdateCount ?? 0}`
         );
       }
+      const lastObservedActivity = Math.max(
+        lastActivityAt ?? transitionCompletedAt,
+        transitionCompletedAt
+      );
       return {
         concurrency,
         ladderDepth,
@@ -244,11 +314,15 @@ async function measurePass(page, options, prepared, concurrency) {
         end: finalPosition,
         step: prepared.step,
         range: prepared.range,
-        animationMs,
-        settleMs: wallMs - animationMs,
+        discrete: prepared.discrete,
+        transitionStartedMs: transitionStartedAt - started,
+        transitionCompletedMs: transitionCompletedAt - started,
+        lastActivityMs: lastObservedActivity - started,
         wallMs,
         transitionUpdateCount,
-        transitionRefinementCount,
+        transitionRefinementCount: transitionRefinementCount ?? 0,
+        updateCountDelta: lastCount - initialUpdateCount,
+        settleTimedOut,
         maxActiveReads,
         maxQueuedReads,
         maxWriteQueue,
@@ -301,6 +375,8 @@ export function enrichResult(result) {
     transition: transitionUpdates.map((timings) => collectStageDurations(timings, 'Load Arrays')),
     settle: settleUpdates.map((timings) => collectStageDurations(timings, 'Load Arrays')),
   };
+  result.missedUpdates = missedPollEvents(result.updateCountDelta, result.updates.length);
+  Object.assign(result, deriveMeasuredDurations(result));
   return result;
 }
 
@@ -328,11 +404,11 @@ function parseOptions(argv) {
     baseUrl: arg('url', 'http://127.0.0.1:5198/?src=http://127.0.0.1:9011', argv),
     profileDir: path.resolve(arg('profile-dir', '/tmp/luxar-opfs-deep-pass', argv)),
     out: path.resolve(arg('out', 'opfs-deep-pass.json', argv)),
-    ladderDepth: parsePositiveNumber('ladder-depth', arg('ladder-depth', '6', argv)),
+    ladderDepth: parsePositiveInteger('ladder-depth', arg('ladder-depth', '6', argv)),
     targetFps: parsePositiveNumber('target-fps', arg('target-fps', '2', argv)),
     startFrame: parseOptionalNumber('start-frame', startValue),
-    headless: arg('headless', 'false', argv) === 'true',
-    clearFirst: arg('clear-first', 'false', argv) === 'true',
+    headless: booleanOption('headless', argv),
+    clearFirst: booleanOption('clear-first', argv),
     prefetch: flag('prefetch', argv),
     concurrencyValues: parseConcurrencyValues(arg('concurrency', '8,64,512,4096', argv)),
   };
