@@ -639,6 +639,11 @@ class TestResolveAdditiveAxisLines:
         with pytest.raises(ValueError, match="stream"):
             resolve_additive_axis_lines({"counts": "stream:-5"})
 
+    def test_valid_equi_energy_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_lines({"counts": "equi-energy:3"})
+        assert spec is not None
+        assert spec["counts"] == "equi-energy:3"
+
     def test_valid_energy_counts_resolves(self) -> None:
         spec = resolve_additive_axis_lines({"counts": "energy:0.5,0.9,1.0"})
         assert spec is not None
@@ -1520,3 +1525,38 @@ def test_no_sub_LOD_carries_the_private_skip_scene_bounds_flag(tmp_path) -> None
             "`group.attrs.update(attrs)` again"
         )
     assert "position_bounds" in parent.attrs
+
+
+class TestEquiEnergyLinesLadder:
+    def test_segments_rungs_carry_equal_energy(self) -> None:
+        from luxar.core.group.lod.lines import compute_lines_energy, identify_polylines
+
+        rng = np.random.RandomState(21)
+        n_seg = 2_000
+        verts = rng.rand(2 * n_seg, 3).astype(np.float32)
+        # Heavy-tailed widths -> heavy-tailed per-polyline energy (width**2).
+        widths = rng.lognormal(mean=0.0, sigma=0.8, size=2 * n_seg).astype(np.float32)
+        widths[1::2] = widths[0::2]
+
+        levels = make_additive_lod_lines(
+            verts,
+            line_type="segments",
+            widths=widths,
+            method="salience",
+            salience_kind="energy",
+            counts="equi-energy:4",
+        )
+        assert len(levels) == 4
+        sizes = [len(lvl) for lvl in levels]
+        assert sum(sizes) == n_seg
+        assert sizes[0] < sizes[-1], "few heavy segments first, fat dim tail last"
+
+        polylines = identify_polylines(len(verts), "segments", None)
+        energy = compute_lines_energy(verts, polylines, widths, None, None)
+        total = float(energy.sum())
+        # Map each level's polylines back to their energies via vertex identity.
+        start_to_idx = {int(pl[0]): i for i, pl in enumerate(polylines)}
+        cum = 0.0
+        for k, lvl in enumerate(levels, start=1):
+            cum += float(sum(energy[start_to_idx[int(pl[0])]] for pl in lvl))
+            assert cum >= total * k / 4 - 1e-9

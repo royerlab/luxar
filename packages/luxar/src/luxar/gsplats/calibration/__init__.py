@@ -4,8 +4,8 @@ Implements the manuscript's calibration protocol (Supp. Doc. 2,
 ``splat_count_vs_quality``):
 
 1. Mask 5% of voxels with a deterministic Bernoulli draw (seed=42).
-2. Replace masked voxels with the median of their 3^D donut neighbourhood
-   (centre excluded) — Noise2Self self-supervision.
+2. Replace masked voxels with the median of the unmasked voxels in their
+   3^D donut neighbourhood (centre excluded) — Noise2Self self-supervision.
 3. Fit a Gaussian-splat model on the donut-filled volume at each ``K`` in
    a sweep; the optimiser never sees the original noisy values at masked
    positions.

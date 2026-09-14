@@ -36,9 +36,11 @@ import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapte
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
+  resolveLadderDepth,
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
+import { config } from '../../config';
 import {
   deleteLadder,
   measureLodBytes,
@@ -352,6 +354,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // between animation ticks and the budgeted prefix commits as
   // "complete for playback" (display gate accepts it without holding).
   private _frameBudgetMs: number | null = null;
+  /**
+   * Pinned rung count for the current pass (`ViewState.ladderDepth`, the
+   * playback "detail" setting), resolved through `resolveLadderDepth`; null
+   * when the pass is not pinned. A pinned pass loads exactly this many rungs,
+   * cold or not, and reports `hasMoreLODs === false` like a budgeted one — the
+   * pinned prefix IS the target.
+   */
+  private _ladderDepth: number | null = null;
 
   constructor(
     lodLoaders: GSplatsSpatialIndexLoader[],
@@ -391,6 +401,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // frame). The next budget-free updateView (pause re-trigger, scrub)
     // clears the budget and refinement resumes from the prefix.
     if (this._frameBudgetMs !== null) return false;
+    if (this._ladderDepth !== null) return false;
     return this._loadedLODCount < this.nLods;
   }
 
@@ -519,6 +530,12 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // clear the budget so refinement can resume). Deadline is measured from
     // pass start so slow levels consume the budget too.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    this._ladderDepth = resolveLadderDepth(
+      viewState.ladderDepth,
+      this.nLods,
+      this.energyTable,
+      config.dimensionAnimation.playback.autoEnergyThreshold
+    );
     this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
@@ -606,14 +623,21 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // empty or restored prefix while budget remains; `prefetch`
     // deepens toward the full decoded ladder (bounded by the pass budget +
     // abort); `refine` stops at the first cold/slow level.
-    const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
+    const pass = classifyStreamingPass(
+      budgetDeadline !== null,
+      isPrefetch,
+      this._ladderDepth !== null
+    );
     const startLevel = this._loadedLODCount;
     const residentBytesAtPassStart = ladderResidentBytes(this.ladderResidency());
     this._levelsAtPassStart = startLevel;
     this._payloadsAtPassStart = this.loadedLODs.length;
     this._restoredFullLadderAtPassStart = false;
 
-    for (let level = startLevel; level < this.nLods; level++) {
+    // A pinned pass bounds the loop at the pinned rung count; the policy's
+    // `pinned` kind disables the deadline / cold-level brakes.
+    const targetLevels = this._ladderDepth ?? this.nLods;
+    for (let level = startLevel; level < targetLevels; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so
       // the next iteration would TypeError on `this.lodLoaders[level]` — a
       // teardown mis-counted as a real refinement failure (recordFailure +
@@ -709,7 +733,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // Gating prefixes on the budget keeps the non-play cost profile (a
     // store per refinement pass would clone O(N²) bytes per slice).
     const result = finish();
-    if (this._loadedLODCount === this.nLods || this._frameBudgetMs !== null) {
+    if (
+      this._loadedLODCount === this.nLods ||
+      this._frameBudgetMs !== null ||
+      this._ladderDepth !== null
+    ) {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,

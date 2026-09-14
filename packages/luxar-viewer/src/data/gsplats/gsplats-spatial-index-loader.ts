@@ -31,6 +31,7 @@ import {
   loadColorRanges,
   colorComponentsOf,
   prefetchRangesIntoCache,
+  planChunkBoundaryViewStates,
   makeInitialLoaderMetrics,
   buildSpatialIndexMetrics,
   loadSliceWithCache,
@@ -1269,6 +1270,27 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     const arrays = this.prefetchArrays();
 
     await prefetchRangesIntoCache(arrays, splatRanges, signal);
+  }
+
+  async prefetchChunkBoundary(
+    current: GSplatsViewState,
+    predicted: GSplatsViewState
+  ): Promise<void> {
+    await this.ensureInitialized();
+    if (!this.chunkIndex || !this.arrays.centers) {
+      await this.prefetchChunks(predicted);
+      return;
+    }
+    let ranges: readonly SplatRange[];
+    try {
+      ranges = await this.queryVisibleSplatRanges(current);
+    } catch {
+      await this.prefetchChunks(predicted);
+      return;
+    }
+    const arrays = this.prefetchArrays();
+    const views = planChunkBoundaryViewStates(current, predicted, ranges, this.chunkIndex, arrays);
+    await Promise.all(views.map((view) => this.prefetchChunks(view)));
   }
 
   private prefetchArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {

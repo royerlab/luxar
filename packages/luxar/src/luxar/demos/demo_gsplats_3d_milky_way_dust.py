@@ -92,6 +92,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_int_arg,
     require_module,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._lod_policy import save_with_lod
@@ -360,6 +361,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 ),
                 citation=DEMO_META["citation"],
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = (
                 "GSplats: Milky Way Interstellar Dust (Leike et al. 2020)"
             )

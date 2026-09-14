@@ -88,7 +88,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import DimensionsConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
 
@@ -200,6 +200,22 @@ def _curve_to_unit_cube(coords: np.ndarray, order: int) -> np.ndarray:
     return ((coords.astype(np.float32) + 0.5) / side - 0.5).astype(np.float32)
 
 
+#: The order the scene opens on (its slot is ``OPENING_ORDER - 1``); clamped to
+#: the highest order actually built when ``--max-order`` is smaller.
+OPENING_ORDER = 4
+
+
+def opening_slot(orders: list[int]) -> int:
+    """Category slot of :data:`OPENING_ORDER` among ``orders`` (clamped)."""
+    return max(
+        0,
+        min(
+            len(orders) - 1,
+            orders.index(min(orders, key=lambda o: abs(o - OPENING_ORDER))),
+        ),
+    )
+
+
 def build_scene(output_path: Path, max_order: int) -> int:
     """Write the multi-order Hilbert curve scene. Returns total vertex count."""
     orders = list(range(1, max_order + 1))
@@ -228,6 +244,15 @@ def build_scene(output_path: Path, max_order: int) -> int:
                     # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
                     allow_high_dpr=True,
                     cinematic_mode=True,
+                    # Open on order 4 (2026-09-10 review: "a bit more
+                    # interesting from the get go" than the 8-vertex order 1
+                    # the viewer would otherwise start on). `current_step` is
+                    # indexed by ABSOLUTE dimension; `order` is dimension 0 and
+                    # its categories are slots 0..N-1, so order k is slot k-1.
+                    dimensions=DimensionsConfig(
+                        current_step=[float(opening_slot(orders)), 0.0, 0.0, 0.0],
+                        selected_dimension=0,
+                    ),
                 ),
             )
 

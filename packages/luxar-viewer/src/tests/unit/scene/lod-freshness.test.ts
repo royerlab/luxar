@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   coarsestFreshIndex,
-  coarsestFreshNonEmptyIndex,
   isFresh,
   isReady,
   SettleTracker,
@@ -102,37 +101,6 @@ describe('visibleElementCount', () => {
     // A tracked leaf WITHOUT the count stamp (not yet committed) is untracked
     // too — the guard must only act on a KNOWN-empty level.
     expect(visibleElementCount(child('gsplats', 1))).toBeNull();
-  });
-});
-
-describe('coarsestFreshNonEmptyIndex', () => {
-  function level(loadedViewVersion: number, visibleSplatCount?: number): FreshnessChild {
-    return {
-      ready: true,
-      object: { userData: { nodeType: 'gsplats', loadedViewVersion, visibleSplatCount } },
-    };
-  }
-
-  it('skips fresh-but-empty levels and returns the coarsest fresh non-empty one', () => {
-    // coarse fresh with 100 splats, fine fresh with 0 → index 0.
-    expect(coarsestFreshNonEmptyIndex([level(2, 100), level(2, 0)], 2)).toBe(0);
-  });
-
-  it('skips stale levels even when non-empty', () => {
-    // coarse stale@1 (non-empty), fine fresh@2 (non-empty) → index 1.
-    expect(coarsestFreshNonEmptyIndex([level(1, 100), level(2, 50)], 2)).toBe(1);
-  });
-
-  it('accepts untracked counts (null) — only KNOWN-empty is skipped', () => {
-    const untracked: FreshnessChild = {
-      ready: true,
-      object: { userData: { nodeType: 'group' } },
-    };
-    expect(coarsestFreshNonEmptyIndex([untracked, level(2, 0)], 2)).toBe(0);
-  });
-
-  it('returns -1 when every fresh level is empty (genuinely empty slice)', () => {
-    expect(coarsestFreshNonEmptyIndex([level(2, 0), level(2, 0)], 2)).toBe(-1);
   });
 });
 

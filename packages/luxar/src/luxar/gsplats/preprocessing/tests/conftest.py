@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 import torch
+
+
+def pytest_configure() -> None:
+    """Fail instead of skipping when the cadence requires real CUDA coverage."""
+    if os.environ.get("LUXAR_REQUIRE_CUDA") != "1":
+        return
+
+    from luxar.gsplats.preprocessing.cuda import NLM_CUDA_AVAILABLE
+
+    if not torch.cuda.is_available():
+        raise pytest.UsageError(
+            "LUXAR_REQUIRE_CUDA=1 but PyTorch cannot access a CUDA device"
+        )
+    if not NLM_CUDA_AVAILABLE:
+        raise pytest.UsageError(
+            "LUXAR_REQUIRE_CUDA=1 but the NLM CUDA backend is unavailable"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Reproducibility

@@ -12,7 +12,8 @@ This is the reference scene for the viewer's remote-control features
 (``docs/guides/specs/REMOTE_CONTROL_SPEC.md``): the camera poses are authored
 ``Waypoint``\\s bound to the ``story`` dimension, the captions are dimension-aware
 overlays, and auto-rotate is on so a story step keeps the turntable spinning
-while it moves the point the camera spins around.
+while it moves the point the camera spins around; a slow dolly breath continues
+under that turntable motion.
 
 Scene structure (two toggleable layers plus one highlight per story):
     - **Backdrop** — every protein, dimmed, in the base demo's taxon colours,
@@ -34,6 +35,16 @@ Usage:
     python -m luxar.demos.demo_esm3_protein_stories --no-serve
     python -m luxar.demos.demo_esm3_protein_stories --no-auto-rotate
     python -m luxar.demos.demo_esm3_protein_stories --no-audio
+
+Touch panel (off by default):
+    A kiosk can be driven from a tablet — a full-screen matrix of one tile per
+    story, derived from the tour itself. ``--control`` exposes it; loopback
+    alone is not reachable from a tablet, so a real kiosk also needs
+    ``--host 0.0.0.0`` and, because that opens the display to the network, a
+    ``--control-token``. The command prints both URLs.
+
+    python -m luxar.demos.demo_esm3_protein_stories --control
+    python -m luxar.demos.demo_esm3_protein_stories --control --host 0.0.0.0 --control-token SECRET
 
 Sound (``docs/guides/specs/SOUND_SPEC.md``): a CC0 ambient bed plays under the
 whole tour and each story is narrated on arrival. Narration is synthesised when
@@ -94,11 +105,13 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import (
     AudioConfig,
     CameraConfig,
+    Chapter,
+    ControlPanelConfig,
     EnvironmentConfig,
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import cached_download, launch_viewer
+from luxar.demos import cached_download, control_serve_args, launch_viewer
 from luxar.demos._audio_synth import synthesise_foa_from_clip
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -230,10 +243,13 @@ STORIES: tuple[Story, ...] = (
             # D1 turns over fastest of all thylakoid proteins; half-life ~2 h in
             # growth light, faster in high light (Aro et al. 1993; Photosynth.
             # Res. reviews).
+            # Half-life ~90 min at a moderate 125 umol/m2/s; 30-60 min under
+            # intense illumination (pulse-chase measurements). D1 is the
+            # fastest-turning-over subunit of photosystem II in the light.
             "Splitting water has a price: D1 is damaged by its own chemistry "
-            "and is the fastest-replaced protein in the photosynthetic "
-            "membrane — a half-life of about two hours in ordinary light, "
-            "shorter in full sun. A leaf rebuilds this protein all day long.",
+            "and is replaced faster than any other protein of photosystem II "
+            "— a half-life of about ninety minutes in ordinary light, half "
+            "that in full sun. A leaf rebuilds this protein all day long.",
             # Purple-bacteria reaction centre L/M chains are homologous to
             # D1/D2 (Deisenhofer, Huber & Michel; Nobel 1988).
             "Its neighbours in this map are the L and M chains of "
@@ -255,8 +271,8 @@ STORIES: tuple[Story, ...] = (
             "subunit sits at the heart of the only enzyme known that splits "
             "water. Cyanobacteria running this machine filled Earth's air with "
             "oxygen, two and a half billion years ago. The chemistry is so "
-            "violent that D1 wrecks itself every couple of hours; a leaf "
-            "rebuilds it all day long. Molecular clocks say water-splitting is "
+            "violent that D1 wrecks itself within the hour in bright sun; a "
+            "leaf rebuilds it all day long. Molecular clocks say water-splitting is "
             "far older than the rise of oxygen. So why did the planet wait so "
             "long to change?"
         ),
@@ -271,7 +287,9 @@ STORIES: tuple[Story, ...] = (
         facts=(
             "Hsp70 — DnaK in bacteria — is a chaperone: it holds unfolded "
             "proteins, refolds the damaged ones and hands the hopeless ones to "
-            "the shredder. Every cell type in every domain of life has it.",
+            "the shredder. Every bacterium and every eukaryote carries one, "
+            "with no known exception; archaea are the odd ones out, and those "
+            "that have it borrowed it from bacteria.",
             # Human Hsp70 vs E. coli DnaK: ~47–48% identity (Brocchieri et al.
             # 2008; Frontiers Mol. Biosci. 2021).
             "After some three billion years of separate evolution, human Hsp70 "
@@ -298,7 +316,8 @@ STORIES: tuple[Story, ...] = (
         narration=(
             "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
             "refolds the damaged ones, and hands the hopeless ones to the "
-            "shredder. After three billion years apart, the human and E. coli "
+            "shredder. Every bacterium and every eukaryote has one. After "
+            "three billion years apart, the human and E. coli "
             "versions are still nearly half identical, letter for letter. That "
             "is why this cluster mixes bacteria, plants and animals. Cancer "
             "cells over-produce it to survive their own chaos, and drugs against "
@@ -329,12 +348,15 @@ STORIES: tuple[Story, ...] = (
             "the same trick: class I fusion proteins that snap into a "
             "six-helix bundle, dragging virus and cell membranes together.",
             "Haemagglutinin gives influenza its “H” (H1N1, H5N1...). "
-            # 50–100 million: Johnson & Mueller 2002; CDC EID 2006.
-            "The 1918 pandemic, an H1N1 virus, killed an estimated 50 million "
-            "people — more than the war it followed.",
-            "The coronavirus spike grips the human ACE2 receptor to open a "
+            # Johnson & Mueller, Bull. Hist. Med. 76:105 (2002): 50 million,
+            # possibly 100 million; Spreeuwenberg et al., Am. J. Epidemiol.
+            # 187:2561 (2018): 17.4 million. No single figure is settled.
+            "The 1918 pandemic, an H1N1 virus, killed tens of millions of "
+            "people — estimates run from 17 to 100 million.",
+            "The SARS-CoV-2 spike grips the human ACE2 receptor to open a "
             "cell; its receptor-binding domain is what most COVID-19 vaccines "
-            "teach the immune system to recognise.",
+            "teach the immune system to recognise. Its cousins pick other "
+            "locks — MERS uses DPP4, not ACE2.",
             "Here they gather into one continent although they share no "
             "common ancestor. The language model groups them by how they are "
             "built and what they do — a hint of convergent design, visible "
@@ -351,7 +373,8 @@ STORIES: tuple[Story, ...] = (
             "The intruders' continent. Influenza's haemagglutinin, the "
             "coronavirus spike, HIV's envelope: unrelated viruses, one trick. "
             "Each snaps into a bundle that drags virus and cell together. The "
-            "1918 flu killed fifty million people with a protein like this one. "
+            "1918 flu killed tens of millions of people with a protein like this "
+            "one. "
             "They gather here although they share no ancestor; the model groups "
             "them by how they are built and what they do. Most viral proteins "
             "have no known relatives at all. Where would that dark matter land "
@@ -435,7 +458,9 @@ STORIES: tuple[Story, ...] = (
             "lost as heat. How a protein manages that is still debated."
         ),
         tags=("energy", "structure"),
-        pdb_id="1BMF",
+        # The WHOLE machine — F1 head, stalk and Fo rotor in the membrane —
+        # not the F1 head alone (1BMF): a visitor should recognise a turbine.
+        pdb_id="6N2Y",
         narration=(
             "ATP synthase, the turbine in every cell. Protons flowing through "
             "it turn an axle, and each turn presses out three molecules of "
@@ -603,7 +628,9 @@ STORIES: tuple[Story, ...] = (
             "One of them, a 25-amino-acid peptide from Conus magus, is now a "
             "drug: ziconotide (Prialt), approved in 2004 for severe chronic "
             "pain. It blocks the calcium channels that carry pain signals in "
-            "the spinal cord — the first medicine ever taken from the sea.",
+            "the spinal cord — the first medicine ever made from a venom of "
+            "the sea. (The first from the sea at all came earlier: "
+            "cytarabine, in 1969, from a Caribbean sponge.)",
             "Swiss-Prot holds over 1,200 conotoxins. This knot is one "
             "superfamily of them; the others are strewn across the whole map, "
             "because venom evolves faster than almost anything else.",
@@ -619,7 +646,7 @@ STORIES: tuple[Story, ...] = (
             "Conotoxins, venom that became medicine. Cone snails hunt with a "
             "harpoon and a cocktail of hundreds of peptides, each a precise key "
             "for one ion channel. One of them is now a drug for severe pain, "
-            "the first medicine ever taken from the sea. This knot is a single "
+            "the first ever made from a venom of the sea. This knot is a single "
             "superfamily; the rest are scattered across the whole map, because "
             "venom evolves faster than almost anything else. Why so fast is "
             "still being worked out."
@@ -732,27 +759,46 @@ SPARSE_TAIL_RATIO = 2.5
 BUBBLE_CAMERA_CLEARANCE = 1.2
 
 
-def bubble_radius(cluster: StoryCluster) -> float:
-    """World radius of the story's soap bubble."""
-    return max(SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * cluster.r95)
+#: The bubble encloses the farthest member with this much room to spare.
+BUBBLE_ENCLOSE_MARGIN = 1.05
 
 
-def framing_radius(cluster: StoryCluster) -> float:
+def bubble_radius(
+    cluster: StoryCluster, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
+    """World radius of the story's soap bubble.
+
+    The larger of the r95 rule and the enclosing radius (every member inside,
+    :data:`BUBBLE_ENCLOSE_MARGIN` to spare), floored at ``min_radius`` — the
+    floor a small cluster is padded up to; the protein-universe variant, whose
+    knots are a few tenths of a unit across, passes a smaller one.
+    """
+    return max(
+        min_radius,
+        SPHERE_RADIUS_SCALE * cluster.r95,
+        BUBBLE_ENCLOSE_MARGIN * cluster.r_max,
+    )
+
+
+def framing_radius(
+    cluster: StoryCluster, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
     """The radius the camera frames: the bubble, or the dense core when sparse."""
     if cluster.r50 > 0 and cluster.r95 > SPARSE_TAIL_RATIO * cluster.r50:
-        return max(
-            SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50
-        )
-    return bubble_radius(cluster)
+        return max(min_radius, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50)
+    return bubble_radius(cluster, min_radius=min_radius)
 
 
-def story_camera_distance(cluster: StoryCluster, story: Story) -> float:
+def story_camera_distance(
+    cluster: StoryCluster, story: Story, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
     """Distance from the story camera to its cluster centre."""
     half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
     return max(
         story.min_distance,
-        framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
-        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster),
+        framing_radius(cluster, min_radius=min_radius)
+        / (story.frame_fraction * half_height_per_unit),
+        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster, min_radius=min_radius),
     )
 
 
@@ -809,6 +855,9 @@ class StoryCluster:
     #: whose r95 is far beyond its r50 is a big bubble around a small core, and
     #: the camera frames the core instead (``0`` = unknown, never sparse).
     r50: float = 0.0
+    #: Distance of the farthest member from the centre: the bubble encloses it
+    #: (``0`` = unknown, the bubble falls back to the r95 rule alone).
+    r_max: float = 0.0
 
 
 def _densest_member(family_pos: np.ndarray, radius: float) -> np.ndarray:
@@ -866,15 +915,28 @@ def select_story_members(
     indices = np.flatnonzero(members)
     if len(indices) == 0:
         raise ValueError(f"story {story.key!r}: no member within radius {story.radius}")
-    # Re-centre on the blob itself (the family median can be pulled by
-    # stragglers) and measure its framing radius.
-    centre = np.median(positions[indices], axis=0)
-    radial = np.linalg.norm(positions[indices] - centre, axis=1)
-    r95 = float(np.percentile(radial, 95))
-    r50 = float(np.percentile(radial, 50))
+    # Centre on the members' bounding box, not their median: a median sits in
+    # the dense half of an asymmetric blob and the bubble then hangs off to
+    # one side of what it is supposed to hold (checked on the kiosk). The
+    # framing radii are measured from that same centre.
+    centre, radial = cluster_geometry(positions[indices])
     return StoryCluster(
-        indices=indices, centre=centre, r95=r95, n_named=n_named, r50=r50
+        indices=indices,
+        centre=centre,
+        r95=float(np.percentile(radial, 95)),
+        n_named=n_named,
+        r50=float(np.percentile(radial, 50)),
+        r_max=float(radial.max()),
     )
+
+
+def cluster_geometry(member_pos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Bounding-box centre of a member set and each member's distance to it."""
+    lo = member_pos.min(axis=0)
+    hi = member_pos.max(axis=0)
+    centre = ((lo + hi) / 2.0).astype(np.float64)
+    radial = np.linalg.norm(member_pos.astype(np.float64) - centre, axis=1)
+    return centre, radial
 
 
 def _midpoint_vertex(
@@ -940,6 +1002,8 @@ def story_camera(
     cluster: StoryCluster,
     story: Story,
     global_centre: np.ndarray,
+    *,
+    min_radius: float = SPHERE_MIN_RADIUS,
 ) -> CameraConfig:
     """Compose the waypoint pose for a cluster.
 
@@ -948,7 +1012,8 @@ def story_camera(
     so the shot is not dead level), at a distance proportional to the blob's
     framing radius. Under auto-rotate only the target and distance are used —
     the turntable keeps its own direction — so the direction here matters
-    exactly when the visitor has stopped the spin.
+    exactly when the visitor has stopped the spin. ``min_radius`` is the
+    bubble's floor (see :func:`bubble_radius`).
     """
     outward = cluster.centre - global_centre
     norm = float(np.linalg.norm(outward))
@@ -963,7 +1028,7 @@ def story_camera(
     # `frame_fraction` of the frame height under a 63° vertical field of view.
     # A sphere of radius R at distance d spans 2R of the frame's 2·d·tan(fov/2)
     # height, so R / (d·tan) is its fraction of the height.
-    distance = story_camera_distance(cluster, story)
+    distance = story_camera_distance(cluster, story, min_radius=min_radius)
     position = cluster.centre + outward * distance
     return CameraConfig(
         position=tuple(float(v) for v in position),
@@ -990,8 +1055,14 @@ def story_narration(story: Story) -> str:
     return f"{story.title}. {story.mystery}"
 
 
-def story_panel_html(story: Story, n_members: int, index: int, total: int) -> str:
-    """The right-hand story panel: title, subtitle, facts, open question."""
+def story_panel_html(
+    story: Story, n_members: int, index: int, total: int, *, unit: str = "proteins"
+) -> str:
+    """The right-hand story panel: title, subtitle, facts, open question.
+
+    ``unit`` names what the highlight count counts (``proteins`` here; the
+    protein-universe variant highlights ``clusters``).
+    """
     r, g, b = (int(round(v * 255)) for v in story.color)
     colour = f"#{r:02x}{g:02x}{b:02x}"
     items = "".join(
@@ -1015,7 +1086,7 @@ def story_panel_html(story: Story, n_members: int, index: int, total: int) -> st
         f'rgba(255,255,255,0.15);padding-top:0.8vh">'
         f"Open question: {html.escape(story.mystery)}</div>"
         f'<div style="font-size:1.0vh;color:#888;margin-top:0.8vh">'
-        f"{n_members:,} proteins highlighted</div>"
+        f"{n_members:,} {html.escape(unit)} highlighted</div>"
         "</div>"
     )
 
@@ -1047,6 +1118,7 @@ def add_story_sounds(
     narration_dir: Path = NARRATION_CACHE_DIR,
     engine: str | None = None,
     ambisonic_dir: Path = AMBISONIC_BED_CACHE_DIR,
+    overview_narration: str = OVERVIEW_NARRATION,
 ) -> int:
     """Add the ambient bed and one narration per story slot.
 
@@ -1054,6 +1126,7 @@ def add_story_sounds(
     skips it with a warning rather than failing the build. Narration is
     synthesised through :func:`luxar.demos._narration.synthesise`; when no
     engine is available the stories stay silent (the helper has already warned).
+    ``overview_narration`` is what slot 0 says (a sibling demo passes its own).
     """
     added = 0
     try:
@@ -1099,7 +1172,7 @@ def add_story_sounds(
     voice = NARRATION_VOICES.get(chosen or "", "")
     # The spoken scripts are authored with the stories (`Story.narration`,
     # `OVERVIEW_NARRATION`): short and punchy, not the panel read aloud.
-    slots: list[tuple[int, str, str]] = [(0, "Overview", OVERVIEW_NARRATION)]
+    slots: list[tuple[int, str, str]] = [(0, "Overview", overview_narration)]
     slots += [(k, s.key, story_narration(s)) for k, s in enumerate(stories, start=1)]
     for k, key, text in slots:
         clip = synthesise(text, voice, narration_dir, engine=chosen or "none")
@@ -1273,7 +1346,28 @@ def build_stories_scene(
                 )
             )
 
+        # The touch panel, authored from the SAME `STORIES` tuple the tour is
+        # built from — so a story added, removed or reworded cannot leave the
+        # panel describing the old tour. The tile labels themselves still come
+        # from the dimension's `categories` (each story's short `key`); this
+        # only adds the evocative second line, which the tour already wrote.
+        control_panel = ControlPanelConfig(
+            chapter_dimension=STORY_DIM,
+            chapters={
+                # +1: slot 0 is the Overview, so story k sits at k+1.
+                index + 1: Chapter(sublabel=story.subtitle)
+                for index, story in enumerate(stories)
+            },
+        )
+
         viewer_config = ViewerConfig(
+            # Names the browser tab AND the control panel's header (the panel
+            # reads it out of `getViewerState().title` — its own page title is
+            # the bundle's generic string). Without this both read
+            # "esm3_protein_stories", which is a filename, not a title, and
+            # this scene goes in front of an audience.
+            title="Eleven stories in the protein universe",
+            control_panel=control_panel,
             cinematic_mode=True,
             camera=CameraConfig(position=overview_position, target=(0.0, 0.0, 0.0)),
             # The turntable is the point: a story step keeps the spin and moves
@@ -1285,6 +1379,17 @@ def build_stories_scene(
             # opening shot looks down at the cloud (spin plus wobble), which
             # over minutes wanders the camera under the map.
             auto_rotate_axis="world-y" if auto_rotate else None,
+            # A slow breath in and out under the turntable, dialled in on the
+            # kiosk display — the cloud reads as a volume rather than a flat
+            # sheet. Gated on `auto_rotate` because that is the flag
+            # `--no-auto-rotate` uses to ask for a still camera.
+            #
+            # This scene's stream ladders are additive rather than selectable
+            # LOD groups, so the swing changes framing without changing element
+            # residency. The cap is deliberately dramatic kiosk tuning.
+            auto_dolly=auto_rotate,
+            auto_dolly_amplitude_percent=95.0 if auto_rotate else None,
+            auto_dolly_period=58.5 if auto_rotate else None,
             # Supersampling: a kiosk-sized point cloud shimmers under the
             # turntable without it; the display is a single large screen with a
             # GPU to spare, so the cost is acceptable.
@@ -1594,7 +1699,9 @@ def main() -> None:
         aprint(f"  Total proteins: {n:,}")
         aprint("")
 
-        launch_viewer(output_path)
+        # Remote control is OFF unless asked for: `--control`, plus
+        # `--control-token` and `--host 0.0.0.0` for a tablet on the LAN.
+        launch_viewer(output_path, serve_args=control_serve_args())
 
     aprint("Cleanup complete")
 

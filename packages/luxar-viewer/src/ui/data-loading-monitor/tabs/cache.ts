@@ -139,10 +139,14 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
     patchField(
       container,
       'l2-hitrate-sub',
-      `${templateFormatNumber(cacheMetrics.l2.reads)} hits · ${templateFormatNumber(cacheMetrics.l2.misses)} miss`
+      `${templateFormatNumber(cacheMetrics.l2.reads)} hits · ${templateFormatNumber(cacheMetrics.l2.misses)} miss · ${templateFormatNumber(cacheMetrics.l2.canceledReads ?? 0)} canceled`
     );
     patchField(container, 'l2-io', `${templateFormatNumber(cacheMetrics.l2.reads)} reads`);
-    patchField(container, 'l2-io-sub', `${templateFormatNumber(cacheMetrics.l2.writes)} writes`);
+    patchField(
+      container,
+      'l2-io-sub',
+      `${templateFormatNumber(cacheMetrics.l2.writes)} writes · ${templateFormatNumber(cacheMetrics.l2.activeReads ?? 0)} active · ${templateFormatNumber(cacheMetrics.l2.queuedReads ?? 0)} queued`
+    );
     // Idle-dimming parity with the initial render: bright once disk
     // traffic exists, dimmed while the tier is untouched.
     updateColorClassByField(

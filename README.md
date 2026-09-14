@@ -27,7 +27,7 @@ Three ideas carry most of the design:
   Gaussians instead of shipped as voxel grids — which is what lets a 3.3 GB
   light-sheet stack, or a 400-timepoint timelapse, travel over a network at all.
 
-**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 86 live demos, no
+**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 88 live demos, no
 install. Or open your own data in the hosted viewer:
 [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
@@ -93,7 +93,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 91 bundled demos
+luxar demo              # Browse the 90 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -107,7 +107,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 91 Luxar demos  ·  75 built  ·  8 cached  ·  8 not generated yet
+🎬 90 Luxar demos  ·  75 built  ·  8 cached  ·  7 not generated yet
 
  ASTRONOMY ──────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
@@ -116,13 +116,13 @@ geometry, what it needs, and whether you have already built it:
 
  MEDICAL ────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB
- • 28  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
+ • 29  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
 
- SYNTHETIC ─────────────────────────────────────────────────────────── 20 demos
+ SYNTHETIC ─────────────────────────────────────────────────────────── 18 demos
  ✓ 10  cloud                                   points
    11  collision                               points
  ...
- ✓ 21  exotic_surfaces                         points
+ ✓ 22  exotic_surfaces                         points
 
  ✓ built   • inputs cached   (blank) not generated yet
  GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply
@@ -337,9 +337,11 @@ the render continuously:
 | small | attenuated projection — near structure pops, occluded structure dims | depth cueing in dense timelapses |
 | large | dense smoke- or ink-like medium | opaque tissue, anatomy |
 
-Because fitted amplitudes *are* densities (fluorophore concentration) rather than
-learned opacities, κ is interpretable as the turbidity of the sample instead of
-being an arbitrary rendering constant. Absorption is also orientation-consistent —
+Because fitted amplitudes are background-relative image intensities — proportional
+to the detected fluorescence after floor subtraction and normalisation, not a
+calibrated fluorophore concentration — rather than learned opacities, κ is still
+interpretable as an effective turbidity of the sample instead of being an arbitrary
+rendering constant. Absorption is also orientation-consistent —
 an elongated splat seen end-on absorbs more than the same splat seen side-on, which
 a stored per-splat opacity cannot express. All three geometry types render the same
 physics, on both the WebGL/GLSL and WebGPU/TSL backends.
@@ -854,7 +856,7 @@ luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar viewer [--data PATH] [OPTIONS]    # Serve viewer only or viewer + data
 luxar info PATH [--stats]               # Dataset information (--stats also reports the chunk layout)
 luxar optimise SRC DST [--profile ...]  # Re-chunk an existing store for streaming (values stay bit-identical)
-luxar restamp-lod STORE [--dry-run]     # Re-derive legacy LOD thresholds in place (attrs only)
+luxar restamp-lod STORE [--dry-run]     # Re-derive LOD thresholds in place (attrs only)
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)
@@ -912,7 +914,7 @@ layout and how to add a new skill.
 | Document | Description |
 |----------|-------------|
 | **[Documentation site](https://royerlab.github.io/luxar/)** | Tutorials, guides, format specs, and the generated Python + TypeScript API reference |
-| **[Live demo gallery](https://demos.luxarviewer.dev)** | 86 demos as interactive scenes in the browser |
+| **[Live demo gallery](https://demos.luxarviewer.dev)** | 88 demos as interactive scenes in the browser |
 | **[Hosted viewer](https://luxarviewer.dev)** | Open any reachable scene: `luxarviewer.dev/?src=<url>` |
 | [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md) | How the two sites above are hosted and published |
 | [Python Package README](packages/luxar/README.md) | Full Python API documentation |
@@ -1103,10 +1105,10 @@ Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Gala
 
 The Python package does not ship these artifacts. The demos consume **derived
 products** — Gaussian-splat fits and point catalogues computed from the datasets
-credited above — archived on Zenodo in four records. The ShareAlike files need a
-separate record because a Zenodo record carries a single licence field; the two
-large timelapses each have their own record so the data collector is credited on
-the recording itself:
+credited above — archived on Zenodo in four demo-data records. The ShareAlike
+files need a separate record because a Zenodo record carries a single licence
+field; the two large timelapses each have their own record so the data collector
+is credited on the recording itself:
 
 | Record | Contents | Cite |
 |---|---|---|

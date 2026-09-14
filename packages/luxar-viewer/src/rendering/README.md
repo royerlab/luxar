@@ -539,6 +539,7 @@ Multisample Anti-Aliasing:
 Super-Sample Anti-Aliasing:
 
 - Renders at higher resolution (1.5x, 2x, 3x, 4x)
+- Suspends MSAA while the multiplier is above 1x to avoid redundant multisample allocations
 - Best possible quality
 - **Heavy performance cost**
 - Recommended only for screenshots or high-end GPUs
@@ -614,6 +615,7 @@ postProcessing.updateDetectorNoiseSettings({
 
 #### MSAA Not Working
 
+- SSAA above 1x suspends MSAA; disable SSAA to see the configured MSAA mode
 - Check console for GPU support warnings
 - Under WebGL2, MSAA requires float-buffer extensions on the active context; check `RendererCapabilities.maxMSAASamples > 0`
 - Under WebGPU, MSAA is native (no extension required); the same `maxMSAASamples` query reports the adapter's supported sample counts

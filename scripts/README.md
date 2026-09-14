@@ -17,11 +17,12 @@ scripts/
 
 | Script | Purpose |
 |--------|---------|
-| `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings) |
+| `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage, with an unbaselineable changelog-fragment format check (JSON output) |
 | `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
+| `check_cadence_liveness.py` | Check GitHub Actions workflow cadences for missing or stale successes using an `actions: read` token; only workflow cadences are visible to this check |
 | `check_layer_order.py` | Assert the `Subpackage layering` order is still the measured minimum and that its dated debt list has not grown |
 | `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, nothing over PyPI's per-file limit, viewer dist bundled |
-| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`) plus `RUF012` (fails only on newly-broken rules) |
+| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`), flake8-blind-except (`BLE`), and `RUF012` (fails only on newly-broken rules) |
 | `ruff_ratchet.py` | Shared fail-closed Ruff settings, nested-config, and scan-coverage guards used by both baseline ratchets |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
@@ -35,11 +36,12 @@ scripts/
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
 | `gen_zenodo_records.py` | Generate Zenodo record descriptions from the manifest and committed `demo_archive_characteristics.json`; `--refresh` updates measurements, optionally preferring a namespaced `--archives-root`, exits 1 after writing if a pinned fit hashes but cannot be parsed, and warns without failing when fit bytes cannot be opened for hashing because those bytes cannot be checked against the pin; `--check` lists incomplete rows and fails on a pinned fit that is present but unreadable (never contacts Zenodo) |
-| `zenodo_record_text/capture.py` | Capture the live Zenodo descriptions and selected metadata into the repository; read-only against Zenodo |
+| `zenodo_record_text/capture.py` | Capture the live Zenodo descriptions and selected metadata into the repository, or compare the snapshots with public records via `--check`; read-only against Zenodo |
+| `check_record_attribution.py` | Compare the manifest `attribution` with the captured record text wherever *either* side says the imaging is unpublished, and report where a record instead asserts a publication describes *the imaging* (a publication describing the instrument or the method is the correct framing and is never flagged, as is an archive "published as" a deposit); scope is resolved before any `[CONFIG]`, so a dataset making no unpublished-imaging claim on a record nobody has captured yet is silent rather than a broken input; an unattributable record-level claim is reported `[HUMAN]`; offline and stdlib-only, and `make check-record-attribution` is the report-only entry point — its live-repo test asserts only what this repo controls, on purpose, because `scripts/tests` runs in the required `python-tests` job |
 | `zenodo_migration_audit.py` | Audit migration readiness offline by default; `--live` with `ZENODO_TOKEN` also compares manifest pins with Zenodo depositions, and `make check-zenodo-live` is the lean report-only entry point |
 | `verify_cold_fetch.py` | Cold-fetch every hosted demo dataset with the cache and in-repo payload hidden; `make check-cold-fetch` is the opt-in pre-removal gate |
 | `gallery/verify_media.py` | Validate the root README's content-addressed gallery manifest and fetch every hosted object to compare status, headers, byte count, and SHA-256; `make check-gallery-media` is the opt-in audit |
-| `run_external_reference_audits.py` | Run the documentation, demo click-through, live Zenodo-pin, and hosted-gallery-media audits independently; normalize them to PASS/NOTICE/WARNING/ERROR and write a non-gating GitHub job summary |
+| `run_external_reference_audits.py` | Run the documentation, demo click-through, Zenodo snapshot, record-attribution, live Zenodo-pin, and hosted-gallery-media audits independently; normalize them to PASS/NOTICE/WARNING/ERROR and write a non-gating GitHub job summary |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |
@@ -60,16 +62,20 @@ scripts/
 
 Audits every built `*.luxar.zarr` demo (or explicitly supplied scenes) and
 fails when a large Points, Lines, or GSplats leaf has no additive ladder, a
-single increment exceeds the relative `--max-share` limit, or an increment
-exceeds the absolute `--max-level-elements` commit budget. For sliced nodes it
-also histograms rung 0 by hidden coordinate across every partition part and
-fails when the lower fifth-percentile visible slice is below
+single increment exceeds the relative `--max-share` limit, or the absolute
+`--max-level-elements` commit budget. On a barrier-ordered sliced leaf, the
+absolute arm measures the conservative largest per-coordinate fetch from the
+level's `chunk_bounds`; unsliced, unindexed, multi-axis, malformed or
+mixed-metadata, and `extend_to_all` leaves retain the node-level cap. For sliced
+nodes it also histograms rung 0 by hidden coordinate across every partition
+part and fails when the lower fifth-percentile visible slice is below
 `--min-slice-first-rung` (default 250), when rung 0 is below
-`--min-slice-rung-share` of the measured node (default 10%), or when a sliced
-survey is empty. Five measured pre-#2384 stores are exempt from the share arm
-only while they remain at least 6%; their keypress-navigated axes refine past
-rung 0, and any degraded rebuild goes red. The existing demo output directory
-is inventoried read-only; the check does not create it.
+`--min-slice-rung-share` of the measured node or its worst drawable partition
+part (default 10%), or when a sliced survey is empty. Five measured pre-#2384
+stores are exempt from the share arm only while they remain at least 6%; their
+keypress-navigated axes refine past rung 0, and any degraded rebuild goes red.
+The existing demo output directory is inventoried read-only; the check does not
+create it.
 
 ```bash
 hatch run check-demo-ladders
@@ -120,6 +126,7 @@ path-like references in tracked package READMEs.
 - Require a README for each top-level package under `luxar/` and viewer `src/`
 - Require Quick Start/Getting Started headings and code examples in Python package READMEs
 - Flag low Python docstring and TypeScript JSDoc coverage
+- Reject every pending changelog fragment outside the `#### Title` + prose format
 - Fail the required PR documentation gate on any new finding
 
 **Usage:**
@@ -134,7 +141,7 @@ hatch run docs:python scripts/check_documentation.py --verbose
 # Machine-readable JSON report (includes a `ratchet` block)
 hatch run docs:python scripts/check_documentation.py --json
 
-# (Re)write the debt baseline from the current state, then exit 0
+# (Re)write the debt baseline; invalid changelog fragments still exit 1
 hatch run docs:python scripts/check_documentation.py --update-baseline
 
 # Point at a non-default baseline file
@@ -150,13 +157,17 @@ hatch run docs:python scripts/check_documentation.py --no-baseline
 - Python modules, functions, classes and methods carry docstrings (AST-parsed, exact)
 - Exported TypeScript declarations have nearby JSDoc (heuristic)
 - A Python file that cannot be parsed is reported as a `Python syntax` finding (the run continues rather than crashing)
+- Pending changelog fragments all use the required `#### Title` + prose format
 
 Existing documentation debt is captured in `scripts/docs_baseline.json`. A
 flagless run tolerates every baselined finding and fails (exit 1) only on new
-missing READMEs/docstrings/JSDoc or broken README path references. It is the
-completeness stage of `make check-docs` and the required `docs-quality` CI job.
-As debt is paid down, regenerate/tighten the baseline with `--update-baseline`
-and commit the smaller file. See
+missing READMEs/docstrings/JSDoc or broken README path references. Invalid
+changelog fragments always fail and cannot be added to the baseline. This is
+the completeness stage of `make check-docs` and the required `docs-quality` CI
+job. As debt is paid down, regenerate/tighten the baseline with
+`--update-baseline` and commit the smaller file. A malformed changelog fragment
+blocks baseline updates until it is fixed, so unrelated docs-debt paydown cannot
+hide a hard fragment-format failure. See
 `docs/guides/developer/DOCUMENTATION_QUALITY.md` for the full model.
 
 ---
@@ -239,21 +250,23 @@ both paths gate PRs.
 
 ### `check_lint_ratchet.py`
 
-Enforces ruff's `flake8-bugbear` (`B`) family plus `RUF012` as a baseline-driven
-ratchet — the same shape as the complexity ratchet above, applied to the
-*defect-bearing* rules rather than the cosmetic ones.
+Enforces ruff's `flake8-bugbear` (`B`) and `flake8-blind-except` (`BLE`) families
+plus `RUF012` as a baseline-driven ratchet — the same shape as the complexity
+ratchet above, applied to the *defect-bearing* rules rather than the cosmetic
+ones.
 
 Each ratcheted rule describes a way working-looking code is silently wrong:
 mutable defaults shared across calls (`B006`, `RUF012`), a closure capturing a
 loop variable by reference (`B023`), `warnings.warn` blaming the wrong line
 (`B028`), positional `maxsplit`/`count` (`B034`, also a `DeprecationWarning`
 from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
-`zip()` silently truncating to its shortest input (`B905`).
+`zip()` silently truncating to its shortest input (`B905`). Broad exception
+handlers (`BLE001`) can hide unrelated defects.
 
 **Purpose:**
-- Run `ruff check --select B,RUF012` over the same paths as `hatch run lint`
+- Run `ruff check --select B,BLE,RUF012` over the same paths as `hatch run lint`
 - Tolerate the pre-existing violations recorded in `scripts/lint_baseline.json`
-  (473 across 235 file/rule keys at the time of writing, 290 of them `B905`)
+  (651 across 338 file/rule keys at the time of writing, 289 of them `B905`)
 - Fail (exit 1) when a file newly breaks a rule, or gains another violation of
   a rule it already breaks
 - Report paid-down debt as advisory (exit 0) so the baseline can be tightened
@@ -272,7 +285,7 @@ from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
 These rules are deliberately not in `[tool.ruff.lint] select` for the same
 reason as `C901` — ruff has no baseline mechanism, and here the sweep would also
 be *behaviour-changing*: `zip(..., strict=True)` **raises** on mismatched
-lengths, so each of the 290 `B905` sites is a decision, not a mechanical edit.
+lengths, so each of the 289 `B905` sites is a decision, not a mechanical edit.
 
 `B008` is absent from the baseline on purpose. All 83 findings were
 `typer.Option(...)` / `typer.Argument(...)` in a parameter default — the

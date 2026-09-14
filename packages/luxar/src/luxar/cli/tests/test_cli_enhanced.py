@@ -244,9 +244,40 @@ class TestEnhancedServeCommand:
         """`serve --viewer --open` (viewer built) opens the browser exactly once
         — the positive twin of test_serve_with_viewer_not_built_skips_open."""
         mock_check.return_value = True
-        result = runner.invoke(app, ["serve", str(sample_scene), "--viewer", "--open"])
+        result = runner.invoke(
+            app,
+            [
+                "serve",
+                str(sample_scene),
+                "--viewer",
+                "--open",
+                "--control",
+                "--control-token",
+                "tap secret",
+            ],
+        )
         assert result.exit_code == 0, result.output
         mock_browser.assert_called_once()
+        opened_url = mock_browser.call_args.args[0]
+        assert "&control" in opened_url
+        assert "&controlToken=tap%20secret" in opened_url
+
+    @patch("luxar.cli.main.pick_port", return_value=8000)
+    @patch("luxar.cli.main.uvicorn.run")
+    def test_control_flags_warn_when_their_prerequisites_are_missing(
+        self, _mock_uvicorn, _mock_port, runner, sample_scene
+    ) -> None:
+        result = runner.invoke(
+            app, ["serve", str(sample_scene), "--control", "--control-token", "secret"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "--control requires --viewer or --viewer-only" in result.stdout
+
+        result = runner.invoke(
+            app, ["serve", str(sample_scene), "--control-token", "secret"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "--control-token requires --control" in result.stdout
 
     @patch("luxar.cli.main.pick_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")

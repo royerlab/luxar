@@ -33,6 +33,7 @@ import {
   mix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { bindLiveTexture } from '../../materials/_shared/live-texture-tsl';
 
 /**
  * FXAA TSL factory. Receives the uniforms table that the
@@ -40,20 +41,21 @@ import { NodeMaterial } from 'three/webgpu';
  * to branch on backend when wiring uniform values.
  */
 export function fxaaWebGPUFactory(uniforms: Record<string, THREE.IUniform>): NodeMaterial {
-  // Wrap the THREE.IUniform refs as TSL uniform nodes. The TSL
-  // `uniform()` helper accepts a value or a callback; passing a
-  // callback that reads from the IUniform keeps the node live-bound
-  // to whatever the host writes to `.value`.
-  //
-  // `texture()` captures the THREE.Texture passed at build time. The
+  // Live-bound texture node — see `bindLiveTexture` for why the swap
+  // lives in `updateBefore` rather than `.onUpdate(…, 'render')`. The
   // host (FxaaPass) builds the material with `uInput.value === null`
-  // and assigns the real `ldrTarget.texture` per render. Without an
-  // `.onUpdate()` swap, the TextureNode would sample the placeholder
-  // forever and FXAA would output an empty image under WebGPU.
+  // and assigns the real `ldrTarget.texture` per render, so this pass
+  // has exactly the many-tap render-target swap that #2584 was about:
+  // on the first frame after each material build the already-updated
+  // taps would derive their Y-flip from the null-placeholder. (The
+  // parity harness hands this factory a real texture at build time, so
+  // the swap never happens under test — the fix here is by
+  // construction, not by coverage.)
   const fallback = new THREE.Texture();
-  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback).onUpdate(
-    () => (uniforms.uInput.value as THREE.Texture | null) ?? fallback,
-    'render'
+  const uInput = bindLiveTexture(
+    texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback),
+    uniforms.uInput,
+    fallback
   );
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)

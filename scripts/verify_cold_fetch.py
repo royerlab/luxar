@@ -161,7 +161,7 @@ def is_reachable(
     dormant record is reported as SKIP instead of failing.
     """
     spec = manifest["datasets"][name]
-    record = manifest.get("records", {}).get(spec.get("record"), {})
+    record = data_fetch.resolved_record(manifest, spec)
     files, _ = data_fetch.resolve_variant(name, spec, variant)
     if not files:
         return False

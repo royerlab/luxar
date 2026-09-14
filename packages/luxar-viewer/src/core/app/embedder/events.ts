@@ -11,6 +11,7 @@
  * Re-exported from the package root (`src/index.ts`).
  */
 
+import type { ControlPanelSettings } from '../../../config/zarr-bridge/control-panel';
 import type { DimensionMetadata } from '../../../types/dims';
 
 export type { Unsubscribe } from '../../../utils/cross-layer/event-bus';
@@ -209,12 +210,31 @@ export interface LayerPatch {
 export interface ViewerState {
   /** Dataset URL currently shown, or `null` before the first load. */
   src: string | null;
+  /**
+   * What the display calls itself: the scene's authored
+   * `viewer_config.title`, else the `?title=` parameter, else the page's own.
+   *
+   * Here because a remote controller cannot know it any other way — a touch
+   * panel is a separate page whose own `document.title` is the bundle's
+   * generic string, and putting that in front of an audience is exactly the
+   * wrong heading.
+   */
+  title: string;
   camera: CameraSnapshot;
   dimensions: EmbedderDimensions;
   rendering: RenderingSettings;
   layers: LayerSummary[];
   /** The sound layer: context state, mute, gains, what is playing. */
   audio: AudioState;
+  /**
+   * The scene's authored `viewer_config.control_panel` block, or `null`.
+   *
+   * `null` means "derive everything", which is the normal case: the touch
+   * panel builds itself from a discrete dimension's `categories` and needs no
+   * authoring at all. Here because the panel is a SEPARATE PAGE from the
+   * display and has no other way to read the store's attributes.
+   */
+  controlPanel: ControlPanelSettings | null;
 }
 
 /**

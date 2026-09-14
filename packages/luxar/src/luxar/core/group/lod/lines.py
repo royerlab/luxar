@@ -512,6 +512,41 @@ def compute_lines_energy(
     return out
 
 
+def _energy_string_polyline_cuts(
+    counts: str,
+    energy: NDArray[np.float64],
+    perm: NDArray[np.intp],
+    polylines: List[NDArray[np.intp]],
+) -> List[int]:
+    """Polyline-count cuts for the two energy-based string specs.
+
+    ``energy:<fractions>`` → cumulative energy fractions (shared with Points);
+    ``equi-energy:<n>`` → equal shares of cumulative polyline energy along the
+    order, with the commit cap measured in VERTICES (the payload currency, as
+    for ``stream:``). Any other string is refused naming all three vocabularies.
+    """
+    if counts.startswith("equi-energy:"):
+        from ....utils.lod_breakpoints import equi_energy_cuts, parse_equi_energy_rungs
+
+        poly_lengths = [int(polylines[int(i)].shape[0]) for i in perm]
+        return equi_energy_cuts(
+            np.asarray(energy, dtype=np.float64)[perm],
+            parse_equi_energy_rungs(counts),
+            weights=poly_lengths,
+        )
+    if not counts.startswith("energy:"):
+        raise ValueError(
+            f"unrecognized breakpoints string {counts!r}; expected "
+            "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0'), "
+            "'equi-energy:<n>' (e.g. 'equi-energy:4') or "
+            "'stream:<c>' (e.g. 'stream:40000')"
+        )
+    from .points import _energy_breakpoints_to_counts  # shared helper
+
+    fracs = [float(s) for s in counts[len("energy:") :].split(",") if s.strip()]
+    return _energy_breakpoints_to_counts(energy, perm, fracs)
+
+
 def make_additive_lod_lines(
     vertices: NDArray,
     *,
@@ -621,7 +656,11 @@ def make_additive_lod_lines(
         return out
 
     # random / salience: slice the polyline permutation by breakpoints.
-    if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
+    if (
+        isinstance(counts, str)
+        and counts.startswith(("energy:", "equi-energy:"))
+        and energy is None
+    ):
         energy = compute_lines_energy(vertices, polylines, widths, colors, scalars)
 
     if isinstance(counts, str) and counts.startswith("stream:"):
@@ -650,19 +689,9 @@ def make_additive_lod_lines(
             if bp > (breakpoints[-1] if breakpoints else 0):
                 breakpoints.append(bp)
     elif isinstance(counts, str):
-        # Energy: fractions → cumulative counts (over polylines).
-        from .points import _energy_breakpoints_to_counts  # shared helper
-
-        if not counts.startswith("energy:"):
-            raise ValueError(
-                f"unrecognized breakpoints string {counts!r}; expected "
-                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0') or "
-                "'stream:<c>' (e.g. 'stream:40000')"
-            )
         if energy is None:
             energy = compute_lines_energy(vertices, polylines, widths, colors, scalars)
-        fracs = [float(s) for s in counts[len("energy:") :].split(",") if s.strip()]
-        breakpoints = _energy_breakpoints_to_counts(energy, perm, fracs)
+        breakpoints = _energy_string_polyline_cuts(counts, energy, perm, polylines)
     elif counts is not None:
         breakpoints = _validate_counts(counts, p)
     else:

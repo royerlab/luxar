@@ -33,7 +33,7 @@ index.css (library, embed-safe)
 
 Every phone/tablet adaptation lives in **one** file, `components/coarse-pointer.css`,
 whose top level contains only `@media` blocks keyed on the pointer/hover media
-features (`(pointer: coarse)`, `(hover: none)`, `(any-hover: hover)`) — never on
+features (`(pointer: coarse)`, `(any-hover: none)`, `(any-hover: hover)`) — never on
 viewport width alone. A mouse-and-keyboard machine therefore receives byte-identical
 CSS; `tests/unit/styles/coarse-pointer-css.test.ts` enforces the contract (media-only
 top level, pointer-feature preludes, no pointer/hover features anywhere else in the
@@ -44,7 +44,13 @@ on the rail gutter and the bottom strip (`index.html` declares `viewport-fit=cov
 `touch-action: manipulation` on buttons, a scrolling items box for the control rail,
 and no idle-dimming of the rail where nothing can hover. The rail's items wrapper
 (`.luxar-control-rail__items`) is `display: contents` in `control-rail.css` so it is
-layout-transparent on fine pointers. See the UI Design Guide §11.5.
+layout-transparent on fine pointers. Ergonomics, same file: 44px primary targets via
+a local `--luxar-hit-min` (36px secondary, 24px thumbs on a 24px hit band,
+28px dual-range thumbs on a 28px band),
+16px panel inputs (iOS focus-zoom), `:active` press fills with sticky post-tap
+`:hover` resets for rail controls, layer rows and play buttons under `(any-hover: none)`, tips on keyboard focus only,
+and the base look of the two elements that exist only on coarse pointers (the
+dimension sliders' `‹ ›` step buttons and name chip). See the UI Design Guide §11.5.
 
 ## CSS Custom Properties
 

@@ -17,6 +17,7 @@
 #include <torch/extension.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <cmath>
 
 #include "nlm_cuda.h"
@@ -344,6 +345,9 @@ torch::Tensor nlm_denoise_2d(
     TORCH_CHECK(input.dtype() == torch::kFloat32, "Input must be float32");
     TORCH_CHECK(h > 0, "h must be positive");
 
+    // Make the input's device current for allocations and kernel launches.
+    const c10::cuda::CUDAGuard device_guard(input.device());
+
     const int H = input.size(0);
     const int W = input.size(1);
     const int pad = search_dist + patch_half;
@@ -376,6 +380,9 @@ torch::Tensor nlm_denoise_3d(
     TORCH_CHECK(input.is_cuda(), "Input must be a CUDA tensor");
     TORCH_CHECK(input.dtype() == torch::kFloat32, "Input must be float32");
     TORCH_CHECK(h > 0, "h must be positive");
+
+    // Also applies the per-device shared-memory opt-in to the input's device.
+    const c10::cuda::CUDAGuard device_guard(input.device());
 
     const int D = input.size(0);
     const int H = input.size(1);

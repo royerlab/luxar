@@ -50,8 +50,8 @@
  * codegen snapshot `tests/__codegen__/line.vertex.glsl.txt` (generated from the
  * TSL graph) together with the source assertion `#790 both vertex stages hand
  * luxarLineJoin each END its own segment-constant width` in
- * `materials/line/material-glsl.test.ts`, and — since that snapshot only runs in
- * the `e2e-tests` job, which CI sets to `if: false` — the TSL-source lock
+ * `materials/line/material-glsl.test.ts`, and — since that snapshot does not run
+ * in CI — the TSL-source lock
  * `materials/line/join-width-tsl.test.ts` — plus the decision itself, mirrored
  * below.
  *

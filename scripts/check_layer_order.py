@@ -52,7 +52,10 @@ RankedOrders: TypeAlias = list[tuple[int, list[str]]]
 #: rest are permuted. `cli`/`demos` sit at the top on a wide margin (201 and 343
 #: outgoing edges against 2 and 6 incoming); the others import nothing internal
 #: at all, so no ordering among them can be violated.
-FIXED_TOP = ("cli", "demos")
+#: `control` joins them for the second reason rather than the first: it imports
+#: nothing internal, so no ordering involving it can be violated, and leaving it
+#: in the permuted middle would multiply the search by its length for no gain.
+FIXED_TOP = ("cli", "control", "demos")
 FIXED_BOTTOM = ("colormaps", "mesh", "shading", "_zarr_compat", "_process")
 
 

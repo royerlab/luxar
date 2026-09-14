@@ -21,6 +21,16 @@ if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
 
+_FOOTPRINT_STATS_KEYS = ("median_footprint", "footprint_dims")
+
+
+def _without_footprint_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy level stats without geometry-dependent footprint stamps."""
+    return {
+        key: value for key, value in stats.items() if key not in _FOOTPRINT_STATS_KEYS
+    }
+
+
 def _concatenate_label_channel(items: Sequence[Any]) -> tuple[Any, Any]:
     """Concatenate compatible categorical channels, or fail loudly."""
     presence = {item.label_ids is not None for item in items}
@@ -280,7 +290,10 @@ class CompositionMixin(_GSplatDataOps):
                         compression_factor=ref.compression_factor,
                         parent_method=ref.parent_method,
                         level_index=ref.level_index,
-                        stats={**ref.stats, "n_sources": len(non_empty)},
+                        stats={
+                            **_without_footprint_stats(ref.stats),
+                            "n_sources": len(non_empty),
+                        },
                     )
                 )
             return cls.from_substitutive_levels(
@@ -766,7 +779,7 @@ class CompositionMixin(_GSplatDataOps):
                         compression_factor=template.compression_factor,
                         parent_method=template.parent_method,
                         level_index=template.level_index,
-                        stats=dict(template.stats),
+                        stats=_without_footprint_stats(template.stats),
                     )
                 )
             return cls.from_substitutive_levels(new_levels, stats=merged_stats)

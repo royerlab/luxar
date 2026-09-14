@@ -129,6 +129,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // Standalone-only — library embedders configure via LuxarAppOptions.
   const userSettings = initUserSettings();
 
+  if (urlParams.opfsReadConcurrency !== null) {
+    config.cache.opfsReadConcurrency = urlParams.opfsReadConcurrency;
+  }
+
   // Pin the input profile (`?input=touch|mouse`) BEFORE anything reads it:
   // the GPU byte budget below, the cache pool's device class, gesture routing
   // and the touch UI all derive from `getInputProfile()`, and it memoises on
@@ -142,15 +146,19 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // path: `navigator.deviceMemory` is Chromium-only and spec-capped at 8 GB, so
   // on a large machine it pins the budget at its ceiling and the pool's
   // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
-  // the only way to reproduce constrained-device behaviour on a roomy box. In
+  // the only way to reproduce constrained-device behaviour on a roomy box;
+  // values around 384 MiB keep the byte-budget eviction path binding. In
   // desktop WebKit it is the sole signal and may raise or lower the 512 MB
-  // fallback. On mobile WebKit the device-class term is the other signal, so
-  // `?cacheBudgetMB=` can only lower its 128 MiB share.
+  // fallback. On mobile WebKit it replaces the device-class pool in the shared
+  // remainder, but the independent 128 MiB mobile safety cap remains a peer
+  // minimum, so the override can only lower it.
   // The persisted Settings budget remains cache-only by design; the regression
-  // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
-  // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
-  // measurement. A MOBILE device class is folded in (inside
-  // `computeAutoBudget`): on WebKit it is the only memory signal a phone has.
+  // guard is "threads stored cache preferences into loaderConfig when no URL
+  // params are set". The ambient JS heap limit is folded in because pooled
+  // geometry retains CPU-side ArrayBuffers; unlike the eager loader, the GPU
+  // term uses the full non-cache remainder with its own 2 GB ceiling. A MOBILE
+  // device class is folded in (inside `computeAutoBudget`): on WebKit it is the
+  // only memory signal a phone has.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
@@ -332,6 +340,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // init pipeline reads options, never window.location.
     lodFade: urlParams.lodFade,
     allowLinks: urlParams.allowLinks,
+    // Already resolved and validated by `normalizeControlSocketUrl`; null when
+    // `?control` was absent or its value was refused.
+    control: urlParams.control,
+    controlToken: urlParams.controlToken,
+    kiosk: urlParams.kiosk,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
     densityGuard: urlParams.densityGuard,
@@ -339,6 +352,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityCap: urlParams.densityCap ?? undefined,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
+    // Session-wide replacement-LOD threshold bias (`?lod-bias=N`).
+    lodBias: urlParams.lodBias ?? undefined,
     // The shared init pipeline applies the mobile default so direct LuxarApp
     // embedders and the standalone app behave identically.
     blendWarmup: urlParams.blendWarmup,

@@ -4,13 +4,13 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest sync-demo-counts \
+.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-control-contract gen-data-manifest sync-demo-counts \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity check-lint-ratchet check-native \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
-        test-e2e test-e2e-smoke test-perf-e2e \
+        test-e2e test-e2e-browsers test-e2e-mobile test-e2e-smoke test-e2e-smoke-strict test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-cold-fetch check-typescript check-rust check-knip check-gallery-staleness check-gallery-media check-wasm-deps setup-dev \
-        check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
+        check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-snapshots check-record-attribution check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
 	generate-gallery-datasets generate-gallery \
@@ -81,7 +81,7 @@ endif
 # `^22.22.2 || ^24.15.0 || >=26.0.0`; its undici 8 dependency destructures
 # `markAsUncloneable` from node:worker_threads (added in Node 22.16) and throws
 # on anything older, so the whole unit suite is unrunnable below that. Vite 8.x
-# only needs 20.19+, so jsdom is the binding constraint for development. This
+# supports `^20.19.0 || >=22.12.0`, so jsdom is the binding constraint for development. This
 # make check is deliberately a coarse too-old floor (major.minor only): every
 # version it accepts has the 22.16+ API the suite actually needs (verified:
 # the full unit suite passes on 22.22.0, below jsdom's ^22.22.2); enforcing
@@ -89,9 +89,9 @@ endif
 # (pnpm neither fails nor warns on a dependency's engines by default).
 # Deliberately NOT mirrored into `engines.node` in
 # packages/luxar-viewer/package.json: that manifest ships with the published
-# npm package, where it must state the LIBRARY's runtime floor (>=20.19.0,
-# Vite 8.x) — a dev-only jsdom constraint there would break installs for
-# consumers on supported Nodes (yarn enforces engines strictly).
+# npm package, where it mirrors Vite 8.x's LIBRARY runtime range
+# (^20.19.0 || >=22.12.0) — a dev-only jsdom constraint there would break
+# installs for consumers on supported Nodes (yarn enforces engines strictly).
 MIN_NODE_MAJOR := 22
 MIN_NODE_MINOR := 22
 # Mirrors `engines.pnpm` in packages/luxar-viewer/package.json. 10.6 is the
@@ -633,6 +633,9 @@ format-all:  ## Format all code (Python, TypeScript, Rust, Go, CUDA)
 	@echo ""
 	$(MAKE) format-cuda
 
+gen-control-contract:  ## Regenerate the Python + TS + Go control-contract projections
+	@hatch run gen-control-contract
+
 gen-contract:  ## Regenerate the Python + TS format-contract projections from contract.yaml
 	@echo "📄 Regenerating format-contract projections (Python + TypeScript)..."
 	$(HATCH) run gen-contract
@@ -653,7 +656,7 @@ check-complexity:  ## Ratchet cyclomatic complexity (ruff C901) against the base
 	@echo "📐 Checking cyclomatic complexity against the baseline..."
 	$(HATCH) run check-complexity
 
-check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + RUF012) against the baseline
+check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + blind-except + RUF012) against the baseline
 	@echo "🐛 Checking defect-bearing lint rules against the baseline..."
 	$(HATCH) run check-lint-ratchet
 
@@ -669,7 +672,7 @@ lint-typescript:  ## Run ESLint on TypeScript code
 	cd packages/luxar-viewer && pnpm run lint
 
 type-check-python:  ## Run mypy type checking on Python code
-	$(HATCH) run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py
+	$(HATCH) run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py
 
 type-check-typescript:  ## Run TypeScript type checking
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -902,10 +905,16 @@ check-cold-fetch:  ## Verify hosted demo datasets fetch from nothing and match t
 check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI gate)
 	python3 scripts/zenodo_migration_audit.py --live
 
+check-zenodo-snapshots:  ## Compare captured Zenodo record text with live records (opt-in)
+	$(HATCH) run python scripts/zenodo_record_text/capture.py --check
+
+check-record-attribution:  ## Compare captured Zenodo record text with manifest attribution (opt-in)
+	python3 scripts/check_record_attribution.py
+
 check-gallery-media:  ## Verify hosted root-README media against its manifest (opt-in)
 	$(HATCH) run python scripts/gallery/verify_media.py
 
-check-external-references:  ## Run all network-backed reference audits (report-only)
+check-external-references:  ## Run all external reference audits (report-only)
 	$(HATCH) run python scripts/run_external_reference_audits.py
 
 check-gallery-staleness:  ## Report README gallery staleness and manifest media sizes
@@ -2590,7 +2599,7 @@ test-cuda:  ## Run CUDA extension tests
 		echo ""; \
 	fi
 	@# Run tests
-	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v
+	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v -rs
 	@echo ""
 	@echo "✅ CUDA tests completed!"
 
@@ -2667,7 +2676,7 @@ test-nlm-cuda:  ## Run NLM CUDA extension tests
 		$(MAKE) build-nlm-cuda; \
 		echo ""; \
 	fi
-	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v
+	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v -rs
 	@echo ""
 	@echo "✅ NLM CUDA tests completed!"
 
@@ -2714,12 +2723,33 @@ test-e2e: run-examples ensure-viewer-fixtures  ## Run the full Playwright E2E su
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e
 
-test-e2e-smoke: run-examples  ## Run the E2E smoke subset (what CI would run)
+test-e2e-browsers: run-examples ensure-viewer-fixtures  ## Run the cross-browser Playwright subset
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:browsers
+
+test-e2e-mobile: run-examples ensure-viewer-fixtures  ## Run the mobile/touch Playwright suite used by PR CI
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:mobile
+
+test-e2e-smoke: run-examples  ## Run the E2E smoke subset
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e:smoke
+
+test-e2e-smoke-strict: run-examples  ## Run smoke with strict browser-console handling
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:smoke:strict
 
 test-perf-e2e: run-examples  ## Run the opt-in Playwright performance suite
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \

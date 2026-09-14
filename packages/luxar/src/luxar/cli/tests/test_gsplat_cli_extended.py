@@ -9674,6 +9674,26 @@ class TestInfoSourceGridReportedOnce:
         assert "voxels_per_splat: 20000" in out.replace(",", "")
         assert "occupancy: 0.01" in out
 
+    def test_short_numeric_metadata_lists_are_printed_inline(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Small numeric vectors remain readable in the catch-all metadata dump."""
+        path, _ = self._stamped(
+            tmp_path,
+            fit_init_marginal_sigma_diag_vox_median=[0.7, 0.9, 1.1],
+            sigma_min_diag_vox=[0.3, 0.3, 0.3],
+            long_numeric_list=list(range(9)),
+            nested_list=[[1.0, 2.0]],
+        )
+        result = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        output = _plain(result.stdout)
+
+        assert "fit_init_marginal_sigma_diag_vox_median: [0.7, 0.9, 1.1]" in output
+        assert "sigma_min_diag_vox: [0.3, 0.3, 0.3]" in output
+        assert "long_numeric_list: list with 9 items" in output
+        assert "nested_list: list with 1 items" in output
+
 
 class TestInfoPartitionSize:
     """The node-tree report must measure a directory store, like the flat one.

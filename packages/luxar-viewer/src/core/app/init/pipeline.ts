@@ -25,7 +25,7 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
-import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
+import { getGpuByteBudget, initializeGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { getMaxPixelRatio, setHighDPRAllowed } from '../../../rendering/pixel-ratio-cap';
 import {
   configureDepthSort,
@@ -111,6 +111,8 @@ export async function runInitPipeline(
   ports: InitPipelinePorts,
   partial: Partial<InitPipelineResult>
 ): Promise<InitPipelineResult> {
+  initializeGpuByteBudget(ports.options.gpuPoolMaxBytes);
+
   // Inform users about expected console messages. The browser logs a
   // `GET … 404` line (with a JS stack trace) for every failed network
   // request; these cannot be suppressed from JS — only avoided by not
@@ -221,6 +223,8 @@ export async function runInitPipeline(
   const lodEnergyCompEnabled = ports.options.lodEnergyComp ?? true;
   // Opt-in: force the finest LOD for capture-quality output (?lod-finest).
   const lodFinestEnabled = ports.options.lodFinest ?? false;
+  // The registry owns the neutral default and validates the live value.
+  const lodBias = ports.options.lodBias;
   SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
@@ -238,6 +242,7 @@ export async function runInitPipeline(
       // skips evaluation in this state.
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
       hasArchiveFault: () => owner.archiveFault !== null,
+      hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
       requestReprocess: (paths) => owner.requestReprocess(paths),
       // A view PASS in flight or queued — not a refinement hold, which the
       // loader parks a resync through (see `LODGroupRegistryOwner`).
@@ -278,6 +283,8 @@ export async function runInitPipeline(
       // Force-finest capture override (?lod-finest via LuxarAppOptions.lodFinest):
       // always select the finest level and never coarsen off-screen.
       getForceFinestLOD: () => lodFinestEnabled,
+      // Area-unit threshold bias (?lod-bias via LuxarAppOptions.lodBias).
+      getLodBias: () => lodBias,
       // Register a fade's clone-on-first-use material so it keeps receiving
       // per-frame camera-uniform updates (an unregistered gsplat clone would
       // project with stale camera params).
@@ -411,11 +418,12 @@ export async function runInitPipeline(
   }
 
   // While the viewer is not SETTLED — an updateView sweep, any loader's load
-  // pass, a lazy LOD level load, or the post-load refinement drain (each
-  // rung is fetch + decode + commit with the lock released between passes)
-  // — frame jank reflects that work, not steady-state render cost, and the
-  // manager suppresses probe/estimator learning for those samples. Same
-  // predicate the perf probes read as `getPerf().isSettled`, inverted.
+  // pass, a lazy LOD level load, a held partition rising-edge resync, or the
+  // post-load refinement drain (each rung is fetch + decode + commit with the
+  // lock released between passes) — frame jank reflects that work, not
+  // steady-state render cost, and the manager suppresses probe/estimator
+  // learning for those samples. Same predicate the perf probes read as
+  // `getPerf().isSettled`, inverted.
   // TRUE while load activity is in flight (the adaptive-DPR manager's sense).
   const isLoadActive = buildLoadActivityPredicate({
     getDefaultLoader: () => getSceneLoader('default'),
@@ -638,13 +646,13 @@ export async function runInitPipeline(
   // unconditionally, so on a plain points/lines scene the capture would
   // otherwise spend its mandatory selector-catch-up rAF on every exported
   // frame waiting for a selector that does not exist. `null` = "no lod_group
-  // to wait for" and skips the drain outright; only a scene with at least one
-  // registered lod_group gets the boolean. Narrow on purpose, and narrower
-  // than "nothing here can be mid-load" — a `--recipe stream` leaf has no
-  // lod_group but does have a progressive ladder still streaming.
+  // or partition to wait for" and skips the drain outright; partitions need
+  // the catch-up tick because a frustum rising edge starts a targeted resync.
+  // This remains narrower than "nothing here can be mid-load": a laddered leaf
+  // outside both group kinds still has no capture-visible registry entry.
   recordingPanel.setLODSettledProvider(() => {
     const registry = getSceneLoader('default')?.lodGroupRegistry;
-    if (!registry || registry.size() === 0) return null;
+    if (!registry || registry.captureSize() === 0) return null;
     return registry.isCaptureQuiescent();
   });
 
@@ -654,8 +662,8 @@ export async function runInitPipeline(
   inputHandler.setLayersPanel(layersPanel);
 
   // Left activity rail — the always-visible, discoverable entry point to the
-  // otherwise keyboard-only panels. Each button fires the SAME command as its
-  // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
+  // otherwise keyboard-only panels. Buttons dispatch through the same command
+  // surface as keyboard shortcuts (via inputHandler.getUiActions()).
   // The sound layer. Constructs no AudioContext until a scene with sound nodes
   // attaches; every viewer piece it needs arrives as a port so `audio/` stays
   // below `scene/` in the layer order (see src/audio/README.md).

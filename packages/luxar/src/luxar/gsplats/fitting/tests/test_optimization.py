@@ -111,6 +111,37 @@ def test_run_optimization_loop_basic(simple_2d_setup) -> None:
     assert results.best_loss >= 0
     assert results.best_max_abs_error >= 0
     assert results.end_time > results.start_time
+    assert results.relocation_statistics == {
+        "total_relocations": 0,
+        "unique_splats": 0,
+    }
+
+
+def test_run_optimization_loop_preserves_relocation_counts(simple_2d_setup) -> None:
+    """Fit results retain both event and distinct-splat relocation counts."""
+    config, preprocessed_data = simple_2d_setup
+    config.enable_dynamic_ops = True
+    config.n_iters = 2
+    config.max_abs_error = 1e-10
+    preprocessed_data.max_abs_error = 1e-10
+    config.dynamic_config.step_every = 1
+    config.dynamic_config.k_max_residuals = 1
+    config.dynamic_config.enable_tiled_seeding = False
+    config.dynamic_config.relocation_percentile = 100.0
+    config.dynamic_config.max_relocations_per_step = 1
+    config.dynamic_config.min_splats_to_keep = 0
+
+    components = initialize_optimization(config, preprocessed_data)
+    loss_fn = create_loss_function(config, preprocessed_data, components.model)
+
+    results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
+
+    assert results.relocation_statistics["total_relocations"] >= 1
+    assert 1 <= results.relocation_statistics["unique_splats"] <= 2
+    assert (
+        results.relocation_statistics["unique_splats"]
+        <= results.relocation_statistics["total_relocations"]
+    )
 
 
 def test_convergence_early_stopping(simple_2d_setup) -> None:

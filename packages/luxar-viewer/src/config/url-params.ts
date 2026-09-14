@@ -86,6 +86,164 @@ export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
   return trimmed;
 }
 
+const MAX_CONTROL_URL_LENGTH = 2048;
+
+/** The path the hub is served at, relative to the page's own origin. */
+export const CONTROL_SOCKET_PATH = '/control';
+
+/** The subset of `window.location` the control-URL validator needs. */
+export interface ControlSocketOrigin {
+  protocol: string;
+  host: string;
+}
+
+/**
+ * Resolve the remote-control socket URL.
+ *
+ * `?control` is a **bare flag** in the ordinary case: the hub is served by the
+ * same app that served this page (`luxar serve --control` puts it on the viewer
+ * app), so the socket address is derivable and there is nothing to validate.
+ * That also means it keeps working behind an origin-rooted reverse proxy, under
+ * `luxar export` and inside the native launcher, none of which know their own
+ * address at authoring time. A path-prefixed proxy uses an explicit same-origin
+ * path such as `?control=/exhibit/control`.
+ *
+ * `?control=<url>` is the split-origin override, and it is **same-origin only**
+ * unless `allowCrossOrigin` is also set. The threat is concrete: a crafted
+ * `?src=<real>&control=ws://attacker/` link turns the display into something an
+ * attacker drives, and hands them `getViewerState()` — the dataset URL, the
+ * layer list and the camera. The host comparison blocks the direct cross-origin
+ * case, and an exhibit that genuinely splits the origins says so explicitly.
+ *
+ * @param raw The parameter value. `''` (a bare `?control`) derives the
+ *   same-origin address; `null` means the flag was absent.
+ * @param origin The page's own protocol and host.
+ * @param allowCrossOrigin Whether `?controlAllowCrossOrigin` was present.
+ * @returns The socket URL, or `null` when control is off or the value is refused.
+ */
+export function normalizeControlSocketUrl(
+  raw: string | null,
+  origin: ControlSocketOrigin,
+  allowCrossOrigin = false
+): string | null {
+  if (raw === null) return null;
+  const secure = origin.protocol === 'https:';
+  const derived = `${secure ? 'wss:' : 'ws:'}//${origin.host}${CONTROL_SOCKET_PATH}`;
+
+  const value = raw.trim();
+  if (value.length === 0) return derived;
+  const url = parseControlSocketUrl(value, derived);
+  if (url === null) return null;
+  return acceptControlSocketUrl(url, origin, secure, allowCrossOrigin) ? url.href : null;
+}
+
+/**
+ * String-level checks, then a parse. `null` for anything not worth inspecting.
+ *
+ * Shared by the two control-related validators — the socket URL and the
+ * `?panel=` module — because the string-level hazards are identical (length,
+ * control characters, a protocol-relative address that would silently inherit
+ * our origin). Only the per-scheme rules afterwards differ.
+ */
+function parseControlSocketUrl(value: string, base: string): URL | null {
+  if (value.length > MAX_CONTROL_URL_LENGTH) return null;
+  if (hasUnsafeSrcCharacter(value)) return null;
+  // Protocol-relative: `new URL` would happily inherit our scheme and host,
+  // which is exactly the cross-origin smuggle this validator exists to stop.
+  if (value.startsWith('//')) return null;
+  try {
+    // A bare path (`/control`) resolves against our own origin; anything with a
+    // scheme is parsed as absolute and checked by the caller.
+    return new URL(value, base);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a parsed socket URL is one this page may dial. */
+function acceptControlSocketUrl(
+  url: URL,
+  origin: ControlSocketOrigin,
+  secure: boolean,
+  allowCrossOrigin: boolean
+): boolean {
+  if (url.protocol !== 'ws:' && url.protocol !== 'wss:') return false;
+  // An insecure socket from a secure page is blocked by the browser anyway;
+  // failing here produces a message instead of a bare SecurityError.
+  if (secure && url.protocol === 'ws:') return false;
+  if (controlSocketUrlCarriesNoise(url)) return false;
+  return url.host === origin.host || allowCrossOrigin;
+}
+
+/**
+ * Credentials, a fragment, or any query key but `token`.
+ *
+ * Credentials in the URL would sit in the address bar of a tablet on a plinth,
+ * and in its history; the token has its own parameter. A fragment and stray
+ * query keys are simply not part of this contract, and accepting them would
+ * mean accepting whatever a crafted link put there.
+ */
+function controlSocketUrlCarriesNoise(url: URL): boolean {
+  if (url.username.length > 0 || url.password.length > 0) return true;
+  if (url.hash.length > 0) return true;
+  // `forEach` rather than `keys()`: this package's lib config has DOM but not
+  // DOM.Iterable, so the iterator helpers are not in the type surface.
+  let foreignQueryKey = false;
+  new URLSearchParams(url.search).forEach((_value, key) => {
+    if (key !== 'token') foreignQueryKey = true;
+  });
+  return foreignQueryKey;
+}
+
+/**
+ * The page's own origin, for the control-socket validator.
+ *
+ * Falls back to a loopback placeholder when there is no `window` at all (a
+ * node-environment unit test), so the validator's same-origin rule still has
+ * something concrete to compare against instead of throwing.
+ */
+function resolvePageOrigin(origin?: ControlSocketOrigin): ControlSocketOrigin {
+  if (origin !== undefined) return origin;
+  const location = typeof window !== 'undefined' ? window.location : undefined;
+  if (!location) return { protocol: 'http:', host: 'localhost' };
+  return { protocol: location.protocol, host: location.host };
+}
+
+/**
+ * Resolve `?panel=<url>` — an alternative control-panel module.
+ *
+ * The documented escape hatch, so the first exhibit that outgrows CSS has a
+ * supported path instead of forking `control.html` out of the viewer package.
+ * The module is `import()`ed and handed the already-connected socket, so it is
+ * **executable code**: hence same-origin only, with no opt-out. A cross-origin
+ * module would be arbitrary remote code running on a kiosk, which is a
+ * different feature and not one anybody asked for. Within our own origin it is
+ * no more trusted than the page that loads it.
+ */
+export function normalizePanelModuleUrl(
+  raw: string | null,
+  origin: ControlSocketOrigin
+): string | null {
+  if (raw === null) return null;
+  const value = raw.trim();
+  // Empty must be refused explicitly: `new URL('', base)` resolves to the base
+  // itself, so a blank `?panel=` would otherwise import the origin root.
+  if (value.length === 0) return null;
+  const url = parseControlSocketUrl(value, `${origin.protocol}//${origin.host}/`);
+  if (url === null) return null;
+  if (url.protocol !== origin.protocol || url.host !== origin.host) return null;
+  if (url.username.length > 0 || url.password.length > 0) return null;
+  return url.href;
+}
+
+/** A trimmed query value, or null when absent or blank. */
+function trimmedParam(params: URLSearchParams, key: string): string | null {
+  const raw = params.get(key);
+  if (raw === null) return null;
+  const value = raw.trim();
+  return value.length === 0 ? null : value;
+}
+
 /**
  * All URL parameters recognized by the viewer, as a typed snapshot.
  *
@@ -106,8 +264,47 @@ export interface UrlParams {
    * a scene's authored `viewer_config.title` overrides it at load.
    */
   title: string | null;
+  /**
+   * Remote-control socket URL, already resolved and validated
+   * (`?control`, or `?control=ws://host/control` to split the origin).
+   * Null when control is off — which is the default — or when the supplied
+   * value was refused. See {@link normalizeControlSocketUrl}.
+   */
+  control: string | null;
+  /**
+   * Shared secret presented to the hub as `?token=` (`?controlToken=...`),
+   * matching `luxar serve --control-token`. Null when the hub is open.
+   *
+   * A token in a query string lands in browser history and in the address bar
+   * of whatever tablet is driving the display. That is acceptable for a LAN
+   * kiosk and is not a substitute for not exposing the hub to a network you
+   * do not trust.
+   */
+  controlToken: string | null;
+  /**
+   * Permit a cross-origin control socket (`?controlAllowCrossOrigin`). Off by
+   * default so a crafted link cannot point the display at someone else's hub.
+   */
+  controlAllowCrossOrigin: boolean;
+  /**
+   * Alternative control-panel module (`?panel=/my-panel.js`), resolved and
+   * validated same-origin. Null when absent or refused.
+   *
+   * Read only by `control.html`; the viewer itself ignores it. See
+   * {@link normalizePanelModuleUrl}.
+   */
+  panel: string | null;
   /** Enable the `window.__luxarDebug` interface (`?debug`). */
   debug: boolean;
+  /**
+   * `?kiosk` — lock this display down for unattended public use.
+   *
+   * A hard override over the scene's authored `ui.kiosk` block, because this
+   * is the OPERATOR's channel: a store that predates the block, or one
+   * borrowed for an exhibit it was never authored for, still has to be
+   * lockable from the launch command. See `config/kiosk.ts`.
+   */
+  kiosk: boolean;
   /** Disable all cache layers (`?no-cache`). */
   noCache: boolean;
   /** Disable only the SliceCache / S-cache (`?no-slice-cache`). */
@@ -118,6 +315,8 @@ export interface UrlParams {
    * it in environments whose OPFS is known to stall (automated Chromium).
    */
   noOpfs: boolean;
+  /** Override the page-wide OPFS read cap (`?opfsReadConcurrency=N`). */
+  opfsReadConcurrency: number | null;
   /** Verbose cache logging (`?cache-debug`). */
   cacheDebug: boolean;
   /** Clear caches on init (`?clear-cache`). */
@@ -160,6 +359,12 @@ export interface UrlParams {
    * three on-by-default flags above).
    */
   lodFinest: boolean;
+  /**
+   * Session-wide replacement-LOD bias (`?lod-bias=<positive number>`), in
+   * screen-area units. `2` advances an occupancy-halved ladder by one level;
+   * `4` by two. Null keeps the neutral `1` default.
+   */
+  lodBias: number | null;
   /**
    * WebGL-only blend warm-up. **On by default**; pass `?no-blend-warmup`
    * to disable the off-interaction-path pre-linking of reachable
@@ -254,9 +459,10 @@ export interface UrlParams {
    * (`?cacheBudgetMB=1536`). Used where `performance.memory` is unavailable —
    * WKWebView (the native app) and Safari — so heap-aware sizing has a real
    * budget to split instead of the tiny fixed fallback. The native launcher
-   * injects it automatically. One third also replaces the no-signal GPU-
-   * geometry fallback, in either direction. Null/invalid ⇒ fall back to the
-   * measured heap, then to the fixed config sizes. See `cache/heap-budget.ts`.
+   * injects it automatically. Its implied non-cache remainder also replaces
+   * the heap-derived GPU-geometry signal in either direction. Null/invalid ⇒
+   * fall back to the measured heap, then to the fixed config sizes. See
+   * `cache/heap-budget.ts`.
    */
   cacheBudgetMB: number | null;
   /**
@@ -334,24 +540,36 @@ export interface UrlParams {
  * Pass an explicit `search` string in tests; in production main.ts calls this
  * once with no argument and threads the result through the rest of the app.
  */
-export function readUrlParams(search?: string): UrlParams {
+export function readUrlParams(search?: string, origin?: ControlSocketOrigin): UrlParams {
   const raw = search ?? (typeof window !== 'undefined' ? window.location?.search : '') ?? '';
   const params = new URLSearchParams(raw);
+  // The control socket's address is derived from the page's own origin, so the
+  // validator needs it. Injectable for the same reason `search` is: a test (and
+  // an embedder) must be able to parse without touching window.location.
+  const pageOrigin = resolvePageOrigin(origin);
+  const allowCrossOriginControl = params.has('controlAllowCrossOrigin');
 
   return {
     src: normalizeDataSourceUrl(params.get('src')),
     theme: params.get('theme'),
     title: params.get('title')?.trim() || null,
+    control: normalizeControlSocketUrl(params.get('control'), pageOrigin, allowCrossOriginControl),
+    controlToken: trimmedParam(params, 'controlToken'),
+    controlAllowCrossOrigin: allowCrossOriginControl,
+    panel: normalizePanelModuleUrl(params.get('panel'), pageOrigin),
     debug: params.has('debug'),
+    kiosk: params.has('kiosk'),
     noCache: params.has('no-cache'),
     noSliceCache: params.has('no-slice-cache'),
     noOpfs: params.has('no-opfs'),
+    opfsReadConcurrency: parsePositiveInt(params.get('opfsReadConcurrency')),
     cacheDebug: params.has('cache-debug'),
     clearCache: params.has('clear-cache'),
     lodFade: !params.has('no-lod-fade'),
     allowLinks: !params.has('no-links'),
     lodEnergyComp: !params.has('no-lod-energy'),
     lodFinest: params.has('lod-finest'),
+    lodBias: parsePositiveFloat(params.get('lod-bias')),
     blendWarmup: !params.has('no-blend-warmup'),
     depthSort: parseEnabledFlag(params.get('depthSort')),
     densityGuard: !params.has('no-density-guard'),
@@ -410,6 +628,12 @@ function parseNonNegativeInt(raw: string | null): number | null {
   if (raw === null) return null;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function parsePositiveInt(raw: string | null): number | null {
+  if (raw === null) return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : null;
 }
 
 /**

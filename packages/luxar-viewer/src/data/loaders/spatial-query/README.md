@@ -31,6 +31,8 @@ the worker pool (see `range-loader/`).
 
 ```
 spatial-query/
+├── chunk-boundary-prefetch.ts # Hidden-axis boundary-aware prefetch planning
+├── prefetch-ranges.ts         # Best-effort range warming helpers
 ├── spatial-query-builder.ts   # SpatialQueryBuilder + AABB scan / range helpers
 ├── tolerance-computer.ts      # Geometry-aware per-dimension tolerance
 ├── range-loader.ts            # Encoding-dispatch range loader (entry point)

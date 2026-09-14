@@ -11,8 +11,8 @@
  * document root.
  *
  * Consumed by `playwright.perf.config.ts`, `line-perf-bench.spec.ts`,
- * `gsplat-perf-bench.spec.ts`, and
- * `performance-tracking-perf-bench.spec.ts`.
+ * `gsplat-perf-bench.spec.ts`, `performance-tracking-perf-bench.spec.ts`,
+ * and the isolated slow-link regression server.
  *
  * @module tests/e2e/perf-data-base
  */
@@ -29,6 +29,11 @@
  */
 export function resolvePerfDataPort(env: NodeJS.ProcessEnv = process.env): number {
   return Number(env.LUXAR_PERF_DATA_PORT ?? 9000);
+}
+
+/** Resolve the isolated slow-link regression server port. */
+export function resolvePerfSlowDataPort(env: NodeJS.ProcessEnv = process.env): number {
+  return Number(env.LUXAR_PERF_SLOW_DATA_PORT ?? resolvePerfDataPort(env) + 1);
 }
 
 /**
@@ -57,3 +62,11 @@ export function resolvePerfDataBase(env: NodeJS.ProcessEnv = process.env): strin
 
 /** Dataset-server origin resolved once from the ambient environment. */
 export const PERF_DATA_BASE = resolvePerfDataBase();
+
+/** Resolve the isolated slow-link regression server origin. */
+export function resolvePerfSlowDataBase(env: NodeJS.ProcessEnv = process.env): string {
+  return env.LUXAR_PERF_SLOW_DATA_BASE ?? `http://localhost:${resolvePerfSlowDataPort(env)}`;
+}
+
+/** Slow-link regression server origin resolved once from the ambient environment. */
+export const PERF_SLOW_DATA_BASE = resolvePerfSlowDataBase();

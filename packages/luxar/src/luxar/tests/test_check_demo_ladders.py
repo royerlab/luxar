@@ -15,6 +15,7 @@ import zarr
 from luxar.utils import paths as luxar_paths
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_BOUND_HALF_WIDTH = 1e-3
 
 
 def _load_checker() -> ModuleType:
@@ -68,6 +69,38 @@ def _check(leaf: zarr.Group, **overrides: int | float) -> tuple[str, str]:
     return checker.check_leaf(leaf, **options)
 
 
+def _add_slice_bounds(
+    level: zarr.Group,
+    *,
+    chunk_size: int,
+    coordinates: list[int | tuple[int, int]],
+) -> None:
+    """Stamp synthetic one-axis chunk bounds, including mixed boundary chunks."""
+    level.attrs.update({"slice_dims": [3], "chunk_size": chunk_size})
+    bounds = np.zeros((len(coordinates), 4, 2), dtype=np.float32)
+    for index, coordinate in enumerate(coordinates):
+        lo, hi = coordinate if isinstance(coordinate, tuple) else (coordinate,) * 2
+        bounds[index, 3] = (lo - _BOUND_HALF_WIDTH, hi + _BOUND_HALF_WIDTH)
+    level.create_array("chunk_bounds", data=bounds)
+
+
+def _add_line_slice_bounds(
+    level: zarr.Group, *, chunk_size: int, coordinates: list[int]
+) -> None:
+    """Stamp the nested Lines vertex-ordering equivalent of slice bounds."""
+    level.attrs["vertex_ordering"] = {
+        "slice_dims": [3],
+        "chunk_size": chunk_size,
+    }
+    bounds = np.zeros((len(coordinates), 4, 2), dtype=np.float32)
+    for index, coordinate in enumerate(coordinates):
+        bounds[index, 3] = (
+            coordinate - _BOUND_HALF_WIDTH,
+            coordinate + _BOUND_HALF_WIDTH,
+        )
+    level.create_array("vertex_chunk_bounds", data=bounds)
+
+
 @pytest.mark.parametrize(
     ("sizes", "expected_status"),
     [
@@ -96,6 +129,113 @@ def test_absolute_level_cap_catches_large_balanced_increment(tmp_path: Path) -> 
     assert status == "fail"
     assert "500 elements" in message
     assert "absolute commit cap" in message
+
+
+def test_absolute_level_cap_uses_the_busiest_barrier_ordered_slice(
+    tmp_path: Path,
+) -> None:
+    leaf = _make_leaf(tmp_path / "sliced.zarr", [120, 120, 120])
+    for index in range(3):
+        _add_slice_bounds(
+            leaf[f"additive_{index}"],
+            chunk_size=40,
+            coordinates=[0, (0, 1), 1],
+        )
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "fail"
+    assert "largest coordinate fetch is 80 elements" in message
+
+
+def test_absolute_level_cap_accepts_large_levels_when_each_slice_is_bounded(
+    tmp_path: Path,
+) -> None:
+    leaf = _make_leaf(tmp_path / "sliced.zarr", [120, 120, 120])
+    for index in range(3):
+        _add_slice_bounds(
+            leaf[f"additive_{index}"], chunk_size=30, coordinates=[0, 0, 1, 1]
+        )
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "ok"
+    assert "largest coordinate fetch 60 elements" in message
+
+
+def test_absolute_level_cap_reads_lines_vertex_ordering_bounds(tmp_path: Path) -> None:
+    leaf = _make_leaf(tmp_path / "lines.zarr", [120, 120, 120])
+    leaf.attrs.update({"type": "lines", "n_vertices": 360})
+    del leaf.attrs["n_points"]
+    for index in range(3):
+        level = leaf[f"additive_{index}"]
+        level.attrs.update({"type": "lines", "n_vertices": 120})
+        del level.attrs["n_points"]
+        _add_line_slice_bounds(level, chunk_size=30, coordinates=[0, 0, 1, 1])
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "ok"
+    assert "largest coordinate fetch 60 elements" in message
+
+
+def test_absolute_level_cap_reads_gsplat_chunk_bounds(tmp_path: Path) -> None:
+    leaf = _make_leaf(tmp_path / "gsplats.zarr", [120, 120, 120])
+    leaf.attrs.update({"type": "gsplats", "n_splats": 360})
+    del leaf.attrs["n_points"]
+    for index in range(3):
+        level = leaf[f"additive_{index}"]
+        level.attrs.update({"type": "gsplats", "n_splats": 120})
+        del level.attrs["n_points"]
+        _add_slice_bounds(level, chunk_size=30, coordinates=[0, 0, 1, 1])
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "ok"
+    assert "largest coordinate fetch 60 elements" in message
+
+
+@pytest.mark.parametrize(
+    "fallback",
+    [
+        "unsliced",
+        "extend_to_all",
+        "multiple_slice_dims",
+        "malformed",
+        "mixed_levels",
+    ],
+)
+def test_absolute_level_cap_keeps_node_level_fallbacks(
+    tmp_path: Path, fallback: str
+) -> None:
+    leaf = _make_leaf(tmp_path / f"{fallback}.zarr", [120, 120, 120])
+    if fallback == "extend_to_all":
+        leaf.attrs["extend_to_all"] = ["time"]
+        for index in range(3):
+            _add_slice_bounds(
+                leaf[f"additive_{index}"],
+                chunk_size=30,
+                coordinates=[0, 0, 1, 1],
+            )
+    elif fallback in ("multiple_slice_dims", "malformed"):
+        for index in range(3):
+            level = leaf[f"additive_{index}"]
+            _add_slice_bounds(level, chunk_size=30, coordinates=[0, 0, 1, 1])
+            level.attrs["slice_dims"] = (
+                [2, 3] if fallback == "multiple_slice_dims" else ["not-an-index"]
+            )
+    elif fallback == "mixed_levels":
+        for index in range(2):
+            _add_slice_bounds(
+                leaf[f"additive_{index}"],
+                chunk_size=30,
+                coordinates=[0, 0, 1, 1],
+            )
+
+    status, message = _check(leaf, max_level_elements=70)
+
+    assert status == "fail"
+    assert "largest level has 120 elements" in message
 
 
 def test_large_unladdered_leaf_fails_but_small_leaf_skips(tmp_path: Path) -> None:
@@ -601,6 +741,72 @@ def test_share_denominator_skips_unladdered_partition_parts(tmp_path: Path) -> N
     assert _sliced_verdicts(root) == []
 
 
+@pytest.mark.parametrize("missing_rung", [False, True])
+def test_share_denominator_skips_unmeasurable_partition_parts(
+    tmp_path: Path, missing_rung: bool
+) -> None:
+    """Parts without a measurable sliced rung do not become a synthetic 0% share."""
+    root = _sliced_node(
+        tmp_path / f"unmeasurable-{missing_rung}.zarr",
+        {0: 400_000},
+        node_total=2_000_000,
+        node_name="healthy",
+    )
+    root.attrs["kind"] = "partition"
+    broken = root.create_group("broken")
+    broken.attrs.update(
+        {
+            "type": "points",
+            "n_points": 200_000 if missing_rung else 0,
+            "n_additive_sublods": 2,
+        }
+    )
+    if missing_rung:
+        broken.create_group("additive_1").attrs.update(
+            {"type": "points", "n_points": 200_000, "slice_dims": [0]}
+        )
+    else:
+        rung = broken.create_group("additive_0")
+        rung.attrs.update({"type": "points", "n_points": 0, "slice_dims": [0]})
+        rung.create_array("positions", data=np.empty((0, 1), dtype=np.uint16))
+        broken.create_group("additive_1").attrs.update(
+            {"type": "points", "n_points": 0, "slice_dims": [0]}
+        )
+
+    assert _sliced_verdicts(root) == []
+
+
+def test_partition_share_arm_reduces_over_the_worst_part(tmp_path: Path) -> None:
+    """A large healthy part must not hide a thin smaller played frame."""
+    root = zarr.open_group(tmp_path / "uneven-partition.zarr", mode="w")
+    root.attrs["kind"] = "partition"
+    for name, total, rung_count, coordinate in (
+        ("healthy", 90_000, 18_000, 0),
+        ("thin", 10_000, 500, 1),
+    ):
+        leaf = root.create_group(name)
+        leaf.attrs.update(
+            {"type": "points", "n_points": total, "n_additive_sublods": 2}
+        )
+        rung = leaf.create_group("additive_0")
+        rung.attrs.update({"type": "points", "n_points": rung_count, "slice_dims": [0]})
+        rung.create_array(
+            "positions",
+            data=np.full((rung_count, 1), coordinate, dtype=np.uint16),
+        )
+        leaf.create_group("additive_1").attrs.update(
+            {
+                "type": "points",
+                "n_points": total - rung_count,
+                "slice_dims": [0],
+            }
+        )
+
+    (path, status, message) = _sliced_verdicts(root)[0]
+    assert (path, status) == ("/", "fail")
+    assert "rung 0 is 5.00% of the worst part (thin)" in message
+
+
 def test_substitutive_share_uses_one_level_not_keywise_maxima(tmp_path: Path) -> None:
     """Synthetic maxima from different LOD alternatives must not inflate share."""
     root = zarr.open_group(tmp_path / "lod-share.zarr", mode="w")
@@ -785,7 +991,7 @@ def test_require_scenes_turns_an_empty_inventory_into_a_failure(
 ) -> None:
     """The opt-in for callers that KNOW scenes should be there.
 
-    Release prep and a demo-build pipeline both run this AFTER building, where
+    Gallery generation and the pre-upload audit run this AFTER building, where
     an empty inventory means the build produced nothing — the one situation in
     which silence is the bug rather than the normal case.
     """

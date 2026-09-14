@@ -628,6 +628,12 @@ class TestMergeStreamingKnobs:
 
         assert parse_lod_breakpoints("stream:20833") == "stream:20833"
 
+    def test_breakpoint_error_lists_equi_energy(self) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import parse_lod_breakpoints
+
+        with pytest.raises(typer.BadParameter, match="equi-energy:<n>"):
+            parse_lod_breakpoints("equienergy:4")
+
     def test_target_ms_sized_with_true_merged_ndim(self) -> None:
         """merged_ndim=3 (single timepoint, 3 spatial) must size against the
         3D analytic figure (21 B), not the hardcoded 4D default (30 B)."""

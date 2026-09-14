@@ -705,11 +705,14 @@ as a legacy store. Both use the RAW amplitudes, the same units
 
 ### Quality Stamps (`lod_stats` / `level_stats`, format-additive)
 
-Builds stamp measured approximation quality alongside the LOD structure so the
-viewer can make principled display decisions (raw element counts compare
-apples to oranges across substitutive levels). All keys live inside the
-existing `lod_stats` / `level_stats` attr dicts — additive, no version bump;
-readers treat absence as "unstamped" and fall back to counts.
+Builds stamp a **heuristic** approximation-quality estimate alongside the LOD
+structure so the viewer has something better than raw element counts to
+schedule display against (counts compare apples to oranges across substitutive
+levels). The stamps are a monotone proxy — an energy fraction times a sampled
+per-level mixture-L² score — not a certified or bounded fidelity measure. All
+keys live inside the existing `lod_stats` / `level_stats` attr dicts —
+additive, no version bump; readers treat absence as "unstamped" and fall back
+to counts.
 
 - **`lod_stats.energy_fraction_cum`** (per additive sub-LOD, `additive_<i>`
   group or single-set leaf): cumulative self-energy fraction *e(k)* ∈ (0, 1]
@@ -732,12 +735,35 @@ readers treat absence as "unstamped" and fall back to counts.
   level vs its group's finest content (constant-cost sampled estimator, see
   `luxar.gsplats.lod.quality`). The finest side is 1.0 by definition
   (including each part leaf of an `overview` fine partition).
+- **`level_stats.median_footprint`** (per GSplat `kind=lod` child): median
+  geometric-mean marginal sigma across the columns named by sibling key
+  **`level_stats.footprint_dims`**, in node-local scene units. Those indices
+  name the node's stored columns (after any scene `dim_order` mapping). The
+  viewer uses it only for a derived `selector="screen-area"` ladder whose
+  displayed columns match those dimensions, projects it in logical CSS pixels,
+  and selects the coarsest level at or below the viewer's current 1.5 px policy.
+  This holds the finest level much longer than occupancy selection and can
+  multiply resident geometry (up to 16.7x in the representative #2685
+  measurement). The viewer retained that policy after the #2685 sweep.
+  Missing, invalid, or mismatched stamps keep the occupancy selector unchanged;
+  explicit legacy `coverage_fractions` are therefore never overridden.
+  `lod-bias` remains an area factor, so the accepted footprint scales by
+  `1/sqrt(b)`; for bias ≥ 1 it is inert once the finest stamped level is
+  selected, while bias below 1 can select a coarser level.
+  Content-changing rewrites drop both measured keys rather than carrying stale
+  values; rebuilding or running `gsplat annotate-quality` restores them. Points
+  and Lines have no equivalent stamp yet and remain occupancy-selected.
 
-The viewer's recursive quality algebra: a leaf currently shows quality
+The viewer's recursive quality algebra: a leaf currently shows the estimate
 `q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its
-visible child's `q`. The LOD display gate releases an upgrade swap once the
-candidate's committed energy reaches a threshold (0.6) instead of waiting for
-the count crossover; `Q` feeds the layers-panel / data-monitor readouts.
+visible child's `q`. `q` is a heuristic proxy for rendered fidelity — `e(k)`
+is exact for the loaded prefix's self-energy but says nothing about spatial
+error, and `Q` is a sampled estimate of a mixture-L² distance — so it orders
+candidates sensibly but does not bound the visual error of what is on screen.
+The LOD display gate uses it that way: an upgrade swap is released once the
+candidate's loaded energy fraction `e(k)` reaches a threshold (0.6) instead of
+waiting for the count crossover; `Q` feeds the layers-panel / data-monitor
+readouts.
 
 Stamps are written by every recipe build (`RecipeParams.quality_stamps`,
 default on; `Q` measurement can be disabled with `--no-quality-stamps`) and
@@ -784,6 +810,24 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 `fitter_name` and custom config. Readers should:
 1. Always read common fields from `fitting/.zattrs`
 2. Only interpret `fitting/config/.zattrs` if they recognize the `fitter_name`
+
+Luxar fits also store relocation and scale diagnostics in `fitting/.zattrs`:
+the configured iteration and dynamic-ops cadence, relocation event and distinct-
+splat counts, the relocation and sigma-floor candidates, and final best-state
+populations within `scale_diagnostic_tolerance_vox` of those candidates. These
+sigmas are in optimization-space voxels before output transforms. Fresh seeds
+record their resolved explicit, physical-derived, or automatic scale as
+`fit_init_sigma_diag_vox`; a uniform precomputed seed covariance records its
+resolved scale there too. Genuinely per-splat covariances record that key and the
+near-count/fraction as `null`, plus per-axis min/median/max summaries under
+`fit_init_marginal_sigma_diag_vox_{min,median,max}`. `fit_init_sigma_vox` is
+`null` whenever precomputed covariances made that fallback config value unused.
+Relocation counts cover the full run, while scale populations describe the
+selected best iteration before any optional closing amplitude trim. If that trim
+changes the splat set, the fit drops those population counts and fractions rather
+than attaching pre-trim values to the delivered artifact. Later content-changing
+rewrites do the same, while retaining the run configuration, candidate scales,
+and initial-covariance summaries.
 
 **Source grid** (fitting/.zattrs, optional) — what the splats are a
 representation *of*, so that "how much did this compress?" is answerable from

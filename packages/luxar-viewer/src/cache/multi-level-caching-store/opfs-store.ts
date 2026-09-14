@@ -5,6 +5,7 @@ import { config } from '../../config';
 import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
 import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
 import { withTimeout } from './opfs-store/opfs-timeout';
+import { getOpfsReadGateStats, withOpfsReadGate } from './opfs-read-gate';
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -72,11 +73,12 @@ export class OPFSStore {
   // Read/write tracking for monitoring. `readCount` is the L2 hit
   // counter — only incremented when get() returns a value. `missCount`
   // counts get() calls that returned undefined (file not present /
-  // size mismatch / I/O error). Together they let consumers compute
-  // an L2 hit rate without separate plumbing.
+  // size mismatch / I/O error). Canceled reads are tracked separately
+  // because they do not fall through to a network download.
   private readCount = 0;
   private writeCount = 0;
   private missCount = 0;
+  private canceledReadCount = 0;
 
   // Health counters surfaced via getStats().
   // `oversizedWriteSkipped`: doSet() rejected an entry larger than
@@ -435,37 +437,33 @@ export class OPFSStore {
   /**
    * Get a file from OPFS and update LRU order.
    */
-  async get(key: string): Promise<Uint8Array | undefined> {
-    if (this.disposed || !this.opfsRoot) {
-      this.missCount++;
-      return undefined;
-    }
-
-    // The index is the source of truth for what's cached. A key absent
-    // from it is either genuinely uncached or an orphaned file — e.g. a
-    // generation-skipped write whose best-effort delete failed, leaving
-    // bytes on disk that a content-hash invalidation meant to drop.
-    // Serving such a file could resurrect stale data, so treat an
-    // unindexed key as a miss. Bonus: skips an OPFS read for uncached
-    // keys (the common cold-miss path).
-    if (!this.index.has(key)) {
-      this.missCount++;
+  async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
+    if (!this.readableRoot(key, options?.signal)) {
+      this.countUnavailableRead(options?.signal);
       return undefined;
     }
 
     try {
-      const data = await this.timed(
-        (async () => {
-          const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, false);
-          const file = await fileHandle.getFile();
-          return new Uint8Array(await file.arrayBuffer());
-        })(),
-        `get(${key})`
-      );
+      const data = await withOpfsReadGate(async () => {
+        const root = this.readableRoot(key, options?.signal);
+        if (!root) return undefined;
+        return this.timed(
+          (async () => {
+            const fileHandle = await this.buckets.navigateToFile(root, key, false);
+            const file = await fileHandle.getFile();
+            return new Uint8Array(await file.arrayBuffer());
+          })(),
+          `get(${key})`
+        );
+      });
+
+      if (!data) {
+        this.countUnavailableRead(options?.signal);
+        return undefined;
+      }
 
       // Verify size matches metadata
-      const entry = this.index.get(key);
-      if (entry && entry.size !== data.byteLength) {
+      if (this.hasSizeMismatch(key, data)) {
         log.warning(Modules.CACHE, `OPFSStore size mismatch for ${key}, removing corrupted entry`);
         this.corruptedEntries++;
         await this.delete(key);
@@ -489,6 +487,21 @@ export class OPFSStore {
       this.missCount++;
       return undefined;
     }
+  }
+
+  private readableRoot(key: string, signal?: AbortSignal): FileSystemDirectoryHandle | null {
+    if (this.disposed || signal?.aborted || !this.index.has(key)) return null;
+    return this.opfsRoot;
+  }
+
+  private countUnavailableRead(signal?: AbortSignal): void {
+    if (signal?.aborted) this.canceledReadCount++;
+    else this.missCount++;
+  }
+
+  private hasSizeMismatch(key: string, data: Uint8Array): boolean {
+    const entry = this.index.get(key);
+    return entry !== undefined && entry.size !== data.byteLength;
   }
 
   /**
@@ -1020,6 +1033,9 @@ export class OPFSStore {
     reads: number;
     writes: number;
     misses: number;
+    canceledReads: number;
+    activeReads: number;
+    queuedReads: number;
     oversizedWriteSkipped: number;
     quotaWriteSkipped: number;
     evictions: number;
@@ -1044,12 +1060,16 @@ export class OPFSStore {
      */
     breakerTripped: boolean;
   } {
+    const readGate = getOpfsReadGateStats();
     return {
       size: this.totalSize,
       count: this.index.size,
       reads: this.readCount,
       writes: this.writeCount,
       misses: this.missCount,
+      canceledReads: this.canceledReadCount,
+      activeReads: readGate.active,
+      queuedReads: readGate.queued,
       oversizedWriteSkipped: this.oversizedWriteSkipped,
       quotaWriteSkipped: this.quotaWriteSkipped,
       evictions: this.evictions,

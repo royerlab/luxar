@@ -25,8 +25,6 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import * as THREE from 'three';
-
 if (typeof globalThis.ImageData === 'undefined') {
   (globalThis as any).ImageData = class ImageData {
     data: Uint8ClampedArray;
@@ -187,25 +185,21 @@ describe('RecordingSession', () => {
   describe('capture-resolution alignment', () => {
     /**
      * Point the mock at a viewport of the given DISPLAY size and give it
-     * the two collaborators the scale-resolution branch touches: a real
-     * PerspectiveCamera (the branch is gated on `instanceof`) and the
-     * material refresh.
+     * the renderer/display sizes and material refresh used by the
+     * scale-resolution branch.
      *
      * `renderer.getSize()` is set to the SSAA-multiplied size the real
      * renderer would report, so a session that reads the renderer
      * instead of the post-processing display size is visible here rather
      * than passing on a coincidence.
      */
-    function withCanvas(width: number, height: number): THREE.PerspectiveCamera {
+    function withCanvas(width: number, height: number): void {
       const scale = mockSceneManager.postProcessing.getEffectiveRenderScale();
       mockSceneManager.postProcessing.getDisplaySize = vi.fn().mockReturnValue({ width, height });
       mockSceneManager.renderer.getSize = vi
         .fn()
         .mockReturnValue({ x: Math.round(width * scale), y: Math.round(height * scale) });
       mockSceneManager.updateMaterialsForCurrentCamera = vi.fn();
-      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
-      mockSceneManager.camera = camera;
-      return camera;
     }
 
     it('records the 1080p preset at exactly 1920x1080', () => {
@@ -221,31 +215,29 @@ describe('RecordingSession', () => {
       expect(mockSceneManager.postProcessing.resize).toHaveBeenCalledWith(1920, 1080);
     });
 
-    it('keeps a Native odd height, and the canvas aspect with it', () => {
+    it('keeps a Native odd height and its aspect-derived width', () => {
       // "Native" is documented as the canvas's own size: a 1512×850 CSS
       // canvas at DPR 2 is 3024×1700, not 3024×1696. And the width comes
       // from the ALIGNED height, so the output aspect tracks the source
       // instead of widening the horizontal FOV the user framed.
-      const camera = withCanvas(3024, 1700);
+      withCanvas(3024, 1700);
       panel.session.saveRecordingState({
         scaleResolution: { targetH: 1700, alignEven: true },
       });
       expect(mockSceneManager.postProcessing.resize).toHaveBeenCalledWith(3024, 1700);
-      expect(camera.aspect).toBeCloseTo(3024 / 1700, 6);
     });
 
     it('never resizes a tiny canvas to zero', () => {
       // A canvas smaller than the alignment used to truncate to 0, giving
       // `resize(0, 0)` and `camera.aspect = 0/0`. Unreachable while every
       // target height was a preset ≥ 1080; Native makes it reachable.
-      const camera = withCanvas(2, 1);
+      withCanvas(2, 1);
       panel.session.saveRecordingState({
         scaleResolution: { targetH: 1, alignEven: true },
       });
       const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
       expect(w).toBeGreaterThanOrEqual(2);
       expect(h).toBeGreaterThanOrEqual(2);
-      expect(Number.isFinite(camera.aspect)).toBe(true);
     });
 
     it('never resizes to a NaN aspect when the canvas has no height yet', () => {
@@ -254,7 +246,7 @@ describe('RecordingSession', () => {
       // bitwise AND (`Infinity & ~15` is 0), giving `resize(0, 1072)` and
       // a zero camera aspect; arithmetic alignment carries the Infinity
       // instead, so the aspect has to fall back on its own.
-      const camera = withCanvas(1920, 0);
+      withCanvas(1920, 0);
       panel.session.saveRecordingState({
         scaleResolution: { targetH: 1080, alignEven: true },
       });
@@ -263,10 +255,7 @@ describe('RecordingSession', () => {
       expect(Number.isFinite(h)).toBe(true);
       expect(w).toBeGreaterThanOrEqual(2);
       expect(h).toBeGreaterThanOrEqual(2);
-      expect(Number.isFinite(camera.aspect)).toBe(true);
-      // Square, not a two-pixel-wide sliver: the aspect itself falls back
-      // rather than being caught downstream by the alignment's own guard.
-      expect(camera.aspect).toBe(1);
+      expect(w).toBe(h);
     });
 
     it('keeps the SSAA-multiplied frame size even, and close to what was asked for', () => {

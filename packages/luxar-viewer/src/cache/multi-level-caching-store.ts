@@ -32,6 +32,21 @@ export type CacheError =
   | { readonly kind: 'Fatal'; readonly cause: Error }
   | { readonly kind: 'Aborted' };
 
+/** @internal Shared result of a coalesced cache read. */
+export type PendingGetOutcome = {
+  result: Result<Uint8Array, CacheError>;
+  source: 'l2' | 'network' | 'missing';
+};
+
+/** @internal Mutable state for callers sharing one cache read. */
+export interface PendingGet {
+  promise: Promise<PendingGetOutcome>;
+  controller: AbortController;
+  waiters: number;
+  prefetchTriggered: boolean;
+}
+
+/** Configuration for the memory, OPFS, and source-backed cache tiers. */
 export interface MultiLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
   l1MaxSize?: number;
@@ -134,16 +149,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
   // CRIT-5 fix: each entry carries an AbortController so a
   // content-hash-mismatch invalidation can cancel in-flight fetches
   // before they write stale data back into L1/L2 after a clear.
-  private pendingGets = new Map<
-    string,
-    {
-      promise: Promise<{
-        result: Result<Uint8Array, CacheError>;
-        source: 'l2' | 'network' | 'missing';
-      }>;
-      controller: AbortController;
-    }
-  >();
+  private pendingGets = new Map<string, PendingGet>();
 
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
   private invalidationCallbacks: (() => void)[] = [];
@@ -349,17 +355,18 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *              - Metadata: '.zarray', '.zmetadata', '.zattrs'
    *              - Nested: 'group1/subgroup/array/0.0'
    *
-   * @param _options - Reserved for zarrita compatibility (currently unused).
-   *                   Zarrita may pass options in future versions.
+   * @param options - Zarrita read options. A supplied abort signal cancels the
+   *                  underlying source read for this caller.
    *
-   * @returns Promise resolving to chunk data as Uint8Array, or undefined if:
-   *          - Chunk doesn't exist (404 Not Found)
-   *          - Network retries are exhausted
-   *          - The store is being disposed with its owning scene
+   * @returns Promise resolving to chunk data as Uint8Array, or undefined when
+   *          the key does not exist (404) or the store is being disposed with
+   *          its owning scene.
    *
    * @throws {DOMException} `AbortError` when a live demand read is cancelled by
-   *         cache invalidation. Rejecting is required because zarrita treats
+   *         its caller or cache invalidation. Rejecting is required because zarrita treats
    *         `undefined` as a missing chunk and substitutes fill values.
+   * @throws {Error} When a source/network failure exhausts retries or the
+   *         container is unreadable, so the loader can record the failure.
    *
    * @example
    * ```typescript
@@ -369,7 +376,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *   console.log(`Loaded ${chunk.byteLength} bytes`);
    *   // Process chunk data...
    * } else {
-   *   console.log('Chunk not found or network error');
+   *   console.log('Chunk not found');
    * }
    * ```
    *
@@ -405,23 +412,24 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * @see {@link init} for cache initialization and validation
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
    */
-  async get(key: string, _options?: unknown): Promise<Uint8Array | undefined> {
+  async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
     // zarrita interprets undefined as "key missing" and decodes the chunk as
-    // fill values. Missing and exhausted NetworkError therefore keep that
-    // contract, but a live-store invalidation abort must reject instead of
-    // silently committing zero-filled geometry. Disposal remains quiet because
-    // the owning scene/load is being discarded at the same time.
-    const result = await this.getResult(key);
+    // fill values. Only a real Missing result may keep that contract: network
+    // failures and live aborts must reject so loaders record a retryable failure
+    // instead of committing and caching fabricated zero-filled geometry.
+    // Disposal remains quiet because the owning scene/load is discarded too.
+    const result = await this.getResult(key, options);
     if (isErr(result)) {
       if (result.error.kind === 'NetworkError') {
         log.warning(Modules.CACHE, `Network error fetching ${key}: ${result.error.cause.message}`);
+        throw result.error.cause;
       } else if (result.error.kind === 'Fatal') {
         // The container itself is unreadable (no Range support, archive missing,
         // access denied). Returning `undefined` would let zarrita fill the chunk
         // and render an empty scene, hiding a message written to be actionable.
         throw result.error.cause;
       } else if (result.error.kind === 'Aborted' && !this.disposed) {
-        throw new DOMException(`Cache read aborted during invalidation: ${key}`, 'AbortError');
+        throw new DOMException(`Cache read aborted: ${key}`, 'AbortError');
       }
       return undefined;
     }
@@ -433,11 +441,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *
    * Same L1 → L2 → L3 cascade as {@link get}, but distinguishes:
    * - `ok(data)` — present in some tier or fetched successfully.
-   * - `err({ kind: 'Missing' })` — server returned non-2xx (e.g. 404)
-   *   or a non-retryable client error. Caller may treat as "not yet
-   *   stored" without alarm.
-   * - `err({ kind: 'NetworkError', cause })` — transient network/DNS
-   *   error or 5xx after retries exhausted. Caller may back off.
+   * - `err({ kind: 'Missing' })` — server returned 404. Caller may treat as
+   *   "not yet stored" without alarm.
+   * - `err({ kind: 'NetworkError', cause })` — a non-missing HTTP failure or
+   *   transient network/DNS error after retries exhausted. Caller may back off.
    * - `err({ kind: 'Aborted' })` — caller signal, cache invalidation, or
    *   store disposal aborted the read.
    * - `err({ kind: 'Fatal', cause })` — the whole container is unreadable, not
@@ -482,58 +489,31 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // caller without affecting any shared chain.
     if (options?.signal?.aborted) return err({ kind: 'Aborted' });
 
-    // Coalesce same-key L2/network cascade. The first concurrent
-    // caller creates the chain; subsequent callers await it. Bytes,
-    // L1, and L2 are populated exactly once.
-    //
-    // Bypass coalescing when the caller provides its own signal: the
-    // shared chain only respects dataAbort (so its lifetime can outlive
-    // any single caller), but a caller passing a signal expects that
-    // aborting it actually cancels the underlying fetch resource.
-    // Falling back to a non-coalesced fetchKeyChain preserves the
-    // per-caller abort contract for those (rare) callers.
-    let inflight: Promise<{
-      result: Result<Uint8Array, CacheError>;
-      source: 'l2' | 'network' | 'missing';
-    }>;
-    // MED-2: only the originator of a coalesced inflight chain should
-    // run prefetcher.onAccess(key) — subsequent waiters early-return
-    // inside the prefetcher anyway, but each call still walks the
-    // neighbour set / seen-set. Tracking originator here dedupes that
-    // fan-out to exactly one onAccess call per logical access.
-    let isPrefetchOriginator = true;
-    if (options?.signal !== undefined) {
-      inflight = this.fetchKeyChain(key, options.signal);
-    } else {
-      const cached = this.pendingGets.get(key);
-      if (cached) {
-        inflight = cached.promise;
-        isPrefetchOriginator = false;
-      } else {
-        // CRIT-5: per-entry AbortController lets validateCache cancel
-        // in-flight gets on a content-hash mismatch so the post-fetch
-        // L1/L2 populate cannot resurrect stale data after a clear.
-        const controller = new AbortController();
-        let fresh!: Promise<{
-          result: Result<Uint8Array, CacheError>;
-          source: 'l2' | 'network' | 'missing';
-        }>;
-        fresh = this.fetchKeyChain(key, controller.signal).finally(() => {
-          // An invalidation clears pendingGets before an aborted chain settles.
-          // A new request may install a replacement for the same key during
-          // that window, so the old chain must only remove its own entry.
-          if (this.pendingGets.get(key)?.promise === fresh) {
-            this.pendingGets.delete(key);
-          }
-        });
-        this.pendingGets.set(key, { promise: fresh, controller });
-        inflight = fresh;
-      }
+    // Coalesce every same-key L2/network cascade, including ordinary demand
+    // reads carrying a per-update signal. Each caller is a waiter: cancelling
+    // one waiter returns Aborted only to that caller, while the shared source
+    // read is cancelled once no waiter remains. Invalidation separately aborts
+    // the per-entry controller regardless of waiter count.
+    let pending = this.pendingGets.get(key);
+    if (pending?.controller.signal.aborted) {
+      this.pendingGets.delete(key);
+      pending = undefined;
     }
+    if (!pending) {
+      const controller = new AbortController();
+      let entry!: PendingGet;
+      const promise = this.fetchKeyChain(key, controller.signal).finally(() => {
+        if (this.pendingGets.get(key) === entry) this.pendingGets.delete(key);
+      });
+      entry = { promise, controller, waiters: 0, prefetchTriggered: false };
+      this.pendingGets.set(key, entry);
+      pending = entry;
+    }
+    pending.waiters++;
 
-    let outcome: { result: Result<Uint8Array, CacheError>; source: 'l2' | 'network' | 'missing' };
+    let outcome: PendingGetOutcome;
     try {
-      outcome = await inflight;
+      outcome = await this.waitForPendingGet(pending, options?.signal);
     } catch (error) {
       const cause = error instanceof Error ? error : new Error(String(error));
       return err({ kind: 'NetworkError', cause });
@@ -544,7 +524,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // network requests; the underlying network counter (incremented
     // inside fetchKeyChain) only bumped once per actual fetch.
     if (isDemand) {
-      if (outcome.source === 'l2') this.l2HitCount++;
+      if (outcome.source === 'l2' && outcome.result.ok) this.l2HitCount++;
       else if (outcome.source === 'network') this.demandNetworkRequestCount++;
       // Count delivered bytes for any tier that actually returned data
       // (L2 or network). L1 hits are counted on their fast-path return
@@ -555,17 +535,52 @@ export class MultiLevelCachingStore implements AsyncReadable {
       }
     }
 
-    // MED-2: per-key prefetch trigger. Only the originator of the
-    // coalesced inflight chain fans out neighbour onAccess work — the
-    // prefetcher's own seen-set would early-return for waiters, but
-    // each call still touches that seen-set N times for N waiters.
-    // Restrict to the originator (or non-coalesced signal'd callers)
-    // so we do exactly one onAccess per logical access.
-    if (!options?.suppressPrefetch && outcome.result.ok && isPrefetchOriginator) {
+    // MED-2: per-key prefetch trigger. Only the first successful demand waiter
+    // fans out neighbour work, so coalesced callers touch the seen-set once.
+    if (!options?.suppressPrefetch && outcome.result.ok && !pending.prefetchTriggered) {
+      pending.prefetchTriggered = true;
       this.prefetcher?.onAccess(key);
     }
 
     return outcome.result;
+  }
+
+  private async waitForPendingGet(
+    pending: PendingGet,
+    signal?: AbortSignal
+  ): Promise<PendingGetOutcome> {
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      pending.waiters--;
+      if (pending.waiters === 0 && !pending.controller.signal.aborted) pending.controller.abort();
+    };
+
+    if (!signal) {
+      try {
+        return await pending.promise;
+      } finally {
+        release();
+      }
+    }
+
+    let removeAbortListener = (): void => {};
+    const aborted = new Promise<PendingGetOutcome>((resolve) => {
+      const onAbort = (): void => resolve({ result: err({ kind: 'Aborted' }), source: 'network' });
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+      }
+    });
+    try {
+      return await Promise.race([pending.promise, aborted]);
+    } finally {
+      removeAbortListener();
+      release();
+    }
   }
 
   /**
@@ -574,24 +589,24 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * coalescer. Increments aggregate network counters once; per-caller
    * demand counters are incremented in getResult after this resolves.
    */
-  private async fetchKeyChain(
-    key: string,
-    callerSignal?: AbortSignal
-  ): Promise<{ result: Result<Uint8Array, CacheError>; source: 'l2' | 'network' | 'missing' }> {
+  private async fetchKeyChain(key: string, sharedSignal?: AbortSignal): Promise<PendingGetOutcome> {
     // L2: OPFS check (~1ms)
     if (this.enabled && this.l2Store) {
-      const l2Hit = await this.l2Store.get(key);
+      const l2Hit = await this.l2Store.get(key, { signal: sharedSignal });
       if (l2Hit) {
         this.log(`L2 hit: ${key}`, 'info');
         // CRIT-5: if validateCache aborted this in-flight get during the
         // L2 read (content-hash mismatch), do NOT promote stale bytes to
         // a just-cleared L1.
-        if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+        if (sharedSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
           return { result: err({ kind: 'Aborted' }), source: 'l2' };
         }
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
         return { result: ok(l2Hit), source: 'l2' };
+      }
+      if (sharedSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+        return { result: err({ kind: 'Aborted' }), source: 'l2' };
       }
     }
 
@@ -600,14 +615,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.log(`source fetch: ${key}`, 'info');
     // Compose the store-level dispose signal so dataset disposal
     // aborts in-flight prefetch/demand fetches without each call site
-    // plumbing its own controller. When the caller passed its own
-    // signal (and bypassed coalescing in getResult), forward that too
-    // so per-caller cancellation actually aborts the resource.
-    const fetchAbort = mergeAbortSignals(this.dataAbort.signal, callerSignal);
+    // plumbing its own controller. The shared pending-get controller aborts
+    // when invalidated or when every caller waiting on this key has cancelled.
+    const fetchAbort = mergeAbortSignals(this.dataAbort.signal, sharedSignal);
     try {
       const outcome = await this.source.get(key, fetchAbort.signal);
 
-      if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
+      if (this.disposed || this.dataAbort.signal.aborted || sharedSignal?.aborted) {
         return { result: err({ kind: 'Aborted' }), source: 'network' };
       }
       if (outcome.kind === 'aborted') {
@@ -620,9 +634,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
         };
       }
       if (outcome.kind === 'fatal') {
-        // Reported, not thrown: `getResult` catches throws and flattens them to
-        // NetworkError, which `get` turns into `undefined` — i.e. exactly the
-        // empty scene this kind exists to prevent. `get` rethrows it instead.
+        // Reported, not thrown: `getResult` catches source throws and flattens
+        // them to NetworkError. Keeping the fatal distinction preserves the
+        // container-specific diagnostic that `get` rethrows to the loader.
         return { result: err({ kind: 'Fatal', cause: outcome.cause }), source: 'network' };
       }
       if (outcome.kind === 'missing') {
@@ -643,7 +657,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       // source returning and now (content-hash mismatch raced an
       // in-flight fetch), do NOT write stale bytes back into a
       // just-cleared L1/L2 — that would silently undo the invalidation.
-      if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+      if (sharedSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
         return { result: err({ kind: 'Aborted' }), source: 'network' };
       }
 
@@ -878,6 +892,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
           reads: 0,
           writes: 0,
           misses: 0,
+          canceledReads: 0,
+          activeReads: 0,
+          queuedReads: 0,
         }),
         // Fixed OPFS/disk budget — surfaced so the monitor's memory gauge has a
         // real per-tier limit to sum (L2 is disk, not heap, but it is a tier).

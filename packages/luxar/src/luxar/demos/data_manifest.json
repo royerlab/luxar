@@ -455,6 +455,7 @@
     "gsplats_4d_neuromast_2ch": {
       "bucket": "zenodo",
       "record": "cc-by",
+      "base_url": "https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
       "license": "cc-by-4.0",
       "source": "Neuromast 2-channel light-sheet timelapse (iSIM)",
       "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). The imaging itself is unpublished; for the biology of this organ see Erzberger et al. (2020), co-authored by the data author: Erzberger, A., Jacobo, A., Dasgupta, A. & Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949-957 (2020). doi:10.1038/s41567-020-0894-9.",
@@ -462,18 +463,20 @@
       "files": [
         {
           "name": "neuromast_membranes.gsplats.zarr.zip",
-          "sha256": "ceaa9a41feb872d6ee7698a18742d36a26c9b7bf5e5b7c77b5c762fc90445e18",
-          "bytes": 71081858,
+          "sha256": "b272a271f2cd8383e65933d9bec1e07c80b1078b86ec899417cab8604cc43b22",
+          "bytes": 72387907,
           "superseded_sha256": [
-            "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31"
+            "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31",
+            "ceaa9a41feb872d6ee7698a18742d36a26c9b7bf5e5b7c77b5c762fc90445e18"
           ]
         },
         {
           "name": "neuromast_nuclei.gsplats.zarr.zip",
-          "sha256": "89e3be6eb19b2b3bce322403b1f18bfeba2313dc354bd710a42048068b095677",
-          "bytes": 65289118,
+          "sha256": "6453283f2f4031fa7a99d82fc03ce6fa5f38438a86cd9fc3e1bfd3be362228b0",
+          "bytes": 70394448,
           "superseded_sha256": [
-            "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1"
+            "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1",
+            "89e3be6eb19b2b3bce322403b1f18bfeba2313dc354bd710a42048068b095677"
           ]
         }
       ]

@@ -164,29 +164,6 @@ export function countFromUserData(ud: FreshnessChild['object']['userData']): num
 }
 
 /**
- * Index of the coarsest child that is ready, fresh for `version`, AND has a
- * non-zero committed element count — or `-1` when none qualifies. Companion
- * to :func:`coarsestFreshIndex` for the registry's empty-level display guard:
- * a fresh level that committed 0 elements while a coarser fresh level holds
- * visible geometry signals inconsistent data (with consistent LOD data a
- * finer level can never be empty where a coarser one is not — coarse levels
- * are derived from fine), and displaying the empty level would blank the
- * screen. Children with an UNTRACKED count (``null``) are accepted — the
- * guard only redirects away from known-empty levels.
- */
-export function coarsestFreshNonEmptyIndex(
-  children: readonly FreshnessChild[],
-  version: number
-): number {
-  for (let i = 0; i < children.length; i++) {
-    if (!isFresh(children[i], version)) continue;
-    if (visibleElementCount(children[i]) === 0) continue;
-    return i;
-  }
-  return -1;
-}
-
-/**
  * Tracks when the (global) view-update version last changed, in registry ticks,
  * so the selector can tell whether the view has "settled" (stopped scrubbing).
  * Single instance per registry — the version is global (one `getViewVersion`).

@@ -10,6 +10,7 @@ no extras installed. That shared gate is tested in ``test_demos_dependencies.py`
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 # The ``luxar.demos`` package is now importable directly (the sys.modules alias
 # that used to shadow it was removed).
@@ -117,3 +118,55 @@ class TestSelectSeeds:
         assert len(set(result.tolist())) == result.size
         assert result.min() >= 0
         assert result.max() < 200
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-10 review: bloom, streamline gain, legend placement, subtitle
+# ---------------------------------------------------------------------------
+
+
+def test_streamline_gain_matches_the_reviewed_colour_range() -> None:
+    from luxar.demos import demo_zebrahub_velocity_streamlines as demo
+
+    assert demo.STREAMLINE_INTENSITY == pytest.approx(1.0 / 45.26)
+    assert demo.STREAMLINE_INTENSITY > demo.LINE_INTENSITY * 2.5
+
+
+def test_bloom_is_faint_and_wide() -> None:
+    from luxar.demos import demo_zebrahub_velocity_streamlines as demo
+
+    assert (demo.BLOOM_THRESHOLD, demo.BLOOM_STRENGTH, demo.BLOOM_RADIUS) == (
+        0.01,
+        0.05,
+        1.0,
+    )
+    assert demo.BLOOM_LEVELS == 8
+
+
+def test_legend_is_only_the_colour_key() -> None:
+    from luxar.demos import demo_zebrahub_velocity_streamlines as demo
+
+    html = demo.build_legend_html(
+        ["brain", "gut", "skin"],
+        np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+        np.array([30, 20, 10]),
+    )
+    assert "Top anatomy classes (3)" in html
+    assert "brain (30)" in html
+    assert "comet" not in html and "advect" not in html
+    assert "Zebrahub RNA-velocity field" not in html
+    # ...and the explanation lives in the subtitle instead.
+    assert "comet" in demo.SUBTITLE.lower() and "streamlines" in demo.SUBTITLE.lower()
+    assert len(demo.SUBTITLE) < 240
+
+
+def test_legend_sits_in_the_lower_left_corner() -> None:
+    import inspect
+
+    from luxar.demos import demo_zebrahub_velocity_streamlines as demo
+
+    src = inspect.getsource(demo.write_scene)
+    i = src.index("build_legend_html(data.anatomy_categories")
+    block = src[i : i + 200]
+    assert "position=(0.06, 0.98)" in block
+    assert 'anchor="bottom-left"' in block

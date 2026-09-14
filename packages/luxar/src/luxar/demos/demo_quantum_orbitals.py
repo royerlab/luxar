@@ -105,7 +105,7 @@ from arbol import Arbol, aprint, asection
 from scipy.special import genlaguerre, sph_harm_y
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import CameraConfig, ViewerConfig
+from luxar.core.viewer_config import CameraConfig, DimensionsConfig, ViewerConfig
 from luxar.demos import (
     add_demo_caption,
     detect_device,
@@ -164,8 +164,23 @@ CULL_RETENTION = 0.995
 PHASE_POSITIVE = (1.00, 0.42, 0.18)
 PHASE_NEGATIVE = (0.20, 0.52, 1.00)
 
-#: Opening camera direction (normalized on use — a 3/4 view).
-CAMERA_DIRECTION = np.array([0.575, 0.436, 0.693], dtype=np.float64)
+#: The state the scene opens on. 3pz, not 1s (2026-09-10 review): the largest
+#: dumbbell with its radial node is the frame that shows what the demo is about,
+#: and the camera distance is composed for it anyway. Looked up in
+#: :data:`ORBITALS` by label so reordering the table cannot silently open on
+#: the wrong state.
+OPENING_ORBITAL = "3pz"
+
+#: Opening camera direction (normalized on use). Nearly side-on to z — the
+#: dumbbells are z-aligned, so this lays 3pz HORIZONTALLY across the frame
+#: with its inner radial-node shell visible in the middle (the 2026-09-10
+#: reference frame) — with a small y/z tilt so a cloverleaf's four lobes
+#: never stack exactly in projection. Auto-rotation about the vertical axis
+#: then turns the dumbbell in the horizontal plane.
+CAMERA_DIRECTION = np.array([0.94, 0.22, 0.26], dtype=np.float64)
+
+#: Auto-rotation period, seconds per full turn (``auto_rotate_speed`` is rpm).
+AUTO_ROTATE_PERIOD_S = 12.0
 
 #: Fraction of the vertical half-FOV the largest orbital should fill, so the
 #: opening pose leaves ~18% air around it. The distance is DERIVED from this
@@ -275,6 +290,12 @@ def camera_distance_for_radius(radius: float) -> float:
         Camera distance from the target, in the same units.
     """
     return radius / math.sin(math.radians(CAMERA_FOV_FILL * COMPOSED_FOV_DEGREES / 2.0))
+
+
+def opening_orbital_index() -> int:
+    """Index of :data:`OPENING_ORBITAL` in :data:`ORBITALS` (the opening slice)."""
+    labels = [o[3] for o in ORBITALS]
+    return labels.index(OPENING_ORBITAL)
 
 
 def cache_path(grid_size: int, seeds: int, iters: int) -> Path:
@@ -642,10 +663,19 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
                 viewer_config=ViewerConfig(
                     cinematic_mode=True,
                     tone_mapping="ACES",
-                    # A 3/4 view, not the auto-framed head-on one: looking
-                    # straight down an axis stacks a cloverleaf's four lobes on
-                    # top of each other in projection. Off-axis separates them
-                    # and reads the z-aligned dumbbells at the same time. The
+                    # Open on 3pz (dimension 3 = orbital, the only navigable
+                    # one, so it is navigable index 0 for the keyboard).
+                    dimensions=DimensionsConfig(
+                        current_step=[0.0, 0.0, 0.0, float(opening_orbital_index())],
+                        selected_dimension=0,
+                    ),
+                    auto_rotate=True,
+                    auto_rotate_speed=60.0 / AUTO_ROTATE_PERIOD_S,
+                    auto_rotate_axis="vertical",
+                    natural_drag=True,
+                    # Nearly side-on to z (see CAMERA_DIRECTION): 3pz lies
+                    # horizontally across the frame, and the small tilt keeps
+                    # a cloverleaf's lobes from stacking in projection. The
                     # distance frames the LARGEST state (3pz), so 1s still reads
                     # as a small bright core — that size gap is the point.
                     camera=CameraConfig(

@@ -608,7 +608,7 @@ Import these types directly from `../types/data-monitor-types`.
 
 ## Float16Array Type Declaration
 
-The file `float16array.d.ts` provides TypeScript type declarations for `Float16Array`, which is supported in modern browsers (Chrome 122+, Firefox 127+, Safari 17+) but lacks built-in TypeScript definitions. This allows the viewer to handle Float16-encoded zarr arrays without type errors. `Float16Array` is also a member of the `PositionArray` and `ScalarArray` unions in `points.ts`.
+`tsconfig.json` includes TypeScript's `ESNext.Float16` library declarations for `Float16Array`, which is supported in modern browsers (Chrome 122+, Firefox 127+, Safari 17+). This allows the viewer to handle Float16-encoded zarr arrays without maintaining a competing ambient declaration. `Float16Array` is also a member of the `PositionArray` and `ScalarArray` unions in `points.ts`.
 
 ## Window Debug Surface
 
@@ -881,5 +881,4 @@ The types package provides the type-safe foundation for all nD visualization ope
 - `partition-group.ts` -- `PartitionGroupMetadata` (the `kind === 'partition'` specialized group; loader matches the shape inline).
 - `animation.ts` -- `LoopMode`, `AnimationDirection`, `DimensionAnimationState`, `DimensionAnimationEvents`.
 - `data-monitor-types.ts` -- Data-loading monitor contracts (`MonitorEvent`, `LoaderMetrics`, `CacheMetrics`, `CacheTelemetryState`, `CacheStatusBadge`, `CacheStatsProvider`, `SceneGraphNode`, `MemoryMetrics`, `GPUPoolStats`, ...).
-- `float16array.d.ts` -- Ambient `Float16Array` typing.
 - `window.d.ts` -- Ambient `window.__luxarDebug` augmentation.

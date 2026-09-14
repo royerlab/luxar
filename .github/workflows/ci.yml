@@ -153,11 +153,14 @@ jobs:
             # would otherwise run zero tests), generate-gallery.spec.ts (the
             # gallery manifest field contract is parsed from it),
             # docs/guides/user/CLI_REFERENCE.md (test_docs_command_coverage.py),
-            # the root and demos README files (test_readme_demo_docs.py,
-            # test_demo_import_spelling.py), plus the CLAUDE.md and visualization-
+            # the root, package and demos README files plus docs/index.rst
+            # (test_readme_demo_docs.py, test_demo_import_spelling.py), plus the
+            # CLAUDE.md and visualization-
             # skill projections checked by sync_demo_counts.py. The Cholesky
             # documentation guard reads that same CLAUDE.md, all three skill pages
             # and GSPLATS_DIMENSION_MAPPING.md.
+            # test_format_contract.py's CURRENT_VERSION_CLAIMS also pins the
+            # current format version across its named docs and viewer sources.
             # GATE_INPUTS in test_ci_diff_classifier.py is the declaration checked
             # against this ERE. Markdown alone runs only docs-quality, so these need
             # explicit Python ownership.
@@ -166,14 +169,22 @@ jobs:
             # literal calls and requires a GATE_INPUTS row for each. Name those files,
             # not whole viewer subtrees: unrelated viewer edits should remain
             # TypeScript-only and avoid the Python matrix.
+            # The two named unit tests are also scanned for repo-rooted readFileSync
+            # inputs, so edits to those scanner inputs must run the Python guard.
             # test_docs_workflow.py also parses docs.yml and derives the published
-            # LFS candidate set from .gitattributes, so both are Python gate inputs.
-            # coverage.yml and external-reference-audits.yml are too: pytest pins
-            # their gate wiring, and workflow files match no other domain alone.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/manifest\.json$|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(coverage|docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            # LFS candidate set from .gitattributes, while the wheel-completeness
+            # guard reads .gitignore. test_verify_media.py reads media-manifest.json;
+            # test_docs_workflow.py checks the demo-site runbook, and the Zenodo
+            # snapshot test reads scripts/zenodo_record_text/. coverage.yml,
+            # cadence-liveness.yml, and external-reference-audits.yml are also
+            # pytest inputs, and workflow files match no language domain alone.
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.(gitattributes|gitignore)$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/(manifest|media-manifest)\.json$|^scripts/zenodo_record_text/|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(index\.rst$|api/gsplats\.rst$|guides/(developer/DEMO_SITE_RUNBOOK|user/(CLI_REFERENCE|FORMAT_AND_MIGRATION|LUXAR_ZARR_FORMAT))\.md$|specs/(GSPLATS_DIMENSION_MAPPING|GSPLATS_ZARR_FORMAT)\.md$)|^(control|format)-contract/|^\.github/workflows/(cadence-liveness|coverage|cuda-nightly|docs|external-reference-audits)\.yml$|^packages/luxar(-viewer)?/README\.md$|^packages/luxar-launcher/control_contract\.go$|^packages/luxar/src/luxar/(cli|gsplats(/(io|lod))?|core/group/(lod|gsplats_pipeline))/README\.md$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/(control-contract\.ts$|sections/(camera|rendering-controls)/data\.ts$)|data/(attrs-composer\.ts$|codecs/README\.md$|loaders/spatial-query/tolerance-computer\.ts$|scene-loader/lifecycle/load-scene\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$|unit/(gallery-selection\.test\.ts$|config/generated-fixture-freshness\.test\.ts$))|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
-            # The gallery-selection unit test also reads the root README and gallery manifest.
-            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
+            # gallery-selection.test.ts also reads the root README and both gallery
+            # manifests; generated-fixture-freshness.test.ts checks the Makefile's
+            # E2E fixture prerequisite wiring. The third-party-notices test scrapes
+            # colormap tables from scripts/generate_builtin_colormaps.py.
+            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^\.nvmrc$|^Makefile$|^README\.md$|^scripts/generate_builtin_colormaps\.py$|^scripts/gallery/(media-)?manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
             printf '%s\n' "$changed" | grep -qE '(\.go$|^packages/luxar/src/luxar/cli/_launchers/|(^|/)go\.(mod|sum)$)' && dom_go=true || true
             # This workflow DEFINES how every suite is invoked, so it belongs to all
@@ -192,7 +203,7 @@ jobs:
           # the gate. Any deletion also runs it because package READMEs may name
           # tracked files of any type; --no-renames makes a rename include a
           # deletion. Empty change output is treated as relevant (fail-safe).
-          docs_pattern='(^docs/|\.[Mm][Dd]$|\.[Rr][Ss][Tt]$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/(check-overrides\.mjs|check-typedoc-warnings(-tests)?\.mjs))$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
+          docs_pattern='(^docs/|\.[Mm][Dd]$|\.[Rr][Ss][Tt]$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|changelog_build\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/(check-overrides\.mjs|check-typedoc-warnings(-tests)?\.mjs))$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
           if [ -z "$changed" ] || [ -n "$deleted" ] || printf '%s\n' "$changed" | grep -qE "$docs_pattern"; then
             echo "-> documentation-relevant changes: RUN docs-quality"
             echo "docs_relevant=true" >> "$GITHUB_OUTPUT"
@@ -455,7 +466,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: needs.changes.outputs.docs_relevant != 'false'
         with:
           package_json_file: packages/luxar-viewer/package.json
@@ -711,6 +722,14 @@ jobs:
         # types/format-contract.ts must match format-contract/contract.yaml.
         run: hatch run check-contract
 
+      - name: Control contract drift (Python <-> TypeScript <-> Go)
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        # The remote-control wire constants are implemented three times — the
+        # Python hub, the viewer's client, and the launcher's relay — and the
+        # Go one ships inside a native binary nobody rebuilds when a Python
+        # constant changes. This is what stops them drifting silently.
+        run: hatch run check-control-contract
+
       - name: Demo data manifest drift
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
         # demos/data_manifest.json must match the demos/data tree. Safe without
@@ -743,8 +762,8 @@ jobs:
         # `--require cxx` is the point of the flag: without it a runner that
         # somehow lost its C++ compiler would SKIP and report green over
         # nothing. The Metal and CUDA arms are deliberately NOT required here
-        # -- they cannot exist on ubuntu -- so full coverage of those two waits
-        # on a macOS runner and a CUDA image respectively (#2544).
+        # -- they cannot exist on ubuntu -- so Metal waits on a macOS runner,
+        # while .github/workflows/cuda-nightly.yml covers CUDA separately.
         run: hatch run check-native --require cxx
 
       - name: Test (PRs skip coverage; dev pushes enforce the coverage gate)
@@ -812,7 +831,7 @@ jobs:
           # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           package_json_file: packages/luxar-viewer/package.json
@@ -922,10 +941,11 @@ jobs:
         working-directory: packages/luxar-viewer
         run: pnpm test:generate-fixtures
 
-      - name: Check (overrides + format + typecheck + lint + layers + knip + coverage)
+      - name: Check (overrides + Node types + format + typecheck + lint + layers + knip + coverage)
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         # `pnpm run check:ci` runs in this order:
         #   check:overrides (security pins single-sourced in pnpm-workspace.yaml)
+        #   → check:node-types (@types/node package major matches .nvmrc)
         #   → check:format → typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)
@@ -956,7 +976,7 @@ jobs:
           # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           package_json_file: packages/luxar-viewer/package.json
@@ -1027,6 +1047,16 @@ jobs:
           grep -qiE 'worker' /tmp/pack-files.txt || { echo "Missing worker asset"; exit 1; }
           echo "All release-readiness assertions passed."
 
+      - name: Set up minimum supported Node
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.19.0
+
+      - name: Smoke-import library on minimum supported Node
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: node scripts/check-lib-exports.mjs
+
   # Build the second release product in an isolated job. `release-readiness`
   # validates the npm library bundle; this job runs the exact application build
   # whose `dist/` directory is force-included in the PyPI wheel. Keeping the two
@@ -1050,7 +1080,7 @@ jobs:
           # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           # Read the exact packageManager pin used by local/Corepack installs.
@@ -1383,10 +1413,11 @@ jobs:
   # Narrow browser gate for the TSL↔GLSL shader cone — the ONLY equivalence
   # check the dual-backend shaders have.
   #
-  # Deliberately distinct from the disabled `e2e-tests` job below. That job's
-  # rationale is that software WebGL is too slow and unreliable for
-  # RENDERING-DEPENDENT specs — specs that load datasets and compare rendered
-  # frames against baselines. `tsl-shader-parity` is not that class: it renders
+  # Deliberately distinct from the mobile-only `e2e-tests` job below. The full
+  # desktop corpus remains off hosted software WebGL because it is too slow and
+  # unreliable for RENDERING-DEPENDENT specs — specs that load datasets and
+  # compare rendered frames against baselines. `tsl-shader-parity` is not that
+  # class: it renders
   # a 64×64 canvas through BOTH backends (`WebGLRenderer` vs
   # `WebGPURenderer({ forceWebGL: true })`) and compares them to EACH OTHER, so
   # rasterizer identity cancels out and llvmpipe is not merely tolerable, it is
@@ -1433,7 +1464,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           package_json_file: packages/luxar-viewer/package.json
@@ -1472,35 +1503,50 @@ jobs:
           path: packages/luxar-viewer/test-results/
           retention-days: 7
 
-  # E2E tests disabled — software WebGL on standard ubuntu-latest runners is
-  # too slow and unreliable for rendering-dependent specs. Run locally with:
-  # make test-e2e.
-  #
-  # The job below is a ready-to-go smoke subset (interaction-focused specs,
-  # datasets generated at runtime via `make run-examples`, no LFS needed) —
-  # re-enabling is a one-line change (drop `if: false`) once we accept the
-  # software-rendering flakiness risk or get GPU-capable runners
-  # (GitHub GPU runner beta, or a self-hosted runner with NVIDIA driver +
-  # EGL software fallback that still satisfies WebGL2).
+  # The full desktop E2E corpus remains on the GPU promotion runner: software
+  # WebGL is too slow and unreliable for hundreds of rendering-heavy specs.
+  # This hosted, Chromium-only job keeps the timing-sensitive mobile/touch
+  # contract live for TypeScript changes, with all 68 cases running serially.
+  # NOT YET REQUIRED. Promote it after several green runs establish its hosted
+  # llvmpipe wall clock and flake rate; before promotion, move the dom_ts guard
+  # to the steps so this context reports green for untouched domains. The
+  # generated examples and fixtures are prepared in named steps so setup
+  # failures stay distinct from test failures.
   e2e-tests:
-    if: false
-    needs: [python-tests, typescript-tests]
+    needs: [changes, python-tests, typescript-tests]
+    if: ${{ !cancelled() && needs.python-tests.result != 'failure' && needs.typescript-tests.result != 'failure' && needs.changes.outputs.dom_ts != 'false' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
-      # The smoke subset generates its example datasets at runtime via
-      # `make run-examples` (see step below) — none of the LFS-backed
-      # demo fixtures are read by the smoke specs. Keeping `lfs: true`
-      # made the checkout step itself fail when the repo's LFS budget
-      # was exhausted. If a future e2e job actually needs the demo
-      # payloads, re-enable `lfs: true` on that job specifically.
+      - name: Free disk space on hosted runners
+        # See python-tests: reclaim preinstalled tooling on GitHub-hosted runners
+        # so the two Hatch environments, generated examples, and Chromium do not
+        # hit `[Errno 28] No space left on device` (#1816).
+        # Skipped on the self-hosted box.
+        if: runner.environment == 'github-hosted'
+        working-directory: ${{ github.workspace }}
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          df -h /
+
+      # The mobile suite generates its example datasets and generated fixtures
+      # at runtime; it reads none of the LFS-backed demo payloads. Keeping
+      # `lfs: true` made checkout itself fail when the repo's LFS budget was
+      # exhausted. Re-enable it only if a future hosted suite needs those files.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: setup-python
         with:
           python-version: '3.12'
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: packages/luxar-viewer/package.json
 
@@ -1511,7 +1557,7 @@ jobs:
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
       - name: Install Hatch
-        run: pipx install hatch
+        run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
       - name: Install viewer dependencies
         run: cd packages/luxar-viewer && pnpm install --frozen-lockfile
@@ -1525,19 +1571,30 @@ jobs:
       - name: Generate example datasets
         run: make run-examples
 
-      # Use the package-level smoke script as the source of truth so a
-      # workflow re-enable stays aligned with the local
-      # `pnpm test:e2e:smoke` definition.
-      - name: Run E2E smoke (CI subset)
-        run: cd packages/luxar-viewer && pnpm test:e2e:smoke
+      - name: Generate viewer fixtures
+        run: make ensure-viewer-fixtures
+
+      - name: Run mobile E2E suite
+        run: make test-e2e-mobile
         timeout-minutes: 45
         env:
           CI: true
+
+      - name: Run hermetic slow-link fetch gate
+        run: >-
+          pnpm exec playwright test --config playwright.perf.config.ts
+          slow-link-fetch-perf-bench.spec.ts --grep hermetic
+        working-directory: packages/luxar-viewer
+        env:
+          CI: true
+          LUXAR_E2E_NO_FIXTURES: "1"
+          LUXAR_PERF_BROWSER: chromium
+          LUXAR_PERF_HEADLESS: "1"
 
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-report
-          path: packages/luxar-viewer/test-results/
+          name: mobile-playwright-results
+          path: packages/luxar-viewer/test-results-mobile/
           retention-days: 7

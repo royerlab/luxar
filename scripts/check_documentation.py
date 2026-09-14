@@ -2,7 +2,8 @@
 """
 Documentation Quality Checker
 
-Validates documentation completeness and quality across the Luxar project.
+Validates documentation completeness and quality across the Luxar project,
+including the required shape of pending changelog fragments.
 Run this script before commits or in CI/CD to ensure documentation standards.
 
 This checker is a baseline-driven *ratchet*: pre-existing documentation debt is
@@ -767,7 +768,74 @@ def build_json_report(
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def _check_changelog_fragments(
+    project_root: Path,
+) -> tuple[bool, List[CheckResult]]:
+    """Run the git-free fragment validator and return reportable results.
+
+    Failed result keys are structurally baselineable like every other finding.
+    The returned validity flag is therefore load-bearing: every exit path must
+    also consult it so a manually added baseline entry cannot silence this gate.
+    """
+    validator = project_root / "scripts" / "changelog_build.py"
+    fragment_dir = project_root / "changelog.d"
+    check_name = "Changelog fragment format"
+    if not validator.is_file():
+        return False, [
+            CheckResult(
+                passed=False,
+                file_path=str(fragment_dir),
+                check_name=check_name,
+                message=f"Changelog fragment validator not found: {validator}",
+            )
+        ]
+
+    proc = subprocess.run(
+        [sys.executable, str(validator), "--check"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode == 0:
+        return True, [
+            CheckResult(
+                passed=True,
+                file_path=str(fragment_dir),
+                check_name=check_name,
+                message=proc.stdout.strip(),
+            )
+        ]
+
+    message = (proc.stderr or proc.stdout).strip()
+    failures: List[CheckResult] = []
+    for line in message.splitlines():
+        match = re.match(r"\s*-\s+(fragment (?P<name>.+?\.md) .+)", line)
+        if match:
+            failures.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(fragment_dir),
+                    check_name=check_name,
+                    message=match.group(1),
+                    key_detail=match.group("name"),
+                )
+            )
+    if failures:
+        return False, failures
+    return False, [
+        CheckResult(
+            passed=False,
+            file_path=str(fragment_dir),
+            check_name=check_name,
+            message=message,
+        )
+    ]
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse documentation checker CLI arguments."""
     parser = argparse.ArgumentParser(description="Check documentation quality")
     parser.add_argument(
         "--verbose", action="store_true", help="Show all checks including passed"
@@ -791,74 +859,82 @@ def main() -> None:
     parser.add_argument(
         "--update-baseline",
         action="store_true",
-        help="(Re)write the baseline from current failures and exit 0",
+        help=(
+            "(Re)write the baseline from current failures; exits 1 instead "
+            "when a changelog fragment is invalid"
+        ),
     )
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    # Find project root
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent
 
-    baseline_path = (
-        Path(args.baseline)
-        if args.baseline
-        else project_root / DEFAULT_BASELINE_RELPATH
-    )
+def _load_baseline_or_exit(baseline_path: Path) -> Set[str]:
+    """Load the baseline, reporting a malformed file cleanly (exit code 2)."""
+    try:
+        return load_baseline(baseline_path)
+    except ValueError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(2)
 
-    checker = DocumentationChecker(project_root, verbose=args.verbose)
-    checker.check_all(quiet=args.json)
-    current = failure_keys(checker.results, project_root)
 
-    def _load_baseline_or_exit() -> Set[str]:
-        """Load the baseline, reporting a malformed file cleanly (exit code 2)."""
-        try:
-            return load_baseline(baseline_path)
-        except ValueError as exc:
-            print(f"❌ {exc}", file=sys.stderr)
-            sys.exit(2)
-
-    # --update-baseline: write current failures and exit 0.
-    if args.update_baseline:
-        save_baseline(baseline_path, current)
-        # To stderr so `--json --update-baseline` keeps a clean stdout stream.
+def _update_baseline_or_exit(
+    baseline_path: Path, current: Set[str], fragments_valid: bool
+) -> None:
+    """Write a tightened baseline unless hard fragment failures are present."""
+    if not fragments_valid:
         print(
-            f"📝 Wrote baseline with {len(current)} entries to {baseline_path}",
+            "❌ Fix invalid changelog fragments before updating the docs baseline.",
             file=sys.stderr,
         )
-        sys.exit(0)
+        sys.exit(1)
+    save_baseline(baseline_path, current)
+    print(
+        f"📝 Wrote baseline with {len(current)} entries to {baseline_path}",
+        file=sys.stderr,
+    )
+    sys.exit(0)
 
-    # --json: print the machine-readable report; exit code still honors ratchet.
-    if args.json:
-        baseline = None if args.no_baseline else _load_baseline_or_exit()
-        report = build_json_report(checker.results, project_root, baseline=baseline)
-        print(json.dumps(report, indent=2, sort_keys=False))
-        if baseline is None:
-            # Strict mode: any failure fails; the baseline file is never read.
-            sys.exit(1 if current else 0)
-        new_findings, _, _ = evaluate_ratchet(current, baseline)
-        sys.exit(1 if new_findings else 0)
 
-    # Human mode: always print the per-check summary.
-    checker.print_summary()
+def _print_json_and_exit(
+    args: argparse.Namespace,
+    checker: DocumentationChecker,
+    project_root: Path,
+    baseline_path: Path,
+    current: Set[str],
+    fragments_valid: bool,
+) -> None:
+    """Emit the machine-readable report and its ratchet exit status."""
+    baseline = None if args.no_baseline else _load_baseline_or_exit(baseline_path)
+    report = build_json_report(checker.results, project_root, baseline=baseline)
+    print(json.dumps(report, indent=2, sort_keys=False))
+    if not fragments_valid:
+        sys.exit(1)
+    if baseline is None:
+        sys.exit(1 if current else 0)
+    new_findings, _, _ = evaluate_ratchet(current, baseline)
+    sys.exit(1 if new_findings else 0)
 
-    # Legacy strict mode: any failure fails.
-    if args.no_baseline:
-        if current:
-            aprint(
-                "\n⚠️  Some documentation checks failed. Please address the "
-                "issues above."
-            )
-            sys.exit(1)
-        aprint("\n✅ All documentation checks passed!")
-        sys.exit(0)
 
-    # Baseline (ratchet) mode.
+def _print_strict_result_and_exit(current: Set[str]) -> None:
+    """Report legacy strict-mode success or failure."""
+    if current:
+        aprint(
+            "\n⚠️  Some documentation checks failed. Please address the issues above."
+        )
+        sys.exit(1)
+    aprint("\n✅ All documentation checks passed!")
+    sys.exit(0)
+
+
+def _print_ratchet_result_and_exit(
+    current: Set[str], baseline_path: Path, fragments_valid: bool
+) -> None:
+    """Report baseline-ratchet findings and exit with the gate result."""
     if not baseline_path.exists():
         aprint(
             f"\nℹ️  No baseline found at {baseline_path}. Run with "
             "--update-baseline to create one (existing debt will be tolerated)."
         )
-    baseline = _load_baseline_or_exit()
+    baseline = _load_baseline_or_exit(baseline_path)
     new_findings, fixed_findings, still_present = evaluate_ratchet(current, baseline)
 
     aprint("\n" + "=" * 70)
@@ -873,7 +949,6 @@ def main() -> None:
             "\n   Nice — some debt was paid down. Run --update-baseline to "
             "tighten the baseline so it can't come back."
         )
-
     if new_findings:
         aprint("\n❌ New documentation findings (must be fixed):\n")
         for key in sorted(new_findings):
@@ -883,9 +958,49 @@ def main() -> None:
             "items above (do NOT baseline them away)."
         )
         sys.exit(1)
-
+    if not fragments_valid:
+        aprint(
+            "\n❌ Invalid changelog fragments must be fixed; they cannot be baselined."
+        )
+        sys.exit(1)
     aprint("\n✅ No new documentation regressions.")
     sys.exit(0)
+
+
+def main() -> None:
+    args = _parse_args()
+
+    # Find project root
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent
+    fragments_valid, fragment_results = _check_changelog_fragments(project_root)
+
+    baseline_path = (
+        Path(args.baseline)
+        if args.baseline
+        else project_root / DEFAULT_BASELINE_RELPATH
+    )
+
+    checker = DocumentationChecker(project_root, verbose=args.verbose)
+    checker.check_all(quiet=args.json)
+    checker.results.extend(fragment_results)
+    current = failure_keys(checker.results, project_root)
+
+    if args.update_baseline:
+        _update_baseline_or_exit(baseline_path, current, fragments_valid)
+    if args.json:
+        _print_json_and_exit(
+            args,
+            checker,
+            project_root,
+            baseline_path,
+            current,
+            fragments_valid,
+        )
+    checker.print_summary()
+    if args.no_baseline:
+        _print_strict_result_and_exit(current)
+    _print_ratchet_result_and_exit(current, baseline_path, fragments_valid)
 
 
 if __name__ == "__main__":

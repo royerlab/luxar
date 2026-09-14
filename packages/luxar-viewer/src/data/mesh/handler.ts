@@ -40,6 +40,11 @@ export interface MeshHandlerCtx {
    * derive independently) stay budget-free.
    */
   frameBudgetMs?: number;
+  /**
+   * Pinned playback ladder depth (see `ViewState.ladderDepth`). Same per-pass
+   * contract as `frameBudgetMs`: injected into the DERIVED view state only.
+   */
+  ladderDepth?: number | 'auto';
 }
 
 /**
@@ -93,8 +98,8 @@ export async function loadAndStage(
   // Playback frame budget rides the derived per-node view state (per-pass
   // directive; absent outside animation playback — see ctx.frameBudgetMs).
   const meshViewState: MeshViewState =
-    ctx.frameBudgetMs !== undefined
-      ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs }
+    ctx.frameBudgetMs !== undefined || ctx.ladderDepth !== undefined
+      ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs, ladderDepth: ctx.ladderDepth }
       : derived.viewState;
   const data = await loader.updateView(meshViewState, session, ctx.signal);
   if (!data) {

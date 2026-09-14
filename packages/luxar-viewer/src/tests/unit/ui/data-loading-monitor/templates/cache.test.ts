@@ -469,6 +469,27 @@ describe('renderCacheContent layout guards (full L0/L1/L2 view)', () => {
     expect(html).toContain('&quot;—&quot; = nothing has fallen through to L2 yet');
   });
 
+  it('surfaces OPFS read gate activity and cancellations', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeFullCacheMetrics({
+        l2: {
+          size: 1,
+          count: 1,
+          reads: 2,
+          writes: 3,
+          misses: 4,
+          canceledReads: 5,
+          activeReads: 6,
+          queuedReads: 7,
+        },
+      })
+    );
+
+    expect(html).toContain('5 canceled');
+    expect(html).toContain('6 active · 7 queued');
+  });
+
   // Collapsible sections: each cache section can collapse to a compact
   // one-line header summary that mirrors every metric via the SAME
   // data-field keys as the full cards, so the per-tick patcher keeps

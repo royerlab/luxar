@@ -34,9 +34,11 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from luxar.demos import registry
+from luxar.gsplats.gsplat_data import GSplatData
 
 _MANIFEST = registry._DEMOS_DIR / "data_manifest.json"
 
@@ -113,3 +115,92 @@ def test_local_fit_paths_accepts_a_complete_zip_set(tmp_path, monkeypatch) -> No
             pass
 
     assert demo.local_fit_paths() == expected
+
+
+# ---------------------------------------------------------------------------
+# First paint: the grafted parts are re-laddered for a small first rung
+# ---------------------------------------------------------------------------
+
+
+def _flat_2d(n: int, seed: int) -> GSplatData:
+    rng = np.random.default_rng(seed)
+    chol = np.zeros((n, 3), dtype=np.float32)
+    chol[:, [0, 2]] = 1.0  # packed lower-triangular diagonal for ndim=2
+    return GSplatData(
+        centers=(rng.random((n, 2)) * 1000).astype(np.float32),
+        amplitudes=rng.random(n).astype(np.float32),
+        cholesky_factors=chol,
+    )
+
+
+def _record_shaped_archive(path: Path, seed: int) -> Path:
+    """A kind=partition store whose parts carry EQUAL-COUNT 4-rung ladders.
+
+    The shape of the published cmu1 archives (four top-level parts, each with
+    ``lod_breakpoints_kind == "equal-count"`` and rung 0 = a quarter of the part).
+    """
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.lod import RecipeParams, build_recipe
+
+    node = build_recipe(
+        _flat_2d(480, seed), "tiles", RecipeParams(max_elements=130, n_lods=4)
+    )
+    write_gsplats_tree(path, node)
+    return path
+
+
+def test_part_ladder_spec_fits_the_smallest_part(tmp_path, monkeypatch) -> None:
+    archive = _record_shaped_archive(tmp_path / "ch.gsplats.zarr", seed=1)
+    monkeypatch.setattr(demo, "FIRST_RUNG_SPLATS", 20)
+
+    spec = demo.part_ladder_spec(archive)
+
+    from luxar._zarr_compat import open_group
+    from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
+
+    smallest = min(read_gsplat_tree_summary(open_group(str(archive))).leaf_counts)
+    assert spec["recompute"] is True
+    assert spec["method"] == "self_energy"
+    cuts = spec["breakpoints"]
+    assert cuts[0] == 20, "first rung is the first-paint budget"
+    assert cuts == sorted(set(cuts)), "strictly increasing cumulative cuts"
+    assert cuts[-1] == smallest, "sized to the smallest part so every part accepts it"
+
+
+def test_scene_reladders_every_grafted_part(tmp_path, monkeypatch) -> None:
+    # The whole point: a record-shaped archive (equal-count rungs, rung 0 = 25%)
+    # reaches the scene with a small first rung on EVERY part.
+    import zarr
+
+    monkeypatch.setattr(demo, "FIRST_RUNG_SPLATS", 20)
+    paths = [
+        _record_shaped_archive(tmp_path / f"cmu1_ch{i}.gsplats.zarr", seed=i)
+        for i in range(demo.N_CHANNELS)
+    ]
+    out = demo.create_luxar_scene(paths, tmp_path / "cmu1.luxar.zarr")
+
+    root = zarr.open_group(str(out), mode="r")
+    parts_seen = 0
+    for colormap in ("red", "green", "blue"):
+        layer = root[f"gsplats_{colormap}"]
+        assert layer.attrs["kind"] == "partition"
+        for name, part in layer.groups():
+            if not name.startswith("part_"):
+                continue
+            parts_seen += 1
+            n_sub = int(part.attrs["n_additive_sublods"])
+            n_total = int(part.attrs["n_splats"])
+            assert n_sub >= 3, f"{colormap}/{name}: expected a real ladder, got {n_sub}"
+            rung0 = part["additive_0"]
+            assert int(rung0.attrs["n_splats"]) == 20, (
+                f"{colormap}/{name}: rung 0 is {rung0.attrs['n_splats']}, "
+                "not the first-paint budget"
+            )
+            stats = rung0.attrs["lod_stats"]
+            assert stats["lod_breakpoints_kind"] != "equal-count", (
+                "the archive's equal-count ladder survived the graft"
+            )
+            assert stats["lod_method"] == "self_energy"
+            rungs = [int(part[f"additive_{i}"].attrs["n_splats"]) for i in range(n_sub)]
+            assert sum(rungs) == n_total
+    assert parts_seen >= 3 * 2, "expected several parts per channel"

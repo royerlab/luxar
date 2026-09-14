@@ -1565,6 +1565,20 @@ def generate_evolving_cloud(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
+            # One-line context (2026-09-10 review: the title alone said nothing
+            # about what is shown). Word-wrapped; no `\n` in a non-hover overlay.
+            scene.add_text(
+                "A simulated cumulus through its whole life cycle: air parcels "
+                "carried by an updraft, condensing where a 4D noise field puts "
+                "the water, lit by sunlight baked through the cloud. Time plays "
+                "on its own — K pauses, N shows the sliders.",
+                position=(0.02, 0.10),
+                font_size=0.02,
+                anchor="top-left",
+                color="rgba(255,255,255,0.45)",
+                width=0.58,
+                line_height=1.35,
+            )
             add_demo_caption(
                 scene,
                 f"Cumulus life cycle • {n_frames} frames • K pauses",

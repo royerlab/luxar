@@ -20,6 +20,9 @@ from typing import AbstractSet, Any, Mapping, Optional, Sequence
 import typer
 from arbol import aprint
 
+from luxar.utils.lod_breakpoints import (
+    estimate_bytes_per_splat as estimate_bytes_per_splat,
+)
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES
 
 #: Valid ordering methods for the additive (prefix-sum) axis.
@@ -91,35 +94,43 @@ def reject_irrelevant_recipe_options(
     raise typer.BadParameter(msg)
 
 
+def _validated_passthrough_breakpoints(s: str) -> str:
+    """Validate a size-adaptive string spec and hand it back verbatim.
+
+    ``stream:<c>`` and ``equi-energy:<n>`` are resolved per-N inside
+    ``_resolve_breakpoints`` (each part/level sizes its own ladder), and the
+    string form round-trips the batch manifest verbatim — so only the payload
+    is checked here, with the shared parsers' own messages.
+    """
+    from luxar.utils.lod_breakpoints import parse_equi_energy_rungs, parse_stream_chunk
+
+    try:
+        if s.startswith("stream:"):
+            parse_stream_chunk(s)
+        else:
+            parse_equi_energy_rungs(s)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+    return s
+
+
 def parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
     """Parse the ``--breakpoints`` string for :func:`make_additive_lod`.
 
     Accepted forms: ``equal-count`` → literal; ``stream:14000`` → passed
     through as a string (a bandwidth-derived geometric ladder, resolved
     per-N inside the builder — the first chunk is ``<c>`` splats, then
-    doubling); ``counts:5,10,15`` → ``[int]`` (cumulative splat counts);
-    ``energy:0.5,0.9,1.0`` → ``[float]`` (cumulative energy fractions in
-    (0, 1]).
+    doubling); ``equi-energy:4`` → passed through as a string (``n`` rungs at
+    equal shares of cumulative self-energy along the ordering, commit-capped —
+    few heavy splats first, fatter rungs later); ``counts:5,10,15`` →
+    ``[int]`` (cumulative splat counts); ``energy:0.5,0.9,1.0`` → ``[float]``
+    (cumulative energy fractions in (0, 1]).
     """
     s = spec.strip()
     if s == "equal-count":
         return "equal-count"
-    if s.startswith("stream:"):
-        body = s[len("stream:") :]
-        try:
-            first_chunk = int(body)
-        except ValueError as e:
-            raise typer.BadParameter(
-                f"stream breakpoints must be 'stream:<integer>'; got {body!r}"
-            ) from e
-        if first_chunk < 1:
-            raise typer.BadParameter(
-                f"stream first-chunk size must be >= 1; got {first_chunk}"
-            )
-        # Pass the validated string through — it is resolved per-N inside
-        # _resolve_breakpoints (each part/level sizes its own ladder), and the
-        # string form round-trips the batch manifest verbatim.
-        return s
+    if s.startswith(("stream:", "equi-energy:")):
+        return _validated_passthrough_breakpoints(s)
     if s.startswith("counts:"):
         body = s[len("counts:") :]
         try:
@@ -152,61 +163,8 @@ def parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
             )
         return values_flt
     raise typer.BadParameter(
-        f"breakpoints must be 'equal-count', 'stream:<c>', 'counts:...', or "
-        f"'energy:...'; got {spec!r}"
-    )
-
-
-#: Assumed stored bytes per scalar for (centers, amplitudes, cholesky) under
-#: each encoding mode (see :func:`estimate_bytes_per_splat`). AUTO and MEMORY
-#: write the SAME widths: centers u16 (coordinates never drop to u8, though they
-#: do escalate to float32 once an axis spans 2**16, or once a NON-gridded axis's
-#: grid would displace MORE THAN 0.1% of the splats past their own sigma — a
-#: gridded axis is snapped instead and stays u16), amplitude ~u16 (width picked from
-#: dynamic range identically in both modes), cholesky u8 (AUTO certified —
-#: escalation to u16 is the exception, not the model; MEMORY unconditional).
-#: PRECISION: float32 everywhere.
-#:
-#: Under an escalated centers array the ``center_b = 2.0`` row under-reports by
-#: ``1.5 × 2 × ndim`` bytes/splat — 12 B/splat on a 4-D fit — which sizes a
-#: ``stream:C`` first chunk derived from ``--target-ms`` too small. The estimate
-#: is not corrected for it: :func:`estimate_bytes_per_splat` is called only when
-#: no store exists to measure, and it sees just ``(ndim, has_colors, encoding)``
-#: — the escalation is a property of the splats' own Cholesky, which is not in
-#: scope here and is not knowable before the fit runs. Measure the store, or use
-#: ``--bytes-per-splat``, when a degenerate sub-population on a NON-gridded axis
-#: is in play. (A plain stacked axis is the grid-snapped case, which stays u16
-#: and needs no correction.)
-_ENCODING_ARRAY_BYTES = {
-    "auto": (2.0, 2.0, 1.0),
-    "precision": (4.0, 4.0, 4.0),
-    "memory": (2.0, 2.0, 1.0),
-}
-
-
-def estimate_bytes_per_splat(
-    ndim: int, has_colors: bool = False, encoding: str = "auto"
-) -> float:
-    """Analytic on-wire bytes/splat estimate for an encoding mode.
-
-    Per-array model: centers (d scalars), amplitude (1), split-Cholesky
-    diag/offdiag (d(d+1)/2) each get the per-mode byte width from
-    ``_ENCODING_ARRAY_BYTES`` (AUTO cholesky is u8 under the covariance
-    certificate), and the store adds zarr/blosc/chunk-bounds overhead of
-    roughly ×1.5 — calibrated against a real 4D fit that measured
-    ~45 B/splat when everything was u16. Colors add ~4 B (u8 RGB + overhead;
-    ~18 B as float32 under PRECISION). A crude estimate by design: used only
-    when no matching store exists to measure (``fit --recipe``, or when
-    ``--encoding`` re-encodes the output); the ``--bytes-per-splat`` override
-    is the escape hatch, and the assumed value is always logged.
-    """
-    k = ndim * (ndim + 1) // 2
-    center_b, amp_b, chol_b = _ENCODING_ARRAY_BYTES.get(encoding, (2.0, 2.0, 1.0))
-    color_bytes = 18.0 if encoding == "precision" else 4.0
-    return round(
-        1.5 * (center_b * ndim + amp_b + chol_b * k)
-        + (color_bytes if has_colors else 0.0),
-        1,
+        f"breakpoints must be 'equal-count', 'stream:<c>', 'equi-energy:<n>', "
+        f"'counts:...', or 'energy:...'; got {spec!r}"
     )
 
 

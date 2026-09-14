@@ -19,6 +19,10 @@ import { placeCameraAt } from './helpers';
 export const NETWORK_PROFILES = {
   /** A typical hosted demo: 25 Mbps down, 30 ms RTT. */
   hosted: { latency: 30, downloadThroughput: 25e6 / 8, uploadThroughput: 5e6 / 8 },
+  /** Slow home/mobile link used by the hosted chunk-completion audit. */
+  slow100k: { latency: 100, downloadThroughput: 100 * 1024, uploadThroughput: 64 * 1024 },
+  slow1m: { latency: 60, downloadThroughput: 1024 * 1024, uploadThroughput: 256 * 1024 },
+  slow3m: { latency: 40, downloadThroughput: 3 * 1024 * 1024, uploadThroughput: 512 * 1024 },
 } as const;
 
 export type NetworkProfile = keyof typeof NETWORK_PROFILES;
@@ -111,8 +115,9 @@ export async function waitForPerfReady(page: Page, timeout = 60_000): Promise<vo
 
 /**
  * Wait for `getPerf().isSettled === true`: no update pass, no load pass, no
- * lazy LOD level, post-load refinement complete. Returns false on timeout so
- * the caller can record a partial row instead of failing the run.
+ * lazy LOD level, no visible partition resync pending, post-load refinement
+ * complete. Returns false on timeout so the caller can record a partial row
+ * instead of failing the run.
  */
 export async function waitForPerfSettled(page: Page, timeout: number): Promise<boolean> {
   try {

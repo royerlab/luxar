@@ -67,6 +67,17 @@ JUSTIFIED: dict[str, str] = {
         "ceiling. Partition children capped at the authored 150,000 points per plane "
         "bound every commit while remaining far below the 5,591,040 Points cap."
     ),
+    "demo_esm_protein_universe.py": (
+        "7,714,508 points RESIDENT in the backdrop (one hidden story coordinate, "
+        "extended to every slot, so the resident slice IS the node) — past the "
+        "5,591,040 Points cap, so the partition is required: a hand-built "
+        "kind=partition of 64 BSP tiles of at most 125,000 points, each its own "
+        "hand-authored kind=lod ladder whose coarse level is a 1-in-4 POINTS "
+        "subsample (not the writer's synthesised Gaussians, which drew the view "
+        "from a knot toward the centre at 6 fps against 144 fps for plain "
+        "points). Per-tile selection draws ~1.9M points at the overview and the "
+        "whole-map stories; a knot swaps in only its nearest handful of tiles."
+    ),
     "demo_desi_galaxies.py": (
         "9,751,955 points RESIDENT with no hidden axis — genuinely past the "
         "5,591,040 Points cap, so the partition is required. The substitutive "

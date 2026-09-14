@@ -162,11 +162,8 @@ def load_dataset_bundle(
     covers everything inside. Extraction then reuses the same safe-member and
     staleness logic as the in-repo path, so a re-migrated bundle still refreshes
     its extracted frames rather than pinning the first extraction — and here the
-    staleness key is the manifest **digest** rather than the in-repo path's
-    ``(size, mtime)`` guess, unless the entry has superseded history. In that
-    case :func:`ensure_dataset` may have served an earlier generation without
-    reporting which digest matched, so the resolved bundle's ``(size, mtime)``
-    is used instead.
+    staleness key is the exact **digest** :func:`ensure_dataset` verified rather
+    than the in-repo path's ``(size, mtime)`` guess.
 
     Args:
         name: Manifest dataset key (e.g. ``"gsplats_zebrafish"``).
@@ -185,12 +182,7 @@ def load_dataset_bundle(
 
     # Lazy, like `_unshippable_reason`'s: data_fetch reads this module's cache
     # root, so a module-level import here would close the loop.
-    from .data_fetch import (
-        LocalComputeDataset,
-        dataset_spec,
-        ensure_dataset,
-        resolve_variant,
-    )
+    from .data_fetch import LocalComputeDataset, ensure_dataset
 
     ctx = asection(f"Loading GSplats bundle ({name})") if verbose else nullcontext()
     with ctx:
@@ -213,26 +205,7 @@ def load_dataset_bundle(
                 f"it lists {sorted(by_name)}"
             )
         bundle_path = by_name[bundle_name]
-        # The digest ensure_dataset just verified is the exact staleness key for
-        # the extracted frames unless the entry has superseded history. In that
-        # case ensure_dataset may have served an older digest without exposing
-        # which one matched, so use the bundle's (size, mtime) stamp rather than
-        # falsely stamping those frames with the current pin.
-        #
-        # `sha256` is the current record pin. The retained `hosted_sha256`
-        # compatibility path still accepts older dual-contract manifests, so fold
-        # both values into the key only when such a manifest makes them disagree.
-        files, _ = resolve_variant(name, dataset_spec(name, manifest), None)
-        entry = next((e for e in files if e.get("name") == bundle_name), {})
-        superseded = entry.get("superseded_sha256")
-        stamp = None
-        if not superseded:
-            sha = entry.get("sha256")
-            hosted = entry.get("hosted_sha256")
-            sha = sha or hosted
-            if sha and hosted and hosted != sha:
-                sha = f"{sha}+{hosted}"
-            stamp = f"sha256:{sha}" if sha else None
+        stamp = f"sha256:{paths.input_digests[bundle_name]}"
         # ensure_dataset already verified the sha256, so an LFS-pointer check
         # would be checking the wrong thing about an already-trusted file.
         return _extract_bundle_and_load(
@@ -326,10 +299,8 @@ def _extract_bundle_and_load(
     what stops a re-migrated bundle serving stale frames, so both paths must use
     the same copy rather than a lookalike.
 
-    *stamp* overrides the staleness key. The manifest-driven caller passes a
-    digest unless the entry has superseded history; then it leaves *stamp* unset
-    because :func:`ensure_dataset` does not report which generation matched, and
-    the key falls back to the bundle's ``(size, mtime)``.
+    *stamp* overrides the staleness key. The manifest-driven caller passes the
+    exact digest verified by the resolver.
     """
     from ....gsplats.gsplat_data import GSplatData
 

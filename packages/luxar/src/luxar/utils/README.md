@@ -46,6 +46,23 @@ This package contains helper functions that simplify common tasks and provide co
 
 ## Modules
 
+### `hosts.py`
+Bind-address predicates. Here rather than in `luxar.cli` because two layers
+need the same answer: the CLI derives its CORS policy from it, and the demo
+runner decides from it whether to warn that a display has been opened to the
+network. `luxar.demos` sits *above* `luxar.cli`, so a demo importing the CLI's
+copy is a layering violation, and a duplicate would let the warning and the
+policy drift apart.
+
+**Key Functions:**
+
+- `is_loopback_host(host)`: True when `host` reaches only this machine. A
+  wildcard bind (`0.0.0.0` / `::`) is deliberately **not** loopback — that is
+  the exposed case the callers exist to notice — and an unset host reads as
+  loopback so a caller that never says where it bound gets the safe answer.
+- `ALL_INTERFACES_HOSTS` / `LOOPBACK_HOSTS`: the sentinel and loopback
+  spellings the predicate recognises.
+
 ### `arbol_warnings.py`
 Route Python warning *display* through arbol console output, so warnings land
 as `⚠️ UserWarning: ...` tree lines whenever arbol can show them, and fall back

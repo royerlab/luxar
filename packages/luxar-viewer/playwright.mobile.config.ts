@@ -10,15 +10,16 @@
  * the first spec asserts exactly that before anything else is trusted.
  *
  * Every project runs on **Chromium**, not the device descriptors' default
- * WebKit: the GPU box that hosts E2E runs Chromium only, and the gestures are
- * driven through the Chrome DevTools Protocol (`Input.dispatchTouchEvent`, see
- * `src/tests/e2e/mobile/touch-helpers.ts`), which WebKit does not expose. Real
- * iOS Safari behaviour is covered by the manual device checklist, not here.
+ * WebKit: both CI E2E environments standardize on Chromium, and the gestures
+ * are driven through the Chrome DevTools Protocol (`Input.dispatchTouchEvent`,
+ * see `src/tests/e2e/mobile/touch-helpers.ts`), which WebKit does not expose.
+ * Real iOS Safari behaviour is covered by the manual device checklist, not here.
  * Chromium reports `navigator.maxTouchPoints === 1` for every emulated device,
  * so this harness does not cover behaviour gated on multiple touch points.
  *
  * Invoke via:
  *   pnpm test:e2e:mobile
+ *   make test-e2e-mobile
  *
  * @module playwright.mobile.config
  */

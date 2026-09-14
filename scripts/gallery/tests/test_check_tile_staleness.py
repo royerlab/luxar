@@ -127,6 +127,7 @@ def _repo(tmp_path: Path) -> Path:
     )
     for filename in (
         "generate-gallery.spec.ts",
+        "gallery-dimension-readiness.ts",
         "gallery-media-reporting.ts",
         "gallery-timelapse-settle.ts",
         "orbit-axis.ts",
@@ -346,6 +347,7 @@ def test_gallery_capture_policy_is_a_global_input(tmp_path: Path, capsys) -> Non
 @pytest.mark.parametrize(
     "relative_path",
     [
+        "packages/luxar-viewer/src/tests/screenshots/gallery-dimension-readiness.ts",
         "packages/luxar-viewer/src/tests/screenshots/gallery-media-reporting.ts",
         "packages/luxar-viewer/src/tests/screenshots/gallery-timelapse-settle.ts",
         "packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts",

@@ -5,12 +5,15 @@
  *
  * Browsers deliberately do NOT expose total/available VRAM (it's a
  * fingerprinting vector), so we can't read an "absolute max" and set to
- * it. Auto-sizing uses ``navigator.deviceMemory`` when available and an
- * explicit total cache-pool override when supplied; if both exist, the lower
- * derived budget wins. The result has a 2 GB ceiling but no lower clamp, with
- * 512 MB used only when neither signal exists. As a safety net, the budget is
- * halved on a WebGL context-loss event (a strong OOM signal) so an
- * over-estimate self-corrects instead of repeatedly crashing the context.
+ * it. Auto-sizing takes the lowest estimate from ``navigator.deviceMemory``
+ * and the shared non-cache remainder derived from the measured JS heap. An
+ * explicit total cache-pool override replaces the heap term in either
+ * direction; a mobile device-class fallback supplies that term when the heap
+ * is unavailable, and an independent 128 MiB mobile cap remains a peer
+ * minimum. The result has a 2 GB ceiling but no lower clamp, with 512 MB used
+ * only when no signal exists. As a safety net, the budget is halved on a WebGL
+ * context-loss event (a strong OOM signal) so an over-estimate self-corrects
+ * instead of repeatedly crashing the context.
  *
  * **Single-viewer-per-page assumption.** The budget lives in module-global
  * state (``budgetBytes`` below), so it is shared by every pool and registry
@@ -43,24 +46,22 @@
  */
 
 import {
+  computeNonCacheRemainderBytes,
   DEVICE_CLASS_POOL_BYTES,
-  computeWorkingSetBudgetBytes,
   readHeapLimitBytes,
 } from '../cache/heap-budget';
+import { config } from '../config';
 import { getInputProfile } from '../utils/input-capabilities';
 import { log, Modules } from '../utils/log';
 
 /** Fraction of system RAM to devote to GPU geometry. */
 const DEVICE_MEMORY_FRACTION = 0.25;
-/**
- * GPU-geometry share of an explicit total cache-pool override. Derived from
- * (0.4 / 0.6) × 0.5 in `cache/heap-budget.ts`, but deliberately kept local.
- */
-const CACHE_POOL_GPU_SHARE = 1 / 3;
 const MIB = 1024 * 1024;
+/** Mobile GPU residency cap established by the device-runtime budget pass (#2588). */
+const MOBILE_BUDGET_BYTES = 128 * MIB;
 /**
- * Budget used when NO memory signal is available at all — neither
- * ``deviceMemory`` nor an explicit cache-pool override.
+ * Budget used when NO memory signal is available at all — no device memory,
+ * measured heap, explicit cache-pool override or mobile device class.
  *
  * NOT a floor under a budget that WAS derived from a signal. It used to be one,
  * and that was the bug: a tab told it had a small pool still got 512 MB, which
@@ -75,6 +76,7 @@ const MAX_BUDGET_BYTES = 2_000_000_000; // 2 GB
 const BACKOFF_FLOOR_BYTES = 256_000_000; // 256 MB
 
 let budgetBytes = NO_SIGNAL_BUDGET_BYTES;
+let configured = false;
 
 /**
  * Explicit memory signals the auto budget folds in alongside `navigator.deviceMemory`.
@@ -92,8 +94,10 @@ export interface GpuBudgetMemorySignals {
 }
 
 /**
- * Compute the auto budget from ``navigator.deviceMemory``, the measured JS
- * heap, and an explicit cache-pool override — whichever is scarcest.
+ * Compute the auto budget from ``navigator.deviceMemory`` and the shared
+ * non-cache remainder. An explicit cache-pool override deliberately replaces
+ * the measured-heap remainder in either direction, while remaining a peer
+ * minimum against device memory and the independent mobile cap.
  *
  * THE HEAP TERM IS THE ONE THAT MATTERS, and it has now been removed twice on
  * the reasoning that a coarse heap tier is not a GPU-memory signal. That is
@@ -108,50 +112,54 @@ export interface GpuBudgetMemorySignals {
  * MEASURED, not argued (host-demos, `jsHeapSizeLimit` spoofed in an init
  * script with real used/total passing through): without the heap term the auto
  * budget stayed at 2000 MB at a spoofed 256 MB heap and reclaimed nothing —
- * not one MB of movement. With it, the budget tracks the spoof at 43 / 86 /
- * 172 MB for 256 / 512 / 1024 MiB, and the auto-binding regression closes
- * (multi6 real-heap evict=5).
+ * not one MB of movement. The pre-#2439 half-share tracked the spoof at 43 / 86
+ * / 172 MB for 256 / 512 / 1024 MiB and closed the auto-binding regression
+ * (multi6 real-heap evict=5); the full-remainder derivation now resolves those
+ * same heap limits to 86 / 172 / 344 MB.
  *
- * The two paths use DIFFERENT derivations on purpose. An explicit
- * `?cacheBudgetMB=` is a direct statement about the pool the user wants, so it
- * takes a simple proportional share ({@link CACHE_POOL_GPU_SHARE}). The
- * ambient heap goes through ``computeWorkingSetBudgetBytes`` because that is
- * the project's existing answer to "how much CPU-side working set can this
- * device spare", the refinement residency cap already sizes from it, and a
- * pooled buffer is exactly such a working set — and because it is the
- * derivation the numbers above were measured against.
+ * Heap, explicit-pool and device-class inputs all go through
+ * ``computeNonCacheRemainderBytes``: the project's single answer to "how much
+ * can this device spare outside the cache pool". GPU geometry may use that
+ * remainder up to this module's own 2 GB ceiling. The eager loader and
+ * refinement residency gate deliberately keep their separate capped half-share;
+ * mobile devices also retain their independent 128 MiB safety cap. The
+ * populations overlap, so these independent ceilings are not additive
+ * reservations.
  */
 function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; sources: string[] } {
   const gb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   const fromDeviceMemory =
     typeof gb === 'number' && gb > 0 ? gb * DEVICE_MEMORY_FRACTION * 1_000_000_000 : undefined;
   const cachePoolOverrideBytes = memory?.cachePoolOverrideBytes;
-  const fromCachePool =
+  const hasCachePoolOverride =
     typeof cachePoolOverrideBytes === 'number' &&
     Number.isFinite(cachePoolOverrideBytes) &&
-    cachePoolOverrideBytes > 0
-      ? Math.floor(cachePoolOverrideBytes * CACHE_POOL_GPU_SHARE)
-      : undefined;
-  // Only when the heap is actually MEASURABLE. `computeWorkingSetBudgetBytes`
-  // answers with a fixed fallback when it has nothing to go on, and that value
-  // is indistinguishable from a derived one — folding it in unguarded would cap
-  // a 32 GB Firefox/Safari box at the fallback purely for exposing no
-  // `performance.memory`. An absent measurement is not a small one.
-  const fromHeap = readHeapLimitBytes() !== undefined ? computeWorkingSetBudgetBytes() : undefined;
+    cachePoolOverrideBytes > 0;
+  const heapLimitBytes = readHeapLimitBytes();
+  const isMobile = getInputProfile().deviceClass === 'mobile';
   // A phone or tablet is a memory signal in itself. WebKit exposes neither
   // `deviceMemory` nor `performance.memory`, so without this an iPhone took the
   // 512 MB no-signal fallback — ≈7 M resident splats, each also holding a
   // CPU-side ArrayBuffer — which is the `RangeError: Array buffer allocation
   // failed` this module exists to prevent. The mobile cache pool the cache
-  // tiers already size from (`DEVICE_CLASS_POOL_BYTES.mobile`) takes the same
-  // proportional GPU share as an explicit `?cacheBudgetMB=` would. Laptop and
+  // tiers already size from (`DEVICE_CLASS_POOL_BYTES.mobile`) implies the same
+  // non-cache remainder as an explicit `?cacheBudgetMB=` would. Laptop and
   // desktop contribute nothing here, so their resolution is unchanged.
-  const fromDeviceClass =
-    getInputProfile().deviceClass === 'mobile'
-      ? Math.floor(DEVICE_CLASS_POOL_BYTES.mobile * CACHE_POOL_GPU_SHARE)
-      : undefined;
+  const fallbackPoolBytes = isMobile ? DEVICE_CLASS_POOL_BYTES.mobile : undefined;
+  const nonCacheRemainder = computeNonCacheRemainderBytes(
+    heapLimitBytes ?? 0,
+    cachePoolOverrideBytes,
+    fallbackPoolBytes
+  );
+  const fromWorkingSet =
+    nonCacheRemainder === undefined
+      ? undefined
+      : Math.floor(Math.min(nonCacheRemainder, MAX_BUDGET_BYTES));
+  // The mobile pool implies a 256 MiB remainder, so the independently measured
+  // 128 MiB safety cap dominates that candidate by construction.
+  const fromMobileCap = isMobile ? MOBILE_BUDGET_BYTES : undefined;
 
-  const candidates = [fromDeviceMemory, fromHeap, fromCachePool, fromDeviceClass].filter(
+  const candidates = [fromDeviceMemory, fromWorkingSet, fromMobileCap].filter(
     (value): value is number => value !== undefined
   );
   if (candidates.length === 0) {
@@ -161,9 +169,9 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
     };
   }
 
-  // The MINIMUM of the available signals. The cache-pool override is a peer
-  // signal, so when deviceMemory is absent it may raise or lower the fallback;
-  // a coarse ambient heap tier is not a GPU-memory signal.
+  // The MINIMUM of the available signals. The shared non-cache remainder keeps
+  // the heap signal live on roomy Chromium tiers instead of inheriting the eager
+  // loader's unrelated 512 MiB burst cap.
   //
   // Clamped ABOVE only. There is no floor: a floor is exactly what stopped this
   // budget from ever binding, and a budget that cannot bind cannot evict.
@@ -171,16 +179,17 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
   if (fromDeviceMemory !== undefined) {
     sources.push(`deviceMemory=${gb} GB -> ${mb(Math.min(fromDeviceMemory, MAX_BUDGET_BYTES))} MB`);
   }
-  if (fromHeap !== undefined) {
-    sources.push(`heap -> ${mb(fromHeap)} MB`);
-  }
-  if (fromCachePool !== undefined) {
+  if (fromWorkingSet !== undefined && hasCachePoolOverride) {
     sources.push(
-      `cacheBudgetMB=${Math.round(cachePoolOverrideBytes! / MIB)} -> ${mb(fromCachePool)} MB`
+      `cacheBudgetMB=${Math.round(cachePoolOverrideBytes / MIB)} -> ${mb(fromWorkingSet)} MB`
     );
+  } else if (fromWorkingSet !== undefined && heapLimitBytes !== undefined) {
+    sources.push(`heap -> ${mb(fromWorkingSet)} MB`);
+  } else if (fromWorkingSet !== undefined && fallbackPoolBytes !== undefined) {
+    sources.push(`mobile device class remainder -> ${mb(fromWorkingSet)} MB`);
   }
-  if (fromDeviceClass !== undefined) {
-    sources.push(`mobile device class -> ${mb(fromDeviceClass)} MB`);
+  if (fromMobileCap !== undefined) {
+    sources.push(`mobile safety cap -> ${mb(fromMobileCap)} MB`);
   }
   return { bytes: Math.min(Math.min(...candidates), MAX_BUDGET_BYTES), sources };
 }
@@ -189,8 +198,8 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
  * Configure the budget once at startup from the resolved config value
  * (or the ``?gpuBudgetMB`` URL param, which the caller passes in):
  *
- * - ``null`` / ``undefined`` → **auto-size** from device memory and any
- *   explicit cache-pool override.
+ * - ``null`` / ``undefined`` / ``NaN`` → **auto-size** from available ambient
+ *   memory signals and any explicit cache-pool override. ``NaN`` also warns.
  * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
  * - a positive number → pin the budget to exactly that many bytes.
  */
@@ -198,6 +207,11 @@ export function configureGpuByteBudget(
   overrideBytes?: number | null,
   memory?: GpuBudgetMemorySignals
 ): void {
+  configured = true;
+  if (Number.isNaN(overrideBytes)) {
+    log.warning(Modules.PERFORMANCE, 'Ignoring NaN GPU byte budget override; using auto-sizing');
+    overrideBytes = null;
+  }
   if (overrideBytes == null) {
     const auto = computeAutoBudget(memory);
     budgetBytes = auto.bytes;
@@ -214,6 +228,39 @@ export function configureGpuByteBudget(
     budgetBytes === 0
       ? 'GPU byte budget: disabled (0 — unbounded resident geometry)'
       : `GPU byte budget: ${mb(budgetBytes)} MB (explicit)`
+  );
+}
+
+/**
+ * Configure the shared budget for whichever supported viewer entry point starts first.
+ *
+ * - ``undefined`` → use the config default; this is no opinion after another
+ *   entry point has configured the budget, so it is ignored silently.
+ * - ``null`` or ``NaN`` → auto-size from ambient memory signals; ``NaN`` warns.
+ * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
+ * - a positive number → pin the budget to exactly that many bytes.
+ *
+ * Later explicit requests are ignored with a warning because the budget is
+ * module-global and shared by every pool and LOD registry on the page.
+ */
+export function initializeGpuByteBudget(overrideBytes?: number | null): void {
+  if (configured) {
+    if (overrideBytes !== undefined) {
+      const requested =
+        overrideBytes === null || Number.isNaN(overrideBytes)
+          ? 'auto-sizing'
+          : Math.max(0, overrideBytes) === 0
+            ? 'disabling eviction'
+            : `${mb(Math.max(0, overrideBytes))} MB`;
+      log.warning(
+        Modules.PERFORMANCE,
+        `GPU byte budget is already configured; ignoring later request for ${requested}`
+      );
+    }
+    return;
+  }
+  configureGpuByteBudget(
+    overrideBytes === undefined ? config.dataLoading.performance.gpuPoolMaxBytes : overrideBytes
   );
 }
 

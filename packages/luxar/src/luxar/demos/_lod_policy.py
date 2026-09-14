@@ -167,9 +167,10 @@ TREE_RECIPES: frozenset[str] = frozenset({"adaptive"})
 #: ``add_gsplats_from_data`` is handed the whole ``GSplatData``, whose matrix form
 #: holds the substitutive levels, and re-emits them as a ``kind=lod`` group;
 #: ``add_gsplats_from_file`` grafts the stored subtree node-for-node. The third
-#: adder, plain ``add_gsplats(centers=…, amplitudes=…)``, is handed loose arrays
-#: — every one of which is a view of the FINEST level only — so it writes a flat
-#: leaf. Measured on a 4,000-splat fit: the same archive added via
+#: adder, ``add_gsplats(centers=…, amplitudes=…)``, is handed loose arrays that
+#: are a view of the FINEST archived level only. It can author a new LOD through
+#: its explicit structure kwargs, but it cannot preserve the archive's existing
+#: topology. Measured on a 4,000-splat fit: the same archive added via
 #: ``add_gsplats`` gives a node with no ``kind`` and no child groups whether it
 #: was written ``stream`` or ``levels``, while the ``levels`` archive is 4.1x the
 #: bytes on disk (the small-fit figure — +38% on a real one, above).
@@ -348,7 +349,11 @@ def stream_ladder(
 
     **Capped increments**, via :func:`~luxar.utils.lod_breakpoints.
     capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
-    and would block the main thread on these leaves.
+    and would block the main thread on these leaves. For a sliced node the
+    whole-node ceiling scales by ``slices``: this budgets 900,000 rows per slice
+    under uniform mixing, while the built-scene gate checks the conservative
+    largest per-coordinate fetch from ``chunk_bounds``. The gap to that gate's
+    1,000,000-row cap is headroom for non-uniform slices and boundary chunks.
 
     A SLICED NODE WANTS A SHARE, NOT A BUDGET — PASS ``slices``
     -----------------------------------------------------------
@@ -430,8 +435,9 @@ def stream_ladder(
     whose unit matches the ``n`` a caller naturally has. The cost is that the
     string form is a plain doubling ladder — its last increment approaches ``n/2``
     rather than being capped. The resolved ladder is checked against the 900,000
-    ceiling because the crossing point depends on the effective first chunk;
-    a larger Lines leaf needs capped cuts expressed in polylines instead.
+    per-slice ceiling (scaled to a whole-node ceiling by ``slices``) because the
+    crossing point depends on the effective first chunk; a larger Lines leaf
+    needs capped cuts expressed in polylines instead.
 
     Args:
         n: Element count of the leaf — points for ``"points"``, VERTICES for
@@ -450,8 +456,9 @@ def stream_ladder(
 
     Raises:
         ValueError: ``geometry`` is neither ``"points"`` nor ``"lines"``, or a
-            sliced leaf cannot deliver its share within the commit ceiling, or a
-            Lines leaf is too large for the uncapped vertex-count string form.
+            sliced leaf cannot deliver its share within the slice-scaled commit
+            ceiling, or a Lines leaf is too large for the uncapped vertex-count
+            string form.
     """
     if geometry not in ("points", "lines"):
         raise ValueError(
@@ -483,6 +490,8 @@ def stream_ladder(
         DEFAULT_BANDWIDTH_MBPS,
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
     )
+    commit_ceiling = DEFAULT_MAX_ADDITIVE_COMMIT * slices
+    slice_label = "slice" if slices == 1 else "slices"
     if slices > 1:
         # Loic's ruling, 2026-08-30: on a sliced node the contract is a SHARE of
         # the frame, not a download budget. A share is what tracks whether the
@@ -503,13 +512,15 @@ def stream_ladder(
             slices=slices,
             max_depth=SLICED_LADDER_MAX_DEPTH,
         )
-        if share_chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
+        if share_chunk > commit_ceiling:
             raise ValueError(
                 f"Sliced node with {n:,} elements cannot deliver its "
                 f"{100 / SLICED_LADDER_MAX_DEPTH:g}% first "
-                f"rung within the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit "
-                "ceiling. Partition this leaf after moving any stacked axis last, "
-                "or supply explicit capped cuts instead of stream_ladder."
+                f"rung within the {commit_ceiling:,}-element whole-node commit "
+                f"ceiling for {slices:,} {slice_label} "
+                f"({DEFAULT_MAX_ADDITIVE_COMMIT:,} per slice under uniform "
+                "mixing). Partition this leaf after moving any stacked axis "
+                "last, or supply explicit capped cuts instead of stream_ladder."
             )
         first_chunk = share_chunk
     if geometry == "lines":
@@ -518,17 +529,20 @@ def stream_ladder(
             (cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts)),
             default=0,
         )
-        if largest_commit > DEFAULT_MAX_ADDITIVE_COMMIT:
+        if largest_commit > commit_ceiling:
             raise ValueError(
                 "Lines streaming ladder with resolved chunk "
-                f"{first_chunk:,} exceeds the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-vertex "
-                f"commit ceiling (largest commit {largest_commit:,}) for n={n:,}. "
+                f"{first_chunk:,} resolves a {largest_commit:,}-vertex whole-node "
+                f"commit, above the {commit_ceiling:,}-vertex ceiling for "
+                f"{slices:,} {slice_label} "
+                f"({DEFAULT_MAX_ADDITIVE_COMMIT:,} per slice "
+                "under uniform mixing). "
                 "Supply capped polyline-count cuts for this leaf instead."
             )
     counts: Any = (
         f"stream:{first_chunk}"
         if geometry == "lines"
-        else capped_stream_cuts(int(n), first_chunk)
+        else capped_stream_cuts(int(n), first_chunk, commit_ceiling)
     )
     return {
         "counts": counts,

@@ -1,7 +1,15 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client", "node"]
   },
-  "include": ["*.config.ts", "scripts/**/*.ts"]
+  "include": [
+    "*.config.ts",
+    "scripts/**/*.ts",
+    "tools/**/*.ts",
+    "src/**/*.d.ts",
+    "src/tests/**/*"
+  ],
+  "exclude": ["node_modules", "dist"]
 }

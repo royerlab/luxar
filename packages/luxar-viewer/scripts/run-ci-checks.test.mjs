@@ -56,7 +56,7 @@ describe('runChecks', () => {
       killed: { check: 'lint', signal: 'SIGKILL' },
       skipped: [],
     });
-    expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS.slice(0, 4));
+    expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS.slice(0, 5));
   });
 
   it('honors signals reported directly by the spawned process', () => {
@@ -91,7 +91,7 @@ describe('runChecks', () => {
       killed: null,
       skipped: [],
     });
-    expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS.slice(0, 2));
+    expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS.slice(0, 3));
   });
 });
 

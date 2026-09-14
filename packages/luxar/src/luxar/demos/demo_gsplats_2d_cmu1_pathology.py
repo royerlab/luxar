@@ -123,6 +123,7 @@ DEMO_META = {
 
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
+import shutil
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
@@ -134,6 +135,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.lod.group import DEFAULT_LADDER_TARGET_MS
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
@@ -145,12 +147,69 @@ from luxar.demos import (
     local_fit_path,
     parse_demo_flags,
     require_module,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_BANDWIDTH_MBPS,
+    capped_stream_cuts,
+    estimate_bytes_per_splat,
+    streaming_chunk_splats,
+)
 from luxar.utils.paths import get_demos_output_dir
+
+#: Splats in the first additive rung of every grafted part — one ~200 ms
+#: download. The record archives ship each part with an EQUAL-COUNT 4-rung
+#: ladder, so rung 0 was a quarter of the part (551K–677K splats) and, with 12
+#: parts loading at once, first paint was ~7.3M splats (2026-09-10 review:
+#: "takes a long time to load — are additive LODs not doing their job?"). They
+#: were there; they were sized wrong. Re-laddering at scene build brings first
+#: paint to 12 x 46K ≈ 556K splats without touching the published archives.
+FIRST_RUNG_SPLATS: int = streaming_chunk_splats(
+    DEFAULT_LADDER_TARGET_MS,
+    DEFAULT_BANDWIDTH_MBPS,
+    estimate_bytes_per_splat(ndim=2, has_colors=False),
+)
+
+
+def part_ladder_spec(cache_path: Path) -> dict:
+    """The ``additive_lod=`` spec that re-ladders every part of a grafted archive.
+
+    A geometric ladder (first rung :data:`FIRST_RUNG_SPLATS`, doubling, then
+    capped increments) as EXPLICIT cumulative counts, sized from the archive's
+    SMALLEST leaf: the graft hands one spec to every part, and an explicit list
+    is validated per part against that part's own count ("largest breakpoint
+    exceeds N"), so the list must fit the smallest part — larger parts simply
+    take one more increment up to their own N. A ``stream:C`` string would
+    adapt per part on its own but doubles all the way up, and on a 2.7M-splat
+    part its last commit (~1.4M) would blow the 900K main-thread commit cap the
+    capped cuts respect. ``recompute=True`` replaces the stored equal-count
+    ladder rather than keeping it.
+
+    Reads only tree metadata after resolving the store. Compressed published
+    archives are extracted here and again by the later graft; array payloads
+    are not loaded during this sizing pass.
+    """
+    from luxar._zarr_compat import open_group as zc_open_group
+    from luxar.gsplats.io._archive import resolve_store_path
+    from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
+
+    zarr_path, temp_dir = resolve_store_path(Path(cache_path))
+    try:
+        summary = read_gsplat_tree_summary(zc_open_group(str(zarr_path), mode="r"))
+    finally:
+        if temp_dir is not None and temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+    smallest = min(summary.leaf_counts)
+    return {
+        "method": "self_energy",
+        "breakpoints": capped_stream_cuts(smallest, FIRST_RUNG_SPLATS),
+        "recompute": True,
+    }
+
 
 # =============================================================================
 # Configuration
@@ -570,6 +629,7 @@ def create_luxar_scene(
                 dimensions=dims,
                 viewer_config=viewer_config,
             )
+            stamp_input_digests(scene)
 
             scene.attrs["title"] = "GSplats 2D: Whole-Slide Pathology (CMU-1, H&E)"
             scene.attrs["description"] = f"""
@@ -640,6 +700,10 @@ Controls:
                         blending_mode="additive",
                         layer=True,
                         colormap=colormap,
+                        # Re-ladder every part for a ~200 ms first paint; the
+                        # archives' own equal-count rungs were a quarter of
+                        # each part. See `part_ladder_spec`.
+                        additive_lod=part_ladder_spec(cache_path),
                     )
                     # Not necessarily "grafted": a flat generation takes the
                     # ordinary data path instead (see this function's docstring).

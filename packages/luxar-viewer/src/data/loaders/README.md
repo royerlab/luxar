@@ -470,6 +470,7 @@ src/data/loaders/
 │   ├── spatial-query-builder.ts  # Canonical chunk-bounds AABB query + helpers
 │   ├── tolerance-computer.ts     # Geometry-aware per-dimension tolerance
 │   ├── prefetch-ranges.ts        # prefetchRangesIntoCache — shared cache-warming read
+│   ├── chunk-boundary-prefetch.ts # Hidden-axis prediction → nearest zarr chunk boundary
 │   ├── range-loader.ts           # Encoding-dispatch orchestrator (thin dispatcher)
 │   └── range-loader/             # Per-encoding helper bodies (private to range-loader.ts)
 │       ├── encoding-types.ts     # EncodingType, RangeLoaderConfig, shared helpers

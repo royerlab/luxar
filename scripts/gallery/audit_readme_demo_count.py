@@ -34,7 +34,9 @@ from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 README_PATH = REPO_ROOT / "README.md"
-TILE_PATTERN = re.compile(r'href="/viewer/index\.html\?src=')
+TILE_PATTERN = re.compile(
+    r'href="(?:/viewer/index\.html|https://luxarviewer\.dev/)\?src='
+)
 CLAIM_PATTERNS = (
     (re.compile(r"(\d+)\s+live demos"), "intro banner"),
     (re.compile(r"(\d+)\s+demos as interactive scenes"), "docs table row"),

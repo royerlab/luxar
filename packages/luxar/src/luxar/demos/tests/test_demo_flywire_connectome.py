@@ -90,3 +90,34 @@ def test_neuron_layer_without_root_id_still_builds(tmp_path: Path) -> None:
     assert not attrs.get("has_keys")
     # The layer itself is intact.
     assert attrs["blending_mode"] == "additive"
+
+
+def test_connection_lines_stay_a_faint_glow() -> None:
+    """Pin the connection layers' gain, read off the `add_lines` call.
+
+    300K luminous lines accumulate along every ray; at `intensity=0.08` the
+    hosted demo rendered the whole brain as one blown-out white blob that hid
+    the neuron layers (2026-09-10). 0.003 was chosen from a live sweep: 0.008
+    still washed every super-class colour, 0.004 began to pale the optic lobes.
+    Parsed from the source because the scene-building test above runs with an
+    empty edge frame and never reaches the lines call.
+    """
+    import ast
+
+    tree = ast.parse(_DEMO_PATH.read_text())
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_lines"
+        ):
+            kwargs = {
+                kw.arg: kw.value.value
+                for kw in node.keywords
+                if kw.arg is not None and isinstance(kw.value, ast.Constant)
+            }
+            assert kwargs["blending_mode"] == "luminous"
+            assert kwargs["opacity"] == pytest.approx(0.08)
+            assert kwargs["intensity"] == pytest.approx(0.003)
+            return
+    raise AssertionError("no add_lines call found in the demo")

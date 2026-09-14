@@ -155,6 +155,7 @@ from luxar.demos import (
     load_local_fit_gsplats_at,
     local_fit_path,
     parse_demo_flags,
+    stamp_input_digests,
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
@@ -794,6 +795,7 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                     cinematic_mode=True, tone_mapping="ACES", camera=camera
                 ),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: Visible Human Head (NLM cryosections)"
             scene.add_gsplats(
                 name="visible_human_head",

@@ -9,6 +9,7 @@ Pytest coverage for the CUDA Gaussian splat backend.
 - Numerical parity against reference PyTorch paths.
 - Model-level integration with `GaussianSplatModel`.
 - FP16 behavior and CUDA-specific performance smoke tests.
+- Device placement and caller-device restoration on non-default GPUs.
 
 ## How to run
 

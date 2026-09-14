@@ -146,6 +146,13 @@ print(points["colors"].shape)  # (N, 3) or None
 print(points["radii"].shape)  # (N,) or None
 print(points["metadata"]["transform"])  # 4x4 numpy array (if present)
 
+# Reconstruct the finest cloud from substitutive LOD, partition, and additive
+# increments. Structured wrapper names come from list_groups(), filtered to
+# kind="lod" or kind="partition". Read one field when a large array_ref should
+# not be materialized.
+finest = scene.get_points("structured_cloud", flatten=True)
+colors = scene.get_point_array("structured_cloud", "colors", flatten=True)
+
 # Similarly for GSplats and Lines
 splats = scene.get_gsplats("splats1")
 print(splats["centers"].shape)  # (N, 3)
@@ -336,9 +343,16 @@ and moves no chunk.
 ```python
 from luxar.io.lod_restamp import restamp_lod_store
 
-report = restamp_lod_store("scene.luxar.zarr", dry_run=True)
+report = restamp_lod_store("scene.luxar.zarr", dry_run=True, finest_anchor=0.25)
 for group in report.restamped:
-    print(group.path, group.anchor, group.old_thresholds, "→", group.new_thresholds)
+    print(
+        group.path,
+        group.anchor_name,
+        group.anchor,
+        group.old_thresholds,
+        "→",
+        group.new_thresholds,
+    )
 ```
 
 Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
@@ -347,7 +361,12 @@ carrying no `selector` at all, which means the same) has its per-child
 `partitioned_coverage_fractions` when the group is TILE-BOUND,
 `coverage_fractions` otherwise — and its group stamped `screen-area`. Children
 are ordered coarsest→finest by `child_index`, and a group already on
-`screen-area` is skipped, so a second run is a no-op down to the `content_hash`.
+`screen-area` is skipped by default, so a second run is a no-op down to the
+`content_hash`. Supplying `finest_anchor=` sets that anchor for every
+whole-object ladder processed, both legacy ladders being migrated and ladders
+already on `screen-area` re-derived from their stored level count;
+partition-bound ladders remain pinned to fills-screen `1.0`. A ladder that
+already matches the requested anchor is still a no-op.
 
 Tile-binding is both gsplat tree writers' full rule, `under_partition or
 any(isinstance(c, GSplatPartition) for c in on_disk)`, read off the store — and
@@ -365,7 +384,8 @@ it has two clauses, not one:
 The binding a lod group resolves is threaded down to its own descendants, as the
 writers thread `under_partition=partition_bound`.
 
-- `restamp_lod_store(path, *, dry_run=False, groups=None)` → `RestampReport` —
+- `restamp_lod_store(path, *, dry_run=False, groups=None, finest_anchor=None)` →
+  `RestampReport` —
   the groups restamped, skipped-as-current, skipped-as-unsupported and
   skipped-as-unresolved, plus the new `content_hash` (with a
   `content_hash_status` of `unchanged` / `restamped` / `unstampable`, since a

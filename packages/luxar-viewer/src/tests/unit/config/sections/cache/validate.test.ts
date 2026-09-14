@@ -159,6 +159,20 @@ describe('validateCache', () => {
     }
   });
 
+  it('requires a positive integer opfsReadConcurrency', () => {
+    for (const bad of [0, -1, 1.5, NaN, Infinity]) {
+      const cfg = cloneConfig();
+      cfg.cache.opfsReadConcurrency = bad;
+      const result = invokeValidator(validateCache, cfg);
+      expect(result.valid, `concurrency=${bad} must be rejected`).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.opfsReadConcurrency'));
+    }
+
+    const cfg = cloneConfig();
+    cfg.cache.opfsReadConcurrency = 16;
+    expect(invokeValidator(validateCache, cfg).valid).toBe(true);
+  });
+
   it('rejects Infinity cache.opfsOperationTimeoutMs', () => {
     const cfg = cloneConfig();
     cfg.cache.opfsOperationTimeoutMs = Number.POSITIVE_INFINITY;

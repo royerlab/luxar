@@ -13,7 +13,8 @@ import type { LineWorkingSetGate, LineWorkingSetNode, NodeBuildCtx } from './bui
 
 // This is a per-parent bound: nested groups may multiply the total fan-out.
 // Eight siblings expose roughly 40 rung-array requests at one level, which
-// stays below the global 64-request fetch gate while collapsing waterfalls.
+// intentionally oversubscribes the 24-slot data fetch lane. Queued requests
+// add latency but do not consume retry budget, while waterfalls stay collapsed.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
 const ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES = 220;

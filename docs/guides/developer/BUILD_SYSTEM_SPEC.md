@@ -94,7 +94,7 @@ The setup process has 5 steps:
 #### Step 2: Node.js Environment
 
 1. Sources nvm if already installed (`~/.nvm/nvm.sh`)
-2. Checks Node.js version (requires 22.22+ — jsdom 30's declared floor; Vite 8.x alone needs only 20.19)
+2. Checks Node.js version (requires 22.22+ — jsdom 30's declared floor; Vite 8.x supports `^20.19.0 || >=22.12.0`)
 3. If Node.js is missing or too old:
    - **macOS**: Uses Homebrew (`brew install node@22`)
    - **Linux**: Installs nvm, then `nvm install 22`
@@ -257,7 +257,10 @@ MIN_NODE_MINOR := 22
 | `make test-fixtures` | Generate test fixtures for TypeScript tests |
 | `make test-viewer-fixtures` | Generate fixtures + run TypeScript tests |
 | `make test-e2e` | Run the full Playwright E2E suite (~17 min) |
-| `make test-e2e-smoke` | Run the E2E smoke subset (the interaction-focused specs CI would run) |
+| `make test-e2e-browsers` | Run the cross-browser Playwright subset |
+| `make test-e2e-mobile` | Run the mobile/touch Playwright suite used by PR CI |
+| `make test-e2e-smoke` | Run the E2E smoke subset |
+| `make test-e2e-smoke-strict` | Run the smoke subset with strict browser-console handling |
 | `make test-perf-e2e` | Run the opt-in Playwright performance suite |
 | `make lint-python` | Run ruff linting on Python |
 | `make check-complexity` | Ratchet cyclomatic complexity (ruff C901) against `scripts/complexity_baseline.json` |
@@ -338,7 +341,8 @@ MIN_NODE_MINOR := 22
 | `make check-demo-links` | Opt-in demo click-through destination audit; reports request failures and human-only checks without failing the command |
 | `make check-zenodo-live` | Opt-in live Zenodo manifest-pin audit using the system Python; requires `ZENODO_TOKEN` and is deliberately not a required CI gate |
 | `make check-cold-fetch` | Opt-in pre-removal gate that downloads hosted demo datasets into a throwaway cache with in-repo payloads hidden, then verifies their hosted SHA-256 pins |
-| `make check-external-references` | Run all network-backed reference audits and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
+| `make check-record-attribution` | Opt-in offline audit comparing each Zenodo record's captured description with the manifest `attribution`; reports where a record asserts a publication describes *the imaging* while the imaging is unpublished (one describing the instrument or method is the correct framing and is never flagged). Report-only because the wording is authored on Zenodo, which is also why its live-repo test asserts only repository-controlled properties — `scripts/tests` runs in the required `python-tests` job |
+| `make check-external-references` | Run every external-reference audit — network-backed ones plus the offline record-attribution comparison — and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
 | `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
 ### Utilities
@@ -371,6 +375,40 @@ MIN_NODE_MINOR := 22
 | `make release-check` | Dry-run release: run ALL preflight checks, tag/push nothing |
 | `make release` | Cut release: validate main + CI green, tag `v<version>`, push (triggers PyPI publish) |
 | `make publish` / `make publish-test` | Disabled — use `make release` (tag-triggered OIDC publish via CI) |
+
+#### Native backend release verification
+
+The Linux compile gate cannot exercise the Objective-C++ binding, the Metal
+shader compiler, or the Metal parity suite. Hosted macOS CI and a dedicated Mac
+runner are not used today — they are deferred until a Mac runner exists.
+Every release candidate must therefore be checked manually on Apple silicon
+before it is tagged:
+
+```bash
+hatch run check-native --require cxx --require metal
+LUXAR_REQUIRE_METAL=1 hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests -v -rs
+```
+
+Without a CUDA toolkit, the compile check must report successful checks for
+`nlm/bindings.cpp`, `metal/bindings.mm`, and `metal/kernels.metal`, skip
+`cuda/bindings.cpp` because its headers are unavailable, report the `nvcc` arm
+as `SKIP`, and finish with `3/3 translation unit(s) compile-checked`. The parity
+command fails during pytest configuration if the Metal backend or MPS interop is
+unavailable, so a release check cannot pass with the Metal tests silently
+skipped.
+
+CUDA compile and parity coverage runs on a separate low-priority, dispatch-only
+cadence rather than in pull-request CI, because the device compile takes minutes
+and the workstation GPUs are shared with interactive work. The systemd timer in
+`royerlab/luxar-ci` dispatches `.github/workflows/cuda-nightly.yml` with
+`--ref dev`; a newly added dispatch workflow is unavailable until promotion
+first carries it to the default branch (`main`). The two-GPU job compile-checks
+both `nvcc` translation units, builds the splatting and NLM extensions, and runs
+both parity suites with `LUXAR_REQUIRE_CUDA=1`, so a missing backend fails during
+pytest configuration instead of silently skipping. A failure opens or updates
+the `CUDA native cadence failure` issue assigned to @royerloic. The daily
+`.github/workflows/cadence-liveness.yml` job separately fails when successful
+dispatches stop arriving within the cadence table's staleness window.
 
 ## Dependency Management
 
@@ -804,7 +842,7 @@ and each job runs its expensive steps only for the domain(s) it covers:
 | Domain | Set by | Gates |
 |--------|--------|-------|
 | `dom_py` | `*.py`, `Makefile`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh`, plus cross-language gate inputs listed below | `python-tests`, `wheel-viewer` |
-| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}`, plus gallery-selection inputs listed below | `typescript-tests`, `release-readiness`, `wheel-viewer` |
+| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}`, plus gallery-selection and E2E-wiring inputs listed below | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_rust` | `*.rs`, `Cargo.toml/lock` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_go` | `*.go`, `go.mod/sum`, `cli/_launchers/` | `go-launcher` |
 
@@ -835,29 +873,54 @@ reads that same `CLAUDE.md` and skill page, and adds
 `.agents/skills/luxar-gsplat-pipeline/SKILL.md` and
 `docs/specs/GSPLATS_DIMENSION_MAPPING.md` to the Python-owned set.
 Consequently, every `CLAUDE.md` edit runs the Python matrix.
-Two workflow files and `.gitattributes` are `dom_py` for the same reason:
-`test_docs_workflow.py` reads `docs.yml` and `.gitattributes`, and
+Five workflow files, `.gitattributes`, and `.gitignore` are `dom_py` for the
+same reason: `test_docs_workflow.py` reads `docs.yml` and `.gitattributes`,
 `test_run_external_reference_audits.py` asserts the schedule, permissions and
-token wiring of `external-reference-audits.yml`. A workflow file matches no
-other domain on its own, so each has to be named or its guard never runs.
+token wiring of `external-reference-audits.yml`, the classifier test parses
+`coverage.yml` and `cuda-nightly.yml`,
+`test_daily_workflow_has_the_permissions_and_token_to_enforce_the_table` parses
+`cadence-liveness.yml`, and the wheel-completeness guard reads `.gitignore`. A
+workflow file matches no other domain on its own, so each has to be named or its
+guard never runs.
 Viewer TypeScript sources read by Python contract tests are also `dom_py`.
 Those tests resolve files through the shared `viewer_source()` helper, and
 `test_ci_diff_classifier.py` statically scans every literal helper call: each
 must have a Python `GATE_INPUTS` row, while every `NON_PYTHON_DOMAIN_PATHS`
-control must remain unread. Five viewer inputs are consumed without opening a
-named path in a test: the version and generated-format checks run through their
-scripts, while `test_fixture_environment.py` matches its three fixture files via
-`git grep`. The classifier test keeps those explicit exceptions disjoint from
-the scanned readers and requires every `dom_py` viewer row to be in one set or
-the other. `GATE_INPUTS` is therefore the exact declaration; the workflow ERE is
-its checked copy rather than a second unchecked inventory. Ownership stays
+control must remain unread. A second scan checks whole tracked non-Python path
+literals in pytest test modules, `conftest.py` files, and helpers under `tests/`,
+while a third resolves module-level, repo-rooted `Path` chains that flow into
+`read_text`, `read_bytes`, or read-only `open` calls. Every discovered path that
+lacks `dom_py` needs a Python `GATE_INPUTS` row or a justified exclusion, even if
+another language already owns it. Documentation relevance is also independent:
+Markdown and RST inputs read by pytest still need `dom_py` even though they
+select `docs-quality`.
+Ten viewer inputs are consumed without a literal `viewer_source()` call: the
+version and generated-format checks run through their scripts, direct readers
+include the viewer README and two `CURRENT_VERSION_CLAIMS` sources, while
+`test_fixture_environment.py` matches its three fixture files via `git grep` and
+the two repo-rooted `readFileSync` reader files are scanned by the classifier.
+The classifier test keeps those explicit exceptions disjoint from the scanned
+readers and requires every `dom_py` viewer row to be in one set or the other.
+`GATE_INPUTS` is therefore the exact declaration; the workflow ERE is its
+checked copy rather than a second unchecked inventory. Ownership stays
 file-narrow so unrelated viewer changes do not pull in the Python matrix. The
 docs gate has no corresponding hole: it already owns every viewer TypeScript
 source under `src/`, while viewer tools outside `src/` are outside both the
 documentation checker's viewer scan and TypeDoc's entry points. `dom_ts`
-explicitly owns the root `README.md` and gallery manifest because the
+explicitly owns the root `README.md` and both gallery manifests because the
 gallery-selection unit test resolves and validates the README capture set from
-them.
+them. It also owns the root `Makefile` because the generated-fixture freshness
+test checks its E2E fixture prerequisite wiring, plus
+`scripts/generate_builtin_colormaps.py` because the viewer's third-party notices
+test scrapes its colormap tables. A narrow static scan over viewer `src/**/*.test.ts`
+files finds literal `readFileSync` inputs rooted through `join(REPO_ROOT, ...)` or
+`resolve(REPO_ROOT, ...)` and requires each to have a TypeScript `GATE_INPUTS` row.
+The matched reader source set must exactly equal the named Python inputs so their
+edits run the classifier and stale ownership rows are rejected. This scan does not
+cover `import.meta`-rooted reads, `*.spec.ts`, or `scripts/*.test.mjs`; those
+existing inputs are already owned by broader TypeScript patterns, while a
+brand-new `*.test.ts` reader is reported the next time another Python-relevant
+change runs the repository-wide classifier.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
@@ -1014,7 +1077,7 @@ that cap without re-measuring queue pressure.
 | Tool | Minimum Version | Reason |
 |------|----------------|--------|
 | Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
-| Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x needs only 20.19 |
+| Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x supports `^20.19.0 || >=22.12.0` |
 | Rust | stable | WASM compilation |
 | wasm-pack | 0.15.0 (pinned) | WASM packaging — `install-rust` installs exactly `WASM_PACK_VERSION` (see the Makefile) with `cargo install --locked --force`, then fails unless PATH answers with that version |
 

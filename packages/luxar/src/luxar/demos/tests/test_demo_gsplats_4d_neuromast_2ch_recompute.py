@@ -1,24 +1,25 @@
 """Tests for the neuromast demo's recompute and scene-compilation paths.
 
-Six things here are worth pinning, each with a quiet failure mode:
+Seven things here are worth pinning, each with a quiet failure mode:
 
-1. **The background subtraction.** A single measured floor per channel,
-   subtracted with a clip at 0. Forgetting the clip leaves negative intensities,
-   which the fitter reads as signal; re-measuring the floor instead of using the
-   recorded one drifts the whole fit.
+1. **The source contract.** The fit reads the RAW assembled array (the camera
+   pedestal is kept, see the demo docstring's step 2), so the only thing between
+   the source and the GPU is the shape check; a wrong file must fail there.
 2. **Two sources, not one.** The channels were acquired and assembled
-   separately, so the recompute needs a path per channel and the two floors are
-   different. A single ``--source`` would fit one channel twice.
+   separately, so the recompute needs a path per channel and the two recorded
+   camera pedestals differ. A single ``--source`` would fit one channel twice.
 3. **The recipe constants.** ``--jobs-per-gpu`` must not be ``auto``: on the
    acquisition box ``auto`` sized 100 concurrent workers for 100 tasks and every
    one was OOM-killed before a tile landed.
 4. **The upstream provenance.** The durable HPC directories, numeric TIFF order,
-   axis convention and floor measurement are the recipe for rebuilding the two
-   assembled arrays if the current copies disappear.
+   axis convention and camera-pedestal measurement are the recipe for rebuilding
+   the two assembled arrays if the current copies disappear.
 5. **The download estimate.** It must stay derived from both manifest archives,
    or metadata can silently drift when either channel is re-uploaded.
 6. **The shipped appearance.** The compiled scene must preserve the tuned
-   blending, optical depth, windows, gamma, opacity, order, and exposure.
+   additive blending, windows, gamma, opacity, order, and exposure.
+7. **The opening camera.** It must look from the low-depth side at the
+   amplitude-weighted middle frame and scale with the archive coordinates.
 """
 
 import json
@@ -105,7 +106,7 @@ def test_manifest_and_download_size_pin_the_channel_pair() -> None:
 
 @pytest.fixture(autouse=True)
 def _small_shape(monkeypatch):
-    """Run the subtraction against a 360-voxel array, not an 11 GB one."""
+    """Run source-shape probes against 360 voxels, not an 11 GB array."""
     monkeypatch.setattr(demo, "SOURCE_SHAPE", SMALL)
 
 
@@ -135,56 +136,40 @@ def _leaf_with_rungs(rungs, *, splats_per_rung=1):
     return GSplatLeaf(additive_sublods=[sublod] * rungs, meta={})
 
 
-def _tiny_gsplat_store(path: Path) -> Path:
+def _tiny_gsplat_store(path: Path, centers=None, amplitudes=None) -> Path:
+    if centers is None:
+        centers = np.array([[0, 0, 0, 0], [1, 1, 1, 1]], dtype=np.float32)
+    centers = np.asarray(centers, dtype=np.float32)
+    if amplitudes is None:
+        amplitudes = np.ones(len(centers), dtype=np.float32)
     save_gsplats(
         path,
-        centers=np.array([[0, 0, 0, 0], [1, 1, 1, 1]], dtype=np.float32),
-        amplitudes=np.ones(2, dtype=np.float32),
-        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1, 0, 0, 0, 1], (2, 1)).astype(
-            np.float32
-        ),
+        centers=centers,
+        amplitudes=np.asarray(amplitudes, dtype=np.float32),
+        cholesky_factors=np.tile(
+            [1, 0, 1, 0, 0, 1, 0, 0, 0, 1], (len(centers), 1)
+        ).astype(np.float32),
         ordering="none",
     )
     return path
 
 
-class TestTheBackgroundSubtractionIsClippedAtZero:
-    def test_values_below_the_floor_become_zero_not_negative(self, tmp_path):
-        values = np.full(SMALL, 5.0, dtype=np.float32)
-        values[0, 0, 0, 0] = 100.0
-        src = _source(tmp_path, values=values)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=10.0)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        data = np.asarray(out[:])
-        assert data.min() == 0.0, "a negative intensity reads to the fitter as signal"
-        assert data[0, 0, 0, 0] == pytest.approx(90.0)
-
-    def test_the_floor_is_subtracted_not_divided_out(self, tmp_path):
-        values = np.full(SMALL, 30.0, dtype=np.float32)
-        src = _source(tmp_path, values=values)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=10.0)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        assert np.asarray(out[:]).max() == pytest.approx(20.0)
-
-    def test_the_floor_actually_used_is_recorded_on_the_output(self, tmp_path):
+class TestTheSourceIsValidatedBeforeTheGpu:
+    def test_the_full_recording_is_accepted(self, tmp_path):
         src = _source(tmp_path)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=7.25)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        assert dict(out.attrs)["background_floor"] == pytest.approx(7.25)
-        assert dict(out.attrs)["axes"] == demo.SOURCE_AXES
+        assert demo._validate_source(src) == SMALL
 
-    def test_every_timepoint_is_written_not_just_the_first(self, tmp_path):
-        """The loop writes per timepoint; an off-by-one leaves the tail at zero,
-        which looks like a dark stretch of the movie rather than an error."""
-        values = np.full(SMALL, 20.0, dtype=np.float32)
-        src = _source(tmp_path, values=values)
-        demo._subtract_background(src, tmp_path / "out.zarr", floor=5.0)
-        out = open_group(tmp_path / "out.zarr", mode="r")[demo.BGSUB_ARRAY_KEY]
-        data = np.asarray(out[:])
-        for t in range(SMALL[0]):
-            assert data[t].min() == pytest.approx(15.0), f"timepoint {t} not written"
+    def test_a_mismatched_extent_is_refused_before_the_gpu(self, tmp_path):
+        src = _source(tmp_path, shape=(SMALL[0], SMALL[1] + 1) + SMALL[2:])
+        with pytest.raises(SystemExit, match="has shape"):
+            demo._validate_source(src)
 
-    def test_a_zip_store_is_closed_after_the_streamed_read(self, tmp_path):
+    def test_a_store_with_no_array_at_its_root_is_refused(self, tmp_path):
+        open_group(tmp_path / "empty.zarr", mode="w")
+        with pytest.raises(SystemExit, match="no array at its root"):
+            demo._validate_source(tmp_path / "empty.zarr")
+
+    def test_a_zip_store_is_closed_after_the_shape_probe(self, tmp_path):
         import zarr
         from zarr.storage import ZipStore
 
@@ -198,18 +183,6 @@ class TestTheBackgroundSubtractionIsClippedAtZero:
             opened_store = opened.store
             assert opened_store._is_open
         assert not opened_store._is_open
-
-
-class TestAWrongShapedSourceIsRefused:
-    def test_a_mismatched_extent_is_refused_before_the_gpu(self, tmp_path):
-        src = _source(tmp_path, shape=(4, 3, 5, 7))
-        with pytest.raises(SystemExit, match="want"):
-            demo._subtract_background(src, tmp_path / "out.zarr", floor=1.0)
-
-    def test_a_store_with_no_array_at_its_root_is_refused(self, tmp_path):
-        open_group(tmp_path / "empty.zarr", mode="w")
-        with pytest.raises(SystemExit, match="no array at its root"):
-            demo._subtract_background(tmp_path / "empty.zarr", tmp_path / "o.zarr", 1.0)
 
 
 class TestBothChannelsNeedTheirOwnSource:
@@ -232,15 +205,18 @@ class TestBothChannelsNeedTheirOwnSource:
         assert "--source-nuclei" in str(exc.value)
         assert "--source-membranes" not in str(exc.value)
 
-    def test_the_two_channels_carry_different_floors(self):
+    def test_the_two_channels_carry_different_pedestals(self):
         """They were assembled separately from different acquisitions, so a
-        shared floor would be wrong for at least one of them."""
-        floors = {ch["name"]: ch["background_floor"] for ch in demo.CHANNELS}
-        assert len(set(floors.values())) == 2
+        shared pedestal value would be wrong for at least one of them."""
+        pedestals = {ch["name"]: ch["camera_pedestal"] for ch in demo.CHANNELS}
+        assert len(set(pedestals.values())) == 2
 
-    def test_the_two_channels_carry_different_expected_counts(self):
-        counts = {ch["name"]: ch["expected_splats"] for ch in demo.CHANNELS}
-        assert len(set(counts.values())) == 2
+    def test_the_expected_counts_are_the_unculled_seed_budget(self):
+        """With no cull anywhere (fit-time retention 0, no post-fit step) every
+        frame keeps exactly its seeds, so both channels record SEEDS x frames.
+        The 2026-08 culled build had 5,864,440 / 5,530,300 and the two differed."""
+        for ch in demo.CHANNELS:
+            assert ch["expected_splats"] == demo.SEEDS * REAL_SOURCE_SHAPE[0]
 
     def test_every_channel_carries_a_layer_order(self):
         """``create_luxar_scene`` reads ``ch["layer_order"]`` per channel.
@@ -287,25 +263,26 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
     output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
     root = open_group(output, mode="r")
 
+    # Validated on 2026-09-13 against the archives currently pinned in the manifest.
     expected = {
         "membranes": {
-            "window": (0.007, 0.242),
-            "gamma": 1.67,
+            "window": (0.0, 0.101),
+            "gamma": 0.71,
             "opacity": 0.5,
             "layer_order": 10,
         },
         "nuclei": {
-            "window": (0.025, 0.719),
-            "gamma": 2.82,
-            "opacity": 1.0,
+            "window": (0.0, 0.05),
+            "gamma": 0.69,
+            "opacity": 0.47,
             "layer_order": 20,
         },
     }
     for name, appearance in expected.items():
         attrs = dict(root[name].attrs)
         lo, hi = appearance["window"]
-        assert attrs["blending_mode"] == "volumetric"
-        assert attrs["absorption"] == pytest.approx(0.02)
+        assert attrs["blending_mode"] == "additive"
+        assert attrs.get("absorption", 1.0) == pytest.approx(1.0)
         assert attrs["gamma"] == pytest.approx(appearance["gamma"])
         assert attrs["opacity"] == pytest.approx(appearance["opacity"])
         assert attrs["layer_order"] == appearance["layer_order"]
@@ -315,24 +292,145 @@ def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
     assert dict(root.attrs)["viewer_config"]["exposure"] == pytest.approx(-3.4)
 
 
-class TestEmptyFitTilesSurviveTheCullStage:
-    def test_empty_markers_are_copied_beside_culled_tiles(self, monkeypatch, tmp_path):
-        fit_dir = tmp_path / "fit"
-        tiles = fit_dir / "tiles"
-        tiles.mkdir(parents=True)
-        (fit_dir / "manifest.json").write_text("{}")
-        (tiles / "tile_00000.gsplats.zarr").mkdir()
-        (tiles / "tile_00001.gsplats.zarr.empty").write_text("")
-        calls = []
-        monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
+def test_compiled_scene_authors_a_signal_derived_scale_independent_camera(
+    tmp_path,
+) -> None:
+    centers = np.array(
+        [
+            [1, 0, 10, 0],
+            [5, 100, 90, 2],
+            [2, 20, 30, 1],
+            [4, 40, 70, 1],
+            [3, 60, 50, 1],
+        ],
+        dtype=np.float32,
+    )
+    amplitudes = (
+        np.array([255, 255, 51, 153, 0], dtype=np.float32),
+        np.array([255, 255, 0, 0, 102], dtype=np.float32),
+    )
 
-        count = demo._cull_tiles(fit_dir, tmp_path / "culled")
+    def compile_camera(scale: float | tuple[float, float, float], suffix: str) -> dict:
+        scaled = centers.copy()
+        scaled[:, :3] *= scale
+        channel_paths = [
+            _tiny_gsplat_store(
+                tmp_path / f"{channel['name']}_{suffix}.gsplats.zarr",
+                scaled,
+                amplitudes[index],
+            )
+            for index, channel in enumerate(demo.CHANNELS)
+        ]
+        output = demo.create_luxar_scene(
+            channel_paths, tmp_path / f"scene_{suffix}.luxar.zarr"
+        )
+        return dict(open_group(output, mode="r").attrs)["viewer_config"]["camera"]
 
-        assert count == 1
-        assert len(calls) == 1
-        assert (
-            tmp_path / "culled" / "tiles" / "tile_00001.gsplats.zarr.empty"
-        ).exists()
+    camera = compile_camera(1.0, "pixels")
+    scaled_camera = compile_camera(0.1083, "microns")
+    anisotropic_scale = (0.1, 0.1083, 0.1083)
+    anisotropic_camera = compile_camera(anisotropic_scale, "anisotropic")
+
+    expected_target = np.array([10 / 3, 130 / 3, 170 / 3])
+    target = np.asarray(camera["target"])
+    position = np.asarray(camera["position"])
+    direction = position - target
+    distance = np.linalg.norm(direction)
+    angle_from_low_depth_normal = np.degrees(
+        np.arccos(np.clip(-direction[0] / distance, -1.0, 1.0))
+    )
+
+    assert target == pytest.approx(expected_target)
+    # Fixture p95 projected radius 32.047 / fill / tan(cinematic half-FOV).
+    assert distance == pytest.approx(84.349, rel=1e-4)
+    assert position[0] < centers[:, 0].min()
+    assert position[2] > target[2]
+    assert 35.0 <= angle_from_low_depth_normal <= 40.0
+    assert camera["up"] == pytest.approx([0.0, 1.0, 0.0])
+    assert scaled_camera["target"] == pytest.approx(target * 0.1083, rel=1e-4, abs=1e-5)
+    assert scaled_camera["position"] == pytest.approx(
+        position * 0.1083, rel=1e-4, abs=1e-5
+    )
+    anisotropic_target = np.asarray(anisotropic_camera["target"])
+    anisotropic_direction = (
+        np.asarray(anisotropic_camera["position"]) - anisotropic_target
+    )
+    anisotropic_angle = np.degrees(
+        np.arccos(
+            np.clip(
+                -anisotropic_direction[0] / np.linalg.norm(anisotropic_direction),
+                -1.0,
+                1.0,
+            )
+        )
+    )
+    assert anisotropic_target == pytest.approx(
+        expected_target * np.asarray(anisotropic_scale), rel=1e-4, abs=1e-5
+    )
+    assert anisotropic_camera["position"][0] < (centers[:, 0] * 0.1).min()
+    assert anisotropic_angle == pytest.approx(demo.CAMERA_ANGLE_DEG)
+
+
+def test_compiled_scene_uses_one_union_reference_time_for_both_channels(
+    tmp_path,
+) -> None:
+    channel_centers = (
+        np.array([[0, 0, 0, 0], [10, 20, 30, 1]], dtype=np.float32),
+        np.array([[0, 0, 0, -1e-6], [10, 20, 30, 1 - 1e-6]], dtype=np.float32),
+    )
+    channel_paths = [
+        _tiny_gsplat_store(
+            tmp_path / f"{channel['name']}.gsplats.zarr",
+            channel_centers[index],
+            [1, 1],
+        )
+        for index, channel in enumerate(demo.CHANNELS)
+    ]
+
+    output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
+    camera = dict(open_group(output, mode="r").attrs)["viewer_config"]["camera"]
+
+    assert camera["target"] == pytest.approx([0.0, 0.0, 0.0], abs=1e-5)
+
+
+def test_compiled_scene_dimensions_cover_both_channels(tmp_path) -> None:
+    # Keep the endpoint offsets below one uint16 step of the union extent so
+    # this test reaches the union assertion rather than the co-registration guard.
+    channel_paths = [
+        _tiny_gsplat_store(
+            tmp_path / "membranes.gsplats.zarr",
+            [[1, 2, 3, 0], [10, 20, 30, 1]],
+        ),
+        _tiny_gsplat_store(
+            tmp_path / "nuclei.gsplats.zarr",
+            [[0.9999, 1.9999, 2.9999, 0], [10.0001, 20.0001, 30.0001, 1]],
+        ),
+    ]
+
+    output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
+    dimensions = dict(open_group(output, mode="r").attrs)["scene_dimensions"]
+    by_name = {dimension["name"]: dimension for dimension in dimensions["dimensions"]}
+
+    assert by_name["Z"]["range"] == pytest.approx([0.9999, 10.0001])
+    assert by_name["Y"]["range"] == pytest.approx([1.9999, 20.0001])
+    assert by_name["X"]["range"] == pytest.approx([2.9999, 30.0001])
+    assert all(by_name[name]["unit"] == "µm" for name in ("Z", "Y", "X"))
+
+
+def test_compiled_scene_rejects_channels_with_divergent_bounds(tmp_path) -> None:
+    channel_paths = [
+        _tiny_gsplat_store(
+            tmp_path / "membranes.gsplats.zarr",
+            [[1, 2, 3, 0], [10, 20, 30, 1]],
+        ),
+        _tiny_gsplat_store(
+            tmp_path / "nuclei.gsplats.zarr",
+            [[2, 2, 3, 0], [11, 20, 30, 1]],
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="co-register"):
+        demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
 
 
 class TestTheRecipeConstantsMatchTheRecordedRun:
@@ -358,8 +456,8 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert demo.SOURCE_AXES == "time,z,y,x"
         assert demo.SOURCE_AXES == "time," + demo.SOURCE_FRAME_AXES
 
-    def test_the_background_floor_recipe_is_recorded(self):
-        assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == (
+    def test_the_camera_pedestal_recipe_is_recorded(self):
+        assert demo.CAMERA_PEDESTAL_SAMPLE_INDICES == (
             0,
             11,
             22,
@@ -371,28 +469,28 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
             88,
             99,
         )
-        assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == tuple(
+        assert demo.CAMERA_PEDESTAL_SAMPLE_INDICES == tuple(
             int(round(value)) for value in np.linspace(0, REAL_SOURCE_SHAPE[0] - 1, 10)
         )
-        assert demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE == 95.0
-        assert demo.BACKGROUND_FLOOR_HISTOGRAM_BINS == 512
-        assert demo.BACKGROUND_FLOOR_REDUCTION == "median"
-        floors = {ch["name"]: ch["background_floor"] for ch in demo.CHANNELS}
+        assert demo.CAMERA_PEDESTAL_HISTOGRAM_PERCENTILE == 95.0
+        assert demo.CAMERA_PEDESTAL_HISTOGRAM_BINS == 512
+        assert demo.CAMERA_PEDESTAL_REDUCTION == "median"
+        floors = {ch["name"]: ch["camera_pedestal"] for ch in demo.CHANNELS}
         assert floors == {
             "membranes": 105.9911880493164,
             "nuclei": 103.88801574707031,
         }
 
-    def test_the_recorded_per_frame_recipe_matches_estimate_floor(self):
+    def test_the_recorded_per_frame_pedestal_recipe_matches_estimate_floor(self):
         rng = np.random.default_rng(0)
         frame = rng.normal(104.0, 2.0, (32, 32)).astype(np.float32)
         frame[12:16, 12:16] += 400.0
         assert np.all(frame > 0.0)
-        upper = np.percentile(frame, demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE)
+        upper = np.percentile(frame, demo.CAMERA_PEDESTAL_HISTOGRAM_PERCENTILE)
         background = frame[frame <= upper]
         histogram, edges = np.histogram(
             background.astype(np.float64),
-            bins=demo.BACKGROUND_FLOOR_HISTOGRAM_BINS,
+            bins=demo.CAMERA_PEDESTAL_HISTOGRAM_BINS,
         )
         peak = int(np.argmax(histogram))
         recorded_floor = float(0.5 * (edges[peak] + edges[peak + 1]))
@@ -421,15 +519,74 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
 
     def test_the_stacked_axis_is_last_in_the_fitted_output(self):
         """The source is time-FIRST; the fit emits spatial-first, stacked-last.
-        The Z scale therefore applies to index 0, not index 1."""
-        assert demo.SOURCE_AXES.startswith("time")
-        assert demo.VOXEL_SCALE[0] == 2.5
-        assert demo.VOXEL_SCALE[1:] == (1.0, 1.0, 1.0)
+        The Z scale therefore applies to index 0, not index 1.
 
-    def test_the_cull_threshold_is_the_measured_one(self):
-        """Chosen from a 0.02/0.05/0.10/0.20/0.35 sweep as the most aggressive
-        setting still SSIM-flat."""
-        assert demo.REDUNDANCY_THRESHOLD == 0.20
+        Placement only — the values are pinned by the sibling test below.
+        """
+        assert demo.SOURCE_AXES.startswith("time")
+        assert demo.VOXEL_SCALE[0] != demo.VOXEL_SCALE[1]
+        assert demo.VOXEL_SCALE[1] == demo.VOXEL_SCALE[2]
+        assert demo.VOXEL_SCALE[3] == 1.0, "the stacked time axis is unchanged"
+
+    def test_the_spatial_scale_is_the_measured_voxel_size_in_microns(self):
+        """The MetaMorph headers record 0.25 um z steps and 0.1083 um pixels.
+
+        Pin all three spatial axes: an anisotropy-only ratio gets the proportions
+        right but leaves the scene in lateral-pixel units while its axes claim um.
+        """
+        assert demo.VOXEL_SCALE == pytest.approx((0.25, 0.1083, 0.1083, 1.0))
+
+    def test_the_recipe_has_no_cull_at_all(self, monkeypatch, tmp_path):
+        """The 2026-08 build redundancy-culled every tile at 0.20 and lost 17-26 dB
+        of foreground; the recipe now keeps every splat the fit produces. Pin both
+        halves: no `gsplat cull` invocation anywhere, and the batch fit itself
+        told to keep everything (`--cull-retention 0.0`) while building the
+        streaming ladder in its own merge."""
+        calls: list[tuple[str, ...]] = []
+
+        def fake_cli(*args):
+            calls.append(tuple(args))
+            if args[:3] == ("gsplat", "batch-fit", "run"):
+                (Path(args[4]) / "merged" / "final.gsplats.zarr").mkdir(parents=True)
+
+        monkeypatch.setattr(demo, "run_luxar_cli", fake_cli)
+        monkeypatch.setattr(demo, "_validate_source", lambda src: None)
+        monkeypatch.setattr(demo, "load_gsplat_node", lambda *a, **k: (None, None))
+        monkeypatch.setattr(demo, "iter_leaves", lambda node: [])
+        monkeypatch.setattr(
+            demo, "_validate_rebuilt_channel", lambda ch, leaves: ch["expected_splats"]
+        )
+
+        demo.recompute_channel(demo.CHANNELS[0], tmp_path / "src.zarr", tmp_path)
+
+        assert [c[:2] for c in calls] == [
+            ("gsplat", "batch-fit"),
+            ("gsplat", "transform"),
+        ], "a cull step crept back into the recipe"
+        fit = calls[0]
+        assert fit[fit.index("--cull-retention") + 1] == "0.0"
+        assert fit[fit.index("--merge-recipe") + 1] == "stream"
+        assert fit[fit.index("--merge-n-lods") + 1] == str(demo.EXPECTED_RUNGS)
+        # The raw frames have minimum 0, so the legacy hard-min floor is a no-op.
+        assert fit[fit.index("--floor") + 1] == "none"
+        # The raw root-level array is the fit input; nothing is pre-subtracted.
+        assert fit[3] == str(tmp_path / "src.zarr")
+        assert "--array-key" not in fit
+        assert not hasattr(demo, "REDUNDANCY_THRESHOLD")
+
+        # The transform is where physical micron units reach the archive.
+        # Pinned as the EMITTED string: reversing the tuple or dropping --scale
+        # entirely leaves every other assertion in this suite green. Same for
+        # --normalize-intensity: change its value or drop the pair and the
+        # rebuilt amplitudes no longer match the display windows that
+        # ``test_compiled_scene_preserves_the_tuned_appearance`` pins, with
+        # nothing else in this suite going red. Membership is asserted first so
+        # a dropped flag names itself instead of raising a bare ValueError.
+        transform = calls[1]
+        assert "--scale" in transform
+        assert transform[transform.index("--scale") + 1] == "0.25,0.1083,0.1083,1.0"
+        assert "--normalize-intensity" in transform
+        assert transform[transform.index("--normalize-intensity") + 1] == "1.0"
 
     def test_the_seed_budget_is_the_calibrated_k_star(self):
         assert demo.SEEDS == 64_000

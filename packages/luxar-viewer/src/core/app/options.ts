@@ -36,6 +36,13 @@ export interface LuxarAppOptions {
   /** Cache and prefetch flags forwarded to the data loader. */
   loaderConfig?: LoaderConfig;
   /**
+   * Session-wide GPU geometry budget in bytes. `null` auto-sizes from device
+   * memory, measured heap, and device class; `0` disables byte-budget eviction,
+   * and a positive value pins the budget. Defaults to
+   * `config.dataLoading.performance.gpuPoolMaxBytes`.
+   */
+  gpuPoolMaxBytes?: number | null;
+  /**
    * Reflect the loaded dataset URL in the browser address bar via
    * `history.replaceState` so the page can be reloaded or shared.
    *
@@ -159,6 +166,16 @@ export interface LuxarAppOptions {
   lodFinest?: boolean;
 
   /**
+   * Replacement-LOD selection bias in screen-area units. `2` selects one
+   * occupancy-halved level finer and `4` selects two. Because finite screen-area
+   * coverage tops out at `1`, values below `1` make partition-anchored finest
+   * levels unreachable and values below `0.5` do the same for whole-object
+   * finest levels. Non-finite or non-positive values are treated as the neutral
+   * `1`. Default: 1. Mirrors `UrlParams.lodBias` (`?lod-bias=<N>`).
+   */
+  lodBias?: number;
+
+  /**
    * Bake the scene-derived environment once the load settles and hand the
    * container to `luxar env bake` (`__luxarDebug.environment.lastBake` + a
    * download). Mirrors `UrlParams.bakeEnv` / `probe` / `envResolution`
@@ -212,4 +229,32 @@ export interface LuxarAppOptions {
    * still fire, so a host can implement its own behaviour instead.
    */
   allowLinks?: boolean;
+
+  /**
+   * Attach to a remote-control hub at this WebSocket URL, letting an external
+   * controller (a kiosk touch panel, a script, an agent) drive this viewer
+   * through the embedder API. Undefined or null ⇒ no channel is opened.
+   *
+   * Mirrors `UrlParams.control` (`?control`), which the standalone bootstrap
+   * threads here already validated — an embedder passing this directly is
+   * responsible for the URL it supplies. See
+   * `core/app/control/control-client.ts` for what a controller may call.
+   */
+  control?: string | null;
+
+  /**
+   * Shared secret presented to the hub as `?token=` (`luxar serve
+   * --control-token`). Mirrors `UrlParams.controlToken`.
+   */
+  controlToken?: string | null;
+
+  /**
+   * Lock the display down for unattended public use (`?kiosk`).
+   *
+   * A HARD override over the scene's authored `ui.kiosk` block: this is the
+   * operator's channel, so a store that predates the block — or one borrowed
+   * for an exhibit it was never authored for — is still lockable from the
+   * launch command. See `config/kiosk.ts`.
+   */
+  kiosk?: boolean;
 }

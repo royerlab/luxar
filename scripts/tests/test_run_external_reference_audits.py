@@ -24,21 +24,37 @@ def test_all_external_reference_audits_are_declared() -> None:
     assert [audit.name for audit in audit_module.AUDITS] == [
         "Documentation links",
         "Demo click-throughs",
+        "Zenodo record snapshots",
+        "Record attribution",
         "Zenodo manifest pins",
         "Hosted gallery media",
     ]
-    assert audit_module.AUDITS[2].required_env == ("ZENODO_TOKEN",)
-    assert audit_module.AUDITS[2].command == ("make", "check-zenodo-live")
-    assert audit_module.AUDITS[3].command == ("make", "check-gallery-media")
+    assert audit_module.AUDITS[2].required_env == ()
+    assert audit_module.AUDITS[2].command == ("make", "check-zenodo-snapshots")
+    assert audit_module.AUDITS[3].required_env == ()
+    assert audit_module.AUDITS[3].command == ("make", "check-record-attribution")
+    assert audit_module.AUDITS[4].required_env == ("ZENODO_TOKEN",)
+    assert audit_module.AUDITS[4].command == ("make", "check-zenodo-live")
+    assert audit_module.AUDITS[5].command == ("make", "check-gallery-media")
 
 
 def test_make_targets_use_the_intended_python_environments() -> None:
     makefile = (SCRIPT.parents[1] / "Makefile").read_text()
 
     assert (
-        "check-external-references:  ## Run all network-backed reference audits"
+        "check-external-references:  ## Run all external reference audits"
         " (report-only)\n\t$(HATCH) run python scripts/run_external_reference_audits.py"
         in makefile
+    )
+    assert (
+        "check-zenodo-snapshots:  ## Compare captured Zenodo record text with live"
+        " records (opt-in)\n\t$(HATCH) run python scripts/zenodo_record_text/capture.py"
+        " --check" in makefile
+    )
+    assert (
+        "check-record-attribution:  ## Compare captured Zenodo record text with"
+        " manifest attribution (opt-in)"
+        "\n\tpython3 scripts/check_record_attribution.py" in makefile
     )
     assert (
         "check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit"
@@ -99,6 +115,52 @@ def test_demo_configuration_findings_are_not_reported_as_parse_failures(
     assert invalid_report.detail == "completed with invalid report levels"
 
 
+def test_record_attribution_drift_warns_and_broken_input_errors(monkeypatch) -> None:
+    # `make` reports its own exit 2 for any nonzero recipe, so the report level
+    # marker, not the exit code, has to be what splits drift from a broken input.
+    failure = "make: *** [Makefile:909: check-record-attribution] Error 1"
+    outputs = iter(
+        (
+            f"[STALE]  gsplats_4d_drosophila_embryogenesis: drifted\n{failure}",
+            f"[CONFIG] droso-timelapse: no captured record text\n{failure}",
+            f"[OK]     gsplats_kidney: clean\n[HUMAN]  (record prose): "
+            f"unattributable\n{failure}",
+        )
+    )
+
+    def run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 2, next(outputs), "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    audit = next(
+        candidate
+        for candidate in audit_module.AUDITS
+        if candidate.command == ("make", "check-record-attribution")
+    )
+
+    drift = audit_module.run_audit(audit, env={})
+    broken_input = audit_module.run_audit(audit, env={})
+    human_check = audit_module.run_audit(audit, env={})
+
+    assert drift.level is audit_module.Level.WARNING
+    assert broken_input.level is audit_module.Level.ERROR
+    # The leg is graded by exit status, not by its markers, so a [HUMAN] line
+    # only survives because the producer exits non-zero for it. Grading it
+    # WARNING rather than NOTICE is the cost of that, and is the safe side.
+    assert human_check.level is audit_module.Level.WARNING
+    assert drift.detail == broken_input.detail == "exited 2"
+
+
+def test_a_human_check_marker_is_never_a_command_error() -> None:
+    """[HUMAN] means a person must look, not that the command is misconfigured.
+
+    How this leg actually grades a `[HUMAN]` line is pinned end to end through
+    `run_audit` by `test_record_attribution_drift_warns_and_broken_input_errors`;
+    only the marker table is this test's business.
+    """
+    assert "[HUMAN]" not in audit_module._COMMAND_ERROR_MARKERS
+
+
 def test_unknown_demo_marker_does_not_override_known_levels() -> None:
     output = "[INFO] nothing wrong here\n[OK] fine\n"
 
@@ -126,7 +188,7 @@ def test_missing_configuration_is_a_notice_without_running(monkeypatch) -> None:
 
     monkeypatch.setattr(subprocess, "run", unexpected_run)
 
-    result = audit_module.run_audit(audit_module.AUDITS[2], env={})
+    result = audit_module.run_audit(audit_module.AUDITS[4], env={})
 
     assert result.level is audit_module.Level.NOTICE
     assert result.detail == "not configured; leg skipped: ZENODO_TOKEN"
@@ -154,6 +216,8 @@ def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) ->
             (2, "audit output"),
             (0, "[OK] host-a"),
             (1, "audit output"),
+            (1, "audit output"),
+            (1, "audit output"),
             (0, "gallery media verified"),
         )
     )
@@ -173,6 +237,8 @@ def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) ->
     assert [result.level for result in results] == [
         audit_module.Level.WARNING,
         audit_module.Level.PASS,
+        audit_module.Level.WARNING,
+        audit_module.Level.WARNING,
         audit_module.Level.WARNING,
         audit_module.Level.PASS,
     ]
@@ -229,7 +295,7 @@ def test_rejected_required_credential_is_a_configuration_error(
     )
 
     result = audit_module.run_audit(
-        audit_module.AUDITS[2], env={"ZENODO_TOKEN": "rejected-token"}
+        audit_module.AUDITS[4], env={"ZENODO_TOKEN": "rejected-token"}
     )
 
     assert result.level is audit_module.Level.ERROR
@@ -319,7 +385,7 @@ def test_zenodo_transport_failures_remain_warnings(monkeypatch, failure: str) ->
     )
 
     result = audit_module.run_audit(
-        audit_module.AUDITS[2], env={"ZENODO_TOKEN": "configured-token"}
+        audit_module.AUDITS[4], env={"ZENODO_TOKEN": "configured-token"}
     )
 
     assert result.level is audit_module.Level.WARNING

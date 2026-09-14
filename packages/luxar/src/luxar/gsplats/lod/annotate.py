@@ -9,8 +9,10 @@ retrofits the stamps **without refitting or re-laddering**:
 * ``lod_stats.energy_fraction_cum`` per additive sub-LOD — the cumulative
   self-energy fraction ``e(k)`` of the committed prefix. Cheap: an O(N) pass
   over the ALPHA-EFFECTIVE amplitudes (``A·α`` — RGBA color-alpha folded in,
-  matching the build path's ``effective_amplitudes``) + the Cholesky
-  *diagonal* only (the on-disk order **is** the ladder order).
+  matching the build path's ``effective_amplitudes``) + Cholesky diagonal (the
+  on-disk order **is** the ladder order). LOD children additionally decode
+  their covariance to stamp the per-level footprint without materializing full
+  splat objects.
 * ``level_stats.reference_energy`` per leaf — the absolute self-energy weight
   ``w`` used for partition-level quality aggregation.
 * ``level_stats.quality`` per lod-group child (opt-in, ``with_quality=True``) —
@@ -38,6 +40,7 @@ import numpy as np
 import zarr
 
 from luxar._zarr_compat import consolidate, open_group
+from luxar.gsplats.utils.spatial_axes import spatial_axes_from_max_sigma
 from luxar.utils.lod_methods import is_reveal_method
 
 __all__ = [
@@ -133,8 +136,12 @@ def _apply_alpha_effective(
 
 
 def _chunk_self_energy(
-    group: zarr.Group, root: zarr.Group, decoder: Any
-) -> Tuple[float, int, int]:
+    group: zarr.Group,
+    root: zarr.Group,
+    decoder: Any,
+    *,
+    include_marginal_sigmas: bool,
+) -> Tuple[float, int, int, Optional[np.ndarray]]:
     """One splat set's raw self-energy sum ``Σ aᵢ²·|Π diagᵢ|`` (no ``π^{D/2}``
     constant — it cancels in fractions and is re-applied for the absolute w).
 
@@ -142,15 +149,55 @@ def _chunk_self_energy(
     via :func:`_apply_alpha_effective`, matching the build path's
     ``effective_amplitudes``); equal to the raw amplitude for non-RGBA data.
 
-    Returns ``(raw_energy, n_splats, ndim)``.
+    The cheap path reads only the Cholesky diagonal. When
+    ``include_marginal_sigmas`` is true, the full covariance for this chunk is
+    additionally decoded and returned as ``marginal_sigmas``.
+
+    Returns ``(raw_energy, n_splats, ndim, marginal_sigmas_or_none)``.
     """
     amps = np.asarray(decoder.decode(group["amplitudes"], root), dtype=np.float64)
     if amps.size == 0:
-        return 0.0, 0, 0
+        sigmas = np.empty((0, 0), dtype=np.float64) if include_marginal_sigmas else None
+        return 0.0, 0, 0, sigmas
     amps = _apply_alpha_effective(amps, group, root, decoder)
     diag = np.asarray(_decode_diag(group, root, decoder), dtype=np.float64)
     raw = float(np.sum(amps**2 * np.abs(np.prod(diag, axis=1))))
-    return raw, int(amps.size), int(diag.shape[1])
+    marginal_sigmas = None
+    if include_marginal_sigmas:
+        from luxar.gsplats.utils.trils import unpack_tril
+        from luxar.io._compiler.gsplat_tree import _decode_cholesky
+
+        chol = np.asarray(_decode_cholesky(group, root, decoder), dtype=np.float64)
+        unpacked = unpack_tril(chol, int(diag.shape[1]))
+        marginal_sigmas = np.sqrt(np.sum(unpacked**2, axis=2))
+    return raw, int(amps.size), int(diag.shape[1]), marginal_sigmas
+
+
+def _stamp_level_footprint(
+    group: zarr.Group, sigma_chunks: List[np.ndarray], *, dry_run: bool
+) -> None:
+    """Stamp one LOD child's median scale from its decoded covariance chunks."""
+    nonempty = [sigmas for sigmas in sigma_chunks if sigmas.size]
+    if not nonempty:
+        return
+    max_sigma = np.maximum.reduce([sigmas.max(axis=0) for sigmas in nonempty])
+    axes = spatial_axes_from_max_sigma(max_sigma)
+    footprints = [
+        np.exp(np.mean(np.log(np.clip(sigmas[:, axes], 1e-12, None)), axis=1))
+        for sigmas in nonempty
+    ]
+    finite = np.concatenate(footprints)
+    finite = finite[np.isfinite(finite) & (finite > 0)]
+    if finite.size:
+        _merge_attr_dict(
+            group,
+            "level_stats",
+            {
+                "median_footprint": float(np.median(finite)),
+                "footprint_dims": axes.tolist(),
+            },
+            dry_run=dry_run,
+        )
 
 
 def _merge_attr_dict(
@@ -275,18 +322,27 @@ def _annotate_leaf(
 ) -> None:
     """Stamp ``energy_fraction_cum`` per sub-LOD + ``reference_energy`` on one
     leaf. Only ``amplitudes`` (folded to alpha-effective ``A·α`` via any RGBA
-    ``colors``) + the Cholesky diagonal are decoded, one sub-LOD resident at a
-    time."""
+    ``colors``) + the Cholesky diagonal are decoded one sub-LOD at a time. LOD
+    children additionally retain each sub-LOD's marginal-sigma matrix until the
+    level footprint is stamped."""
     sub_groups = _ladder_sub_groups(group)
 
     raw_energies: List[float] = []
     counts: List[int] = []
+    sigma_chunks: List[np.ndarray] = []
     ndim = 0
     for sub in sub_groups:
-        raw, n, d = _chunk_self_energy(sub, root, decoder)
+        raw, n, d, sigmas = _chunk_self_energy(
+            sub, root, decoder, include_marginal_sigmas=is_lod_child
+        )
         raw_energies.append(raw)
         counts.append(n)
+        if sigmas is not None:
+            sigma_chunks.append(sigmas)
         ndim = max(ndim, d)
+
+    if is_lod_child:
+        _stamp_level_footprint(group, sigma_chunks, dry_run=dry_run)
 
     total_raw = float(sum(raw_energies))
     n_total = int(sum(counts))
@@ -539,7 +595,7 @@ def annotate_quality_store(
         are rejected — extraction is temp-dir based, so in-place is impossible).
     with_quality
         Also measure per-level Q vs each lod group's finest content
-        (loads full splat arrays; the e(k)/w stamps alone are O(N) cheap).
+        (loads full splat arrays; the e(k)/w/footprint stamps alone are O(N)).
     max_pair_splats, device
         Forwarded to :func:`~luxar.gsplats.lod.quality.mixture_quality`.
     dry_run

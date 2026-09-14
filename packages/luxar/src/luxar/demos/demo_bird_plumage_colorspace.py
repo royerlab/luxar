@@ -801,6 +801,19 @@ def _camera(lab: np.ndarray) -> CameraConfig:
     return CameraConfig(position=position, target=(0.0, 0.0, 0.0))
 
 
+def _explainer_text(n_readings: int, n_species: int) -> str:
+    """The concise what-am-I-looking-at paragraph shown under the title."""
+    return (
+        f"Each line is one reflectance spectrum of one plumage patch — "
+        f"{n_readings:,} readings from {n_species:,} bird species — plotted "
+        "in CIELAB as a human sees it: direction is hue, length is chroma, "
+        "height is lightness, each painted in its own colour. Birds also see "
+        "ultraviolet, which this plot cannot hold, so UV chroma is the 4th "
+        "axis: step through its deciles to see which visible colours carry "
+        "the most UV. The grey ghost is the whole corpus."
+    )
+
+
 def _legend_html(labels: list[str], counts: np.ndarray) -> str:
     """A compact readout of what the UV slider is stepping through."""
     rows = "".join(
@@ -822,8 +835,9 @@ def build_scene(output_path: Path, recompute: bool = False) -> int:
     """Build the colour-space scene. Returns the reading count."""
     corpus = load_corpus(recompute=recompute)
     lab, rgb = corpus["lab"], corpus["rgb"]
+    n_species = len(set(corpus["species"].tolist()))
     aprint(f"✓ {len(lab):,} readings")
-    aprint(f"  species: {len(set(corpus['species'].tolist())):,}")
+    aprint(f"  species: {n_species:,}")
     aprint(f"  orders:  {len(set(corpus['order'].tolist())):,}")
 
     uv_bin, bin_labels = _uv_bins(corpus["uv_chroma"])
@@ -927,6 +941,21 @@ def build_scene(output_path: Path, recompute: bool = False) -> int:
                 font_size=0.022,
                 anchor="top-left",
                 color="rgba(255,255,255,0.4)",
+            )
+            # What the frame IS, in one breath: the title and the key hint
+            # alone left a first-time viewer looking at an unexplained
+            # rainbow wedge. A single word-wrapped paragraph (a `\n` in a
+            # non-hover overlay collapses to a space, so no hand line breaks).
+            scene.add_text(
+                _explainer_text(len(lab), n_species),
+                position=(0.02, 0.135),
+                font_size=0.018,
+                anchor="top-left",
+                color="rgba(255,255,255,0.8)",
+                width=0.30,
+                line_height=1.45,
+                background="rgba(0,0,0,0.5)",
+                padding=0.012,
             )
             scene.add_html(
                 _legend_html(bin_labels, counts),

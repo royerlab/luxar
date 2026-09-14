@@ -50,6 +50,11 @@ export interface ViewerConfigPorts {
       stepSize?: number;
     }
   ) => void;
+  /**
+   * Set the scene's authored playback detail (`viewer_config.playback_lod_depth`)
+   * as the default for every dimension. Optional for lightweight test ports.
+   */
+  setDefaultLadderDepth?: (ladderDepth: number | 'auto' | null) => void;
 }
 
 /**
@@ -105,6 +110,15 @@ export function applyViewerConfigState(
     }
   }
 
+  // --- Playback detail (authored default) ---
+  //
+  // Applied BEFORE the animation block so a scene that opens playing plays at
+  // its authored detail from the first tick. Untyped JSON: accept exactly the
+  // Python-side vocabulary and ignore anything else.
+  if (ports.setDefaultLadderDepth) {
+    const resolved = resolvePlaybackLodDepth(viewerConfig.playback_lod_depth);
+    if (resolved !== undefined) ports.setDefaultLadderDepth(resolved);
+  }
   // --- Animation state ---
   //
   // The `animation` block round-tripped through the scene file for a long time
@@ -149,4 +163,20 @@ export function applyViewerConfigState(
       });
     }
   }
+}
+
+/**
+ * Map the authored `playback_lod_depth` vocabulary to the animation manager's
+ * detail setting: a positive integer pins that many rungs, `'all'` the whole
+ * ladder (`Infinity`), `'auto'` the energy rule, `'fast'` time-budgeted
+ * streaming (null). Absent or unrecognised values return `undefined` (leave the
+ * viewer default alone).
+ */
+export function resolvePlaybackLodDepth(raw: unknown): number | 'auto' | null | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (raw === 'auto') return 'auto';
+  if (raw === 'all') return Infinity;
+  if (raw === 'fast') return null;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 1) return Math.floor(raw);
+  return undefined;
 }

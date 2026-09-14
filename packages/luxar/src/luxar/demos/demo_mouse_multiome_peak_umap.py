@@ -62,6 +62,7 @@ from luxar.demos import (
     add_demo_caption,
     ensure_dataset,
     launch_viewer,
+    stamp_input_digests,
 )
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._support._umap_utils import (
@@ -253,6 +254,7 @@ def create_mouse_scene(
                 citation=DEMO_META["citation"],
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
+            stamp_input_digests(scene)
 
             total_points = len(positions_combined)
             radii = np.full(total_points, 0.02, dtype=np.float32)

@@ -1005,6 +1005,23 @@ describe('MultiLevelCachingStore', () => {
       expect(l1.chunksSize).toBe(0);
     });
 
+    it('stops at L2 when a queued OPFS read is canceled', async () => {
+      await store.init();
+      const l2Store = (store as any).l2Store as OPFSStore;
+      vi.spyOn(l2Store, 'get').mockImplementation(async () => {
+        await Promise.resolve();
+        (store as any).pendingGets.get('queued.chunk').controller.abort();
+        return undefined;
+      });
+      const sourceGet = vi.spyOn((store as any).source, 'get');
+
+      const outcome = await store.getResult('queued.chunk');
+
+      expect(outcome).toEqual({ ok: false, error: { kind: 'Aborted' } });
+      expect(sourceGet).not.toHaveBeenCalled();
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
+    });
+
     it('should bypass cache when validating content_hash (critical fix)', async () => {
       // This test verifies the fix for the cache validation bug where
       // validation was reading .zattrs from cache, comparing cached hash
@@ -1338,7 +1355,7 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
-    it('per-caller signal bypasses coalescing (independent fetches)', async () => {
+    it('coalesces signal-bearing callers into one underlying fetch', async () => {
       let fetchCount = 0;
       global.fetch = vi.fn(() => {
         fetchCount++;
@@ -1353,14 +1370,52 @@ describe('MultiLevelCachingStore', () => {
 
       const ac1 = new AbortController();
       const ac2 = new AbortController();
-      // Two callers both passing signals: each gets its own fetch.
+      // Demand reads normally carry per-update signals. They must still share
+      // the same-key fetch or ordinary concurrent loaders amplify requests.
       const [r1, r2] = await Promise.all([
         store.getResult('signal-key', { signal: ac1.signal }),
         store.getResult('signal-key', { signal: ac2.signal }),
       ]);
-      // Two independent fetches because the signal-bearing path bypasses pendingGets.
-      expect(fetchCount).toBe(2);
+      expect(fetchCount).toBe(1);
       expect(r1.ok && r2.ok).toBe(true);
+    });
+
+    it('aborts only the cancelled waiter while another coalesced caller continues', async () => {
+      let fetchSignal: AbortSignal | undefined;
+      let releaseFetch!: () => void;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        fetchSignal = init?.signal ?? undefined;
+        return new Promise<Response>((resolve, reject) => {
+          releaseFetch = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              async arrayBuffer() {
+                return new Uint8Array([7]).buffer;
+              },
+            } as Response);
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      }) as unknown as typeof fetch;
+
+      const first = new AbortController();
+      const second = new AbortController();
+      const firstRead = store.getResult('shared-signal-key', { signal: first.signal });
+      const secondRead = store.getResult('shared-signal-key', { signal: second.signal });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      first.abort();
+      const firstResult = await firstRead;
+      expect(firstResult.ok).toBe(false);
+      if (!firstResult.ok) expect(firstResult.error.kind).toBe('Aborted');
+      expect(fetchSignal?.aborted).toBe(false);
+
+      releaseFetch();
+      const secondResult = await secondRead;
+      expect(secondResult.ok).toBe(true);
+      expect(global.fetch).toHaveBeenCalledOnce();
     });
 
     it('pendingGets is cleaned on settle (subsequent calls re-fetch if L1/L2 missed)', async () => {
@@ -1637,6 +1692,31 @@ describe('MultiLevelCachingStore', () => {
       expect(observedSignal?.aborted).toBe(true);
     });
 
+    it('invalidation aborts a signal-bearing chain before it can repopulate L1', async () => {
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        observedSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          observedSignal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const caller = new AbortController();
+      const read = store.get('signal-invalidation-race', { signal: caller.signal });
+      for (let i = 0; i < 20 && observedSignal === undefined; i++) await Promise.resolve();
+
+      const clear = store.clearAll();
+      await expect(read).rejects.toMatchObject({ name: 'AbortError' });
+      await clear;
+      expect(observedSignal?.aborted).toBe(true);
+      const l1Cache = (store as unknown as { l1Cache: { has(key: string): boolean } }).l1Cache;
+      expect(l1Cache.has('signal-invalidation-race')).toBe(false);
+    });
+
     it('retry backoff includes jitter (commit 4.3)', async () => {
       // With Math.random() forced to deterministic values we can prove
       // the jittered delay differs from a pure exponential. We don't
@@ -1683,13 +1763,35 @@ describe('MultiLevelCachingStore', () => {
       expect(global.fetch).toHaveBeenCalledTimes(3);
     });
 
-    it('should handle network errors', async () => {
+    it('rejects exhausted network errors instead of returning a fill-valued miss', async () => {
       global.fetch = vi.fn(async () => {
         throw new Error('Network error');
       }) as any;
 
-      const result = await store.get('test');
-      expect(result).toBeUndefined(); // Graceful failure
+      await expect(store.get('test')).rejects.toThrow('fetch exhausted retries');
+    });
+
+    it('forwards zarrita GetOptions.signal through get() to the underlying fetch', async () => {
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        observedSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const controller = new AbortController();
+      const pending = store.get('cancelled', { signal: controller.signal });
+      await vi.waitFor(() => expect(observedSignal).toBeDefined());
+
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(observedSignal?.aborted).toBe(true);
     });
 
     it('should handle OPFS initialization failure', async () => {

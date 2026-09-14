@@ -185,18 +185,17 @@ signatures and can never reach `**attrs`.
    placement also outranks the #1437 channel gate at the top of the
    partition, substitutive, and multi-LOD wrappers (see "Partition wrappers"
    below) — matching the flat writer's own order, where node attrs are
-   validated before channels. GSplats' only structural door on `add_gsplats`
-   is `partition=` (its `lod_group=`/`additive_lod=` doors live on the
-   separate `add_gsplats_from_data` adder, out of scope for this file).
+   validated before channels. The GSplats leaf implementation's only
+   structural door is `partition=`; the public array adder resolves its LOD
+   controls through `add_gsplats_from_data` before reaching it.
    Before #1534, `add_mesh(..., partition={"max_elements": 40},
    blending="max")` and `add_gsplats(..., partition={"max_elements": 100},
    blending="max")` raised the same message but still left a childless
    `kind=partition` node that survived `finalize()` — the #1529 stranding one
    geometry type over.
-6. **Substitutive-LOD branch** (points/lines/mesh, when `substitutive_lod` is
-   set — GSplats has no `substitutive_lod=` on `add_gsplats`; its own
-   substitutive door is `lod_group=` on the separate `add_gsplats_from_data`
-   adder): delegate to the substitutive wrapper, whose coarse levels are
+6. **Substitutive-LOD branch** (points/lines/mesh, and GSplats through the
+   array adder's `add_gsplats_from_data` dispatch): delegate to the
+   substitutive wrapper, whose coarse levels are
    synthesised gsplats (points/lines) or decimated meshes (mesh) under a
    `kind=lod` group. Before that wrapper is written, validate an explicit
    `extend_to_all` once against the scene; `None` remains child-only because its

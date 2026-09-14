@@ -29,7 +29,7 @@ precomputes every range's destination offset up front (`rangeDestOffsets` —
 element counts are deterministic per range) and issues all `zarr.get()` calls
 concurrently via `Promise.all`; ranges write into disjoint output spans, so
 resolution order doesn't matter. Network concurrency stays bounded by the
-global fetch gate (`utils/fetch-concurrency.ts`, 64-wide) and decode
+global data fetch lane (`utils/fetch-concurrency.ts`, 24 slots) and decode
 concurrency by the worker pool. A decoded chunk whose length mismatches the
 precomputed span is clamped with a warning (`clampRangeData`) — over-long data
 is truncated (never corrupts a neighbour's span), short data leaves the tail

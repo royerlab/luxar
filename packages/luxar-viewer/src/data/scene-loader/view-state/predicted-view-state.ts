@@ -6,8 +6,10 @@
  * current view; without a prediction it has no way to know which
  * chunk the user will need on the *next* tick. By extrapolating the
  * per-dimension delta between the previous and current view states,
- * we can dispatch `prefetchChunks(predicted)` to each loader so the
- * cache warms while the user keeps scrubbing.
+ * we can dispatch a predicted transition to each loader so the cache
+ * warms while the user keeps scrubbing. Spatial-index loaders use their
+ * array chunk shapes plus index bounds to warm the next chunk boundary;
+ * other loaders retain the single-step fallback.
  *
  * Single-step extrapolation: for each non-displayed dimension d,
  *
@@ -28,26 +30,27 @@ import type { ViewState } from '../../data-loader-types';
 
 /**
  * Structural type for a loader that supports predictive prefetch.
- * The concrete loaders (Points/Lines/GSplats spatial-index loaders)
- * all implement `prefetchChunks` as a class method; the base loader
- * interfaces don't yet declare it. Using this structural type at the
- * dispatch site lets the prefetcher accept any conforming loader
- * without coupling scene-loader.ts to the concrete classes.
+ * The concrete spatial-index loaders implement `prefetchChunkBoundary`;
+ * loaders without chunk metadata can expose `prefetchChunks` for the
+ * historical one-step behavior. The base loader interfaces don't declare
+ * either method, so this structural type avoids coupling scene-loader.ts
+ * to concrete loader classes.
  */
 export interface PrefetchableLoader {
   prefetchChunks?: (vs: ViewState) => Promise<void>;
+  prefetchChunkBoundary?: (current: ViewState, predicted: ViewState) => Promise<void>;
 }
 
 /**
- * Predict the next view state and dispatch `prefetchChunks(predicted)`
- * on every loader that supports it. Returns `true` when a prefetch was
- * dispatched, `false` when the predictor decided no axis moved.
+ * Predict the next view state and dispatch a chunk-boundary-aware transition,
+ * falling back to `prefetchChunks(predicted)`. Returns `true` when a prefetch
+ * was dispatched, `false` when the predictor decided no axis moved.
  *
  * The dispatcher itself is synchronous (returns after calling each
- * loader's prefetchChunks once); the underlying prefetch is async
+ * loader's prefetch method once); the underlying prefetch is async
  * and not awaited — that's the point of prefetch.
  *
- * Errors from prefetchChunks are caught and silently swallowed —
+ * Errors from either prefetch method are caught and silently swallowed —
  * prefetch is best-effort cache warming, not a demand fetch, so a
  * failed prefetch must never block the next updateView.
  */
@@ -69,7 +72,9 @@ export function dispatchPredictivePrefetch(
 
   for (const loader of loaders) {
     try {
-      const result = loader.prefetchChunks?.(predicted);
+      const result = loader.prefetchChunkBoundary
+        ? loader.prefetchChunkBoundary(current, predicted)
+        : loader.prefetchChunks?.(predicted);
       if (result && typeof (result as Promise<unknown>).catch === 'function') {
         (result as Promise<unknown>).catch(() => {
           // Prefetch is best-effort; swallow errors so demand-path

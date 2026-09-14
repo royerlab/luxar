@@ -76,31 +76,23 @@ forced the zebrafish demo to round. And the build asserts every stored timepoint
 lands on the grid rather than trusting that it does.
 
 ================================================================================
-CULLING: WHY THE SHIPPED ARCHIVE USES A FIXED AMPLITUDE CUTOFF
+CULLING: WHY THE 2026-08 ARCHIVE'S AMPLITUDE CUTOFF WAS DROPPED (2026-09)
 ================================================================================
 
 The fit uses a nominal seed budget of 256,000 splats per frame — a ceiling of
-128 million in total — and this run's ``merged/final.gsplats.zarr`` measured
-exactly 128,000,000. The shipped archive contains 83,221,420 splats and was
-filtered at the recorded raw-amplitude cutoff **33.40462112**.
+128 million in total — and the merge measured exactly 128,000,000. The 2026-08
+archive then kept only 83,221,420 of them: a hard raw-amplitude floor at
+33.40462112 (originally intended as cumulative-amplitude retention 0.960; the
+pre-#2260 float32 accumulator kept 12.4 %, the corrected float64 one 55.3 %,
+and the shipped root stats record the fixed cutoff instead). It was validated
+by flicker test on the companion ``gsplats_3d_culling_study`` demo.
 
-That is not a quality compromise so much as a haze removal. Amplitude in a
-fitted light-sheet stack is heavily right-skewed: a minority of splats sit on
-nuclei and carry most of the signal, while a long tail of dim, diffuse splats
-models background and out-of-focus glow. Removing that tail in amplitude order
-is very nearly "least visible first". The operating point was chosen by flicker
-test on the companion ``gsplats_3d_culling_study`` demo, which puts ten retention
-levels of this same specimen on one selector at a fixed camera — the only way
-differences this subtle are actually visible.
-
-The original operation was intended as cumulative-amplitude retention 0.960.
-The pre-#2260 float32 accumulator silently kept only 12.4% at the 128M scale;
-the corrected float64 implementation keeps 55.3% on the same fit. The shipped
-archive's root stats instead record ``n_splats = 83,221,420`` and
-``amplitude_range.min = 33.40462112426758`` — a hard floor at the fixed cutoff
-above. Rerunning the current cumulative cull therefore does not reproduce this
-artifact. Keep the distinction: the cutoff reproduces the archive; cumulative
-retention expresses the original quality choice.
+That validation was blind to what the cull cost. Scored per frame against the
+raw recording (manuscript SD14, five frames), the culled archive sat 5-8 dB
+below a fresh fit of the same frames, and an unculled tile of the batch fit
+scored identically to the fresh fit (39.45 vs 39.46 dB): the WHOLE gap was the
+cull. The dim tail is haze in a flicker test but signal in a PSNR, so the
+recipe now ships the unculled merge. The archive is correspondingly larger.
 
 WHERE THE DATA COMES FROM
 ================================================================================
@@ -165,20 +157,16 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
         --tiling uniform --tile-size 1400 --overlap 0 \
         --preset standard --iters 1500 --seeds 256000 --floor 8 \
         --gpus 0 --jobs-per-gpu 2 \
-        --merge-recipe stream --merge-target-ms 200
+        --merge-recipe stream --merge-n-lods 4
 
-    # 2. Apply the amplitude cutoff recorded for the corrected rebuild:
-    #    nominal 128,000,000-seed budget -> 83,221,420 shipped splats.
-    luxar gsplat filter out/merged/final.gsplats.zarr culled.gsplats.zarr \
-        --amplitude-min 33.40462112
-
-    # 3. Physical microns. Time is left as an INTEGER FRAME INDEX on purpose —
+    # 2. Physical microns, straight from the unculled merge (no amplitude cull,
+    #    see CULLING above). Time is left as an INTEGER FRAME INDEX on purpose —
     #    see `normalise_time_axis` below for why a scaled axis does not survive
     #    the centres encoder.
-    luxar gsplat transform culled.gsplats.zarr um.gsplats.zarr \
+    luxar gsplat transform out/merged/final.gsplats.zarr um.gsplats.zarr \
         --scale 1.93,0.40625,0.40625,1
 
-    # 4. Re-chunk for streaming. Measured on this store: 173 -> about 3 requests
+    # 3. Re-chunk for streaming. Measured on this store: 173 -> about 3 requests
     #    per timepoint step, and a 7.7% smaller zip. The tradeoff at 500 frames
     #    is 47 MB / 115 requests for first paint; `--profile hosting` measures
     #    18 MB / 68 requests instead, but about 12 requests per timepoint step.
@@ -196,19 +184,19 @@ ONCE across all 500 frames rather than per timepoint. That is what keeps the
 exposure from drifting as the embryo brightens, and it is why the appearance
 constants below are portable across the whole recording.
 
-``--merge-target-ms 200`` reproduces the shipped 14-rung ladder, but the target
-is sized against the whole node rather than the displayed time slice. Its first
-rung therefore contains a median 45 splats per timepoint (p05 7; one timepoint
-empty), not 200 ms worth of the visible frame. Prefer ``--merge-n-lods 4`` for a
-new sliced archive; keep the target only when reproducing this artifact. See
-#2374 and #2376.
-
-Step 2 records the fixed amplitude cutoff used to build the shipped archive after
-#2260 (issue #2258). Do not replace it with a fresh cumulative cull: that does not
-reproduce the published 83,221,420-splat artifact.
+``--merge-n-lods 4`` (equal-count) gives a 4-rung ladder whose first rung is a
+quarter of the node, 64,000 splats per timepoint, which satisfies
+``check-demo-ladders``' sliced-node share floor (rung 0 at or above 10 % of the
+node, or playback re-pays a thin rung 0 every tick). The current gate still
+rejects the ladder under its slice-unaware 1,000,000-element commit cap; #2699
+tracks that auditor defect. The two ``--merge-target-ms 200`` ladders this
+archive carried before also fail the share floor: the 2026-08
+archive's 14 rungs were sized against the whole node and its rung 0 held a
+median 45 splats per timepoint (#2374/#2376); the per-slice sizing that replaced
+it gives 5 rungs with rung 0 at 8.14 % of the node. ``EXPECTED_RUNGS`` pins 4.
 
 The fit directory is preserved across recompute attempts so ``batch-fit run`` can
-resume completed timepoints. Only the derived filter, transform, and archive
+resume completed timepoints. Only the derived transform and archive
 outputs are replaced on a retry. Delete ``fit/`` manually after changing fit
 constants such as ``ITERS``; otherwise the default resume path can reuse the old
 tiles and merged output.
@@ -272,6 +260,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
 )
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
 from luxar.gsplats.gsplat_data import GSplatData
@@ -291,14 +280,17 @@ SCENE_NAME = "gsplats_4d_drosophila_embryogenesis.luxar.zarr"
 #: See the docstring: an off-grid timepoint renders nothing, silently.
 FRAME_INTERVAL_MIN = 0.5
 
-#: Appearance, tuned live in the Layers panel on the normalised render.
-#: The non-zero window floor lifts residual haze and buys contrast. Absorption
-#: is below the single-frame demo's 0.57 because this fit puts more splats on
-#: each ray. The window is stored as an intensity/offset PAIR, not a gain:
-#: ``intensity = 1/(hi-lo)``, ``offset = -lo/(hi-lo)``.
-DISPLAY_WINDOW = (0.059, 1.153)
+#: Appearance, tuned live in the Layers panel on the hosted render
+#: (2026-09-10). The non-zero window floor lifts residual haze and buys
+#: contrast; the window top came down from 1.153 to 0.868 (brighter nuclei) and
+#: absorption went UP from 0.33 to 1.19 so the near nuclei screen the far ones
+#: and the embryo reads as a solid rather than a haze — the two move together
+#: (a higher kappa dims, the tighter window compensates). The window is stored
+#: as an intensity/offset PAIR, not a gain: ``intensity = 1/(hi-lo)``,
+#: ``offset = -lo/(hi-lo)``.
+DISPLAY_WINDOW = (0.059, 0.868)
 GSPLAT_OPACITY = 0.20
-GSPLAT_ABSORPTION = 0.33
+GSPLAT_ABSORPTION = 1.19
 
 #: Share of the half-frame the embryo's long axis subtends at the opening pose.
 CAMERA_FRAME_FILL = 0.62
@@ -340,19 +332,17 @@ FLOOR = 8
 #: Recorded acquisition-box scheduling; two workers kept the GPU occupied.
 GPUS = "0"
 JOBS_PER_GPU = 2
-#: Progressive first-paint ladder produced during the streaming merge.
+#: Progressive first-paint ladder produced during the streaming merge: four
+#: equal-count rungs (see the docstring for why not a target-ms ladder).
 MERGE_RECIPE = "stream"
-MERGE_TARGET_MS = 200
-#: The shipped root stats record 83,221,420 splats with this exact hard floor.
-AMPLITUDE_MIN = 33.40462112
+MERGE_N_LODS = 4
 #: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
 #: One-megabyte chunks measured at 0-2.3 MB in 0-4 requests per timepoint step.
 CHUNK_PROFILE = "archive"
 #: Nominal whole-recording seed budget; a refit may drift as dynamic ops run.
 NOMINAL_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
-EXPECTED_SPLATS = 83_221_420
-EXPECTED_RUNGS = 14
+EXPECTED_RUNGS = 4
 #: Parallel fit reductions can move a threshold count, but not by recipe scale.
 SPLAT_COUNT_TOLERANCE = 0.01
 
@@ -448,19 +438,25 @@ def _only_leaf(node: Any, label: str) -> Any:
     return leaves[0]
 
 
-def _validate_rebuilt_archive(node: Any) -> int:
-    """Validate the merged leaf count and progressive-rung contract."""
+def _validate_rebuilt_archive(node: Any, expected_splats: int) -> int:
+    """Validate the final leaf count and progressive-rung contract."""
     leaf = _only_leaf(node, "rebuild")
     rungs = int(leaf.n_additive_sublods)
     if rungs != EXPECTED_RUNGS:
         raise RuntimeError(
             f"rebuild produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
         )
-    return int(leaf.n_splats)
+    got = int(leaf.n_splats)
+    if got != expected_splats:
+        raise RuntimeError(
+            f"rebuild changed the fitted splat count from {expected_splats:,} "
+            f"to {got:,} during transform or optimise"
+        )
+    return got
 
 
-def _validate_fitted_splat_count(node: Any) -> None:
-    """Reject an incomplete or misconfigured merged fit before filtering it."""
+def _validate_fitted_splat_count(node: Any) -> int:
+    """Reject an incomplete or misconfigured merged fit before transforming it."""
     got = int(_only_leaf(node, "fitted merge").n_splats)
     drift = abs(got - NOMINAL_FITTED_SPLATS) / NOMINAL_FITTED_SPLATS
     if drift >= SPLAT_COUNT_TOLERANCE:
@@ -474,22 +470,11 @@ def _validate_fitted_splat_count(node: Any) -> None:
         f"fitted merge validated: {got:,} splats "
         f"(nominal {NOMINAL_FITTED_SPLATS:,}, {drift:.3%} drift)"
     )
-
-
-def _validate_splat_count(got: int) -> None:
-    """Reject count drift large enough to indicate a changed recipe."""
-    drift = abs(got - EXPECTED_SPLATS) / EXPECTED_SPLATS
-    aprint(f"rebuilt {got:,} splats (recorded {EXPECTED_SPLATS:,}, {drift:.3%} drift)")
-    if drift >= SPLAT_COUNT_TOLERANCE:
-        raise RuntimeError(
-            f"rebuilt {got:,} splats against a recorded {EXPECTED_SPLATS:,} "
-            f"({drift:.2%} drift). Over 1% means the recipe changed -- check "
-            f"the source, fit settings, and recorded amplitude cutoff."
-        )
+    return got
 
 
 def recompute_archive(work_dir: Path) -> Path:
-    """Refit, filter, physically scale, and re-chunk the 500-frame archive."""
+    """Refit, physically scale, and re-chunk the 500-frame archive."""
     with asection("Recomputing the Drosophila embryogenesis archive"):
         if SOURCE_ARG is None:
             raise SystemExit(
@@ -503,7 +488,9 @@ def recompute_archive(work_dir: Path) -> Path:
 
         work_dir.mkdir(parents=True, exist_ok=True)
         fit = work_dir / "fit"
-        culled = work_dir / "culled.gsplats.zarr"
+        culled = (
+            work_dir / "culled.gsplats.zarr"
+        )  # legacy intermediate, removed if present
         scaled = work_dir / "um.gsplats.zarr"
         final = work_dir / REBUILT_FILENAME
         for derived in (culled, scaled, final):
@@ -542,25 +529,20 @@ def recompute_archive(work_dir: Path) -> Path:
             str(JOBS_PER_GPU),
             "--merge-recipe",
             MERGE_RECIPE,
-            "--merge-target-ms",
-            str(MERGE_TARGET_MS),
+            "--merge-n-lods",
+            str(MERGE_N_LODS),
         )
         merged = fit / "merged" / "final.gsplats.zarr"
         fitted_node, _ = load_gsplat_node(merged)
-        _validate_fitted_splat_count(fitted_node)
+        fitted_count = _validate_fitted_splat_count(fitted_node)
         del fitted_node
-        run_luxar_cli(
-            "gsplat",
-            "filter",
-            str(merged),
-            str(culled),
-            "--amplitude-min",
-            f"{AMPLITUDE_MIN:.8f}",
-        )
+        # No post-fit amplitude cull (2026-09): the shipped 2026-08 archive was the
+        # fit filtered at AMPLITUDE_MIN (65 % of the splats removed) and scored 5-8 dB
+        # below a fresh fit of the same frames; the unculled merge IS the recipe.
         run_luxar_cli(
             "gsplat",
             "transform",
-            str(culled),
+            str(merged),
             str(scaled),
             "--scale",
             ",".join(f"{value:g}" for value in VOXEL_SCALE),
@@ -574,7 +556,10 @@ def recompute_archive(work_dir: Path) -> Path:
         )
 
         node, _ = load_gsplat_node(str(final))
-        _validate_splat_count(_validate_rebuilt_archive(node))
+        got = _validate_rebuilt_archive(node, fitted_count)
+        aprint(
+            f"rebuilt {got:,} splats (unculled recipe; nominal {NOMINAL_FITTED_SPLATS:,})"
+        )
         aprint(f"rebuilt: {final}")
         return final
 
@@ -660,7 +645,7 @@ def normalise_time_axis(node) -> tuple[float, float, int]:
 
 
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
-    """Build the 4D scene from the pre-fitted, culled, physically-scaled data."""
+    """Build the 4D scene from the pre-fitted, physically-scaled data."""
     with asection("Creating the Drosophila embryogenesis scene"):
         node, _ = load_gsplat_node(str(data_path))
 
@@ -720,6 +705,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     ),
                 ),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: Drosophila Embryogenesis (SiMView)"
             scene.attrs["description"] = (
                 "Drosophila melanogaster embryo (His2Av::mRFP1) over 4 h 10 min of "

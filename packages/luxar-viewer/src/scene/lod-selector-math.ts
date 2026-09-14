@@ -323,6 +323,61 @@ export function pickChildWithHysteresis(
 }
 
 /**
+ * Current viewer median-sigma limit in logical CSS pixels. GSplats draw to about
+ * 3σ, so 1.5 px corresponds to a typical rendered blob about 9 px across. The
+ * #2685 sweep retained this policy.
+ */
+export const MAX_MEDIAN_FOOTPRINT_PX = 1.5;
+
+/** Pick the coarsest acceptable footprint, resisting only coarser downgrades. */
+export function pickChildByFootprintWithHysteresis(
+  footprintsPx: readonly number[],
+  currentIdx: number,
+  maxFootprintPx: number = MAX_MEDIAN_FOOTPRINT_PX,
+  hysteresisRatio: number = HYSTERESIS_RATIO
+): number {
+  if (footprintsPx.length === 0) return -1;
+  let natural = footprintsPx.length - 1;
+  for (let i = 0; i < footprintsPx.length; i++) {
+    if (footprintsPx[i] <= maxFootprintPx) {
+      natural = i;
+      break;
+    }
+  }
+  if (natural >= currentIdx) return natural;
+  return footprintsPx[natural] <= maxFootprintPx * (1 - hysteresisRatio) ? natural : currentIdx;
+}
+
+/**
+ * Project a node-local radius into logical CSS pixels. The caller divides the
+ * accepted radius by `sqrt(lodBias)` because the public bias remains an area
+ * factor while this metric is a length.
+ */
+export function projectWorldRadiusPx(
+  radiusWorld: number,
+  worldCenter: THREE.Vector3,
+  camera: THREE.Camera,
+  viewportHeight: number,
+  viewCenterScratch: THREE.Vector3 = new THREE.Vector3()
+): number | null {
+  if (!(radiusWorld > 0) || !Number.isFinite(radiusWorld) || viewportHeight <= 0) return null;
+  if (camera instanceof THREE.PerspectiveCamera) {
+    const viewCenter = viewCenterScratch.copy(worldCenter).applyMatrix4(camera.matrixWorldInverse);
+    const depth = -viewCenter.z;
+    if (!(depth > 0)) return Number.POSITIVE_INFINITY;
+    return (
+      (radiusWorld * viewportHeight) /
+      (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2))
+    );
+  }
+  if (camera instanceof THREE.OrthographicCamera) {
+    const frustumHeight = (camera.top - camera.bottom) / camera.zoom;
+    return frustumHeight > 0 ? (radiusWorld * viewportHeight) / frustumHeight : null;
+  }
+  return null;
+}
+
+/**
  * Minimal structural shape {@link computeEntryWorldBox} reads off a registry
  * entry (``LODGroupEntry`` satisfies it structurally — same pattern as
  * ``lod-freshness.ts``'s ``FreshnessChild``, avoiding an import cycle back

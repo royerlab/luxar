@@ -134,6 +134,8 @@ export interface LODGroupDebugInfo {
   name: string;
   levelCount: number;
   activeLevel: number;
+  selector: 'screen-area' | 'coverage';
+  footprintStamped: boolean;
 }
 
 /** `kind=partition` BSP group summary. */
@@ -347,10 +349,16 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     const kind = (object.userData as { kind?: string })?.kind;
     if (kind === 'lod') {
       const children = object.children;
+      const metadata = object.userData as {
+        lodSelector?: 'screen-area' | 'coverage';
+        footprintStamped?: boolean;
+      };
       lodGroups.push({
         name: object.name || 'unnamed',
         levelCount: children.length,
         activeLevel: children.findIndex((c) => c.visible),
+        selector: metadata.lodSelector ?? 'coverage',
+        footprintStamped: metadata.footprintStamped ?? false,
       });
     } else if (kind === 'partition') {
       const children = object.children;

@@ -76,6 +76,7 @@ vi.mock('zarrita', () => ({
 }));
 
 import { buildInfo, buildInfoLine } from '../../../config/build-info';
+import { config } from '../../../config';
 import { bootstrapStandalone } from '../../../core/bootstrap';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
@@ -95,10 +96,16 @@ const EMPTY_PARAMS: UrlParams = {
   src: null,
   theme: null,
   title: null,
+  control: null,
+  controlToken: null,
+  controlAllowCrossOrigin: false,
+  panel: null,
   debug: false,
+  kiosk: false,
   noCache: false,
   noSliceCache: false,
   noOpfs: false,
+  opfsReadConcurrency: null,
   cacheDebug: false,
   clearCache: false,
   lodFade: true,
@@ -109,6 +116,7 @@ const EMPTY_PARAMS: UrlParams = {
   densityGuard: true,
   densityCap: null,
   lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
+  lodBias: null,
   noPrefetch: false,
   prefetchDebug: false,
   cacheStats: false,
@@ -143,6 +151,19 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('session overrides', () => {
+    it('applies the OPFS read concurrency URL override', async () => {
+      const original = config.cache.opfsReadConcurrency;
+      try {
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: { ...EMPTY_PARAMS, opfsReadConcurrency: 16 },
+        });
+        expect(config.cache.opfsReadConcurrency).toBe(16);
+      } finally {
+        config.cache.opfsReadConcurrency = original;
+      }
+    });
+
     it('installs the ?linePrimitive= and ?lineJoin= overrides before returning', async () => {
       // These installs are load-bearing (both backends bake at material
       // construction) and were previously mutation-survivable: deleting the
@@ -546,7 +567,7 @@ describe('bootstrapStandalone', () => {
       expect(mocks.init.mock.calls.at(-1)?.[0].pinnedDPR).toBeUndefined();
     });
 
-    it('threads the on-by-default feature flags (lodFade/lodEnergyComp/blendWarmup/depthSort) into init()', async () => {
+    it('threads the LOD/rendering URL controls into init()', async () => {
       // An embedder-supplied urlParams object must control these flags —
       // the init pipeline reads options, never window.location.
       await bootstrapStandalone({
@@ -558,6 +579,7 @@ describe('bootstrapStandalone', () => {
           blendWarmup: false,
           depthSort: false,
           lodFinest: true, // opt-IN flag — flipped the other way
+          lodBias: 4,
         },
       });
       const flipped = mocks.init.mock.calls.at(-1)?.[0];
@@ -566,6 +588,7 @@ describe('bootstrapStandalone', () => {
       expect(flipped.blendWarmup).toBe(false);
       expect(flipped.depthSort).toBe(false);
       expect(flipped.lodFinest).toBe(true);
+      expect(flipped.lodBias).toBe(4);
 
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
       const defaults = mocks.init.mock.calls.at(-1)?.[0];
@@ -574,6 +597,7 @@ describe('bootstrapStandalone', () => {
       expect(defaults.blendWarmup).toBe(true);
       expect(defaults.depthSort).toBe(true);
       expect(defaults.lodFinest).toBe(false);
+      expect(defaults.lodBias).toBeUndefined();
     });
 
     it('does not set perfTimestamp on the init() call when urlParams.perfTimestamp is false', async () => {

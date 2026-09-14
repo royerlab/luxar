@@ -9,6 +9,7 @@ Pytest coverage for GSplat preprocessing and denoising backends.
 - Calibration helpers and parameter handling.
 - Pipeline-level denoise behavior for zarr/numpy-style inputs.
 - CUDA NLM behavior when the optional extension is available.
+- Non-default-GPU placement and caller-device restoration for CUDA NLM.
 
 ## How to run
 
@@ -20,6 +21,6 @@ hatch run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_denoi
 CUDA-specific tests require optional dependencies and a built CUDA extension:
 
 ```bash
-make build-cuda
+make build-nlm-cuda
 hatch run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py
 ```

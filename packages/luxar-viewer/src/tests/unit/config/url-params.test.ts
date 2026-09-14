@@ -13,10 +13,16 @@ describe('readUrlParams', () => {
       src: null,
       theme: null,
       title: null,
+      control: null,
+      controlToken: null,
+      controlAllowCrossOrigin: false,
+      panel: null,
       debug: false,
+      kiosk: false,
       noCache: false,
       noSliceCache: false,
       noOpfs: false,
+      opfsReadConcurrency: null,
       cacheDebug: false,
       clearCache: false,
       lodFade: true,
@@ -27,6 +33,7 @@ describe('readUrlParams', () => {
       densityGuard: true, // projected-density guard is ON by default (opt-out via ?no-density-guard)
       densityCap: null, // configured cap unless ?density-cap=N
       lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
+      lodBias: null, // normal LOD thresholds unless ?lod-bias=N
       noPrefetch: false,
       prefetchDebug: false,
       cacheStats: false,
@@ -114,6 +121,16 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?lod-finest').lodFinest).toBe(true);
   });
 
+  it('parses ?lod-bias= as a positive float, anything else → null', () => {
+    expect(readUrlParams('').lodBias).toBeNull();
+    expect(readUrlParams('?lod-bias=4').lodBias).toBe(4);
+    expect(readUrlParams('?lod-bias=0.25').lodBias).toBe(0.25);
+    expect(readUrlParams('?lod-bias=0').lodBias).toBeNull();
+    expect(readUrlParams('?lod-bias=-2').lodBias).toBeNull();
+    expect(readUrlParams('?lod-bias=lots').lodBias).toBeNull();
+    expect(readUrlParams('?lod-bias=').lodBias).toBeNull();
+  });
+
   it('blendWarmup defaults ON and is disabled only by ?no-blend-warmup', () => {
     expect(readUrlParams('').blendWarmup).toBe(true);
     expect(readUrlParams('?debug').blendWarmup).toBe(true);
@@ -177,6 +194,13 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?cacheBudgetMB=-5').cacheBudgetMB).toBeNull();
     expect(readUrlParams('?cacheBudgetMB=abc').cacheBudgetMB).toBeNull();
     expect(readUrlParams('').cacheBudgetMB).toBeNull();
+  });
+
+  it('parses opfsReadConcurrency as a positive integer', () => {
+    expect(readUrlParams('?opfsReadConcurrency=16').opfsReadConcurrency).toBe(16);
+    expect(readUrlParams('?opfsReadConcurrency=0').opfsReadConcurrency).toBeNull();
+    expect(readUrlParams('?opfsReadConcurrency=1.5').opfsReadConcurrency).toBeNull();
+    expect(readUrlParams('?opfsReadConcurrency=abc').opfsReadConcurrency).toBeNull();
   });
 
   it('parses and trims valid src and theme strings', () => {

@@ -76,6 +76,7 @@ function makeCommands(): KeyBindingsCommands {
     cycleDataMonitor: vi.fn(),
     recenterCamera: vi.fn(),
     exportViewerState: vi.fn(),
+    closeAllPanels: vi.fn(),
     handleEscape: vi.fn(),
     shouldHandleSpaceKey: vi.fn(() => true),
   };

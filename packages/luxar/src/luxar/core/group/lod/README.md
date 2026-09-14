@@ -17,10 +17,10 @@ This package splits cleanly into two layers:
   Partition kind.
 - **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`,
   `mesh.py`) — one peer per leaf type, interpreting the `additive_lod=` /
-  `substitutive_lod=` (and, for gsplats, `lod_group=`) convenience kwargs that
-  `add_points` / `add_lines` / `add_gsplats_from_data` / `add_mesh` accept. All four
-  take both axes; mesh's vocabulary is the shortest — decimation rather than a lift,
-  and a **reveal-only** additive axis.
+  `substitutive_lod=` / `additive_lod=` convenience kwargs that the four geometry
+  adders accept. Gsplats also retain `lod_group=` as a backward-compatible alias
+  for `substitutive_lod=`. Mesh's vocabulary is the shortest — decimation rather
+  than a lift, and a **reveal-only** additive axis.
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are NumPy
 ordering primitives shared by the Points and Lines resolvers (`poisson_disk` also
@@ -192,6 +192,10 @@ Breakpoint vocabulary for `counts` / `breakpoints`:
 - `"energy:0.5,0.9,0.99,1.0"` → cumulative perceptual-energy fractions; element
   energy is `luminance_i × radius_i³`. Requires `colors` or `scalars` for the
   luminance term.
+- `"equi-energy:4"` → 4 rungs at equal shares of cumulative perceptual energy
+  along the ordering (same energy as `energy:`), commit-capped; with
+  `method="salience", salience_kind="energy"` the first rung is few heavy
+  elements and the late rungs fat. For Lines the cap is counted in vertices.
 - `"stream:40000"` → bandwidth-derived geometric ladder `[c, 2c, 4c, …, N]`, so
   first paint costs `c` elements and each refinement doubles. Resolved against
   the actual N, so one spec adapts to every level of a tree. For Lines, `c` is
@@ -532,7 +536,7 @@ scene.add_points(
 # and add a 4-level additive ladder per level
 scene.add_gsplats_from_data(
     "splats", gsplat_data,
-    lod_group=True,            # require/use stored substitutive levels
+    substitutive_lod=True,     # require/use stored substitutive levels
     additive_lod=dict(n_lods=4),
 )
 ```

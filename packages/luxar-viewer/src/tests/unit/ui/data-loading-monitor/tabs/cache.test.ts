@@ -126,6 +126,9 @@ describe('updateCacheTab', () => {
           reads: 4,
           writes: 6,
           misses: 1,
+          canceledReads: 2,
+          activeReads: 3,
+          queuedReads: 5,
         },
       })
     );
@@ -133,7 +136,9 @@ describe('updateCacheTab', () => {
     const io = c.querySelector('[data-field="l2-io"]') as HTMLElement;
     expect(io.textContent).toContain('4');
     const ioSub = c.querySelector('[data-field="l2-io-sub"]') as HTMLElement;
-    expect(ioSub.textContent).toContain('6');
+    expect(ioSub.textContent).toContain('6 writes · 3 active · 5 queued');
+    const hitRateSub = c.querySelector('[data-field="l2-hitrate-sub"]') as HTMLElement;
+    expect(hitRateSub.textContent).toContain('4 hits · 1 miss · 2 canceled');
   });
 
   // R2: locked-in regression — the per-tick patcher must update the L2

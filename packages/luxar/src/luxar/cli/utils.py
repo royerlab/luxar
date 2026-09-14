@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -18,6 +19,8 @@ from arbol import aprint
 
 from .._zarr_compat import array_keys, group_keys
 from .._zarr_compat import open_group as zarr_open_group
+from ..utils.hosts import ALL_INTERFACES_HOSTS as _ALL_INTERFACES_HOSTS
+from ..utils.hosts import is_loopback_host as _is_loopback_host
 
 # CORS configuration shared across the CLI. Lives here (not in main.py)
 # so subcommand modules like gsplat_commands.py can import it without
@@ -25,9 +28,124 @@ from .._zarr_compat import open_group as zarr_open_group
 # to attach the subcommand tree, so the constant must live below both.
 #
 # 0.0.0.0 is a bind address, not a routable origin — browsers never send it
-# as Origin — so it is intentionally absent from this regex.
+# as Origin — so it never appears in an allowed-origin regex. A wildcard bind
+# is handled by RESOLVING it to a concrete address instead
+# (`advertised_host`), which is also what the printed URLs need.
 _LOCAL_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
 _DEFAULT_CORS_ORIGIN = "local"
+
+# Re-exported so existing `cli.utils` importers keep working; the definitions
+# live in `luxar.utils.hosts` because `luxar.demos` needs them too and sits
+# ABOVE `luxar.cli` in the layering contract.
+ALL_INTERFACES_HOSTS = _ALL_INTERFACES_HOSTS
+is_loopback_host = _is_loopback_host
+
+
+def primary_lan_address() -> Optional[str]:
+    """Return this machine's primary outbound IPv4 address, or None.
+
+    Asks the routing table which local interface would carry traffic towards
+    the outside world. Nothing is sent: ``connect()`` on a *datagram* socket
+    only fixes the route, so this is free and works on a machine with no
+    route at all (it simply returns None). The peer is an RFC 5737
+    documentation address that is guaranteed never to be routed anywhere.
+
+    This is a best guess, not the only answer: a machine can hold several
+    addresses on the same LAN (Wi-Fi and Ethernet both up, say) and any of
+    them may be the one a tablet dials. The default route is the most useful
+    single choice for a URL, and it is only ever used where one address is
+    unavoidable — printing a URL. The CORS allowance deliberately does NOT
+    build on this, because a guess there would reject a client that arrived
+    on a sibling address; see ``_SameHostCORSMiddleware`` in `serving.py`.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.0.2.1", 9))
+            address = str(probe.getsockname()[0])
+    except OSError:
+        return None
+    return address or None
+
+
+def advertised_host(bind_host: str) -> str:
+    """Return the address to put in a URL for a server bound to ``bind_host``.
+
+    A concrete bind address is already the answer. A wildcard bind is not:
+    ``http://0.0.0.0:5173`` is not reachable from another machine (and on
+    some platforms not from this one), so a printed URL containing it is
+    simply wrong. Resolve it to the primary LAN address, which is what a
+    tablet on the same network needs, and fall back to loopback on a machine
+    with no route — where loopback is the only thing that could have worked.
+    """
+    host = bind_host.strip()
+    if host.lower() in ALL_INTERFACES_HOSTS:
+        return primary_lan_address() or "127.0.0.1"
+    return host
+
+
+# An `Origin` is by specification exactly ``scheme "://" host [ ":" port ]`` —
+# no path, no query, no fragment, no userinfo. Matching that shape explicitly
+# is not pedantry: `urlparse(...).hostname` (and `.netloc`) RAISE
+# ``ValueError("Invalid IPv6 URL")`` on an unterminated bracket such as
+# ``http://[::1``, which an unauthenticated client can send at will, and a
+# lenient parse otherwise accepts trailing junk that Starlette then REFLECTS
+# back in `Access-Control-Allow-Origin`.
+_HOST_PATTERN = r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+_ORIGIN_RE = re.compile(
+    rf"^https?://(?P<host>{_HOST_PATTERN})(?::(?P<port>\d{{1,5}}))?$",
+    re.IGNORECASE,
+)
+_AUTHORITY_RE = re.compile(rf"^(?P<host>{_HOST_PATTERN})(?::(?P<port>\d{{1,5}}))?$")
+
+
+def _host_of(match: Optional[re.Match[str]]) -> str:
+    """The lowercased, unbracketed host of a matched origin/authority."""
+    if match is None:
+        return ""
+    return match.group("host").lower().strip("[]")
+
+
+def origin_hostname(origin: str) -> str:
+    """The **hostname** of an ``Origin`` header, or ``""`` if malformed.
+
+    Port deliberately excluded. This answers "is this origin the same machine
+    as the request's ``Host``?", and the viewer and the data server are two
+    *different ports* on one host by construction, so a port-sensitive
+    comparison would reject every real pairing.
+
+    Anything that is not a clean ``http(s)://host[:port]`` returns ``""`` and
+    therefore matches nothing — including ``null`` (a sandboxed iframe), an
+    origin carrying a path or fragment, and one with an embedded CRLF.
+
+    Contrast :func:`origin_authority`, which keeps the port for the control
+    hub, where the socket is served from the very port that served the page.
+    """
+    return _host_of(_ORIGIN_RE.match(origin.strip()))
+
+
+def authority_hostname(authority: str) -> str:
+    """The hostname of a ``Host`` header value, or ``""`` if malformed.
+
+    Fails closed: a ``Host`` this cannot parse yields no match rather than a
+    guess, so a malformed or smuggled header cannot widen an allowance.
+    """
+    return _host_of(_AUTHORITY_RE.match(authority.strip()))
+
+
+def origin_authority(origin: str) -> str:
+    """The lowercased ``host`` or ``host:port`` of an origin, ``""`` if malformed.
+
+    The control hub compares this against its request's ``Host`` — port
+    INCLUDED, because the control WebSocket is served from the same port as
+    the page that opens it, so a differing port there is a genuine mismatch
+    rather than the expected two-port pairing :func:`origin_hostname` allows.
+    """
+    match = _ORIGIN_RE.match(origin.strip())
+    if match is None:
+        return ""
+    host = match.group("host").lower()
+    port = match.group("port")
+    return f"{host}:{port}" if port else host
 
 
 def open_browser(url: str, suppress_errors: bool = False) -> bool:

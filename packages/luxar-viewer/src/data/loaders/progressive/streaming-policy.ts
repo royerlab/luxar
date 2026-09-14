@@ -41,13 +41,20 @@
  *    pause pass). Stream cache-resident levels and stop at the first cold/slow
  *    one so the frame renders; a later pass picks up the rest.
  *
+ *  - `pinned` — a pinned ladder depth is set (`ViewState.ladderDepth`, the
+ *    playback "detail" setting), foreground or shadow. The loader bounds its
+ *    loop at the pinned rung count, and neither the deadline nor a cold level
+ *    stops it before that bound — a frame is drawn at the pinned depth or the
+ *    tick waits. Takes precedence over the other three. Only the refinement
+ *    residency allowance still applies.
+ *
  * @module data/loaders/progressive/streaming-policy
  */
 
 import { CACHE_HIT_THRESHOLD_MS } from './constants';
 
 /** Which streaming discipline a progressive-loader pass follows. */
-export type StreamingPassKind = 'playback' | 'prefetch' | 'refine';
+export type StreamingPassKind = 'playback' | 'prefetch' | 'refine' | 'pinned';
 
 /**
  * Classify a streaming pass from the two facts a loader knows at pass start:
@@ -57,8 +64,10 @@ export type StreamingPassKind = 'playback' | 'prefetch' | 'refine';
  */
 export function classifyStreamingPass(
   budgetActive: boolean,
-  isPrefetch: boolean
+  isPrefetch: boolean,
+  pinned = false
 ): StreamingPassKind {
+  if (pinned) return 'pinned';
   if (isPrefetch) return 'prefetch';
   return budgetActive ? 'playback' : 'refine';
 }
@@ -89,6 +98,7 @@ export function shouldStopBeforeLevel(
   nowMs: number,
   deadlineMs: number | null
 ): boolean {
+  if (kind === 'pinned') return false;
   return (
     deadlineMs !== null &&
     isPastGuaranteedProgressFloor(kind, level, startLevel) &&
@@ -129,9 +139,50 @@ export function shouldStopAfterLevel(
   ) {
     return true;
   }
-  if (kind === 'prefetch') return false;
+  if (kind === 'pinned' || kind === 'prefetch') return false;
   return (
     isPastGuaranteedProgressFloor(kind, level, startLevel) &&
     (!allResident || elapsedMs > CACHE_HIT_THRESHOLD_MS)
   );
+}
+
+/**
+ * Resolve a pass's pinned ladder depth (`ViewState.ladderDepth`) to a loop
+ * bound: the number of rungs to load, clamped to `[1, nLods]`, or `null` when
+ * the pass is not pinned (absent, non-finite-and-not-Infinity, or below 1).
+ * `Infinity` means "the whole ladder" and clamps to `nLods`. Shared by the four
+ * geometry loaders so a fractional or over-long request cannot be interpreted
+ * differently per geometry.
+ */
+export function normalizeLadderDepth(
+  ladderDepth: number | undefined | null,
+  nLods: number
+): number | null {
+  if (ladderDepth === undefined || ladderDepth === null || Number.isNaN(ladderDepth)) return null;
+  if (ladderDepth < 1) return null;
+  return Math.min(nLods, Math.floor(ladderDepth));
+}
+
+/**
+ * Resolve a pass's requested playback detail (`ViewState.ladderDepth`) to a
+ * loop bound for THIS ladder. A number goes through {@link normalizeLadderDepth};
+ * `'auto'` pins the first rung whose cumulative energy fraction e(k) reaches
+ * `energyThreshold` (the `energy_fraction_cum` build stamps, one per rung, in
+ * `[0, 1]`, non-decreasing), or the whole ladder if none does; a ladder without
+ * stamps cannot be judged and returns `null` (time-budgeted streaming). Shared
+ * by the four geometry loaders so `'auto'` means the same thing everywhere.
+ */
+export function resolveLadderDepth(
+  ladderDepth: number | 'auto' | undefined | null,
+  nLods: number,
+  energyTable: readonly number[] | null | undefined,
+  energyThreshold: number
+): number | null {
+  if (ladderDepth !== 'auto') return normalizeLadderDepth(ladderDepth, nLods);
+  if (!energyTable || energyTable.length === 0 || nLods < 1) return null;
+  const n = Math.min(nLods, energyTable.length);
+  for (let k = 0; k < n; k++) {
+    if (energyTable[k] >= energyThreshold) return k + 1;
+  }
+  return nLods;
 }

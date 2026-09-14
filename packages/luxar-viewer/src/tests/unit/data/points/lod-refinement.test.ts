@@ -26,11 +26,14 @@ const baseViewState: ViewState = {
   tolerance: [0, 0, 0, 1],
 };
 
-defineRefinementLoopContract('runPointsRefinement', 'Points', 'showing reduced detail', (w) =>
-  runPointsRefinement({
-    rootGroup: new THREE.Group(),
+defineRefinementLoopContract('runPointsRefinement', 'Points', 'showing reduced detail', (w) => {
+  const rootGroup = w.rootGroup ?? new THREE.Group();
+  return runPointsRefinement({
+    objects:
+      w.objects ??
+      new Map([...w.loaders.keys()].map((path) => [path, rootGroup.getObjectByName(path)])),
     viewStateQueue: w.viewStateQueue,
-    pointsLoaders: w.loaders as PointsRefinementCtx['pointsLoaders'],
+    loaders: w.loaders as PointsRefinementCtx['loaders'],
     deriveNodeViewState: w.deriveNodeViewState as PointsRefinementCtx['deriveNodeViewState'],
     updatePointsGeometry: w.processSpy as PointsRefinementCtx['updatePointsGeometry'],
     updateVisibleCountsInMonitor: w.updateVisibleCountsInMonitor,
@@ -38,8 +41,8 @@ defineRefinementLoopContract('runPointsRefinement', 'Points', 'showing reduced d
     retriggerUpdate: w.retriggerUpdate,
     signal: w.signal,
     residencyBudget: w.residencyBudget,
-  })
-);
+  });
+});
 
 describe('runPointsRefinement — Points-specific behaviour', () => {
   it('skips loaders that do not expose hasMoreLODs (non-progressive loaders)', async () => {
@@ -54,9 +57,9 @@ describe('runPointsRefinement — Points-specific behaviour', () => {
     const updatePointsGeometry = vi.fn();
 
     await runPointsRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
-      pointsLoaders: new Map([['/p', singleShot]]),
+      loaders: new Map([['/p', singleShot]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       updatePointsGeometry,
       updateVisibleCountsInMonitor: vi.fn(),
@@ -95,9 +98,9 @@ describe('runPointsRefinement — Points-specific behaviour', () => {
     const updatePointsGeometry = vi.fn();
 
     await runPointsRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
-      pointsLoaders: new Map([['/p', loader]]),
+      loaders: new Map([['/p', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       updatePointsGeometry,
       updateVisibleCountsInMonitor: vi.fn(),
@@ -144,9 +147,9 @@ describe('runPointsRefinement — Points-specific behaviour', () => {
     const updatePointsGeometry = vi.fn();
 
     await runPointsRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
-      pointsLoaders: new Map([['/p', loader]]),
+      loaders: new Map([['/p', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       updatePointsGeometry,
       updateVisibleCountsInMonitor: vi.fn(),

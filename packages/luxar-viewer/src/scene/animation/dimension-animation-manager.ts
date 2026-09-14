@@ -51,6 +51,12 @@ export interface PlayOptions {
   targetFPS?: number;
   loopMode?: LoopMode;
   direction?: AnimationDirection;
+  /**
+   * Playback "detail": a number pins the additive-ladder depth (rungs) for
+   * every frame, `'auto'` resolves it per ladder from the energy stamps, null
+   * streams whatever fits the tick. See `DimensionAnimationState.ladderDepth`.
+   */
+  ladderDepth?: number | 'auto' | null;
 }
 
 /**
@@ -65,6 +71,10 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
   /** Cached dimension ranges for performance */
   private dimensionRanges: [number, number][] | null = null;
+
+  /** The detail a fresh dimension state starts with (see {@link setDefaultLadderDepth}). */
+  private defaultLadderDepth: number | 'auto' | null =
+    config.dimensionAnimation.defaults.ladderDepth;
 
   /** Per-dimension update tracking — prevents advancing faster than data loads */
   private pendingUpdates = new Set<number>();
@@ -410,6 +420,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         if (options?.targetFPS !== undefined) state.targetFPS = options.targetFPS;
         if (options?.loopMode !== undefined) state.loopMode = options.loopMode;
         if (options?.direction !== undefined) state.direction = options.direction;
+        if (options?.ladderDepth !== undefined) {
+          state.ladderDepth = normalizeLadderDepthSetting(options.ladderDepth);
+        }
         this.animationStates.set(dimIndex, state);
       } else {
         // Update existing state
@@ -421,6 +434,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         }
         if (options?.direction !== undefined) {
           state.direction = options.direction;
+        }
+        if (options?.ladderDepth !== undefined) {
+          state.ladderDepth = normalizeLadderDepthSetting(options.ladderDepth);
         }
       }
 
@@ -516,6 +532,81 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     // whole window minus a fixed projection/commit/render reserve — a 1 fps
     // tick should stream ~950ms of levels, not idle 40% of every second.
     return Math.max(frameWindow * budgetFraction, frameWindow - overheadReserveMs, minBudgetMs);
+  }
+
+  /**
+   * Playback "detail" for the current tick: the pinned additive-ladder depth
+   * (rungs) the progressive loaders must load for every frame, or null when no
+   * playing dimension pins one (time-budgeted streaming). With several playing
+   * dimensions the DEEPEST pin wins — a pinned dim must never be drawn below
+   * its setting because another dim plays on Auto. Threaded to the loaders as
+   * `ViewState.ladderDepth` by `updateAllNDNodes`, and to the t+1 shadow
+   * prefetch, so the next frame's S-cache entry carries the pinned prefix.
+   */
+  getPlaybackLadderDepth(): number | 'auto' | null {
+    return combineLadderDepths(
+      [...this.animationStates.values()].filter((s) => s.isPlaying).map((s) => s.ladderDepth)
+    );
+  }
+
+  /**
+   * The detail a SCRUB pass (a slider drag, a keyboard step, the pause
+   * re-trigger — any slice change while nothing plays) is pinned to: the
+   * deepest explicit pin among all dimensions' settings, else `'auto'` if any
+   * dimension asks for it, else null. Dimensions never touched inherit
+   * {@link getDefaultLadderDepth}. The orchestrator pins the scrub pass to it
+   * and follows up with an unpinned settle pass once the scrub is quiet, so a
+   * paused view still refines to the full ladder.
+   */
+  getScrubLadderDepth(): number | 'auto' | null {
+    const states = [...this.animationStates.values()];
+    if (states.length === 0) return this.defaultLadderDepth;
+    return combineLadderDepths(states.map((s) => s.ladderDepth));
+  }
+
+  /**
+   * The detail a dimension starts with before anyone sets it: the scene's
+   * authored `viewer_config.playback_lod_depth` when present, else
+   * `config.dimensionAnimation.defaults.ladderDepth`. Setting it also updates
+   * every dimension still on the previous default, so an authored value read
+   * after the slider panel created its states still takes effect.
+   */
+  getDefaultLadderDepth(): number | 'auto' | null {
+    return this.defaultLadderDepth;
+  }
+
+  setDefaultLadderDepth(ladderDepth: number | 'auto' | null): void {
+    const normalized = normalizeLadderDepthSetting(ladderDepth);
+    const previous = this.defaultLadderDepth;
+    this.defaultLadderDepth = normalized;
+    for (const [dimIndex, state] of this.animationStates) {
+      if (state.ladderDepth === previous) {
+        state.ladderDepth = normalized;
+        this.dispatchEvent({ type: 'ladderDepthChange', dimIndex, ladderDepth: normalized });
+      }
+    }
+    log.info(Modules.ANIMATION, `Default playback detail: ${describeLadderDepth(normalized)}`);
+  }
+
+  /**
+   * Set the playback detail for a dimension: a pinned additive-ladder depth
+   * (rungs, `Infinity` = whole ladder) every frame is drawn at while it plays or
+   * scrubs, `'auto'` for the energy rule, or null for Fast (time-budgeted
+   * streaming). Takes effect on the next tick.
+   */
+  setLadderDepth(dimIndex: number, ladderDepth: number | 'auto' | null): void {
+    let state = this.animationStates.get(dimIndex);
+    if (!state) {
+      state = this.createDefaultState();
+      this.animationStates.set(dimIndex, state);
+    }
+    const normalized = normalizeLadderDepthSetting(ladderDepth);
+    state.ladderDepth = normalized;
+    this.dispatchEvent({ type: 'ladderDepthChange', dimIndex, ladderDepth: normalized });
+    log.info(
+      Modules.ANIMATION,
+      `Set dimension ${dimIndex} playback detail to ${describeLadderDepth(normalized)}`
+    );
   }
 
   /**
@@ -651,6 +742,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       loopMode: config.dimensionAnimation.defaults.loop,
       direction: config.dimensionAnimation.defaults.direction,
       stepSize: config.dimensionAnimation.defaults.stepSize,
+      ladderDepth: this.defaultLadderDepth,
       lastUpdateTime: currentTime,
       frameCount: 0,
       lastFPSMeasurementTime: currentTime,
@@ -777,4 +869,44 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     log.info(Modules.ANIMATION, 'Disposed dimension animation manager');
   }
+}
+
+/**
+ * Normalise a playback-detail setting: `'auto'` and null pass through, a
+ * number becomes a whole rung count >= 1 (`Infinity` allowed), anything else
+ * (0, negative, NaN) means "no pin" (null).
+ */
+export function normalizeLadderDepthSetting(
+  ladderDepth: number | 'auto' | null | undefined
+): number | 'auto' | null {
+  if (ladderDepth === 'auto') return 'auto';
+  if (ladderDepth === null || ladderDepth === undefined || !(ladderDepth >= 1)) return null;
+  return Math.floor(ladderDepth);
+}
+
+/**
+ * Combine several dimensions' detail settings into the one directive a pass
+ * receives: the DEEPEST explicit pin wins (a pinned dimension must never be
+ * drawn below its setting because another one is on Auto), else `'auto'` if
+ * any dimension asks for it, else null (time-budgeted).
+ */
+export function combineLadderDepths(
+  depths: ReadonlyArray<number | 'auto' | null>
+): number | 'auto' | null {
+  let deepest: number | null = null;
+  let anyAuto = false;
+  for (const d of depths) {
+    if (d === 'auto') anyAuto = true;
+    else if (typeof d === 'number') deepest = deepest === null ? d : Math.max(deepest, d);
+  }
+  if (deepest !== null) return deepest;
+  return anyAuto ? 'auto' : null;
+}
+
+/** Human-readable detail setting for logs and the panel readout. */
+export function describeLadderDepth(ladderDepth: number | 'auto' | null): string {
+  if (ladderDepth === 'auto') return 'auto';
+  if (ladderDepth === null) return 'fast';
+  if (ladderDepth === Infinity) return 'all rungs';
+  return `${ladderDepth} rung${ladderDepth === 1 ? '' : 's'}`;
 }

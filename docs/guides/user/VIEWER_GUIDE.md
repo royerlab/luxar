@@ -171,10 +171,16 @@ Append parameters to the viewer URL to control startup behavior.
 | `src` | string | Zarr dataset URL or local path. |
 | `theme` | string | Initial theme. One of: `light`, `dark`, `liquid-glass`, `frosted-glass`. |
 | `title` | string | Browser tab title (`document.title`). Serve-family commands derive it from the dataset file name; a scene's authored `viewer_config.title` overrides it. Dropped when you switch datasets in the viewer -- the tab is then named after the dataset you switched to. |
+| `control` | flag \| WebSocket URL | Attach this viewer to the serving app's control hub. A URL selects an explicit hub and must be same-origin unless `controlAllowCrossOrigin` is present. |
+| `controlToken` | string | Shared control-hub token, matching `luxar serve --control-token`. Query-string tokens are visible in browser history and are only a LAN convenience. |
+| `controlAllowCrossOrigin` | flag | Permit an explicit `control` URL to cross the page origin. Without this flag, explicit control sockets are same-origin only; use it only with an authenticated or explicitly origin-allow-listed hub. |
+| `panel` | module URL | On the `control.html` panel page, load an alternative same-origin control-panel module. Cross-origin modules are rejected. |
+| `kiosk` | flag | Force kiosk mode on as a hard operator override. It can lock a scene but cannot unlock authored kiosk mode. |
 | `debug` | flag | Enable the debug interface (developer use). |
 | `no-cache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
 | `no-slice-cache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
 | `no-opfs` | flag | Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache stay on. For environments whose OPFS stalls — the deterministic sibling of the automatic circuit breaker. |
+| `opfsReadConcurrency` | positive integer | Override the page-wide concurrent OPFS read cap (default 64) for diagnosis. |
 | `cache-debug` | flag | Enable cache debug logging to the browser console. |
 | `clear-cache` | flag | Clear all caches on startup. |
 | `no-prefetch` | flag | Disable adjacent-chunk prefetching. |
@@ -184,7 +190,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `webgpu-force-webgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
 | `perf-timestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
-| `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies a GPU-geometry/LOD residency signal at one third of the cache pool; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it. |
+| `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it, capped at 2 GB. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
 | `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there. |
@@ -491,6 +497,16 @@ Animation loops according to the configured loop mode: `once` (stop at end),
 `loop` (restart from beginning), or `bounce` (reverse direction at each end).
 The loop mode and direction can be set through `ViewerConfig` in Python (see
 below).
+
+The **Detail** section of the same menu decides how deep each frame's additive
+ladder is loaded while a dimension plays or is scrubbed. `Auto` (the default)
+pins every ladder at the first rung whose energy stamp reaches the viewer's
+threshold, so a heavy time-lapse reads consistently and the frame rate adapts
+to the data; a rung count or `All` pins the depth explicitly; `Fast` streams
+whatever is resident within each tick (quick cadence, quality varies from frame
+to frame). Scenes can author the default with
+`ViewerConfig(playback_lod_depth=...)` — an integer rung count, `"all"`,
+`"auto"` or `"fast"`.
 
 ---
 
