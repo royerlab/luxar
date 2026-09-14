@@ -165,6 +165,26 @@ RECORDS = {
         "base_url": None,
         "published": True,
     },
+    # The Z-corrected neuromast fits (#2713): same recording and licence as the
+    # `cc-by` record, but refit at the measured 2.31 anisotropy, so the two
+    # channel archives are DIFFERENT bytes served from R2 (`base_url`) rather
+    # than a new Zenodo deposition. `base_url` outranks the zenodo ids in
+    # `zenodo_file_url`, so reusing the cc-by record id keeps
+    # `test_every_shipped_record_agrees_with_its_published_flag` satisfied
+    # without publishing anything new. Must be a RECORD: the resolver reads a
+    # record's base_url, never a dataset's.
+    "neuromast-z": {
+        "title": (
+            "Neuromast 2-channel light-sheet timelapse as Gaussian splats "
+            "(Z-corrected, isotropy 2.31)"
+        ),
+        "license": "cc-by-4.0",
+        "zenodo_doi": "10.5281/zenodo.21912280",
+        "zenodo_record": "21912280",
+        "zenodo_conceptdoi": "10.5281/zenodo.21912279",
+        "base_url": "https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
+        "published": True,
+    },
 }
 
 # Curated per-dataset metadata. `dir` is the demos/data subdir (or "" for
@@ -461,12 +481,12 @@ DATASETS: dict[str, dict] = {
     # -- Heavy timelapses computed on obsidian -------------------------------
     "gsplats_4d_neuromast_2ch": dict(
         bucket="zenodo",
-        record="cc-by",
-        # The corrected pair is mirrored on R2 rather than published as a new
-        # Zenodo deposition. A dataset-level override keeps the real cc-by
-        # deposition as the provenance identity without routing this pair to its
-        # superseded files.
-        base_url="https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
+        # The corrected pair is mirrored on R2 via its own record `neuromast-z`
+        # (whose base_url outranks the Zenodo id in zenodo_file_url) rather than
+        # a new Zenodo deposition. `neuromast-z` reuses the cc-by deposition id
+        # for provenance/licence; a dataset-level base_url does NOT work — the
+        # resolver only reads a record's base_url.
+        record="neuromast-z",
         license="cc-by-4.0",
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
         attribution=(
@@ -486,7 +506,8 @@ DATASETS: dict[str, dict] = {
         #
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
         # the cc-by record (md5 verified against Zenodo). Their digests are retained
-        # as superseded pins; the active pins describe the R2 mirror above.
+        # as superseded pins; the active pins describe the R2 mirror served by
+        # the `neuromast-z` record.
     ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",

@@ -1936,6 +1936,25 @@ def test_every_shipped_record_agrees_with_its_published_flag():
             assert url is None, f"{name}: unpublished draft, but the leg is live"
 
 
+def test_neuromast_resolves_to_the_r2_mirror_not_zenodo():
+    """The Z-corrected neuromast pair (#2713) must fetch from the R2 mirror.
+
+    A digest-only re-pin passes every other test in this file, yet leaves the
+    dataset resolving to the un-updated Zenodo record — which still serves the
+    OLD Z-stretched bytes (now recorded as superseded). That is how the first
+    repin attempt landed half-done. Pin the resolved URL, not just the digest.
+    """
+    m = load_manifest()
+    d = m["datasets"]["gsplats_4d_neuromast_2ch"]
+    rec = m["records"][d["record"]]
+    assert d["files"], "neuromast dataset lost its file pins"
+    for f in d["files"]:
+        url = data_fetch.zenodo_file_url(rec, f["name"])
+        assert url and "data.luxarviewer.dev/inputs/neuromast-z-2713" in url, (
+            f"{f['name']} resolves to {url!r}, not the R2 mirror"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Two checksum contracts (`sha256` = the repo's copy, `hosted_sha256` = the
 # record's). These are the cases that exist only once the two can disagree — the
