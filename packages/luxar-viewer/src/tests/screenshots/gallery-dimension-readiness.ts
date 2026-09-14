@@ -55,6 +55,8 @@ export function isGalleryDataReady(options: {
         );
       }
       const displayed = new Set(state.dimensions?.displayed ?? []);
+      // Latch a one-time match so animated scenes may advance afterward. Ignore
+      // displayed axes because the viewer clamps their authored values on load.
       galleryGlobal.__luxarGalleryDimensionStepReached = expectedStep.every(
         (value, index) => displayed.has(index) || currentStep[index] === value
       );
@@ -77,6 +79,7 @@ export function describeGalleryDataState(options: {
   };
   const state = galleryGlobal.__luxarDebug?.getState?.();
   return [
+    `requireElements=${String(options.requireElements)}`,
     `expectedDimensionStep=${JSON.stringify(options.expectedDimensionStep)}`,
     `currentStep=${JSON.stringify(state?.dimensions?.currentStep ?? null)}`,
     `displayed=${JSON.stringify(state?.dimensions?.displayed ?? null)}`,

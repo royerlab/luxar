@@ -162,7 +162,7 @@ describe('gallery data readiness', () => {
     });
 
     expect(describeGalleryDataState({ requireElements: true, expectedDimensionStep: [0, 4] })).toBe(
-      'expectedDimensionStep=[0,4], currentStep=[0,2], displayed=[0], isLoading=true, totalElements=0, expectedStepReached=false'
+      'requireElements=true, expectedDimensionStep=[0,4], currentStep=[0,2], displayed=[0], isLoading=true, totalElements=0, expectedStepReached=false'
     );
   });
 });

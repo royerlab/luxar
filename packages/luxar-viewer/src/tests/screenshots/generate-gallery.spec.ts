@@ -325,13 +325,18 @@ async function waitForDataLoaded(
   // stays 0 for a pure Lines demo like dipc_3d_genome, or a pure Mesh one).
   //
   // `requireElements = false` permits an empty initial slice while still waiting
-  // for the authored dimension step. A scene whose index-zero slice is empty may
-  // not have elements until its baked opening step or dimensionNav override runs.
+  // for the authored dimension step. This is reserved for dimensionNav scenes,
+  // whose explicit post-load navigation may be what populates the slice.
   const readinessOptions = { requireElements, expectedDimensionStep };
   try {
     await page.waitForFunction(isGalleryDataReady, readinessOptions, { timeout });
   } catch (error) {
-    const diagnostics = await page.evaluate(describeGalleryDataState, readinessOptions);
+    let diagnostics = 'diagnostics unavailable';
+    try {
+      diagnostics = await page.evaluate(describeGalleryDataState, readinessOptions);
+    } catch {
+      // Preserve the original readiness failure if the page is already gone.
+    }
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Gallery data readiness failed: ${reason}; ${diagnostics}`, { cause: error });
   }
@@ -1381,8 +1386,8 @@ for (const demo of DEMOS) {
     await installChromeHider(page); // survives Vite reloads (must precede goto)
     await page.goto(viewerUrl, { waitUntil: 'networkidle' });
     await waitForLuxarReady(page);
-    // An nD demo may be empty at index zero. Permit that until the baked opening
-    // step (or a subsequent dimensionNav override) has had a chance to populate it.
+    // A dimensionNav demo may be empty until its explicit post-load navigation.
+    // Every scene without that override must have geometry at its baked step.
     const needsNav = Boolean(demo.dimensionNav);
     const initialLoadOptions = {
       requireElements: !needsNav,

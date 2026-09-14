@@ -49,9 +49,9 @@
         "azimuth": 90,
         "elevation": 8
       },
-      "distance": 60,
+      "fillTarget": 0.75,
       "exposure": 1.2,
-      "note": "distance 32 -> 60: the orbitals overflowed the frame at distance 32; the live still shows two small lobes with wide margin. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | The abandoned fillTarget 0.55 attempt was a no-op because fillTarget is INERT when `distance` is set; the 86.6% -> 90.0% border-lit change was run variance. | No dimensionNav: the demo bakes OPENING_ORBITAL=`3pz` (current_step=[0,0,0,4] of 8 categories), and after #2733 the capture waits for that authoritative opening slice. The measurements that diagnosed the old readiness race are retained here: measured 2026-09-12 at d=40, steps 4/6/5/3/1/2 gave span 12.3/39.5/59.8/86.8/90.0/92.8%; before the gate, removing dimensionNav rendered every slice at once (border-lit 100% at d=9, identical at d=12 and to steps:8). Those results describe the pre-#2733 race, not the current no-navigation capture. Also: border-lit alone cannot validate this tile \u2014 a subject shrunk to ~1% of frame scores a perfect 0.0%; read the harness's own `under-filled?` warning."
+      "note": "No dimensionNav: the demo bakes OPENING_ORBITAL=`3pz` (current_step=[0,0,0,4] of 8 categories), and after #2733 the capture waits for that authoritative opening slice. No absolute distance: the substantially larger orbital uses fillTarget 0.75 instead of distance 60 from the old `2pz` tile. Measured across the published store's full 120-frame orbit on 2026-09-14: final coverage 69.0%, final lit 50.2%, border-lit 0/4316 (0.0%)."
     },
     {
       "id": "desi_galaxies",
