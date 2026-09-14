@@ -224,8 +224,8 @@ auto-exposure), `autoExpose` / `autoFrame` (set `false` to use the scene's baked
 (`{azimuth, elevation}`), `orbitUp` (`'x' | 'y' | 'z'`, the world axis the rock
 revolves about; default = the camera's own signed up axis, so set it only to
 override — and note it re-parks the camera and so usually wants a `viewAngle`
-beside it), `dimensionNav`
-(`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
+beside it), `dimensionNav` (`{key, steps}` for an nD override, applied relative
+to the scene's baked opening step), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
 `noOrbitVideo` (see below), `note` (free-text human annotation; the capture code
 never reads it).
 

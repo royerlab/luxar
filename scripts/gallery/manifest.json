@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), note (free-text human annotation; the capture code never reads it).",
+  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for an nD override applied relative to the baked opening step), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), note (free-text human annotation; the capture code never reads it).",
   "demos": [
     {
       "id": "lorenz",
@@ -45,17 +45,13 @@
       "category": "synthetic",
       "script": "demo_quantum_orbitals.py",
       "dataset": "datasets/demos/quantum_orbitals.luxar.zarr",
-      "dimensionNav": {
-        "key": "1",
-        "steps": 2
-      },
       "viewAngle": {
         "azimuth": 90,
         "elevation": 8
       },
-      "distance": 60,
+      "fillTarget": 0.75,
       "exposure": 1.2,
-      "note": "distance 32 -> 60: the orbitals overflowed the frame at distance 32; the live still shows two small lobes with wide margin. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | The abandoned fillTarget 0.55 attempt was a no-op because fillTarget is INERT when `distance` is set; the 86.6% -> 90.0% border-lit change was run variance. | KEEP dimensionNav steps:2 AND distance 60; measured 2026-09-12. The obvious-looking edit is to raise steps to 4 because the demo bakes OPENING_ORBITAL='3pz' (current_step=[0,0,0,4] of 8 categories) - do NOT. The capture does not start from the baked step (#2733), so steps:4 renders a small single-phase sphere (span 8.3% at d=60, 56.8% at d=9) instead of a dumbbell. Measured at d=40, steps 4/6/5/3/1/2 give span 12.3/39.5/59.8/86.8/90.0/92.8% - an apparent-size ordering in which no steps value reaches 3pz. Removing dimensionNav entirely renders EVERY slice at once (border-lit 100% at d=9, identical at d=12 and identical to steps:8). steps:2 + d=60 gives coverage 64.5%, border-lit 0.1%, and the two-lobed warm/cool dumbbell the live tile shows. Also: border-lit alone cannot validate this tile - a subject shrunk to ~1% of frame scores a perfect 0.0%; read the harness's own `under-filled?` warning."
+      "note": "No dimensionNav: the demo bakes OPENING_ORBITAL=`3pz` (current_step=[0,0,0,4] of 8 categories), and after #2733 the capture waits for that authoritative opening slice. No absolute distance: the substantially larger orbital uses fillTarget 0.75 instead of distance 60 from the old `2pz` tile. Measured across the published store's full 120-frame orbit on 2026-09-14: final coverage 69.0%, final lit 50.2%, border-lit 0/4316 (0.0%)."
     },
     {
       "id": "desi_galaxies",
@@ -326,11 +322,7 @@
         "azimuth": 20,
         "elevation": 25
       },
-      "dimensionNav": {
-        "key": "1",
-        "steps": 3
-      },
-      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, dimensionNav steps the 10-category taxon slider"
+      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, and the tile keeps the demo's authored Birds opening slice"
     },
     {
       "id": "nuclear_pore_complex",
@@ -524,10 +516,6 @@
       "category": "synthetic",
       "script": "demo_hilbert_curve_3d.py",
       "dataset": "datasets/demos/hilbert_curve_3d.luxar.zarr",
-      "dimensionNav": {
-        "key": "1",
-        "steps": 3
-      },
       "viewAngle": {
         "azimuth": 32,
         "elevation": 24

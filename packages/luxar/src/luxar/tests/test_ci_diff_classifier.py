@@ -612,6 +612,9 @@ _NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS = {
     "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts": (
         "test_check_tile_staleness.py writes a fixture file at this path"
     ),
+    "packages/luxar-viewer/src/tests/screenshots/gallery-dimension-readiness.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
     "packages/luxar-viewer/src/tests/screenshots/gallery-media-reporting.ts": (
         "test_check_tile_staleness.py writes a fixture file at this path"
     ),
