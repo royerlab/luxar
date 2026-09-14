@@ -39,6 +39,9 @@ make changelog MONTH="August 2026"   # pin the month heading explicitly
 Commit that in the normal version-bump PR, then follow **Cutting a release** below
 before tagging the release (`make release`).
 
+`--check` validates fragment encoding and format only. The release fold still
+needs git history to resolve each fragment's authored month unless `MONTH` is set.
+
 ## Notes
 
 - Fragments are **Markdown** and touch no source domain, so a fragment-only PR runs

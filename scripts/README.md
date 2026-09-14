@@ -141,7 +141,7 @@ hatch run docs:python scripts/check_documentation.py --verbose
 # Machine-readable JSON report (includes a `ratchet` block)
 hatch run docs:python scripts/check_documentation.py --json
 
-# (Re)write the debt baseline from the current state, then exit 0
+# (Re)write the debt baseline; invalid changelog fragments still exit 1
 hatch run docs:python scripts/check_documentation.py --update-baseline
 
 # Point at a non-default baseline file
@@ -165,7 +165,9 @@ missing READMEs/docstrings/JSDoc or broken README path references. Invalid
 changelog fragments always fail and cannot be added to the baseline. This is
 the completeness stage of `make check-docs` and the required `docs-quality` CI
 job. As debt is paid down, regenerate/tighten the baseline with
-`--update-baseline` and commit the smaller file. See
+`--update-baseline` and commit the smaller file. A malformed changelog fragment
+blocks baseline updates until it is fixed, so unrelated docs-debt paydown cannot
+hide a hard fragment-format failure. See
 `docs/guides/developer/DOCUMENTATION_QUALITY.md` for the full model.
 
 ---
