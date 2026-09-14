@@ -21,6 +21,8 @@ from luxar.gsplats.fitting.config import (
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import pack_tril
 
+_SCALE_DIAGNOSTIC_TOLERANCE_VOX = 0.01
+
 # ANSI 256-color codes: red → yellow → green → cyan gradient
 _GRADIENT_CODES = [
     196,
@@ -187,6 +189,89 @@ def _clip_to_bounds(
     # Scale each row of L: Ls_clipped[k,i,j] = Ls[k,i,j] * scale[k,i]
     clipped: np.ndarray = Ls * scale[:, :, np.newaxis]  # (N,d,d) * (N,d,1) -> broadcast
     return clipped
+
+
+def _near_sigma_statistics(
+    marginal_sigmas: np.ndarray,
+    target_sigma: np.ndarray,
+) -> tuple[int, float]:
+    """Count splats whose marginal sigma matches the target on every axis."""
+    if len(marginal_sigmas) == 0:
+        return 0, 0.0
+    near = np.all(
+        np.abs(marginal_sigmas - target_sigma) <= _SCALE_DIAGNOSTIC_TOLERANCE_VOX,
+        axis=1,
+    )
+    count = int(np.count_nonzero(near))
+    return count, count / len(marginal_sigmas)
+
+
+def _fit_diagnostic_stats(
+    optimization_results: OptimizationResults,
+    config: FitConfig,
+    preprocessed_data: PreprocessedData,
+    Ls: np.ndarray,
+) -> dict[str, Any]:
+    """Build reproducibility and candidate-scale diagnostics for one fit."""
+    from luxar.gsplats.fitting.initialization import _resolve_fit_initial_sigma_diag
+
+    marginal_sigmas = np.sqrt(np.einsum("nij,nij->ni", Ls, Ls, optimize=True))
+    relocation_sigma = np.full(
+        preprocessed_data.d, config.dynamic_config.init_sigma_vox, dtype=np.float32
+    )
+    relocation_count, relocation_fraction = _near_sigma_statistics(
+        marginal_sigmas, relocation_sigma
+    )
+    relocation_statistics = optimization_results.relocation_statistics
+    stats: dict[str, Any] = {
+        "configured_iterations": config.n_iters,
+        "dynamic_ops_enabled": config.enable_dynamic_ops,
+        "dynamic_ops_step_every": config.dynamic_config.step_every,
+        "dynamic_ops_k_max_residuals": config.dynamic_config.k_max_residuals,
+        "dynamic_ops_relocation_events": relocation_statistics["total_relocations"],
+        "dynamic_ops_unique_splats_relocated": relocation_statistics["unique_splats"],
+        "scale_diagnostic_tolerance_vox": _SCALE_DIAGNOSTIC_TOLERANCE_VOX,
+        "fit_init_sigma_vox": config.init_sigma_vox,
+        "relocation_init_sigma_vox": config.dynamic_config.init_sigma_vox,
+        "splats_near_relocation_init_sigma_count": relocation_count,
+        "splats_near_relocation_init_sigma_fraction": relocation_fraction,
+    }
+
+    sigma_min = (
+        np.asarray(config.sigma_min_diag, dtype=np.float32)
+        if config.sigma_min_diag is not None
+        else None
+    )
+    candidates_match_dimensions = sigma_min is None or sigma_min.shape == (
+        preprocessed_data.d,
+    )
+    fit_sigma = (
+        _resolve_fit_initial_sigma_diag(config, preprocessed_data)
+        if candidates_match_dimensions
+        else None
+    )
+    if fit_sigma is not None:
+        fit_count, fit_fraction = _near_sigma_statistics(marginal_sigmas, fit_sigma)
+        stats.update(
+            {
+                "fit_init_sigma_diag_vox": fit_sigma.tolist(),
+                "splats_near_fit_init_sigma_count": fit_count,
+                "splats_near_fit_init_sigma_fraction": fit_fraction,
+            }
+        )
+
+    if sigma_min is not None and candidates_match_dimensions:
+        sigma_min_count, sigma_min_fraction = _near_sigma_statistics(
+            marginal_sigmas, sigma_min
+        )
+        stats.update(
+            {
+                "sigma_min_diag_vox": sigma_min.tolist(),
+                "splats_near_sigma_min_count": sigma_min_count,
+                "splats_near_sigma_min_fraction": sigma_min_fraction,
+            }
+        )
+    return stats
 
 
 #: Fraction of the normalized [0, 1] intensity range a voxel must EXCEED to count
@@ -436,6 +521,9 @@ def finalize_results(
     centers_np = centers_dev.cpu().numpy()
     Ls_np = Ls_dev.cpu().numpy()
     amps_np = amps_dev.cpu().numpy()
+    diagnostic_stats = _fit_diagnostic_stats(
+        optimization_results, config, preprocessed_data, Ls_np
+    )
 
     # Rescale amplitudes to original intensity range.
     # NOTE: image_min (incl. any subtracted background floor) is intentionally
@@ -530,6 +618,7 @@ def finalize_results(
         "image_max": preprocessed_data.image_max,
         "intensity_range": preprocessed_data.intensity_range,
         "floor": preprocessed_data.floor,
+        **diagnostic_stats,
         # What the splats are a representation OF. Without this, a stored
         # .gsplats.zarr cannot say how much it compressed: the source grid is
         # nowhere on disk, and it is not recoverable from the demo either,

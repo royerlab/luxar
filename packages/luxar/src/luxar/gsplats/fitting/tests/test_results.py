@@ -1206,3 +1206,65 @@ def test_postfit_metrics_present_for_physical_coords() -> None:
     # centers all sit below 1.0, so any such bound holds whether the physical
     # conversion ran or not.
     np.testing.assert_allclose(result.centers, 0.5 * voxel_centers, rtol=1e-6)
+
+
+def test_finalize_reports_relocation_and_candidate_scale_diagnostics(
+    basic_config, basic_preprocessed_data
+) -> None:
+    """Fit stats distinguish relocation history from colliding scale candidates."""
+    basic_config.init_sigma_vox = 0.5
+    basic_config.sigma_min_diag = [0.3, 0.3]
+    basic_config.enable_dynamic_ops = True
+    basic_config.n_iters = 20_000
+    basic_config.dynamic_config.step_every = 50
+    basic_config.dynamic_config.k_max_residuals = 40
+    basic_config.dynamic_config.init_sigma_vox = 0.5
+    basic_config.clip_to_bounds = False
+    basic_config.voxel_footprint_correction = True
+
+    Ls = torch.tensor(
+        [
+            [[0.5, 0.0], [0.0, 0.5]],
+            [[0.5, 0.0], [0.006, 0.5]],
+            [[0.3, 0.0], [0.0, 0.3]],
+            [[0.7, 0.0], [0.0, 0.7]],
+            [[0.5, 0.0], [0.0, 0.7]],
+        ],
+        dtype=torch.float32,
+    )
+    optimization_results = OptimizationResults(
+        centers=torch.full((5, 2), 16.0),
+        Ls=Ls,
+        amps=torch.ones(5),
+        converged_early=False,
+        early_stopped=False,
+        actual_iters=20_000,
+        best_iteration=19_900,
+        best_loss=0.01,
+        best_max_abs_error=0.05,
+        best_rel_l2=0.1,
+        movie_frames=None,
+        start_time=0.0,
+        end_time=1.0,
+        relocation_statistics={"total_relocations": 17, "unique_splats": 11},
+    )
+
+    result = finalize_results(
+        optimization_results, basic_config, basic_preprocessed_data
+    )
+
+    assert result.stats["configured_iterations"] == 20_000
+    assert result.stats["dynamic_ops_step_every"] == 50
+    assert result.stats["dynamic_ops_k_max_residuals"] == 40
+    assert result.stats["dynamic_ops_relocation_events"] == 17
+    assert result.stats["dynamic_ops_unique_splats_relocated"] == 11
+    assert result.stats["scale_diagnostic_tolerance_vox"] == 0.01
+    assert result.stats["fit_init_sigma_diag_vox"] == [0.5, 0.5]
+    assert result.stats["relocation_init_sigma_vox"] == 0.5
+    assert result.stats["sigma_min_diag_vox"] == pytest.approx([0.3, 0.3])
+    assert result.stats["splats_near_fit_init_sigma_count"] == 2
+    assert result.stats["splats_near_fit_init_sigma_fraction"] == 0.4
+    assert result.stats["splats_near_relocation_init_sigma_count"] == 2
+    assert result.stats["splats_near_relocation_init_sigma_fraction"] == 0.4
+    assert result.stats["splats_near_sigma_min_count"] == 1
+    assert result.stats["splats_near_sigma_min_fraction"] == 0.2

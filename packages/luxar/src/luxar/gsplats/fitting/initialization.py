@@ -14,6 +14,39 @@ from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.optim import create_optimizer_and_scheduler
 
 
+def _resolve_fit_initial_sigma_diag(
+    config: FitConfig, preprocessed_data: PreprocessedData
+) -> Optional[np.ndarray]:
+    """Return the uniform voxel-space sigma vector used for fresh seeds.
+
+    A caller-supplied ``init_L`` may contain a different covariance per splat,
+    so it has no single fit-initialization scale to diagnose.
+    """
+    if preprocessed_data.init_L is not None:
+        return None
+
+    opt_shape = tuple(preprocessed_data.V_tensor.shape)
+    if config.init_sigma_vox is not None:
+        sigma_diag = np.full(
+            preprocessed_data.d, config.init_sigma_vox, dtype=np.float32
+        )
+    elif config.voxel_size is not None:
+        phys_dims = np.array(opt_shape, dtype=np.float32) * config.voxel_size
+        init_sigma_phys = max(
+            1.5 * float(config.voxel_size.min()), float(phys_dims.min()) * 0.05
+        )
+        sigma_diag = np.asarray(init_sigma_phys / config.voxel_size, dtype=np.float32)
+    else:
+        init_sigma = max(1.5, float(min(opt_shape)) * 0.05)
+        sigma_diag = np.full(preprocessed_data.d, init_sigma, dtype=np.float32)
+
+    if config.sigma_min_diag is not None:
+        sigma_diag = np.maximum(
+            sigma_diag, np.asarray(config.sigma_min_diag, dtype=np.float32) + 0.1
+        )
+    return np.asarray(sigma_diag, dtype=np.float32)
+
+
 def initialize_optimization(
     config: FitConfig, preprocessed_data: PreprocessedData
 ) -> ModelComponents:
@@ -57,43 +90,18 @@ def initialize_optimization(
             aprint(f"Using pre-initialized Cholesky factors: {L0.shape}")
     else:
         # Fallback: isotropic Gaussians with init_sigma_vox or auto-computed sigma
-        init_sigma = config.init_sigma_vox
-        init_sigma_phys = None  # Physical-space sigma (only used with voxel_size)
-        if init_sigma is None:
-            if config.voxel_size is not None:
-                # Physical-space auto: use physical extents
-                phys_dims = np.array(opt_shape, dtype=np.float32) * config.voxel_size
-                min_phys_dim = float(phys_dims.min())
-                min_vs = float(config.voxel_size.min())
-                init_sigma_phys = max(1.5 * min_vs, min_phys_dim * 0.05)
-                if config.verbose:
-                    aprint(
-                        f"Auto-computed init_sigma_phys={init_sigma_phys:.2f} "
-                        f"(5% of min physical dim {min_phys_dim:.1f})"
-                    )
-            else:
-                # Voxel-space auto: ~5% of smallest dimension, min 1.5
-                min_dim = float(min(opt_shape))
-                init_sigma = max(1.5, min_dim * 0.05)
-                if config.verbose:
-                    aprint(
-                        f"Auto-computed init_sigma={init_sigma:.2f} (5% of min dim {min_dim})"
-                    )
-
+        sigma_diag = _resolve_fit_initial_sigma_diag(config, preprocessed_data)
+        assert sigma_diag is not None
         L0 = np.zeros((N, d, d), dtype=np.float32)
-        if init_sigma_phys is not None:
-            # Physical sigma → per-axis voxel-space L_diag
-            assert config.voxel_size is not None  # set when init_sigma_phys is set
-            for i in range(d):
-                L0[:, i, i] = init_sigma_phys / config.voxel_size[i]
-        else:
-            # Scalar voxel-space sigma (backward-compatible)
-            for i in range(d):
-                L0[:, i, i] = init_sigma
+        for i in range(d):
+            L0[:, i, i] = sigma_diag[i]
+
+        if config.verbose and config.init_sigma_vox is None:
+            aprint(f"Auto-computed init sigma diag={sigma_diag.tolist()} voxels")
 
     # Ensure diagonal values are at least sigma_min_diag to prevent gradient death
     # (inverse_softplus of values near 0 causes gradients to vanish)
-    if config.sigma_min_diag is not None:
+    if config.sigma_min_diag is not None and preprocessed_data.init_L is not None:
         sigma_min = np.asarray(config.sigma_min_diag, dtype=np.float32)
         for i in range(d):
             L0[:, i, i] = np.maximum(L0[:, i, i], sigma_min[i] + 0.1)

@@ -268,6 +268,10 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
   `floor="none"` because the pedestal was removed once up front — so only the
   overall stats can say what was subtracted (#1175). See
   `docs/specs/GSPLATS_ZARR_FORMAT.md` for the per-writer-path table.
+- Fit stats also preserve dynamic-ops event/distinct-splat relocation counts and
+  count final splats within 0.01 voxel of the resolved fit initialization,
+  relocation initialization, and sigma-floor candidates. These diagnostics use
+  marginal sigmas from the selected best state before output-space transforms.
 
 ### `visualization.py` - Display Helpers
 **Purpose:** Optional visualization of results.

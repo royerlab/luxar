@@ -458,6 +458,11 @@ class OptimizationResults:
     start_time: float
     end_time: float
 
+    # Dynamic-ops diagnostics from the full optimization history.
+    relocation_statistics: Dict[str, int] = field(
+        default_factory=lambda: {"total_relocations": 0, "unique_splats": 0}
+    )
+
 
 @dataclass
 class ModelComponents:

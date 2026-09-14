@@ -446,6 +446,13 @@ def run_optimization_loop(
             pred_final = model()
             best_max_abs_error, best_rel_l2 = _compute_eval_metrics(pred_final, V_t)
 
+    relocation_statistics = (
+        relocation_tracker.get_statistics()
+        if relocation_tracker is not None
+        else {"total_relocations": 0, "unique_splats": 0}
+    )
+    relocation_statistics.pop("currently_on_cooldown", None)
+
     return OptimizationResults(
         centers=centers,
         Ls=Ls,
@@ -460,6 +467,7 @@ def run_optimization_loop(
         movie_frames=movie_frames,
         start_time=start_time,
         end_time=end_time,
+        relocation_statistics=relocation_statistics,
     )
 
 
