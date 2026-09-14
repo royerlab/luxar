@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
 from luxar.gsplats.fitting.config import (
+    _EMPTY_RELOCATION_STATISTICS,
     FitConfig,
     ModelComponents,
     OptimizationResults,
@@ -52,6 +53,19 @@ def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:
         Maximum absolute error across all elements
     """
     return torch.max(torch.abs(pred - target)).item()
+
+
+def _completed_relocation_statistics(
+    relocation_tracker: Optional[RecentlyRelocatedTracker],
+) -> dict[str, int]:
+    """Return persisted relocation counters without transient cooldown state."""
+    if relocation_tracker is None:
+        return _EMPTY_RELOCATION_STATISTICS.copy()
+    tracker_statistics = relocation_tracker.get_statistics()
+    return {
+        "total_relocations": tracker_statistics["total_relocations"],
+        "unique_splats": tracker_statistics["unique_splats"],
+    }
 
 
 def _compute_eval_metrics(
@@ -446,6 +460,8 @@ def run_optimization_loop(
             pred_final = model()
             best_max_abs_error, best_rel_l2 = _compute_eval_metrics(pred_final, V_t)
 
+    relocation_statistics = _completed_relocation_statistics(relocation_tracker)
+
     return OptimizationResults(
         centers=centers,
         Ls=Ls,
@@ -460,6 +476,7 @@ def run_optimization_loop(
         movie_frames=movie_frames,
         start_time=start_time,
         end_time=end_time,
+        relocation_statistics=relocation_statistics,
     )
 
 

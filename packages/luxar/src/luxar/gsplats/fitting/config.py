@@ -16,6 +16,8 @@ from luxar.typing_utils.constants import (
     DEFAULT_TRUNCATION_RADIUS,
 )
 
+_EMPTY_RELOCATION_STATISTICS = {"total_relocations": 0, "unique_splats": 0}
+
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
@@ -457,6 +459,11 @@ class OptimizationResults:
     # Timing
     start_time: float
     end_time: float
+
+    # Dynamic-ops diagnostics from the full optimization history.
+    relocation_statistics: Dict[str, int] = field(
+        default_factory=_EMPTY_RELOCATION_STATISTICS.copy
+    )
 
 
 @dataclass

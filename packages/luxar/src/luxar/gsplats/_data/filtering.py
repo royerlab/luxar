@@ -9,13 +9,16 @@ predicate covers more than one:
   an amplitude threshold leaves the represented region exactly as it was.
   Predicate: :func:`_is_crop`.
 * :data:`_CONTENT_SCOPED_STATS_KEYS` — MEASURED reconstruction scores of the
-  splat set against the SOURCE VOLUME (the PSNR family), plus the
+  splat set against the SOURCE VOLUME (the PSNR family), final populations
+  measured against candidate scales, plus the
   :data:`_CONTENT_SCOPED_OP_RECORD_KEYS` record of the reduction that produced
   the artifact. Invalidated whenever the splat set changes, spatially or not: an
   amplitude-threshold cull leaves the region untouched while changing the
   reconstruction completely, and a merge-family reduction can hit the requested
   count exactly while replacing every splat with a representative. Predicate:
-  "did the content change" — :func:`_stats_after_content_change`.
+  "did the content change" — :func:`_stats_after_content_change`. The final
+  populations are the one subset the producer-side score exemption does not
+  restore after a closing trim.
 * :data:`_STRUCTURE_SCOPED_STATS_KEYS` — the artifact's OWN TOPOLOGY: which LOD
   mechanism built it, how many substitutive levels and additive rungs it has,
   where the ladder cutpoints fall, which recipe was run. Invalidated when a
@@ -170,6 +173,20 @@ def stamp_region_scoped_stats(
         stats["voxels_per_splat"] = float(fitted_voxels / n_splats)
 
 
+#: Final best-state populations measured against candidate scales. They are
+#: content-scoped, but unlike reconstruction scores they are cheap counts rather
+#: than expensive renders, so the fitters' closing-trim snapshot must not carry
+#: them onto a different splat set.
+_FINAL_SCALE_POPULATION_STATS_KEYS = (
+    "splats_near_fit_init_sigma_count",
+    "splats_near_fit_init_sigma_fraction",
+    "splats_near_relocation_init_sigma_count",
+    "splats_near_relocation_init_sigma_fraction",
+    "splats_near_sigma_min_count",
+    "splats_near_sigma_min_fraction",
+)
+
+
 #: MEASURED reconstruction scores — every number that was obtained by rendering
 #: a specific splat set and comparing it to the source volume. They describe the
 #: SPLATS, not the source and not the run, so any operation that changes which
@@ -203,6 +220,10 @@ _CONTENT_SCOPED_STATS_KEYS = (
     "final_loss",
     "final_rel_l2",
     "final_max_abs_error",
+    # Final best-state populations measured against candidate scales. The
+    # candidate/config values and initial-covariance summaries remain run-scoped,
+    # but these counts and fractions describe the exact splat set being reduced.
+    *_FINAL_SCALE_POPULATION_STATS_KEYS,
     # Progressive fit, per additive sub-LOD: the PSNR of the prefix up to and
     # including this pass, and its increment. Persisted as the leaf's
     # `lod_stats` and read back by `GSplatData.lod_psnrs`, so a cull that fixed
@@ -484,10 +505,12 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     get no such exemption — carrying the score across an arbitrary retention the
     user picked is #1600 itself.
 
-    Covers the measured SCORES only, not :data:`_CONTENT_SCOPED_OP_RECORD_KEYS`:
-    the op that scrubbed them re-stamps its own record right after, and restoring
-    an older cull's ``n_original`` / ``amplitude_retention`` over it would publish
-    the wrong reduction (a tiled fit culls each tile, then culls the merge).
+    Covers the measured SCORES only, not final scale populations or
+    :data:`_CONTENT_SCOPED_OP_RECORD_KEYS`: restoring populations would attach
+    pre-trim counts to a different splat set, and the op that scrubbed the record
+    re-stamps its own right after. Restoring an older cull's ``n_original`` /
+    ``amplitude_retention`` over it would publish the wrong reduction (a tiled
+    fit culls each tile, then culls the merge).
 
     The nested per-pass lists are deep-copied so the snapshot is independent of
     the dataset it was taken from — a later edit of the source (or of the trimmed
@@ -495,10 +518,28 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     """
     import copy
 
-    snapshot = {key: stats[key] for key in _CONTENT_SCOPED_STATS_KEYS if key in stats}
+    snapshot = {
+        key: stats[key]
+        for key in _CONTENT_SCOPED_STATS_KEYS
+        if key in stats and key not in _FINAL_SCALE_POPULATION_STATS_KEYS
+    }
     for key in _NESTED_STATS_LIST_KEYS:
         if key in stats:
-            snapshot[key] = copy.deepcopy(stats[key])
+            nested = copy.deepcopy(stats[key])
+            if isinstance(nested, list):
+                nested = [
+                    (
+                        {
+                            k: v
+                            for k, v in entry.items()
+                            if k not in _FINAL_SCALE_POPULATION_STATS_KEYS
+                        }
+                        if isinstance(entry, dict)
+                        else entry
+                    )
+                    for entry in nested
+                ]
+            snapshot[key] = nested
     return snapshot
 
 
@@ -550,7 +591,27 @@ def restore_measured_stats(
         data.stats.update(snapshot[0])
         return data
     for target, saved in zip(targets, snapshot):
-        target.update(saved)
+        restored = dict(saved)
+        for key in _NESTED_STATS_LIST_KEYS:
+            target_nested = target.get(key)
+            saved_nested = saved.get(key)
+            if (
+                isinstance(target_nested, list)
+                and isinstance(saved_nested, list)
+                and len(target_nested) == len(saved_nested)
+            ):
+                restored[key] = [
+                    (
+                        {**target_entry, **saved_entry}
+                        if isinstance(target_entry, dict)
+                        and isinstance(saved_entry, dict)
+                        else saved_entry
+                    )
+                    for target_entry, saved_entry in zip(
+                        target_nested, saved_nested, strict=True
+                    )
+                ]
+        target.update(restored)
     return data
 
 
