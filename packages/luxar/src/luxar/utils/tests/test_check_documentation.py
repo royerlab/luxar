@@ -760,11 +760,25 @@ def test_invalid_fragment_cannot_be_added_to_docs_baseline(tmp_path: Path) -> No
         baseline_path,
         {"Changelog fragment format::changelog.d::bad.md"},
     )
+    baseline_before = baseline_path.read_bytes()
 
     proc = _run(script_copy)
-
     assert proc.returncode == 1
     assert "cannot be baselined" in proc.stdout
+
+    json_proc = _run(script_copy, "--json")
+    assert json_proc.returncode == 1
+    report = json.loads(json_proc.stdout)
+    assert report["ratchet"]["new"] == []
+    assert (
+        "Changelog fragment format::changelog.d::bad.md"
+        in report["ratchet"]["still_present"]
+    )
+
+    update_proc = _run(script_copy, "--update-baseline")
+    assert update_proc.returncode == 1
+    assert "Fix invalid changelog fragments" in update_proc.stderr
+    assert baseline_path.read_bytes() == baseline_before
 
 
 def test_update_baseline_cli(tmp_path: Path) -> None:
