@@ -365,17 +365,14 @@ class TestWrittenDatasetContract:
 
     @pytest.mark.parametrize("grid", [12, 16])
     def test_dimension_metadata_and_decoded_planes(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grid: int
+        self, tmp_path: Path, grid: int
     ) -> None:
         import zarr
 
         from luxar.io.reader import LuxarScene
 
         # 12 exercises phase alignment when grid//2 is not divisible by the
-        # stride and forces multiple bounded partition children; 16 proves the
-        # already-aligned case does not move under the production cap.
-        if grid == 12:
-            monkeypatch.setattr(_demo, "TARGET_MAX_POINTS_PER_PLANE", 1_000)
+        # stride; 16 proves the already-aligned case does not move.
         out = tmp_path / f"fractals_4d_test_{grid}.luxar.zarr"
         _demo.generate_4d_fractal_dataset(out, grid_size=grid)
 
@@ -396,26 +393,16 @@ class TestWrittenDatasetContract:
         assert len(planes) > 2, "test grid too small to exercise the slider"
 
         root = zarr.open_group(out, mode="r")
-        group = root["Fractals4D"]
-        attrs = group.attrs
-        assert attrs["kind"] == "partition"
-        assert attrs["max_elements"] == _demo.TARGET_MAX_POINTS_PER_PLANE
+        leaf = root["Fractals4D"]
+        attrs = leaf.attrs
+        assert attrs["type"] == "points"
         assert attrs["blending_mode"] == "volumetric"
         assert attrs["opacity"] == pytest.approx(0.43)
         assert attrs["absorption"] == pytest.approx(1.23)
         assert attrs["intensity"] == pytest.approx(1.0 / _demo.DISPLAY_MAX)
 
-        part_names = list(group.group_keys())
-        assert part_names
-        if grid == 12:
-            assert len(part_names) > 1
-        assert all(
-            group[name].attrs["n_points"] <= _demo.TARGET_MAX_POINTS_PER_PLANE
-            for name in part_names
-        )
-        pos = np.concatenate(
-            [scene.get_points(f"Fractals4D/{name}")["positions"] for name in part_names]
-        )
+        assert not list(leaf.group_keys())
+        pos = scene.get_points("Fractals4D")["positions"]
         w = pos[:, 1]
         fractal_ids = pos[:, 0]
         # Quantization precision is judged against the PRODUCTION fetch

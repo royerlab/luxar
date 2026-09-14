@@ -729,10 +729,12 @@ def generate_4d_fractal_dataset(
             # helping to blend into.
             sharpnesses = np.full(len(positions_5d), 0.75, dtype=np.float32)
 
-            fractals = scene.add_partition_group(
+            scene.add_points(
                 "Fractals4D",
-                display_type="points",
-                max_elements=TARGET_MAX_POINTS_PER_PLANE,
+                positions_5d,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpnesses,
                 # Dialled in live in the Layers panel and copied back here, so
                 # the demo OPENS on the settings someone actually chose rather
                 # than on defaults they then have to rediscover.
@@ -753,31 +755,6 @@ def generate_4d_fractal_dataset(
                 intensity=1.0 / DISPLAY_MAX,
                 layer=True,
             )
-            for part, start in enumerate(
-                range(0, len(positions_5d), TARGET_MAX_POINTS_PER_PLANE)
-            ):
-                stop = min(start + TARGET_MAX_POINTS_PER_PLANE, len(positions_5d))
-                fractals.add_points(
-                    f"part_{part}",
-                    positions_5d[start:stop],
-                    colors=colors[start:stop],
-                    radii=radii[start:stop],
-                    sharpness=sharpnesses[start:stop],
-                    # A part is a slab of the INDEX, so most of them cover a
-                    # single hidden coordinate on at least one axis (measured:
-                    # 217 of 297 hold one `fractal` and several `w`, 76 hold one
-                    # of each, 4 hold neither) and the writer offers
-                    # `extend_to_all` for those 293. Declining it EXPLICITLY is
-                    # the right answer — a part must be visible only where its own
-                    # points are, or a slab would smear across every plane — and
-                    # `[]` resolves to exactly what `None` resolves to, so no
-                    # attribute is written either way and the store is
-                    # byte-identical. What it removes is build-log noise: those
-                    # 293 `warnings.warn` calls carry only two distinct texts, so
-                    # Python's warning registry already collapsed them to two
-                    # printed lines, and now to none.
-                    extend_to_all=[],
-                )
 
             # --- Overlays ---
             # Title

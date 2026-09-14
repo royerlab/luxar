@@ -1707,12 +1707,6 @@ scene.add_gsplats_from_data(
             "additive_lod",
             "stream_ladder",
         ),
-        (
-            "demo_4d_fractals.py",
-            "'Fractals4D'",
-            "max_elements",
-            "TARGET_MAX_POINTS_PER_PLANE",
-        ),
     ],
 )
 def test_gallery_oversized_nodes_bound_individual_commits(
