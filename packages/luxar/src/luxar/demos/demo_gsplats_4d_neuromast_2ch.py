@@ -153,7 +153,7 @@ from luxar.demos import (
 )
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds, iter_leaves
+from luxar.gsplats.tree import GSplatNode, center_bounds, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -201,9 +201,10 @@ CHANNELS = [
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
-        # Display window (Layers-panel range) and gamma, validated on the pinned
-        # historical-2.5, lateral-pixel-unit pair at -3.4 stops (2026-09-13,
-        # ADDITIVE compositing). The micron repin must re-check exposure only.
+        # Display window (Layers-panel range) and gamma, validated at -3.4 stops
+        # on 2026-09-13 against manifest SHA-256 ceaa9a41... (membranes) and
+        # 89e3be6e... (nuclei), with full-ladder p90 0.0944 / 0.0219. Replacement
+        # pins must re-check appearance. Compositing was ADDITIVE.
         # The window is authored as intensity/offset: intensity = 1 / (hi - lo),
         # offset = -lo / (hi - lo), which the viewer maps back to [lo, hi] on a
         # colormapped node. A gamma below 1 lifts the dim membrane shell.
@@ -253,11 +254,14 @@ NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 
-#: Opening pose measured from the middle timepoint, where the rosette is stable.
+#: Opening angle measured from the low-depth surface normal.
 CAMERA_ANGLE_DEG = 37.5
+#: Weighted projected-radius percentile used to exclude sparse outliers.
 CAMERA_RADIUS_PERCENTILE = 95.0
+#: Produced 72 % subject coverage and 0 % border-lit pixels at 1600x1000.
 CAMERA_FRAME_FILL = 0.62
-CAMERA_FRAME_TOLERANCE = 0.25
+#: Temporal tolerance around the shared middle-frame coordinate.
+REFERENCE_FRAME_TOLERANCE = 0.25
 
 #: Per-channel ``--source-*`` paths, resolved once at import like the other flags.
 SOURCE_ARGS = {ch["name"]: parse_path_arg(str(ch["source_flag"])) for ch in CHANNELS}
@@ -523,22 +527,23 @@ def resolve_channel_paths() -> list[Path]:
 # Scene construction
 # =============================================================================
 def _reference_frame_samples(
-    node: Any, bounds: tuple[np.ndarray, np.ndarray]
+    node: GSplatNode, reference_time: float, path: Path
 ) -> tuple[np.ndarray, np.ndarray]:
-    reference_time = np.floor((bounds[0][3] + bounds[1][3]) / 2.0 + 0.5)
     centers = []
     amplitudes = []
     for leaf in iter_leaves(node):
         for sub in leaf.additive_sublods:
             selected = (
-                np.abs(sub.centers[:, 3] - reference_time) <= CAMERA_FRAME_TOLERANCE
+                np.abs(sub.centers[:, 3] - reference_time) <= REFERENCE_FRAME_TOLERANCE
             )
             positive = selected & (sub.amplitudes > 0)
             if np.any(positive):
                 centers.append(sub.centers[positive, :3])
                 amplitudes.append(sub.amplitudes[positive])
     if not centers:
-        raise ValueError("Neuromast reference frame has no positive-amplitude splats")
+        raise ValueError(
+            f"Neuromast reference frame has no positive-amplitude splats: {path}"
+        )
     return np.concatenate(centers), np.concatenate(amplitudes)
 
 
@@ -599,17 +604,14 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         # spatial axes are displayed; Time is a DISCRETE (step=1) hidden axis
         # that drives the playback slider.
         channel_bounds = []
-        camera_centers = []
-        camera_amplitudes = []
+        channel_nodes: list[GSplatNode] = []
         for path in channel_paths:
             node, _ = load_gsplat_node(str(path))
             bounds = center_bounds(node)
             if bounds is None:
                 raise ValueError(f"Channel has no centre bounds: {path}")
+            channel_nodes.append(node)
             channel_bounds.append(bounds)
-            centers, amplitudes = _reference_frame_samples(node, bounds)
-            camera_centers.append(centers)
-            camera_amplitudes.append(amplitudes)
         channel_mins = np.stack([bounds[0] for bounds in channel_bounds])
         channel_maxs = np.stack([bounds[1] for bounds in channel_bounds])
         bmin = np.min(channel_mins, axis=0)
@@ -631,6 +633,14 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                 f"endpoint deltas={endpoint_delta[divergent]}, "
                 f"tolerances={quantization_step[divergent]}"
             )
+        reference_time = float(np.floor((bmin[3] + bmax[3]) / 2.0 + 0.5))
+        camera_centers = []
+        camera_amplitudes = []
+        for node, path in zip(channel_nodes, channel_paths, strict=True):
+            centers, amplitudes = _reference_frame_samples(node, reference_time, path)
+            camera_centers.append(centers)
+            camera_amplitudes.append(amplitudes)
+        del node, channel_nodes
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
         camera = _opening_camera(
             np.concatenate(camera_centers),

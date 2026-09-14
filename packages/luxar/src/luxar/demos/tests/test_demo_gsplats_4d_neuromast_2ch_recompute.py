@@ -32,9 +32,8 @@ from luxar._zarr_compat import open_group
 from luxar.demos import demo_gsplats_4d_neuromast_2ch as demo
 from luxar.gsplats.calibration.noise_floor import estimate_floor
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
-from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.io.save_gsplats import save_gsplats
-from luxar.gsplats.tree import GSplatLeaf, iter_leaves
+from luxar.gsplats.tree import GSplatLeaf
 
 SMALL = (4, 3, 5, 6)
 _MANIFEST_PATH = Path(__file__).resolve().parents[1] / "data_manifest.json"
@@ -298,8 +297,8 @@ def test_compiled_scene_authors_a_signal_derived_scale_independent_camera(
 ) -> None:
     centers = np.array(
         [
-            [0, 0, 0, 0],
-            [10, 100, 100, 2],
+            [1, 0, 10, 0],
+            [5, 100, 90, 2],
             [2, 20, 30, 1],
             [4, 40, 70, 1],
             [3, 60, 50, 1],
@@ -307,11 +306,11 @@ def test_compiled_scene_authors_a_signal_derived_scale_independent_camera(
         dtype=np.float32,
     )
     amplitudes = (
-        np.array([4, 4, 1, 3, 0], dtype=np.float32),
-        np.array([4, 4, 0, 0, 2], dtype=np.float32),
+        np.array([255, 255, 51, 153, 0], dtype=np.float32),
+        np.array([255, 255, 0, 0, 102], dtype=np.float32),
     )
 
-    def compile_camera(scale: float, suffix: str) -> tuple[dict, np.ndarray]:
+    def compile_camera(scale: float | tuple[float, float, float], suffix: str) -> dict:
         scaled = centers.copy()
         scaled[:, :3] *= scale
         channel_paths = [
@@ -322,30 +321,17 @@ def test_compiled_scene_authors_a_signal_derived_scale_independent_camera(
             )
             for index, channel in enumerate(demo.CHANNELS)
         ]
-        reference_centers = []
-        reference_amplitudes = []
-        for path in channel_paths:
-            node, _ = load_gsplat_node(str(path))
-            for leaf in iter_leaves(node):
-                for sub in leaf.additive_sublods:
-                    selected = np.abs(sub.centers[:, 3] - 1.0) <= 0.25
-                    positive = selected & (sub.amplitudes > 0)
-                    reference_centers.append(sub.centers[positive, :3])
-                    reference_amplitudes.append(sub.amplitudes[positive])
-        expected_target = np.average(
-            np.concatenate(reference_centers),
-            axis=0,
-            weights=np.concatenate(reference_amplitudes),
-        )
         output = demo.create_luxar_scene(
             channel_paths, tmp_path / f"scene_{suffix}.luxar.zarr"
         )
-        camera = dict(open_group(output, mode="r").attrs)["viewer_config"]["camera"]
-        return camera, expected_target
+        return dict(open_group(output, mode="r").attrs)["viewer_config"]["camera"]
 
-    camera, expected_target = compile_camera(1.0, "pixels")
-    scaled_camera, scaled_expected_target = compile_camera(0.1083, "microns")
+    camera = compile_camera(1.0, "pixels")
+    scaled_camera = compile_camera(0.1083, "microns")
+    anisotropic_scale = (0.1, 0.1083, 0.1083)
+    anisotropic_camera = compile_camera(anisotropic_scale, "anisotropic")
 
+    expected_target = np.array([10 / 3, 130 / 3, 170 / 3])
     target = np.asarray(camera["target"])
     position = np.asarray(camera["position"])
     direction = position - target
@@ -355,17 +341,56 @@ def test_compiled_scene_authors_a_signal_derived_scale_independent_camera(
     )
 
     assert target == pytest.approx(expected_target)
+    # Fixture p95 projected radius 32.047 / fill / tan(cinematic half-FOV).
+    assert distance == pytest.approx(84.349, rel=1e-4)
     assert position[0] < centers[:, 0].min()
     assert position[2] > target[2]
     assert 35.0 <= angle_from_low_depth_normal <= 40.0
     assert camera["up"] == pytest.approx([0.0, 1.0, 0.0])
-    assert scaled_expected_target == pytest.approx(
-        expected_target * 0.1083, rel=1e-5, abs=3e-5
-    )
     assert scaled_camera["target"] == pytest.approx(target * 0.1083, rel=1e-4, abs=1e-5)
     assert scaled_camera["position"] == pytest.approx(
         position * 0.1083, rel=1e-4, abs=1e-5
     )
+    anisotropic_target = np.asarray(anisotropic_camera["target"])
+    anisotropic_direction = (
+        np.asarray(anisotropic_camera["position"]) - anisotropic_target
+    )
+    anisotropic_angle = np.degrees(
+        np.arccos(
+            np.clip(
+                -anisotropic_direction[0] / np.linalg.norm(anisotropic_direction),
+                -1.0,
+                1.0,
+            )
+        )
+    )
+    assert anisotropic_target == pytest.approx(
+        expected_target * np.asarray(anisotropic_scale), rel=1e-4, abs=1e-5
+    )
+    assert anisotropic_camera["position"][0] < (centers[:, 0] * 0.1).min()
+    assert anisotropic_angle == pytest.approx(demo.CAMERA_ANGLE_DEG)
+
+
+def test_compiled_scene_uses_one_union_reference_time_for_both_channels(
+    tmp_path,
+) -> None:
+    channel_centers = (
+        np.array([[0, 0, 0, 0], [10, 20, 30, 1]], dtype=np.float32),
+        np.array([[0, 0, 0, -1e-6], [10, 20, 30, 1 - 1e-6]], dtype=np.float32),
+    )
+    channel_paths = [
+        _tiny_gsplat_store(
+            tmp_path / f"{channel['name']}.gsplats.zarr",
+            channel_centers[index],
+            [1, 1],
+        )
+        for index, channel in enumerate(demo.CHANNELS)
+    ]
+
+    output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
+    camera = dict(open_group(output, mode="r").attrs)["viewer_config"]["camera"]
+
+    assert camera["target"] == pytest.approx([0.0, 0.0, 0.0], abs=1e-5)
 
 
 def test_compiled_scene_dimensions_cover_both_channels(tmp_path) -> None:
