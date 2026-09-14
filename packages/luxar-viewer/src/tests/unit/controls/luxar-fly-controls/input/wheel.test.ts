@@ -76,14 +76,14 @@ describe('handleWheel — gating', () => {
 
 describe('handleWheel — plain scroll (forward/backward)', () => {
   // Formula:
-  //   delta = -Math.sign(event.deltaY)
-  //   impulse = delta * movementSpeed * 0.3
+  //   direction = Math.sign(event.deltaY)
+  //   impulse = -direction * movementSpeed * 0.3
   //   inertialMode: velocity += forward * impulse
   //   non-inertial: position += forward * impulse * 0.2
   // forward = (0,0,-1).applyQuaternion(orientation) → identity → (0,0,-1).
 
   it('scroll up (negative deltaY) in inertial mode adds forward impulse to velocity (M6)', () => {
-    // M6: assert the exact magic-number formula. delta=+1, speed=2, impulse = 0.6.
+    // M6: assert the exact formula. direction=-1, speed=2, impulse = 0.6.
     // velocity += (0,0,-1)*0.6 → (0,0,-0.6).
     const ctx = makeCtx({ inertialMode: true, movementSpeed: 2 });
     handleWheel(ctx, makeWheelEvent(-100));
@@ -94,7 +94,7 @@ describe('handleWheel — plain scroll (forward/backward)', () => {
   });
 
   it('scroll down (positive deltaY) reverses direction', () => {
-    // delta = -Math.sign(+100) = -1 → impulse = -0.6 → velocity = (0,0,+0.6).
+    // direction = Math.sign(+100) = 1 → impulse = -0.6 → velocity = (0,0,+0.6).
     const ctx = makeCtx({ inertialMode: true, movementSpeed: 2 });
     handleWheel(ctx, makeWheelEvent(+100));
     expect(ctx.velocity.z).toBeCloseTo(+0.6, 5);
@@ -109,7 +109,7 @@ describe('handleWheel — plain scroll (forward/backward)', () => {
   });
 
   it('only the SIGN of deltaY matters (impulse magnitude does not scale with |deltaY|)', () => {
-    // Math.sign(d) means delta=10 and delta=10000 produce identical impulses.
+    // Math.sign(d) gives deltaY=10 and deltaY=10000 the same direction and impulse.
     const ctxA = makeCtx({ movementSpeed: 1 });
     const ctxB = makeCtx({ movementSpeed: 1 });
     handleWheel(ctxA, makeWheelEvent(-10));
@@ -159,12 +159,13 @@ describe('handleWheel — wheelZoomSensitivity (Settings > Input > Zoom Sensitiv
 
 describe('handleWheel — shift+scroll (roll around viewing axis)', () => {
   // Formula:
-  //   rollImpulse = delta * rotationSpeed * 0.06
+  //   direction = Math.sign(event.deltaY or the deltaX fallback)
+  //   rollImpulse = VIEW_AXIS_ROLL_SIGN * direction * rotationSpeed * 0.06
   //   inertialMode: angularVelocity += forward * rollImpulse
   //   non-inertial: orientation *= setFromAxisAngle(forward, rollImpulse)
 
   it('shift+scroll in inertial mode adds to angularVelocity (M6)', () => {
-    // delta=+1, rotationSpeed=2 → rollImpulse = 0.12. angularVelocity = (0,0,-0.12).
+    // direction=-1, rotationSpeed=2 → rollImpulse = 0.12. angularVelocity = (0,0,-0.12).
     const ctx = makeCtx({ inertialMode: true, rotationSpeed: 2 });
     handleWheel(ctx, makeWheelEvent(-100, { shiftKey: true }));
     expect(ctx.angularVelocity.x).toBeCloseTo(0, 5);

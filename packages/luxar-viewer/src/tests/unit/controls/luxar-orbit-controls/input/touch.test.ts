@@ -14,10 +14,9 @@ import * as THREE from 'three';
 import {
   handleTouchStart,
   handleTouchMove,
-  wrapAngle,
   TWIST_ROLL_GAIN,
-  TWIST_ROLL_SIGN,
 } from '../../../../../controls/luxar-orbit-controls/input/touch';
+import { VIEW_AXIS_ROLL_SIGN, wrapAngle } from '../../../../../controls/touch-twist';
 import type {
   OrbitInputCtx,
   ControlAction,
@@ -388,7 +387,7 @@ describe('two-finger twist → roll', () => {
     ctx.pointerPositions.get(2)!.set(400, 400);
     handleTouchMove(ctx, pointers[0]);
     expect(state.zoomDelta).toBeCloseTo(0, 6);
-    expect(state.rollDelta).toBeCloseTo(TWIST_ROLL_SIGN * TWIST_ROLL_GAIN * (Math.PI / 2), 6);
+    expect(state.rollDelta).toBeCloseTo(VIEW_AXIS_ROLL_SIGN * TWIST_ROLL_GAIN * (Math.PI / 2), 6);
     expect(ctx.pan).toHaveBeenCalledWith(0, 0);
   });
 
@@ -416,7 +415,7 @@ describe('two-finger twist → roll', () => {
     handleTouchMove(ctx, pointers[0]);
     const step = wrapAngle(ctx.dollyStart.x - startAngle);
     expect(Math.abs(step)).toBeLessThan(0.1); // a small twist, not a ~2π jump
-    expect(state.rollDelta).toBeCloseTo(TWIST_ROLL_SIGN * TWIST_ROLL_GAIN * step, 6);
+    expect(state.rollDelta).toBeCloseTo(VIEW_AXIS_ROLL_SIGN * TWIST_ROLL_GAIN * step, 6);
   });
 
   it('does not roll when rotation is disabled (ortho)', () => {

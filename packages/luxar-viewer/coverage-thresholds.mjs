@@ -76,7 +76,9 @@ export const COVERAGE_THRESHOLDS = {
   'src/cache/**': { lines: 93, functions: 93, branches: 84 },
   // lines 93 -> 95 and branches 86 -> 88 after the fly-touch orchestration
   // and input/touch.ts tests moved the subtree past the slack budget.
-  'src/controls/**': { lines: 95, functions: 88, branches: 88 },
+  // functions 88 -> 90 after the shared view-axis roll regression tests
+  // lifted the subtree from 90.72 -> 91.21.
+  'src/controls/**': { lines: 95, functions: 90, branches: 88 },
 
   // The bulk of the codebase.
   // functions 87 -> 90 after the L0-cache-wiring + spatial-extend-dims
@@ -134,7 +136,7 @@ export const COVERAGE_RECORDED = {
   'src/utils/**': { lines: 99.6, functions: 100, branches: 96.19 },
   'src/scene/**': { lines: 95.5, functions: 86.74, branches: 91.15 },
   'src/cache/**': { lines: 95.03, functions: 95.2, branches: 85.41 },
-  'src/controls/**': { lines: 96.32, functions: 90.72, branches: 89.44 },
+  'src/controls/**': { lines: 96.32, functions: 91.21, branches: 89.44 },
   'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
   'src/workers/**': { lines: 91.39, functions: 91.41, branches: 86.74 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },

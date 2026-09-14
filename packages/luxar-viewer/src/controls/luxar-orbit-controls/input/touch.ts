@@ -18,30 +18,14 @@
 import * as THREE from 'three';
 import { type OrbitInputCtx, pointerNDC } from './pointer';
 import { computeArcballRotation } from '../math/trackball';
+import { VIEW_AXIS_ROLL_SIGN, wrapAngle } from '../../touch-twist';
 
 /**
- * Radians of camera roll per radian of two-finger twist. 1 = the scene turns
- * with the fingers; the damping in update() smooths pinch jitter, which is
- * small because fingers moving radially barely change the inter-finger angle.
+ * Radians of camera roll per radian of two-finger twist. With the shared sign,
+ * 1 = the scene turns with the fingers; the damping in update() smooths pinch
+ * jitter, which is small because radial motion barely changes the angle.
  */
 export const TWIST_ROLL_GAIN = 1.0;
-
-/**
- * Sign that makes the SCENE follow the fingers. Screen space is y-down, so
- * `atan2` grows for a visually clockwise twist; a positive roll about the view
- * axis turns the camera clockwise as the user sees it, i.e. the scene
- * counter-clockwise — hence the negation.
- */
-export const TWIST_ROLL_SIGN = -1;
-
-/** Wrap an angle difference into (-π, π] so a twist across ±π does not jump. */
-export function wrapAngle(delta: number): number {
-  if (!Number.isFinite(delta)) return 0;
-  let d = delta;
-  while (d > Math.PI) d -= 2 * Math.PI;
-  while (d <= -Math.PI) d += 2 * Math.PI;
-  return d;
-}
 
 /** Client coordinates → normalized device coordinates on `domElement`. */
 function clientNDC(clientX: number, clientY: number, domElement: HTMLElement): THREE.Vector2 {
@@ -150,7 +134,7 @@ function moveTwoFingers(ctx: OrbitInputCtx): void {
 
   if (ctx.enableRotate && ctx.dollyStart.y > 0 && g.distance > 0) {
     const twist = wrapAngle(g.angle - ctx.dollyStart.x);
-    if (twist !== 0) ctx.addRollDelta(TWIST_ROLL_SIGN * TWIST_ROLL_GAIN * twist);
+    if (twist !== 0) ctx.addRollDelta(VIEW_AXIS_ROLL_SIGN * TWIST_ROLL_GAIN * twist);
   }
   ctx.dollyStart.set(g.angle, g.distance);
 
