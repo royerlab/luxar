@@ -297,12 +297,12 @@ FIRST_RUNG_ROWS_PER_FRAME = 300
 #: exactly when the unclamped floor would have authored a failing ladder (``300 /
 #: stars_in_bin > 0.6``, i.e. under 500 stars) and never otherwise, so it cannot
 #: coarsen a rung that was doing its job. It is a no-op on every node of the
-#: default build. Below the 200,000-row threshold only the no-ladder and
-#: degeneracy/share checks switch off; the sliced absolute arm still audits any
-#: laddered node. The clamp starts binding below 500 stars, where the absolute
-#: arm can remain red because 0.6 of a thin frame is still too little — e.g. 400
-#: stars x 241 = 96,400 rows clamp the 72,300-row floor to 57,840, averaging 240
-#: rows per frame before the sparsest-frame reduction.
+#: default build. Below the 200,000-row threshold ``check_leaf`` stops its
+#: no-ladder, commit-cap, degeneracy/share and level-count audit; both sliced
+#: arms still apply in full. The clamp starts binding below 500 stars, where the
+#: absolute sliced arm can remain red because 0.6 of a thin frame is still too
+#: little — e.g. 400 stars x 241 = 96,400 rows clamp the 72,300-row floor to
+#: 57,840, averaging 240 rows per frame before the sparsest-frame reduction.
 #:
 #: What the clamp does NOT buy. At the 0.6 bound rung 0 holds 0.6 rows per star
 #: per frame, so a bin under about 450 stars still lands under the 250-row
