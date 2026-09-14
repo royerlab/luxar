@@ -106,22 +106,25 @@ cap 64 showed 2.941 s / 0.802 s. Those absolute numbers are provenance only:
 the old harness included settle/refinement work in wall time and stale profiler
 rows in the aggregate. The cross-arm result remained useful: once warm
 (`misses=0`), the pre-fix harness reported five wall-time passes at 4.99–5.79 s
-for cap 64 and 3.72–5.24 s for the unbounded-ish arm, with no 6–30 s tail or
-cap-dependent trend. Those ranges include the pre-fix settle/quiet-window tax.
+for cap 64 and 3.72–5.24 s for the unbounded-ish arm, with no 6–30 s tail. Those
+ranges include the pre-fix settle/quiet-window tax.
 `ValidationQueue` runs only during store initialization, not per read. The
 evidence attributes the reported stall to mixed L2-miss fan-out/browser
 contention; the cap added in #2732 is sufficient, with no additional scheduling
 change justified. New artifacts expose `animationMs`, `settleMs`,
 transition/settle updates, and refinement roots separately.
 
-The corrected September 13, 2026 baseline used the setup above with
-`Time range=[0,50]`, `step=1`, and 51 timepoints. Because `once` stops one
-coordinate short of `range[1]`, each of the four warm sweeps measured 48→49:
-cap 64 reported `animationMs` 0.121–2.923 s and `settleMs` 0.187–1.744 s; cap
-4096 reported `animationMs` 0.103–0.131 s and `settleMs` 0.064–1.555 s. Three
-cap-4096 arms stamped `missedUpdates=1` (cap 64 stamped 0–1), so the phase split
-remains diagnostic for the fastest arms, but the baseline still shows no 6–30 s
-warm tail or cap-dependent trend.
+The corrected September 13, 2026 baseline used `Time range=[0,50]`, `step=1`,
+and 51 timepoints. One warm sweep used the regenerated store from the setup
+above; three used a separate archived store with identical declared `Time`
+metadata. Because `once` stops one coordinate short of `range[1]`, all four
+measured 48→49. Across them, cap 64 reported `animationMs` 0.121–2.923 s and
+`settleMs` 0.187–1.744 s; cap 4096 reported `animationMs` 0.103–0.131 s and
+`settleMs` 0.064–1.555 s. Three cap-4096 arms stamped `missedUpdates=1` (cap 64
+stamped 0–1), so the phase split remains diagnostic for the fastest arms. The
+2.923 s cap-64 arm is a 22× excursion over the cap-4096 maximum; with only four
+arms per cap, the sample does not resolve a cap-dependent difference, but it
+does show no 6–30 s warm tail.
 
 This untyped harness depends on the debug surface names
 `getSceneLoader`, `getDefaultLoader`, `getProfiler`, `inputHandler`,
