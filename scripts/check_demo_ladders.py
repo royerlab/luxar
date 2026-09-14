@@ -9,14 +9,18 @@ viewer folds completed rungs into one cumulative payload, avoiding the former
 second retained copy. This walks built scenes and reports, per laddered leaf,
 whether the ladder is actually *useful*.
 
+An unladdered sliced leaf is judged by its busiest resident coordinate fetch,
+not by its declared all-slices total; leaves without usable slice metadata keep
+the declared-total fallback.
+
 A ladder can exist and still be worthless. For example,
 ``global_rivers_earth/terrain`` once shipped levels of 8 / 56 / 272 / 1174 /
 7,998,490 over 8M points: 99.98% of the data remained in one commit. A large
 leaf therefore fails when any level exceeds either ``--max-share`` of the total
 or the absolute ``--max-level-elements`` commit budget. On a barrier-ordered
 sliced leaf, that absolute arm measures the conservative largest per-coordinate
-fetch from the level's chunk bounds; unsliced, unindexed, multi-axis, malformed
-or mixed-metadata, and ``extend_to_all`` leaves retain the node-level cap. This
+fetch from the level's chunk bounds; unsliced, unindexed, malformed or
+mixed-metadata, and ``extend_to_all`` leaves retain the node-level cap. This
 bounds-based commit arm is independent of the coordinate-decoding histogram
 used by the share arm below, so their reports can differ at chunk boundaries.
 
@@ -65,6 +69,7 @@ import argparse
 import sys
 from collections import Counter
 from collections.abc import Iterator, Sequence
+from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -88,8 +93,9 @@ DEFAULT_SCREEN_ASPECT_SPEC = ",".join(
     f"{label}={value!r}" for label, value in DEFAULT_ASPECTS
 )
 
-#: Leaves at or below this element count are reported but never failed — a small
-#: leaf commits fast enough that an all-at-once load is invisible.
+#: Unsliced leaves at or below this total, and sliced leaves whose busiest
+#: resident coordinate fetch is at or below it, are reported but never failed.
+#: Such a commit is small enough that an all-at-once load is invisible.
 DEFAULT_MIN_ELEMENTS = 200_000
 
 #: A ladder whose largest level exceeds this share of the total is not a
@@ -230,7 +236,7 @@ def _slice_ordering(level: Any) -> tuple[list[int], int, str] | None:
 
 
 def _busiest_slice_elements(level: Any) -> int | None:
-    """Conservative largest one-coordinate fetch from one-axis chunk bounds.
+    """Conservative largest one-coordinate fetch from chunk bounds.
 
     Whole chunks are the viewer's fetch atom, so a chunk whose bounds touch two
     coordinates counts toward both. Distinct coordinates must be separated by
@@ -241,8 +247,6 @@ def _busiest_slice_elements(level: Any) -> int | None:
     if ordering is None:
         return None
     dims, chunk_size, bounds_name = ordering
-    if len(dims) != 1:
-        return None
     total = _element_count(dict(level.attrs))
     bounds = np.asarray(level[bounds_name][:])
     expected_chunks = (total + chunk_size - 1) // chunk_size
@@ -251,25 +255,28 @@ def _busiest_slice_elements(level: Any) -> int | None:
         or bounds.ndim != 3
         or bounds.shape[0] != expected_chunks
         or bounds.shape[2] < 2
-        or dims[0] < 0
-        or dims[0] >= bounds.shape[1]
+        or len(set(dims)) != len(dims)
+        or any(dim < 0 or dim >= bounds.shape[1] for dim in dims)
     ):
         return None
-    dim = dims[0]
-    events: list[tuple[float, int, int]] = []
-    for index in range(expected_chunks):
-        rows = min(chunk_size, total - index * chunk_size)
-        lo = float(bounds[index, dim, 0])
-        hi = float(bounds[index, dim, 1])
-        if not np.isfinite(lo) or not np.isfinite(hi) or lo > hi:
-            return None
-        events.append((lo, 0, rows))
-        events.append((hi, 1, -rows))
-    current = 0
+    slice_bounds = bounds[:, dims, :2].astype(np.float64, copy=False)
+    if not np.isfinite(slice_bounds).all() or np.any(
+        slice_bounds[:, :, 0] > slice_bounds[:, :, 1]
+    ):
+        return None
+    rows = np.minimum(
+        chunk_size,
+        total - np.arange(expected_chunks, dtype=np.int64) * chunk_size,
+    )
+    candidates = [np.unique(slice_bounds[:, axis, :]) for axis in range(len(dims))]
     busiest = 0
-    for _, _, delta in sorted(events):
-        current += delta
-        busiest = max(busiest, current)
+    for coordinate in product(*candidates):
+        point = np.asarray(coordinate, dtype=np.float64)
+        contains = np.all(
+            (slice_bounds[:, :, 0] <= point) & (point <= slice_bounds[:, :, 1]),
+            axis=1,
+        )
+        busiest = max(busiest, int(rows[contains].sum()))
     return busiest
 
 
@@ -315,6 +322,31 @@ def _commit_cap_result(
             f"{max_level_elements:,} absolute commit cap",
         ),
     )
+
+
+def _unladdered_result(leaf: Any, total: int, min_elements: int) -> tuple[str, str]:
+    """Judge one flat leaf by its resident coordinate fetch when available."""
+    sliced_total = None
+    if not leaf.attrs.get("extend_to_all"):
+        sliced_total = _busiest_slice_elements(leaf)
+    measured_total = sliced_total if sliced_total is not None else total
+    if measured_total > min_elements:
+        measured = (
+            f"{measured_total:,} elements in one coordinate fetch"
+            if sliced_total is not None
+            else f"{measured_total:,} elements in ONE commit"
+        )
+        return (
+            "fail",
+            f"{measured} (no ladder) — will block the main thread on load",
+        )
+    if sliced_total is not None:
+        return (
+            "skip",
+            f"{total:,} elements, largest coordinate fetch "
+            f"{sliced_total:,} elements, no ladder (below threshold)",
+        )
+    return ("skip", f"{total:,} elements, no ladder (below threshold)")
 
 
 def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
@@ -558,13 +590,7 @@ def check_leaf(
     n_sub = int(attrs.get("n_additive_sublods", 1) or 1)
 
     if n_sub <= 1:
-        if total > min_elements:
-            return (
-                "fail",
-                f"{total:,} elements in ONE commit (no ladder) — will block the "
-                "main thread on load",
-            )
-        return ("skip", f"{total:,} elements, no ladder (below threshold)")
+        return _unladdered_result(leaf, total, min_elements)
 
     sizes: list[int] = []
     for i in range(n_sub):

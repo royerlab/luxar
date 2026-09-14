@@ -85,6 +85,8 @@ W_STRIDE = 4
 #: surface voxels of the densest fractal at grid 200; at 80k the flat faces
 #: still read as stippled. The store compresses well (lattice coordinates), so
 #: the measured AO-shaded default output is about 147 MB on disk.
+#: Keep this below the ladder auditor's resident-coordinate threshold; the
+#: package test pins that cross-file safety margin.
 TARGET_MAX_POINTS_PER_PLANE = 150_000
 #: Direction budget for the grouped surface AO bake. Twenty-four is half the
 #: library's measured floor for normal-weighted AO, chosen to bound peak memory;

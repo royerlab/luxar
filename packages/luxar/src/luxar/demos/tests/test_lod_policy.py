@@ -203,6 +203,197 @@ def _gsplats_additive_lod_calls(src: str) -> list[tuple[ast.AST, ast.expr]]:
     return out
 
 
+#: Policy surfaces that make a first chunk a SHARE of the resident slice.
+#:
+#: Three spellings of one thing, because the policy exposes it three ways and a
+#: demo legitimately reaches for whichever fits: ``stream_ladder(..., slices=…)``
+#: DELEGATES the floor (handled separately, since it is the keyword and not the
+#: name that carries the meaning), :func:`sliced_ladder_first_chunk` is the helper
+#: it delegates to, and :data:`SLICED_LADDER_MAX_DEPTH` is the constant that
+#: DEFINES the share — what a caller applying the floor by hand must divide by.
+#:
+#: ``capped_stream_cuts`` is deliberately NOT here. It bounds a COMMIT and takes
+#: whatever first chunk it is handed, so a helper whose body is
+#: ``capped_stream_cuts(n, 39_062)`` is precisely the download-budget-on-a-sliced-
+#: node defect this gate exists to catch (#2374). It appears in
+#: :data:`_LADDER_BUILDERS` below instead, where it answers a different question.
+_SLICE_SHARE_SURFACES = frozenset(
+    {"sliced_ladder_first_chunk", "SLICED_LADDER_MAX_DEPTH"}
+)
+
+#: Calls that turn a first chunk into the ladder spec an adder can consume.
+#:
+#: The second half of the helper predicate: computing a share and then not
+#: building a ladder out of it is not a ladder. Either the policy's own
+#: :func:`stream_ladder` returns the spec, or the caller resolves explicit cuts
+#: with :func:`capped_stream_cuts` — which is what both current helpers do,
+#: because the ladder they need differs from the policy's default.
+_LADDER_BUILDERS = frozenset({"stream_ladder", "capped_stream_cuts"})
+
+
+def _module_level_defs(src: str) -> dict[str, ast.FunctionDef]:
+    """Name → ``def`` for the module-level functions of *src*.
+
+    MODULE level, not every nested ``def``: the gate resolves a helper the demo
+    names on its own ``additive_lod=``, and a closure defined inside the write
+    loop would be neither importable by a test nor visible to a reader scrolling
+    the constants block. One level of resolution only, for the same reason — a
+    helper that delegates its slice-awareness to a SECOND local helper fails
+    loudly rather than being chased, which is the safe direction for a gate.
+    """
+    return {
+        node.name: node
+        for node in ast.parse(src).body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+def _reaches_the_slice_policy(fn: ast.FunctionDef) -> bool:
+    """Whether *fn*'s body derives a first chunk from the slice policy.
+
+    Two independent conditions, and a helper needs BOTH:
+
+    **a share surface** — ``stream_ladder(..., slices=…)``, or one of
+    :data:`_SLICE_SHARE_SURFACES`. This is the thing the gate is actually
+    protecting: on a node the viewer slices, an absolute download budget arrives
+    divided by the slice count, which is #2374.
+
+    **a ladder builder** — one of :data:`_LADDER_BUILDERS`, so the share is
+    turned into cuts rather than measured and discarded.
+
+    What this CANNOT see, stated plainly because a gate that overclaims is worse
+    than a narrow one: it does not prove the share surface feeds the first chunk
+    that the builder receives. A helper that computes a share, drops it, and
+    builds a budget ladder would pass. Following the dataflow statically would
+    mean over-fitting to two call sites; what the check does buy is that a
+    hand-rolled ladder with no slice term in it at all — the shape that shipped
+    the 4-splat scan in #2485 and the 144-row frame in #2657 — cannot pass.
+    """
+    has_share = False
+    has_builder = False
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "stream_ladder" and any(
+                keyword.arg == "slices" for keyword in node.keywords
+            ):
+                has_share = True
+            if node.func.id in _LADDER_BUILDERS:
+                has_builder = True
+        elif isinstance(node, ast.Name) and node.id in _SLICE_SHARE_SURFACES:
+            has_share = True
+    return has_share and has_builder
+
+
+def _slice_policy_violation(
+    name: str,
+    call: ast.Call,
+    additive_lod: ast.expr,
+    local_defs: dict[str, ast.FunctionDef],
+) -> str | None:
+    """Why one ``additive_lod=`` value skips the slice policy, or ``None``.
+
+    Split out of :func:`_sliced_additive_lod_violations` so each function stays
+    under the C901 limit, and because the four refusals below are the gate's
+    actual content — the caller only walks the corpus and handles exemptions.
+    """
+    spelled = f"{name}:{call.lineno} uses additive_lod="
+    if not (
+        isinstance(additive_lod, ast.Call) and isinstance(additive_lod.func, ast.Name)
+    ):
+        # Not even a named call: a variable, a dict literal, a comprehension.
+        return f"{spelled}{ast.unparse(additive_lod)}"
+    callee = additive_lod.func.id
+    if callee == "stream_ladder":
+        # The original rule, unchanged: the policy itself, told the slice count.
+        if any(keyword.arg == "slices" for keyword in additive_lod.keywords):
+            return None
+        return f"{spelled}{ast.unparse(additive_lod)}, with no slices="
+    helper = local_defs.get(callee)
+    if helper is None:
+        return (
+            f"{spelled}{ast.unparse(additive_lod)}, whose callee {callee} is "
+            "not a module-level def of this demo"
+        )
+    if not _reaches_the_slice_policy(helper):
+        return (
+            f"{spelled}{ast.unparse(additive_lod)}, and {callee}() never "
+            "reaches the slice policy"
+        )
+    return None
+
+
+def _sliced_additive_lod_violations(
+    sources: dict[str, str],
+    exemptions: dict[tuple[str, int], str] | None = None,
+) -> list[str]:
+    """Every Points/Lines ladder in *sources* that skips the slice policy.
+
+    #2374: on a node the viewer slices, rung 0 must be a SHARE of the resident
+    frame rather than a download budget, because only one hidden coordinate is on
+    screen at a time. The original rule was literal — the ``additive_lod=`` value
+    had to be ``stream_ladder(..., slices=…)`` — and that is still what most
+    demos should write.
+
+    It is widened to accept a MODULE-LOCAL HELPER CALL, because two demos need a
+    ladder the policy does not return unmodified and the alternative spellings are
+    both worse. ``demo_galaxy_simulation.played_layer_ladder`` floors rung 0 at a
+    per-FRAME row count on top of the policy's share (the share alone leaves a
+    measured 144 rows in the sparsest frame of its thin age bin), and
+    ``demo_exotic_surfaces.family_ladder`` applies the share floor BY HAND
+    precisely so it does not also inherit ``stream_ladder``'s slice-scaled commit
+    ceiling on a node that has only one coordinate to spend it on. Both are
+    STRICTER than the rule, so refusing them would push each demo back to an
+    inline call that is wrong in a way the gate cannot see — which is the opposite
+    of what the gate is for.
+
+    So a helper is accepted only if it is resolvable and slice-aware: it must name
+    a ``def`` in the SAME demo module (:func:`_module_level_defs`) whose body
+    reaches the slice policy (:func:`_reaches_the_slice_policy`). An arbitrary
+    expression, a name that resolves to no local ``def``, and a local helper with
+    no slice term all still fail — see the fires-proof tests beside the gate.
+
+    Args:
+        sources: Demo file name → source. Injected rather than read here so the
+            gate itself can be run against a synthetic corpus; that is the only
+            way to prove it FIRES, and a gate that cannot fail and one that always
+            passes are indistinguishable from a green suite.
+        exemptions: Location → reason, defaulting to
+            :data:`_SLICED_ADDITIVE_LOD_EXEMPTIONS`. Pass ``{}`` in a fires-proof
+            test: with a synthetic corpus the real exemption is unseen, so it
+            would arrive as stale-exemption noise that makes a bare
+            ``pytest.raises`` pass for the wrong reason.
+
+    Returns:
+        Human-readable violations, empty when the corpus is clean.
+    """
+    if exemptions is None:
+        exemptions = _SLICED_ADDITIVE_LOD_EXEMPTIONS
+    missing: list[str] = []
+    seen_exemptions = set()
+    for name, src in sources.items():
+        if not _declares_a_hidden_dimension(src):
+            continue
+        local_defs = _module_level_defs(src)
+        for call, additive_lod in _additive_lod_calls(src):
+            location = (name, call.lineno)
+            if location in exemptions:
+                seen_exemptions.add(location)
+                if not any(
+                    keyword.arg == "substitutive_lod" for keyword in call.keywords
+                ):
+                    missing.append(
+                        f"{name}:{call.lineno} is exempt but has no substitutive_lod="
+                    )
+                continue
+            violation = _slice_policy_violation(name, call, additive_lod, local_defs)
+            if violation is not None:
+                missing.append(violation)
+    missing.extend(
+        f"stale exemption {location}" for location in set(exemptions) - seen_exemptions
+    )
+    return missing
+
+
 def _dict_literal_items(node: ast.expr) -> dict[str, ast.expr] | None:
     """The keyword name → value map of a readable ``dict(...)`` / ``{...}`` literal.
 
@@ -1101,41 +1292,192 @@ class TestASlicedNodeGetsAShareOfItsFrame:
         )
 
     def test_every_sliced_additive_ladder_uses_the_slice_policy(self) -> None:
-        missing = []
-        seen_exemptions = set()
-        for name, src in _demo_sources().items():
-            if not _declares_a_hidden_dimension(src):
-                continue
-            for call, additive_lod in _additive_lod_calls(src):
-                location = (name, call.lineno)
-                if location in _SLICED_ADDITIVE_LOD_EXEMPTIONS:
-                    seen_exemptions.add(location)
-                    if not any(
-                        keyword.arg == "substitutive_lod" for keyword in call.keywords
-                    ):
-                        missing.append(
-                            f"{name}:{call.lineno} is exempt but has no substitutive_lod="
-                        )
-                    continue
-                if not (
-                    isinstance(additive_lod, ast.Call)
-                    and isinstance(additive_lod.func, ast.Name)
-                    and additive_lod.func.id == "stream_ladder"
-                ):
-                    missing.append(
-                        f"{name}:{call.lineno} uses additive_lod="
-                        f"{ast.unparse(additive_lod)}"
-                    )
-                    continue
-                call = additive_lod
-                if not any(keyword.arg == "slices" for keyword in call.keywords):
-                    missing.append(f"{name}:{call.lineno}")
-        stale_exemptions = set(_SLICED_ADDITIVE_LOD_EXEMPTIONS) - seen_exemptions
-        missing.extend(f"stale exemption {location}" for location in stale_exemptions)
+        """The real corpus. See :func:`_sliced_additive_lod_violations` for the
+        rule, and for why a module-local slice-aware helper counts as using it."""
+        missing = _sliced_additive_lod_violations(_demo_sources())
+
         assert not missing, (
-            "Points/Lines additive ladders in demos with hidden dimensions must use "
-            f"stream_ladder(..., slices=...) or an explicit exemption: {missing}"
+            "Points/Lines additive ladders in demos with hidden dimensions must "
+            "use stream_ladder(..., slices=...), or a module-level helper of the "
+            "same demo whose body derives its first chunk from the slice policy, "
+            f"or an explicit exemption: {missing}"
         )
+
+    # ── the fires-proof arms ────────────────────────────────────────────────
+    #
+    # The gate above widened from "must be literally stream_ladder(..., slices=)"
+    # to "may also be a local slice-aware helper", and a widening is exactly where
+    # a gate goes vacuous without anyone noticing. Each arm below is one way the
+    # widened predicate could have been written too loosely.
+    #
+    # They pass `exemptions={}`: over a synthetic corpus the real exemption is
+    # never seen, so it would arrive as a stale-exemption entry and a bare
+    # "raises / is non-empty" assertion would pass for the wrong reason. With the
+    # dict emptied, every message comes from the synthetic demo.
+
+    _SLICED_SCENE = 'Dimension("Time", range=(0, 9), display=False)\n'
+
+    def _violations(self, body: str) -> list[str]:
+        return _sliced_additive_lod_violations(
+            {"demo_synthetic.py": self._SLICED_SCENE + body}, exemptions={}
+        )
+
+    def test_an_arbitrary_expression_is_not_a_ladder(self) -> None:
+        missing = self._violations(
+            "scene.add_points('a', p, additive_lod=SOME_LADDER)\n"
+        )
+
+        assert missing == ["demo_synthetic.py:2 uses additive_lod=SOME_LADDER"]
+
+    def test_a_helper_that_ignores_slices_is_not_slice_aware(self) -> None:
+        missing = self._violations(
+            "def my_ladder(n):\n"
+            "    return stream_ladder(n)\n"
+            "scene.add_points('a', p, additive_lod=my_ladder(len(p)))\n"
+        )
+
+        assert missing == [
+            "demo_synthetic.py:4 uses additive_lod=my_ladder(len(p)), and "
+            "my_ladder() never reaches the slice policy"
+        ]
+
+    def test_a_helper_that_only_bounds_the_commit_is_not_slice_aware(self) -> None:
+        # The narrow miss the predicate is shaped around: `capped_stream_cuts`
+        # bounds one commit and takes the first chunk it is given, so a budget
+        # chunk fed through it is still a budget — #2374's exact shape.
+        missing = self._violations(
+            "def my_ladder(n):\n"
+            "    return {'counts': capped_stream_cuts(n, 39_062)}\n"
+            "scene.add_points('a', p, additive_lod=my_ladder(len(p)))\n"
+        )
+
+        assert missing == [
+            "demo_synthetic.py:4 uses additive_lod=my_ladder(len(p)), and "
+            "my_ladder() never reaches the slice policy"
+        ]
+
+    def test_a_helper_that_shares_but_builds_nothing_is_refused(self) -> None:
+        # The other half of the predicate. This rung 0 IS 12.5% of the node, so
+        # it clears the gate's share arm — and then its second increment is 87.5%
+        # of the node, which the ladder auditor fails as degenerate. Deriving a
+        # share is not the same as building a ladder out of it.
+        missing = self._violations(
+            "def my_ladder(n):\n"
+            "    return {'counts': [-(-n // SLICED_LADDER_MAX_DEPTH), n]}\n"
+            "scene.add_points('a', p, additive_lod=my_ladder(len(p)))\n"
+        )
+
+        assert missing == [
+            "demo_synthetic.py:4 uses additive_lod=my_ladder(len(p)), and "
+            "my_ladder() never reaches the slice policy"
+        ]
+
+    def test_a_callee_with_no_local_def_is_refused(self) -> None:
+        # An imported or otherwise unresolvable name. The helper door is only
+        # open because the body can be READ in the same file a reviewer is
+        # already looking at; a name from somewhere else forfeits that.
+        missing = self._violations(
+            "scene.add_points('a', p, additive_lod=imported_ladder(len(p)))\n"
+        )
+
+        assert missing == [
+            "demo_synthetic.py:2 uses additive_lod=imported_ladder(len(p)), whose "
+            "callee imported_ladder is not a module-level def of this demo"
+        ]
+
+    def test_a_nested_def_does_not_resolve(self) -> None:
+        # One level of resolution, deliberately: a closure is invisible to a
+        # reader scanning the module's own helpers.
+        missing = self._violations(
+            "def build():\n"
+            "    def my_ladder(n):\n"
+            "        return stream_ladder(n, slices=2)\n"
+            "    scene.add_points('a', p, additive_lod=my_ladder(len(p)))\n"
+        )
+
+        assert missing == [
+            "demo_synthetic.py:5 uses additive_lod=my_ladder(len(p)), whose callee "
+            "my_ladder is not a module-level def of this demo"
+        ]
+
+    def test_an_inline_ladder_without_slices_still_fails(self) -> None:
+        # The original rule, unchanged by the widening.
+        missing = self._violations(
+            "scene.add_points('a', p, additive_lod=stream_ladder(len(p)))\n"
+        )
+
+        assert missing == [
+            "demo_synthetic.py:2 uses additive_lod=stream_ladder(len(p)), with no "
+            "slices="
+        ]
+
+    @pytest.mark.parametrize(
+        "helper_body",
+        [
+            "    return stream_ladder(n, slices=stops)",
+            "    ladder = stream_ladder(n)\n"
+            "    ladder['counts'] = capped_stream_cuts(\n"
+            "        n, sliced_ladder_first_chunk(39_062, elements=n, slices=2), 900_000\n"
+            "    )\n"
+            "    return ladder",
+            "    ladder = stream_ladder(n)\n"
+            "    ladder['counts'] = capped_stream_cuts(\n"
+            "        n, -(-n // SLICED_LADDER_MAX_DEPTH), 900_000\n"
+            "    )\n"
+            "    return ladder",
+        ],
+        ids=["delegates-slices", "sliced-first-chunk", "share-constant"],
+    )
+    def test_each_slice_policy_spelling_is_accepted(self, helper_body: str) -> None:
+        """All three share surfaces, so the door is not open to only one shape."""
+        missing = self._violations(
+            f"def my_ladder(n, stops=2):\n{helper_body}\n"
+            "scene.add_points('a', p, additive_lod=my_ladder(len(p)))\n"
+        )
+
+        assert missing == []
+
+    def test_an_unsliced_demo_is_not_gated_at_all(self) -> None:
+        # The file-level predicate: no hidden dimension, no slice contract.
+        assert (
+            _sliced_additive_lod_violations(
+                {"demo_synthetic.py": "scene.add_points('a', p, additive_lod=X)\n"},
+                exemptions={},
+            )
+            == []
+        )
+
+    def test_a_stale_exemption_is_still_reported(self) -> None:
+        # The staleness arm survived the extraction: an entry no call site
+        # matches must not sit there quietly permitting a shape nobody wrote.
+        missing = _sliced_additive_lod_violations(
+            {"demo_synthetic.py": self._SLICED_SCENE},
+            exemptions={("demo_gone.py", 12): "reason"},
+        )
+
+        assert missing == ["stale exemption ('demo_gone.py', 12)"]
+
+    def test_the_real_exemption_is_matched_and_needs_its_substitutive_level(
+        self,
+    ) -> None:
+        # The exemption's structural co-requirement, against the real corpus:
+        # "an eager coarse level paints first" is only true if there IS one.
+        sources = _demo_sources()
+        (exempt_file, exempt_line), _ = next(
+            iter(_SLICED_ADDITIVE_LOD_EXEMPTIONS.items())
+        )
+        stripped = sources[exempt_file].replace("substitutive_lod=", "no_such_kwarg=")
+        assert stripped != sources[exempt_file]
+
+        missing = _sliced_additive_lod_violations(
+            {**sources, exempt_file: stripped}, _SLICED_ADDITIVE_LOD_EXEMPTIONS
+        )
+
+        assert any(
+            f"{exempt_file}:{exempt_line} is exempt but has no substitutive_lod="
+            == message
+            for message in missing
+        ), missing
 
     def test_every_sliced_gsplats_additive_ladder_is_slice_even(self) -> None:
         """A sliced gsplats ladder must be slice-aware AND must actually run.
@@ -1320,3 +1662,72 @@ scene.add_gsplats_from_data(
     def test_rejects_a_slice_count_below_one(self) -> None:
         with pytest.raises(ValueError, match="slices must be >= 1"):
             stream_ladder(1_000, slices=0)
+
+
+@pytest.mark.parametrize(
+    ("filename", "node_expression", "keyword", "value_expression"),
+    [
+        ("demo_lorenz.py", "'LorenzAttractor'", "additive_lod", "stream_ladder"),
+        ("demo_mandelbulb.py", "'Mandelbulb'", "additive_lod", "stream_ladder"),
+        ("demo_rainbow_sphere.py", "'RainbowSphere'", "additive_lod", "stream_ladder"),
+        # These four wrap `stream_ladder` in a named module helper, because the
+        # ladder they need is not the one the policy returns unmodified: the
+        # helper's docstring carries the measured reason and its arithmetic is
+        # covered behaviourally (`family_ladder` in
+        # `tests/test_demo_exotic_surfaces.py`, `played_layer_ladder` in
+        # `tests/test_demo_galaxy_simulation.py`). Naming the helper is what this
+        # arm can check; that the helper is right is what those tests check.
+        (
+            "demo_exotic_surfaces.py",
+            "FAMILY_NAMES[family]",
+            "additive_lod",
+            "family_ladder",
+        ),
+        (
+            "demo_galaxy_simulation.py",
+            "f'Disc {label}'",
+            "additive_lod",
+            "played_layer_ladder",
+        ),
+        (
+            "demo_galaxy_simulation.py",
+            "'HII regions'",
+            "additive_lod",
+            "played_layer_ladder",
+        ),
+        (
+            "demo_galaxy_simulation.py",
+            "'Bulge'",
+            "additive_lod",
+            "played_layer_ladder",
+        ),
+        (
+            "demo_ppi_flow_field.py",
+            "'Advected protein streamlines'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+    ],
+)
+def test_gallery_oversized_nodes_bound_individual_commits(
+    filename: str,
+    node_expression: str,
+    keyword: str,
+    value_expression: str,
+) -> None:
+    """Every known oversized gallery node must bound one viewer commit."""
+    source = (Path(__file__).parents[1] / filename).read_text()
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"add_points", "add_lines", "add_partition_group"}
+        and node.args
+        and ast.unparse(node.args[0]) == node_expression
+    ]
+    assert len(calls) == 1, f"expected one {node_expression} adder in {filename}"
+
+    values = {item.arg: item.value for item in calls[0].keywords if item.arg}
+    assert keyword in values, f"{filename} {node_expression} has no {keyword}="
+    assert value_expression in ast.unparse(values[keyword])

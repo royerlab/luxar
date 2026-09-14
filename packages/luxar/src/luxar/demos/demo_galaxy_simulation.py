@@ -149,6 +149,7 @@ import math
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
@@ -157,6 +158,11 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_MAX_ADDITIVE_COMMIT,
+    capped_stream_cuts,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -238,6 +244,107 @@ AGE_BIN_LABELS = (
     "2-6 Gyr",
     "> 6 Gyr",
 )
+
+#: Rows rung 0 must budget PER FRAME on a played layer, not per node.
+#:
+#: The age bins are wildly uneven by construction — at the authored seed they
+#: hold 110 / 966 / 12,455 / 44,569 / 41,900 stars, and every star is present in
+#: every frame, so a layer is exactly ``stars x n_frames`` rows with an exactly
+#: uniform per-frame occupancy. ``stream_ladder`` sizes rung 0 as a SHARE of the
+#: node (``n/8``), which is the right contract for the three fat bins and useless
+#: for ``50-300 Myr``: 966 x 241 = 232,806 rows is only 16% over the ladder gate's
+#: 200,000 "needs a ladder at all" threshold, so its share rung stayed at the
+#: unsliced 39,062-element download budget and spread to a MEASURED 144 rows at
+#: the sparsest 5th-percentile frame — under the 250-element absolute
+#: first-paint floor in ``scripts/check_demo_ladders.py``, which is the arm that
+#: catches a played axis rendering nothing.
+#:
+#: 300 rather than 250 because the seeded random prefix is a multinomial over the
+#: frames, not an even deal: its p05 frame lands ~8-11% below the mean (measured
+#: 144 against a 162 mean at the old 39,062 rung). At 300 x 241 = 72,300 rows the
+#: measured p05 frame is 275 — 10% clear of the floor — and the ladder resolves to
+#: 3 rungs of 72,300 / 72,300 / 88,206, whose largest increment is 37.9% of the
+#: node, inside the gate's 0.6 degeneracy bound.
+#:
+#: NOT fixed by merging the two thin bins. The five-way age split is the
+#: comparison this demo exists for (see ``AGE_BIN_LABELS`` above), #2657 asks for
+#: ladders "without changing scene content", and merging would barely move the
+#: arithmetic anyway: ``< 50 Myr`` + ``50-300 Myr`` is 1,076 stars = 259,316 rows,
+#: still over the 200,000 threshold and still needing ~28% of the node in rung 0
+#: to put 250 rows in its sparsest frame.
+FIRST_RUNG_ROWS_PER_FRAME = 300
+
+#: The two ``scripts/check_demo_ladders.py`` thresholds the floor above has to
+#: stay inside, mirrored here because production code must not import a script
+#: (``DEFAULT_MIN_ELEMENTS`` and ``DEFAULT_MAX_SHARE`` there). A package test
+#: pins these copies to the script's values.
+#:
+#: An absolute per-frame budget is a share of ``stars_in_bin``, not of the node,
+#: so on a thin enough bin it can ask for more of the node than a ladder may
+#: hold. Both failure modes are reachable from the flags, and neither is what the
+#: floor is for (measured, with the bin sizes this demo's own seed produces):
+#:
+#: * ``--stars 250000 --frames 900`` puts 242 stars in ``< 50 Myr``, i.e. 217,800
+#:   rows against a 270,000-row floor. An unclamped floor above ``n`` makes
+#:   ``capped_stream_cuts`` return a single cut — a FLAT 217,800-row leaf, which
+#:   is the "no ladder above 200,000" failure the gate exists to catch;
+#: * ``--stars 40000 --frames 600`` puts 405 stars in ``50-300 Myr``, i.e. 243,000
+#:   rows against a 180,000-row floor — a rung 0 holding 74% of the node, past the
+#:   0.6 degeneracy bound.
+#:
+#: Clamping at the gate's own 0.6 makes both unreachable. It is the LOOSEST bound
+#: that cannot fail the share arm, which is why it is the one used: it binds
+#: exactly when the unclamped floor would have authored a failing ladder (``300 /
+#: stars_in_bin > 0.6``, i.e. under 500 stars) and never otherwise, so it cannot
+#: coarsen a rung that was doing its job. It is a no-op on every node of the
+#: default build. Below the 200,000-row threshold ``check_leaf`` stops its
+#: no-ladder, commit-cap, degeneracy/share and level-count audit; both sliced
+#: arms still apply in full. The clamp starts binding below 500 stars, where the
+#: absolute sliced arm can remain red because 0.6 of a thin frame is still too
+#: little — e.g. 400 stars x 241 = 96,400 rows clamp the 72,300-row floor to
+#: 57,840, averaging 240 rows per frame before the sparsest-frame reduction.
+#:
+#: What the clamp does NOT buy. At the 0.6 bound rung 0 holds 0.6 rows per star
+#: per frame, so a bin under about 450 stars still lands under the 250-row
+#: absolute arm (measured p05 frames: 245 at 440 stars, 251 at 450, 280 at 500)
+#: and those flag combinations stay red — on the arm that says the frame is too
+#: thin to see, which is a content limit rather than a sizing one. A clamped rung
+#: is also two levels rather than three until ~600 stars, which the gate WARNS
+#: about (its ``min_sublods``) rather than failing.
+LADDER_GATE_AUDITED_ROWS = 200_000
+LADDER_GATE_MAX_RUNG_SHARE = 0.6
+
+
+def played_layer_ladder(n_rows: int, stops: int) -> dict[str, Any]:
+    """The additive ladder a PLAYED layer of ``stops`` frames should carry.
+
+    ``stream_ladder``'s share rung (``n/8``) satisfies the ladder gate's rung-0
+    SHARE arm on any node; it does not satisfy the absolute PER-FRAME arm on a
+    node whose rows are spread thinly over a played axis. So take whichever rung 0
+    is larger — the policy's own share rung or
+    :data:`FIRST_RUNG_ROWS_PER_FRAME` per frame — and re-resolve the SAME capped
+    schedule around it. Reading rung 0 back off the spec rather than recomputing
+    it is what keeps the budget-vs-share choice in one place.
+
+    Args:
+        n_rows: Rows in the layer, i.e. ``stars_in_layer * stops``.
+        stops: Distinct hidden (time) coordinates, from ``hidden_axis_stops``.
+
+    Returns:
+        A spec for ``additive_lod=`` on :meth:`Group.add_points`. ``counts`` is a
+        cut LIST because these are Points; the Lines spelling is a string.
+    """
+    ladder = stream_ladder(n_rows, slices=stops)
+    row_floor = stops * FIRST_RUNG_ROWS_PER_FRAME
+    if n_rows > LADDER_GATE_AUDITED_ROWS:
+        row_floor = min(row_floor, int(LADDER_GATE_MAX_RUNG_SHARE * n_rows))
+    ladder["counts"] = capped_stream_cuts(
+        n_rows,
+        max(ladder["counts"][0], row_floor),
+        DEFAULT_MAX_ADDITIVE_COMMIT * stops,
+    )
+    return ladder
+
 
 # =============================================================================
 # Dust
@@ -961,6 +1068,15 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                     )
                     disc_col[b].clear()
                     rad = np.tile(disc_radii_star[bins == b], n_frames)
+                    # T is PLAYED here, so rung 0 has to satisfy the absolute
+                    # per-frame arm of the ladder gate as well as its share arm —
+                    # see `played_layer_ladder` and FIRST_RUNG_ROWS_PER_FRAME for
+                    # the measured 144-row sparsest frame the bare share rung
+                    # leaves on `50-300 Myr`. On the three fat bins the floor
+                    # loses to the policy's own chunk and the ladder is
+                    # byte-for-byte unchanged (verified: 3.00M / 10.74M / 10.10M
+                    # rows all keep [n/8, n/4, n/2, n]).
+                    stops = hidden_axis_stops(pos, dims.non_displayed)
                     scene.add_points(
                         f"Disc {label}",
                         positions=pos,
@@ -970,6 +1086,7 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                         opacity=1.0,
                         blending_mode="additive",
                         intensity=gain,
+                        additive_lod=played_layer_ladder(len(pos), stops),
                         layer=True,
                     )
                     total += len(pos)
@@ -992,6 +1109,20 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                     opacity=1.0,
                     blending_mode="additive",
                     intensity=gain,
+                    # T is played here too, so the same floor applies. It does
+                    # not BIND at the default star count — the n/8 share rung is
+                    # 90,375 against a 72,300-row floor, giving a measured p05
+                    # frame of 343 — so this is byte-for-byte a no-op on the
+                    # shipped store. It is passed anyway because HII rows track
+                    # `--stars`: the population is the youngest 3% of the disc, so
+                    # `--stars 50000` leaves 1,500 stars = 361,500 rows, whose
+                    # share rung spreads to a measured p05 frame of 166 and fails
+                    # the gate. The floor makes that 274. Same argument on the
+                    # bulge at `n_disc // 5`.
+                    additive_lod=played_layer_ladder(
+                        len(hii_pos),
+                        hidden_axis_stops(hii_pos, dims.non_displayed),
+                    ),
                     layer=True,
                 )
                 total += len(hii_pos)
@@ -1010,6 +1141,10 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                     opacity=1.0,
                     blending_mode="additive",
                     intensity=gain,
+                    additive_lod=played_layer_ladder(
+                        len(bulge_pos),
+                        hidden_axis_stops(bulge_pos, dims.non_displayed),
+                    ),
                     layer=True,
                 )
                 total += len(bulge_pos)

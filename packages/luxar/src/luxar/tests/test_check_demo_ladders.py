@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.demos import demo_galaxy_simulation
 from luxar.utils import paths as luxar_paths
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -101,6 +102,19 @@ def _add_line_slice_bounds(
     level.create_array("vertex_chunk_bounds", data=bounds)
 
 
+def _add_two_axis_slice_bounds(level: zarr.Group, *, chunk_size: int) -> None:
+    """Stamp three chunks whose busiest hidden-coordinate tuple spans two chunks."""
+    level.attrs.update({"slice_dims": [2, 3], "chunk_size": chunk_size})
+    bounds = np.zeros((3, 4, 2), dtype=np.float32)
+    bounds[0, 2] = (-_BOUND_HALF_WIDTH, _BOUND_HALF_WIDTH)
+    bounds[0, 3] = (-_BOUND_HALF_WIDTH, _BOUND_HALF_WIDTH)
+    bounds[1, 2] = (-_BOUND_HALF_WIDTH, _BOUND_HALF_WIDTH)
+    bounds[1, 3] = (-_BOUND_HALF_WIDTH, 1 + _BOUND_HALF_WIDTH)
+    bounds[2, 2] = (1 - _BOUND_HALF_WIDTH, 1 + _BOUND_HALF_WIDTH)
+    bounds[2, 3] = (1 - _BOUND_HALF_WIDTH, 1 + _BOUND_HALF_WIDTH)
+    level.create_array("chunk_bounds", data=bounds)
+
+
 @pytest.mark.parametrize(
     ("sizes", "expected_status"),
     [
@@ -146,6 +160,37 @@ def test_absolute_level_cap_uses_the_busiest_barrier_ordered_slice(
 
     assert status == "fail"
     assert "largest coordinate fetch is 80 elements" in message
+
+
+def test_busiest_slice_measurement_supports_two_hidden_axes(tmp_path: Path) -> None:
+    leaf = _make_leaf(tmp_path / "two-axis.zarr", None, declared_total=120)
+    _add_two_axis_slice_bounds(leaf, chunk_size=40)
+
+    status, message = _check(leaf, min_elements=80)
+
+    assert status == "skip"
+    assert "largest coordinate fetch 80 elements" in message
+
+
+def test_unladdered_two_axis_leaf_fails_on_busiest_coordinate(tmp_path: Path) -> None:
+    leaf = _make_leaf(tmp_path / "two-axis-large.zarr", None, declared_total=180)
+    _add_two_axis_slice_bounds(leaf, chunk_size=60)
+
+    status, message = _check(leaf, min_elements=100)
+
+    assert status == "fail"
+    assert "120 elements in one coordinate fetch" in message
+
+
+def test_unladdered_leaf_without_slice_metadata_uses_declared_total(
+    tmp_path: Path,
+) -> None:
+    leaf = _make_leaf(tmp_path / "unsliced.zarr", None, declared_total=120)
+
+    status, message = _check(leaf, min_elements=80)
+
+    assert status == "fail"
+    assert "120 elements in ONE commit" in message
 
 
 def test_absolute_level_cap_accepts_large_levels_when_each_slice_is_bounded(
@@ -200,7 +245,6 @@ def test_absolute_level_cap_reads_gsplat_chunk_bounds(tmp_path: Path) -> None:
     [
         "unsliced",
         "extend_to_all",
-        "multiple_slice_dims",
         "malformed",
         "mixed_levels",
     ],
@@ -217,13 +261,11 @@ def test_absolute_level_cap_keeps_node_level_fallbacks(
                 chunk_size=30,
                 coordinates=[0, 0, 1, 1],
             )
-    elif fallback in ("multiple_slice_dims", "malformed"):
+    elif fallback == "malformed":
         for index in range(3):
             level = leaf[f"additive_{index}"]
             _add_slice_bounds(level, chunk_size=30, coordinates=[0, 0, 1, 1])
-            level.attrs["slice_dims"] = (
-                [2, 3] if fallback == "multiple_slice_dims" else ["not-an-index"]
-            )
+            level.attrs["slice_dims"] = ["not-an-index"]
     elif fallback == "mixed_levels":
         for index in range(2):
             _add_slice_bounds(
@@ -250,6 +292,19 @@ def test_large_unladdered_leaf_fails_but_small_leaf_skips(tmp_path: Path) -> Non
 
     assert _check(large, min_elements=checker.DEFAULT_MIN_ELEMENTS)[0] == "fail"
     assert _check(small, min_elements=checker.DEFAULT_MIN_ELEMENTS)[0] == "skip"
+
+
+def test_galaxy_ladder_policy_mirrors_the_auditor_thresholds() -> None:
+    assert (
+        demo_galaxy_simulation.LADDER_GATE_AUDITED_ROWS == checker.DEFAULT_MIN_ELEMENTS
+    )
+    assert (
+        demo_galaxy_simulation.LADDER_GATE_MAX_RUNG_SHARE == checker.DEFAULT_MAX_SHARE
+    )
+    assert (
+        demo_galaxy_simulation.FIRST_RUNG_ROWS_PER_FRAME
+        > checker.DEFAULT_MIN_SLICE_FIRST_RUNG
+    )
 
 
 def test_declared_total_and_level_structure_are_validated(tmp_path: Path) -> None:
