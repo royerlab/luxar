@@ -462,6 +462,11 @@ DATASETS: dict[str, dict] = {
     "gsplats_4d_neuromast_2ch": dict(
         bucket="zenodo",
         record="cc-by",
+        # The corrected pair is mirrored on R2 rather than published as a new
+        # Zenodo deposition. A dataset-level override keeps the real cc-by
+        # deposition as the provenance identity without routing this pair to its
+        # superseded files.
+        base_url="https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
         license="cc-by-4.0",
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
         attribution=(
@@ -480,8 +485,8 @@ DATASETS: dict[str, dict] = {
         # first-author role. It is his data, so it is his call.
         #
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
-        # the cc-by record and pinned below (md5 verified against Zenodo). Those
-        # pins became the active fetch contract when the record was published.
+        # the cc-by record (md5 verified against Zenodo). Their digests are retained
+        # as superseded pins; the active pins describe the R2 mirror above.
     ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",
