@@ -1,7 +1,6 @@
-import * as fs from 'fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  hasNonZeroDimensionStep,
+  describeGalleryDataState,
   isGalleryDataReady,
   readBakedDimensionStep,
 } from '../../../tests/screenshots/gallery-dimension-readiness';
@@ -12,6 +11,7 @@ function response(ok: boolean, body: unknown) {
 
 afterEach(() => {
   delete (globalThis as any).__luxarDebug;
+  delete (globalThis as any).__luxarGalleryDimensionStepReached;
 });
 
 describe('gallery baked dimension metadata', () => {
@@ -85,7 +85,37 @@ describe('gallery data readiness', () => {
   });
 
   it('accepts an idle matching slice with content', () => {
-    setState({ isLoading: false, totalElements: 100, dimensions: { currentStep: [0, 4] } });
+    setState({
+      isLoading: false,
+      totalElements: 100,
+      dimensions: { currentStep: [0, 4], displayed: [0] },
+    });
+
+    expect(isGalleryDataReady({ requireElements: true, expectedDimensionStep: [0, 4] })).toBe(true);
+  });
+
+  it('stays ready after an animated scene advances past the authored step', () => {
+    const state = {
+      isLoading: true,
+      totalElements: 100,
+      dimensions: { currentStep: [0, 4], displayed: [0] },
+    };
+    setState(state);
+
+    expect(isGalleryDataReady({ requireElements: true, expectedDimensionStep: [0, 4] })).toBe(
+      false
+    );
+    state.dimensions.currentStep = [0, 5];
+    state.isLoading = false;
+    expect(isGalleryDataReady({ requireElements: true, expectedDimensionStep: [0, 4] })).toBe(true);
+  });
+
+  it('ignores displayed coordinates that the viewer clamps on load', () => {
+    setState({
+      isLoading: false,
+      totalElements: 100,
+      dimensions: { currentStep: [2, 4], displayed: [0] },
+    });
 
     expect(isGalleryDataReady({ requireElements: true, expectedDimensionStep: [0, 4] })).toBe(true);
   });
@@ -112,31 +142,27 @@ describe('gallery data readiness', () => {
     );
   });
 
-  it('detects whether the scene opens away from the all-zero default', () => {
-    expect(hasNonZeroDimensionStep(null)).toBe(false);
-    expect(hasNonZeroDimensionStep([0, 0, 0])).toBe(false);
-    expect(hasNonZeroDimensionStep([0, 0, 4])).toBe(true);
+  it('fails fast when the authored step has more dimensions than the scene', () => {
+    setState({
+      isLoading: false,
+      totalElements: 100,
+      dimensions: { currentStep: [0, 4], displayed: [0] },
+    });
+
+    expect(() =>
+      isGalleryDataReady({ requireElements: true, expectedDimensionStep: [0, 4, 9] })
+    ).toThrow('3 values, but the scene exposes 2 dimensions');
   });
-});
 
-describe('gallery dimension readiness wiring', () => {
-  const specPath = 'src/tests/screenshots/generate-gallery.spec.ts';
+  it('reports the expected and live state for timeout diagnostics', () => {
+    setState({
+      isLoading: true,
+      totalElements: 0,
+      dimensions: { currentStep: [0, 2], displayed: [0] },
+    });
 
-  it('gates the initial load on the scene-authored opening step', () => {
-    const source = fs.readFileSync(specPath, 'utf-8');
-
-    const readStep = source.indexOf('await readBakedDimensionStep(dataUrl)');
-    const firstWait = source.indexOf('await waitForDataLoaded(', readStep);
-    const navigation = source.indexOf('if (demo.dimensionNav)', firstWait);
-
-    expect(readStep).toBeGreaterThan(-1);
-    expect(firstWait).toBeGreaterThan(readStep);
-    expect(navigation).toBeGreaterThan(firstWait);
-    expect(source.slice(readStep, firstWait)).toContain(
-      'expectedDimensionStep: bakedDimensionStep'
+    expect(describeGalleryDataState({ requireElements: true, expectedDimensionStep: [0, 4] })).toBe(
+      'expectedDimensionStep=[0,4], currentStep=[0,2], displayed=[0], isLoading=true, totalElements=0, expectedStepReached=false'
     );
-    expect(
-      source.slice(firstWait, navigation).match(/waitForDataLoaded\(page, initialLoadOptions\)/g)
-    ).toHaveLength(2);
   });
 });

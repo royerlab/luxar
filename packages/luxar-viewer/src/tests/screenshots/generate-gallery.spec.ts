@@ -85,7 +85,7 @@ import {
 import { mediaKeyIndex, requireMediaBaseUrl, resolveGalleryOnly } from './gallery-selection';
 import { resolveTimelapseSettleMs, waitForTimelapseSliceSettled } from './gallery-timelapse-settle';
 import {
-  hasNonZeroDimensionStep,
+  describeGalleryDataState,
   isGalleryDataReady,
   readBakedDimensionStep,
 } from './gallery-dimension-readiness';
@@ -327,11 +327,14 @@ async function waitForDataLoaded(
   // `requireElements = false` permits an empty initial slice while still waiting
   // for the authored dimension step. A scene whose index-zero slice is empty may
   // not have elements until its baked opening step or dimensionNav override runs.
-  await page.waitForFunction(
-    isGalleryDataReady,
-    { requireElements, expectedDimensionStep },
-    { timeout }
-  );
+  const readinessOptions = { requireElements, expectedDimensionStep };
+  try {
+    await page.waitForFunction(isGalleryDataReady, readinessOptions, { timeout });
+  } catch (error) {
+    const diagnostics = await page.evaluate(describeGalleryDataState, readinessOptions);
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Gallery data readiness failed: ${reason}; ${diagnostics}`, { cause: error });
+  }
 }
 
 /** Navigate a non-displayed dimension (e.g. to a populated timepoint). */
@@ -1381,9 +1384,8 @@ for (const demo of DEMOS) {
     // An nD demo may be empty at index zero. Permit that until the baked opening
     // step (or a subsequent dimensionNav override) has had a chance to populate it.
     const needsNav = Boolean(demo.dimensionNav);
-    const opensAwayFromDefault = hasNonZeroDimensionStep(bakedDimensionStep);
     const initialLoadOptions = {
-      requireElements: !(needsNav || opensAwayFromDefault),
+      requireElements: !needsNav,
       expectedDimensionStep: bakedDimensionStep,
     };
     await waitForDataLoaded(page, initialLoadOptions);
