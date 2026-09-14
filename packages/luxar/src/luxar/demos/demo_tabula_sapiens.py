@@ -59,6 +59,7 @@ from luxar.demos import (
     launch_viewer,
     require_module,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -721,6 +722,7 @@ def generate_tabula_sapiens(
                 link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
                 copy="{hover_key}",
                 layer=True,
+                additive_lod=stream_ladder(len(positions)),
             )
 
             scene.add_text(

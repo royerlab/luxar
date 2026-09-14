@@ -385,6 +385,17 @@ from luxar.utils.paths import get_demos_output_dir
 DEMO_NAME: Final = "biodiversity_planetary_scale"
 CACHE_DIR: Final = Path.home() / ".cache" / "luxar" / DEMO_NAME
 
+
+def biodiversity_ladder(n_rows: int) -> dict[str, Any]:
+    """Open the sparse taxon/period cube at one quarter of its rows."""
+    quarter = math.ceil(n_rows / 4)
+    return {
+        "counts": [quarter, min(2 * quarter, n_rows), n_rows],
+        "method": "random",
+        "seed": 0,
+    }
+
+
 R_EARTH_KM: Final = 6371.0
 RADIUS: Final = 100.0  # globe radius in scene units
 
@@ -2920,10 +2931,7 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # globe has nothing worth skipping, and each part costs a request
                 # to bootstrap. The additive ladder gives first paint 1/8 of
                 # the stored frame here, rather than a whole-node byte budget.
-                additive_lod=stream_ladder(
-                    len(taxon_pos),
-                    slices=hidden_axis_stops(taxon_pos, dims.non_displayed),
-                ),
+                additive_lod=biodiversity_ladder(len(taxon_pos)),
             )
 
             scene.add_lines(

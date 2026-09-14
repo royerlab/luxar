@@ -1670,6 +1670,32 @@ scene.add_gsplats_from_data(
         ("demo_lorenz.py", "'LorenzAttractor'", "additive_lod", "stream_ladder"),
         ("demo_mandelbulb.py", "'Mandelbulb'", "additive_lod", "stream_ladder"),
         ("demo_rainbow_sphere.py", "'RainbowSphere'", "additive_lod", "stream_ladder"),
+        ("demo_spiral_galaxy.py", "'SpiralGalaxy'", "additive_lod", "stream_ladder"),
+        ("demo_tabula_sapiens.py", "'cells'", "additive_lod", "stream_ladder"),
+        (
+            "demo_hilbert_curve_3d.py",
+            "f'Hilbert order {order}'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        (
+            "demo_biodiversity_planetary_scale.py",
+            "'By taxon & period'",
+            "additive_lod",
+            "biodiversity_ladder",
+        ),
+        (
+            "demo_zebrahub_velocity_streamlines.py",
+            "'Velocity comets (tail → head = velocity direction)'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        (
+            "demo_zebrahub_velocity_streamlines.py",
+            "'RNA-velocity streamlines'",
+            "additive_lod",
+            "stream_ladder",
+        ),
         # These four wrap `stream_ladder` in a named module helper, because the
         # ladder they need is not the one the policy returns unmodified: the
         # helper's docstring carries the measured reason and its arithmetic is

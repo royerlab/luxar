@@ -940,6 +940,13 @@ def test_every_share_arm_exemption_carries_a_measured_reason() -> None:
         )
 
 
+def test_every_leaf_exemption_is_exact_and_explained() -> None:
+    assert checker.LEAF_EXEMPT
+    for key, reason in checker.LEAF_EXEMPT.items():
+        assert ".luxar.zarr/" in key
+        assert len(reason) >= 40
+
+
 def test_calibrated_sliced_defaults_and_cli_exemption_are_pinned(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

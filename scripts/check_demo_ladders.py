@@ -188,6 +188,24 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
     ),
 }
 
+LEAF_EXEMPT: dict[str, str] = {
+    "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_0": (
+        "published 51-timepoint archive; republishing is tracked separately"
+    ),
+    "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_1": (
+        "published 51-timepoint archive; republishing is tracked separately"
+    ),
+    "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_2": (
+        "published 51-timepoint archive; republishing is tracked separately"
+    ),
+    "gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_3": (
+        "published 51-timepoint archive; republishing is tracked separately"
+    ),
+    "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
+        "intentional flat control in the six-recipe LOD comparison"
+    ),
+}
+
 #: Which order statistic of the per-coordinate histogram decides starvation.
 #: A ladder starves at its SPARSEST slice, not its densest, so this reduction
 #: must be a low percentile. It replaced ``max()``, which asked whether the
@@ -817,6 +835,11 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
 
         results: list[tuple[str, str, str]] = []
         for leaf_path, leaf in walk_leaves(root):
+            exemption = LEAF_EXEMPT.get(f"{scene.name}{leaf_path}")
+            if exemption is not None:
+                results.append((leaf_path, "warn", f"exempt: {exemption}"))
+                counts["warn"] += 1
+                continue
             status, message = check_leaf(
                 leaf,
                 min_elements=args.min_elements,

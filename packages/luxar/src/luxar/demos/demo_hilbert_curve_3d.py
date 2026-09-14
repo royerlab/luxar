@@ -90,6 +90,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import DimensionsConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_int_arg
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -266,6 +267,14 @@ def build_scene(output_path: Path, max_order: int) -> int:
                 vertices_4d = np.empty((len(xyz), 4), dtype=np.float32)
                 vertices_4d[:, 0] = float(slot)
                 vertices_4d[:, 1:] = xyz
+                segment_vertices = np.empty(
+                    (2 * (len(vertices_4d) - 1), 4), dtype=np.float32
+                )
+                segment_vertices[0::2] = vertices_4d[:-1]
+                segment_vertices[1::2] = vertices_4d[1:]
+                segment_colors = np.empty((len(segment_vertices), 3), dtype=np.float32)
+                segment_colors[0::2] = colors[:-1]
+                segment_colors[1::2] = colors[1:]
 
                 aprint(
                     f"  order {order}: {len(xyz):,} vertices "
@@ -274,15 +283,16 @@ def build_scene(output_path: Path, max_order: int) -> int:
 
                 scene.add_lines(
                     f"Hilbert order {order}",
-                    vertices=vertices_4d,
+                    vertices=segment_vertices,
                     widths=LINE_WIDTH,
-                    colors=colors,
-                    line_type="polyline",
+                    colors=segment_colors,
+                    line_type="segments",
                     sharpness=0.5,
                     opacity=0.95,
                     intensity=0.55,
                     blending_mode="luminous",
                     layer=True,
+                    additive_lod=stream_ladder(len(segment_vertices), geometry="lines"),
                 )
                 total_pts += len(xyz)
 

@@ -75,6 +75,7 @@ from luxar.demos import (
     rk4_step,
 )
 from luxar.demos._cinematic_camera import pull_in
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -981,6 +982,7 @@ def write_scene(
                 opacity=0.95,
                 intensity=LINE_INTENSITY,
                 layer=True,
+                additive_lod=stream_ladder(len(comet_vertices), geometry="lines"),
             )
 
             if len(streamlines.vertices) > 0:
@@ -997,6 +999,9 @@ def write_scene(
                     intensity=STREAMLINE_INTENSITY,
                     layer=True,
                     substitutive_lod=streamline_lod,
+                    additive_lod=stream_ladder(
+                        len(streamlines.vertices), geometry="lines"
+                    ),
                 )
 
             add_reference_cube_to_scene(

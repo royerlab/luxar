@@ -43,6 +43,7 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     _dataset_ids,
     _dictionary_codes,
     _read_part,
+    biodiversity_ladder,
     chain_segment_indices,
     globe_camera,
     great_circle_resample,
@@ -55,6 +56,14 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     taxon_slot,
     tile_count_for,
 )
+
+
+def test_biodiversity_ladder_opens_at_one_quarter_and_conserves_rows() -> None:
+    assert biodiversity_ladder(2_111_885) == {
+        "counts": [527_972, 1_055_944, 2_111_885],
+        "method": "random",
+        "seed": 0,
+    }
 
 
 def test_keep_stale_reuses_an_existing_scene_with_a_mismatched_marker(
