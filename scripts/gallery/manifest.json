@@ -45,17 +45,13 @@
       "category": "synthetic",
       "script": "demo_quantum_orbitals.py",
       "dataset": "datasets/demos/quantum_orbitals.luxar.zarr",
-      "dimensionNav": {
-        "key": "1",
-        "steps": 2
-      },
       "viewAngle": {
         "azimuth": 90,
         "elevation": 8
       },
       "distance": 60,
       "exposure": 1.2,
-      "note": "distance 32 -> 60: the orbitals overflowed the frame at distance 32; the live still shows two small lobes with wide margin. Framing only — manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | The abandoned fillTarget 0.55 attempt was a no-op because fillTarget is INERT when `distance` is set; the 86.6% -> 90.0% border-lit change was run variance. | KEEP dimensionNav steps:2 AND distance 60. The demo bakes OPENING_ORBITAL=`3pz` (current_step=[0,0,0,4] of 8 categories); after #2733 the capture waits for that opening step before applying steps:2, so dimensionNav is an explicit relative override rather than a duplicated absolute slice index. Also: border-lit alone cannot validate this tile — a subject shrunk to ~1% of frame scores a perfect 0.0%; read the harness's own `under-filled?` warning."
+      "note": "distance 32 -> 60: the orbitals overflowed the frame at distance 32; the live still shows two small lobes with wide margin. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95. | The abandoned fillTarget 0.55 attempt was a no-op because fillTarget is INERT when `distance` is set; the 86.6% -> 90.0% border-lit change was run variance. | No dimensionNav: the demo bakes OPENING_ORBITAL=`3pz` (current_step=[0,0,0,4] of 8 categories), and after #2733 the capture waits for that authoritative opening slice. The measurements that diagnosed the old readiness race are retained here: measured 2026-09-12 at d=40, steps 4/6/5/3/1/2 gave span 12.3/39.5/59.8/86.8/90.0/92.8%; before the gate, removing dimensionNav rendered every slice at once (border-lit 100% at d=9, identical at d=12 and to steps:8). Those results describe the pre-#2733 race, not the current no-navigation capture. Also: border-lit alone cannot validate this tile \u2014 a subject shrunk to ~1% of frame scores a perfect 0.0%; read the harness's own `under-filled?` warning."
     },
     {
       "id": "desi_galaxies",
@@ -326,11 +322,7 @@
         "azimuth": 20,
         "elevation": 25
       },
-      "dimensionNav": {
-        "key": "1",
-        "steps": 3
-      },
-      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, dimensionNav steps the 10-category taxon slider"
+      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, and the tile keeps the demo's authored Birds opening slice"
     },
     {
       "id": "nuclear_pore_complex",
@@ -524,10 +516,6 @@
       "category": "synthetic",
       "script": "demo_hilbert_curve_3d.py",
       "dataset": "datasets/demos/hilbert_curve_3d.luxar.zarr",
-      "dimensionNav": {
-        "key": "1",
-        "steps": 3
-      },
       "viewAngle": {
         "azimuth": 32,
         "elevation": 24
