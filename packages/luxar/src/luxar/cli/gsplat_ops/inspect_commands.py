@@ -93,6 +93,18 @@ def _print_fitting_value(
         aprint(f"  {key}: {value}")
 
 
+def _is_short_numeric_list(value: Any) -> bool:
+    """Whether a metadata list is compact and readable without summarizing."""
+    return (
+        isinstance(value, list)
+        and len(value) <= 8
+        and all(
+            isinstance(item, (int, float)) and not isinstance(item, bool)
+            for item in value
+        )
+    )
+
+
 def _ascii_histogram(
     data: "np.ndarray", bins: int = 40, width: int = 60, title: str = "Distribution"
 ) -> str:
@@ -233,6 +245,8 @@ def _print_dataset_metadata(
                         value,
                         show_full_provenance=show_full_provenance,
                     )
+                elif _is_short_numeric_list(value):
+                    _print_fitting_value(key, value)
                 elif isinstance(value, (dict, list)):
                     aprint(f"  {key}: {type(value).__name__} with {len(value)} items")
                 else:
