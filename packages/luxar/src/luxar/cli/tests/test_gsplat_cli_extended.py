@@ -9685,9 +9685,7 @@ class TestInfoSourceGridReportedOnce:
             long_numeric_list=list(range(9)),
             nested_list=[[1.0, 2.0]],
         )
-        result = runner.invoke(
-            app, ["gsplat", "info", str(path), "--no-histograms"]
-        )
+        result = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         output = _plain(result.stdout)
 

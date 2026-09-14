@@ -17,12 +17,15 @@ _SIGMA_MIN_DIAG_MARGIN = 0.1
 
 
 def apply_sigma_min_diag_floor(
-    sigma_diag: np.ndarray, sigma_min_diag: Sequence[float]
+    sigma_diag: np.ndarray, sigma_min_diag: Sequence[float] | np.ndarray
 ) -> np.ndarray:
     """Apply the fitter's gradient-safety floor to Cholesky diagonals."""
-    return np.maximum(
-        np.asarray(sigma_diag, dtype=np.float32),
-        np.asarray(sigma_min_diag, dtype=np.float32) + _SIGMA_MIN_DIAG_MARGIN,
+    return np.asarray(
+        np.maximum(
+            np.asarray(sigma_diag, dtype=np.float32),
+            np.asarray(sigma_min_diag, dtype=np.float32) + _SIGMA_MIN_DIAG_MARGIN,
+        ),
+        dtype=np.float32,
     )
 
 
@@ -32,9 +35,7 @@ def _resolve_unfloored_fit_initial_sigma_diag(
     """Return the fresh-seed sigma vector before the gradient-safety floor."""
     opt_shape = tuple(preprocessed_data.V_tensor.shape)
     if config.init_sigma_vox is not None:
-        return np.full(
-            preprocessed_data.d, config.init_sigma_vox, dtype=np.float32
-        )
+        return np.full(preprocessed_data.d, config.init_sigma_vox, dtype=np.float32)
     if config.voxel_size is not None:
         phys_dims = np.array(opt_shape, dtype=np.float32) * config.voxel_size
         init_sigma_phys = max(
@@ -125,8 +126,7 @@ def initialize_optimization(
             L0[:, i, i] = clamped_diagonal[:, i]
         if config.verbose:
             aprint(
-                "Clamped L0 diagonal to >= sigma_min_diag "
-                f"+ {_SIGMA_MIN_DIAG_MARGIN:g}"
+                f"Clamped L0 diagonal to >= sigma_min_diag + {_SIGMA_MIN_DIAG_MARGIN:g}"
             )
 
     if preprocessed_data.init_amps is not None:
