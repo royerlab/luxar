@@ -112,14 +112,15 @@ contention; the cap added in #2732 is sufficient, with no additional scheduling
 change justified. New artifacts expose `animationMs`, `settleMs`,
 transition/settle updates, and refinement roots separately.
 
-A corrected three-sweep validation on September 13, 2026 used an archived
-51-part H2AFVA store whose effective last playable coordinate was 49, so it
-passed `--start-frame 48`. Every arm was warm (`misses=0`) and none timed out.
-Cap 64 reported `animationMs` 0.121–2.923 s and `settleMs` 0.305–1.744 s; cap
-4096 reported 0.103–0.131 s and 0.093–1.555 s respectively. The cap-4096 arms
-all stamped `missedUpdates=1` (cap 64 stamped 0–1), so those transition/settle
-splits are explicitly incomplete and are diagnostic rather than a new
-cap-effect conclusion. The corrected artifacts still show no 6–30 s warm tail.
+A September 13, 2026 diagnostic used a separate archived H2AFVA store that
+declared `Time range=[0,50]`, `step=1`, and 51 timepoints, matching the generated
+store's metadata, but playback from `--start-frame 48` stopped at 49 instead of
+continuing to 50. Its three warm sweeps therefore measured the 48→49 transition,
+not the documented 49→50 transition: cap 64 reported `animationMs` 0.121–2.923 s
+and `settleMs` 0.305–1.744 s; cap 4096 reported 0.103–0.131 s and 0.093–1.555 s.
+The cap-4096 arms all stamped `missedUpdates=1` (cap 64 stamped 0–1), so these
+non-reproducible archive numbers are retained only as diagnostic provenance, not
+as a baseline for the setup above. They still show no 6–30 s warm tail.
 
 This untyped harness depends on the debug surface names
 `getSceneLoader`, `getDefaultLoader`, `getProfiler`, `inputHandler`,
