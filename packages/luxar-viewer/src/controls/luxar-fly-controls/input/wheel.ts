@@ -91,6 +91,7 @@ export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
   } else {
     // Plain scroll: move forward/backward
     _v0.set(0, 0, -1).applyQuaternion(ctx.orientation);
+    // Plain-scroll direction is independent of the gesture roll convention.
     const impulse = -direction * ctx.movementSpeed * ctx.wheelZoomSensitivity * 0.3;
 
     if (ctx.inertialMode) {
