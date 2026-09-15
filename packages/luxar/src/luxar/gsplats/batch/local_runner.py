@@ -132,6 +132,9 @@ def _report_gpu_mappings(
     gpu_indices: list[int], workers: dict[int, int], host_workers: int
 ) -> None:
     """Print the parent-visible index, child token, and device name per GPU."""
+    if not gpu_indices:
+        aprint("CUDA hidden from workers; fit device forced to CPU")
+        return
     for gpu in gpu_indices:
         visible_token = _worker_env(gpu, workers, host_workers)["CUDA_VISIBLE_DEVICES"]
         aprint(
@@ -359,9 +362,12 @@ def run_batch_local(
         # its replacement exists, and a failed refit would then leave nothing.
         shutil.rmtree(staging, ignore_errors=True)
         Path(str(staging) + ".empty").unlink(missing_ok=True)
-        return build_task_fit_argv(
+        argv = build_task_fit_argv(
             manifest, job, staging, denoise_h=_denoise_h_for_job(manifest, job)
         )
+        if assignment.get(task_id, -1) < 0:
+            argv += ["--device", "cpu"]
+        return argv
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)

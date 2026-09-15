@@ -569,6 +569,41 @@ def test_run_batch_local_reports_resolved_gpu_mapping(
     assert output == ["visible index 0 -> CUDA_VISIBLE_DEVICES=1 (NVIDIA RTX 3070)"]
 
 
+def test_run_batch_local_cpu_forces_device_and_reports_hidden_cuda(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """CPU workers cannot fall through to CUDA or MPS device auto-selection."""
+    import luxar.gsplats.batch.local_runner as lr
+    from luxar.gsplats.batch.task_pool import TaskResult
+
+    manifest, out_dir = _plan_single_tile_manifest(tmp_path)
+    output: list[str] = []
+    monkeypatch.setattr(lr, "aprint", lambda message: output.append(str(message)))
+
+    def _fake_pool(  # type: ignore[no-untyped-def]
+        task_ids, *, argv_builder, env_builder, **kwargs
+    ):
+        task_id = task_ids[0]
+        argv = argv_builder(task_id)
+        assert argv[-2:] == ["--device", "cpu"]
+        assert env_builder(task_id)["CUDA_VISIBLE_DEVICES"] == ""
+        return [TaskResult(key=task_id, returncode=1, output="stop")]
+
+    monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
+
+    with pytest.raises(RuntimeError, match="fit tasks failed"):
+        lr.run_batch_local(
+            manifest,
+            out_dir,
+            gpus="cpu",
+            jobs_per_gpu=1,
+            resume=False,
+            verbose=False,
+        )
+
+    assert output == ["CUDA hidden from workers; fit device forced to CPU"]
+
+
 def test_no_resume_replaces_stale_output_only_after_successful_refit(
     tmp_path: Path, monkeypatch
 ) -> None:
