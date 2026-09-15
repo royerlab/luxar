@@ -103,14 +103,29 @@ def _worker_env(gpu: int, workers: dict[int, int], host_workers: int) -> dict[st
     quality_host_workers = str(max(1, host_workers))
     if gpu < 0:
         return {
+            "CUDA_VISIBLE_DEVICES": "",
             QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
             QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
         }
+    parent_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    visible_token = (
+        parent_visible.split(",")[gpu].strip() if parent_visible else str(gpu)
+    )
     return {
-        "CUDA_VISIBLE_DEVICES": str(gpu),
+        "CUDA_VISIBLE_DEVICES": visible_token,
         QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
         QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
     }
+
+
+def _gpu_device_name(gpu: int) -> str:
+    """Return the parent-visible CUDA device name for startup diagnostics."""
+    try:
+        import torch
+
+        return str(torch.cuda.get_device_properties(gpu).name)
+    except (AttributeError, RuntimeError, AssertionError):
+        return "unknown GPU"
 
 
 def _active_worker_counts(
@@ -347,6 +362,14 @@ def run_batch_local(
         f"Local batch fit: {n_run}/{len(task_ids)} tasks on {dev_desc}, "
         f"{global_workers} concurrent worker(s){auto_limit}"
     ):
+        for gpu in active_gpu_indices:
+            visible_token = _worker_env(gpu, active_workers, active_host_workers)[
+                "CUDA_VISIBLE_DEVICES"
+            ]
+            aprint(
+                f"visible index {gpu} -> CUDA_VISIBLE_DEVICES={visible_token} "
+                f"({_gpu_device_name(gpu)})"
+            )
         if verbose and n_run < len(task_ids):
             aprint(f"Resuming: {len(task_ids) - n_run} task(s) already complete")
 

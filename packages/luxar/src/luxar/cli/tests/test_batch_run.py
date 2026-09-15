@@ -16,6 +16,54 @@ from luxar.cli.tests._testing import normalized_cli_output
 runner = CliRunner()
 
 
+def test_local_profile_uses_selected_devices(monkeypatch) -> None:
+    """Local planning records and profiles the GPUs that will run the tasks."""
+    import torch
+
+    import luxar.gsplats.gpu_profile as gpu_profile
+    import luxar.gsplats.utils.device as device
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _resolve_local_gpu_profile,
+    )
+
+    class _Properties:
+        def __init__(self, name: str, total_memory: int) -> None:
+            self.name = name
+            self.total_memory = total_memory
+
+    properties = {
+        0: _Properties("Large GPU", 48 * 1024**3),
+        1: _Properties("Small GPU", 8 * 1024**3),
+    }
+    summaries = {
+        "Large GPU": {
+            "recommendations": {"peak_throughput_3d": {"shape": [512, 512, 512]}}
+        },
+        "Small GPU": {
+            "oom_boundaries": {"3d": {"max_successful_shape": [256, 256, 256]}}
+        },
+    }
+    tables = {"Large GPU": [{"voxels": 2}], "Small GPU": [{"voxels": 1}]}
+
+    monkeypatch.setattr(device, "resolve_gpu_selection", lambda spec: [0, 1])
+    monkeypatch.setattr(torch.cuda, "get_device_properties", properties.__getitem__)
+    monkeypatch.setattr(
+        gpu_profile, "get_gpu_summary", lambda gpu_name: summaries.get(gpu_name)
+    )
+    monkeypatch.setattr(
+        gpu_profile,
+        "get_gpu_throughput_table",
+        lambda gpu_name: tables.get(gpu_name),
+    )
+
+    selected, manifest_name, max_shape, throughput = _resolve_local_gpu_profile("0,1")
+
+    assert selected == [0, 1]
+    assert manifest_name == "Large GPU, Small GPU"
+    assert max_shape == [256, 256, 256]
+    assert throughput == [{"voxels": 1}]
+
+
 def _make_zarr(path: Path) -> None:
     import zarr
 
