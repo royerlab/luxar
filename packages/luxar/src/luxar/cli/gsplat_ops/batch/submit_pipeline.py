@@ -124,6 +124,9 @@ class PackingPlan:
     est_seconds_per_job: float
     slurm_time: str
     total_gpu_hours: float
+    limiting_resource: str
+    slurm_cpus: int
+    slurm_mem_gb: int
 
 
 def resolve_packing(
@@ -135,6 +138,10 @@ def resolve_packing(
     est_seconds: float,
     total_tasks: int,
     time_limit: Optional[str],
+    partition: Optional[str],
+    gpus_per_task: int,
+    cpus: int,
+    mem: int,
 ) -> PackingPlan:
     """Compute tasks-per-job packing and the derived job-count/time figures.
 
@@ -145,14 +152,18 @@ def resolve_packing(
     """
     import math
 
-    from luxar.gsplats.batch.env_capture import get_slurm_scheduler_info
+    from luxar.gsplats.batch.env_capture import (
+        get_partition_node_resources,
+        get_slurm_scheduler_info,
+    )
     from luxar.gsplats.batch.time_estimate import estimate_slurm_time_limit
 
     sched_info = get_slurm_scheduler_info()
     uses_backfill = sched_info["uses_backfill"]
     no_job_limit = sched_info["max_jobs_per_user"] is None
 
-    tasks_per_job = resolve_tasks_per_job(
+    node_resources = get_partition_node_resources(partition) if partition else []
+    resolution = resolve_tasks_per_job(
         tasks_per_job,
         parallel=parallel,
         uses_backfill=uses_backfill,
@@ -160,7 +171,12 @@ def resolve_packing(
         max_shape=max_shape,
         tile_voxels=tile_voxels,
         est_seconds=est_seconds,
+        gpus_per_task=gpus_per_task,
+        cpus_per_task=cpus,
+        mem_gb_per_task=mem,
+        node_resources=node_resources,
     )
+    tasks_per_job = resolution.count
 
     n_slurm_jobs = math.ceil(total_tasks / tasks_per_job)
     if parallel:
@@ -179,6 +195,9 @@ def resolve_packing(
         est_seconds_per_job=est_seconds_per_job,
         slurm_time=slurm_time,
         total_gpu_hours=total_gpu_hours,
+        limiting_resource=resolution.limit,
+        slurm_cpus=cpus * tasks_per_job if parallel else cpus,
+        slurm_mem_gb=mem * tasks_per_job if parallel else mem,
     )
 
 
@@ -190,8 +209,6 @@ def stamp_slurm_fields(
     account: Optional[str],
     qos: Optional[str],
     gpus_per_task: int,
-    cpus: int,
-    mem: int,
     parallel: bool,
     max_concurrent: Optional[int],
     preemptible: bool,
@@ -216,8 +233,8 @@ def stamp_slurm_fields(
     manifest.slurm_account = account
     manifest.slurm_qos = qos
     manifest.slurm_gpus = gpus_per_task
-    manifest.slurm_cpus = cpus
-    manifest.slurm_mem_gb = mem
+    manifest.slurm_cpus = packing.slurm_cpus
+    manifest.slurm_mem_gb = packing.slurm_mem_gb
     manifest.tasks_per_job = packing.tasks_per_job
     manifest.parallel_tasks_per_job = parallel
     manifest.max_concurrent = max_concurrent

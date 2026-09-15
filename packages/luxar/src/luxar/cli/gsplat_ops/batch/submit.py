@@ -619,6 +619,10 @@ def run_batch_submit(
             est_seconds=est_seconds,
             total_tasks=total_tasks,
             time_limit=time_limit,
+            partition=partition,
+            gpus_per_task=gpus_per_task,
+            cpus=cpus,
+            mem=mem,
         )
         tasks_per_job = packing.tasks_per_job
         uses_backfill = packing.uses_backfill
@@ -639,8 +643,6 @@ def run_batch_submit(
             account=account,
             qos=qos,
             gpus_per_task=gpus_per_task,
-            cpus=cpus,
-            mem=mem,
             parallel=parallel,
             max_concurrent=max_concurrent,
             preemptible=preemptible,
@@ -674,6 +676,7 @@ def run_batch_submit(
             auto_tile=auto_tile,
             total_tasks=total_tasks,
             tasks_per_job=tasks_per_job,
+            packing_limit=packing.limiting_resource,
             parallel=parallel,
             n_slurm_jobs=n_slurm_jobs,
             mps_available_fn=is_slurm_mps_available,
@@ -687,8 +690,8 @@ def run_batch_submit(
             slurm_time=slurm_time,
             partition=partition,
             gpus_per_task=gpus_per_task,
-            cpus=cpus,
-            mem=mem,
+            cpus=packing.slurm_cpus,
+            mem=packing.slurm_mem_gb,
             output_dir=output_dir,
         )
 

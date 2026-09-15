@@ -3,7 +3,59 @@
 from __future__ import annotations
 
 import math
-from typing import Optional, Sequence
+from dataclasses import dataclass
+from typing import Literal, Optional, Sequence
+
+_CUDA_PROCESS_OVERHEAD_BYTES = 512 * 1024**2
+_FIT_BYTES_PER_VOXEL = 2 * 4
+
+PackingLimit = Literal[
+    "GPU memory",
+    "node CPU count",
+    "node RAM",
+    "packing cap",
+    "requested count",
+    "unknown node capacity",
+]
+
+
+@dataclass(frozen=True)
+class PackingResolution:
+    """Resolved tasks per Slurm job and the binding constraint."""
+
+    count: int
+    limit: PackingLimit
+
+
+def _gpu_parallel_capacity(
+    max_shape: Optional[Sequence[int]], tile_voxels: int, gpus_per_task: int
+) -> int:
+    if not max_shape:
+        return 1
+    profile_budget = (
+        math.prod(max_shape) * _FIT_BYTES_PER_VOXEL + _CUDA_PROCESS_OVERHEAD_BYTES
+    )
+    per_worker = tile_voxels * _FIT_BYTES_PER_VOXEL + _CUDA_PROCESS_OVERHEAD_BYTES
+    per_gpu = max(1, profile_budget // max(per_worker, 1))
+    return max(1, int(per_gpu) * max(1, gpus_per_task))
+
+
+def _node_parallel_limit(
+    node_resources: Optional[Sequence[tuple[int, int]]],
+    cpus_per_task: int,
+    mem_gb_per_task: int,
+) -> PackingResolution:
+    if not node_resources:
+        return PackingResolution(4, "unknown node capacity")
+    candidates: list[PackingResolution] = []
+    for cores, memory_mb in node_resources:
+        cpu_limit = max(1, cores // max(1, cpus_per_task))
+        memory_limit = max(1, memory_mb // max(1, mem_gb_per_task * 1024))
+        if cpu_limit <= memory_limit:
+            candidates.append(PackingResolution(cpu_limit, "node CPU count"))
+        else:
+            candidates.append(PackingResolution(memory_limit, "node RAM"))
+    return max(candidates, key=lambda candidate: candidate.count)
 
 
 def resolve_tasks_per_job(
@@ -15,37 +67,34 @@ def resolve_tasks_per_job(
     max_shape: Optional[Sequence[int]],
     tile_voxels: int,
     est_seconds: float,
-) -> int:
+    gpus_per_task: int,
+    cpus_per_task: int,
+    mem_gb_per_task: int,
+    node_resources: Optional[Sequence[tuple[int, int]]],
+) -> PackingResolution:
     """Resolve effective ``tasks_per_job`` using scheduler-aware heuristics."""
-    if tasks_per_job is None:
-        max_safe = math.prod(max_shape) if max_shape else tile_voxels
+    if tasks_per_job is not None:
+        return PackingResolution(max(1, tasks_per_job), "requested count")
 
-        if parallel:
-            # Local worker sizing uses the shared policy in gsplats/utils/device.py;
-            # Slurm packing needs allocation-aware limits tracked in #2756.
-            # Each concurrent fit holds the volume tensor + model params
-            # + optimizer state. ~2× the raw volume is a safe estimate.
-            packing = max(1, int(max_safe / max(tile_voxels * 2, 1)))
-        else:
-            packing = max(1, int(max_safe / max(tile_voxels, 1)))
+    if parallel:
+        cap = 4 if uses_backfill and no_job_limit else 10
+        candidates = [
+            _node_parallel_limit(node_resources, cpus_per_task, mem_gb_per_task),
+            PackingResolution(
+                _gpu_parallel_capacity(max_shape, tile_voxels, gpus_per_task),
+                "GPU memory",
+            ),
+            PackingResolution(cap, "packing cap"),
+        ]
+        return min(candidates, key=lambda candidate: candidate.count)
 
-        # On backfill clusters with no job limit, prefer shorter jobs
-        # (more jobs = more backfill opportunities = faster throughput).
-        # Cap packing lower so individual jobs stay short.
-        if uses_backfill and no_job_limit:
-            if parallel:
-                # Parallel: already short, keep the memory-based packing.
-                packing = min(packing, 4)
-            else:
-                # Sequential: each extra task adds wall-time.
-                # Keep jobs under ~5 min for best backfill scheduling.
-                if est_seconds > 0:
-                    max_tasks_for_5min = max(1, int(300 / est_seconds))
-                    packing = min(packing, max_tasks_for_5min)
-                packing = min(packing, 3)
-        else:
-            packing = min(packing, 10)
+    max_safe = math.prod(max_shape) if max_shape else tile_voxels
+    packing = max(1, int(max_safe / max(tile_voxels, 1)))
 
-        tasks_per_job = packing
-
-    return max(1, tasks_per_job)
+    if uses_backfill and no_job_limit:
+        if est_seconds > 0:
+            packing = min(packing, max(1, int(300 / est_seconds)))
+        packing = min(packing, 3)
+    else:
+        packing = min(packing, 10)
+    return PackingResolution(max(1, packing), "packing cap")

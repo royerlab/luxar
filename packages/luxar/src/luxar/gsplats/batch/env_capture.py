@@ -277,6 +277,34 @@ def validate_partition_access(partition: str) -> bool:
     return False
 
 
+def get_partition_node_resources(partition: str) -> list[tuple[int, int]]:
+    """Return ``(cores, memory_mb)`` classes advertised by a partition."""
+    try:
+        result = subprocess.run(
+            ["sinfo", "-p", partition, "--format=%c %m", "--noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        resources: list[tuple[int, int]] = []
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if len(fields) < 2:
+                continue
+            try:
+                resources.append((int(fields[0]), int(fields[1])))
+            except ValueError:
+                continue
+        return resources
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    except Exception as exc:
+        _warn_probe_failure_once("get_partition_node_resources", exc)
+        return []
+
+
 def _cuda_build_info_path() -> Optional[Path]:
     """Return the optional CUDA build metadata path."""
     try:

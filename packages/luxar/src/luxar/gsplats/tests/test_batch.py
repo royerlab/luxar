@@ -240,6 +240,21 @@ class TestManifest:
 
 
 class TestEnvCapture:
+    def test_partition_node_resources_parse_scheduler_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="16 128000\n64 512000\n", stderr=""
+        )
+        monkeypatch.setattr(env_capture.subprocess, "run", lambda *_a, **_kw: result)
+
+        assert env_capture.get_partition_node_resources("gpu") == [
+            (16, 128000),
+            (64, 512000),
+        ]
+
     def test_capture_conda(self) -> None:
         from luxar.gsplats.batch.env_capture import capture_environment
 
@@ -267,6 +282,7 @@ class TestEnvCapture:
             ("_partition_has_gpu", ("gpu",), False),
             ("detect_preemptible_gpu_partition", (), None),
             ("validate_partition_access", ("gpu",), False),
+            ("get_partition_node_resources", ("gpu",), []),
         ],
     )
     def test_broken_slurm_probe_warns_once_and_keeps_fallback(
@@ -309,6 +325,7 @@ class TestEnvCapture:
             ("_partition_has_gpu", ("gpu",), False),
             ("detect_preemptible_gpu_partition", (), None),
             ("validate_partition_access", ("gpu",), False),
+            ("get_partition_node_resources", ("gpu",), []),
         ],
     )
     @pytest.mark.parametrize(

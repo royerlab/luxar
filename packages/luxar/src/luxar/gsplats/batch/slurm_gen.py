@@ -376,6 +376,25 @@ def generate_fit_sbatch(
         ]
     )
 
+    if manifest.parallel_tasks_per_job:
+        threads_per_worker = max(1, manifest.slurm_cpus // tpj)
+        workers_per_device = math.ceil(tpj / max(1, manifest.slurm_gpus))
+        lines.extend(
+            [
+                "    local WORKER_OFFSET=$((TASK_ID - BASE_TASK))",
+                f"    export OMP_NUM_THREADS={threads_per_worker}",
+                f"    export MKL_NUM_THREADS={threads_per_worker}",
+                f"    export LUXAR_QUALITY_WORKERS_PER_HOST={tpj}",
+                f"    export LUXAR_QUALITY_WORKERS_PER_DEVICE={workers_per_device}",
+            ]
+        )
+        if manifest.slurm_gpus > 1:
+            lines.append(
+                "    export CUDA_VISIBLE_DEVICES="
+                f"$((WORKER_OFFSET % {manifest.slurm_gpus}))"
+            )
+        lines.append("")
+
     lines.extend(_runtime_denoise_floor_lines(manifest, output_dir))
 
     lines.extend(

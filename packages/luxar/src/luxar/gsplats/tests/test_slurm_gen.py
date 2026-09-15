@@ -31,6 +31,24 @@ def _packed_manifest(total_tasks: int) -> BatchManifest:
     )
 
 
+def test_parallel_fit_scales_allocation_and_isolates_workers() -> None:
+    manifest = _packed_manifest(3)
+    manifest.parallel_tasks_per_job = True
+    manifest.slurm_gpus = 2
+    manifest.slurm_cpus = 12
+    manifest.slurm_mem_gb = 96
+
+    script = generate_fit_sbatch(manifest, "")
+
+    assert "#SBATCH --cpus-per-task=12" in script
+    assert "#SBATCH --mem=96G" in script
+    assert "export OMP_NUM_THREADS=4" in script
+    assert "export MKL_NUM_THREADS=4" in script
+    assert "export LUXAR_QUALITY_WORKERS_PER_HOST=3" in script
+    assert "export LUXAR_QUALITY_WORKERS_PER_DEVICE=2" in script
+    assert "export CUDA_VISIBLE_DEVICES=$((WORKER_OFFSET % 2))" in script
+
+
 def _directive_value(script: str, option: str) -> str:
     """Parse one generated ``#SBATCH --option=value`` directive."""
     prefix = f"#SBATCH --{option}="

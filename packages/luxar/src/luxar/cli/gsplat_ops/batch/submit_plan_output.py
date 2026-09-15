@@ -25,6 +25,7 @@ def print_batch_submit_plan(
     auto_tile: bool,
     total_tasks: int,
     tasks_per_job: int,
+    packing_limit: str,
     parallel: bool,
     n_slurm_jobs: int,
     mps_available_fn: Callable[[], bool],
@@ -69,7 +70,7 @@ def print_batch_submit_plan(
     slot = "boxes" if mode == "content" else "tiles"
     aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks ({slot})")
 
-    if tasks_per_job > 1:
+    if parallel or tasks_per_job > 1:
         run_mode = "parallel" if parallel else "sequential"
         mps_note = ""
         if parallel:
@@ -81,7 +82,8 @@ def print_batch_submit_plan(
                 mps_note = " [bash background processes]"
         aprint(
             f"  Packing: {tasks_per_job} tasks/job ({run_mode}) "
-            f"→ {n_slurm_jobs} Slurm jobs{mps_note}"
+            f"→ {n_slurm_jobs} Slurm jobs{mps_note}; limited by {packing_limit}; "
+            f"allocation: {cpus} CPUs, {mem}G RAM"
         )
     else:
         aprint(f"  Slurm array: {total_tasks} jobs (1 task each)")
