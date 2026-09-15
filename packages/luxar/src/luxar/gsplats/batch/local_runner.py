@@ -142,6 +142,13 @@ def _report_gpu_mappings(
         )
 
 
+def _worker_argv(argv: list[str], gpu: int) -> list[str]:
+    """Force the CPU sentinel while leaving GPU workers env-pinned."""
+    if gpu < 0:
+        return [*argv, "--device", "cpu"]
+    return argv
+
+
 def _active_worker_counts(
     task_ids: list[int],
     assignment: dict[int, int],
@@ -361,12 +368,12 @@ def run_batch_local(
         # its replacement exists, and a failed refit would then leave nothing.
         shutil.rmtree(staging, ignore_errors=True)
         Path(str(staging) + ".empty").unlink(missing_ok=True)
-        argv = build_task_fit_argv(
-            manifest, job, staging, denoise_h=_denoise_h_for_job(manifest, job)
+        return _worker_argv(
+            build_task_fit_argv(
+                manifest, job, staging, denoise_h=_denoise_h_for_job(manifest, job)
+            ),
+            assignment.get(task_id, -1),
         )
-        if assignment.get(task_id, -1) < 0:
-            argv += ["--device", "cpu"]
-        return argv
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)
