@@ -188,6 +188,12 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
     ),
 }
 
+LEAF_EXEMPT: dict[str, str] = {
+    "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
+        "control: the flat leaf of the six-recipe LOD comparison, unladdered by design"
+    ),
+}
+
 #: Which order statistic of the per-coordinate histogram decides starvation.
 #: A ladder starves at its SPARSEST slice, not its densest, so this reduction
 #: must be a low percentile. It replaced ``max()``, which asked whether the
@@ -371,7 +377,12 @@ def _first_rung_histogram(
         rung = leaf["additive_0"]
     except KeyError:
         return Counter()
-    dims = [int(dim) for dim in rung.attrs.get("slice_dims", [])]
+    ordering = (
+        rung.attrs.get("vertex_ordering", {})
+        if attrs["type"] == "lines"
+        else rung.attrs
+    )
+    dims = [int(dim) for dim in ordering.get("slice_dims", [])]
     if not dims:
         return None
     coordinate_array = {
@@ -515,6 +526,7 @@ def _record_sliced_verdicts(
     results: list[tuple[str, str, str]],
     counts: dict[str, int],
     failures: list[str],
+    matched_exemptions: set[str],
     min_rung_share: float = DEFAULT_MIN_SLICE_RUNG_SHARE,
 ) -> None:
     """Append scene-level sliced-rung failures without inflating ``run_gate``.
@@ -540,6 +552,10 @@ def _record_sliced_verdicts(
         partitioned,
         worst_part,
     ) in sliced_rung_measurements(root):
+        exemption_key = f"{scene_name}{path}"
+        if exemption_key in LEAF_EXEMPT:
+            matched_exemptions.add(exemption_key)
+            continue
         count = sparsest_slice_elements(histogram)
         coverage = len(histogram)
         where = (
@@ -800,11 +816,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _record_stale_leaf_exemptions(
+    inspected_scenes: set[str],
+    matched_exemptions: set[str],
+) -> list[str]:
+    """Fail exact exemptions whose scene exists but whose leaf no longer does."""
+    stale_exemptions = sorted(
+        key
+        for key in LEAF_EXEMPT
+        if key.split("/", 1)[0] in inspected_scenes and key not in matched_exemptions
+    )
+    for key in stale_exemptions:
+        aprint(f"❌ stale leaf exemption matched no leaf: {key}")
+    return stale_exemptions
+
+
 def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
     """Run the streaming-ladder and sliced-first-rung audits."""
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
     icons = {"ok": "✅", "warn": "⚠️ ", "fail": "❌", "skip": "· "}
     failures: list[str] = []
+    matched_exemptions: set[str] = set()
+    inspected_scenes: set[str] = set()
 
     for scene in paths:
         try:
@@ -814,9 +847,16 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             counts["fail"] += 1
             failures.append(scene.name)
             continue
+        inspected_scenes.add(scene.name)
 
         results: list[tuple[str, str, str]] = []
         for leaf_path, leaf in walk_leaves(root):
+            exemption = LEAF_EXEMPT.get(f"{scene.name}{leaf_path}")
+            if exemption is not None:
+                matched_exemptions.add(f"{scene.name}{leaf_path}")
+                results.append((leaf_path, "warn", f"exempt: {exemption}"))
+                counts["warn"] += 1
+                continue
             status, message = check_leaf(
                 leaf,
                 min_elements=args.min_elements,
@@ -836,6 +876,7 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             results,
             counts,
             failures,
+            matched_exemptions,
             args.min_slice_rung_share,
         )
 
@@ -849,16 +890,21 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
                 for leaf_path, status, message in visible_results:
                     aprint(f"{icons[status]} {leaf_path}: {message}")
 
+    stale_exemptions = _record_stale_leaf_exemptions(
+        inspected_scenes, matched_exemptions
+    )
+
     aprint(
         f"{counts['ok']} ok, {counts['warn']} warned, {counts['fail']} failed, "
-        f"{counts['skip']} below threshold"
+        f"{counts['skip']} below threshold, "
+        f"{len(stale_exemptions)} stale exemption"
+        f"{'s' if len(stale_exemptions) != 1 else ''}"
     )
     if failures:
         with asection("Failed leaves"):
             for name in failures:
                 aprint(name)
-        return 1
-    return 0
+    return int(bool(failures or stale_exemptions))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

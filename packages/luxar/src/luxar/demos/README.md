@@ -434,11 +434,11 @@ The flagship synthetic scene: a terrain-planted procedural forest scrubbable thr
 ---
 
 #### demo_hilbert_curve_3d.py - 3D Hilbert Space-Filling Curve (Lines Demo)
-The 3D Hilbert curve — a continuous, self-similar polyline that visits every cell of a 2^n × 2^n × 2^n grid exactly once with consecutive cells always sharing a face. Vectorized Skilling algorithm produces orders 1 through max_order (default 6 = 262k vertices), each rendered as a single thin polyline with HSV hue swept along the traversal index. A slider on the `order` dim steps through the recursion so you can watch each level subdivide and rotate.
+The 3D Hilbert curve — a continuous, self-similar polyline that visits every cell of a 2^n × 2^n × 2^n grid exactly once with consecutive cells always sharing a face. Vectorized Skilling algorithm produces orders 1 through max_order (default 6 = 262k curve vertices), each rendered as one continuous thin strand with HSV hue swept along the traversal index. The strand is stored as explicit segments so its additive ladder can cut on segment boundaries. A slider on the `order` dim steps through the recursion so you can watch each level subdivide and rotate.
 
 **Run**: `luxar demo run hilbert_curve_3d [-- --max-order=6]`
 
-**Demonstrates**: Single ultra-long `polyline` Lines node (262k+ vertices, 262k segments), thin constant width with color gradient along traversal, runtime-verified Hamiltonian path on the integer lattice, slider-driven recursion exploration (each order on its own slot of a non-displayed `order` dim), Skilling's vectorized 3D Hilbert algorithm.
+**Demonstrates**: Single ultra-long `segments` Lines node (524,286 stored vertices / 262,143 segments at order 6), thin constant width with color gradient along traversal, runtime-verified Hamiltonian path on the integer lattice, slider-driven recursion exploration (each order on its own slot of a non-displayed `order` dim), Skilling's vectorized 3D Hilbert algorithm.
 
 ---
 

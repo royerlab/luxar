@@ -36,9 +36,10 @@ properties at runtime as a sanity check.
 
 VISUAL ENCODING
 ---------------
-- Each order is a single ``polyline`` Lines node — one continuous strand,
-  no breaks. Vertex positions are scaled to the unit cube and centered at
-  the origin so all orders share a common viewing volume.
+- Each order is stored as explicit ``segments`` in one Lines node. The segments
+  preserve one continuous strand while giving the additive ladder legal cut
+  points; vertex positions are scaled to the unit cube and centered at the
+  origin so all orders share a common viewing volume.
 - Color: HSV hue swept from 0° to 360° along the traversal index, so the
   curve fades smoothly through red → yellow → green → cyan → blue →
   magenta → red as it fills space.
@@ -83,13 +84,25 @@ DEMO_META = {
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.lod.group import (
+    DEFAULT_LADDER_BYTES_PER_ELEMENT,
+    DEFAULT_LADDER_TARGET_MS,
+)
 from luxar.core.viewer_config import DimensionsConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_int_arg
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_MAX_ADDITIVE_COMMIT,
+    capped_stream_cuts,
+    sliced_ladder_first_chunk,
+    streaming_chunk_splats,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -98,6 +111,40 @@ from luxar.utils.paths import get_demos_output_dir
 
 DEFAULT_MAX_ORDER = 6  # Order 6 = 262,144 vertices (largest comfortable size)
 LINE_WIDTH = 0.0015  # In normalized cube units; thin enough not to drown the curve
+FIRST_RUNG_LINE_VERTICES = streaming_chunk_splats(
+    DEFAULT_LADDER_TARGET_MS,
+    DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_LADDER_BYTES_PER_ELEMENT,
+)
+
+
+def hilbert_ladder(n_vertices: int) -> dict[str, Any]:
+    """Give each hidden-order curve a useful first frame.
+
+    ``n_vertices`` is the explicit-segment vertex-row count. The returned
+    ``counts`` are in polyline units, one per two-row segment, so the first-rung
+    and commit budgets are halved before calling :func:`capped_stream_cuts`.
+
+    Each leaf occupies one ``order`` coordinate, so a measured stop count is 1,
+    but stepping the hidden dimension still replaces the whole curve and resets
+    it to rung 0. Arm the sliced policy's 1/8 share explicitly: order 6 opens at
+    32,768 of 262,143 segments (65,536 of 524,286 vertex rows, 12.5%), and its
+    largest increment stays at or below the 900,000-vertex whole-node cap.
+    """
+    first_chunk = sliced_ladder_first_chunk(
+        FIRST_RUNG_LINE_VERTICES,
+        elements=n_vertices,
+        slices=2,
+    )
+    return {
+        "counts": capped_stream_cuts(
+            n_vertices // 2,
+            max(1, first_chunk // 2),
+            DEFAULT_MAX_ADDITIVE_COMMIT // 2,
+        ),
+        "method": "random",
+        "seed": 0,
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -266,6 +313,14 @@ def build_scene(output_path: Path, max_order: int) -> int:
                 vertices_4d = np.empty((len(xyz), 4), dtype=np.float32)
                 vertices_4d[:, 0] = float(slot)
                 vertices_4d[:, 1:] = xyz
+                segment_vertices = np.empty(
+                    (2 * (len(vertices_4d) - 1), 4), dtype=np.float32
+                )
+                segment_vertices[0::2] = vertices_4d[:-1]
+                segment_vertices[1::2] = vertices_4d[1:]
+                segment_colors = np.empty((len(segment_vertices), 3), dtype=np.float32)
+                segment_colors[0::2] = colors[:-1]
+                segment_colors[1::2] = colors[1:]
 
                 aprint(
                     f"  order {order}: {len(xyz):,} vertices "
@@ -274,15 +329,16 @@ def build_scene(output_path: Path, max_order: int) -> int:
 
                 scene.add_lines(
                     f"Hilbert order {order}",
-                    vertices=vertices_4d,
+                    vertices=segment_vertices,
                     widths=LINE_WIDTH,
-                    colors=colors,
-                    line_type="polyline",
+                    colors=segment_colors,
+                    line_type="segments",
                     sharpness=0.5,
                     opacity=0.95,
                     intensity=0.55,
                     blending_mode="luminous",
                     layer=True,
+                    additive_lod=hilbert_ladder(len(segment_vertices)),
                 )
                 total_pts += len(xyz)
 

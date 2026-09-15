@@ -43,6 +43,7 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     _dataset_ids,
     _dictionary_codes,
     _read_part,
+    biodiversity_ladder,
     chain_segment_indices,
     globe_camera,
     great_circle_resample,
@@ -55,6 +56,23 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     taxon_slot,
     tile_count_for,
 )
+from luxar.utils.lod_breakpoints import DEFAULT_MAX_ADDITIVE_COMMIT
+
+
+def test_biodiversity_ladder_opens_at_one_quarter_and_conserves_rows() -> None:
+    n_rows = 2_111_885
+    stops = 139
+    counts = biodiversity_ladder(n_rows, stops)["counts"]
+    increments = [
+        count - previous
+        for previous, count in zip([0, *counts[:-1]], counts, strict=True)
+    ]
+
+    assert counts[0] == math.ceil(n_rows / 4)
+    assert all(left < right for left, right in zip(counts, counts[1:], strict=False))
+    assert counts[-1] == n_rows
+    assert max(increments) <= DEFAULT_MAX_ADDITIVE_COMMIT * stops
+    assert biodiversity_ladder(1, stops)["counts"] == [1]
 
 
 def test_keep_stale_reuses_an_existing_scene_with_a_mismatched_marker(

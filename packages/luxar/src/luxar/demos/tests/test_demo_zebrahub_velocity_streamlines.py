@@ -132,6 +132,20 @@ def test_streamline_gain_matches_the_reviewed_colour_range() -> None:
     assert demo.STREAMLINE_INTENSITY > demo.LINE_INTENSITY * 2.5
 
 
+@pytest.mark.parametrize("max_vertices", [31, 61])
+def test_streamline_ladder_caps_each_polyline_commit(max_vertices: int) -> None:
+    from luxar.demos import demo_zebrahub_velocity_streamlines as demo
+
+    counts = demo.streamline_ladder(120_800, max_vertices)["counts"]
+    increments = [
+        count - previous
+        for previous, count in zip([0, *counts[:-1]], counts, strict=True)
+    ]
+
+    assert counts[-1] == 120_800
+    assert max(increments) * max_vertices <= 900_000
+
+
 def test_bloom_is_faint_and_wide() -> None:
     from luxar.demos import demo_zebrahub_velocity_streamlines as demo
 

@@ -376,6 +376,10 @@ from luxar.demos._globe_common import (
 )
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.encoding import EncodingMode
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_MAX_ADDITIVE_COMMIT,
+    capped_stream_cuts,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -384,7 +388,6 @@ from luxar.utils.paths import get_demos_output_dir
 
 DEMO_NAME: Final = "biodiversity_planetary_scale"
 CACHE_DIR: Final = Path.home() / ".cache" / "luxar" / DEMO_NAME
-
 R_EARTH_KM: Final = 6371.0
 RADIUS: Final = 100.0  # globe radius in scene units
 
@@ -717,6 +720,25 @@ N_POINTS = parse_int_arg("n-points", DEFAULT_N_POINTS)
 N_PARTS = parse_int_arg("n-parts", 0)  # 0 -> derived from N_POINTS
 
 Arbol.max_depth = 5
+
+
+def biodiversity_ladder(n_rows: int, stops: int) -> dict[str, Any]:
+    """Open the sparse taxon/period cube at one quarter of its rows.
+
+    ``stream_ladder``'s 1/8 share leaves the sparsest rung-0 slices at 152
+    records across the 139 populated taxon/period coordinates, below the
+    auditor's 250-record floor. A quarter projects p05 to about 325 records,
+    with two coordinates of headroom, while the 1,055,941-row largest increment
+    remains far below the slice-scaled commit ceiling (27,300 rows in the
+    largest measured coordinate fetch).
+    """
+    ladder = stream_ladder(n_rows, slices=stops)
+    ladder["counts"] = capped_stream_cuts(
+        n_rows,
+        max(ladder["counts"][0], math.ceil(n_rows / 4)),
+        DEFAULT_MAX_ADDITIVE_COMMIT * stops,
+    )
+    return ladder
 
 
 # =============================================================================
@@ -2918,11 +2940,11 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # Points cap, 124x under it. A partition exists so the viewer can
                 # skip off-screen geometry; a 45,000-point marginal spread over a
                 # globe has nothing worth skipping, and each part costs a request
-                # to bootstrap. The additive ladder gives first paint 1/8 of
+                # to bootstrap. The additive ladder gives first paint 1/4 of
                 # the stored frame here, rather than a whole-node byte budget.
-                additive_lod=stream_ladder(
+                additive_lod=biodiversity_ladder(
                     len(taxon_pos),
-                    slices=hidden_axis_stops(taxon_pos, dims.non_displayed),
+                    hidden_axis_stops(taxon_pos, dims.non_displayed),
                 ),
             )
 

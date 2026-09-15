@@ -79,7 +79,7 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
 
 #: Sliced Points/Lines calls whose additive ladder does not paint first, and why.
 _SLICED_ADDITIVE_LOD_EXEMPTIONS = {
-    ("demo_biodiversity_planetary_scale.py", 2657): (
+    ("demo_biodiversity_planetary_scale.py", 2679): (
         "the eager coarsest substitutive level paints first; the additive ladder "
         "only refines that already-visible partition in the background"
     ),
@@ -1670,13 +1670,38 @@ scene.add_gsplats_from_data(
         ("demo_lorenz.py", "'LorenzAttractor'", "additive_lod", "stream_ladder"),
         ("demo_mandelbulb.py", "'Mandelbulb'", "additive_lod", "stream_ladder"),
         ("demo_rainbow_sphere.py", "'RainbowSphere'", "additive_lod", "stream_ladder"),
-        # These four wrap `stream_ladder` in a named module helper, because the
-        # ladder they need is not the one the policy returns unmodified: the
-        # helper's docstring carries the measured reason and its arithmetic is
-        # covered behaviourally (`family_ladder` in
-        # `tests/test_demo_exotic_surfaces.py`, `played_layer_ladder` in
-        # `tests/test_demo_galaxy_simulation.py`). Naming the helper is what this
-        # arm can check; that the helper is right is what those tests check.
+        ("demo_spiral_galaxy.py", "'SpiralGalaxy'", "additive_lod", "stream_ladder"),
+        ("demo_tabula_sapiens.py", "'cells'", "additive_lod", "stream_ladder"),
+        (
+            "demo_zebrahub_velocity_streamlines.py",
+            "'Velocity comets (tail → head = velocity direction)'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        (
+            "demo_zebrahub_velocity_streamlines.py",
+            "'RNA-velocity streamlines'",
+            "additive_lod",
+            "streamline_ladder",
+        ),
+        # These six use a named module helper because the ladder they need is
+        # not the one `stream_ladder` returns unmodified. The helper's docstring
+        # carries the measured reason and its arithmetic is covered
+        # behaviourally in the corresponding demo test. Naming the helper is
+        # what this arm can check; that the helper is right is what those tests
+        # check.
+        (
+            "demo_hilbert_curve_3d.py",
+            "f'Hilbert order {order}'",
+            "additive_lod",
+            "hilbert_ladder",
+        ),
+        (
+            "demo_biodiversity_planetary_scale.py",
+            "'By taxon & period'",
+            "additive_lod",
+            "biodiversity_ladder",
+        ),
         (
             "demo_exotic_surfaces.py",
             "FAMILY_NAMES[family]",
