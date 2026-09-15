@@ -1721,6 +1721,12 @@ scene.add_gsplats_from_data(
             "biodiversity_ladder",
         ),
         (
+            "demo_biodiversity_planetary_scale.py",
+            "'Migrations by slice'",
+            "additive_lod",
+            "geometry='lines'",
+        ),
+        (
             "demo_exotic_surfaces.py",
             "FAMILY_NAMES[family]",
             "additive_lod",
