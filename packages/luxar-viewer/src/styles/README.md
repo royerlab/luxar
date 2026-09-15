@@ -7,9 +7,10 @@ CSS architecture for the Luxar viewer, split between an **embed-safe library ent
 Two entry stylesheets:
 
 - `index.css` — embed-safe. Every rule is scoped to a `.luxar-*` class, a
-  `[data-theme=...]` attribute, or a component-local selector. Imports
-  `base/utilities.css`, every `components/*.css`, the custom GUI library
-  styles from `../ui/gui/styles/`, and the `themes/*.css` overrides.
+  `[data-theme=...]` attribute, or a component-local selector, except `:root`
+  blocks that declare only `--luxar-*` custom properties. Imports
+  `base/utilities.css`, every `components/*.css`, the custom GUI library styles
+  from `../ui/gui/styles/`, and the `themes/*.css` overrides.
 - `standalone.css` — global host-page chrome. Imports `reset.css`,
   `base/typography.css`, and `base/layout.css`. The standalone app's
   `main.ts` imports **both** files; embedders import only `index.css`.
