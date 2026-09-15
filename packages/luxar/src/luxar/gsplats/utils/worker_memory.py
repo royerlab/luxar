@@ -7,8 +7,6 @@ its CUDA context and library handles even when its task is tiny.
 
 from __future__ import annotations
 
-from typing import Optional
-
 _CUDA_PROCESS_OVERHEAD_BYTES = 512 * 1024**2
 
 
@@ -33,9 +31,7 @@ def cuda_worker_memory_bytes(
     )
 
 
-def cuda_worker_count(memory_budget: Optional[int], task_bytes: int) -> int:
+def cuda_worker_count(memory_budget: int, task_bytes: int) -> int:
     """Return the number of CUDA workers that fit a memory budget."""
-    if memory_budget is None:
-        return 1
     per_worker = task_bytes + _CUDA_PROCESS_OVERHEAD_BYTES
     return max(1, int(memory_budget // per_worker))
