@@ -281,7 +281,14 @@ def get_partition_node_resources(partition: str) -> list[tuple[int, int]]:
     """Return ``(cores, memory_mb)`` classes advertised by a partition."""
     try:
         result = subprocess.run(
-            ["sinfo", "-p", partition, "--format=%c %m", "--noheader"],
+            [
+                "sinfo",
+                "-p",
+                partition,
+                "--states=idle,alloc,mix",
+                "--format=%c %m",
+                "--noheader",
+            ],
             capture_output=True,
             text=True,
             timeout=5,
@@ -294,13 +301,15 @@ def get_partition_node_resources(partition: str) -> list[tuple[int, int]]:
             if len(fields) < 2:
                 continue
             try:
-                resources.append((int(fields[0]), int(fields[1])))
+                cores, memory_mb = int(fields[0]), int(fields[1])
             except ValueError:
                 continue
+            if cores > 0 and memory_mb > 0:
+                resources.append((cores, memory_mb))
         return resources
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         _warn_probe_failure_once("get_partition_node_resources", exc)
         return []
 

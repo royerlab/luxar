@@ -124,6 +124,37 @@ def _runtime_denoise_floor_lines(manifest: BatchManifest, output_dir: str) -> li
     return lines
 
 
+def _parallel_worker_env_lines(
+    manifest: BatchManifest, tasks_per_job: int
+) -> list[str]:
+    """Render per-worker resource isolation for packed parallel fits."""
+    if not manifest.parallel_tasks_per_job:
+        return []
+    threads = max(1, manifest.slurm_cpus // tasks_per_job)
+    workers_per_device = math.ceil(tasks_per_job / max(1, manifest.slurm_gpus))
+    lines = [
+        "    local WORKER_OFFSET=$((TASK_ID - BASE_TASK))",
+        f"    export OMP_NUM_THREADS={threads}",
+        f"    export MKL_NUM_THREADS={threads}",
+        f"    export LUXAR_QUALITY_WORKERS_PER_HOST={tasks_per_job}",
+        f"    export LUXAR_QUALITY_WORKERS_PER_DEVICE={workers_per_device}",
+    ]
+    if manifest.slurm_gpus > 1:
+        lines.extend(
+            [
+                f"    local WORKER_GPU_INDEX=$((WORKER_OFFSET % {manifest.slurm_gpus}))",
+                '    if [ "${#ALLOCATED_GPUS[@]}" -gt "$WORKER_GPU_INDEX" ] '
+                '&& [ -n "${ALLOCATED_GPUS[$WORKER_GPU_INDEX]}" ]; then',
+                '        export CUDA_VISIBLE_DEVICES="${ALLOCATED_GPUS[$WORKER_GPU_INDEX]}"',
+                "    else",
+                '        export CUDA_VISIBLE_DEVICES="$WORKER_GPU_INDEX"',
+                "    fi",
+            ]
+        )
+    lines.append("")
+    return lines
+
+
 def generate_fit_sbatch(
     manifest: BatchManifest,
     env_preamble: str,
@@ -312,6 +343,7 @@ def generate_fit_sbatch(
             f"N_CHANNELS={manifest.n_channels}",
             f"N_TILES={manifest.n_tiles}",
             "BASE_TASK=$((SLURM_ARRAY_TASK_ID * TASKS_PER_JOB))",
+            "IFS=',' read -r -a ALLOCATED_GPUS <<< \"${CUDA_VISIBLE_DEVICES:-}\"",
             "",
         ]
     )
@@ -376,24 +408,7 @@ def generate_fit_sbatch(
         ]
     )
 
-    if manifest.parallel_tasks_per_job:
-        threads_per_worker = max(1, manifest.slurm_cpus // tpj)
-        workers_per_device = math.ceil(tpj / max(1, manifest.slurm_gpus))
-        lines.extend(
-            [
-                "    local WORKER_OFFSET=$((TASK_ID - BASE_TASK))",
-                f"    export OMP_NUM_THREADS={threads_per_worker}",
-                f"    export MKL_NUM_THREADS={threads_per_worker}",
-                f"    export LUXAR_QUALITY_WORKERS_PER_HOST={tpj}",
-                f"    export LUXAR_QUALITY_WORKERS_PER_DEVICE={workers_per_device}",
-            ]
-        )
-        if manifest.slurm_gpus > 1:
-            lines.append(
-                "    export CUDA_VISIBLE_DEVICES="
-                f"$((WORKER_OFFSET % {manifest.slurm_gpus}))"
-            )
-        lines.append("")
+    lines.extend(_parallel_worker_env_lines(manifest, tpj))
 
     lines.extend(_runtime_denoise_floor_lines(manifest, output_dir))
 
