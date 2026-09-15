@@ -722,18 +722,27 @@ N_PARTS = parse_int_arg("n-parts", 0)  # 0 -> derived from N_POINTS
 Arbol.max_depth = 5
 
 
-def biodiversity_ladder(n_rows: int, stops: int) -> dict[str, Any]:
-    """Open the sparse sliced line layers at two fifths of their rows.
+def biodiversity_ladder(
+    n_rows: int, stops: int, *, geometry: str = "points"
+) -> dict[str, Any]:
+    """Open each sparse sliced layer at its measured safe share.
 
-    ``stream_ladder``'s 1/8 share leaves the sparsest rung-0 slices below the
-    auditor's 250-record floor: 152 records across the 139 taxon/period
-    coordinates and 164 across the 11 migration slices. Two fifths clears both
-    measured floors while keeping every increment below the commit ceiling.
+    The points cube needs one quarter: its 1/8 rung measured p05=152 across
+    139 taxon/period coordinates, while the rebuilt 1/4 rung measured p05=291.
+    The indexed migrations need three eighths: their 1/8 rung measured p05=164
+    across 11 slices, while the rebuilt 3/8 rung measured p05=333. Lines must
+    keep the ``stream:<vertices>`` spelling because an explicit list is counted
+    in polylines and silently collapses this node to one flat level.
     """
-    ladder = stream_ladder(n_rows, slices=stops)
+    ladder = stream_ladder(n_rows, geometry=geometry, slices=stops)
+    first_chunk = math.ceil(n_rows / 4)
+    if geometry == "lines":
+        first_chunk = math.ceil(3 * n_rows / 8)
+        ladder["counts"] = f"stream:{first_chunk}"
+        return ladder
     ladder["counts"] = capped_stream_cuts(
         n_rows,
-        max(ladder["counts"][0], math.ceil(2 * n_rows / 5)),
+        max(ladder["counts"][0], first_chunk),
         DEFAULT_MAX_ADDITIVE_COMMIT * stops,
     )
     return ladder
@@ -3012,6 +3021,7 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 additive_lod=biodiversity_ladder(
                     int(track_pos.shape[0]),
                     hidden_axis_stops(track_pos, dims.non_displayed),
+                    geometry="lines",
                 ),
             )
 
