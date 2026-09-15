@@ -691,6 +691,27 @@ def check_leaf(
     return ("ok", detail)
 
 
+def _leaf_verdict_with_exemption(
+    leaf: Any,
+    exemption_key: str,
+    args: argparse.Namespace,
+) -> tuple[str, str]:
+    """Return one leaf verdict, applying only a bounded matching exemption."""
+    status, message = check_leaf(
+        leaf,
+        min_elements=args.min_elements,
+        max_share=args.max_share,
+        max_level_elements=args.max_level_elements,
+        min_sublods=args.min_sublods,
+    )
+    if status != "fail":
+        return status, message
+    exemption_reason = _leaf_exemption_reason(leaf, exemption_key)
+    if exemption_reason is None:
+        return status, message
+    return "warn", f"{message} [exempt: {exemption_reason}]"
+
+
 def scene_paths(args_paths: Sequence[str]) -> list[Path]:
     """Resolve explicit scenes or inventory the existing demo output directory."""
     if args_paths:
@@ -901,18 +922,7 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             exemption_key = f"{scene.name}{leaf_path}"
             if exemption_key in LEAF_EXEMPT:
                 matched_exemptions.add(exemption_key)
-            status, message = check_leaf(
-                leaf,
-                min_elements=args.min_elements,
-                max_share=args.max_share,
-                max_level_elements=args.max_level_elements,
-                min_sublods=args.min_sublods,
-            )
-            if status == "fail":
-                exemption_reason = _leaf_exemption_reason(leaf, exemption_key)
-                if exemption_reason is not None:
-                    status = "warn"
-                    message = f"{message} [exempt: {exemption_reason}]"
+            status, message = _leaf_verdict_with_exemption(leaf, exemption_key, args)
             results.append((leaf_path, status, message))
             counts[status] += 1
             if status == "fail":
