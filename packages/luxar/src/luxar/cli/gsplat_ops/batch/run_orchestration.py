@@ -24,7 +24,14 @@ def _resolve_local_gpu_profile(
 
     selected = resolve_gpu_selection(gpus)
     if not selected:
-        return selected, "CPU", None, None
+        summary = get_gpu_summary()
+        if summary is None:
+            return selected, "CPU", None, None
+        recommendations = summary.get("recommendations", {})
+        peak = recommendations.get("peak_throughput_3d", {})
+        oom = summary.get("oom_boundaries", {}).get("3d", {})
+        max_shape = oom.get("max_successful_shape", peak.get("shape", []))
+        return selected, "CPU", max_shape, get_gpu_throughput_table()
 
     device_memory_by_name: dict[str, int] = {}
     for index in selected:

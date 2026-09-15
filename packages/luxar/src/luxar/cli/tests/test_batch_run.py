@@ -16,6 +16,32 @@ from luxar.cli.tests._testing import normalized_cli_output
 runner = CliRunner()
 
 
+def test_local_cpu_profile_preserves_auto_sizing(monkeypatch) -> None:
+    """CPU execution still uses the legacy default profile for tile sizing."""
+    import luxar.gsplats.gpu_profile as gpu_profile
+    import luxar.gsplats.utils.device as device
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _resolve_local_gpu_profile,
+    )
+
+    summary = {
+        "oom_boundaries": {"3d": {"max_successful_shape": [192, 192, 192]}}
+    }
+    throughput = [{"voxels": 192**3, "throughput": 1.0}]
+    monkeypatch.setattr(device, "resolve_gpu_selection", lambda spec: [])
+    monkeypatch.setattr(gpu_profile, "get_gpu_summary", lambda: summary)
+    monkeypatch.setattr(
+        gpu_profile, "get_gpu_throughput_table", lambda: throughput
+    )
+
+    selected, manifest_name, max_shape, table = _resolve_local_gpu_profile("cpu")
+
+    assert selected == []
+    assert manifest_name == "CPU"
+    assert max_shape == [192, 192, 192]
+    assert table == throughput
+
+
 def test_local_profile_uses_selected_devices(monkeypatch) -> None:
     """Local planning records and profiles the GPUs that will run the tasks."""
     import torch
