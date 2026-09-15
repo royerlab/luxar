@@ -8,6 +8,7 @@ from luxar.cli.gsplat_ops.batch.submit_packing import (
     resolve_tasks_per_job,
 )
 from luxar.cli.gsplat_ops.batch.submit_pipeline import resolve_packing
+from luxar.cli.gsplat_ops.batch.submit_plan_output import print_batch_submit_plan
 
 
 def test_parallel_packing_is_bounded_by_node_cpus() -> None:
@@ -317,3 +318,95 @@ def test_explicit_unschedulable_parallel_packing_warns(monkeypatch) -> None:
         "but the largest gpu node class has 64 CPUs and 512G RAM; "
         "the job may remain pending."
     ]
+
+
+def test_batch_submit_plan_prints_parallel_allocation_only(
+    monkeypatch, tmp_path
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(
+        "luxar.cli.gsplat_ops.batch.submit_plan_output.aprint", messages.append
+    )
+
+    def render(
+        *,
+        tasks_per_job: int,
+        packing_limit: str,
+        parallel: bool,
+        n_slurm_jobs: int,
+        cpus_total: int,
+        mem_gb_total: int,
+    ) -> None:
+        print_batch_submit_plan(
+            input_name="volume.zarr",
+            n_t=1,
+            n_c=1,
+            spatial=(64, 64, 64),
+            resolved_gpu="A100",
+            peak_gvs=1.5,
+            peak_shape=(64, 64, 64),
+            mode="uniform",
+            n_tiles=4,
+            tile_overlap=16,
+            needs_tiling=True,
+            tile_size=64,
+            auto_tile=True,
+            total_tasks=4,
+            tasks_per_job=tasks_per_job,
+            packing_limit=packing_limit,
+            parallel=parallel,
+            n_slurm_jobs=n_slurm_jobs,
+            mps_available_fn=lambda: False,
+            uses_backfill=False,
+            no_job_limit=False,
+            est_seconds=60.0,
+            preset="standard",
+            n_iters=1000,
+            est_seconds_per_job=72.0,
+            total_gpu_hours=1.0,
+            slurm_time="01:00:00",
+            partition="gpu",
+            gpus_per_task=1,
+            cpus_per_task=4,
+            mem_gb_per_task=32,
+            cpus_total=cpus_total,
+            mem_gb_total=mem_gb_total,
+            output_dir=tmp_path,
+        )
+
+    render(
+        tasks_per_job=2,
+        packing_limit="node CPU count on 8-CPU/128G node class",
+        parallel=True,
+        n_slurm_jobs=2,
+        cpus_total=8,
+        mem_gb_total=64,
+    )
+
+    assert (
+        messages.count(
+            "  Packing: 2 tasks/job (parallel) → 2 Slurm jobs "
+            "[bash background processes]; limited by "
+            "node CPU count on 8-CPU/128G node class"
+        )
+        == 1
+    )
+    assert (
+        messages.count(
+            "  Fit allocation: 4 CPUs/task × 2 = 8 CPUs, 32G RAM/task × 2 = 64G RAM"
+        )
+        == 1
+    )
+
+    messages.clear()
+    render(
+        tasks_per_job=1,
+        packing_limit="requested count",
+        parallel=False,
+        n_slurm_jobs=4,
+        cpus_total=4,
+        mem_gb_total=32,
+    )
+
+    assert not any(message.startswith("  Packing:") for message in messages)
+    assert not any(message.startswith("  Fit allocation:") for message in messages)
