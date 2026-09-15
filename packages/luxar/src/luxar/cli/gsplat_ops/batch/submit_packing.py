@@ -6,7 +6,12 @@ import math
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 
-_CUDA_PROCESS_OVERHEAD_BYTES = 512 * 1024**2
+from luxar.gsplats.utils.device import cuda_worker_memory_bytes, gpu_worker_capacity
+
+# A fit holds the volume tensor plus model/optimizer state, approximately twice
+# the raw float32 volume. The benchmark OOM ceiling already paid for one CUDA
+# context, so its task bytes plus the shared fixed overhead recover the usable
+# device-memory budget for packed workers.
 _FIT_BYTES_PER_VOXEL = 2 * 4
 
 PackingLimit = Literal[
@@ -14,8 +19,10 @@ PackingLimit = Literal[
     "node CPU count",
     "node RAM",
     "packing cap",
+    "backfill window",
     "requested count",
     "unknown node capacity",
+    "volume ratio",
 ]
 
 
@@ -25,19 +32,28 @@ class PackingResolution:
 
     count: int
     limit: PackingLimit
+    node_class: Optional[tuple[int, int]] = None
 
 
 def _gpu_parallel_capacity(
     max_shape: Optional[Sequence[int]], tile_voxels: int, gpus_per_task: int
 ) -> int:
+    """Bound packed fits by the profiled per-GPU OOM ceiling."""
     if not max_shape:
         return 1
-    profile_budget = (
-        math.prod(max_shape) * _FIT_BYTES_PER_VOXEL + _CUDA_PROCESS_OVERHEAD_BYTES
-    )
-    per_worker = tile_voxels * _FIT_BYTES_PER_VOXEL + _CUDA_PROCESS_OVERHEAD_BYTES
-    per_gpu = max(1, profile_budget // max(per_worker, 1))
-    return max(1, int(per_gpu) * max(1, gpus_per_task))
+    profile_budget = cuda_worker_memory_bytes(math.prod(max_shape))
+    task_bytes = max(1, tile_voxels * _FIT_BYTES_PER_VOXEL)
+    per_gpu = gpu_worker_capacity(profile_budget, task_bytes).count
+    return max(1, per_gpu * max(1, gpus_per_task))
+
+
+def _node_classes(
+    node_resources: Optional[Sequence[tuple[int, int]]],
+) -> list[tuple[int, int]]:
+    """Return distinct scheduler node classes in stable order."""
+    if not node_resources:
+        return []
+    return list(dict.fromkeys(node_resources))
 
 
 def _node_parallel_limit(
@@ -45,17 +61,41 @@ def _node_parallel_limit(
     cpus_per_task: int,
     mem_gb_per_task: int,
 ) -> PackingResolution:
-    if not node_resources:
+    """Bound packing so the request remains eligible for every node class."""
+    node_classes = _node_classes(node_resources)
+    if not node_classes:
         return PackingResolution(4, "unknown node capacity")
     candidates: list[PackingResolution] = []
-    for cores, memory_mb in node_resources:
+    for cores, memory_mb in node_classes:
         cpu_limit = max(1, cores // max(1, cpus_per_task))
         memory_limit = max(1, memory_mb // max(1, mem_gb_per_task * 1024))
         if cpu_limit <= memory_limit:
-            candidates.append(PackingResolution(cpu_limit, "node CPU count"))
+            candidates.append(
+                PackingResolution(cpu_limit, "node CPU count", (cores, memory_mb))
+            )
         else:
-            candidates.append(PackingResolution(memory_limit, "node RAM"))
-    return max(candidates, key=lambda candidate: candidate.count)
+            candidates.append(
+                PackingResolution(memory_limit, "node RAM", (cores, memory_mb))
+            )
+    return min(candidates, key=lambda candidate: candidate.count)
+
+
+def largest_node_class(
+    node_resources: Optional[Sequence[tuple[int, int]]],
+    cpus_per_task: int,
+    mem_gb_per_task: int,
+) -> Optional[tuple[int, int]]:
+    """Return the node class that can host the most requested workers."""
+    node_classes = _node_classes(node_resources)
+    if not node_classes:
+        return None
+    return max(
+        node_classes,
+        key=lambda node: min(
+            node[0] // max(1, cpus_per_task),
+            node[1] // max(1, mem_gb_per_task * 1024),
+        ),
+    )
 
 
 def resolve_tasks_per_job(
@@ -90,11 +130,19 @@ def resolve_tasks_per_job(
 
     max_safe = math.prod(max_shape) if max_shape else tile_voxels
     packing = max(1, int(max_safe / max(tile_voxels, 1)))
+    limit: PackingLimit = "volume ratio"
 
     if uses_backfill and no_job_limit:
         if est_seconds > 0:
-            packing = min(packing, max(1, int(300 / est_seconds)))
-        packing = min(packing, 3)
+            backfill_limit = max(1, int(300 / est_seconds))
+            if backfill_limit < packing:
+                packing = backfill_limit
+                limit = "backfill window"
+        if 3 < packing:
+            packing = 3
+            limit = "packing cap"
     else:
-        packing = min(packing, 10)
-    return PackingResolution(max(1, packing), "packing cap")
+        if 10 < packing:
+            packing = 10
+            limit = "packing cap"
+    return PackingResolution(max(1, packing), limit)

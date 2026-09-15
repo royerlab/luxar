@@ -283,6 +283,7 @@ def get_partition_node_resources(partition: str) -> list[tuple[int, int]]:
         result = subprocess.run(
             [
                 "sinfo",
+                "--exact",
                 "-p",
                 partition,
                 "--states=idle,alloc,mix",
@@ -301,7 +302,8 @@ def get_partition_node_resources(partition: str) -> list[tuple[int, int]]:
             if len(fields) < 2:
                 continue
             try:
-                cores, memory_mb = int(fields[0]), int(fields[1])
+                cores = int(fields[0].removesuffix("+"))
+                memory_mb = int(fields[1].removesuffix("+"))
             except ValueError:
                 continue
             if cores > 0 and memory_mb > 0:

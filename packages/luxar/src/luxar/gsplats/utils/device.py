@@ -216,6 +216,19 @@ def _gpu_worker_capacity(free_memory: Optional[int], task_bytes: int) -> WorkerL
     return WorkerLimit(max(1, int(free_memory // per_worker)), "GPU memory")
 
 
+def cuda_worker_memory_bytes(
+    task_voxels: int, dtype_bytes: int = 4, safety_factor: float = 2.0
+) -> int:
+    """Estimate one CUDA fit worker's task data plus fixed process overhead."""
+    task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
+    return task_bytes + _AUTO_CUDA_WORKER_OVERHEAD_BYTES
+
+
+def gpu_worker_capacity(memory_budget: Optional[int], task_bytes: int) -> WorkerLimit:
+    """Resolve CUDA worker capacity from a fixed memory budget."""
+    return _gpu_worker_capacity(memory_budget, task_bytes)
+
+
 def resolve_auto_worker_limit(
     *,
     task_voxels: int,

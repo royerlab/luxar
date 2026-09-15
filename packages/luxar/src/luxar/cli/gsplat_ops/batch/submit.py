@@ -283,10 +283,16 @@ def run_batch_submit(
         rich_help_panel="Slurm resources",
     ),
     cpus: int = typer.Option(
-        4, "--cpus", help="CPUs per task", rich_help_panel="Slurm resources"
+        4,
+        "--cpus",
+        help="CPUs per fit task; --parallel multiplies the Slurm request by resolved packing",
+        rich_help_panel="Slurm resources",
     ),
     mem: int = typer.Option(
-        32, "--mem", help="Memory per task (GB)", rich_help_panel="Slurm resources"
+        32,
+        "--mem",
+        help="Memory per fit task (GB); --parallel multiplies the Slurm request by resolved packing",
+        rich_help_panel="Slurm resources",
     ),
     time_limit: Optional[str] = typer.Option(
         None,
@@ -456,8 +462,8 @@ def run_batch_submit(
         help=(
             "Run packed tasks concurrently (--parallel) or one by one "
             "(--sequential, default). Parallel mode launches multiple fit "
-            "processes sharing the same GPU — higher throughput but uses "
-            "more GPU memory."
+            "processes with per-worker GPU/thread/quality-budget isolation and "
+            "scales the CPU/RAM allocation by the resolved packing."
         ),
     ),
     # Array selection
@@ -690,8 +696,10 @@ def run_batch_submit(
             slurm_time=slurm_time,
             partition=partition,
             gpus_per_task=gpus_per_task,
-            cpus=packing.slurm_cpus,
-            mem=packing.slurm_mem_gb,
+            cpus_per_task=packing.slurm_cpus,
+            mem_gb_per_task=packing.slurm_mem_gb,
+            cpus_total=packing.slurm_cpus_total,
+            mem_gb_total=packing.slurm_mem_gb_total,
             output_dir=output_dir,
         )
 

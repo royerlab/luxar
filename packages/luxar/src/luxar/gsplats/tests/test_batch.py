@@ -246,14 +246,21 @@ class TestEnvCapture:
         from luxar.gsplats.batch import env_capture
 
         result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="16 128000\n64 512000\n", stderr=""
+            args=[], returncode=0, stdout="16+ 128000+\n64 512000\n", stderr=""
         )
-        monkeypatch.setattr(env_capture.subprocess, "run", lambda *_a, **_kw: result)
+        calls: list[list[str]] = []
+
+        def fake_run(args, **_kwargs):
+            calls.append(args)
+            return result
+
+        monkeypatch.setattr(env_capture.subprocess, "run", fake_run)
 
         assert env_capture.get_partition_node_resources("gpu") == [
             (16, 128000),
             (64, 512000),
         ]
+        assert "--exact" in calls[0]
 
     def test_capture_conda(self) -> None:
         from luxar.gsplats.batch.env_capture import capture_environment

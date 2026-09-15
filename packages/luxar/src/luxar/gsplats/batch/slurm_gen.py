@@ -130,7 +130,7 @@ def _parallel_worker_env_lines(
     """Render per-worker resource isolation for packed parallel fits."""
     if not manifest.parallel_tasks_per_job:
         return []
-    threads = max(1, manifest.slurm_cpus // tasks_per_job)
+    threads = max(1, manifest.slurm_cpus)
     workers_per_device = math.ceil(tasks_per_job / max(1, manifest.slurm_gpus))
     lines = [
         "    local WORKER_OFFSET=$((TASK_ID - BASE_TASK))",
@@ -146,8 +146,6 @@ def _parallel_worker_env_lines(
                 '    if [ "${#ALLOCATED_GPUS[@]}" -gt "$WORKER_GPU_INDEX" ] '
                 '&& [ -n "${ALLOCATED_GPUS[$WORKER_GPU_INDEX]}" ]; then',
                 '        export CUDA_VISIBLE_DEVICES="${ALLOCATED_GPUS[$WORKER_GPU_INDEX]}"',
-                "    else",
-                '        export CUDA_VISIBLE_DEVICES="$WORKER_GPU_INDEX"',
                 "    fi",
             ]
         )
@@ -198,8 +196,8 @@ def generate_fit_sbatch(
         f"#SBATCH --partition={effective_partition}",
         "#SBATCH --ntasks=1",
         f"#SBATCH --gpus-per-task={manifest.slurm_gpus}",
-        f"#SBATCH --cpus-per-task={manifest.slurm_cpus}",
-        f"#SBATCH --mem={manifest.slurm_mem_gb}G",
+        f"#SBATCH --cpus-per-task={manifest.slurm_cpus_total or manifest.slurm_cpus}",
+        f"#SBATCH --mem={manifest.slurm_mem_gb_total or manifest.slurm_mem_gb}G",
         f"#SBATCH --time={manifest.slurm_time_limit}",
         f"#SBATCH --output={_slurm_log_path(output_dir, f'{log_stem}_%a.out')}",
         f"#SBATCH --error={_slurm_log_path(output_dir, f'{log_stem}_%a.err')}",

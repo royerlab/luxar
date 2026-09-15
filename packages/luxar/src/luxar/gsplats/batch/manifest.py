@@ -166,6 +166,12 @@ class BatchManifest:
 
     slurm_cpus: int = 4
     slurm_mem_gb: int = 32
+    slurm_cpus_total: int = 0
+    """Total CPUs requested by the fit allocation; 0 falls back to ``slurm_cpus``."""
+
+    slurm_mem_gb_total: int = 0
+    """Total RAM requested by the fit allocation; 0 falls back to ``slurm_mem_gb``."""
+
     slurm_extra_args: List[str] = field(default_factory=list)
 
     # Packing

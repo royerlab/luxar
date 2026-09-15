@@ -39,8 +39,10 @@ def print_batch_submit_plan(
     slurm_time: str,
     partition: str,
     gpus_per_task: int,
-    cpus: int,
-    mem: int,
+    cpus_per_task: int,
+    mem_gb_per_task: int,
+    cpus_total: int,
+    mem_gb_total: int,
     output_dir: Path,
 ) -> None:
     """Print the human-facing batch-plan summary (stable CLI output)."""
@@ -82,9 +84,14 @@ def print_batch_submit_plan(
                 mps_note = " [bash background processes]"
         aprint(
             f"  Packing: {tasks_per_job} tasks/job ({run_mode}) "
-            f"→ {n_slurm_jobs} Slurm jobs{mps_note}; limited by {packing_limit}; "
-            f"allocation: {cpus} CPUs, {mem}G RAM"
+            f"→ {n_slurm_jobs} Slurm jobs{mps_note}; limited by {packing_limit}"
         )
+        if parallel:
+            aprint(
+                f"  Fit allocation: {cpus_per_task} CPUs/task × {tasks_per_job} = "
+                f"{cpus_total} CPUs, {mem_gb_per_task}G RAM/task × "
+                f"{tasks_per_job} = {mem_gb_total}G RAM"
+            )
     else:
         aprint(f"  Slurm array: {total_tasks} jobs (1 task each)")
 
@@ -113,7 +120,7 @@ def print_batch_submit_plan(
     aprint(f"  Slurm --time: {slurm_time}")
     aprint(
         f"  Partition: {partition}, GPUs/task: {gpus_per_task}, "
-        f"CPUs: {cpus}, Mem: {mem}G"
+        f"CPUs/task: {cpus_per_task}, Mem/task: {mem_gb_per_task}G"
     )
     aprint(f"  Output: {output_dir}")
     aprint("")
