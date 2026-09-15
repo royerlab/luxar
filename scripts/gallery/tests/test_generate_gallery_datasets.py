@@ -487,6 +487,30 @@ def test_only_gating_generated_store_audits_fail_the_gallery_build(
     assert (next_step in out) is (expected_code == 0)
 
 
+def test_configured_non_gating_generated_store_audit_is_report_only(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        gen,
+        "SCENE_AUDITOR_NAMES",
+        (("synthetic_auditor.py", False),),
+    )
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok")],
+        audit_outcomes={"synthetic_auditor.py": 1},
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert len(calls.audit_invocations) == 2
+    assert "synthetic_auditor failed with exit 1 (report-only)" in out
+    assert "Next: cd packages/luxar-viewer && pnpm gallery" in out
+
+
 def test_an_idempotent_run_reports_on_the_complete_local_inventory(
     tmp_path, monkeypatch
 ) -> None:
