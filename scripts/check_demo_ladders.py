@@ -190,7 +190,7 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
 
 LEAF_EXEMPT: dict[str, str] = {
     "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
-        "control: intentional flat control in the six-recipe LOD comparison"
+        "control: the flat leaf of the six-recipe LOD comparison, unladdered by design"
     ),
 }
 

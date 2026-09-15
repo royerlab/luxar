@@ -121,11 +121,15 @@ FIRST_RUNG_LINE_VERTICES = streaming_chunk_splats(
 def hilbert_ladder(n_vertices: int) -> dict[str, Any]:
     """Give each hidden-order curve a useful first frame.
 
+    ``n_vertices`` is the explicit-segment vertex-row count. The returned
+    ``counts`` are in polyline units, one per two-row segment, so the first-rung
+    and commit budgets are halved before calling :func:`capped_stream_cuts`.
+
     Each leaf occupies one ``order`` coordinate, so a measured stop count is 1,
     but stepping the hidden dimension still replaces the whole curve and resets
     it to rung 0. Arm the sliced policy's 1/8 share explicitly: order 6 opens at
-    65,536 of 524,286 segment vertices (12.5%), and its largest increment stays
-    below the 900,000-vertex whole-node cap.
+    32,768 of 262,143 segments (65,536 of 524,286 vertex rows, 12.5%), and its
+    largest increment stays at or below the 900,000-vertex whole-node cap.
     """
     first_chunk = sliced_ladder_first_chunk(
         FIRST_RUNG_LINE_VERTICES,

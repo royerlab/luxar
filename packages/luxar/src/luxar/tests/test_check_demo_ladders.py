@@ -16,6 +16,10 @@ from luxar.demos import demo_galaxy_simulation
 from luxar.utils import paths as luxar_paths
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_EXEMPTION_EVIDENCE = re.compile(
+    r"#\d+|\d[\d,.]*[\s-]*(?:%|rows?|elements?|vertices?|points?|splats?)\b",
+    re.IGNORECASE,
+)
 _BOUND_HALF_WIDTH = 1e-3
 
 
@@ -31,6 +35,10 @@ def _load_checker() -> ModuleType:
 
 
 checker = _load_checker()
+
+
+def _has_exemption_evidence(reason: str) -> bool:
+    return reason.startswith("control:") or bool(_EXEMPTION_EVIDENCE.search(reason))
 
 
 def _make_leaf(
@@ -980,11 +988,23 @@ def test_every_leaf_exemption_is_exact_and_explained() -> None:
     assert checker.LEAF_EXEMPT, "an empty allowlist should be deleted, not kept"
     for key, reason in checker.LEAF_EXEMPT.items():
         assert ".luxar.zarr/" in key
-        has_evidence = reason.startswith("control:") or re.search(
-            r"#\d+|\d[\d,.]*\s*(?:%|rows?|elements?|vertices?|points?|splats?)",
-            reason,
-        )
-        assert has_evidence, f"{key}: reason cites no evidence"
+        assert _has_exemption_evidence(reason), f"{key}: reason cites no evidence"
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("control: deliberately unladdered comparison leaf", True),
+        ("legacy exception tracked by #2657", True),
+        ("measured 14 rows per coordinate", True),
+        ("measured 37,930,613-element level", True),
+        ("largest 1,055,941-row increment", True),
+        ("legacy archive retained for compatibility", False),
+        ("measured during the gallery audit", False),
+    ],
+)
+def test_leaf_exemption_evidence_predicate(reason: str, expected: bool) -> None:
+    assert _has_exemption_evidence(reason) is expected
 
 
 def test_stale_leaf_exemption_fails_when_its_scene_is_inspected(

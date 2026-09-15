@@ -44,7 +44,7 @@ def test_hidden_order_ladder_opens_on_an_eighth_and_bounds_commits() -> None:
             for previous, count in zip([0, *counts[:-1]], counts, strict=True)
         ]
 
-        assert counts[0] * 2 == max(65_536, (n_vertices + 7) // 8)
+        assert counts[0] * 2 == (n_vertices + 7) // 8
         assert counts[-1] * 2 == n_vertices
         assert max(increments) <= 900_000
 
