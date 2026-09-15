@@ -3,10 +3,11 @@
  *
  * Importing this file is safe for third-party host pages: every rule below
  * is scoped to a `.luxar-*` class, a `[data-theme=...]` attribute, or a
- * component-local selector. **No global selectors live here** (no `body`,
- * `html`, `*`, `::-webkit-scrollbar`, `:focus-visible`, etc.) — those are
- * confined to `standalone.css`, which the standalone-app entry imports
- * separately.
+ * component-local selector, except `:root` blocks that declare only
+ * `--luxar-*` custom properties. **No host-styling global selectors live
+ * here** (no `body`, `html`, `*`, `::-webkit-scrollbar`, `:focus-visible`,
+ * etc.) — those are confined to `standalone.css`, which the standalone-app
+ * entry imports separately.
  *
  * Theme variables (`--luxar-*`) are injected at runtime by `ThemeManager`.
  */

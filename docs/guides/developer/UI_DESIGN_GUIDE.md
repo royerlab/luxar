@@ -77,8 +77,9 @@ browser** (`src/ui/dataset-browser.ts` + `styles/components/dataset-browser.css`
 Two CSS entry points (see `src/styles/README.md`):
 
 - `index.css` — **embed-safe library entry**. Every rule is scoped to a
-  `.luxar-*` class or `[data-theme=…]`. Imports utilities, all component CSS,
-  the GUI library styles, and the glass theme overrides.
+  `.luxar-*` class or `[data-theme=…]`, except `:root` blocks that declare only
+  `--luxar-*` custom properties. Imports utilities, all component CSS, the GUI
+  library styles, and the glass theme overrides.
 - `standalone.css` — global host-page chrome (reset, typography, layout).
   Only the standalone app imports it; embedders never get their `body`
   clobbered. **Consequence:** the global `:focus-visible` ring lives in
@@ -92,10 +93,10 @@ Two CSS entry points (see `src/styles/README.md`):
 All colors, spacing, and effects are CSS custom properties with the
 `--luxar-` prefix, injected at runtime by `ThemeManager` as **inline styles on
 `document.documentElement`** (not a `:root {}` stylesheet rule — they carry
-inline-style specificity) — with one sanctioned exception registered in
-§15.6: `--luxar-glass-tint` is the only `--luxar-` property declared in a
-stylesheet rather than by `ThemeManager` (a separate, unregistered case,
-`--luxar-overlay-transition-duration`, is a per-element runtime value
+inline-style specificity) — with two sanctioned exceptions registered in
+§15.6: `--luxar-glass-tint` and `--luxar-rail-gutter` are declared in
+stylesheets rather than by `ThemeManager` (a separate, unregistered case,
+`--luxar-overlay-transition-duration`, is a per-element runtime value that
 `overlay-manager.ts` sets directly on an element, not a theme token at all).
 Component CSS must reference tokens, never hardcoded values (sanctioned
 exceptions are registered in §15.6).
@@ -1407,7 +1408,7 @@ migrated.
   to beat unknown third-party host UI (documented in that file's header). Small
   local stacking indexes (`1/2/10` inside a positioned parent) are not layer
   values at all and need no entry.
-- **A stylesheet-declared custom property, not a `ThemeManager` token** (§3):
+- **Stylesheet-declared custom properties, not `ThemeManager` tokens** (§3):
   `--luxar-glass-tint` (`styles/themes/liquid-glass.css`, under the
   `[data-theme='liquid-glass']` selector) is the dark tint painted by
   `.luxar-glass-surface::after` — liquid-glass's own internal implementation
@@ -1427,7 +1428,11 @@ migrated.
   than moving into `ThemeManager`'s `themeToCSSVariables()` because it is
   this one theme's CSS-layer implementation detail — a tint painted by a
   pseudo-element — not a member of the `Theme` interface, so it does not
-  belong in the token vocabulary.
+  belong in the token vocabulary. `--luxar-rail-gutter`
+  (`styles/components/control-rail.css`, with the coarse-pointer override in
+  `styles/components/coarse-pointer.css`) is likewise a stylesheet layout
+  property: its `:root` declaration keeps unscoped consumers valid, while the
+  media query updates the shared rail geometry without runtime profile state.
 
 ---
 
