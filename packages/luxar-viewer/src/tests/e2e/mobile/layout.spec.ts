@@ -81,6 +81,20 @@ test.describe('mobile layout', () => {
             text: 'Readable touch caption',
             width: 0.1,
           },
+          {
+            name: '__viewport_cap_probe',
+            type: 'overlay_text',
+            position: [0.8, 0.6],
+            opacity: 1,
+            anchor: 'top-left',
+            transition: 'none',
+            transition_duration: 0,
+            interactive: false,
+            z_index: 5,
+            hover: false,
+            text: 'Viewport-capped caption',
+            width: 0.3,
+          },
         ],
         ''
       );
@@ -107,6 +121,11 @@ test.describe('mobile layout', () => {
     expect(overlay!.left).toBeGreaterThanOrEqual(rail!.right + 8);
     expect(overlay!.width).toBeCloseTo(readableFloor, 0);
     expect(overlay!.right).toBeLessThanOrEqual(overlay!.vw - 11.5);
+
+    const capped = await rectOf(page, '[data-overlay-name="__viewport_cap_probe"]');
+    expect(capped).not.toBeNull();
+    expect(capped!.width).toBeLessThan(capped!.vw * 0.3 - 0.5);
+    expect(capped!.right).toBeLessThanOrEqual(capped!.vw - 11.5);
   });
 
   test('the data monitor, expanded, stays inside the viewport', async ({ page }) => {

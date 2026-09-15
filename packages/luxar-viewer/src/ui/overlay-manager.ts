@@ -906,8 +906,7 @@ export class OverlayManager {
     if (config.width) {
       // Explicit width is the primary sizing; honor it verbatim.
       el.classList.add('luxar-overlay--explicit-width');
-      el.style.setProperty('--luxar-overlay-width', `${config.width * 100}vw`);
-      el.style.width = '';
+      el.style.width = `${config.width * 100}vw`;
       el.style.maxWidth = '';
       // Hover overlays use pre-line so \n in labels creates line breaks;
       // regular overlays use normal for standard word wrapping.
@@ -919,7 +918,6 @@ export class OverlayManager {
       // line against the right-anchored container edge (see issue #773), rather
       // than the ~2vw the pre-transform container position would otherwise impose.
       el.classList.remove('luxar-overlay--explicit-width');
-      el.style.removeProperty('--luxar-overlay-width');
       el.style.width = '';
       el.style.maxWidth = 'min(30vw, 40ch)';
       el.style.whiteSpace = 'pre-line';
@@ -929,7 +927,6 @@ export class OverlayManager {
       // content (unchanged behavior — a max-width here would only clip the box
       // while nowrap text overflows off-screen).
       el.classList.remove('luxar-overlay--explicit-width');
-      el.style.removeProperty('--luxar-overlay-width');
       el.style.width = '';
       el.style.maxWidth = '';
       el.style.whiteSpace = 'nowrap';

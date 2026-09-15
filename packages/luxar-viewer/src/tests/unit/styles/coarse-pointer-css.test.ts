@@ -150,11 +150,13 @@ describe('coarse-pointer.css contract', () => {
       coarse,
       '.luxar-has-control-rail\n    .luxar-overlay--text.luxar-overlay--explicit-width:not(.luxar-overlay--right-anchored)'
     );
-    expect(sizedTextOverlay).toMatch(
-      /width:\s*min\(\s*max\(var\(--luxar-overlay-width\),\s*18ch\),/
-    );
+    expect(sizedTextOverlay).toMatch(/--luxar-overlay-available-width:\s*calc\(/);
     expect(sizedTextOverlay).toMatch(/100vw\s*-\s*max\(\s*var\(--luxar-overlay-x\)/);
     expect(sizedTextOverlay).toMatch(/safe-area-inset-right/);
+    expect(sizedTextOverlay).toMatch(
+      /min-width:\s*min\(18ch,\s*var\(--luxar-overlay-available-width\)\)/
+    );
+    expect(sizedTextOverlay).toMatch(/max-width:\s*var\(--luxar-overlay-available-width\)/);
 
     // The wrapper scrolls, but its children and the root's fixed controls do not shrink.
     expect(coarse).toMatch(
@@ -211,9 +213,6 @@ describe('coarse-pointer.css contract', () => {
   it('keeps authored overlay geometry in custom properties for the coarse override', () => {
     expect(ruleBody(overlayCss, '.luxar-overlay')).toMatch(/left:\s*var\(--luxar-overlay-x\)/);
     expect(ruleBody(overlayCss, '.luxar-overlay--right-anchored')).toMatch(/left:\s*auto/);
-    expect(ruleBody(overlayCss, '.luxar-overlay--text.luxar-overlay--explicit-width')).toMatch(
-      /width:\s*var\(--luxar-overlay-width\)/
-    );
   });
 
   it('grows the tap targets and the text inputs under (pointer: coarse)', () => {

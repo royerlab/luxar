@@ -815,8 +815,7 @@ describe('OverlayManager — anchoring (issue #773)', () => {
     const el = document.querySelector('[data-overlay-name="wide"]') as HTMLDivElement;
     // Explicit width stays the primary sizing.
     expect(el.classList.contains('luxar-overlay--explicit-width')).toBe(true);
-    expect(el.style.getPropertyValue('--luxar-overlay-width')).toBe('50vw');
-    expect(el.style.width).toBe('');
+    expect(el.style.width).toBe('50vw');
     // The clamp is only applied on the no-explicit-width path.
     expect(el.style.maxWidth).toBe('');
   });
@@ -838,8 +837,7 @@ describe('OverlayManager — anchoring (issue #773)', () => {
       'createTextContent'
     ](el, makeTextOverlay({ name: 'morph', width: 0.5 }));
     expect(el.classList.contains('luxar-overlay--explicit-width')).toBe(true);
-    expect(el.style.getPropertyValue('--luxar-overlay-width')).toBe('50vw');
-    expect(el.style.width).toBe('');
+    expect(el.style.width).toBe('50vw');
     expect(el.style.maxWidth).toBe('');
 
     // explicit width → plain no-width nowrap: width, clamp and wrap all reset.
@@ -847,7 +845,6 @@ describe('OverlayManager — anchoring (issue #773)', () => {
       'createTextContent'
     ](el, makeTextOverlay({ name: 'morph' }));
     expect(el.classList.contains('luxar-overlay--explicit-width')).toBe(false);
-    expect(el.style.getPropertyValue('--luxar-overlay-width')).toBe('');
     expect(el.style.width).toBe('');
     expect(el.style.maxWidth).toBe('');
     expect(el.style.whiteSpace).toBe('nowrap');

@@ -174,17 +174,16 @@
 
   .luxar-has-control-rail
     .luxar-overlay--text.luxar-overlay--explicit-width:not(.luxar-overlay--right-anchored) {
-    width: min(
-      max(var(--luxar-overlay-width), 18ch),
-      calc(
-        100vw -
-          max(
-            var(--luxar-overlay-x),
-            calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px))
-          ) -
-          12px - env(safe-area-inset-right, 0px)
-      )
+    --luxar-overlay-available-width: calc(
+      100vw -
+        max(
+          var(--luxar-overlay-x),
+          calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px))
+        ) -
+        12px - env(safe-area-inset-right, 0px)
     );
+    min-width: min(18ch, var(--luxar-overlay-available-width));
+    max-width: var(--luxar-overlay-available-width);
   }
 
   /* ---- Bottom strip: clear the home indicator. ---- */
