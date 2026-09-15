@@ -17,7 +17,7 @@ from luxar.utils import paths as luxar_paths
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _EXEMPTION_EVIDENCE = re.compile(
-    r"#\d+|\d[\d,.]*[\s-]*(?:%|rows?|elements?|vertices?|points?|splats?)\b",
+    r"#\d+|\d[\d,.]*[\s-]*(?:%|(?:rows?|elements?|vertices?|points?|splats?)\b)",
     re.IGNORECASE,
 )
 _BOUND_HALF_WIDTH = 1e-3
@@ -999,6 +999,7 @@ def test_every_leaf_exemption_is_exact_and_explained() -> None:
         ("measured 14 rows per coordinate", True),
         ("measured 37,930,613-element level", True),
         ("largest 1,055,941-row increment", True),
+        ("rung 0 is 7.45% of the node", True),
         ("legacy archive retained for compatibility", False),
         ("measured during the gallery audit", False),
     ],
