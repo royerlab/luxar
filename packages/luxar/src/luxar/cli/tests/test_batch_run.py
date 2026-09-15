@@ -24,15 +24,11 @@ def test_local_cpu_profile_preserves_auto_sizing(monkeypatch) -> None:
         _resolve_local_gpu_profile,
     )
 
-    summary = {
-        "oom_boundaries": {"3d": {"max_successful_shape": [192, 192, 192]}}
-    }
+    summary = {"oom_boundaries": {"3d": {"max_successful_shape": [192, 192, 192]}}}
     throughput = [{"voxels": 192**3, "throughput": 1.0}]
     monkeypatch.setattr(device, "resolve_gpu_selection", lambda spec: [])
     monkeypatch.setattr(gpu_profile, "get_gpu_summary", lambda: summary)
-    monkeypatch.setattr(
-        gpu_profile, "get_gpu_throughput_table", lambda: throughput
-    )
+    monkeypatch.setattr(gpu_profile, "get_gpu_throughput_table", lambda: throughput)
 
     selected, manifest_name, max_shape, table = _resolve_local_gpu_profile("cpu")
 
