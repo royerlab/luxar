@@ -735,11 +735,13 @@ def biodiversity_ladder(
     in polylines and silently collapses this node to one flat level.
     """
     ladder = stream_ladder(n_rows, geometry=geometry, slices=stops)
-    first_chunk = math.ceil(n_rows / 4)
     if geometry == "lines":
         first_chunk = math.ceil(3 * n_rows / 8)
+        # This deliberate override remains far below the gallery caller's
+        # measured commit ceiling: 119,280 vertices versus 9,900,000.
         ladder["counts"] = f"stream:{first_chunk}"
         return ladder
+    first_chunk = math.ceil(n_rows / 4)
     ladder["counts"] = capped_stream_cuts(
         n_rows,
         max(ladder["counts"][0], first_chunk),
