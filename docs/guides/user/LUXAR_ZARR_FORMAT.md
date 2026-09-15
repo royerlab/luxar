@@ -1558,9 +1558,10 @@ with metadata in `.zattrs` and optional raw image files.
 Overlays are NOT part of the 3D scene graph — they use normalized screen coordinates
 `[0, 1]` with top-left origin `(0, 0)`.
 On a coarse pointer, the viewer may move a left-edge anchor rightward to clear the
-control rail. An explicit text-overlay `width` remains the authored viewport-fraction
-target, but is bounded by an 18-character readable floor and the remaining viewport;
-center- and right-anchored overlays retain their authored horizontal origin.
+control rail. For a left-anchored text overlay, an explicit `width` remains the
+authored viewport-fraction target but is bounded by an 18-character readable floor
+and the remaining viewport. Center- and right-anchored overlays retain both their
+authored horizontal origin and authored width.
 
 ### Overlay Types
 
