@@ -17,6 +17,8 @@ def _resolve_local_gpu_profile(
     gpus: str,
 ) -> tuple[list[int], str, Optional[list[int]], Optional[list[dict[str, Any]]]]:
     """Resolve local devices and the conservative profile used for planning."""
+    # Keep runtime discovery imports local so CLI tests can isolate hardware and
+    # profile dependencies without importing this orchestration module differently.
     import torch
 
     from luxar.gsplats.gpu_profile import get_gpu_summary, get_gpu_throughput_table
