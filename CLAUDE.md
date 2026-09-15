@@ -744,8 +744,8 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:1400
 # sparsest slice and one busy coordinate masks hundreds of starved ones.
 # It is intentionally not a checkout-only CI step: generated demo stores are
 # gitignored and absent there, so that would audit nothing. The gallery generator
-# runs it with `--require-scenes` against newly built stores (credits gate, ladders
-# report-only); the pre-upload inventory audit checks the whole corpus, and
+# runs both auditors with `--require-scenes` as gates against newly built stores;
+# the pre-upload inventory audit checks the whole corpus, and
 # `check-scene-credits` has the same artifact-only contract.
 
 # Give every leaf of an EXISTING tree an additive ladder, structure-preservingly

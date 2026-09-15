@@ -462,7 +462,7 @@ def test_newly_generated_stores_are_audited_by_explicit_path(
 
 @pytest.mark.parametrize(
     ("failed_auditor", "expected_code"),
-    [("check_demo_ladders.py", 0), ("check_scene_credits.py", 1)],
+    [("check_demo_ladders.py", 1), ("check_scene_credits.py", 1)],
 )
 def test_only_gating_generated_store_audits_fail_the_gallery_build(
     tmp_path, monkeypatch, capsys, failed_auditor, expected_code
@@ -485,6 +485,30 @@ def test_only_gating_generated_store_audits_fail_the_gallery_build(
     assert failed_auditor.removesuffix(".py") in out
     next_step = "Next: cd packages/luxar-viewer && pnpm gallery"
     assert (next_step in out) is (expected_code == 0)
+
+
+def test_configured_non_gating_generated_store_audit_is_report_only(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        gen,
+        "SCENE_AUDITOR_NAMES",
+        (("synthetic_auditor.py", False),),
+    )
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok")],
+        audit_outcomes={"synthetic_auditor.py": 1},
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert len(calls.audit_invocations) == 2
+    assert "synthetic_auditor failed with exit 1 (report-only)" in out
+    assert "Next: cd packages/luxar-viewer && pnpm gallery" in out
 
 
 def test_an_idempotent_run_reports_on_the_complete_local_inventory(

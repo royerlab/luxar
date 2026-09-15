@@ -59,7 +59,7 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
 from luxar.utils.lod_breakpoints import DEFAULT_MAX_ADDITIVE_COMMIT
 
 
-def test_biodiversity_ladder_opens_at_one_quarter_and_conserves_rows() -> None:
+def test_biodiversity_ladder_uses_geometry_safe_measured_openings() -> None:
     n_rows = 2_111_885
     stops = 139
     counts = biodiversity_ladder(n_rows, stops)["counts"]
@@ -73,6 +73,10 @@ def test_biodiversity_ladder_opens_at_one_quarter_and_conserves_rows() -> None:
     assert counts[-1] == n_rows
     assert max(increments) <= DEFAULT_MAX_ADDITIVE_COMMIT * stops
     assert biodiversity_ladder(1, stops)["counts"] == [1]
+
+    line_rows = 318_078
+    line_ladder = biodiversity_ladder(line_rows, 11, geometry="lines")
+    assert line_ladder["counts"] == f"stream:{math.ceil(3 * line_rows / 8)}"
 
 
 def test_keep_stale_reuses_an_existing_scene_with_a_mismatched_marker(

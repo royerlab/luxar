@@ -722,20 +722,29 @@ N_PARTS = parse_int_arg("n-parts", 0)  # 0 -> derived from N_POINTS
 Arbol.max_depth = 5
 
 
-def biodiversity_ladder(n_rows: int, stops: int) -> dict[str, Any]:
-    """Open the sparse taxon/period cube at one quarter of its rows.
+def biodiversity_ladder(
+    n_rows: int, stops: int, *, geometry: str = "points"
+) -> dict[str, Any]:
+    """Open each sparse sliced layer at its measured safe share.
 
-    ``stream_ladder``'s 1/8 share leaves the sparsest rung-0 slices at 152
-    records across the 139 populated taxon/period coordinates, below the
-    auditor's 250-record floor. A quarter projects p05 to about 325 records,
-    with two coordinates of headroom, while the 1,055,941-row largest increment
-    remains far below the slice-scaled commit ceiling (27,300 rows in the
-    largest measured coordinate fetch).
+    The points cube needs one quarter: its 1/8 rung measured p05=152 across
+    139 taxon/period coordinates, while the rebuilt 1/4 rung measured p05=291.
+    The indexed migrations need three eighths: their 1/8 rung measured p05=164
+    across 11 slices, while the rebuilt 3/8 rung measured p05=333. Lines must
+    keep the ``stream:<vertices>`` spelling because an explicit list is counted
+    in polylines and silently collapses this node to one flat level.
     """
-    ladder = stream_ladder(n_rows, slices=stops)
+    ladder = stream_ladder(n_rows, geometry=geometry, slices=stops)
+    if geometry == "lines":
+        first_chunk = math.ceil(3 * n_rows / 8)
+        # This deliberate override remains far below the gallery caller's
+        # measured commit ceiling: 119,280 vertices versus 9,900,000.
+        ladder["counts"] = f"stream:{first_chunk}"
+        return ladder
+    first_chunk = math.ceil(n_rows / 4)
     ladder["counts"] = capped_stream_cuts(
         n_rows,
-        max(ladder["counts"][0], math.ceil(n_rows / 4)),
+        max(ladder["counts"][0], first_chunk),
         DEFAULT_MAX_ADDITIVE_COMMIT * stops,
     )
     return ladder
@@ -3011,10 +3020,10 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # `counts` LIST is in POLYLINES while `stream:<c>` is in VERTICES,
                 # and a vertex-sized list here would clamp to the polyline count
                 # and write NO rungs, silently. See `stream_ladder`.
-                additive_lod=stream_ladder(
+                additive_lod=biodiversity_ladder(
                     int(track_pos.shape[0]),
+                    hidden_axis_stops(track_pos, dims.non_displayed),
                     geometry="lines",
-                    slices=hidden_axis_stops(track_pos, dims.non_displayed),
                 ),
             )
 

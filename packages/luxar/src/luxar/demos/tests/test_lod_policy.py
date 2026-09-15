@@ -79,7 +79,7 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
 
 #: Sliced Points/Lines calls whose additive ladder does not paint first, and why.
 _SLICED_ADDITIVE_LOD_EXEMPTIONS = {
-    ("demo_biodiversity_planetary_scale.py", 2679): (
+    ("demo_biodiversity_planetary_scale.py", "f'part_{i}'"): (
         "the eager coarsest substitutive level paints first; the additive ladder "
         "only refines that already-visible partition in the background"
     ),
@@ -324,7 +324,7 @@ def _slice_policy_violation(
 
 def _sliced_additive_lod_violations(
     sources: dict[str, str],
-    exemptions: dict[tuple[str, int], str] | None = None,
+    exemptions: dict[tuple[str, str], str] | None = None,
 ) -> list[str]:
     """Every Points/Lines ladder in *sources* that skips the slice policy.
 
@@ -375,14 +375,16 @@ def _sliced_additive_lod_violations(
             continue
         local_defs = _module_level_defs(src)
         for call, additive_lod in _additive_lod_calls(src):
-            location = (name, call.lineno)
+            node_expression = ast.unparse(call.args[0])
+            location = (name, node_expression)
             if location in exemptions:
                 seen_exemptions.add(location)
                 if not any(
                     keyword.arg == "substitutive_lod" for keyword in call.keywords
                 ):
                     missing.append(
-                        f"{name}:{call.lineno} is exempt but has no substitutive_lod="
+                        f"{name}:{call.lineno} {node_expression} is exempt but has "
+                        "no substitutive_lod="
                     )
                 continue
             violation = _slice_policy_violation(name, call, additive_lod, local_defs)
@@ -1452,10 +1454,10 @@ class TestASlicedNodeGetsAShareOfItsFrame:
         # matches must not sit there quietly permitting a shape nobody wrote.
         missing = _sliced_additive_lod_violations(
             {"demo_synthetic.py": self._SLICED_SCENE},
-            exemptions={("demo_gone.py", 12): "reason"},
+            exemptions={("demo_gone.py", "gone"): "reason"},
         )
 
-        assert missing == ["stale exemption ('demo_gone.py', 12)"]
+        assert missing == ["stale exemption ('demo_gone.py', 'gone')"]
 
     def test_the_real_exemption_is_matched_and_needs_its_substitutive_level(
         self,
@@ -1463,7 +1465,7 @@ class TestASlicedNodeGetsAShareOfItsFrame:
         # The exemption's structural co-requirement, against the real corpus:
         # "an eager coarse level paints first" is only true if there IS one.
         sources = _demo_sources()
-        (exempt_file, exempt_line), _ = next(
+        (exempt_file, exempt_node), _ = next(
             iter(_SLICED_ADDITIVE_LOD_EXEMPTIONS.items())
         )
         stripped = sources[exempt_file].replace("substitutive_lod=", "no_such_kwarg=")
@@ -1474,8 +1476,8 @@ class TestASlicedNodeGetsAShareOfItsFrame:
         )
 
         assert any(
-            f"{exempt_file}:{exempt_line} is exempt but has no substitutive_lod="
-            == message
+            message.startswith(f"{exempt_file}:")
+            and f"{exempt_node} is exempt but has no substitutive_lod=" in message
             for message in missing
         ), missing
 
@@ -1672,6 +1674,16 @@ scene.add_gsplats_from_data(
         ("demo_rainbow_sphere.py", "'RainbowSphere'", "additive_lod", "stream_ladder"),
         ("demo_spiral_galaxy.py", "'SpiralGalaxy'", "additive_lod", "stream_ladder"),
         ("demo_tabula_sapiens.py", "'cells'", "additive_lod", "stream_ladder"),
+        ("demo_cubic_array.py", "'BackgroundStars'", "additive_lod", "stream_ladder"),
+        ("demo_cubic_array.py", "'CubicArray'", "additive_lod", "stream_ladder"),
+        ("demo_quasicrystal_3d.py", "'Quasicrystal'", "additive_lod", "stream_ladder"),
+        (
+            "demo_flywire_connectome.py",
+            "f'Connections — {nt}'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        ("demo_zebrahub_multiome.py", "'Cells'", "additive_lod", "stream_ladder"),
         (
             "demo_zebrahub_velocity_streamlines.py",
             "'Velocity comets (tail → head = velocity direction)'",
@@ -1701,6 +1713,18 @@ scene.add_gsplats_from_data(
             "'By taxon & period'",
             "additive_lod",
             "biodiversity_ladder",
+        ),
+        (
+            "demo_biodiversity_planetary_scale.py",
+            "'Migrations by slice'",
+            "additive_lod",
+            "biodiversity_ladder",
+        ),
+        (
+            "demo_biodiversity_planetary_scale.py",
+            "'Migrations by slice'",
+            "additive_lod",
+            "geometry='lines'",
         ),
         (
             "demo_exotic_surfaces.py",
@@ -1751,8 +1775,8 @@ def test_gallery_oversized_nodes_bound_individual_commits(
         and node.args
         and ast.unparse(node.args[0]) == node_expression
     ]
-    assert len(calls) == 1, f"expected one {node_expression} adder in {filename}"
-
-    values = {item.arg: item.value for item in calls[0].keywords if item.arg}
-    assert keyword in values, f"{filename} {node_expression} has no {keyword}="
-    assert value_expression in ast.unparse(values[keyword])
+    assert calls, f"expected a {node_expression} adder in {filename}"
+    for call in calls:
+        values = {item.arg: item.value for item in call.keywords if item.arg}
+        assert keyword in values, f"{filename} {node_expression} has no {keyword}="
+        assert value_expression in ast.unparse(values[keyword])

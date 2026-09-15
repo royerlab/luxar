@@ -76,8 +76,8 @@ def test_runbook_audits_built_scenes_before_upload() -> None:
 
     assert "hatch run check-demo-ladders --require-scenes" in section
     assert "hatch run check-scene-credits --require-scenes" in section
-    assert "report-only" in section
-    assert "currently fails" in section
+    assert "Both audits gate a newly generated store" in section
+    assert "Both direct full-inventory commands" in section
     assert "--force" in section
     assert "not re-gated" in section
     assert "backstop" in section

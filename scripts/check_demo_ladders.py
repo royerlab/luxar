@@ -188,9 +188,22 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
     ),
 }
 
-LEAF_EXEMPT: dict[str, str] = {
+#: Exact leaf exemptions are bounded by the structural/absolute arm's commit
+#: measurement. A numeric value must be the exact measured largest commit: the
+#: exemption applies only while the
+#: current measurement is ``<=`` that ceiling, so rounding down breaks the
+#: pinned store and rounding up weakens the degradation guard. ``None`` is
+#: reserved for controls that are intentionally unladdered by design, never for
+#: an archive whose commit size has not been measured.
+LEAF_EXEMPT: dict[str, tuple[int | None, str]] = {
+    "gsplats_4d_drosophila_embryogenesis.luxar.zarr/drosophila_nuclei": (
+        37_930_613,
+        "pinned 2026-08 archive has a measured 37,930,613-element level; remove "
+        "this exemption when #2716 republishes the archive with a ladder",
+    ),
     "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
-        "control: the flat leaf of the six-recipe LOD comparison, unladdered by design"
+        None,
+        "control: the flat leaf of the six-recipe LOD comparison, unladdered by design",
     ),
 }
 
@@ -364,6 +377,46 @@ def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
         return  # additive_<i> subgroups are internal to the leaf
     for name in group.group_keys():
         yield from walk_leaves(group[name], f"{path}/{name}")
+
+
+def _leaf_commit_measurement(leaf: Any) -> int | None:
+    """Return the element measurement a leaf exemption bounds."""
+    attrs = dict(leaf.attrs)
+    total = _element_count(attrs)
+    n_sub = int(attrs.get("n_additive_sublods", 1) or 1)
+    if n_sub <= 1:
+        sliced_total = None
+        if not leaf.attrs.get("extend_to_all"):
+            sliced_total = _busiest_slice_elements(leaf)
+        return total if sliced_total is None else sliced_total
+    sizes: list[int] = []
+    for index in range(n_sub):
+        try:
+            sizes.append(_element_count(dict(leaf[f"additive_{index}"].attrs)))
+        except KeyError:
+            return None
+    if total and sum(sizes) != total:
+        return None
+    node_biggest = max(sizes, default=0)
+    return _largest_commit_elements(leaf, n_sub, node_biggest)[0]
+
+
+def _leaf_exemption_reason(group: Any, exemption_key: str) -> str | None:
+    """Return a matching exemption reason only within its measured ceiling."""
+    exemption = LEAF_EXEMPT.get(exemption_key)
+    if exemption is None:
+        return None
+    ceiling, reason = exemption
+    if ceiling is None:
+        return reason
+    measurements = [
+        measurement
+        for _, leaf in walk_leaves(group)
+        if (measurement := _leaf_commit_measurement(leaf)) is not None
+    ]
+    if measurements and max(measurements) <= ceiling:
+        return reason
+    return None
 
 
 def _first_rung_histogram(
@@ -555,7 +608,6 @@ def _record_sliced_verdicts(
         exemption_key = f"{scene_name}{path}"
         if exemption_key in LEAF_EXEMPT:
             matched_exemptions.add(exemption_key)
-            continue
         count = sparsest_slice_elements(histogram)
         coverage = len(histogram)
         where = (
@@ -586,6 +638,11 @@ def _record_sliced_verdicts(
                 continue
             message = thin
         else:
+            continue
+        exemption_reason = _leaf_exemption_reason(root[path], exemption_key)
+        if exemption_reason is not None:
+            results.append((path, "warn", f"{message} [exempt: {exemption_reason}]"))
+            counts["warn"] += 1
             continue
         results.append((path, "fail", message))
         counts["fail"] += 1
@@ -642,6 +699,27 @@ def check_leaf(
         if n_sub < min_sublods:
             return ("warn", f"{detail} — only {n_sub} levels")
     return ("ok", detail)
+
+
+def _leaf_verdict_with_exemption(
+    leaf: Any,
+    exemption_key: str,
+    args: argparse.Namespace,
+) -> tuple[str, str]:
+    """Return one leaf verdict, applying only a bounded matching exemption."""
+    status, message = check_leaf(
+        leaf,
+        min_elements=args.min_elements,
+        max_share=args.max_share,
+        max_level_elements=args.max_level_elements,
+        min_sublods=args.min_sublods,
+    )
+    if status != "fail":
+        return status, message
+    exemption_reason = _leaf_exemption_reason(leaf, exemption_key)
+    if exemption_reason is None:
+        return status, message
+    return "warn", f"{message} [exempt: {exemption_reason}]"
 
 
 def scene_paths(args_paths: Sequence[str]) -> list[Path]:
@@ -851,19 +929,10 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
 
         results: list[tuple[str, str, str]] = []
         for leaf_path, leaf in walk_leaves(root):
-            exemption = LEAF_EXEMPT.get(f"{scene.name}{leaf_path}")
-            if exemption is not None:
-                matched_exemptions.add(f"{scene.name}{leaf_path}")
-                results.append((leaf_path, "warn", f"exempt: {exemption}"))
-                counts["warn"] += 1
-                continue
-            status, message = check_leaf(
-                leaf,
-                min_elements=args.min_elements,
-                max_share=args.max_share,
-                max_level_elements=args.max_level_elements,
-                min_sublods=args.min_sublods,
-            )
+            exemption_key = f"{scene.name}{leaf_path}"
+            if exemption_key in LEAF_EXEMPT:
+                matched_exemptions.add(exemption_key)
+            status, message = _leaf_verdict_with_exemption(leaf, exemption_key, args)
             results.append((leaf_path, status, message))
             counts[status] += 1
             if status == "fail":

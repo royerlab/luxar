@@ -45,6 +45,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, cache_computed, launch_viewer
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -206,6 +207,10 @@ def main() -> None:
                     link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
                     copy="{hover_key}",
                     layer=True,
+                    additive_lod=stream_ladder(
+                        len(positions),
+                        slices=hidden_axis_stops(positions, dims.non_displayed),
+                    ),
                 )
 
                 # --- Overlays ---
@@ -318,6 +323,10 @@ def main() -> None:
                     link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
                     copy="{hover_key}",
                     layer=True,
+                    additive_lod=stream_ladder(
+                        len(positions),
+                        slices=hidden_axis_stops(positions, dims.non_displayed),
+                    ),
                 )
 
                 # --- Overlays ---
