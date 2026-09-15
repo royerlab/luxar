@@ -60,6 +60,8 @@ const ANCHOR_TRANSFORM: Record<string, string> = {
   'bottom-right': 'translate(-100%, -100%)',
 };
 
+const CENTER_ANCHORS = new Set(['top-center', 'center', 'bottom-center']);
+
 /**
  * Transform for RIGHT-side anchors when the element is positioned from the
  * container's RIGHT edge (via `right:` instead of `left:`).
@@ -846,10 +848,7 @@ export class OverlayManager {
       config.anchor === 'top-right' ||
       config.anchor === 'center-right' ||
       config.anchor === 'bottom-right';
-    const isCenterAnchor =
-      config.anchor === 'top-center' ||
-      config.anchor === 'center' ||
-      config.anchor === 'bottom-center';
+    const isCenterAnchor = CENTER_ANCHORS.has(config.anchor);
 
     el.classList.toggle('luxar-overlay--center-anchored', isCenterAnchor);
 

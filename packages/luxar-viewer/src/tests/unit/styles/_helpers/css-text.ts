@@ -124,15 +124,17 @@ export function stripMediaQueries(css: string): string {
  * selector punctuation. Returns an empty string when the selector is absent.
  */
 export function ruleBody(css: string, selector: string): string {
-  const compact = (text: string): string =>
-    text
-      .replace(/\s+/g, ' ')
-      .replace(/\s*([(),>+~])\s*/g, '$1')
-      .trim();
-  const compactCss = compact(css);
-  const compactSelector = compact(selector);
-  const escaped = compactSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(^|[^\\w-])${escaped}\\s*\\{([^}]*)\\}`, 'm');
-  const m = compactCss.match(re);
+  const selectorPattern = selector
+    .trim()
+    .split(/(\s+|[(),>+~])/)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^\s+$/.test(part)) return '\\s+';
+      const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return /^[(),>+~]$/.test(part) ? `\\s*${escaped}\\s*` : escaped;
+    })
+    .join('');
+  const re = new RegExp(`(^|[^\\w-])${selectorPattern}\\s*\\{([^}]*)\\}`, 'm');
+  const m = css.match(re);
   return m ? m[2] : '';
 }
