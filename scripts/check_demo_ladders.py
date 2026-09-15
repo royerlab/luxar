@@ -188,10 +188,17 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
     ),
 }
 
+#: Leaves exempt from the structural/absolute commit arm. A numeric value must
+#: be the exact measured largest commit: the exemption applies only while the
+#: current measurement is ``<=`` that ceiling, so rounding down breaks the
+#: pinned store and rounding up weakens the degradation guard. ``None`` is
+#: reserved for controls that are intentionally unladdered by design, never for
+#: an archive whose commit size has not been measured.
 LEAF_EXEMPT: dict[str, tuple[int | None, str]] = {
     "gsplats_4d_drosophila_embryogenesis.luxar.zarr/drosophila_nuclei": (
         37_930_613,
-        "pinned 2026-08 archive has a measured 37,930,613-element level",
+        "pinned 2026-08 archive has a measured 37,930,613-element level; remove "
+        "this exemption when #2716 republishes the archive with a ladder",
     ),
     "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
         None,
