@@ -140,5 +140,6 @@ describe('ruleBody', () => {
 
   it('preserves descendant combinators', () => {
     expect(ruleBody('.a.b { color: red; }', '.a .b')).toBe('');
+    expect(ruleBody('.a:not(.x).y { color: red; }', '.a:not(.x) .y')).toBe('');
   });
 });

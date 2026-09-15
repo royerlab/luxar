@@ -125,6 +125,8 @@ export function stripMediaQueries(css: string): string {
  */
 export function ruleBody(css: string, selector: string): string {
   const selectorPunctuation = /^[(),>+~]$/;
+  const selectorOpeningPunctuation = /^[,(>+~]$/;
+  const selectorClosingPunctuation = /^[,)>+~]$/;
   const selectorPattern = selector
     .trim()
     .split(/(\s+|[(),>+~])/)
@@ -132,8 +134,8 @@ export function ruleBody(css: string, selector: string): string {
     .map((part, index, parts) => {
       if (/^\s+$/.test(part)) {
         const nextToPunctuation =
-          selectorPunctuation.test(parts[index - 1] ?? '') ||
-          selectorPunctuation.test(parts[index + 1] ?? '');
+          selectorOpeningPunctuation.test(parts[index - 1] ?? '') ||
+          selectorClosingPunctuation.test(parts[index + 1] ?? '');
         return nextToPunctuation ? '' : '\\s+';
       }
       const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
