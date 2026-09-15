@@ -128,6 +128,18 @@ def _gpu_device_name(gpu: int) -> str:
         return "unknown GPU"
 
 
+def _report_gpu_mappings(
+    gpu_indices: list[int], workers: dict[int, int], host_workers: int
+) -> None:
+    """Print the parent-visible index, child token, and device name per GPU."""
+    for gpu in gpu_indices:
+        visible_token = _worker_env(gpu, workers, host_workers)["CUDA_VISIBLE_DEVICES"]
+        aprint(
+            f"visible index {gpu} -> CUDA_VISIBLE_DEVICES={visible_token} "
+            f"({_gpu_device_name(gpu)})"
+        )
+
+
 def _active_worker_counts(
     task_ids: list[int],
     assignment: dict[int, int],
@@ -362,14 +374,7 @@ def run_batch_local(
         f"Local batch fit: {n_run}/{len(task_ids)} tasks on {dev_desc}, "
         f"{global_workers} concurrent worker(s){auto_limit}"
     ):
-        for gpu in active_gpu_indices:
-            visible_token = _worker_env(gpu, active_workers, active_host_workers)[
-                "CUDA_VISIBLE_DEVICES"
-            ]
-            aprint(
-                f"visible index {gpu} -> CUDA_VISIBLE_DEVICES={visible_token} "
-                f"({_gpu_device_name(gpu)})"
-            )
+        _report_gpu_mappings(active_gpu_indices, active_workers, active_host_workers)
         if verbose and n_run < len(task_ids):
             aprint(f"Resuming: {len(task_ids) - n_run} task(s) already complete")
 

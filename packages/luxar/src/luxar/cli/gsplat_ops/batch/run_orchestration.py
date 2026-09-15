@@ -37,10 +37,9 @@ def _resolve_local_gpu_profile(
     profiled: list[tuple[int, str, dict[str, Any]]] = []
     for name, total_memory in devices:
         summary = get_gpu_summary(gpu_name=name)
-        if summary is not None:
-            profiled.append((total_memory, name, summary))
-    if not profiled:
-        return selected, manifest_name, None, None
+        if summary is None:
+            return selected, manifest_name, None, None
+        profiled.append((total_memory, name, summary))
 
     _, profile_name, summary = min(profiled, key=lambda item: item[0])
     recommendations = summary.get("recommendations", {})

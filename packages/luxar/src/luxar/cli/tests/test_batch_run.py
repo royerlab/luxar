@@ -64,6 +64,45 @@ def test_local_profile_uses_selected_devices(monkeypatch) -> None:
     assert throughput == [{"voxels": 1}]
 
 
+def test_local_profile_does_not_size_from_only_part_of_selected_set(
+    monkeypatch,
+) -> None:
+    """An unprofiled selected model prevents unsafe heterogeneous auto-sizing."""
+    import torch
+
+    import luxar.gsplats.gpu_profile as gpu_profile
+    import luxar.gsplats.utils.device as device
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _resolve_local_gpu_profile,
+    )
+
+    class _Properties:
+        def __init__(self, name: str, total_memory: int) -> None:
+            self.name = name
+            self.total_memory = total_memory
+
+    properties = {
+        0: _Properties("Profiled GPU", 48 * 1024**3),
+        1: _Properties("Unprofiled GPU", 8 * 1024**3),
+    }
+    monkeypatch.setattr(device, "resolve_gpu_selection", lambda spec: [0, 1])
+    monkeypatch.setattr(torch.cuda, "get_device_properties", properties.__getitem__)
+    monkeypatch.setattr(
+        gpu_profile,
+        "get_gpu_summary",
+        lambda gpu_name: (
+            {"recommendations": {}} if gpu_name == "Profiled GPU" else None
+        ),
+    )
+
+    selected, manifest_name, max_shape, throughput = _resolve_local_gpu_profile("0,1")
+
+    assert selected == [0, 1]
+    assert manifest_name == "Profiled GPU, Unprofiled GPU"
+    assert max_shape is None
+    assert throughput is None
+
+
 def _make_zarr(path: Path) -> None:
     import zarr
 
