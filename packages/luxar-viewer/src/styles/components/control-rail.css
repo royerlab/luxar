@@ -35,7 +35,7 @@
     padding 0.18s ease;
 }
 
-.luxar-has-control-rail {
+:root {
   --luxar-rail-gutter: 73px;
 }
 

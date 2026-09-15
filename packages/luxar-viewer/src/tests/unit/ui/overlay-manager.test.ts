@@ -775,6 +775,7 @@ describe('OverlayManager — anchoring (issue #773)', () => {
     expect(center.style.getPropertyValue('--luxar-overlay-x')).toBe('25%');
     expect(center.style.left).toBe('');
     expect(center.style.right).toBe('');
+    expect(center.classList.contains('luxar-overlay--center-anchored')).toBe(true);
     expect(center.style.transform).toBe('translate(-50%, -50%)');
     expect(cleft.style.getPropertyValue('--luxar-overlay-x')).toBe('10%');
     expect(cleft.style.left).toBe('');

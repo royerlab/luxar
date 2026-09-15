@@ -40,7 +40,7 @@
    Coarse primary pointer: viewport clamps, safe areas, tap targets.
    ========================================================================= */
 @media (pointer: coarse) {
-  .luxar-has-control-rail {
+  :root {
     /* 12px rail inset + 58px coarse rail box + the desktop 9px gap. */
     --luxar-rail-gutter: 79px;
   }
@@ -165,22 +165,29 @@
     );
   }
 
-  .luxar-has-control-rail .luxar-overlay:not(.luxar-overlay--right-anchored) {
-    left: max(
+  /* Only edge-anchored overlays can be clamped by their positioning origin.
+     Centre anchors paint half their width left of it via translate(-50%). */
+  .luxar-has-control-rail
+    .luxar-overlay:not(.luxar-overlay--right-anchored, .luxar-overlay--center-anchored) {
+    --luxar-overlay-x-clamped: max(
       var(--luxar-overlay-x),
       calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px))
     );
+    left: var(--luxar-overlay-x-clamped);
   }
 
   .luxar-has-control-rail
-    .luxar-overlay--text.luxar-overlay--explicit-width:not(.luxar-overlay--right-anchored) {
+    .luxar-overlay--text.luxar-overlay--explicit-width:not(
+      .luxar-overlay--right-anchored,
+      .luxar-overlay--center-anchored
+    ) {
+    --luxar-overlay-x-clamped: clamp(
+      calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px)),
+      var(--luxar-overlay-x),
+      calc(100vw - 18ch - 12px - env(safe-area-inset-right, 0px))
+    );
     --luxar-overlay-available-width: calc(
-      100vw -
-        max(
-          var(--luxar-overlay-x),
-          calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px))
-        ) -
-        12px - env(safe-area-inset-right, 0px)
+      100vw - var(--luxar-overlay-x-clamped) - 12px - env(safe-area-inset-right, 0px)
     );
     min-width: min(18ch, var(--luxar-overlay-available-width));
     max-width: var(--luxar-overlay-available-width);

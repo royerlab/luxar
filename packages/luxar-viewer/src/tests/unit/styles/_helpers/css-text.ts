@@ -120,12 +120,19 @@ export function stripMediaQueries(css: string): string {
 
 /**
  * Extract the declaration block for a given CSS selector. Matches the
- * literal selector at the start of a rule. Returns an empty string when
- * the selector is not present.
+ * literal selector at the start of a rule after normalizing whitespace and
+ * selector punctuation. Returns an empty string when the selector is absent.
  */
 export function ruleBody(css: string, selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const compact = (text: string): string =>
+    text
+      .replace(/\s+/g, ' ')
+      .replace(/\s*([(),>+~])\s*/g, '$1')
+      .trim();
+  const compactCss = compact(css);
+  const compactSelector = compact(selector);
+  const escaped = compactSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`(^|[^\\w-])${escaped}\\s*\\{([^}]*)\\}`, 'm');
-  const m = css.match(re);
+  const m = compactCss.match(re);
   return m ? m[2] : '';
 }

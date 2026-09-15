@@ -93,7 +93,35 @@ test.describe('mobile layout', () => {
             z_index: 5,
             hover: false,
             text: 'Viewport-capped caption',
+            width: 0.5,
+          },
+          {
+            name: '__right_edge_probe',
+            type: 'overlay_text',
+            position: [0.98, 0.65],
+            opacity: 1,
+            anchor: 'top-left',
+            transition: 'none',
+            transition_duration: 0,
+            interactive: false,
+            z_index: 5,
+            hover: false,
+            text: 'Right-edge caption',
             width: 0.3,
+          },
+          {
+            name: '__center_anchor_probe',
+            type: 'overlay_text',
+            position: [0.19, 0.7],
+            opacity: 1,
+            anchor: 'top-center',
+            transition: 'none',
+            transition_duration: 0,
+            interactive: false,
+            z_index: 5,
+            hover: false,
+            text: 'Centered caption',
+            width: 0.26,
           },
         ],
         ''
@@ -119,13 +147,49 @@ test.describe('mobile layout', () => {
     expect(rail).not.toBeNull();
     expect(overlay).not.toBeNull();
     expect(overlay!.left).toBeGreaterThanOrEqual(rail!.right + 8);
-    expect(overlay!.width).toBeCloseTo(readableFloor, 0);
+    expect(overlay!.width).toBeGreaterThanOrEqual(readableFloor - 0.5);
     expect(overlay!.right).toBeLessThanOrEqual(overlay!.vw - 11.5);
 
     const capped = await rectOf(page, '[data-overlay-name="__viewport_cap_probe"]');
     expect(capped).not.toBeNull();
-    expect(capped!.width).toBeLessThan(capped!.vw * 0.3 - 0.5);
+    expect(capped!.width).toBeGreaterThanOrEqual(readableFloor - 0.5);
+    expect(capped!.width).toBeLessThan(capped!.vw * 0.5 - 0.5);
     expect(capped!.right).toBeLessThanOrEqual(capped!.vw - 11.5);
+
+    const rightEdge = await rectOf(page, '[data-overlay-name="__right_edge_probe"]');
+    expect(rightEdge).not.toBeNull();
+    expect(rightEdge!.width).toBeGreaterThanOrEqual(readableFloor - 0.5);
+    expect(rightEdge!.right).toBeLessThanOrEqual(rightEdge!.vw - 11.5);
+
+    const centeredLeft = await page
+      .locator('[data-overlay-name="__center_anchor_probe"]')
+      .evaluate((element) => parseFloat(getComputedStyle(element).left));
+    expect(centeredLeft).toBeCloseTo(overlay!.vw * 0.19, 0);
+  });
+
+  test('the rail gutter remains defined without the presence marker', async ({ page }) => {
+    const metrics = await page.evaluate(() => {
+      const debugConsole = document.querySelector<HTMLElement>('.luxar-debug-console');
+      if (!debugConsole) throw new Error('Debug console not found');
+      const hadMarker = document.body.classList.contains('luxar-has-control-rail');
+      const previousDisplay = debugConsole.style.display;
+      const previousVisibility = debugConsole.style.visibility;
+      document.body.classList.remove('luxar-has-control-rail');
+      debugConsole.style.display = 'block';
+      debugConsole.style.visibility = 'hidden';
+      const gutter = getComputedStyle(document.documentElement)
+        .getPropertyValue('--luxar-rail-gutter')
+        .trim();
+      const width = debugConsole.getBoundingClientRect().width;
+      debugConsole.style.display = previousDisplay;
+      debugConsole.style.visibility = previousVisibility;
+      if (hadMarker) document.body.classList.add('luxar-has-control-rail');
+      return { gutter, width };
+    });
+
+    expect(metrics.gutter).toBe('79px');
+    expect(metrics.width).toBeGreaterThan(100);
+    expect(metrics.width).toBeLessThanOrEqual(600);
   });
 
   test('the data monitor, expanded, stays inside the viewport', async ({ page }) => {

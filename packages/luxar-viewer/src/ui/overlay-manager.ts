@@ -846,6 +846,12 @@ export class OverlayManager {
       config.anchor === 'top-right' ||
       config.anchor === 'center-right' ||
       config.anchor === 'bottom-right';
+    const isCenterAnchor =
+      config.anchor === 'top-center' ||
+      config.anchor === 'center' ||
+      config.anchor === 'bottom-center';
+
+    el.classList.toggle('luxar-overlay--center-anchored', isCenterAnchor);
 
     if (isRightAnchor) {
       el.classList.add('luxar-overlay--right-anchored');

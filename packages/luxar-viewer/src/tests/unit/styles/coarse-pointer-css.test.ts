@@ -28,6 +28,9 @@ const css = stripComments(raw);
 const overlayCss = stripComments(
   readFileSync(resolve(STYLES_ROOT, 'components/overlay-layer.css'), 'utf8')
 );
+const controlRailCss = stripComments(
+  readFileSync(resolve(STYLES_ROOT, 'components/control-rail.css'), 'utf8')
+);
 
 /** The pointer/hover features a block may be keyed on. */
 const POINTER_FEATURES = /\((pointer:\s*coarse|hover:\s*none|any-hover:\s*(?:none|hover))\)/;
@@ -135,23 +138,27 @@ describe('coarse-pointer.css contract', () => {
     expect(ruleBody(coarse, '.luxar-control-rail')).not.toMatch(/overflow/);
     expect(ruleBody(coarse, '.luxar-control-rail')).toMatch(/max-height:\s*calc\(100vh/);
 
-    const railMarker = ruleBody(coarse, '.luxar-has-control-rail');
-    expect(railMarker).toMatch(/--luxar-rail-gutter:\s*79px/);
+    const root = ruleBody(coarse, ':root');
+    expect(root).toMatch(/--luxar-rail-gutter:\s*79px/);
+    expect(ruleBody(controlRailCss, ':root')).toMatch(/--luxar-rail-gutter:\s*73px/);
 
     const leftOverlay = ruleBody(
       coarse,
-      '.luxar-has-control-rail .luxar-overlay:not(.luxar-overlay--right-anchored)'
+      '.luxar-has-control-rail .luxar-overlay:not(.luxar-overlay--right-anchored, .luxar-overlay--center-anchored)'
     );
     expect(leftOverlay).toMatch(
-      /left:\s*max\(\s*var\(--luxar-overlay-x\),\s*calc\(var\(--luxar-rail-gutter\)\s*\+\s*env\(safe-area-inset-left,\s*0px\)\)\s*\)/
+      /--luxar-overlay-x-clamped:\s*max\(\s*var\(--luxar-overlay-x\),\s*calc\(var\(--luxar-rail-gutter\)\s*\+\s*env\(safe-area-inset-left,\s*0px\)\)\s*\)/
     );
+    expect(leftOverlay).toMatch(/left:\s*var\(--luxar-overlay-x-clamped\)/);
 
     const sizedTextOverlay = ruleBody(
       coarse,
-      '.luxar-has-control-rail\n    .luxar-overlay--text.luxar-overlay--explicit-width:not(.luxar-overlay--right-anchored)'
+      '.luxar-has-control-rail .luxar-overlay--text.luxar-overlay--explicit-width:not(.luxar-overlay--right-anchored, .luxar-overlay--center-anchored)'
     );
+    expect(sizedTextOverlay).toMatch(/--luxar-overlay-x-clamped:\s*clamp\(/);
+    expect(sizedTextOverlay).toMatch(/100vw\s*-\s*18ch\s*-\s*12px/);
     expect(sizedTextOverlay).toMatch(/--luxar-overlay-available-width:\s*calc\(/);
-    expect(sizedTextOverlay).toMatch(/100vw\s*-\s*max\(\s*var\(--luxar-overlay-x\)/);
+    expect(sizedTextOverlay).toMatch(/100vw\s*-\s*var\(--luxar-overlay-x-clamped\)/);
     expect(sizedTextOverlay).toMatch(/safe-area-inset-right/);
     expect(sizedTextOverlay).toMatch(
       /min-width:\s*min\(18ch,\s*var\(--luxar-overlay-available-width\)\)/
