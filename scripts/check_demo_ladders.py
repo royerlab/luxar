@@ -188,8 +188,9 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
     ),
 }
 
-#: Leaves exempt from the structural/absolute commit arm. A numeric value must
-#: be the exact measured largest commit: the exemption applies only while the
+#: Exact leaf exemptions are bounded by the structural/absolute arm's commit
+#: measurement. A numeric value must be the exact measured largest commit: the
+#: exemption applies only while the
 #: current measurement is ``<=`` that ceiling, so rounding down breaks the
 #: pinned store and rounding up weakens the degradation guard. ``None`` is
 #: reserved for controls that are intentionally unladdered by design, never for
