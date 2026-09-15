@@ -8,6 +8,33 @@ from typing import Callable, Sequence
 from arbol import aprint
 
 
+def _parallel_launcher_note(
+    parallel: bool, mps_available_fn: Callable[[], bool]
+) -> str:
+    """Describe the launcher used for packed parallel tasks."""
+    if not parallel:
+        return ""
+    if mps_available_fn():
+        return " [MPS available]"
+    return " [bash background processes]"
+
+
+def _print_estimated_job_time(
+    tasks_per_job: int,
+    parallel: bool,
+    est_seconds: float,
+    est_seconds_per_job: float,
+) -> None:
+    """Print the packed-job duration when a job contains multiple tasks."""
+    if tasks_per_job <= 1:
+        return
+    if parallel:
+        detail = f"{tasks_per_job} tasks in parallel"
+    else:
+        detail = f"{tasks_per_job} tasks × {est_seconds / 60:.0f} min"
+    aprint(f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({detail})")
+
+
 def print_batch_submit_plan(
     *,
     input_name: str,
@@ -74,14 +101,9 @@ def print_batch_submit_plan(
 
     if parallel or tasks_per_job > 1:
         run_mode = "parallel" if parallel else "sequential"
-        mps_note = ""
-        if parallel:
-            # Probed lazily: `scontrol show config` (subprocess, 5 s timeout)
-            # only runs when the note is actually printed.
-            if mps_available_fn():
-                mps_note = " [MPS available]"
-            else:
-                mps_note = " [bash background processes]"
+        # Probed lazily: `scontrol show config` (subprocess, 5 s timeout) only
+        # runs when the parallel-launcher note is actually printed.
+        mps_note = _parallel_launcher_note(parallel, mps_available_fn)
         aprint(
             f"  Packing: {tasks_per_job} tasks/job ({run_mode}) "
             f"→ {n_slurm_jobs} Slurm jobs{mps_note}; limited by {packing_limit}"
@@ -104,17 +126,7 @@ def print_batch_submit_plan(
     aprint(
         f"  Est. time/task: ~{est_seconds / 60:.0f} min (preset: {preset}, {n_iters} iters)"
     )
-    if tasks_per_job > 1:
-        if parallel:
-            aprint(
-                f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min "
-                f"({tasks_per_job} tasks in parallel)"
-            )
-        else:
-            aprint(
-                f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min "
-                f"({tasks_per_job} tasks × {est_seconds / 60:.0f} min)"
-            )
+    _print_estimated_job_time(tasks_per_job, parallel, est_seconds, est_seconds_per_job)
 
     aprint(f"  Est. total GPU-hours: {total_gpu_hours:.0f} h")
     aprint(f"  Slurm --time: {slurm_time}")
