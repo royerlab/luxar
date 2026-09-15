@@ -209,7 +209,7 @@ def resolve_packing(
     slurm_time = time_limit or estimate_slurm_time_limit(est_seconds_per_job)
     total_gpu_hours = est_seconds * total_tasks / 3600.0
 
-    limiting_resource = resolution.limit
+    limiting_resource: str = resolution.limit
     if resolution.node_class is not None:
         cores, memory_mb = resolution.node_class
         limiting_resource += f" on {cores}-CPU/{memory_mb // 1024}G node class"
