@@ -42,6 +42,22 @@ def test_local_cpu_profile_preserves_auto_sizing(monkeypatch) -> None:
     assert table == throughput
 
 
+def test_local_profile_rejects_invalid_gpu_spec_cleanly(monkeypatch) -> None:
+    """Invalid local GPU selections surface as CLI parameter errors."""
+    import luxar.gsplats.utils.device as device
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _resolve_local_gpu_profile,
+    )
+
+    def _reject(spec: str) -> list[int]:
+        raise ValueError(f"invalid GPU selection: {spec}")
+
+    monkeypatch.setattr(device, "resolve_gpu_selection", _reject)
+
+    with pytest.raises(typer.BadParameter, match="invalid GPU selection: bogus"):
+        _resolve_local_gpu_profile("bogus")
+
+
 def test_local_profile_uses_selected_devices(monkeypatch) -> None:
     """Local planning records and profiles the GPUs that will run the tasks."""
     import torch

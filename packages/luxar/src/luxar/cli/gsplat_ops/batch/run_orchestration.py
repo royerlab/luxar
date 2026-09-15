@@ -22,7 +22,10 @@ def _resolve_local_gpu_profile(
     from luxar.gsplats.gpu_profile import get_gpu_summary, get_gpu_throughput_table
     from luxar.gsplats.utils.device import resolve_gpu_selection
 
-    selected = resolve_gpu_selection(gpus)
+    try:
+        selected = resolve_gpu_selection(gpus)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     if not selected:
         summary = get_gpu_summary()
         if summary is None:
