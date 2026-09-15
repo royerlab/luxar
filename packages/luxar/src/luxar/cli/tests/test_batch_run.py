@@ -112,9 +112,9 @@ def test_local_profile_does_not_size_from_only_part_of_selected_set(
     """An unprofiled selected model prevents unsafe heterogeneous auto-sizing."""
     import torch
 
+    import luxar.cli.gsplat_ops.batch.run_orchestration as orchestration
     import luxar.gsplats.gpu_profile as gpu_profile
     import luxar.gsplats.utils.device as device
-    import luxar.cli.gsplat_ops.batch.run_orchestration as orchestration
 
     class _Properties:
         def __init__(self, name: str, total_memory: int) -> None:
