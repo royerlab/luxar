@@ -18,6 +18,11 @@ from typing import Literal, Optional
 
 import torch
 
+from .worker_memory import (
+    cuda_worker_count,
+    task_working_set_bytes,
+)
+
 # Free-VRAM floor (bytes) for ``--gpus auto``: a CUDA device is selected only if
 # it has at least this much free memory, so a small co-resident card (e.g. an
 # 8 GB display GPU) is skipped rather than bottlenecking or OOMing a fit.
@@ -28,7 +33,6 @@ _AUTO_VRAM_FLOOR_BYTES = 12 * 1024**3
 # only the bytes in its tile.  A CUDA context plus library handles is hundreds
 # of MiB even for a tiny task; host RSS has a similar floor once Python, torch,
 # and the fit stack are imported.
-_AUTO_CUDA_WORKER_OVERHEAD_BYTES = 512 * 1024**2
 _AUTO_HOST_WORKER_OVERHEAD_BYTES = 1024**3
 # Override with the ``LUXAR_AUTO_WORKER_HARD_CAP`` environment variable.
 _AUTO_WORKER_HARD_CAP = 8
@@ -189,12 +193,6 @@ def _auto_worker_hard_cap(minimum: int = 1) -> int:
     return max(minimum, _AUTO_WORKER_HARD_CAP)
 
 
-def _task_working_set_bytes(
-    task_voxels: int, dtype_bytes: int, safety_factor: float
-) -> int:
-    return max(1, int(safety_factor * task_voxels * dtype_bytes))
-
-
 def _host_worker_limit(task_bytes: int) -> WorkerLimit:
     cpu_workers = max(1, _effective_cpu_count() // max(2, _intraop_thread_count()))
     candidates: list[tuple[int, WorkerLimitReason]] = [
@@ -212,16 +210,7 @@ def _host_worker_limit(task_bytes: int) -> WorkerLimit:
 def _gpu_worker_capacity(free_memory: Optional[int], task_bytes: int) -> WorkerLimit:
     if free_memory is None:
         return WorkerLimit(1, "GPU memory unavailable")
-    per_worker = task_bytes + _AUTO_CUDA_WORKER_OVERHEAD_BYTES
-    return WorkerLimit(max(1, int(free_memory // per_worker)), "GPU memory")
-
-
-def cuda_worker_memory_bytes(
-    task_voxels: int, dtype_bytes: int = 4, safety_factor: float = 2.0
-) -> int:
-    """Estimate one CUDA fit worker's task data plus fixed process overhead."""
-    task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
-    return task_bytes + _AUTO_CUDA_WORKER_OVERHEAD_BYTES
+    return WorkerLimit(cuda_worker_count(free_memory, task_bytes), "GPU memory")
 
 
 def gpu_worker_capacity(memory_budget: Optional[int], task_bytes: int) -> WorkerLimit:
@@ -238,7 +227,7 @@ def resolve_auto_worker_limit(
     safety_factor: float = 2.0,
 ) -> WorkerLimit:
     """Resolve safe host concurrency for one device and report its limiter."""
-    task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
+    task_bytes = task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
     host_limit = _host_worker_limit(task_bytes)
     if not require_device_memory:
         return host_limit
@@ -401,7 +390,7 @@ def resolve_jobs_per_gpu(
     if not gpu_indices:  # CPU sentinel
         if explicit is not None:
             return WorkerAllocation({-1: explicit}, "requested count")
-        task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
+        task_bytes = task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
         host_limit = _host_worker_limit(task_bytes)
         return WorkerAllocation({-1: host_limit.count}, host_limit.limit)
 
@@ -412,7 +401,7 @@ def resolve_jobs_per_gpu(
             {idx: explicit for idx in gpu_indices}, "requested count"
         )
 
-    task_bytes = _task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
+    task_bytes = task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
     host_limit = _host_worker_limit(task_bytes)
     capacities: dict[int, int] = {}
     unknown_device_memory = 0

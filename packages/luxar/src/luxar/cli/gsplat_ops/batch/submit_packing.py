@@ -6,13 +6,11 @@ import math
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 
-from luxar.gsplats.utils.device import cuda_worker_memory_bytes, gpu_worker_capacity
-
-# A fit holds the volume tensor plus model/optimizer state, approximately twice
-# the raw float32 volume. The benchmark OOM ceiling already paid for one CUDA
-# context, so its task bytes plus the shared fixed overhead recover the usable
-# device-memory budget for packed workers.
-_FIT_BYTES_PER_VOXEL = 2 * 4
+from luxar.gsplats.utils.worker_memory import (
+    cuda_worker_count,
+    cuda_worker_memory_bytes,
+    task_working_set_bytes,
+)
 
 PackingLimit = Literal[
     "GPU memory",
@@ -41,9 +39,11 @@ def _gpu_parallel_capacity(
     """Bound packed fits by the profiled per-GPU OOM ceiling."""
     if not max_shape:
         return 1
+    # The benchmark OOM ceiling already paid for one CUDA context, so adding
+    # the shared fixed overhead recovers the usable device-memory budget.
     profile_budget = cuda_worker_memory_bytes(math.prod(max_shape))
-    task_bytes = max(1, tile_voxels * _FIT_BYTES_PER_VOXEL)
-    per_gpu = gpu_worker_capacity(profile_budget, task_bytes).count
+    task_bytes = task_working_set_bytes(tile_voxels)
+    per_gpu = cuda_worker_count(profile_budget, task_bytes)
     return max(1, per_gpu * max(1, gpus_per_task))
 
 
@@ -91,9 +91,13 @@ def largest_node_class(
         return None
     return max(
         node_classes,
-        key=lambda node: min(
-            node[0] // max(1, cpus_per_task),
-            node[1] // max(1, mem_gb_per_task * 1024),
+        key=lambda node: (
+            min(
+                node[0] // max(1, cpus_per_task),
+                node[1] // max(1, mem_gb_per_task * 1024),
+            ),
+            node[0],
+            node[1],
         ),
     )
 
