@@ -189,6 +189,15 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
 }
 
 LEAF_EXEMPT: dict[str, str] = {
+    "gsplats_4d_drosophila_embryogenesis.luxar.zarr/drosophila_nuclei": (
+        "pinned 2026-08 archive has a measured 37,930,613-element level"
+    ),
+    **{
+        f"gsplats_4d_h2afva_timelapse.luxar.zarr/zebrafish_nuclei_4d/part_4/additive_{index}": (
+            "pinned archive has a measured 264,402-element coordinate fetch"
+        )
+        for index in range(4)
+    },
     "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
         "control: the flat leaf of the six-recipe LOD comparison, unladdered by design"
     ),

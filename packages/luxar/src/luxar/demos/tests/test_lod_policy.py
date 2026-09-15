@@ -79,7 +79,7 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
 
 #: Sliced Points/Lines calls whose additive ladder does not paint first, and why.
 _SLICED_ADDITIVE_LOD_EXEMPTIONS = {
-    ("demo_biodiversity_planetary_scale.py", 2679): (
+    ("demo_biodiversity_planetary_scale.py", 2677): (
         "the eager coarsest substitutive level paints first; the additive ladder "
         "only refines that already-visible partition in the background"
     ),
@@ -1672,6 +1672,16 @@ scene.add_gsplats_from_data(
         ("demo_rainbow_sphere.py", "'RainbowSphere'", "additive_lod", "stream_ladder"),
         ("demo_spiral_galaxy.py", "'SpiralGalaxy'", "additive_lod", "stream_ladder"),
         ("demo_tabula_sapiens.py", "'cells'", "additive_lod", "stream_ladder"),
+        ("demo_cubic_array.py", "'BackgroundStars'", "additive_lod", "stream_ladder"),
+        ("demo_cubic_array.py", "'CubicArray'", "additive_lod", "stream_ladder"),
+        ("demo_quasicrystal_3d.py", "'Quasicrystal'", "additive_lod", "stream_ladder"),
+        (
+            "demo_flywire_connectome.py",
+            "f'Connections — {nt}'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        ("demo_zebrahub_multiome.py", "'Cells'", "additive_lod", "stream_ladder"),
         (
             "demo_zebrahub_velocity_streamlines.py",
             "'Velocity comets (tail → head = velocity direction)'",
@@ -1699,6 +1709,12 @@ scene.add_gsplats_from_data(
         (
             "demo_biodiversity_planetary_scale.py",
             "'By taxon & period'",
+            "additive_lod",
+            "biodiversity_ladder",
+        ),
+        (
+            "demo_biodiversity_planetary_scale.py",
+            "'Migrations by slice'",
             "additive_lod",
             "biodiversity_ladder",
         ),
@@ -1751,8 +1767,8 @@ def test_gallery_oversized_nodes_bound_individual_commits(
         and node.args
         and ast.unparse(node.args[0]) == node_expression
     ]
-    assert len(calls) == 1, f"expected one {node_expression} adder in {filename}"
-
-    values = {item.arg: item.value for item in calls[0].keywords if item.arg}
-    assert keyword in values, f"{filename} {node_expression} has no {keyword}="
-    assert value_expression in ast.unparse(values[keyword])
+    assert calls, f"expected a {node_expression} adder in {filename}"
+    for call in calls:
+        values = {item.arg: item.value for item in call.keywords if item.arg}
+        assert keyword in values, f"{filename} {node_expression} has no {keyword}="
+        assert value_expression in ast.unparse(values[keyword])

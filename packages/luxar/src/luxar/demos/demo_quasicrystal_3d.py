@@ -110,6 +110,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 #: Subtitle under the title. Concise on purpose: what the points are, how they
@@ -353,6 +354,7 @@ def generate_quasicrystal_3d(
                 opacity=0.9,
                 intensity=0.125,
                 layer=True,
+                additive_lod=stream_ladder(len(positions_3d)),
             )
 
             # Overlay annotations

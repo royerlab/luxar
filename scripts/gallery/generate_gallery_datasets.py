@@ -96,7 +96,7 @@ LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 UNBUILDABLE_IDS: dict[str, str] = {}
 
 SCENE_AUDITOR_NAMES = (
-    ("check_demo_ladders.py", False),
+    ("check_demo_ladders.py", True),
     ("check_scene_credits.py", True),
 )
 

@@ -118,6 +118,7 @@ from luxar.demos import (
     parse_int_arg,
     parse_path_arg,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -759,6 +760,7 @@ def build_scene(
                     intensity=0.003,
                     labels=nt_labels,
                     layer=True,
+                    additive_lod=stream_ladder(len(nt_verts), geometry="lines"),
                 )
 
             # Title

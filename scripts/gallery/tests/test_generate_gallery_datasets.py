@@ -462,7 +462,7 @@ def test_newly_generated_stores_are_audited_by_explicit_path(
 
 @pytest.mark.parametrize(
     ("failed_auditor", "expected_code"),
-    [("check_demo_ladders.py", 0), ("check_scene_credits.py", 1)],
+    [("check_demo_ladders.py", 1), ("check_scene_credits.py", 1)],
 )
 def test_only_gating_generated_store_audits_fail_the_gallery_build(
     tmp_path, monkeypatch, capsys, failed_auditor, expected_code
