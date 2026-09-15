@@ -124,14 +124,20 @@ export function stripMediaQueries(css: string): string {
  * selector punctuation. Returns an empty string when the selector is absent.
  */
 export function ruleBody(css: string, selector: string): string {
+  const selectorPunctuation = /^[(),>+~]$/;
   const selectorPattern = selector
     .trim()
     .split(/(\s+|[(),>+~])/)
     .filter(Boolean)
-    .map((part) => {
-      if (/^\s+$/.test(part)) return '\\s+';
+    .map((part, index, parts) => {
+      if (/^\s+$/.test(part)) {
+        const nextToPunctuation =
+          selectorPunctuation.test(parts[index - 1] ?? '') ||
+          selectorPunctuation.test(parts[index + 1] ?? '');
+        return nextToPunctuation ? '' : '\\s+';
+      }
       const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return /^[(),>+~]$/.test(part) ? `\\s*${escaped}\\s*` : escaped;
+      return selectorPunctuation.test(part) ? `\\s*${escaped}\\s*` : escaped;
     })
     .join('');
   const re = new RegExp(`(^|[^\\w-])${selectorPattern}\\s*\\{([^}]*)\\}`, 'm');
