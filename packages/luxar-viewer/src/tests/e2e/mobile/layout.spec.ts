@@ -51,6 +51,64 @@ test.describe('mobile layout', () => {
     expect(help!.bottom).toBeLessThanOrEqual(help!.vh + 0.5);
   });
 
+  test('left-authored text overlays clear the rail and keep a readable measure', async ({
+    page,
+  }) => {
+    await page.evaluate(() => {
+      const manager = (
+        window as unknown as {
+          __luxarDebug: {
+            getOverlayManager: () => {
+              loadOverlays: (configs: unknown[], baseUrl: string) => Promise<void>;
+            } | null;
+          };
+        }
+      ).__luxarDebug.getOverlayManager();
+      if (!manager) throw new Error('OverlayManager not available on __luxarDebug');
+      return manager.loadOverlays(
+        [
+          {
+            name: '__rail_clearance_probe',
+            type: 'overlay_text',
+            position: [0.02, 0.5],
+            opacity: 1,
+            anchor: 'top-left',
+            transition: 'none',
+            transition_duration: 0,
+            interactive: false,
+            z_index: 5,
+            hover: false,
+            text: 'Readable touch caption',
+            width: 0.1,
+          },
+        ],
+        ''
+      );
+    });
+
+    const rail = await rectOf(page, '.luxar-control-rail');
+    const overlay = await rectOf(page, '[data-overlay-name="__rail_clearance_probe"]');
+    const readableFloor = await page
+      .locator('[data-overlay-name="__rail_clearance_probe"]')
+      .evaluate((element) => {
+        const computed = getComputedStyle(element);
+        const probe = document.createElement('div');
+        probe.style.position = 'fixed';
+        probe.style.visibility = 'hidden';
+        probe.style.font = computed.font;
+        probe.style.width = '18ch';
+        document.body.appendChild(probe);
+        const width = probe.getBoundingClientRect().width;
+        probe.remove();
+        return width;
+      });
+    expect(rail).not.toBeNull();
+    expect(overlay).not.toBeNull();
+    expect(overlay!.left).toBeGreaterThanOrEqual(rail!.right + 8);
+    expect(overlay!.width).toBeCloseTo(readableFloor, 0);
+    expect(overlay!.right).toBeLessThanOrEqual(overlay!.vw - 11.5);
+  });
+
   test('the data monitor, expanded, stays inside the viewport', async ({ page }) => {
     await tapRail(page, 'monitor');
     await page.locator('.luxar-data-monitor__expand-btn').tap();

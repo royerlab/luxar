@@ -35,6 +35,10 @@
     padding 0.18s ease;
 }
 
+.luxar-has-control-rail {
+  --luxar-rail-gutter: 73px;
+}
+
 .luxar-control-rail.is-awake,
 .luxar-control-rail:hover {
   opacity: 1;
@@ -487,7 +491,7 @@
 .luxar-control-rail-hint {
   position: absolute;
   /* Same unified gutter as the popovers and docked panels. */
-  left: 73px;
+  left: var(--luxar-rail-gutter);
   top: 50%;
   transform: translateY(-50%);
   max-width: 232px;
@@ -551,14 +555,14 @@
   /* One gutter everywhere: this equals the popovers' computed left edge
      (rail box incl. border + their 10px gap resolves to 73px), so docked
      panels and rail popovers share one exact left edge. */
-  left: 73px !important;
+  left: var(--luxar-rail-gutter) !important;
 }
 
 /* The debug console (logs) defaults to the lower-left and IS draggable, so
    only shift its default position (no !important) — the inline `left` it sets
    while dragging still wins, keeping it movable. */
 .luxar-has-control-rail .luxar-debug-console {
-  left: 73px;
+  left: var(--luxar-rail-gutter);
 }
 
 .luxar-control-rail-hint::before {

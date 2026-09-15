@@ -40,6 +40,11 @@
    Coarse primary pointer: viewport clamps, safe areas, tap targets.
    ========================================================================= */
 @media (pointer: coarse) {
+  .luxar-has-control-rail {
+    /* 12px rail inset + 58px coarse rail box + the desktop 9px gap. */
+    --luxar-rail-gutter: 79px;
+  }
+
   /* ---- Control rail: honour the left safe area (landscape notch). ---- */
   .luxar-control-rail {
     left: calc(12px + env(safe-area-inset-left, 0px));
@@ -83,7 +88,10 @@
     display: none;
   }
   .luxar-control-rail__popover-body {
-    width: min(264px, calc(100vw - 73px - 12px - env(safe-area-inset-left, 0px)));
+    width: min(
+      264px,
+      calc(100vw - var(--luxar-rail-gutter) - 12px - env(safe-area-inset-left, 0px))
+    );
   }
 
   /* ---- Fixed-width panels never wider than the viewport. ---- */
@@ -128,7 +136,7 @@
     bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
   }
   .luxar-debug-console {
-    width: min(600px, calc(100vw - 73px - var(--luxar-spacing-10, 20px)));
+    width: min(600px, calc(100vw - var(--luxar-rail-gutter) - var(--luxar-spacing-10, 20px)));
     height: min(400px, 60vh);
     bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
   }
@@ -142,17 +150,40 @@
      this restates it with the inset). ---- */
   .luxar-has-control-rail .luxar-gui,
   .luxar-has-control-rail .luxar-layers-panel {
-    left: calc(73px + env(safe-area-inset-left, 0px)) !important;
+    left: calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px)) !important;
   }
   .luxar-has-control-rail .luxar-debug-console {
-    left: calc(73px + env(safe-area-inset-left, 0px));
+    left: calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px));
   }
   .luxar-control-rail-hint {
-    left: calc(73px + env(safe-area-inset-left, 0px));
+    left: calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px));
     /* Beside the rail, never across the canvas centre: on a phone the hint
        covered the middle of the canvas and swallowed the first touch. */
     max-width: calc(
-      100vw - 73px - 2 * 12px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)
+      100vw - var(--luxar-rail-gutter) - 2 * 12px - env(safe-area-inset-left, 0px) -
+        env(safe-area-inset-right, 0px)
+    );
+  }
+
+  .luxar-has-control-rail .luxar-overlay:not(.luxar-overlay--right-anchored) {
+    left: max(
+      var(--luxar-overlay-x),
+      calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px))
+    );
+  }
+
+  .luxar-has-control-rail
+    .luxar-overlay--text.luxar-overlay--explicit-width:not(.luxar-overlay--right-anchored) {
+    width: min(
+      max(var(--luxar-overlay-width), 18ch),
+      calc(
+        100vw -
+          max(
+            var(--luxar-overlay-x),
+            calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px))
+          ) -
+          12px - env(safe-area-inset-right, 0px)
+      )
     );
   }
 
