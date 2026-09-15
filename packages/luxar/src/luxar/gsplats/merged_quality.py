@@ -48,9 +48,8 @@ _QUALITY_DEVICE_PEAK_VOLUMES = 8
 #: concurrency here so each process admits only its share of device VRAM.
 QUALITY_WORKERS_PER_DEVICE_ENV = "LUXAR_QUALITY_WORKERS_PER_DEVICE"
 
-#: Local ``batch-fit run`` workers across every device share the host's RAM. The
-#: single-card ``-j N`` and Slurm fan-outs do not yet set these counts; their
-#: per-tile scoring work is tracked by #2195.
+#: Concurrent fit workers across every device share the host's RAM. Local and
+#: packed Slurm launchers set this count before each worker starts.
 QUALITY_WORKERS_PER_HOST_ENV = "LUXAR_QUALITY_WORKERS_PER_HOST"
 
 

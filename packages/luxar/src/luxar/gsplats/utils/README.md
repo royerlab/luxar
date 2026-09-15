@@ -21,6 +21,8 @@ This package provides low-level utilities for working with Gaussian splat parame
 
 Part of the `luxar.gsplats` package, but importable on a plain `pip install luxar`: everything in `trils.py` is pure NumPy, and the core scene-authoring path depends on that (`add_gsplats` reaches `split_tril` through the compiler on every call).
 
+`worker_memory.py` is also dependency-free so core CLI planning can share fit-memory policy without importing `torch`.
+
 The two `device.py` helpers — `resolve_torch_device` and `is_mps_available` — are the exception: they import `torch`, which ships only in the optional `gsplats` extra. They are therefore resolved lazily by a module `__getattr__` (PEP 562), so importing this package costs nothing on a core-only install and `from luxar.gsplats.utils import resolve_torch_device` raises `ModuleNotFoundError: No module named 'torch'` only when the name is actually touched. Install the extra to use them:
 
 ```bash
