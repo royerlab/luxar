@@ -513,7 +513,7 @@ def test_the_default_budget_is_held_under_the_memory_actually_free(
     monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 1024.0)
     assert _quality_budget_gb() == pytest.approx(_QUALITY_BUDGET_GB)
 
-    # Unmeasurable (a platform without SC_AVPHYS_PAGES) falls back to the ceiling
+    # Unmeasurable allocatable host memory falls back to the ceiling
     # rather than declining to score at all.
     monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: None)
     assert _quality_budget_gb() == pytest.approx(_QUALITY_BUDGET_GB)

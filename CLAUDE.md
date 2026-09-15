@@ -490,7 +490,8 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32  # Single tile (Slurm-ready)
 # Parallel tiles on ONE GPU (no Slurm): spawn N `fit --tile` worker subprocesses,
-# then merge. Default -j 1 = sequential. `-j auto` sizes N from free VRAM.
+# then merge. Default -j 1 = sequential. `-j auto` sizes N from GPU memory plus
+# shared host RAM/CPU limits; override its hard cap with LUXAR_AUTO_WORKER_HARD_CAP.
 # Saturates the GPU when a single tile under-utilizes it (the local counterpart
 # of `batch-fit submit --parallel`). --keep-tiles keeps the per-tile temp outputs.
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32 -j 4
@@ -527,8 +528,9 @@ luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --rec
 # LOCAL multi-GPU whole-timelapse fit (no Slurm; the local sibling of submit).
 # --gpus auto = every visible CUDA card above a free-VRAM floor (skips small
 # cards; override LUXAR_GPU_VRAM_FLOOR_GB); 'all' forces every card; 'cpu' = CPU;
-# '0,1,3' = explicit. Per-GPU concurrency from --jobs-per-gpu (auto sizes from
-# each card's free VRAM). Resumable: re-running skips tiles already on disk.
+# '0,1,3' = explicit. Per-GPU concurrency from --jobs-per-gpu (auto accounts for
+# GPU memory plus shared host RAM/CPU limits; LUXAR_AUTO_WORKER_HARD_CAP overrides
+# the host-wide cap). Resumable: re-running skips tiles already on disk.
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256            # uniform, all GPUs
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto   # content plan
 luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --merge-n-lods 4  # per-part LOD at merge

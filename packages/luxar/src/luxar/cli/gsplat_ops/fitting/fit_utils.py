@@ -622,6 +622,7 @@ def dispatch_parallel_tiled(
         build_worker_cmd,
         fit_tiled_parallel,
         luxar_argv0,
+        report_auto_jobs,
         resolve_jobs,
     )
     from luxar.gsplats.fitting.downscale import downscale_volume, normalize_downscale
@@ -646,15 +647,18 @@ def dispatch_parallel_tiled(
     tile_voxels = max((int(math.prod(s.shape)) for s in specs), default=1)
 
     try:
-        n_jobs = resolve_jobs(
+        worker_limit = resolve_jobs(
             ctx.jobs,
             tile_voxels=tile_voxels,
             num_tiles=n_tiles,
             device=ctx.device,
         )
+        n_jobs = worker_limit.count
     except ValueError:
         aprint(f"Error: --jobs must be an integer or 'auto', got '{ctx.jobs}'")
         raise typer.Exit(1)
+
+    report_auto_jobs(ctx.jobs, worker_limit)
 
     # Only spawn workers when there is genuine concurrency to gain.
     # Otherwise (n_jobs == 1) fall through to the sequential tiled

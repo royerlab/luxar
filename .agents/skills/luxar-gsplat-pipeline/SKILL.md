@@ -597,7 +597,8 @@ single leaf.
 ```bash
 # Uniform tiles with seamless Hann stitching.
 luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
-# Parallel tiles on ONE GPU (no Slurm); -j auto sizes from free VRAM.
+# Parallel tiles on ONE GPU (no Slurm); -j auto accounts for GPU memory plus
+# shared host RAM/CPU limits.
 luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform --tile-size 256 -j 4
 # Content-adaptive boxes (more splats where the volume is busy); needs a density.
 luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json -j 8

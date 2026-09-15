@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from luxar.gsplats.fit_tiled_parallel import (
     build_worker_cmd,
@@ -25,6 +26,13 @@ from luxar.gsplats.tiling import compute_tile_specs
 # Subprocess-pool tiled fitting (seconds per test). Slow → CI runs `-m "not
 # slow"`; the full suite runs locally pre-push.
 pytestmark = pytest.mark.slow
+
+
+@pytest.fixture(autouse=True)
+def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.setenv("MKL_NUM_THREADS", "1")
+
 
 # ── A fake worker: writes a deterministic tiny gsplats per tile ──────────────
 
@@ -141,53 +149,117 @@ def _corrupt_store_builder(corrupt_on: int):
 
 class TestResolveJobs:
     def test_explicit_passthrough(self) -> None:
-        assert resolve_jobs(4, tile_voxels=1000, num_tiles=10) == 4
+        assert resolve_jobs(4, tile_voxels=1000, num_tiles=10).count == 4
 
     def test_explicit_clamped_to_num_tiles(self) -> None:
-        assert resolve_jobs(8, tile_voxels=1000, num_tiles=3) == 3
+        assert resolve_jobs(8, tile_voxels=1000, num_tiles=3).count == 3
 
     def test_explicit_floor_one(self) -> None:
-        assert resolve_jobs(0, tile_voxels=1000, num_tiles=5) == 1
+        assert resolve_jobs(0, tile_voxels=1000, num_tiles=5).count == 1
 
     def test_bad_string_raises(self) -> None:
         with pytest.raises(ValueError):
             resolve_jobs("banana", tile_voxels=1000, num_tiles=5)
 
     def test_auto_uses_vram_estimate(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # free=300 MB, per_tile = 2 * 10e6 * 4 = 80 MB  -> 3 workers
+        # free=2 GB, per tile=80 MB + 512 MiB CUDA overhead -> 3 workers.
         import luxar.gsplats.metrics as metrics
         import luxar.gsplats.utils.device as device_mod
 
-        monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: 300_000_000)
-        monkeypatch.setattr(device_mod, "resolve_torch_device", lambda *a, **k: None)
+        monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: 2_000_000_000)
+        monkeypatch.setattr(
+            device_mod, "resolve_torch_device", lambda *a, **k: torch.device("cuda")
+        )
+        monkeypatch.setattr(
+            device_mod, "available_host_memory_bytes", lambda: 128 * 1024**3
+        )
+        monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 32)
         n = resolve_jobs("auto", tile_voxels=10_000_000, num_tiles=10, device="cuda")
-        assert n == 3
+        assert n.count == 3
 
     def test_auto_clamped_to_num_tiles(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import luxar.gsplats.metrics as metrics
         import luxar.gsplats.utils.device as device_mod
 
         monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: 10_000_000_000)
-        monkeypatch.setattr(device_mod, "resolve_torch_device", lambda *a, **k: None)
-        n = resolve_jobs("auto", tile_voxels=1000, num_tiles=4, device="cuda")
-        assert n == 4
+        monkeypatch.setattr(
+            device_mod, "resolve_torch_device", lambda *a, **k: torch.device("cuda")
+        )
+        monkeypatch.setattr(
+            device_mod, "available_host_memory_bytes", lambda: 128 * 1024**3
+        )
+        monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 32)
+        limit = resolve_jobs("auto", tile_voxels=1000, num_tiles=4, device="cuda")
+        assert limit.count == 4
+        assert limit.limit == "task count"
+
+    def test_auto_caps_reported_small_task(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import luxar.gsplats.metrics as metrics
+        import luxar.gsplats.utils.device as device_mod
+
+        monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: int(7.5 * 1024**3))
+        monkeypatch.setattr(
+            device_mod, "resolve_torch_device", lambda *a, **k: torch.device("cuda")
+        )
+        monkeypatch.setattr(
+            device_mod, "available_host_memory_bytes", lambda: 125 * 1024**3
+        )
+        monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 32)
+
+        limit = resolve_jobs(
+            "auto",
+            tile_voxels=41 * 512 * 512,
+            num_tiles=400,
+            device="cuda",
+        )
+
+        assert limit.count == 8
+        assert limit.limit == "hard cap"
 
     def test_auto_cpu_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # No VRAM info -> CPU fallback = cpu_count()//2 (pinned to 8 cores here
-        # so the assertion tests the formula, not the num_tiles clamp), then
-        # clamped to num_tiles.
-        import os
-
+        # CPU auto sizing uses the shared host limits: CPU count, RAM, hard cap,
+        # then the number of tiles.
         import luxar.gsplats.metrics as metrics
         import luxar.gsplats.utils.device as device_mod
 
         monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: None)
-        monkeypatch.setattr(device_mod, "resolve_torch_device", lambda *a, **k: None)
-        monkeypatch.setattr(os, "cpu_count", lambda: 8)
-        # num_tiles high enough to not clamp -> returns 8//2 = 4
-        assert resolve_jobs("auto", tile_voxels=1000, num_tiles=100, device="cpu") == 4
+        monkeypatch.setattr(
+            device_mod, "resolve_torch_device", lambda *a, **k: torch.device("cpu")
+        )
+        monkeypatch.setattr(
+            device_mod, "available_host_memory_bytes", lambda: 16 * 1024**3
+        )
+        monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 8)
+        assert (
+            resolve_jobs("auto", tile_voxels=1000, num_tiles=100, device="cpu").count
+            == 4
+        )
         # and clamped when num_tiles is small
-        assert resolve_jobs("auto", tile_voxels=1000, num_tiles=2, device="cpu") == 2
+        assert (
+            resolve_jobs("auto", tile_voxels=1000, num_tiles=2, device="cpu").count == 2
+        )
+
+    def test_auto_cuda_probe_failure_keeps_host_parallelism(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import luxar.gsplats.metrics as metrics
+        import luxar.gsplats.utils.device as device_mod
+
+        monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: None)
+        monkeypatch.setattr(
+            device_mod, "resolve_torch_device", lambda *a, **k: torch.device("cuda")
+        )
+        monkeypatch.setattr(
+            device_mod, "available_host_memory_bytes", lambda: 128 * 1024**3
+        )
+        monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 32)
+
+        limit = resolve_jobs("auto", tile_voxels=1000, num_tiles=100, device="cuda")
+
+        assert limit.count == 8
+        assert limit.limit == "GPU memory unavailable"
 
 
 # ── build_worker_cmd ─────────────────────────────────────────────────────────

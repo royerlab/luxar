@@ -43,7 +43,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--tile-size` | 256 | tile edge in voxels |
 | `--overlap` | 32 | inter-tile overlap voxels (Hann-stitched) |
 | `--tile` | none | fit a single tile `N/M` (e.g. `3/16`) — Slurm-ready |
-| `--jobs` / `-j` | 1 | concurrent tiles on one GPU; `auto` sizes from free VRAM |
+| `--jobs` / `-j` | 1 | concurrent tiles on one GPU; `auto` accounts for GPU memory plus shared host RAM/CPU limits |
 | `--keep-tiles` | false | keep per-tile temp outputs after merge |
 
 ### Content-adaptive tiling (`--tiling content`) — needs a density

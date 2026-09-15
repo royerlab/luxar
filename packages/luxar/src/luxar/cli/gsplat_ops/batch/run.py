@@ -174,8 +174,9 @@ def run_batch_run(
     jobs_per_gpu: str = typer.Option(
         "auto",
         "--jobs-per-gpu",
-        help="Concurrent fit workers per GPU. 'auto' sizes each card from its own "
-        "free VRAM; an integer applies uniformly. Use 1 to be safe on small cards.",
+        help="Concurrent fit workers per GPU. 'auto' shares GPU memory, host RAM, "
+        "available CPU threads, and a configurable host-wide hard cap; an integer "
+        "applies uniformly. Use 1 to be safe on small cards.",
         rich_help_panel="Local GPUs",
     ),
     no_resume: bool = typer.Option(
@@ -270,9 +271,9 @@ def run_batch_run(
     The local (non-Slurm) sibling of `batch-fit submit`: plans the decomposition
     once (uniform tiles or a shared content box plan), fits every (t,c,slot) task
     with a multi-GPU subprocess pool (one worker pinned per GPU via
-    CUDA_VISIBLE_DEVICES, per-GPU concurrency sized from free VRAM), then runs the
-    memory-safe streaming merge to a single kind=partition .gsplats.zarr. Resumable
-    — re-running skips tiles already on disk.
+    CUDA_VISIBLE_DEVICES, concurrency bounded by GPU memory and shared host
+    resources), then runs the memory-safe streaming merge to a single kind=partition
+    .gsplats.zarr. Resumable — re-running skips tiles already on disk.
 
     Examples:
         luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256

@@ -14,7 +14,6 @@ a single tile under-saturates the GPU and there is spare compute/VRAM.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -22,7 +21,10 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
+
+if TYPE_CHECKING:
+    from luxar.gsplats.utils.device import WorkerLimit
 
 import numpy as np
 from arbol import aprint, asection
@@ -220,35 +222,58 @@ def resolve_jobs(
     num_tiles: int,
     device: Optional[str] = None,
     dtype_bytes: int = 4,
-) -> int:
-    """Resolve the ``--jobs`` option to a concrete worker count.
+) -> "WorkerLimit":
+    """Resolve ``--jobs`` and report the resource that limited auto sizing.
 
-    Explicit integers pass through (clamped to ``>= 1``).  ``"auto"`` probes
-    free GPU VRAM and divides by a conservative per-tile working-set estimate
-    (~2x the tile's voxel bytes, matching the Slurm parallel-packing heuristic);
-    it falls back to half the CPU count when VRAM can't be queried (CPU / MPS
-    devices have no ``mem_get_info``).  The result is always clamped to
-    ``num_tiles`` — never spawn more workers than there are tiles.
+    Explicit integers pass through (clamped to ``>= 1``). ``"auto"`` accounts
+    for the per-tile working set plus fixed CUDA-process overhead, then applies
+    free host RAM, CPU-count, and hard caps. CPU / MPS use the host limits only.
+    The result is always clamped to ``num_tiles``.
     """
+    from luxar.gsplats.utils.device import (
+        WorkerLimit,
+        resolve_auto_worker_limit,
+        resolve_torch_device,
+    )
+
     if isinstance(jobs, str) and jobs.strip().lower() == "auto":
         free: Optional[int] = None
+        require_device_memory = False
         try:
             from luxar.gsplats.metrics import _gpu_free_memory
-            from luxar.gsplats.utils.device import resolve_torch_device
 
             dev = resolve_torch_device(device) if device else resolve_torch_device()
-            free = _gpu_free_memory(dev)
+            require_device_memory = getattr(dev, "type", None) == "cuda"
+            if require_device_memory:
+                free = _gpu_free_memory(dev)
         except Exception:
             free = None
 
-        if free is None:
-            n = max(1, (os.cpu_count() or 2) // 2)
-        else:
-            per_tile = max(1, int(2.0 * tile_voxels * dtype_bytes))
-            n = max(1, int(free // per_tile))
-        return max(1, min(n, num_tiles))
+        limit = resolve_auto_worker_limit(
+            task_voxels=tile_voxels,
+            free_device_memory=free,
+            require_device_memory=require_device_memory,
+            dtype_bytes=dtype_bytes,
+        )
+        if num_tiles < limit.count:
+            return WorkerLimit(max(1, num_tiles), "task count")
+        return limit
 
-    return max(1, min(int(jobs), num_tiles))
+    requested = max(1, int(jobs))
+    if num_tiles < requested:
+        return WorkerLimit(max(1, num_tiles), "task count")
+    return WorkerLimit(requested, "requested count")
+
+
+def report_auto_jobs(jobs: str | int, worker_limit: "WorkerLimit") -> None:
+    """Print the resolved count and limiter for an automatic jobs request."""
+    if isinstance(jobs, str) and jobs.strip().lower() == "auto":
+        from luxar.gsplats.utils.device import format_worker_limit
+
+        aprint(
+            f"Auto jobs: {worker_limit.count} worker(s), "
+            f"{format_worker_limit(worker_limit.limit)}"
+        )
 
 
 def fit_tiled_parallel(

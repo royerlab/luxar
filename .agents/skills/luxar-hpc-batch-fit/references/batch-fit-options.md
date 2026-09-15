@@ -160,7 +160,7 @@ Every subcommand: `--dry-run` shows the plan without submitting/fitting.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--gpus` | auto | `auto` (cards above a free-VRAM floor) / `all` / `cpu` / `0,1,3` |
-| `--jobs-per-gpu` | auto | concurrent workers per GPU (auto sizes from free VRAM) |
+| `--jobs-per-gpu` | auto | concurrent workers per GPU (auto accounts for GPU memory plus shared host RAM/CPU limits) |
 | `--no-resume` | off | re-fit every task even if its output exists (default: resume) |
 
 Local runner always denoises on-the-fly per tile (no `--preprocess`).

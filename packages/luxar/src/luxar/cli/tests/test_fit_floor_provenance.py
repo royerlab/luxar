@@ -248,7 +248,6 @@ def test_parallel_content_fit_hands_the_loaded_volume_to_the_merge(
     import importlib
 
     from luxar.cli.gsplat_ops import planner
-    from luxar.gsplats import fit_tiled_parallel
     from luxar.gsplats.planner import FitPlan, PlanBox
 
     parallel_module = importlib.import_module(
@@ -277,7 +276,6 @@ def test_parallel_content_fit_hands_the_loaded_volume_to_the_merge(
         return _stub_leaf()
 
     monkeypatch.setattr(parallel_module, "fit_planned_parallel", _fake_parallel)
-    monkeypatch.setattr(fit_tiled_parallel, "resolve_jobs", lambda *args, **kwargs: 2)
     monkeypatch.setattr(planner, "_save_fit_result", lambda *args, **kwargs: None)
 
     planner.run_content_fit(
@@ -304,7 +302,6 @@ def test_parallel_content_fit_rejects_an_external_plan_for_another_grid(
     import importlib
 
     from luxar.cli.gsplat_ops import planner
-    from luxar.gsplats import fit_tiled_parallel
     from luxar.gsplats.planner import FitPlan, PlanBox
 
     parallel_module = importlib.import_module(
@@ -332,7 +329,6 @@ def test_parallel_content_fit_rejects_an_external_plan_for_another_grid(
         pytest.fail("grid mismatch must be rejected before floor preprocessing")
 
     monkeypatch.setattr(parallel_module, "fit_planned_parallel", _fake_parallel)
-    monkeypatch.setattr(fit_tiled_parallel, "resolve_jobs", lambda *args, **kwargs: 2)
     monkeypatch.setattr(planner, "resolve_shared_floor", _unexpected_floor_scan)
 
     with pytest.raises(typer.BadParameter, match="does not match the plan grid"):
