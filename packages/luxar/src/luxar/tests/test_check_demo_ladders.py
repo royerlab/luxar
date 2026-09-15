@@ -986,8 +986,10 @@ def test_every_share_arm_exemption_carries_a_measured_reason() -> None:
 
 def test_every_leaf_exemption_is_exact_and_explained() -> None:
     assert checker.LEAF_EXEMPT, "an empty allowlist should be deleted, not kept"
-    for key, reason in checker.LEAF_EXEMPT.items():
+    for key, (ceiling, reason) in checker.LEAF_EXEMPT.items():
         assert ".luxar.zarr/" in key
+        assert "/additive_" not in key
+        assert ceiling is None or ceiling > 0
         assert _has_exemption_evidence(reason), f"{key}: reason cites no evidence"
 
 
@@ -1016,7 +1018,7 @@ def test_stale_leaf_exemption_fails_when_its_scene_is_inspected(
     monkeypatch.setattr(
         checker,
         "LEAF_EXEMPT",
-        {"stale.luxar.zarr/missing": "measured 123 rows in the legacy leaf"},
+        {"stale.luxar.zarr/missing": (123, "measured 123 rows in the legacy leaf")},
     )
 
     assert checker.main([str(scene)]) == 1
@@ -1036,7 +1038,7 @@ def test_leaf_exemption_covers_structural_and_sliced_arms(
     _sliced_node(
         scene,
         {coordinate: 7 for coordinate in range(40)},
-        node_total=83_221_420,
+        node_total=37_930_893,
         node_name="legacy_leaf",
     )
     monkeypatch.setattr(
@@ -1044,15 +1046,46 @@ def test_leaf_exemption_covers_structural_and_sliced_arms(
         "LEAF_EXEMPT",
         {
             "legacy.luxar.zarr/legacy_leaf": (
-                "pinned legacy archive has a measured 37,930,613-element level"
+                37_930_613,
+                "pinned legacy archive has a measured 37,930,613-element level",
             )
         },
     )
 
     assert checker.main([str(scene)]) == 0
     output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
-    assert "legacy_leaf: exempt:" in output
-    assert "sparsest rung-0 slices" not in output
+    assert "legacy_leaf:" in output
+    assert "[exempt:" in output
+    assert "sparsest rung-0 slices" in output
+
+
+def test_leaf_exemption_stops_at_its_measured_ceiling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scene = tmp_path / "legacy.luxar.zarr"
+    _sliced_node(
+        scene,
+        {coordinate: 7 for coordinate in range(40)},
+        node_total=37_930_894,
+        node_name="legacy_leaf",
+    )
+    monkeypatch.setattr(
+        checker,
+        "LEAF_EXEMPT",
+        {
+            "legacy.luxar.zarr/legacy_leaf": (
+                37_930_613,
+                "pinned legacy archive has a measured 37,930,613-element level",
+            )
+        },
+    )
+
+    assert checker.main([str(scene)]) == 1
+    output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "above the 1,000,000 absolute commit cap" in output
+    assert "[exempt:" not in output
 
 
 def test_partition_node_exemption_matched_only_by_sliced_arm_is_not_stale(
@@ -1082,7 +1115,8 @@ def test_partition_node_exemption_matched_only_by_sliced_arm_is_not_stale(
         "LEAF_EXEMPT",
         {
             "partitioned.luxar.zarr/big_node": (
-                "measured 14 rows per coordinate in the pinned archive"
+                400,
+                "measured 14 rows per coordinate in the pinned archive",
             )
         },
     )
