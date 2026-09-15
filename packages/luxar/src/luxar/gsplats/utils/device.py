@@ -213,11 +213,6 @@ def _gpu_worker_capacity(free_memory: Optional[int], task_bytes: int) -> WorkerL
     return WorkerLimit(cuda_worker_count(free_memory, task_bytes), "GPU memory")
 
 
-def gpu_worker_capacity(memory_budget: Optional[int], task_bytes: int) -> WorkerLimit:
-    """Resolve CUDA worker capacity from a fixed memory budget."""
-    return _gpu_worker_capacity(memory_budget, task_bytes)
-
-
 def resolve_auto_worker_limit(
     *,
     task_voxels: int,
