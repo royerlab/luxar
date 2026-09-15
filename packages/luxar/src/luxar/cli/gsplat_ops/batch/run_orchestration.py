@@ -26,13 +26,16 @@ def _resolve_local_gpu_profile(
     if not selected:
         return selected, "CPU", None, None
 
-    devices: list[tuple[str, int]] = []
+    device_memory_by_name: dict[str, int] = {}
     for index in selected:
         properties = torch.cuda.get_device_properties(index)
-        device = (str(properties.name), int(properties.total_memory))
-        if device[0] not in {name for name, _ in devices}:
-            devices.append(device)
+        name = str(properties.name)
+        total_memory = int(properties.total_memory)
+        device_memory_by_name[name] = min(
+            device_memory_by_name.get(name, total_memory), total_memory
+        )
 
+    devices = list(device_memory_by_name.items())
     manifest_name = ", ".join(name for name, _ in devices)
     profiled: list[tuple[int, str, dict[str, Any]]] = []
     for name, total_memory in devices:
