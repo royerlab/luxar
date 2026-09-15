@@ -615,11 +615,13 @@ The rail is the canonical interactive surface; its patterns generalize:
   chip-tips upward.
 - **Popover/flyout arrows are real children** (§5.1.1): 12×12 rotated square
   painted `--luxar-bg-secondary` with two hairline borders.
-- **One rail gutter: `left: 73px`.** Docked panels, popovers/flyouts and the
-  first-run hint all share it — it is the popovers' own computed left edge (the
-  rail box including its border, plus their 10px gap), so whichever surface is
-  open its left edge lands in exactly the same place. Docked panels get it as
-  an `!important` override of inline positioning (`control-rail.css:547`,
+- **One rail gutter: `--luxar-rail-gutter`.** Docked panels, popovers/flyouts
+  and the first-run hint all share its 73px default; `(pointer: coarse)` raises
+  it to 79px for the wider touch rail. It is the popovers' own computed left
+  edge (the rail box including its border, plus their gap), so whichever
+  surface is open its left edge lands in exactly the same place. Docked panels
+  get it as an `!important` override of inline positioning
+  (`control-rail.css:558`,
   sanctioned by §13 and registered in §15.6); the draggable debug console gets
   the same default *without* `!important` so dragging still wins.
   **The rule is a hardcoded selector pair** — only `.luxar-gui` and
@@ -913,8 +915,8 @@ Every animation and transition a component introduces must be disabled under
 | Surface | Placement |
 | --- | --- |
 | Control rail | Left edge, vertically centered, `left: 12px` |
-| Left-docked panels (GUI, rendering/recording, layers, debug console) | `left: 73px` beside the rail, one at a time (§7.5); debug console draggable |
-| Rail popovers/flyouts | `left: calc(100% + 10px)` off the rail (= the same 73px gutter), arrow pointing back |
+| Left-docked panels (GUI, rendering/recording, layers, debug console) | `left: var(--luxar-rail-gutter)` beside the rail, one at a time (§7.5); 73px normally, 79px on coarse pointers; debug console draggable |
+| Rail popovers/flyouts | `left: calc(100% + 10px)` off the rail (= `--luxar-rail-gutter`), arrow pointing back |
 | Dimension sliders | Bottom-center, 80% width, max 800px |
 | Toast | Bottom-center, transient |
 | Scene-identity banner | Top-center, `top: 12px`, standing (not transient) |
@@ -973,13 +975,15 @@ media features in any other stylesheet, and the load-bearing clamps present.
 - **Buttons are `touch-action: manipulation`** (no 300 ms double-tap delay,
   no page zoom on a double-tap over UI). Canvas `touch-action: none` and gesture
   ownership are planned separately.
-- **Hit sizes.** Under `(pointer: coarse)` the primary controls (rail buttons,
-  chips, panel close) are 44px through a LOCAL `--luxar-hit-min` custom property
-  set on the component roots — not a theme token, because the tokens are
-  TS-generated across four theme files and a touch-only size is not a theme
-  decision. Dense secondary controls (layer eye, play and step buttons) are
-  36px; range thumbs use a matching hit band (24px normally, 28px for the
-  two-thumb range slider) while the drawn track stays thin; checkboxes 24px.
+- **Local layout properties.** `--luxar-rail-gutter` is 73px at `:root` and
+  becomes 79px under `(pointer: coarse)` so docked surfaces clear the wider
+  touch rail. Primary controls (rail buttons, chips, panel close) are 44px
+  through a LOCAL `--luxar-hit-min` custom property set on the component roots
+  — not a theme token, because the tokens are TS-generated across four theme
+  files and a touch-only size is not a theme decision. Dense secondary controls
+  (layer eye, play and step buttons) are 36px; range thumbs use a matching hit
+  band (24px normally, 28px for the two-thumb range slider) while the drawn
+  track stays thin; checkboxes 24px.
 - **16px inputs.** Every text/number/select inside a panel is `font-size: 16px`
   under a coarse pointer: below that iOS Safari zooms the page into a focused
   field and never zooms back. Numeric inputs use `inputmode="decimal"` only when
@@ -1388,11 +1392,12 @@ migrated.
   every other reduced-motion block in the tree spells a plain
   `animation: none` / `transition: none` and needs no override, so `!important`
   is not automatic there. Also sanctioned: the rail-docking gutter
-  `left: 73px !important` (`control-rail.css:547`, §7.5) — restated with the
-  safe-area inset under `(pointer: coarse)` in `coarse-pointer.css` (§11.5) — and the
+  `left: var(--luxar-rail-gutter) !important` (`control-rail.css:558`, §7.5) —
+  restated with the safe-area inset under `(pointer: coarse)` in
+  `coarse-pointer.css` (§11.5) — and the
   popover-nesting overrides that unpin a GUI mounted inside a popover
   (`control-rail.css:388-391`); and the state-forcing rules in
-  `overlay-layer.css:33-34` that must beat inline styles.
+  `overlay-layer.css:38-39` that must beat inline styles.
 - Off-tier z-indexes via `calc()` (§3.5): the modal scrim at
   `calc(var(--luxar-z-modal) - 1)` (`dataset-browser.css:18`), the debug
   console at `calc(var(--luxar-z-base) + 50)` (`debug-console.css:31`), the
