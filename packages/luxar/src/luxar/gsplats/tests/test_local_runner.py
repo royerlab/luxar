@@ -64,6 +64,7 @@ def test_assignment_single_gpu() -> None:
         ("1", 0, "1"),
         ("3,1", 1, "1"),
         ("GPU-abc123,MIG-def456", 1, "MIG-def456"),
+        ("0", 3, "3"),
     ],
 )
 def test_gpu_worker_env_maps_visible_index_to_parent_token(

@@ -108,9 +108,8 @@ def _worker_env(gpu: int, workers: dict[int, int], host_workers: int) -> dict[st
             QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
         }
     parent_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
-    visible_token = (
-        parent_visible.split(",")[gpu].strip() if parent_visible else str(gpu)
-    )
+    parent_tokens = parent_visible.split(",") if parent_visible else []
+    visible_token = parent_tokens[gpu].strip() if gpu < len(parent_tokens) else str(gpu)
     return {
         "CUDA_VISIBLE_DEVICES": visible_token,
         QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
