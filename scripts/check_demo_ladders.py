@@ -387,6 +387,8 @@ def _leaf_commit_measurement(leaf: Any) -> int | None:
             sizes.append(_element_count(dict(leaf[f"additive_{index}"].attrs)))
         except KeyError:
             return None
+    if total and sum(sizes) != total:
+        return None
     node_biggest = max(sizes, default=0)
     return _largest_commit_elements(leaf, n_sub, node_biggest)[0]
 

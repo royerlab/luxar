@@ -1088,6 +1088,30 @@ def test_leaf_exemption_stops_at_its_measured_ceiling(
     assert "[exempt:" not in output
 
 
+def test_leaf_exemption_does_not_cover_level_sum_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scene = tmp_path / "legacy.luxar.zarr"
+    _make_leaf(scene, [10, 20, 30], declared_total=99)
+    monkeypatch.setattr(
+        checker,
+        "LEAF_EXEMPT",
+        {
+            "legacy.luxar.zarr/leaf": (
+                30,
+                "pinned legacy archive has a measured 30-element level",
+            )
+        },
+    )
+
+    assert checker.main([str(scene)]) == 1
+    output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "levels sum to 60 but the leaf declares 99" in output
+    assert "[exempt:" not in output
+
+
 def test_partition_node_exemption_matched_only_by_sliced_arm_is_not_stale(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
