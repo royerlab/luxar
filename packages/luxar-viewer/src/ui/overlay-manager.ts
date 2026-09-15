@@ -60,6 +60,8 @@ const ANCHOR_TRANSFORM: Record<string, string> = {
   'bottom-right': 'translate(-100%, -100%)',
 };
 
+const CENTER_ANCHORS = new Set(['top-center', 'center', 'bottom-center']);
+
 /**
  * Transform for RIGHT-side anchors when the element is positioned from the
  * container's RIGHT edge (via `right:` instead of `left:`).
@@ -846,15 +848,22 @@ export class OverlayManager {
       config.anchor === 'top-right' ||
       config.anchor === 'center-right' ||
       config.anchor === 'bottom-right';
+    const isCenterAnchor = CENTER_ANCHORS.has(config.anchor);
+
+    el.classList.toggle('luxar-overlay--center-anchored', isCenterAnchor);
 
     if (isRightAnchor) {
+      el.classList.add('luxar-overlay--right-anchored');
       el.style.right = `${(1 - x) * 100}%`;
+      el.style.removeProperty('--luxar-overlay-x');
       el.style.left = '';
       // Transform without the horizontal -100% (the right edge already
       // places the box); vertical component preserved.
       el.style.transform = RIGHT_ANCHOR_TRANSFORM[config.anchor] ?? 'translate(0, 0)';
     } else {
-      el.style.left = `${x * 100}%`;
+      el.classList.remove('luxar-overlay--right-anchored');
+      el.style.setProperty('--luxar-overlay-x', `${x * 100}%`);
+      el.style.left = '';
       el.style.right = '';
       el.style.transform = ANCHOR_TRANSFORM[config.anchor] ?? 'translate(0, 0)';
     }
@@ -901,6 +910,7 @@ export class OverlayManager {
     // re-apply with a different config.
     if (config.width) {
       // Explicit width is the primary sizing; honor it verbatim.
+      el.classList.add('luxar-overlay--explicit-width');
       el.style.width = `${config.width * 100}vw`;
       el.style.maxWidth = '';
       // Hover overlays use pre-line so \n in labels creates line breaks;
@@ -912,6 +922,7 @@ export class OverlayManager {
       // label wraps to a couple of lines instead of collapsing to one word per
       // line against the right-anchored container edge (see issue #773), rather
       // than the ~2vw the pre-transform container position would otherwise impose.
+      el.classList.remove('luxar-overlay--explicit-width');
       el.style.width = '';
       el.style.maxWidth = 'min(30vw, 40ch)';
       el.style.whiteSpace = 'pre-line';
@@ -920,6 +931,7 @@ export class OverlayManager {
       // No explicit width and not a wrapping overlay: single line, sized to its
       // content (unchanged behavior — a max-width here would only clip the box
       // while nowrap text overflows off-screen).
+      el.classList.remove('luxar-overlay--explicit-width');
       el.style.width = '';
       el.style.maxWidth = '';
       el.style.whiteSpace = 'nowrap';

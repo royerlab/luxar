@@ -120,12 +120,29 @@ export function stripMediaQueries(css: string): string {
 
 /**
  * Extract the declaration block for a given CSS selector. Matches the
- * literal selector at the start of a rule. Returns an empty string when
- * the selector is not present.
+ * literal selector at the start of a rule after normalizing whitespace and
+ * selector punctuation. Returns an empty string when the selector is absent.
  */
 export function ruleBody(css: string, selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(^|[^\\w-])${escaped}\\s*\\{([^}]*)\\}`, 'm');
+  const selectorPunctuation = /^[(),>+~]$/;
+  const selectorOpeningPunctuation = /^[,(>+~]$/;
+  const selectorClosingPunctuation = /^[,)>+~]$/;
+  const selectorPattern = selector
+    .trim()
+    .split(/(\s+|[(),>+~])/)
+    .filter(Boolean)
+    .map((part, index, parts) => {
+      if (/^\s+$/.test(part)) {
+        const nextToPunctuation =
+          selectorOpeningPunctuation.test(parts[index - 1] ?? '') ||
+          selectorClosingPunctuation.test(parts[index + 1] ?? '');
+        return nextToPunctuation ? '' : '\\s+';
+      }
+      const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return selectorPunctuation.test(part) ? `\\s*${escaped}\\s*` : escaped;
+    })
+    .join('');
+  const re = new RegExp(`(^|[^\\w-])${selectorPattern}\\s*\\{([^}]*)\\}`, 'm');
   const m = css.match(re);
   return m ? m[2] : '';
 }

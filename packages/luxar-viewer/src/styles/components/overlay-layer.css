@@ -7,12 +7,17 @@
 
 .luxar-overlay {
   position: fixed;
+  left: var(--luxar-overlay-x);
   pointer-events: none;
   box-sizing: border-box;
   /* Sit between the WebGL canvas (z-index: auto) and UI controls (z-index: 10+) */
   z-index: 5;
   /* Prevent text selection by default */
   user-select: none;
+}
+
+.luxar-overlay--right-anchored {
+  left: auto;
 }
 
 /* Interactive overlays capture pointer events */

@@ -25,6 +25,12 @@ const FILE = resolve(STYLES_ROOT, 'components/coarse-pointer.css');
 
 const raw = readFileSync(FILE, 'utf8');
 const css = stripComments(raw);
+const overlayCss = stripComments(
+  readFileSync(resolve(STYLES_ROOT, 'components/overlay-layer.css'), 'utf8')
+);
+const controlRailCss = stripComments(
+  readFileSync(resolve(STYLES_ROOT, 'components/control-rail.css'), 'utf8')
+);
 
 /** The pointer/hover features a block may be keyed on. */
 const POINTER_FEATURES = /\((pointer:\s*coarse|hover:\s*none|any-hover:\s*(?:none|hover))\)/;
@@ -132,6 +138,33 @@ describe('coarse-pointer.css contract', () => {
     expect(ruleBody(coarse, '.luxar-control-rail')).not.toMatch(/overflow/);
     expect(ruleBody(coarse, '.luxar-control-rail')).toMatch(/max-height:\s*calc\(100vh/);
 
+    const root = ruleBody(coarse, ':root');
+    expect(root).toMatch(/--luxar-rail-gutter:\s*79px/);
+    expect(ruleBody(controlRailCss, ':root')).toMatch(/--luxar-rail-gutter:\s*73px/);
+
+    const leftOverlay = ruleBody(
+      coarse,
+      '.luxar-has-control-rail .luxar-overlay:not(.luxar-overlay--right-anchored, .luxar-overlay--center-anchored)'
+    );
+    expect(leftOverlay).toMatch(
+      /--luxar-overlay-x-clamped:\s*max\(\s*var\(--luxar-overlay-x\),\s*calc\(var\(--luxar-rail-gutter\)\s*\+\s*env\(safe-area-inset-left,\s*0px\)\)\s*\)/
+    );
+    expect(leftOverlay).toMatch(/left:\s*var\(--luxar-overlay-x-clamped\)/);
+
+    const sizedTextOverlay = ruleBody(
+      coarse,
+      '.luxar-has-control-rail .luxar-overlay--text.luxar-overlay--explicit-width:not(.luxar-overlay--right-anchored, .luxar-overlay--center-anchored)'
+    );
+    expect(sizedTextOverlay).toMatch(/--luxar-overlay-x-clamped:\s*clamp\(/);
+    expect(sizedTextOverlay).toMatch(/100vw\s*-\s*18ch\s*-\s*12px/);
+    expect(sizedTextOverlay).toMatch(/--luxar-overlay-available-width:\s*calc\(/);
+    expect(sizedTextOverlay).toMatch(/100vw\s*-\s*var\(--luxar-overlay-x-clamped\)/);
+    expect(sizedTextOverlay).toMatch(/safe-area-inset-right/);
+    expect(sizedTextOverlay).toMatch(
+      /min-width:\s*min\(18ch,\s*var\(--luxar-overlay-available-width\)\)/
+    );
+    expect(sizedTextOverlay).toMatch(/max-width:\s*var\(--luxar-overlay-available-width\)/);
+
     // The wrapper scrolls, but its children and the root's fixed controls do not shrink.
     expect(coarse).toMatch(
       /\.luxar-control-rail__items > \.luxar-control-rail__btn,[\s\S]*?\.luxar-control-rail > \.luxar-perf\s*\{[^}]*flex:\s*0 0 auto/
@@ -152,7 +185,7 @@ describe('coarse-pointer.css contract', () => {
     // Width clamps use min(<desktop width>, viewport - margins).
     expect(ruleBody(coarse, '.luxar-help-overlay')).toMatch(/width:\s*min\(400px,/);
     expect(ruleBody(coarse, '.luxar-data-monitor--expanded')).toMatch(/width:\s*min\(600px,/);
-    expect(ruleBody(coarse, '.luxar-debug-console')).toMatch(/width:\s*min\(600px,/);
+    expect(ruleBody(coarse, '.luxar-debug-console')).toMatch(/width:\s*min\(\s*600px,/);
 
     // Safe-area insets on the docked gutter and the bottom strip.
     expect(coarse).toMatch(
@@ -165,7 +198,7 @@ describe('coarse-pointer.css contract', () => {
     );
     expect(ruleBody(coarse, '.luxar-layers-panel')).toMatch(/top:\s*calc\(.*safe-area-inset-top/);
     expect(
-      ruleBody(coarse, '.luxar-data-monitor--top-left,\n  .luxar-data-monitor--bottom-left')
+      ruleBody(coarse, '.luxar-data-monitor--top-left, .luxar-data-monitor--bottom-left')
     ).toMatch(/left:\s*calc\(.*safe-area-inset-left/);
     expect(ruleBody(coarse, '.luxar-control-rail.is-collapsed')).toMatch(
       /50vh[^;]*safe-area-inset-bottom/
@@ -182,6 +215,11 @@ describe('coarse-pointer.css contract', () => {
 
     // Tap targets opt out of the double-tap-zoom delay.
     expect(coarse).toMatch(/\.luxar-control-rail__btn,[\s\S]*?\{[^}]*touch-action:\s*manipulation/);
+  });
+
+  it('keeps authored overlay geometry in custom properties for the coarse override', () => {
+    expect(ruleBody(overlayCss, '.luxar-overlay')).toMatch(/left:\s*var\(--luxar-overlay-x\)/);
+    expect(ruleBody(overlayCss, '.luxar-overlay--right-anchored')).toMatch(/left:\s*auto/);
   });
 
   it('grows the tap targets and the text inputs under (pointer: coarse)', () => {
@@ -295,13 +333,13 @@ describe('coarse-pointer.css contract', () => {
     expect(ruleBody(coarse, '.luxar-layers-panel')).toMatch(
       /max-height:\s*calc\(\s*100vh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
     );
-    expect(ruleBody(coarse, '.luxar-gui,\n  .luxar-gui__scroll')).toMatch(
+    expect(ruleBody(coarse, '.luxar-gui, .luxar-gui__scroll')).toMatch(
       /max-height:\s*calc\(\s*100vh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
     );
     expect(ruleBody(dvh, '.luxar-layers-panel')).toMatch(
       /max-height:\s*calc\(\s*100dvh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
     );
-    expect(ruleBody(dvh, '.luxar-gui,\n    .luxar-gui__scroll')).toMatch(
+    expect(ruleBody(dvh, '.luxar-gui, .luxar-gui__scroll')).toMatch(
       /max-height:\s*calc\(\s*100dvh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
     );
     expect(ruleBody(dvh, '.luxar-control-rail.is-collapsed')).toMatch(
