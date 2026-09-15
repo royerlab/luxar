@@ -333,13 +333,13 @@ describe('coarse-pointer.css contract', () => {
     expect(ruleBody(coarse, '.luxar-layers-panel')).toMatch(
       /max-height:\s*calc\(\s*100vh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
     );
-    expect(ruleBody(coarse, '.luxar-gui,\n  .luxar-gui__scroll')).toMatch(
+    expect(ruleBody(coarse, '.luxar-gui, .luxar-gui__scroll')).toMatch(
       /max-height:\s*calc\(\s*100vh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
     );
     expect(ruleBody(dvh, '.luxar-layers-panel')).toMatch(
       /max-height:\s*calc\(\s*100dvh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
     );
-    expect(ruleBody(dvh, '.luxar-gui,\n    .luxar-gui__scroll')).toMatch(
+    expect(ruleBody(dvh, '.luxar-gui, .luxar-gui__scroll')).toMatch(
       /max-height:\s*calc\(\s*100dvh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
     );
     expect(ruleBody(dvh, '.luxar-control-rail.is-collapsed')).toMatch(
