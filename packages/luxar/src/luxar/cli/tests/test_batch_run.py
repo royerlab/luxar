@@ -114,9 +114,7 @@ def test_local_profile_does_not_size_from_only_part_of_selected_set(
 
     import luxar.gsplats.gpu_profile as gpu_profile
     import luxar.gsplats.utils.device as device
-    from luxar.cli.gsplat_ops.batch.run_orchestration import (
-        _resolve_local_gpu_profile,
-    )
+    import luxar.cli.gsplat_ops.batch.run_orchestration as orchestration
 
     class _Properties:
         def __init__(self, name: str, total_memory: int) -> None:
@@ -127,6 +125,7 @@ def test_local_profile_does_not_size_from_only_part_of_selected_set(
         0: _Properties("Profiled GPU", 48 * 1024**3),
         1: _Properties("Unprofiled GPU", 8 * 1024**3),
     }
+    output: list[str] = []
     monkeypatch.setattr(device, "resolve_gpu_selection", lambda spec: [0, 1])
     monkeypatch.setattr(torch.cuda, "get_device_properties", properties.__getitem__)
     monkeypatch.setattr(
@@ -136,13 +135,20 @@ def test_local_profile_does_not_size_from_only_part_of_selected_set(
             {"recommendations": {}} if gpu_name == "Profiled GPU" else None
         ),
     )
+    monkeypatch.setattr(orchestration, "aprint", lambda message: output.append(message))
 
-    selected, manifest_name, max_shape, throughput = _resolve_local_gpu_profile("0,1")
+    selected, manifest_name, max_shape, throughput = (
+        orchestration._resolve_local_gpu_profile("0,1")
+    )
 
     assert selected == [0, 1]
     assert manifest_name == "Profiled GPU, Unprofiled GPU"
     assert max_shape is None
     assert throughput is None
+    assert output == [
+        "no benchmark profile for Unprofiled GPU — tile auto-sizing off; "
+        "pass --tile-size or run 'luxar gsplat benchmark'"
+    ]
 
 
 def _make_zarr(path: Path) -> None:

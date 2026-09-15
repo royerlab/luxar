@@ -51,6 +51,10 @@ def _resolve_local_gpu_profile(
     for name, total_memory in devices:
         summary = get_gpu_summary(gpu_name=name)
         if summary is None:
+            aprint(
+                f"no benchmark profile for {name} — tile auto-sizing off; "
+                "pass --tile-size or run 'luxar gsplat benchmark'"
+            )
             return selected, manifest_name, None, None
         profiled.append((total_memory, name, summary))
 
