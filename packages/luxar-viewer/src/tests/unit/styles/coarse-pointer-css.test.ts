@@ -198,7 +198,7 @@ describe('coarse-pointer.css contract', () => {
     );
     expect(ruleBody(coarse, '.luxar-layers-panel')).toMatch(/top:\s*calc\(.*safe-area-inset-top/);
     expect(
-      ruleBody(coarse, '.luxar-data-monitor--top-left,\n  .luxar-data-monitor--bottom-left')
+      ruleBody(coarse, '.luxar-data-monitor--top-left, .luxar-data-monitor--bottom-left')
     ).toMatch(/left:\s*calc\(.*safe-area-inset-left/);
     expect(ruleBody(coarse, '.luxar-control-rail.is-collapsed')).toMatch(
       /50vh[^;]*safe-area-inset-bottom/
