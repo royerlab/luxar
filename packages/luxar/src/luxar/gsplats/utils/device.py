@@ -29,10 +29,9 @@ from .worker_memory import (
 # Override with the ``LUXAR_GPU_VRAM_FLOOR_GB`` environment variable.
 _AUTO_VRAM_FLOOR_BYTES = 12 * 1024**3
 
-# ``auto`` concurrency must account for the fixed cost of a worker process, not
-# only the bytes in its tile.  A CUDA context plus library handles is hundreds
-# of MiB even for a tiny task; host RSS has a similar floor once Python, torch,
-# and the fit stack are imported.
+# ``auto`` concurrency must account for the fixed host cost of a worker process,
+# not only the bytes in its tile. Host RSS has a substantial floor once Python,
+# torch, and the fit stack are imported.
 _AUTO_HOST_WORKER_OVERHEAD_BYTES = 1024**3
 # Override with the ``LUXAR_AUTO_WORKER_HARD_CAP`` environment variable.
 _AUTO_WORKER_HARD_CAP = 8

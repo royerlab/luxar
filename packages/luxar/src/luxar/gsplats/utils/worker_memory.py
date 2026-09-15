@@ -1,4 +1,9 @@
-"""Shared worker-memory estimates for Gaussian splat launchers."""
+"""Shared worker-memory estimates for Gaussian splat launchers.
+
+A fit keeps the volume tensor plus model and optimizer state, approximately
+twice the raw float32 volume. Each CUDA worker also pays hundreds of MiB for
+its CUDA context and library handles even when its task is tiny.
+"""
 
 from __future__ import annotations
 
