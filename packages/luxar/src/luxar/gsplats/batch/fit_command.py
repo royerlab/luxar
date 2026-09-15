@@ -74,9 +74,10 @@ def build_task_fit_argv(
     generator (when there are multiple values or slicing selected specific
     indices), using ``job.channel`` / ``job.timepoint`` (already real indices).
 
-    Device is NOT passed here: the local runner pins each worker to a GPU via
-    ``CUDA_VISIBLE_DEVICES`` in the subprocess environment, so the worker sees
-    its card as ``cuda:0`` (sidestepping un-validated ``cuda:N`` strings).
+    Device is NOT passed here: the local runner pins each GPU worker via
+    ``CUDA_VISIBLE_DEVICES`` so it sees its card as ``cuda:0`` (sidestepping
+    un-validated ``cuda:N`` strings). The runner appends ``--device cpu`` for
+    the CPU sentinel so device auto-selection cannot fall through to MPS.
 
     Parameters
     ----------

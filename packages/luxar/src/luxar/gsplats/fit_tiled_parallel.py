@@ -157,6 +157,9 @@ def build_worker_cmd(
     if iters is not None:
         cmd += ["--iters", str(iters)]
     if device:
+        # Keep the parent's CUDA visibility unchanged here. Unlike batch-fit,
+        # these workers receive the parent's logical device string directly,
+        # so ``cuda:N`` stays in the same visible-device namespace.
         cmd += ["--device", device]
     if preset:
         cmd += ["--preset", preset]

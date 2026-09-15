@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import typer
 from arbol import aprint
@@ -11,6 +11,62 @@ from arbol import aprint
 if TYPE_CHECKING:
     from luxar.cli.gsplat_ops.batch.plan_configs import PlanConfigs
     from luxar.gsplats.batch.manifest import BatchManifest
+
+
+def _resolve_local_gpu_profile(
+    gpus: str,
+) -> tuple[list[int], str, Optional[list[int]], Optional[list[dict[str, Any]]]]:
+    """Resolve local devices and the conservative profile used for planning."""
+    # Keep runtime discovery imports local so CLI tests can isolate hardware and
+    # profile dependencies without importing this orchestration module differently.
+    import torch
+
+    from luxar.gsplats.gpu_profile import get_gpu_summary, get_gpu_throughput_table
+    from luxar.gsplats.utils.device import resolve_gpu_selection
+
+    try:
+        selected = resolve_gpu_selection(gpus)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if not selected:
+        summary = get_gpu_summary()
+        if summary is None:
+            return selected, "CPU", None, None
+        recommendations = summary.get("recommendations", {})
+        peak = recommendations.get("peak_throughput_3d", {})
+        oom = summary.get("oom_boundaries", {}).get("3d", {})
+        max_shape = oom.get("max_successful_shape", peak.get("shape", []))
+        return selected, "CPU", max_shape, get_gpu_throughput_table()
+
+    device_memory_by_name: dict[str, int] = {}
+    for index in selected:
+        properties = torch.cuda.get_device_properties(index)
+        name = str(properties.name)
+        total_memory = int(properties.total_memory)
+        device_memory_by_name[name] = min(
+            device_memory_by_name.get(name, total_memory), total_memory
+        )
+
+    devices = list(device_memory_by_name.items())
+    manifest_name = ", ".join(name for name, _ in devices)
+    profiled: list[tuple[int, str, dict[str, Any]]] = []
+    for name, total_memory in devices:
+        summary = get_gpu_summary(gpu_name=name)
+        if summary is None:
+            aprint(
+                f"no benchmark profile for {name} — tile auto-sizing off; "
+                "pass --tile-size or run 'luxar gsplat benchmark'"
+            )
+            return selected, manifest_name, None, None
+        profiled.append((total_memory, name, summary))
+
+    _, profile_name, summary = min(profiled, key=lambda item: item[0])
+    recommendations = summary.get("recommendations", {})
+    peak = recommendations.get("peak_throughput_3d", {})
+    oom = summary.get("oom_boundaries", {}).get("3d", {})
+    max_shape = oom.get("max_successful_shape", peak.get("shape", []))
+    throughput_table = get_gpu_throughput_table(gpu_name=profile_name)
+    return selected, manifest_name, max_shape, throughput_table
 
 
 def _resolve_local_deferred_floor(
@@ -70,31 +126,13 @@ def run_batch_local_orchestration(
         build_merge_recipe_params as _build_merge_recipe_params_impl,
     )
     from luxar.gsplats.batch.local_runner import run_batch_local
-    from luxar.gsplats.gpu_profile import (
-        get_gpu_summary,
-        get_gpu_throughput_table,
-        load_profiles,
-    )
-    from luxar.gsplats.utils.device import resolve_gpu_selection
 
     axes_list = [a.strip() for a in axes.split(",")] if axes else None
 
-    # Optional GPU profile — only used to auto-size uniform tiles; not required.
-    summary = get_gpu_summary()
-    resolved_gpu = "local"
-    max_shape = None
-    throughput_table = None
-    if summary is not None:
-        recs = summary.get("recommendations", {})
-        peak = recs.get("peak_throughput_3d", {})
-        oom = summary.get("oom_boundaries", {}).get("3d", {})
-        max_shape = oom.get("max_successful_shape", peak.get("shape", []))
-        profiles = load_profiles()
-        for name, entry in profiles.get("gpus", {}).items():
-            if entry.get("summary") == summary:
-                resolved_gpu = name
-                break
-        throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
+    # Plan against the selected execution device(s), not torch's default GPU 0.
+    selected_gpus, resolved_gpu, max_shape, throughput_table = (
+        _resolve_local_gpu_profile(gpus)
+    )
 
     fit_cfg = cfgs.fit
     denoise_cfg = cfgs.denoise
@@ -133,11 +171,7 @@ def run_batch_local_orchestration(
         recipe_params = _build_merge_recipe_params_impl(manifest.merge_recipe_args)
 
     # Plan summary (which GPUs, how many tasks already done).
-    try:
-        sel = resolve_gpu_selection(gpus)
-        gpu_desc = "CPU" if not sel else f"GPU(s) {sel}"
-    except ValueError as exc:
-        gpu_desc = f"<{exc}>"
+    gpu_desc = "CPU" if not selected_gpus else f"GPU(s) {selected_gpus}"
     slot = "boxes" if manifest.mode == "content" else "tiles"
     aprint("")
     aprint("=" * 60)

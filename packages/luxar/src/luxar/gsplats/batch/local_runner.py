@@ -103,14 +103,50 @@ def _worker_env(gpu: int, workers: dict[int, int], host_workers: int) -> dict[st
     quality_host_workers = str(max(1, host_workers))
     if gpu < 0:
         return {
+            "CUDA_VISIBLE_DEVICES": "",
             QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
             QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
         }
+    parent_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    parent_tokens = parent_visible.split(",") if parent_visible else []
+    visible_token = parent_tokens[gpu].strip() if gpu < len(parent_tokens) else str(gpu)
     return {
-        "CUDA_VISIBLE_DEVICES": str(gpu),
+        "CUDA_VISIBLE_DEVICES": visible_token,
         QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
         QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
     }
+
+
+def _gpu_device_name(gpu: int) -> str:
+    """Return the parent-visible CUDA device name for startup diagnostics."""
+    try:
+        import torch
+
+        return str(torch.cuda.get_device_properties(gpu).name)
+    except (AttributeError, RuntimeError, AssertionError):
+        return "unknown GPU"
+
+
+def _report_gpu_mappings(
+    gpu_indices: list[int], workers: dict[int, int], host_workers: int
+) -> None:
+    """Print the parent-visible index, child token, and device name per GPU."""
+    if not gpu_indices:
+        aprint("CUDA hidden from workers; fit device forced to CPU")
+        return
+    for gpu in gpu_indices:
+        visible_token = _worker_env(gpu, workers, host_workers)["CUDA_VISIBLE_DEVICES"]
+        aprint(
+            f"visible index {gpu} -> CUDA_VISIBLE_DEVICES={visible_token} "
+            f"({_gpu_device_name(gpu)})"
+        )
+
+
+def _worker_argv(argv: list[str], gpu: int) -> list[str]:
+    """Force the CPU sentinel while leaving GPU workers env-pinned."""
+    if gpu < 0:
+        return [*argv, "--device", "cpu"]
+    return argv
 
 
 def _active_worker_counts(
@@ -332,8 +368,11 @@ def run_batch_local(
         # its replacement exists, and a failed refit would then leave nothing.
         shutil.rmtree(staging, ignore_errors=True)
         Path(str(staging) + ".empty").unlink(missing_ok=True)
-        return build_task_fit_argv(
-            manifest, job, staging, denoise_h=_denoise_h_for_job(manifest, job)
+        return _worker_argv(
+            build_task_fit_argv(
+                manifest, job, staging, denoise_h=_denoise_h_for_job(manifest, job)
+            ),
+            assignment.get(task_id, -1),
         )
 
     def _env(task_id: int) -> dict[str, str]:
@@ -347,6 +386,7 @@ def run_batch_local(
         f"Local batch fit: {n_run}/{len(task_ids)} tasks on {dev_desc}, "
         f"{global_workers} concurrent worker(s){auto_limit}"
     ):
+        _report_gpu_mappings(active_gpu_indices, active_workers, active_host_workers)
         if verbose and n_run < len(task_ids):
             aprint(f"Resuming: {len(task_ids) - n_run} task(s) already complete")
 
