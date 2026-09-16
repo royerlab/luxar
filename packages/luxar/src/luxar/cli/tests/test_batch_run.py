@@ -475,10 +475,37 @@ def test_batch_plan_records_ngff_dimension_metadata_with_axes_override(
     ).manifest
 
     assert manifest.dimension_metadata == [
-        {"name": "z", "unit": "micrometer", "scale": 2.0},
-        {"name": "y", "unit": "micrometer", "scale": 0.75},
-        {"name": "x", "unit": "micrometer", "scale": 0.75},
-        {"name": "time", "unit": "second", "scale": 0.5},
+        {"name": "z", "scale": 2.0},
+        {"name": "y", "scale": 0.75},
+        {"name": "x", "scale": 0.75},
+        {"name": "time", "scale": 0.5},
+    ]
+
+
+def test_batch_dimension_metadata_normalizes_unit_scale_units() -> None:
+    from luxar.cli.gsplat_ops.batch.planning import _batch_dimension_metadata
+    from luxar.io.ome_zarr import OMEZarrInfo
+
+    info = OMEZarrInfo(
+        axes=["time", "z", "y", "x"],
+        shape=(2, 3, 4, 5),
+        n_timepoints=2,
+        n_channels=1,
+        channel_axes=[],
+        channel_shape=(),
+        spatial_shape=(3, 4, 5),
+        spatial_axes=["z", "y", "x"],
+        time_axis=0,
+        spatial_indices=(1, 2, 3),
+        axis_units=["second", "micrometer", "fortnight", None],
+        axis_scales=(1.0, 1.0, 1.0, 1.0),
+    )
+
+    assert _batch_dimension_metadata(info, ["time", "z", "y", "x"], 2) == [
+        {"name": "z", "scale": 1.0, "unit": "um"},
+        {"name": "y", "scale": 1.0, "unit": "fortnight"},
+        {"name": "x", "scale": 1.0},
+        {"name": "time", "scale": 1.0, "unit": "s"},
     ]
 
 

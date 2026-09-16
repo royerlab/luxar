@@ -208,10 +208,12 @@ tree.
 
 A producer may also attach root `dimension_metadata`, an ordered list aligned
 with the columns of `centers`. Each entry carries a dimension `name`, `unit`, and
-positive physical `scale`. The batch-fit merger uses it to retain source
-OME-Zarr axis semantics; `luxar gsplat convert` overlays those descriptors onto
-the dimensions it derives from the fitted bounds. Consumers that do not know
-the attribute ignore it.
+positive physical `scale`; `unit` is optional. The batch-fit merger uses it to
+retain source OME-Zarr axis semantics; `luxar gsplat convert` overlays those
+descriptors onto the dimensions it derives from the fitted bounds. `scale` is
+recorded for provenance but is not applied by current consumers; producers
+therefore omit a unit when the stored center coordinates are not already in that
+unit. Consumers that do not know the attribute ignore it.
 
 ---
 

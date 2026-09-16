@@ -52,6 +52,8 @@ def build_dimensions_from_data(
 
     Args:
         centers: Splat center positions (N, D)
+        dimension_metadata: Optional ordered descriptors to overlay. Any length,
+            shape, or name mismatch is ignored in favor of inferred defaults.
 
     Returns:
         Dimensions with ranges matching the data extent
@@ -116,7 +118,7 @@ def _apply_dimension_metadata(dimensions: Any, metadata: Any) -> Any:
         scale = descriptor.get("scale")
         if isinstance(name, str) and name:
             values["name"] = name
-        if isinstance(unit, str):
+        if isinstance(unit, str) and unit:
             values["unit"] = unit
         if (
             isinstance(scale, (int, float))

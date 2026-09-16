@@ -167,6 +167,18 @@ def test_axes_override_preserves_ngff_units_and_scales(tmp_path: Path) -> None:
     assert info.voxel_size == pytest.approx((2.0, 0.75, 0.75))
 
 
+def test_non_ngff_discovery_has_positional_empty_axis_units(tmp_path: Path) -> None:
+    import zarr
+
+    path = tmp_path / "plain.zarr"
+    root = zarr.open_group(str(path), mode="w")
+    create_array(root, "0", shape=(2, 3, 4, 5), dtype="f4")
+
+    info = discover_ome_zarr_shape(path, axes_override=["time", "z", "y", "x"])
+
+    assert info.axis_units == [None, None, None, None]
+
+
 # ---------------------------------------------------------------------------
 # The resolver itself
 # ---------------------------------------------------------------------------

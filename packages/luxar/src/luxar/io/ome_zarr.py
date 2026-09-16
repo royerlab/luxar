@@ -202,6 +202,13 @@ class OMEZarrInfo:
     path: Optional[Path] = None
     """Path to the zarr store."""
 
+    def __post_init__(self) -> None:
+        """Keep positional axis metadata aligned with the discovered axes."""
+        if not self.axis_units:
+            self.axis_units = [None] * len(self.axes)
+        elif len(self.axis_units) != len(self.axes):
+            raise ValueError("axis_units must align position-for-position with axes")
+
 
 # The one reason string for "the store declared `multiscales`, but there is no
 # block in it to read". Shared by :func:`_usable_multiscales` (root) and
