@@ -1570,6 +1570,58 @@ def _physical_voxel_size(
     return values, configured is None
 
 
+def _restore_declared_voxel_size(
+    input_path: Path,
+    array_key: Optional[str],
+    axes_list: Optional[List[str]],
+    fit: FitConfig,
+    ome_info: "OMEZarrInfo",
+) -> None:
+    """Recover NGFF spacing when an explicit axes view omits scale metadata."""
+    if not fit.physical or axes_list is None or ome_info.voxel_size is not None:
+        return
+    from luxar.io.ome_zarr import discover_ome_zarr_shape
+
+    declared_info = discover_ome_zarr_shape(input_path, array_key=array_key)
+    if declared_info.spatial_indices == ome_info.spatial_indices:
+        ome_info.voxel_size = declared_info.voxel_size
+
+
+def _configure_physical_fit_args(
+    fit_args: dict[str, str],
+    fit: FitConfig,
+    ome_info: "OMEZarrInfo",
+    axes_list: Optional[List[str]],
+    ndim: int,
+) -> Optional[List[float]]:
+    """Resolve physical spacing and add the worker-only override when needed."""
+    voxel_size, inject = _physical_voxel_size(fit, ome_info, axes_list, ndim)
+    if inject:
+        assert voxel_size is not None
+        fit_args["voxel-size"] = ",".join(str(value) for value in voxel_size)
+    return voxel_size
+
+
+def _configure_content_physical(
+    fit_args: dict[str, str], fit: FitConfig, mode: str
+) -> None:
+    """Mark content workers only when physical output was explicitly requested."""
+    if fit.physical and mode == "content":
+        fit_args["physical-coordinates"] = ""
+
+
+def _batch_grid_scale(
+    fit: FitConfig,
+    mode: str,
+    physical_voxel_size: Optional[List[float]],
+    ndim: int,
+) -> Optional[List[float]]:
+    """Resolve the coordinate frame recorded on the batch manifest."""
+    if physical_voxel_size is not None:
+        return physical_voxel_size
+    return resolve_uniform_grid_scale(fit, ndim) if mode != "content" else None
+
+
 def resolve_merge_recipe_args(
     merge: MergeConfig,
     *,
@@ -1978,10 +2030,7 @@ def plan_batch(
         ome_info = discover_ome_zarr_shape(
             input_path, axes_override=axes_list, array_key=array_key
         )
-        if fit.physical and axes_list is not None and ome_info.voxel_size is None:
-            declared_info = discover_ome_zarr_shape(input_path, array_key=array_key)
-            if declared_info.spatial_indices == ome_info.spatial_indices:
-                ome_info.voxel_size = declared_info.voxel_size
+        _restore_declared_voxel_size(input_path, array_key, axes_list, fit, ome_info)
         n_t_full = ome_info.n_timepoints
         n_c_full = ome_info.n_channels
         # Positional workers call load_volume without --axes, whose legacy
@@ -2005,14 +2054,9 @@ def plan_batch(
             emits_timepoint=n_t_full > 1 or bool(timepoints_slice),
         )
 
-        physical_voxel_size, inject_physical_voxel_size = _physical_voxel_size(
-            fit, ome_info, axes_list, len(spatial)
+        physical_voxel_size = _configure_physical_fit_args(
+            fit_args, fit, ome_info, axes_list, len(spatial)
         )
-        if inject_physical_voxel_size:
-            assert physical_voxel_size is not None
-            fit_args["voxel-size"] = ",".join(
-                str(value) for value in physical_voxel_size
-            )
 
         t_indices = (
             _parse_slice(timepoints_slice, n_t_full)
@@ -2049,8 +2093,7 @@ def plan_batch(
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"
-    if fit.physical and mode == "content":
-        fit_args["physical-coordinates"] = ""
+    _configure_content_physical(fit_args, fit, mode)
     _validate_content_spatial_shape(mode, spatial, ome_info.spatial_shape, axes_list)
     content_plan = None
     plan_path_str: Optional[str] = None
@@ -2068,16 +2111,11 @@ def plan_batch(
     downscale_factors = validate_config_downscale(fit, len(spatial))
 
     # The frame the tasks will emit in, resolved once and recorded on the
-    # manifest for the merge (#1587). Uniform only: a content merge takes its
-    # split planes from the shared plan's own boxes, not from a rebuilt grid.
+    # manifest for the merge (#1587). A content merge takes its split planes
+    # from the shared plan's boxes; physical output scales that tree separately.
     # Ahead of the floor resolution below because it reads only the fit config:
     # a frame the merge cannot reconcile fails before any voxel is sampled.
-    if physical_voxel_size is not None:
-        grid_scale = physical_voxel_size
-    else:
-        grid_scale = (
-            resolve_uniform_grid_scale(fit, len(spatial)) if mode != "content" else None
-        )
+    grid_scale = _batch_grid_scale(fit, mode, physical_voxel_size, len(spatial))
     _validate_merge_refine_frame(merge, grid_scale)
 
     # 3a. Background floor: ONE level for the whole timelapse, resolved here and

@@ -318,8 +318,7 @@ def run_content_fit(
         fk.pop("seeds", None)
         fk.pop("device", None)
         fk["verbose"] = False
-        if physical_coordinates:
-            fk["_content_physical"] = True
+        fk["_content_physical"] = physical_coordinates
         return fk
 
     # Validate the EFFECTIVE floor spec BEFORE the volume is read: a typo

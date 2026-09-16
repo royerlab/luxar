@@ -110,6 +110,50 @@ def _stamp_planned_normalization(
     target.update(agreed_normalization_stats([region.stats for region in regions]))
 
 
+def _resolve_content_frame(
+    fit_kwargs: dict[str, Any], ndim: int
+) -> "tuple[bool, Optional[tuple[float, ...]]]":
+    """Preserve legacy voxel output unless physical content was explicit."""
+    content_physical = bool(fit_kwargs.pop("_content_physical", False))
+    if not content_physical:
+        voxel_size = fit_kwargs.pop("voxel_size", None)
+        output_space = fit_kwargs.pop("output_space", None)
+        if voxel_size is not None and output_space != "voxel":
+            import warnings
+
+            warnings.warn(
+                "voxel_size/output_space='real' are not supported with content-"
+                "planned fitting unless the caller explicitly enables physical "
+                "content geometry; fitting in voxel space (voxel_size ignored).",
+                UserWarning,
+                stacklevel=2,
+            )
+    from luxar.gsplats.tiling import resolve_grid_scale
+
+    return (
+        content_physical,
+        resolve_grid_scale(
+            ndim,
+            voxel_size=fit_kwargs.get("voxel_size"),
+            output_space=fit_kwargs.get("output_space", "real"),
+        ),
+    )
+
+
+def _scaled_plan_bsp_tree(
+    bsp_tree: "Optional[dict[str, Any]]",
+    grid_scale: "Optional[tuple[float, ...]]",
+) -> "Optional[dict[str, Any]]":
+    """Return the content partition tree in the fitted coordinate frame."""
+    if bsp_tree is None or grid_scale is None:
+        return bsp_tree
+    from luxar.core.group.partition import map_serialized_bsp_tree
+
+    return map_serialized_bsp_tree(
+        bsp_tree, linear=np.diag(np.asarray(grid_scale, dtype=float))
+    )
+
+
 def _score_planned_merge(
     merged: "GSplatData | Sequence[GSplatData]",
     volume: Any,
@@ -451,27 +495,7 @@ def fit_planned(
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
     _ensure_planned_norm_range(V, fit_kwargs, verbose)
-    content_physical = bool(fit_kwargs.pop("_content_physical", False))
-    if not content_physical:
-        voxel_size = fit_kwargs.pop("voxel_size", None)
-        output_space = fit_kwargs.pop("output_space", None)
-        if voxel_size is not None and output_space != "voxel":
-            import warnings
-
-            warnings.warn(
-                "voxel_size/output_space='real' are not supported with content-"
-                "planned fitting unless the caller explicitly enables physical "
-                "content geometry; fitting in voxel space (voxel_size ignored).",
-                UserWarning,
-                stacklevel=2,
-            )
-    from luxar.gsplats.tiling import resolve_grid_scale
-
-    grid_scale = resolve_grid_scale(
-        V.ndim,
-        voxel_size=fit_kwargs.get("voxel_size"),
-        output_space=fit_kwargs.get("output_space", "real"),
-    )
+    content_physical, grid_scale = _resolve_content_frame(fit_kwargs, V.ndim)
 
     # Per-box saturation cap (from the calibration): the halo inflation must not
     # push the fit past the K the calibration measured as over-saturated.
@@ -516,20 +540,13 @@ def fit_planned(
         # One part per box — boxes are core-disjoint, so this is an exact
         # spatial partition (viewer frustum-culls per part). Returns a tree node.
         # ``recipe`` gives each part its own LOD ladder/group as it is assembled.
-        bsp_tree = plan.bsp_tree
-        if grid_scale is not None:
-            from luxar.core.group.partition import map_serialized_bsp_tree
-
-            bsp_tree = map_serialized_bsp_tree(
-                bsp_tree, linear=np.diag(np.asarray(grid_scale, dtype=float))
-            )
         result = GSplatData.partition_from_regions(
             regions,
             recipe=recipe,
             recipe_params=recipe_params,
             # The planner's own split planes: core-disjoint boxes have an EXACT
             # back-to-front order, and this is what carries it to the viewer.
-            bsp_tree=bsp_tree,
+            bsp_tree=_scaled_plan_bsp_tree(plan.bsp_tree, grid_scale),
             region_labels=region_boxes,
         )
         from luxar.gsplats.tree import GSplatPartition, total_splats
