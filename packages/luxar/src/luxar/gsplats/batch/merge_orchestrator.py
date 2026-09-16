@@ -187,19 +187,59 @@ def _tile_path(
 
 
 def _copy_or_resave_tile(
-    source: Path, destination: Path, root_attrs: "Optional[Dict[str, Any]]"
+    source: Path,
+    destination: Path,
+    dimension_metadata: "Optional[List[Dict[str, Any]]]",
 ) -> None:
-    """Copy an intermediate tile, or re-save a final leaf with root metadata."""
-    if root_attrs is not None:
-        from luxar.gsplats.gsplat_data import GSplatData
-
-        GSplatData.load(source).save(destination, root_attrs=root_attrs)
-        return
+    """Copy a tile byte-for-byte, then stamp optional final-root metadata."""
     import shutil
 
     if destination.exists():
         shutil.rmtree(destination)
     shutil.copytree(source, destination)
+    if dimension_metadata is not None:
+        from luxar._zarr_compat import consolidate as zc_consolidate
+        from luxar._zarr_compat import open_group as zc_open_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        root = zc_open_group(destination, mode="r+")
+        root_attrs = _dimension_root_attrs(
+            dimension_metadata, int(root["centers"].shape[1])
+        )
+        if root_attrs:
+            root.attrs.update(root_attrs)
+            _stamp_content_hash(root)
+            zc_consolidate(root)
+
+
+def _dimension_root_attrs(
+    metadata: "Optional[List[Dict[str, Any]]]", ndim: int
+) -> "Optional[Dict[str, Any]]":
+    """Return aligned dimension metadata, or warn and omit a bad descriptor list."""
+    if metadata is None:
+        return None
+    if len(metadata) != ndim:
+        aprint(
+            "  WARNING: manifest dimension metadata has "
+            f"{len(metadata)} entries for {ndim} output columns; omitting it"
+        )
+        return None
+    return {"dimension_metadata": metadata}
+
+
+def _drop_mismatched_partition_dimension_attrs(
+    root_attrs: "Optional[Dict[str, Any]]",
+    metadata: "Optional[List[Dict[str, Any]]]",
+    ndim: int,
+) -> None:
+    """Remove deferred partition metadata when a streamed part proves it wrong."""
+    if not root_attrs or metadata is None or len(metadata) == ndim:
+        return
+    root_attrs.clear()
+    aprint(
+        "  WARNING: manifest dimension metadata does not match "
+        f"the partition's {ndim} output columns; omitting it"
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -1000,6 +1040,7 @@ def _merge_partition(
             )
             if part is None:
                 raise ValueError("Single tile-region is empty — nothing to merge")
+            root_attrs = _dimension_root_attrs(manifest.dimension_metadata, part.ndim)
             single_part_provenance = _single_part_provenance(part)
             if recipe is None:
                 # Pass the authoritative stacked-time barrier here too (K==1,
@@ -1077,6 +1118,9 @@ def _merge_partition(
                 ]
             )
             part.stats.pop("part_provenance", None)
+            _drop_mismatched_partition_dimension_attrs(
+                root_attrs, manifest.dimension_metadata, part.ndim
+            )
             _stamp_recipe_floor(part, recipe, floor_stats)
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
@@ -1147,12 +1191,6 @@ def _merge_flat(
     label = "box" if manifest.mode == "content" else "tile"
 
     t_indices, c_indices = _tile_indices(manifest)
-    root_attrs = (
-        {"dimension_metadata": manifest.dimension_metadata}
-        if manifest.dimension_metadata is not None
-        else None
-    )
-
     # ================================================================
     # Level 1: Merge tiles per (T, C)
     # ================================================================
@@ -1199,12 +1237,21 @@ def _merge_flat(
                     # A T=1 leaf can be the final output and needs metadata;
                     # a T>1 leaf is intermediate and can stay a direct copy.
                     _copy_or_resave_tile(
-                        tile_files[0], out_path, root_attrs if n_t == 1 else None
+                        tile_files[0],
+                        out_path,
+                        manifest.dimension_metadata if n_t == 1 else None,
                     )
                 else:
                     datasets = [GSplatData.load(p) for p in tile_files]
                     merged = GSplatData.concatenate(datasets)
-                    merged.save(out_path, root_attrs=root_attrs if n_t == 1 else None)
+                    merged.save(
+                        out_path,
+                        root_attrs=_dimension_root_attrs(
+                            manifest.dimension_metadata, merged.ndim
+                        )
+                        if n_t == 1
+                        else None,
+                    )
 
                 if verbose:
                     aprint(
@@ -1234,7 +1281,12 @@ def _merge_flat(
                     values=[float(t) for t in t_indices],
                     sigma=0.0,
                 )
-                stacked.save(out_path, root_attrs=root_attrs)
+                stacked.save(
+                    out_path,
+                    root_attrs=_dimension_root_attrs(
+                        manifest.dimension_metadata, stacked.ndim
+                    ),
+                )
 
                 if verbose:
                     aprint(
@@ -1261,7 +1313,12 @@ def _merge_flat(
             ch_files = [channel_paths[c] for c in range(n_c)]
             datasets = [GSplatData.load(p) for p in ch_files]
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
-            final.save(final_path, root_attrs=root_attrs)
+            final.save(
+                final_path,
+                root_attrs=_dimension_root_attrs(
+                    manifest.dimension_metadata, final.ndim
+                ),
+            )
 
             if verbose:
                 aprint(f"  Merged {n_c} channels -> {final.n_splats:,} splats")
@@ -1279,7 +1336,12 @@ def _merge_flat(
                 ch_files = [channel_paths[c] for c in range(n_c)]
                 datasets = [GSplatData.load(p) for p in ch_files]
                 final = GSplatData.concatenate(datasets)
-                final.save(final_path, root_attrs=root_attrs)
+                final.save(
+                    final_path,
+                    root_attrs=_dimension_root_attrs(
+                        manifest.dimension_metadata, final.ndim
+                    ),
+                )
                 if verbose:
                     aprint(f"  Concatenated {n_c} channels")
 
