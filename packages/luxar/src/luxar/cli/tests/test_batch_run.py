@@ -514,6 +514,21 @@ def test_batch_plan_records_ngff_dimension_metadata_with_axes_override(
         {"name": "time", "scale": 0.5},
     ]
 
+    configured_default_manifest = _plan(
+        src,
+        tmp_path / "configured-default-out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+        config=config,
+    ).manifest
+
+    assert configured_default_manifest.dimension_metadata == [
+        {"name": "z", "scale": 1.0},
+        {"name": "y", "scale": 1.0},
+        {"name": "x", "scale": 1.0},
+        {"name": "time", "scale": 0.5},
+    ]
+
 
 def test_batch_dimension_metadata_normalizes_unit_scale_units() -> None:
     from luxar.cli.gsplat_ops.batch.planning import _batch_dimension_metadata

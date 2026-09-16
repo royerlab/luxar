@@ -2383,7 +2383,7 @@ def plan_batch(
             ome_info,
             axes_list,
             n_t,
-            physical_coordinates=fit.physical,
+            physical_coordinates=grid_scale is not None,
             ngff_spatial_units=uses_ngff_spacing,
         ),
         mode=mode,
