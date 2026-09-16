@@ -9,7 +9,7 @@ import os
 import re
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 import pytest
@@ -6369,6 +6369,11 @@ class TestLODCarriesAuthoredAppearance:
         # future change ever starts defaulting it to 0.
         "layer_order": 20,
     }
+    DIMENSION_METADATA: ClassVar[list[dict[str, Any]]] = [
+        {"name": "z", "scale": 2.0},
+        {"name": "y", "scale": 0.75},
+        {"name": "x", "scale": 0.75},
+    ]
 
     #: Carried by the registry but not exercised here, each for a stated reason.
     #: Asserted against the registry below so a NEW key cannot slip through
@@ -6659,6 +6664,41 @@ class TestLODCarriesAuthoredAppearance:
         for key, want in self.AUTHORED.items():
             assert key in got, f"{label}: dropped {key!r} (had {want!r})"
             assert got[key] == want, f"{label}: {key} = {got[key]!r}, want {want!r}"
+
+    @pytest.mark.parametrize("label", sorted(set(REWRITERS) - {"merge", "transform"}))
+    def test_dimension_metadata_survives_structure_only_rebuilds(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        label: str,
+    ) -> None:
+        self._authored_input(
+            medium_gsplats, {"dimension_metadata": self.DIMENSION_METADATA}
+        )
+        out = tmp_path / f"dimension_{label.replace(':', '_')}.gsplats.zarr"
+        argv = self._resolve(self.REWRITERS[label], medium_gsplats, out, tmp_path)
+
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
+        assert self._root_attrs(out)["dimension_metadata"] == self.DIMENSION_METADATA
+
+    def test_transform_drops_dimension_metadata(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        self._authored_input(
+            medium_gsplats, {"dimension_metadata": self.DIMENSION_METADATA}
+        )
+        out = tmp_path / "transformed.gsplats.zarr"
+
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(medium_gsplats), str(out), "--scale", "2,1,1"],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert "dimension_metadata" not in self._root_attrs(out)
 
     # ── `gsplat merge`: N inputs, so the appearance has to be AGREED ──────────
     #

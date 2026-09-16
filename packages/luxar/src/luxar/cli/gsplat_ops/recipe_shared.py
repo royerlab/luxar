@@ -182,9 +182,17 @@ def carried_appearance(input_path: Path) -> dict:
     as one statement (and so ``lod_recipe`` stays under the complexity ratchet).
     Quiet when the input authored nothing.
     """
-    from luxar.gsplats.io.load_gsplats import read_authored_appearance
+    from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
+    from luxar.gsplats.io.load_gsplats import read_rebuild_root_attrs
 
-    return _announce_carried(read_authored_appearance(input_path))
+    root_attrs = read_rebuild_root_attrs(input_path)
+    appearance = {
+        key: value
+        for key, value in root_attrs.items()
+        if key in AUTHORED_APPEARANCE_ATTRS
+    }
+    _announce_carried(appearance)
+    return root_attrs
 
 
 def carried_appearance_from_inputs(

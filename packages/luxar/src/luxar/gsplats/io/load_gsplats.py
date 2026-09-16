@@ -113,6 +113,21 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     return carried
 
 
+def read_rebuild_root_attrs(path: str | Path) -> Dict[str, Any]:
+    """Read root attrs a structure-only rebuild can preserve unchanged.
+
+    ``dimension_metadata`` describes center columns, so it survives topology,
+    encoding, filtering, and culling rebuilds. Geometric transforms must keep
+    using :func:`read_authored_appearance` because scaling or rotating centers
+    invalidates the recorded axis descriptors.
+    """
+    carried = read_authored_appearance(path)
+    attrs = _read_root_attrs(path)
+    if "dimension_metadata" in attrs:
+        carried["dimension_metadata"] = attrs["dimension_metadata"]
+    return carried
+
+
 #: What a ``colormap: "custom"`` costs, shared verbatim by the one-input carry
 #: and the N-input merge so both explain the same loss the same way.
 _CUSTOM_COLORMAP_LOSS = (
@@ -141,6 +156,21 @@ def _read_authored_appearance(path: str | Path) -> "tuple[Dict[str, Any], bool]"
     """
     from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
 
+    attrs = _read_root_attrs(path)
+    carried = {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
+    has_custom_colormap = carried.get("colormap") == "custom"
+    if has_custom_colormap:
+        # The palette itself lives in a sibling `colormap_lut` array, which
+        # this attrs-only read (and the archive peek in particular) cannot
+        # reach. See the docstring: a dangling sentinel renders worse than the
+        # writer's own default, so drop it — and hand the fact back to the
+        # caller, which is what says so.
+        del carried["colormap"]
+    return carried, has_custom_colormap
+
+
+def _read_root_attrs(path: str | Path) -> Dict[str, Any]:
+    """Read root attrs from a directory or archive, best-effort."""
     p = Path(path)
     try:
         if p.is_dir():
@@ -170,17 +200,8 @@ def _read_authored_appearance(path: str | Path) -> "tuple[Dict[str, Any], bool]"
             # A regular file that is not an archive yields {} from the helper.
             attrs = read_archive_root_attrs(p)
     except Exception:
-        return {}, False
-    carried = {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
-    has_custom_colormap = carried.get("colormap") == "custom"
-    if has_custom_colormap:
-        # The palette itself lives in a sibling `colormap_lut` array, which
-        # this attrs-only read (and the archive peek in particular) cannot
-        # reach. See the docstring: a dangling sentinel renders worse than the
-        # writer's own default, so drop it — and hand the fact back to the
-        # caller, which is what says so.
-        del carried["colormap"]
-    return carried, has_custom_colormap
+        return {}
+    return attrs
 
 
 def _distinct(values: "Sequence[Any]") -> "List[Any]":
