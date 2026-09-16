@@ -65,8 +65,20 @@ def _require_plan_volume_shape(volume: Any, fitplan: Any) -> None:
         )
 
 
-def _validate_parallel_content_frame(physical_coordinates: bool, n_jobs: int) -> None:
+def _validate_parallel_content_frame(
+    physical_coordinates: bool,
+    jobs: str | int,
+    *,
+    plan_only: bool = False,
+    plan_box: Optional[int] = None,
+) -> None:
     """Reject a parallel mode whose assembler cannot scale the plan tree."""
+    if plan_only or plan_box is not None:
+        return
+    try:
+        n_jobs = int(jobs)
+    except ValueError:
+        return
     if physical_coordinates and n_jobs > 1:
         raise typer.BadParameter(
             "--physical-coordinates is not supported with parallel content fitting "
@@ -336,6 +348,9 @@ def run_content_fit(
     # usage error, not a bare ValueError from inside the fit. (`--floor` itself
     # is not validated by Typer: it is a free-form string spec.)
     validate_floor_spec(_fit_kwargs().get("floor", "auto"))
+    _validate_parallel_content_frame(
+        physical_coordinates, jobs, plan_only=plan_only, plan_box=plan_box
+    )
 
     # ── worker mode: fit ONE box of an existing plan (a -j parallel subprocess) ──
     if plan_box is not None:

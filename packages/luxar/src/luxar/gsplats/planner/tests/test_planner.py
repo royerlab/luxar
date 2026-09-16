@@ -1043,6 +1043,31 @@ class TestContentFitCullRetention:
                 verbose=False,
             )
 
+    def test_explicit_parallel_physical_refusal_precedes_volume_read(
+        self, tmp_path, monkeypatch
+    ):
+        """An explicit unsupported worker count is a zero-I/O usage error."""
+        import typer
+
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+
+        def fail_load(*args, **kwargs):
+            pytest.fail("volume must not be read before validating --jobs")
+
+        monkeypatch.setattr("luxar.cli.gsplat_config.load_volume", fail_load)
+        with pytest.raises(typer.BadParameter, match="use -j 1"):
+            run_content_fit(
+                tmp_path / "missing.npy",
+                tmp_path / "out.gsplats.zarr",
+                floor="none",
+                physical_coordinates=True,
+                jobs="2",
+                device="cpu",
+                verbose=False,
+            )
+
+        assert list(tmp_path.iterdir()) == []
+
     def test_bare_content_fit_is_near_lossless(self, tmp_path, monkeypatch):
         """No preset, no --config, no --cull-retention → 0.999 for every box.
 
