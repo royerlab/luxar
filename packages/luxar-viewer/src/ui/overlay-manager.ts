@@ -731,11 +731,18 @@ export class OverlayManager {
     config: OverlayConfig
   ): HTMLCanvasElement | null {
     if (config.alpha_matte !== 'stacked') return null;
+    const posterBackground = video.poster ? `url("${video.poster}")` : '';
     const matte = createVideoMatteCompositor(video, {
       onFailure: (error) => this.abandonMatte(config.name, video, error),
       onFirstFrame: () => {
         const current = this.matteCompositors.get(config.name);
         if (current) current.canvas.style.backgroundImage = 'none';
+      },
+      // Releasing the context blanks the canvas, so the poster goes back
+      // underneath it until the next visible frame is drawn.
+      onRelease: () => {
+        const current = this.matteCompositors.get(config.name);
+        if (current) current.canvas.style.backgroundImage = posterBackground || 'none';
       },
     });
     video.classList.add('luxar-overlay__matte-source');
@@ -818,8 +825,14 @@ export class OverlayManager {
     const video = this.videoElements.get(name);
     if (!video) return;
     const matte = this.matteCompositors.get(name);
+    // RELEASE, not stop, when the clip goes away: a WebGL context per hidden
+    // clip is a per-session leak, and a browser caps how many may be live —
+    // Chrome then evicts the OLDEST, which is the scene's own renderer. A tour
+    // with nineteen stacked turntables lost the renderer partway through
+    // before this; only the visible clip holds a context now, whatever the
+    // tour's length. The cost is one context acquisition per story step.
     if (visible) matte?.start();
-    else matte?.stop();
+    else matte?.release();
     if (visible) {
       video.preload = 'auto';
       if (video.paused && video.dataset.autoplay === '1') {

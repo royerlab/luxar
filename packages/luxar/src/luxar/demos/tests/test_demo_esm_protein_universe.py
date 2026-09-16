@@ -3,7 +3,7 @@
 The demo itself needs the two hand-delivered parquet files (~900 MB), so the
 scene build is exercised manually; these tests pin the parts that decide WHAT a
 story highlights and WHERE the camera goes, on synthetic data, plus the
-well-formedness of the twelve shipped stories.
+well-formedness of the nineteen shipped stories.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from luxar.demos.demo_esm_protein_universe import (
     backdrop_colors,
     densest_core,
     family_mask,
+    highlight_appearance,
     highlight_intensity,
     member_labels,
     overview_panel_html,
@@ -370,7 +371,7 @@ def test_overview_panel_carries_the_count_and_the_credit() -> None:
     panel = overview_panel_html(7_714_508)
     assert "7,714,508" in panel
     assert demo.ATTRIBUTION in panel
-    assert "Twelve stories" in panel
+    assert "Nineteen stories" in panel
 
 
 # --------------------------------------------------------------------------- #
@@ -378,9 +379,9 @@ def test_overview_panel_carries_the_count_and_the_credit() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_twelve_shipped_stories_are_well_formed() -> None:
+def test_shipped_stories_are_well_formed() -> None:
     keys = [s.key for s in STORIES]
-    assert len(keys) == len(set(keys)) == 12
+    assert len(keys) == len(set(keys)) == 19
     for s in STORIES:
         assert isinstance(s, UniverseStory) and isinstance(s, Story)
         assert "/" not in s.key, f"{s.key!r} doubles as a node name; '/' is refused"
@@ -403,7 +404,13 @@ def test_twelve_shipped_stories_are_well_formed() -> None:
     # A story about the map itself lights EVERY member (the panel says "a quarter
     # of the map"; the picture must agree), so it has no knot cut and no bubble.
     assert all(s.whole for s in STORIES if s.region)
-    assert not any(s.whole for s in STORIES if not s.region)
+    # The converse does NOT hold: a SCATTER story is whole without being a
+    # region (tyrosine decarboxylase selects a family that turns out not to be
+    # one). Every non-region whole story must be exactly that case, so a story
+    # cannot silently lose its knot cut.
+    assert all(s.scatter for s in STORIES if s.whole and not s.region)
+    assert all(s.whole for s in STORIES if s.scatter)
+    assert [s.key for s in STORIES if s.scatter] == ["Levodopa and the gut"]
 
 
 def test_carried_stories_keep_their_vetted_facts() -> None:
@@ -442,7 +449,7 @@ def test_shipped_stories_author_valid_waypoints() -> None:
         for k, s in enumerate(STORIES, start=1)
     ]
     config = ViewerConfig(waypoints=waypoints)
-    assert len(config.to_dict()["waypoints"]) == 12
+    assert len(config.to_dict()["waypoints"]) == 19
     # A knot smaller than the bubble floor is framed at the story's own
     # distance floor, never closer than the bubble.
     pose = waypoints[0].camera
@@ -513,3 +520,221 @@ def test_high_quality_flag_is_spelled_in_main_and_documented() -> None:
     assert module_doc.index("--high-quality") < touch_panel
     assert module_doc.index("--coords X.parquet --annotations Y.parquet") < touch_panel
     assert "95% dolly swing" in (demo.build_universe_scene.__doc__ or "")
+
+
+# ---------------------------------------------------------------------------
+# Scatter stories (2026-09-16 review: a requested family that is not one)
+# ---------------------------------------------------------------------------
+
+
+def test_scatter_story_demands_the_whole_selection() -> None:
+    """A scatter story is about every member, so it cannot take a knot cut."""
+    with pytest.raises(ValueError, match="scatter=True needs whole=True"):
+        _story(pattern="x", scatter=True)
+
+    # whole=True makes it legal, and the flag survives construction.
+    story = _story(pattern="x", whole=True, scatter=True)
+    assert story.scatter and story.whole
+
+
+def test_highlight_appearance_has_one_regime_per_kind_of_story() -> None:
+    """Knot points, a region's sub-pixel shadow, a scatter's countable dots."""
+    knot = _story(pfam=("PF00042",))
+    region = _story(region="dark", whole=True)
+    scatter = _story(pattern="x", whole=True, scatter=True)
+
+    assert highlight_appearance(knot, 50) == (
+        demo.HIGHLIGHT_RADIUS,
+        highlight_intensity(50),
+    )
+    # A big knot is dimmed by the member count; a region ignores it.
+    assert highlight_appearance(knot, 10_000)[1] < highlight_appearance(knot, 50)[1]
+    assert highlight_appearance(region, 300_000) == (
+        demo.WHOLE_HIGHLIGHT_RADIUS,
+        demo.WHOLE_HIGHLIGHT_INTENSITY,
+    )
+    assert highlight_appearance(scatter, 52) == (
+        demo.SCATTER_HIGHLIGHT_RADIUS,
+        demo.SCATTER_HIGHLIGHT_INTENSITY,
+    )
+    # The whole point of a scatter marker: visible where a region's is not.
+    assert demo.SCATTER_HIGHLIGHT_RADIUS > 10 * demo.WHOLE_HIGHLIGHT_RADIUS
+    # ... and dimmer than a knot's, because each marker covers many pixels.
+    assert demo.SCATTER_HIGHLIGHT_INTENSITY < HIGHLIGHT_INTENSITY
+
+
+def test_carries_labels_follows_the_member_count_not_the_story_kind() -> None:
+    """A scatter story's few dozen members are labelled; a region's millions are not.
+
+    Hover labels are per-member strings in the store, so the dark proteome's
+    two million would dominate it; 52 tyrosine decarboxylase clusters are worth
+    reading and cost nothing.
+    """
+    knot = _story(pfam=("PF00042",))
+    region = _story(region="dark", whole=True)
+    scatter = _story(pattern="x", whole=True, scatter=True)
+    cap = demo.LABELLED_MEMBER_CAP
+
+    # A knot is labelled whatever its size (its knot cut keeps it small).
+    assert demo.carries_labels(knot, 1)
+    assert demo.carries_labels(knot, cap + 1)
+    # A whole story is labelled up to the cap and not past it.
+    assert demo.carries_labels(scatter, 52)
+    assert demo.carries_labels(scatter, cap)
+    assert not demo.carries_labels(scatter, cap + 1)
+    assert not demo.carries_labels(region, 2_025_330)
+    # The cap sits below the whole-map draw budget, so no region story can
+    # slip under it by being sampled.
+    assert cap < demo.WHOLE_HIGHLIGHT_MAX_POINTS
+
+
+def test_shipped_stories_label_the_scatter_and_not_the_regions() -> None:
+    """The rule, applied to the real tour with its measured member counts."""
+    measured = {
+        "Dark proteome": 2_025_330,
+        "Phage": 580_733,
+        "ABC transporters": 8_277,
+        "Levodopa and the gut": 52,
+    }
+    by_key = {s.key: s for s in STORIES}
+    assert demo.carries_labels(
+        by_key["Levodopa and the gut"], measured["Levodopa and the gut"]
+    )
+    for key in ("Dark proteome", "Phage", "ABC transporters"):
+        assert not demo.carries_labels(by_key[key], measured[key]), key
+
+
+def test_the_scatter_story_is_the_one_family_that_is_not_a_family() -> None:
+    """Tyrosine decarboxylase is authored as a scatter on purpose.
+
+    Measured on this Atlas release (2026-09-16): 52 clusters name it, their
+    densest ball holds 21 at 4% purity inside the 4,170-cluster group II PLP
+    decarboxylase fold, and their phyla are scattered. A knot story here would
+    claim a family the map does not show, so the panel's last two facts are
+    about the scatter itself.
+    """
+    (story,) = [s for s in STORIES if s.scatter]
+    assert story.key == "Levodopa and the gut"
+    assert story.pattern and story.pfam  # name match UNION the dedicated Pfam
+    assert story.region is None  # not a map-wide predicate: a family selector
+    assert story.frame_fraction >= 1.0  # pulled back to hold the whole scatter
+    assert any("no knot at all" in f for f in story.facts)
+
+
+def test_the_worm_knot_keeps_its_deliberately_smaller_radius() -> None:
+    """The nematode chemoreceptor radius is 0.2, not FAMILY_RADIUS.
+
+    Measured both ways (2026-09-16): the family has several comparable
+    components, and at 0.3 the purity-weighted seed abandons the tight knot
+    (55 members, r95 0.051, 95% ball purity, every member a nematode) for a
+    diffuse 40-member component at 20% purity. This pins the choice so a later
+    tidy-up cannot silently widen it.
+    """
+    (worm,) = [s for s in STORIES if s.key == "Worm chemoreceptors"]
+    assert worm.radius == 0.2 < demo.FAMILY_RADIUS
+
+
+def test_every_new_story_selects_by_pfam_or_name_and_names_its_structure() -> None:
+    """The seven stories added in the 2026-09-16 review."""
+    added = [
+        "Lanthipeptides",
+        "Ice-binding proteins",
+        "Reverse gyrase",
+        "Olfactory receptors",
+        "Insect odorant receptors",
+        "Worm chemoreceptors",
+        "Levodopa and the gut",
+    ]
+    by_key = {s.key: s for s in STORIES}
+    assert [k for k in added if k in by_key] == added
+    # They come after the twelve the tour shipped with, so the kiosk chapter
+    # indices of the original stops do not move.
+    assert [s.key for s in STORIES][-7:] == added
+    for key in added:
+        s = by_key[key]
+        assert s.key not in {c.key for c in SWISSPROT_STORIES}  # not carried
+        assert s.pfam or s.pattern, key
+        assert s.pdb_id and s.pdb_id == s.pdb_id.upper(), key
+        assert s.tags, key
+    # Distinct turntables: two stops showing the same molecule would read as a
+    # bug on the kiosk.
+    pdbs = [s.pdb_id.upper() for s in STORIES]
+    assert len(pdbs) == len(set(pdbs))
+
+
+def test_scatter_camera_frames_the_map_not_the_members_bounding_box() -> None:
+    """A scatter story's picture must contain the cloud its panel talks about.
+
+    The bounding-box centre of a few dozen scattered clusters is a biased
+    point, so aiming there leaves the map in one half of the frame.
+    """
+    from luxar.demos.demo_esm3_protein_stories import StoryCluster
+
+    cluster = StoryCluster(
+        indices=np.arange(52),
+        centre=np.array([-7.63, 2.49, 0.2]),  # measured for the shipped scatter
+        r95=6.79,
+        n_named=52,
+        r50=5.94,
+        r_max=7.63,
+    )
+    story = _story(pattern="x", whole=True, scatter=True, frame_fraction=1.0)
+    pose = demo.universe_story_camera(cluster, story, np.zeros(3), map_radius=20.0)
+
+    # Aimed at the MAP's centre, not the members'.
+    assert tuple(pose.target) == (0.0, 0.0, 0.0)
+    # Far enough back that the map's radius fits the frame height.
+    distance = float(np.linalg.norm(np.asarray(pose.position)))
+    assert distance > 20.0
+    # Approached from the members' own side of the cloud, so the shot differs
+    # from the Overview's.
+    to_camera = np.asarray(pose.position)
+    assert float(np.dot(to_camera[[0, 2]], cluster.centre[[0, 2]])) > 0
+
+    # A knot story is unaffected and needs no map radius.
+    knot = _story(pfam=("PF00042",))
+    assert demo.universe_story_camera(cluster, knot, np.zeros(3)).target != (
+        0.0,
+        0.0,
+        0.0,
+    )
+
+
+def test_a_scatter_story_refuses_to_be_framed_without_the_map_radius() -> None:
+    """Fail loudly rather than silently framing a scatter like a knot."""
+    from luxar.demos.demo_esm3_protein_stories import StoryCluster
+
+    cluster = StoryCluster(
+        indices=np.arange(3),
+        centre=np.array([1.0, 0.0, 0.0]),
+        r95=5.0,
+        n_named=3,
+        r50=4.0,
+    )
+    with pytest.raises(ValueError, match="pass map_radius"):
+        demo.universe_story_camera(
+            cluster, _story(pattern="x", whole=True, scatter=True), np.zeros(3)
+        )
+
+
+def test_only_one_story_claims_the_tour_is_tightest_knot() -> None:
+    """Superlatives are measured, so only one story may hold each.
+
+    Measured r95 over the fifteen knot stories (2026-09-16): reverse gyrase
+    0.020 is the tightest, then ice-binding 0.044 and the worm chemoreceptors
+    0.051; the vertebrate olfactory knot is EIGHTH at 0.123, so an earlier
+    draft calling it "among the tightest" was wrong and now says it is the
+    largest of the three smell knots instead. This guard keeps two stories from
+    claiming the same crown after a later edit.
+    """
+    unscoped, scoped = [], []
+    for s in STORIES:
+        body = " ".join(s.facts + (s.subtitle, s.title)).lower()
+        if "tightest" not in body:
+            continue
+        (scoped if "of the three" in body else unscoped).append(s.key)
+    assert unscoped == ["Reverse gyrase"], unscoped
+    assert scoped == ["Worm chemoreceptors"], scoped
+    # And the one that claims it is the smallest knot is the same story.
+    smallest = [s.key for s in STORIES if "smallest" in " ".join(s.facts).lower()]
+    assert smallest == ["Reverse gyrase"], smallest

@@ -65,7 +65,17 @@ export interface VideoMatteCompositor {
   start(): void;
   /** Stop drawing; the last frame stays on the canvas. */
   stop(): void;
-  /** Stop, release the GL resources and lose the context. */
+  /**
+   * Stop and hand the WebGL context back, staying REUSABLE: the next `start()`
+   * acquires a fresh one. A browser caps how many WebGL contexts may be live at
+   * once (Chrome evicts the oldest when the cap is passed, and the oldest is
+   * the scene's own renderer), so a tour with more stacked clips than that cap
+   * would kill the renderer if every clip kept its context for the session.
+   * Losing the context also clears the canvas, so `onRelease` fires to let the
+   * caller put a poster back underneath.
+   */
+  release(): void;
+  /** Stop, release the GL resources and detach for good. */
   dispose(): void;
 }
 
@@ -139,6 +149,12 @@ export interface VideoMatteOptions {
   onFailure?: (error: unknown) => void;
   /** Called once after the first frame has been drawn to the canvas. */
   onFirstFrame?: () => void;
+  /**
+   * Called when `release()` has handed the context back and blanked the
+   * canvas, so the caller can restore whatever sits behind it (the poster).
+   * `onFirstFrame` will fire again on the next start.
+   */
+  onRelease?: () => void;
 }
 
 /**
@@ -237,6 +253,23 @@ export function createVideoMatteCompositor(
     handle = 0;
   };
 
+  const release = (): void => {
+    running = false;
+    cancel();
+    if (!setup) return;
+    setup.gl.deleteTexture(setup.texture);
+    setup.gl.deleteProgram(setup.program);
+    setup.gl.getExtension('WEBGL_lose_context')?.loseContext();
+    setup = undefined;
+    // The canvas is blank again, so the next start has to redraw before it
+    // shows anything — and `onFirstFrame` must fire again for the caller to
+    // hide whatever it puts underneath. `failed` deliberately survives: a
+    // tainted clip stays abandoned rather than retrying on every step.
+    hasFrame = false;
+    delete canvas.dataset.hasFrame;
+    options.onRelease?.();
+  };
+
   return {
     canvas,
     start() {
@@ -250,15 +283,10 @@ export function createVideoMatteCompositor(
       running = false;
       cancel();
     },
+    release,
     dispose() {
-      running = false;
-      cancel();
+      release();
       video.removeEventListener('loadedmetadata', sizeToVideo);
-      if (setup) {
-        setup.gl.deleteTexture(setup.texture);
-        setup.gl.deleteProgram(setup.program);
-        setup.gl.getExtension('WEBGL_lose_context')?.loseContext();
-      }
     },
   };
 }

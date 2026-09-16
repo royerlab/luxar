@@ -920,7 +920,7 @@
     },
     {
       "id": "esm_protein_universe",
-      "title": "ESM Protein Universe \u2014 twelve stories across 7.7 million protein clusters",
+      "title": "ESM Protein Universe \u2014 nineteen stories across 7.7 million protein clusters",
       "geometry": "points",
       "category": "embeddings",
       "script": "demo_esm_protein_universe.py",

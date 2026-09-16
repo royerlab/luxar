@@ -495,7 +495,7 @@ top, and every field is optional:
 
 ```python
 scene.viewer_config.control_panel = ControlPanelConfig(
-    title="Twelve stories in the protein universe",
+    title="Nineteen stories in the protein universe",
     subtitle="Touch a tile to travel there",
     chapter_dimension="story",   # by NAME; an index breaks when dims reorder
     columns=4,                   # unset lets the panel fit its own container

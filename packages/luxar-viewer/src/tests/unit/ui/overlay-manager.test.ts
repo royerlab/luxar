@@ -348,11 +348,14 @@ describe('OverlayManager.loadOverlays', () => {
       canvas: document.createElement('canvas'),
       start: vi.fn(),
       stop: vi.fn(),
+      release: vi.fn(),
       dispose: vi.fn(),
     };
     let firstFrame: (() => void) | undefined;
+    let released: (() => void) | undefined;
     matteFactory.mockImplementationOnce((_video, opts) => {
       firstFrame = opts?.onFirstFrame;
+      released = opts?.onRelease;
       return matte;
     });
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
@@ -414,8 +417,18 @@ describe('OverlayManager.loadOverlays', () => {
     expect(matte.start).not.toHaveBeenCalled();
     setStory(2);
     expect(matte.start).toHaveBeenCalledTimes(1);
+    const releasesBefore = matte.release.mock.calls.length;
     setStory(0);
-    expect(matte.stop).toHaveBeenCalled();
+    // RELEASE, not stop: a hidden clip must not hold a WebGL context, because
+    // the browser's context cap evicts the oldest — the scene's own renderer.
+    expect(matte.release.mock.calls.length).toBe(releasesBefore + 1);
+    expect(matte.stop).not.toHaveBeenCalled();
+    // Releasing blanks the canvas, so the poster returns underneath it.
+    released!();
+    expect(matte.canvas.style.backgroundImage).toContain('poster.png');
+    // Coming back re-acquires and redraws.
+    setStory(2);
+    expect(matte.start).toHaveBeenCalledTimes(2);
 
     manager.dispose();
     expect(matte.dispose).toHaveBeenCalledTimes(1);
@@ -431,6 +444,7 @@ describe('OverlayManager.loadOverlays', () => {
       canvas: document.createElement('canvas'),
       start: vi.fn(),
       stop: vi.fn(),
+      release: vi.fn(),
       dispose: vi.fn(),
     };
     matteFactory.mockReturnValueOnce(matte);
@@ -464,6 +478,7 @@ describe('OverlayManager.loadOverlays', () => {
       canvas: document.createElement('canvas'),
       start: vi.fn(),
       stop: vi.fn(),
+      release: vi.fn(),
       dispose: vi.fn(),
     };
     let fail: ((error: unknown) => void) | undefined;
