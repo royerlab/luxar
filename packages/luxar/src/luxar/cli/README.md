@@ -557,12 +557,13 @@ luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slur
 luxar gsplat benchmark --list                         # Show profiled GPUs
 ```
 
-The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared. Content planning rejects on-the-fly `--denoise` and `--progressive` because content-box workers do not implement them; `batch-fit submit --preprocess` is the supported denoising route because it denoises to a store before the boxes fit.
+The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared. Content planning rejects on-the-fly `--denoise` and `--progressive` because content-box workers do not implement them; `batch-fit submit --preprocess` is the supported denoising route because it denoises to a store before the boxes fit. Output remains in voxel index space by default. Pass `--physical` to scale fitted centers, covariance, tile/box origins, partition split planes, and quality scoring with the selected NGFF `coordinateTransformations` spatial scale; an explicit `voxel_size` in `--config` wins. Merged stores record scaled spatial axes at scale 1 and retain the NGFF unit only when it supplied the spacing, so converted scenes can label the scale bar honestly. Planning rejects `--physical` when no spacing is available, when the config requests `output_space: voxel`, or when `--merge-refine volume` would crop a physical-space part on the source voxel grid.
 
 #### `luxar gsplat batch-fit run`
 Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. Workers are pinned per GPU via `CUDA_VISIBLE_DEVICES`; automatic concurrency accounts for GPU memory and shared host RAM/CPU limits. Resumable — re-running skips tiles already on disk.
 ```bash
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256                  # uniform, every GPU
+luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256 --physical       # NGFF physical coordinates
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto # content plan
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10
 luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --merge-n-lods 4  # per-part LOD
@@ -577,6 +578,7 @@ Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by d
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu                    # Submit to Slurm
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --physical         # NGFF physical coordinates
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --gpus-per-task 2  # 2 GPUs per Slurm task
 ```
 `--gpus-per-task` is a COUNT of GPUs to request for each task, emitted verbatim as `#SBATCH --gpus-per-task`. It is deliberately not spelled `--gpus`: that means the opposite thing one command over, where `batch-fit run --gpus` SELECTS which local devices to use.

@@ -2903,7 +2903,7 @@ class TestContentMerge:
             cholesky_factors=chol,
         )
 
-    def _content_manifest(self, out: Path, n_boxes: int) -> "object":
+    def _content_manifest(self, out: Path, n_boxes: int, **kwargs: Any) -> "object":
         from luxar.gsplats.batch.manifest import (
             BatchJob,
             BatchManifest,
@@ -2932,9 +2932,50 @@ class TestContentMerge:
             plan_path=str(out / "plan.json"),
             total_tasks=n_boxes,
             slurm_partition="gpu",
+            **kwargs,
         )
         m.jobs = jobs
         return m
+
+    def test_content_split_planes_follow_physical_grid_scale(
+        self, tmp_path: Path
+    ) -> None:
+        """The content plan stays voxel-authored while its merge tree is physical."""
+        from luxar.gsplats.batch.merge_orchestrator import _slot_bsp_tree
+        from luxar.gsplats.planner.spec import FitPlan, PlanBox
+
+        out = tmp_path / "batch"
+        out.mkdir()
+        FitPlan(
+            volume_shape=[20, 20, 20],
+            boxes=[
+                PlanBox(box=[0, 10, 0, 20, 0, 20], n_features=1, budget=1),
+                PlanBox(box=[10, 20, 0, 20, 0, 20], n_features=1, budget=1),
+            ],
+            overlap=0,
+            feature_method="peaks",
+            min_leaf=4,
+            max_leaf=16,
+            bsp_tree={
+                "axis": 0,
+                "split": 10.0,
+                "left": {"part": 0},
+                "right": {"part": 1},
+            },
+        ).to_json(out / "plan.json")
+
+        tree = _slot_bsp_tree(
+            self._content_manifest(out, 2, grid_scale=[5.0, 2.0, 1.0]),
+            out,
+            False,
+        )
+
+        assert tree == {
+            "axis": 0,
+            "split": 50.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        }
 
     def test_content_merge_finds_box_outputs_and_skips_empty(
         self, tmp_path: Path

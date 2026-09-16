@@ -349,7 +349,6 @@ def discover_ome_zarr_shape(
             The match is exact, but on the NORMALISED spellings, so a block
             writing its own levels explicitly relative (``"./0"`` for the array at
             ``"0"``) still names them; see :func:`_selected_dataset`.
-
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
 

@@ -545,6 +545,9 @@ luxar gsplat batch-fit run vol.zarr out/ --gpus auto --axes time,z,y,x \
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10   # subset, 2 workers/GPU
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                            # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run  # plan only
+# Batch output stays in index space by default; --physical opts run/submit into
+# the selected NGFF spatial scale (a config voxel_size still takes precedence).
+luxar gsplat batch-fit run vol.zarr out/ --gpus auto --physical
 
 # HPC Slurm fitting (plans + submits Slurm array jobs). `batch-fit submit`
 # submits by default; pass --dry-run to plan without submitting.
@@ -552,6 +555,7 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu                    # 
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tile-size 256    # Manual tile size (skips GPU profile)
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --physical         # Emit physical coordinates from NGFF spacing
 # Content-aware cluster fan-out: build ONE content-balanced box plan and reuse it
 # for every (t,c) — the cluster sibling of `fit --tiling content`. By default the
 # plan is scanned from a temporal MAX-PROJECTION over up to --plan-samples

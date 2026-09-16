@@ -36,6 +36,10 @@ content-box worker at that store.
 every preset, `standard` included, sets 0.999; 0 keeps all). The older "0.95 for
 uniform tiles, 0.999 for content boxes" split never existed in the batch path.
 
+Output coordinates remain in index space by default. `--physical` opts both
+`batch-fit run` and `batch-fit submit` into the selected OME-Zarr NGFF spatial
+scale; a config-supplied `voxel_size` takes precedence over discovered spacing.
+
 Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 (t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
 volume's M non-empty tiles (`ceil(K/M)`, floored at 1) instead of fitting K per
