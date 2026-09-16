@@ -523,6 +523,18 @@ def test_a_parsed_store_says_nothing_at_all(
     assert capsys.readouterr().out == ""
 
 
+def test_guess_notice_can_be_suppressed(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Internal metadata probes can reuse discovery without duplicate warnings."""
+    path = _write_store(tmp_path / "plain.zarr", (7, 16, 32, 32))
+
+    info = discover_ome_zarr_shape(path, announce=False)
+
+    assert info.shape == (7, 16, 32, 32)
+    assert capsys.readouterr().out == ""
+
+
 def test_an_unambiguous_3d_store_stays_quiet(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:

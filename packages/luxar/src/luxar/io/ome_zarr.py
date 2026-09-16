@@ -293,6 +293,8 @@ def discover_ome_zarr_shape(
     path: Path,
     axes_override: Optional[List[str]] = None,
     array_key: Optional[str] = None,
+    *,
+    announce: bool = True,
 ) -> OMEZarrInfo:
     """Discover the shape and axis structure of an OME-Zarr dataset.
 
@@ -335,6 +337,8 @@ def discover_ome_zarr_shape(
             The match is exact, but on the NORMALISED spellings, so a block
             writing its own levels explicitly relative (``"./0"`` for the array at
             ``"0"``) still names them; see :func:`_selected_dataset`.
+        announce: Print the ambiguous-axis warning when discovery falls back to
+            shape-based heuristics. Internal metadata probes may disable it.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
@@ -406,7 +410,8 @@ def discover_ome_zarr_shape(
 
     # Fallback: heuristic based on ndim
     info = _heuristic_ome_info(shape, ndim, path)
-    _announce_guessed_axes(info, path, unusable)
+    if announce:
+        _announce_guessed_axes(info, path, unusable)
     return info
 
 
