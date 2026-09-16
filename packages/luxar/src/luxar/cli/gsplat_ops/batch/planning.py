@@ -46,6 +46,7 @@ class FitConfig:
     iters: Optional[int] = None
     config: Optional[Path] = None
     floor: Optional[str] = "auto"
+    physical: bool = False
     progressive: bool = False
     splats_per_pass: Optional[int] = None
     psnr_patience: Optional[float] = None
@@ -1522,6 +1523,53 @@ def resolve_uniform_grid_scale(fit: FitConfig, ndim: int) -> Optional[List[float
     return list(scale) if scale is not None else None
 
 
+def _physical_voxel_size(
+    fit: FitConfig,
+    ome_info: "OMEZarrInfo",
+    axes_list: Optional[List[str]],
+    ndim: int,
+) -> "Tuple[Optional[List[float]], bool]":
+    """Resolve ``--physical`` spacing and whether workers need an override."""
+    if not fit.physical:
+        return None, False
+
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.tiling import resolve_grid_scale
+
+    config = load_fit_config(preset=fit.preset, config_path=fit.config)
+    if config.get("output_space", "real") != "real":
+        raise typer.BadParameter(
+            "--physical requires output_space: real; remove the config override "
+            "or omit --physical to keep voxel coordinates."
+        )
+
+    configured = config.get("voxel_size")
+    discovered = ome_info.voxel_size
+    if discovered is not None and axes_list is None:
+        discovered = tuple(
+            spacing
+            for size, spacing in zip(ome_info.spatial_shape, discovered, strict=True)
+            if size != 1
+        )
+    selected = configured if configured is not None else discovered
+    if selected is None:
+        raise typer.BadParameter(
+            "--physical requested physical coordinates, but the selected OME-Zarr "
+            "array has no usable spatial scale in coordinateTransformations and "
+            "the fit config does not define voxel_size."
+        )
+    try:
+        resolve_grid_scale(ndim, voxel_size=selected, output_space="real")
+        values = (
+            [float(selected)] * ndim
+            if isinstance(selected, (int, float))
+            else [float(value) for value in selected]
+        )
+    except (TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"--physical voxel size is invalid: {exc}") from exc
+    return values, configured is None
+
+
 def resolve_merge_recipe_args(
     merge: MergeConfig,
     *,
@@ -1930,6 +1978,10 @@ def plan_batch(
         ome_info = discover_ome_zarr_shape(
             input_path, axes_override=axes_list, array_key=array_key
         )
+        if fit.physical and axes_list is not None and ome_info.voxel_size is None:
+            declared_info = discover_ome_zarr_shape(input_path, array_key=array_key)
+            if declared_info.spatial_indices == ome_info.spatial_indices:
+                ome_info.voxel_size = declared_info.voxel_size
         n_t_full = ome_info.n_timepoints
         n_c_full = ome_info.n_channels
         # Positional workers call load_volume without --axes, whose legacy
@@ -1952,6 +2004,15 @@ def plan_batch(
             emits_channel=n_c_full > 1 or bool(channels_slice),
             emits_timepoint=n_t_full > 1 or bool(timepoints_slice),
         )
+
+        physical_voxel_size, inject_physical_voxel_size = _physical_voxel_size(
+            fit, ome_info, axes_list, len(spatial)
+        )
+        if inject_physical_voxel_size:
+            assert physical_voxel_size is not None
+            fit_args["voxel-size"] = ",".join(
+                str(value) for value in physical_voxel_size
+            )
 
         t_indices = (
             _parse_slice(timepoints_slice, n_t_full)
@@ -2009,9 +2070,12 @@ def plan_batch(
     # split planes from the shared plan's own boxes, not from a rebuilt grid.
     # Ahead of the floor resolution below because it reads only the fit config:
     # a frame the merge cannot reconcile fails before any voxel is sampled.
-    grid_scale = (
-        resolve_uniform_grid_scale(fit, len(spatial)) if mode != "content" else None
-    )
+    if physical_voxel_size is not None:
+        grid_scale = physical_voxel_size
+    else:
+        grid_scale = (
+            resolve_uniform_grid_scale(fit, len(spatial)) if mode != "content" else None
+        )
     _validate_merge_refine_frame(merge, grid_scale)
 
     # 3a. Background floor: ONE level for the whole timelapse, resolved here and

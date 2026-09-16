@@ -655,6 +655,165 @@ def test_the_batch_planner_fans_out_over_the_recovered_time_axis(
     assert plan.manifest.n_channels == 1
 
 
+def test_batch_physical_forwards_discovered_ngff_voxel_size(tmp_path: Path) -> None:
+    """The opt-in moves worker output and the merge grid into physical space."""
+    from luxar.cli.gsplat_ops.batch.planning import FitConfig
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+
+    src = _write_store(
+        tmp_path / "physical.zarr",
+        (2, 16, 32, 32),
+        labels=_TZYX,
+        scale=(1.0, 2.0, 0.325, 0.325),
+        nested=True,
+    )
+
+    plan = _plan(
+        src,
+        tmp_path / "out_physical",
+        fit=FitConfig(floor=None, physical=True),
+    )
+    argv = build_task_fit_argv(
+        plan.manifest,
+        plan.manifest.jobs[0],
+        "unused.gsplats.zarr",
+        argv0=["luxar"],
+    )
+
+    assert tuple(
+        float(value) for value in argv[argv.index("--voxel-size") + 1].split(",")
+    ) == (2.0, 0.325, 0.325)
+    assert plan.manifest.grid_scale == [2.0, 0.325, 0.325]
+
+
+def test_batch_index_space_remains_the_default(tmp_path: Path) -> None:
+    """NGFF spacing is inert unless the user explicitly requests physical output."""
+    src = _write_store(
+        tmp_path / "index.zarr",
+        (2, 16, 32, 32),
+        labels=_TZYX,
+        scale=(1.0, 2.0, 0.325, 0.325),
+    )
+
+    plan = _plan(src, tmp_path / "out_index")
+
+    assert "voxel-size" not in plan.manifest.fit_args
+    assert plan.manifest.grid_scale is None
+
+
+def test_batch_physical_respects_configured_voxel_size(tmp_path: Path) -> None:
+    """An explicit fit config remains the higher-priority spacing source."""
+    from luxar.cli.gsplat_ops.batch.planning import FitConfig
+
+    src = _write_store(
+        tmp_path / "configured.zarr",
+        (16, 32, 32),
+        labels=_ZYX,
+        scale=(2.0, 0.325, 0.325),
+    )
+    config = tmp_path / "fit.yaml"
+    config.write_text("voxel_size: [4.0, 1.0, 1.0]\n")
+
+    plan = _plan(
+        src,
+        tmp_path / "out_configured",
+        fit=FitConfig(floor=None, physical=True, config=config),
+    )
+
+    assert "voxel-size" not in plan.manifest.fit_args
+    assert plan.manifest.grid_scale == [4.0, 1.0, 1.0]
+
+
+def test_batch_physical_requires_a_spacing_source(tmp_path: Path) -> None:
+    """The opt-in fails loudly instead of silently producing voxel coordinates."""
+    import typer
+    import zarr
+
+    from luxar.cli.gsplat_ops.batch.planning import FitConfig
+
+    src = tmp_path / "plain.zarr"
+    create_array(
+        zarr.open_group(src, mode="w"),
+        "0",
+        data=np.zeros((16, 32, 32), dtype=np.float32),
+    )
+
+    with pytest.raises(typer.BadParameter, match="no usable spatial scale"):
+        _plan(
+            src,
+            tmp_path / "out_plain",
+            fit=FitConfig(floor=None, physical=True),
+        )
+
+
+def test_batch_physical_drops_squeezed_singleton_spacing(tmp_path: Path) -> None:
+    """Discovered spacing follows the exact dimensions positional workers fit."""
+    from luxar.cli.gsplat_ops.batch.planning import FitConfig
+
+    src = _write_store(
+        tmp_path / "thin.zarr",
+        (1, 16, 32),
+        labels=_ZYX,
+        scale=(5.0, 0.4, 0.2),
+    )
+
+    plan = _plan(
+        src,
+        tmp_path / "out_thin",
+        fit=FitConfig(floor=None, physical=True),
+    )
+
+    assert plan.manifest.spatial_shape == (16, 32)
+    assert plan.manifest.grid_scale == [0.4, 0.2]
+    assert plan.manifest.fit_args["voxel-size"] == "0.4,0.2"
+
+
+def test_batch_physical_rejects_voxel_output_space(tmp_path: Path) -> None:
+    """An explicit request for voxel output cannot silently defeat --physical."""
+    import typer
+
+    from luxar.cli.gsplat_ops.batch.planning import FitConfig
+
+    src = _write_store(
+        tmp_path / "voxel-output.zarr",
+        (16, 32, 32),
+        labels=_ZYX,
+        scale=(2.0, 0.4, 0.4),
+    )
+    config = tmp_path / "voxel.yaml"
+    config.write_text("output_space: voxel\n")
+
+    with pytest.raises(typer.BadParameter, match="requires output_space: real"):
+        _plan(
+            src,
+            tmp_path / "out_voxel",
+            fit=FitConfig(floor=None, physical=True, config=config),
+        )
+
+
+def test_batch_physical_rejects_volume_merge_refine(tmp_path: Path) -> None:
+    """Volume refinement crops in voxels, so planning refuses a physical frame."""
+    import typer
+
+    from luxar.cli.gsplat_ops.batch.planning import FitConfig, MergeConfig
+
+    src = _write_store(
+        tmp_path / "refine.zarr",
+        (16, 32, 32),
+        labels=_ZYX,
+        scale=(2.0, 0.4, 0.4),
+    )
+
+    with pytest.raises(typer.BadParameter, match="frame scaled by"):
+        _plan(
+            src,
+            tmp_path / "out_refine",
+            axes_list=["z", "y", "x"],
+            fit=FitConfig(floor=None, physical=True),
+            merge=MergeConfig(recipe="levels", levels=1, refine="volume"),
+        )
+
+
 def _plan_axes(src: Path, out_dir: Path, axes_list: List[str]) -> Any:
     """``_plan`` with an explicit ``--axes`` — the guard's documented escape hatch."""
     from luxar.cli.gsplat_ops.batch.planning import (

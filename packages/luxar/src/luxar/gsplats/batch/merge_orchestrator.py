@@ -866,7 +866,22 @@ def _content_slot_bsp_tree(
                 f"manifest expects {manifest.n_tiles} slots"
             )
         return None
-    return plan.bsp_tree
+    if not manifest.grid_scale:
+        return plan.bsp_tree
+    try:
+        import numpy as np
+
+        from luxar.core.group.partition import map_serialized_bsp_tree
+
+        return map_serialized_bsp_tree(
+            plan.bsp_tree, linear=np.diag([float(v) for v in manifest.grid_scale])
+        )
+    except (TypeError, ValueError) as exc:
+        aprint(
+            f"  WARNING: no split planes — the manifest records a grid_scale "
+            f"{manifest.grid_scale!r} that does not fit the content plan ({exc})."
+        )
+        return None
 
 
 def _uniform_slot_bsp_tree(

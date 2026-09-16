@@ -78,6 +78,7 @@ def _stamp_content_box_output(
     device: Optional[str],
     *,
     verbose: bool,
+    grid_scale: "Optional[tuple[float, ...]]" = None,
 ) -> None:
     """Describe a standalone content box after its halo splats were removed.
 
@@ -103,6 +104,8 @@ def _stamp_content_box_output(
     z0, z1, y0, y1, x0, x1 = box.box
     shape = (z1 - z0, y1 - y0, x1 - x0)
     origin = np.asarray((z0, y0, x0), dtype=np.float32)
+    if grid_scale is not None:
+        origin = origin * np.asarray(grid_scale, dtype=np.float32)
     scored = GSplatData(
         centers=(result.centers - origin).astype(np.float32, copy=False),
         amplitudes=result.amplitudes,
@@ -115,7 +118,7 @@ def _stamp_content_box_output(
         scored,
         core,
         volume_shape=shape,
-        grid_scale=None,
+        grid_scale=grid_scale,
         device=device,
         verbose=verbose,
         image_min=fit_image_min(result.stats),
@@ -225,6 +228,7 @@ def run_content_fit(
     lr: Optional[float] = None,
     floor: Optional[str] = None,
     norm_range: "Optional[tuple[float, float]]" = None,
+    voxel_size: "Optional[tuple[float, ...]]" = None,
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
@@ -298,6 +302,7 @@ def run_content_fit(
                 "lr": lr,
                 "floor": floor,
                 "norm_range": norm_range,
+                "voxel_size": voxel_size,
                 # `0.0` ("keep every splat") is not None, so it still wins here.
                 "cull_retention": cull_retention,
             },
@@ -364,12 +369,19 @@ def run_content_fit(
             # Save the fitted dataset AS IS: rebuilding it from bare arrays
             # dropped the fit's truncation_radius and per-box stats (#1637),
             # and suppressing fitting info here discarded those stats on disk.
+            from luxar.gsplats.tiling import resolve_grid_scale
+
             _stamp_content_box_output(
                 box_result,
                 vol,
                 fitplan.boxes[plan_box],
                 device,
                 verbose=verbose,
+                grid_scale=resolve_grid_scale(
+                    vol.ndim,
+                    voxel_size=fk.get("voxel_size"),
+                    output_space=fk.get("output_space", "real"),
+                ),
             )
             box_result.save(output)
         return

@@ -196,6 +196,12 @@ def run_fit_volume(
         hidden=True,
         help="Internal worker handoff: raw-input normalization range LO,HI.",
     ),
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        hidden=True,
+        help="Internal worker handoff: comma-separated physical voxel spacing.",
+    ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
     ),
@@ -575,6 +581,16 @@ def run_fit_volume(
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
     parsed_norm_range = _parse_norm_range(norm_range)
+    try:
+        parsed_voxel_size = (
+            tuple(float(part.strip()) for part in voxel_size.split(","))
+            if voxel_size is not None
+            else None
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "--voxel-size must be comma-separated numbers"
+        ) from exc
 
     try:
         from luxar.gsplats import fit_gaussian_splats
@@ -644,6 +660,7 @@ def run_fit_volume(
                 lr=lr,
                 floor=floor,
                 norm_range=parsed_norm_range,
+                voxel_size=parsed_voxel_size,
                 seed_method=seed_method,
                 verbose=verbose,
                 downscale=downscale,
@@ -744,6 +761,7 @@ def run_fit_volume(
                     lr=lr,
                     floor=floor,
                     norm_range=parsed_norm_range,
+                    voxel_size=parsed_voxel_size,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,

@@ -86,6 +86,12 @@ def run_batch_run(
     # Fit params
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
+    physical: bool = typer.Option(
+        False,
+        "--physical",
+        help="Fit centers and covariance in physical coordinates using the selected "
+        "OME-Zarr coordinateTransformations scale. A voxel_size in --config wins.",
+    ),
     floor: Optional[str] = typer.Option(
         None,
         "--floor",
@@ -298,6 +304,7 @@ def run_batch_run(
             iters=iters,
             config=config,
             floor=floor,
+            physical=physical,
             batch_progressive=batch_progressive,
             batch_splats_per_pass=batch_splats_per_pass,
             batch_psnr_patience=batch_psnr_patience,

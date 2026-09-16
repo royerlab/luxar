@@ -119,6 +119,7 @@ class FitPipelineCtx:
     denoise_patch_size: int
     denoise_search_distance: int
     denoise_backend: str
+    voxel_size: "Optional[tuple[float, ...]]" = None
     denoise_effective_h: Optional[float] = None
     denoise_norm_range: "Optional[tuple[float, float]]" = None
 
@@ -363,6 +364,7 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
         "lr": ctx.lr,
         "floor": ctx.floor,
         "norm_range": ctx.norm_range,
+        "voxel_size": ctx.voxel_size,
         "seed_method": ctx.seed_method,
         "verbose": ctx.verbose,
         "cull_retention": ctx.cull_retention,
