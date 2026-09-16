@@ -879,7 +879,10 @@ def _content_slot_bsp_tree(
     except (TypeError, ValueError) as exc:
         aprint(
             f"  WARNING: no split planes — the manifest records a grid_scale "
-            f"{manifest.grid_scale!r} that does not fit the content plan ({exc})."
+            f"{manifest.grid_scale!r} that does not fit the content plan ({exc}). "
+            "The partition is written WITHOUT split planes; the viewer falls "
+            "back to ordering the parts by centroid, which can pop at the seams "
+            "(#1555)."
         )
         return None
 

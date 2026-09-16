@@ -1580,7 +1580,36 @@ def _restore_declared_voxel_size(
     """Recover NGFF spacing when an explicit axes view omits scale metadata."""
     if not fit.physical or axes_list is None or ome_info.voxel_size is not None:
         return
-    from luxar.io.ome_zarr import discover_ome_zarr_shape
+    import zarr
+
+    from luxar._zarr_compat import close, open_store
+    from luxar.io.ome_zarr import (
+        _owner_ngff_attrs,
+        _relative_key,
+        _usable_ngff_for_selection,
+        discover_ome_zarr_shape,
+    )
+    from luxar.io.volume import _select_zarr_array
+
+    store = zarr.open(store=open_store(input_path, mode="r"), mode="r")
+    try:
+        array, key_path, owner, declares = _select_zarr_array(
+            store, input_path, array_key
+        )
+        root_attrs = dict(getattr(store, "attrs", {}))
+        owner_ngff = None
+        owner_key = None
+        if owner is not None and owner is not store:
+            owner_attrs = dict(owner.attrs)
+            owner_key = _relative_key(owner, key_path)
+            owner_ngff, _ = _owner_ngff_attrs(owner, array, owner_attrs, declares)
+        multiscales, _, _ = _usable_ngff_for_selection(
+            root_attrs, owner_ngff, owner_key, key_path or None, len(array.shape)
+        )
+    finally:
+        close(store)
+    if multiscales is None:
+        return
 
     declared_info = discover_ome_zarr_shape(input_path, array_key=array_key)
     if declared_info.spatial_indices == ome_info.spatial_indices:

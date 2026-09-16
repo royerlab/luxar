@@ -110,15 +110,16 @@ def _stamp_planned_normalization(
     target.update(agreed_normalization_stats([region.stats for region in regions]))
 
 
-def _resolve_content_frame(
-    fit_kwargs: dict[str, Any], ndim: int
-) -> "tuple[bool, Optional[tuple[float, ...]]]":
-    """Preserve legacy voxel output unless physical content was explicit."""
-    content_physical = bool(fit_kwargs.pop("_content_physical", False))
+def _content_fit_frame(
+    fit_kwargs: dict[str, Any], content_physical: bool
+) -> "tuple[Optional[Sequence[float] | float], str]":
+    """Resolve one content fit's output frame, stripping implicit physical config."""
+    voxel_size = fit_kwargs.get("voxel_size")
+    output_space = fit_kwargs.get("output_space", "real")
     if not content_physical:
-        voxel_size = fit_kwargs.pop("voxel_size", None)
-        output_space = fit_kwargs.pop("output_space", None)
-        if voxel_size is not None and output_space != "voxel":
+        ignored_voxel_size = fit_kwargs.pop("voxel_size", None)
+        ignored_output_space = fit_kwargs.pop("output_space", None)
+        if ignored_voxel_size is not None and ignored_output_space != "voxel":
             import warnings
 
             warnings.warn(
@@ -128,14 +129,25 @@ def _resolve_content_frame(
                 UserWarning,
                 stacklevel=2,
             )
+        voxel_size = None
+        output_space = "voxel"
+    return voxel_size, output_space
+
+
+def _resolve_content_frame(
+    fit_kwargs: dict[str, Any], ndim: int
+) -> "tuple[bool, Optional[tuple[float, ...]]]":
+    """Preserve legacy voxel output unless physical content was explicit."""
+    content_physical = bool(fit_kwargs.pop("_content_physical", False))
+    voxel_size, output_space = _content_fit_frame(fit_kwargs, content_physical)
     from luxar.gsplats.tiling import resolve_grid_scale
 
     return (
         content_physical,
         resolve_grid_scale(
             ndim,
-            voxel_size=fit_kwargs.get("voxel_size"),
-            output_space=fit_kwargs.get("output_space", "real"),
+            voxel_size=voxel_size,
+            output_space=output_space,
         ),
     )
 
@@ -147,11 +159,20 @@ def _scaled_plan_bsp_tree(
     """Return the content partition tree in the fitted coordinate frame."""
     if bsp_tree is None or grid_scale is None:
         return bsp_tree
-    from luxar.core.group.partition import map_serialized_bsp_tree
+    scale = np.asarray(grid_scale, dtype=float)
 
-    return map_serialized_bsp_tree(
-        bsp_tree, linear=np.diag(np.asarray(grid_scale, dtype=float))
-    )
+    def walk(node: dict[str, Any]) -> dict[str, Any]:
+        if "part" in node:
+            return {"part": int(node["part"])}
+        axis = int(node["axis"])
+        return {
+            "axis": axis,
+            "split": float(node["split"]) * float(scale[axis]),
+            "left": walk(node["left"]),
+            "right": walk(node["right"]),
+        }
+
+    return walk(bsp_tree)
 
 
 def _score_planned_merge(
@@ -312,23 +333,7 @@ def _fit_one_box(
     from luxar.gsplats.utils.trils import tril_size
     from luxar.typing_utils.json_safe import json_safe_value
 
-    voxel_size = fit_kwargs.get("voxel_size")
-    output_space = fit_kwargs.get("output_space", "real")
-    if not content_physical:
-        ignored_voxel_size = fit_kwargs.pop("voxel_size", None)
-        ignored_output_space = fit_kwargs.pop("output_space", None)
-        if ignored_voxel_size is not None and ignored_output_space != "voxel":
-            import warnings
-
-            warnings.warn(
-                "voxel_size/output_space='real' are not supported with content-"
-                "planned fitting unless the caller explicitly enables physical "
-                "content geometry; fitting in voxel space (voxel_size ignored).",
-                UserWarning,
-                stacklevel=2,
-            )
-        voxel_size = None
-        output_space = "voxel"
+    voxel_size, output_space = _content_fit_frame(fit_kwargs, content_physical)
 
     V = np.asarray(volume, dtype=np.float32)
     ndim = V.ndim

@@ -126,20 +126,15 @@ class BatchManifest:
 
     grid_scale: Optional[List[float]] = None
     """Per-axis factor mapping the VOXEL tile grid onto the frame the fit tasks'
-    splats actually come back in (``uniform`` mode; #1587).
+    splats actually come back in (uniform tiles or content boxes; #1587).
 
-    Every array task runs ``luxar gsplat fit --tile k/M`` with this run's
-    ``--preset`` and (verbatim) its ``--config`` YAML, so a ``voxel_size:`` with
-    the default ``output_space: real`` makes each worker emit PHYSICAL centers
-    while ``spatial_shape`` — and hence the tile grid rebuilt from it at merge
-    time — stays in voxels. That is the only term the planner composes, ONCE,
-    here, with :func:`~luxar.gsplats.tiling.resolve_grid_scale`, because this is
-    where the merged fit config is in hand: re-deriving it at merge time would
-    mean re-reading a YAML that may have moved, been deleted, or been replaced by
-    an unrelated same-named file. A config ``downscale:`` is deliberately NOT a
-    term: every task rescales its splats back to the full-resolution frame the
-    planner tiled, so it never moves them off this grid (#1624). Consumers still
-    honour whatever factor is recorded, since a manifest can be written by hand.
+    Uniform tasks can inherit ``voxel_size`` from their fit config; content tasks
+    use physical coordinates only under the explicit batch ``--physical`` opt-in.
+    Either can make workers emit PHYSICAL centers while ``spatial_shape`` and a
+    content ``FitPlan`` remain in voxels. The planner records that factor ONCE so
+    merge-time consumers never need to re-read a config that may have moved. A
+    config ``downscale:`` is deliberately NOT a term: every task rescales its
+    splats back to the full-resolution frame the planner tiled (#1624).
 
     ``None`` means NO scale — the tile grid and the splats share a frame. That
     is both the overwhelmingly common case and what a manifest written before

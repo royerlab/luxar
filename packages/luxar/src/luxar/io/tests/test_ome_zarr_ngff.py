@@ -724,6 +724,70 @@ def test_batch_physical_respects_configured_voxel_size(tmp_path: Path) -> None:
     assert plan.manifest.grid_scale == [4.0, 1.0, 1.0]
 
 
+def test_content_batch_physical_respects_configured_voxel_size(tmp_path: Path) -> None:
+    """Content workers read config spacing while the manifest records the frame."""
+    import zarr
+
+    from luxar.cli.gsplat_ops.batch.planning import ContentKnobs, FitConfig
+
+    src = _write_store(
+        tmp_path / "configured-content.zarr",
+        (16, 32, 32),
+        labels=_ZYX,
+        scale=(2.0, 0.325, 0.325),
+    )
+    zarr.open_group(src, mode="r+")["0"][4:12, 8:24, 8:24] = 1.0
+    config = tmp_path / "content-fit.yaml"
+    config.write_text("voxel_size: [4.0, 1.0, 1.0]\n")
+
+    plan = _plan(
+        src,
+        tmp_path / "out_configured_content",
+        tiling="content",
+        tile_size=None,
+        fit=FitConfig(floor=None, physical=True, config=config),
+        content=ContentKnobs(
+            k_star_ref=100,
+            n_features_ref=10,
+            feature_threshold=1.0,
+            cell=8,
+            min_leaf=16,
+            max_leaf=32,
+        ),
+    )
+
+    assert plan.manifest.fit_args["physical-coordinates"] == ""
+    assert "voxel-size" not in plan.manifest.fit_args
+    assert plan.manifest.grid_scale == [4.0, 1.0, 1.0]
+
+
+def test_physical_axes_override_on_plain_zarr_does_not_repeat_guess_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """An explicit axes override must not trigger a second heuristic discovery."""
+    import typer
+    import zarr
+
+    from luxar.cli.gsplat_ops.batch.planning import FitConfig
+
+    src = tmp_path / "plain-4d.zarr"
+    create_array(
+        zarr.open_group(src, mode="w"),
+        "0",
+        data=np.zeros((2, 8, 16, 16), dtype=np.float32),
+    )
+
+    with pytest.raises(typer.BadParameter, match="no usable spatial scale"):
+        _plan(
+            src,
+            tmp_path / "out_plain_axes",
+            axes_list=["time", "z", "y", "x"],
+            fit=FitConfig(floor=None, physical=True),
+        )
+
+    assert "GUESSED" not in capsys.readouterr().out
+
+
 def test_batch_physical_requires_a_spacing_source(tmp_path: Path) -> None:
     """The opt-in fails loudly instead of silently producing voxel coordinates."""
     import typer

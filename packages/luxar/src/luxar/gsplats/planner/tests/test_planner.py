@@ -193,61 +193,69 @@ class TestFitPlanned:
         assert c[:, 0].min() >= 0 and c[:, 0].max() < 64
         assert c[:, 2].min() >= 0 and c[:, 2].max() < 64
 
-    def test_fit_planned_scales_centers_and_box_geometry(self, monkeypatch):
-        """Content boxes keep/filter in physical coordinates when requested."""
+    @pytest.mark.parametrize(
+        ("physical", "expected_split", "expected_centers"),
+        [
+            (False, 4.0, [[2.0, 4.0, 4.0], [6.0, 4.0, 4.0]]),
+            (True, 20.0, [[10.0, 8.0, 4.0], [30.0, 8.0, 4.0]]),
+        ],
+    )
+    def test_fit_planned_keeps_geometry_and_tree_in_one_frame(
+        self, monkeypatch, physical, expected_split, expected_centers
+    ):
+        """The fitted centers and partition planes use the same selected frame."""
         from luxar.gsplats.gsplat_data import GSplatData
-        from luxar.gsplats.planner.fit_planned import _fit_one_box
-        from luxar.gsplats.planner.spec import PlanBox
+        from luxar.gsplats.planner import fit_planned
+        from luxar.gsplats.planner.spec import FitPlan, PlanBox
 
         def fake_fit(sub, **kwargs):
-            assert sub.shape == (12, 12, 12)
-            assert kwargs["voxel_size"] == (5.0, 2.0, 1.0)
+            center = np.array([[2.0, 4.0, 4.0]], dtype=np.float32)
+            if "voxel_size" in kwargs:
+                center *= np.asarray(kwargs["voxel_size"], dtype=np.float32)
             return GSplatData(
-                centers=np.array([[10.0, 8.0, 4.0]], dtype=np.float32),
+                centers=center,
                 amplitudes=np.ones(1, dtype=np.float32),
                 cholesky_factors=np.ones((1, 6), dtype=np.float32),
             )
 
         monkeypatch.setattr("luxar.gsplats.fit_gsplats.fit_gaussian_splats", fake_fit)
-
-        result = _fit_one_box(
-            np.ones((24, 24, 24), dtype=np.float32),
-            PlanBox(box=(8, 16, 8, 16, 8, 16), n_features=10, budget=10),
-            overlap=2,
-            cap=100,
-            content_physical=True,
+        monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0")
+        plan = FitPlan(
+            volume_shape=[8, 8, 8],
+            boxes=[
+                PlanBox(box=[0, 4, 0, 8, 0, 8], n_features=1, budget=1),
+                PlanBox(box=[4, 8, 0, 8, 0, 8], n_features=1, budget=1),
+            ],
+            overlap=0,
+            feature_method="peaks",
+            min_leaf=4,
+            max_leaf=4,
+            bsp_tree={
+                "axis": 0,
+                "split": 4.0,
+                "left": {"part": 0},
+                "right": {"part": 1},
+            },
+        )
+        kwargs = dict(
             voxel_size=(5.0, 2.0, 1.0),
             output_space="real",
+            _content_physical=physical,
+            partition=True,
+            verbose=False,
         )
+        if physical:
+            result = fit_planned(np.ones((8, 8, 8), np.float32), plan, **kwargs)
+        else:
+            with pytest.warns(UserWarning, match="fitting in voxel space"):
+                result = fit_planned(np.ones((8, 8, 8), np.float32), plan, **kwargs)
 
-        np.testing.assert_allclose(result.centers, [[40.0, 20.0, 10.0]])
-
-    def test_fit_planned_keeps_config_only_content_in_voxel_space(self, monkeypatch):
-        """Physical content geometry remains opt-in rather than a config side effect."""
-        from luxar.gsplats.gsplat_data import GSplatData
-        from luxar.gsplats.planner.fit_planned import _fit_one_box
-        from luxar.gsplats.planner.spec import PlanBox
-
-        def fake_fit(sub, **kwargs):
-            assert "voxel_size" not in kwargs
-            return GSplatData(
-                centers=np.array([[4.0, 4.0, 4.0]], dtype=np.float32),
-                amplitudes=np.ones(1, dtype=np.float32),
-                cholesky_factors=np.ones((1, 6), dtype=np.float32),
-            )
-
-        monkeypatch.setattr("luxar.gsplats.fit_gsplats.fit_gaussian_splats", fake_fit)
-        with pytest.warns(UserWarning, match="fitting in voxel space"):
-            result = _fit_one_box(
-                np.ones((24, 24, 24), dtype=np.float32),
-                PlanBox(box=(4, 12, 4, 12, 4, 12), n_features=10, budget=10),
-                overlap=0,
-                cap=100,
-                voxel_size=(5.0, 2.0, 1.0),
-                output_space="real",
-            )
-
-        np.testing.assert_allclose(result.centers, [[8.0, 8.0, 8.0]])
+        assert result.bsp_tree is not None
+        assert result.bsp_tree["split"] == pytest.approx(expected_split)
+        centers = np.concatenate(
+            [part.additive_sublods[0].centers for part in result.children]
+        )
+        np.testing.assert_allclose(centers, expected_centers)
 
     @pytest.mark.parametrize("partition", [False, True])
     def test_scoring_receives_the_merged_box_basis(self, monkeypatch, partition):
@@ -1011,6 +1019,29 @@ class TestContentFitCullRetention:
             r["cull_retention"]
             for r in self._run_boxes(tmp_path, monkeypatch, **run_kwargs)
         ]
+
+    def test_parallel_content_refuses_physical_coordinates(self, tmp_path):
+        """Parallel assembly cannot emit physical parts under voxel split planes."""
+        import typer
+
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+
+        volume = _pedestal_blobs(shape=(16, 16, 32))
+        with pytest.raises(typer.BadParameter, match="use -j 1"):
+            run_content_fit(
+                tmp_path / "unused.npy",
+                tmp_path / "out.gsplats.zarr",
+                volume=volume,
+                k_star_ref=4000,
+                n_features_ref=200,
+                plan=self._plan(tmp_path, volume),
+                floor="none",
+                physical_coordinates=True,
+                voxel_size=(5.0, 1.0, 1.0),
+                jobs="2",
+                device="cpu",
+                verbose=False,
+            )
 
     def test_bare_content_fit_is_near_lossless(self, tmp_path, monkeypatch):
         """No preset, no --config, no --cull-retention → 0.999 for every box.
@@ -1986,8 +2017,9 @@ class TestPlannedFitTruncationRadius:
         assert merged.n_splats == content.n_splats + uniform.n_splats
         assert merged.truncation_radius == pytest.approx(3.5)
 
-    def test_plan_box_worker_saves_the_configured_radius(self, tmp_path):
-        """A content batch-fit tile keeps its radius and fitting stamps."""
+    @pytest.mark.parametrize("physical", [False, True])
+    def test_plan_box_worker_scores_in_its_fitted_frame(self, tmp_path, physical):
+        """A content batch-fit box scores in voxel or physical coordinates as fitted."""
         from typer.testing import CliRunner
 
         from luxar._zarr_compat import read_node_attrs
@@ -2001,7 +2033,10 @@ class TestPlannedFitTruncationRadius:
         plan_json = tmp_path / "plan.json"
         plan.to_json(plan_json)
         cfg = tmp_path / "fit.yaml"
-        cfg.write_text("truncate: 3.5\nn_iters: 5\nearly_stop_patience: 5\n")
+        cfg.write_text(
+            "truncate: 3.5\nn_iters: 5\nearly_stop_patience: 5\n"
+            "voxel_size: [5.0, 1.0, 1.0]\n"
+        )
         box_idx = next(
             i
             for i, box in enumerate(plan.boxes)
@@ -2009,25 +2044,26 @@ class TestPlannedFitTruncationRadius:
         )
         out = tmp_path / "box.gsplats.zarr"
 
+        args = [
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "content",
+            "--plan",
+            str(plan_json),
+            "--plan-box",
+            str(box_idx),
+            "--config",
+            str(cfg),
+            "--device",
+            "cpu",
+        ]
+        if physical:
+            args.append("--physical-coordinates")
         result = CliRunner().invoke(
             app_gsplat,
-            # fmt: off
-            [
-                "fit",
-                str(vol),
-                str(out),
-                "--tiling",
-                "content",
-                "--plan",
-                str(plan_json),
-                "--plan-box",
-                str(box_idx),
-                "--config",
-                str(cfg),
-                "--device",
-                "cpu",
-            ],
-            # fmt: on
+            args,
         )
         assert result.exit_code == 0, result.output
         assert "Merged quality: PSNR=" in result.output
