@@ -576,6 +576,8 @@ def run_content_fit(
         raise typer.Exit(1)
 
     report_auto_jobs(jobs, worker_limit)
+    if physical_coordinates and n_jobs > 1 and created_plan and not keep_boxes:
+        Path(plan_json_path).unlink(missing_ok=True)
     _validate_parallel_content_frame(physical_coordinates, n_jobs)
 
     partition = not flat

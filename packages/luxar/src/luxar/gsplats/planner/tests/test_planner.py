@@ -1068,6 +1068,40 @@ class TestContentFitCullRetention:
 
         assert list(tmp_path.iterdir()) == []
 
+    def test_auto_parallel_physical_refusal_removes_created_plan(
+        self, tmp_path, monkeypatch
+    ):
+        """An auto-sized refusal must remove its generated worker plan."""
+        import typer
+
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+        from luxar.gsplats.utils.device import WorkerLimit
+
+        monkeypatch.setattr(
+            "luxar.gsplats.fit_tiled_parallel.resolve_jobs",
+            lambda *args, **kwargs: WorkerLimit(2, "requested count"),
+        )
+        output = tmp_path / "out.gsplats.zarr"
+        with pytest.raises(typer.BadParameter, match="use -j 1"):
+            run_content_fit(
+                tmp_path / "unused.npy",
+                output,
+                volume=_pedestal_blobs(shape=(16, 16, 32)),
+                k_star_ref=4000,
+                n_features_ref=200,
+                floor="none",
+                physical_coordinates=True,
+                voxel_size=(5.0, 1.0, 1.0),
+                jobs="auto",
+                cell=8,
+                min_leaf=8,
+                max_leaf=8,
+                device="cpu",
+                verbose=False,
+            )
+
+        assert list(tmp_path.glob(f".{output.name}.plan.*.json")) == []
+
     def test_bare_content_fit_is_near_lossless(self, tmp_path, monkeypatch):
         """No preset, no --config, no --cull-retention → 0.999 for every box.
 
