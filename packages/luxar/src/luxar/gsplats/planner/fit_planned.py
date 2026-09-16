@@ -127,7 +127,7 @@ def _content_fit_frame(
                 "planned fitting unless the caller explicitly enables physical "
                 "content geometry; fitting in voxel space (voxel_size ignored).",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
         voxel_size = None
         output_space = "voxel"
@@ -160,6 +160,8 @@ def _scaled_plan_bsp_tree(
     if bsp_tree is None or grid_scale is None:
         return bsp_tree
     scale = np.asarray(grid_scale, dtype=float)
+    # Keep gsplats independent of core; resolve_grid_scale guarantees the valid
+    # positive diagonal for this simpler counterpart to map_serialized_bsp_tree.
 
     def walk(node: dict[str, Any]) -> dict[str, Any]:
         if "part" in node:

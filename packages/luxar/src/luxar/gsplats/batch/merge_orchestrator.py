@@ -877,6 +877,9 @@ def _content_slot_bsp_tree(
             plan.bsp_tree, linear=np.diag([float(v) for v in manifest.grid_scale])
         )
     except (TypeError, ValueError) as exc:
+        # Only a hand-edited / corrupt manifest can reach this: the content
+        # planner records a validated length-3 positive factor. Keep it loud for
+        # the same reason as the uniform fallback below.
         aprint(
             f"  WARNING: no split planes — the manifest records a grid_scale "
             f"{manifest.grid_scale!r} that does not fit the content plan ({exc}). "
