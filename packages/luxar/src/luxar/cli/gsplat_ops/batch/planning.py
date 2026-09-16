@@ -1571,38 +1571,19 @@ def _physical_voxel_size(
     return values, configured is None
 
 
-def _restore_declared_voxel_size(
-    input_path: Path,
-    array_key: Optional[str],
-    axes_list: Optional[List[str]],
-    fit: FitConfig,
-    ome_info: "OMEZarrInfo",
-) -> None:
-    """Recover NGFF spacing when an explicit axes view omits scale metadata."""
-    if not fit.physical or axes_list is None or ome_info.voxel_size is not None:
-        return
-    from luxar.io.ome_zarr import discover_ome_zarr_shape
-
-    declared_info = discover_ome_zarr_shape(
-        input_path, array_key=array_key, announce=False
-    )
-    if declared_info.spatial_indices == ome_info.spatial_indices:
-        ome_info.voxel_size = declared_info.voxel_size
-
-
 def _configure_physical_fit_args(
     fit_args: dict[str, str],
     fit: FitConfig,
     ome_info: "OMEZarrInfo",
     axes_list: Optional[List[str]],
     ndim: int,
-) -> Optional[List[float]]:
+) -> "Tuple[Optional[List[float]], bool]":
     """Resolve physical spacing and add the worker-only override when needed."""
-    voxel_size, inject = _physical_voxel_size(fit, ome_info, axes_list, ndim)
-    if inject:
+    voxel_size, uses_ngff_spacing = _physical_voxel_size(fit, ome_info, axes_list, ndim)
+    if uses_ngff_spacing:
         assert voxel_size is not None
         fit_args["voxel-size"] = ",".join(str(value) for value in voxel_size)
-    return voxel_size
+    return voxel_size, uses_ngff_spacing
 
 
 def _configure_content_physical(
@@ -1904,18 +1885,30 @@ def _worker_spatial_shape(
 
 
 def _batch_dimension_metadata(
-    info: "OMEZarrInfo", axes_list: Optional[List[str]], n_timepoints: int
+    info: "OMEZarrInfo",
+    axes_list: Optional[List[str]],
+    n_timepoints: int,
+    *,
+    physical_coordinates: bool = False,
+    ngff_spatial_units: bool = False,
 ) -> List[dict[str, Any]]:
     """Describe output columns in ``_worker_spatial_shape`` order, then time."""
     spatial_indices = list(info.spatial_indices)
     if axes_list is None:
         spatial_indices = [index for index in spatial_indices if info.shape[index] != 1]
 
-    def descriptor(index: int) -> dict[str, Any]:
+    def descriptor(index: int, *, spatial: bool = False) -> dict[str, Any]:
         unit = info.axis_units[index]
-        scale = info.axis_scales[index] if info.axis_scales is not None else 1.0
+        scale = (
+            1.0
+            if spatial and physical_coordinates
+            else info.axis_scales[index]
+            if info.axis_scales is not None
+            else 1.0
+        )
         result: dict[str, Any] = {"name": info.axes[index], "scale": float(scale)}
-        if unit and scale == 1.0:
+        unit_is_honest = not spatial or not physical_coordinates or ngff_spatial_units
+        if unit and scale == 1.0 and unit_is_honest:
             try:
                 unit = PhysicalUnit.validate(unit).value
             except ValueError:
@@ -1923,7 +1916,7 @@ def _batch_dimension_metadata(
             result["unit"] = unit
         return result
 
-    metadata = [descriptor(index) for index in spatial_indices]
+    metadata = [descriptor(index, spatial=True) for index in spatial_indices]
     if n_timepoints > 1 and info.time_axis is not None:
         metadata.append(descriptor(info.time_axis))
     return metadata
@@ -2059,7 +2052,6 @@ def plan_batch(
         ome_info = discover_ome_zarr_shape(
             input_path, axes_override=axes_list, array_key=array_key
         )
-        _restore_declared_voxel_size(input_path, array_key, axes_list, fit, ome_info)
         n_t_full = ome_info.n_timepoints
         n_c_full = ome_info.n_channels
         # Positional workers call load_volume without --axes, whose legacy
@@ -2083,7 +2075,7 @@ def plan_batch(
             emits_timepoint=n_t_full > 1 or bool(timepoints_slice),
         )
 
-        physical_voxel_size = _configure_physical_fit_args(
+        physical_voxel_size, uses_ngff_spacing = _configure_physical_fit_args(
             fit_args, fit, ome_info, axes_list, len(spatial)
         )
 
@@ -2387,7 +2379,13 @@ def plan_batch(
         channel_axes=ome_info.channel_axes,
         channel_shape=ome_info.channel_shape,
         spatial_shape=spatial,
-        dimension_metadata=_batch_dimension_metadata(ome_info, axes_list, n_t),
+        dimension_metadata=_batch_dimension_metadata(
+            ome_info,
+            axes_list,
+            n_t,
+            physical_coordinates=fit.physical,
+            ngff_spatial_units=uses_ngff_spacing,
+        ),
         mode=mode,
         tile_size=tile_size_resolved,
         tile_overlap=tile_overlap,

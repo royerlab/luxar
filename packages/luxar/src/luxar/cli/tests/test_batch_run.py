@@ -481,6 +481,39 @@ def test_batch_plan_records_ngff_dimension_metadata_with_axes_override(
         {"name": "time", "scale": 0.5},
     ]
 
+    physical_manifest = _plan(
+        src,
+        tmp_path / "physical-out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+        physical=True,
+    ).manifest
+
+    assert physical_manifest.dimension_metadata == [
+        {"name": "z", "scale": 1.0, "unit": "um"},
+        {"name": "y", "scale": 1.0, "unit": "um"},
+        {"name": "x", "scale": 1.0, "unit": "um"},
+        {"name": "time", "scale": 0.5},
+    ]
+
+    config = tmp_path / "fit.yaml"
+    config.write_text("voxel_size: [3.0, 1.0, 1.0]\n")
+    configured_manifest = _plan(
+        src,
+        tmp_path / "configured-out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+        physical=True,
+        config=config,
+    ).manifest
+
+    assert configured_manifest.dimension_metadata == [
+        {"name": "z", "scale": 1.0},
+        {"name": "y", "scale": 1.0},
+        {"name": "x", "scale": 1.0},
+        {"name": "time", "scale": 0.5},
+    ]
+
 
 def test_batch_dimension_metadata_normalizes_unit_scale_units() -> None:
     from luxar.cli.gsplat_ops.batch.planning import _batch_dimension_metadata
