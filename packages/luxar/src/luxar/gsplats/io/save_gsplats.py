@@ -508,9 +508,10 @@ def _stamp_content_hash(root: zarr.Group) -> str:
     identity for the same reasons the compiler-side hash folds them in — see
     :func:`luxar.io._compiler.finalize.hashing._storage_identity`, which is where
     that argument lives. Both digests should agree on what a store's identity IS,
-    and this one carries an extra obligation: it is what the three IN-PLACE
-    re-stampers (``gsplat annotate-quality``, ``gsplat doctor --fix``, and
-    ``luxar restamp-lod``) write, and they leave the per-save ``timestamp``
+    and this one carries an extra obligation: it is what the four IN-PLACE
+    re-stampers (single-tile batch merge, ``gsplat annotate-quality``,
+    ``gsplat doctor --fix``, and ``luxar restamp-lod``) write, and they leave
+    the per-save ``timestamp``
     untouched. None of them can change layout today — every mutation on those
     paths is attrs-only — so what moves their digest is the changed attrs, as it
     already did. The fold is here so
@@ -1093,6 +1094,7 @@ def write_partition_streaming(
     compressor: Optional[Any] = DEFAULT_COMP,
     barrier_dims: Optional[Sequence[int]] = None,
     bsp_tree: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
+    root_attrs: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Write a ``kind=partition`` file part-by-part, holding ≤1 part in memory.
 
@@ -1120,6 +1122,9 @@ def write_partition_streaming(
     so the caller prunes inside the provider. Omit it, or return ``None``, and the
     viewer falls back to a per-part centroid order, which is not a valid painter's
     order and pops at the seams under order-dependent blending (#1555).
+
+    ``root_attrs`` seeds optional root metadata before the structural partition
+    attrs are stamped, so caller metadata cannot override the node kind.
 
     The producer is responsible for skipping empty tile-regions (it must yield
     only non-empty subtrees). Compression is intentionally not supported here
@@ -1189,6 +1194,8 @@ def write_partition_streaming(
         # Root partition attrs — same set the GSplatPartition branch of
         # write_gsplat_node emits (type/kind/display_type/max_elements/position_bounds
         # + the optional bsp_tree).
+        if root_attrs:
+            root.attrs.update(root_attrs)
         root.attrs["type"] = "group"
         root.attrs["kind"] = "partition"
         root.attrs["display_type"] = "gsplats"

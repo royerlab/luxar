@@ -65,6 +65,9 @@ class BatchManifest:
     spatial_shape: Tuple[int, ...] = ()
     """Spatial shape emitted by workers; positional loading removes singleton axes."""
 
+    dimension_metadata: Optional[List[Dict[str, Any]]] = None
+    """Merged center-axis names, units, and physical scales in output order."""
+
     # Tiling
     mode: str = "uniform"
     """Decomposition: ``uniform`` (a regular tile grid) or ``content`` (a shared

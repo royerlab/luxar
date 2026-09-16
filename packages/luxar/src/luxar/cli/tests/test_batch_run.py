@@ -436,6 +436,79 @@ def _plan(
     )
 
 
+def test_batch_plan_records_ngff_dimension_metadata_with_axes_override(
+    tmp_path: Path,
+) -> None:
+    import zarr
+
+    src = tmp_path / "recording.ome.zarr"
+    root = zarr.open_group(str(src), mode="w", zarr_format=2)
+    root.create_array(
+        "0",
+        data=np.zeros((4, 16, 24, 24), dtype=np.float32),
+        chunks=(1, 16, 24, 24),
+    )
+    root.attrs["multiscales"] = [
+        {
+            "axes": [
+                {"name": "t", "type": "time", "unit": "second"},
+                {"name": "z", "type": "space", "unit": "micrometer"},
+                {"name": "y", "type": "space", "unit": "micrometer"},
+                {"name": "x", "type": "space", "unit": "micrometer"},
+            ],
+            "datasets": [
+                {
+                    "path": "0",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [0.5, 2.0, 0.75, 0.75]}
+                    ],
+                }
+            ],
+        }
+    ]
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+    ).manifest
+
+    assert manifest.dimension_metadata == [
+        {"name": "z", "scale": 2.0},
+        {"name": "y", "scale": 0.75},
+        {"name": "x", "scale": 0.75},
+        {"name": "time", "scale": 0.5},
+    ]
+
+
+def test_batch_dimension_metadata_normalizes_unit_scale_units() -> None:
+    from luxar.cli.gsplat_ops.batch.planning import _batch_dimension_metadata
+    from luxar.io.ome_zarr import OMEZarrInfo
+
+    info = OMEZarrInfo(
+        axes=["time", "z", "y", "x"],
+        shape=(2, 3, 4, 5),
+        n_timepoints=2,
+        n_channels=1,
+        channel_axes=[],
+        channel_shape=(),
+        spatial_shape=(3, 4, 5),
+        spatial_axes=["z", "y", "x"],
+        time_axis=0,
+        spatial_indices=(1, 2, 3),
+        axis_units=["second", "micrometer", "fortnight", None],
+        axis_scales=(1.0, 1.0, 1.0, 1.0),
+    )
+
+    assert _batch_dimension_metadata(info, ["time", "z", "y", "x"], 2) == [
+        {"name": "z", "scale": 1.0, "unit": "um"},
+        {"name": "y", "scale": 1.0, "unit": "fortnight"},
+        {"name": "x", "scale": 1.0},
+        {"name": "time", "scale": 1.0, "unit": "s"},
+    ]
+
+
 @pytest.mark.parametrize(
     ("fit_kwargs", "denoise_kwargs", "expected_flag"),
     [

@@ -178,7 +178,9 @@ def convert_to_scene(
                     data = data.scale_intensity(scale_intensity)
 
                 with asection("Creating Luxar scene"):
-                    dims = build_dimensions_from_data(data.centers)
+                    dims = build_dimensions_from_data(
+                        data.centers, node.meta.get("dimension_metadata")
+                    )
                     with LuxarZarrCompiler(
                         output_path, encoding_mode=_resolve_encoding_mode(encoding)
                     ) as compiler:
@@ -223,7 +225,9 @@ def convert_to_scene(
                 box = np.array([bmin, bmax], dtype=np.float32)
 
                 with asection("Creating Luxar scene"):
-                    dims = build_dimensions_from_data(box)
+                    dims = build_dimensions_from_data(
+                        box, node.meta.get("dimension_metadata")
+                    )
                     with LuxarZarrCompiler(
                         output_path, encoding_mode=_resolve_encoding_mode(encoding)
                     ) as compiler:
@@ -422,7 +426,7 @@ def reencode_command(
                 if "provenance" in root:
                     provenance_info = dict(root["provenance"].attrs)
 
-            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+            from luxar.gsplats.io.load_gsplats import read_rebuild_root_attrs
 
             write_gsplats_tree(
                 output_path,
@@ -433,7 +437,7 @@ def reencode_command(
                 fitting_info=fitting_info,
                 fitting_config=fitting_config,
                 provenance_info=provenance_info,
-                root_attrs=read_authored_appearance(input_path),
+                root_attrs=read_rebuild_root_attrs(input_path),
             )
 
             # Read-back verify — a loadable current-format file, not blind success.

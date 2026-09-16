@@ -1523,7 +1523,7 @@ import { PointMaterial } from '../rendering/point-material';
 ## Luxar Conventions
 
 ### Physical Units
-Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
+Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au, s
 
 ### Geometry Types & Attributes
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)

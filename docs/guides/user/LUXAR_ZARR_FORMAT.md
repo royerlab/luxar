@@ -198,7 +198,7 @@ The root `.zattrs` file contains scene-wide configuration:
 {
   "luxar_version": "0.1",
   "type": "scene",
-  "units": "um",  // Physical units (nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au)
+  "units": "um",  // Physical units (nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au, s)
   "scene_dimensions": {  // Scene-level dimension specification (REQUIRED for nD data)
     "dimensions": [
       {

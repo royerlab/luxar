@@ -28,6 +28,7 @@ from arbol import aprint, asection
 from luxar.cli.gsplat_ops.fitting.fit_utils import CONTENT_UNSUPPORTED_FIT_FLAGS
 from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
+from luxar.typing_utils.enums import PhysicalUnit
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.io.ome_zarr import OMEZarrInfo
@@ -1902,6 +1903,32 @@ def _worker_spatial_shape(
     return tuple(size for size in spatial_shape if size != 1)
 
 
+def _batch_dimension_metadata(
+    info: "OMEZarrInfo", axes_list: Optional[List[str]], n_timepoints: int
+) -> List[dict[str, Any]]:
+    """Describe output columns in ``_worker_spatial_shape`` order, then time."""
+    spatial_indices = list(info.spatial_indices)
+    if axes_list is None:
+        spatial_indices = [index for index in spatial_indices if info.shape[index] != 1]
+
+    def descriptor(index: int) -> dict[str, Any]:
+        unit = info.axis_units[index]
+        scale = info.axis_scales[index] if info.axis_scales is not None else 1.0
+        result: dict[str, Any] = {"name": info.axes[index], "scale": float(scale)}
+        if unit and scale == 1.0:
+            try:
+                unit = PhysicalUnit.validate(unit).value
+            except ValueError:
+                pass
+            result["unit"] = unit
+        return result
+
+    metadata = [descriptor(index) for index in spatial_indices]
+    if n_timepoints > 1 and info.time_axis is not None:
+        metadata.append(descriptor(info.time_axis))
+    return metadata
+
+
 def _validate_content_spatial_shape(
     mode: str,
     spatial: Tuple[int, ...],
@@ -2360,6 +2387,7 @@ def plan_batch(
         channel_axes=ome_info.channel_axes,
         channel_shape=ome_info.channel_shape,
         spatial_shape=spatial,
+        dimension_metadata=_batch_dimension_metadata(ome_info, axes_list, n_t),
         mode=mode,
         tile_size=tile_size_resolved,
         tile_overlap=tile_overlap,
