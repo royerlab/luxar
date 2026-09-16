@@ -6684,17 +6684,37 @@ class TestLODCarriesAuthoredAppearance:
         assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
         assert self._root_attrs(out)["dimension_metadata"] == self.DIMENSION_METADATA
 
+    @pytest.mark.parametrize("partitioned", [False, True])
     def test_transform_drops_dimension_metadata(
-        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        partitioned: bool,
     ) -> None:
         self._authored_input(
             medium_gsplats, {"dimension_metadata": self.DIMENSION_METADATA}
         )
+        input_path = medium_gsplats
+        if partitioned:
+            input_path = tmp_path / "partitioned.gsplats.zarr"
+            partition_result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "partition",
+                    str(medium_gsplats),
+                    str(input_path),
+                    "--parts",
+                    "2",
+                ],
+            )
+            assert partition_result.exit_code == 0, partition_result.stdout
         out = tmp_path / "transformed.gsplats.zarr"
 
         result = runner.invoke(
             app,
-            ["gsplat", "transform", str(medium_gsplats), str(out), "--scale", "2,1,1"],
+            ["gsplat", "transform", str(input_path), str(out), "--scale", "2,1,1"],
         )
 
         assert result.exit_code == 0, result.stdout

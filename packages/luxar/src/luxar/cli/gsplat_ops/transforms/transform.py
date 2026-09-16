@@ -515,9 +515,10 @@ def run_transform_dataset(
                     or translate_vec is not None
                     or center
                 )
-                if geometry_changed:
-                    from luxar.gsplats.tree import without_meta_key
+                from luxar.gsplats.tree import without_meta_key
 
+                node = without_meta_key(node, "dimension_metadata")
+                if geometry_changed:
                     node = without_meta_key(node, "coverage_fraction")
                     # The selector names the UNITS of the thresholds just
                     # scrubbed, so it goes with them: the writer re-derives in

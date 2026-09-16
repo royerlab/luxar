@@ -105,11 +105,7 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     """
     carried, has_custom_colormap = _read_authored_appearance(path)
     if has_custom_colormap:
-        aprint(
-            '⚠️  The source root declares colormap: "custom"; '
-            + _CUSTOM_COLORMAP_LOSS
-            + _CUSTOM_COLORMAP_REMEDY
-        )
+        _warn_custom_colormap_loss()
     return carried
 
 
@@ -121,8 +117,10 @@ def read_rebuild_root_attrs(path: str | Path) -> Dict[str, Any]:
     using :func:`read_authored_appearance` because scaling or rotating centers
     invalidates the recorded axis descriptors.
     """
-    carried = read_authored_appearance(path)
     attrs = _read_root_attrs(path)
+    carried, has_custom_colormap = _authored_appearance_from_attrs(attrs)
+    if has_custom_colormap:
+        _warn_custom_colormap_loss()
     if "dimension_metadata" in attrs:
         carried["dimension_metadata"] = attrs["dimension_metadata"]
     return carried
@@ -154,9 +152,14 @@ def _read_authored_appearance(path: str | Path) -> "tuple[Dict[str, Any], bool]"
     ``colormap`` outright instead, and to warn ONCE for N such inputs rather
     than once per input.
     """
+    return _authored_appearance_from_attrs(_read_root_attrs(path))
+
+
+def _authored_appearance_from_attrs(
+    attrs: "Mapping[str, Any]",
+) -> "tuple[Dict[str, Any], bool]":
     from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
 
-    attrs = _read_root_attrs(path)
     carried = {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
     has_custom_colormap = carried.get("colormap") == "custom"
     if has_custom_colormap:
@@ -167,6 +170,14 @@ def _read_authored_appearance(path: str | Path) -> "tuple[Dict[str, Any], bool]"
         # caller, which is what says so.
         del carried["colormap"]
     return carried, has_custom_colormap
+
+
+def _warn_custom_colormap_loss() -> None:
+    aprint(
+        '⚠️  The source root declares colormap: "custom"; '
+        + _CUSTOM_COLORMAP_LOSS
+        + _CUSTOM_COLORMAP_REMEDY
+    )
 
 
 def _read_root_attrs(path: str | Path) -> Dict[str, Any]:

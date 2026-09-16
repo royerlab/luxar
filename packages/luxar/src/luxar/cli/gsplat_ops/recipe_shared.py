@@ -171,6 +171,8 @@ def parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
 def carried_appearance(input_path: Path) -> dict:
     """The source root's authored appearance, announced as it is picked up.
 
+    The returned attrs also include center-column dimension metadata when present.
+
     A rebuilding command owns the STRUCTURE, not the look: the builders make
     fresh nodes that know nothing about the input, so without this the writer's
     own defaults take over and every authored value is lost (#1600). Pass the
