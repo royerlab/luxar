@@ -483,6 +483,11 @@ def test_a_filter_with_no_format_3_twin_is_refused(tmp_path: Path) -> None:
         zc.set_zarr_format(original)
 
 
+def test_unknown_codec_errors_are_resolved_at_import() -> None:
+    expected = getattr(zarr.errors, "UnknownCodecError", KeyError)
+    assert zc._UNKNOWN_CODEC_ERRORS == (KeyError, expected)
+
+
 # ---------------------------------------------------------------------------
 # create_array's zarr-2 argument tolerance
 # ---------------------------------------------------------------------------

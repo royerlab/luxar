@@ -1338,6 +1338,23 @@ class TestBatchPlanRegression:
         d = asdict(m)
         json.dumps(d)  # should not raise
 
+    def test_dimension_metadata_round_trips_through_manifest_json(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.batch.manifest import (
+            BatchManifest,
+            load_manifest,
+            save_manifest,
+        )
+
+        metadata = [
+            {"name": "z", "unit": "micrometer", "scale": 2.0},
+            {"name": "time", "unit": "second", "scale": 0.5},
+        ]
+        save_manifest(BatchManifest(dimension_metadata=metadata), tmp_path)
+
+        assert load_manifest(tmp_path).dimension_metadata == metadata
+
     def test_env_capture_ld_library_path_prepend(self) -> None:
         """LD_LIBRARY_PATH should be prepended, not replaced, in preamble."""
         from luxar.gsplats.batch.env_capture import CapturedEnv, generate_env_preamble
@@ -1525,6 +1542,130 @@ class TestMergeOrchestrator:
         assert centers.shape[1] == 4
         assert detect_barrier_dims(centers) == []  # auto-detect misses the sparse axis
         assert list(root.attrs["slice_dims"]) == [3]  # authoritative barrier applied
+
+    @pytest.mark.parametrize("flat", [False, True])
+    def test_merge_preserves_dimension_metadata(
+        self, tmp_path: Path, flat: bool
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for t in range(2):
+            for k in range(2):
+                self._tile(3, seed=t * 2 + k).save(
+                    tiles_dir / output_filename(t, 0, k, 2, 1, 2)
+                )
+        metadata = [
+            {"name": "z", "unit": "micrometer", "scale": 2.0},
+            {"name": "y", "unit": "micrometer", "scale": 0.75},
+            {"name": "x", "unit": "micrometer", "scale": 0.75},
+            {"name": "time", "unit": "second", "scale": 0.5},
+        ]
+        manifest = BatchManifest(
+            n_timepoints=2,
+            n_channels=1,
+            n_tiles=2,
+            spatial_shape=(8, 8, 8),
+            dimension_metadata=metadata,
+        )
+
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe=None, flat=flat
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert root.attrs["dimension_metadata"] == metadata
+
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        node, _ = load_gsplat_node(final)
+        assert node.meta["dimension_metadata"] == metadata
+
+    def test_single_flat_tile_preserves_metadata_and_pipeline(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        tile = self._tile(1, seed=0)
+        tile.stats.update(
+            {
+                "final_loss": 0.25,
+                "n_iters": 999,
+                "image_min": 7.0,
+                "floor": 3.25,
+            }
+        )
+        tile.save(tiles_dir / output_filename(0, 0, 0, 1, 1, 1))
+        metadata = [
+            {"name": "z", "scale": 1.0},
+            {"name": "y", "scale": 1.0},
+            {"name": "x", "scale": 1.0},
+        ]
+        manifest = BatchManifest(
+            n_timepoints=1,
+            n_channels=1,
+            n_tiles=1,
+            spatial_shape=(8, 8, 8),
+            dimension_metadata=metadata,
+        )
+
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe=None, flat=True
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert root.attrs["dimension_metadata"] == metadata
+        assert root["fitting"].attrs["final_loss"] == pytest.approx(0.25)
+        assert root["pipeline"].attrs["n_iters"] == 999
+        assert root["pipeline"].attrs["image_min"] == pytest.approx(7.0)
+        assert root["pipeline"].attrs["floor"] == pytest.approx(3.25)
+        stored_hash = root.attrs["content_hash"]
+
+        from luxar._zarr_compat import open_group as zc_open_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        assert _stamp_content_hash(zc_open_group(final, mode="r+")) == stored_hash
+
+    @pytest.mark.parametrize("flat", [False, True])
+    def test_merge_omits_dimension_metadata_with_wrong_width(
+        self, tmp_path: Path, flat: bool, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for k in range(2):
+            self._tile(2, seed=k).save(tiles_dir / output_filename(0, 0, k, 1, 1, 2))
+        manifest = BatchManifest(
+            n_timepoints=1,
+            n_channels=1,
+            n_tiles=2,
+            spatial_shape=(8, 8, 8),
+            dimension_metadata=[{"name": "z"}, {"name": "y"}],
+        )
+
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe=None, flat=flat
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert "dimension_metadata" not in root.attrs
+        assert "omitting it" in capsys.readouterr().out
 
     def test_merge_channels_with_colors_round_trips(self, tmp_path: Path) -> None:
         """T=1, C=2, K=2 (--flat): Level-1 concat then Level-3 color merge."""

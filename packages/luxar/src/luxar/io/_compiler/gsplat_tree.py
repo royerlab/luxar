@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 #: fresh ``"screen-area"`` stamp would be misread by the viewer. The reader
 #: whitelists it to the known modes so a stale pre-v3.2 value can't ride along.
 _NODE_META_ATTR_KEYS = (
+    "dimension_metadata",
     "coverage_fraction",
     "selector",
     "compression_factor",

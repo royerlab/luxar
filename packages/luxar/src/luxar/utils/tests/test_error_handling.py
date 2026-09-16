@@ -192,6 +192,7 @@ class TestSceneErrorHandling:
 
         with pytest.raises(ValueError, match="Invalid"):
             PhysicalUnit.validate("invalid_unit")
+        assert PhysicalUnit.validate("second").value == "s"
 
         # Invalid path (simulate permission error)
         # This is platform-specific, so we'll skip for now

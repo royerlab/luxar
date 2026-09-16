@@ -186,6 +186,62 @@ def _tile_path(
     )
 
 
+def _copy_or_resave_tile(
+    source: Path,
+    destination: Path,
+    dimension_metadata: "Optional[List[Dict[str, Any]]]",
+) -> None:
+    """Copy a tile byte-for-byte, then stamp optional final-root metadata."""
+    import shutil
+
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
+    if dimension_metadata is not None:
+        from luxar._zarr_compat import consolidate as zc_consolidate
+        from luxar._zarr_compat import open_group as zc_open_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        root = zc_open_group(destination, mode="r+")
+        root_attrs = _dimension_root_attrs(
+            dimension_metadata, int(root["centers"].shape[1])
+        )
+        if root_attrs:
+            root.attrs.update(root_attrs)
+            _stamp_content_hash(root)
+            zc_consolidate(root)
+
+
+def _dimension_root_attrs(
+    metadata: "Optional[List[Dict[str, Any]]]", ndim: int
+) -> "Optional[Dict[str, Any]]":
+    """Return aligned dimension metadata, or warn and omit a bad descriptor list."""
+    if metadata is None:
+        return None
+    if len(metadata) != ndim:
+        aprint(
+            "  WARNING: manifest dimension metadata has "
+            f"{len(metadata)} entries for {ndim} output columns; omitting it"
+        )
+        return None
+    return {"dimension_metadata": metadata}
+
+
+def _drop_mismatched_partition_dimension_attrs(
+    root_attrs: "Optional[Dict[str, Any]]",
+    metadata: "Optional[List[Dict[str, Any]]]",
+    ndim: int,
+) -> None:
+    """Remove deferred partition metadata when a streamed part proves it wrong."""
+    if not root_attrs or metadata is None or len(metadata) == ndim:
+        return
+    root_attrs.clear()
+    aprint(
+        "  WARNING: manifest dimension metadata does not match "
+        f"the partition's {ndim} output columns; omitting it"
+    )
+
+
 # ════════════════════════════════════════════════════════════════════════
 # Default: streaming spatial partition (tile-outer, O(1) memory per tile)
 # ════════════════════════════════════════════════════════════════════════
@@ -959,6 +1015,11 @@ def _merge_partition(
     pipeline_info = _pipeline_info_with_floor(
         recipe, recipe_params, floor_stats, _manifest_part_coarsen_dims(manifest)
     )
+    root_attrs = (
+        {"dimension_metadata": manifest.dimension_metadata}
+        if manifest.dimension_metadata is not None
+        else None
+    )
 
     # Authoritative ordering barrier: when timepoints are stacked (n_timepoints
     # > 1) the merge appends them as the LAST axis (see _finalize_part_node /
@@ -979,6 +1040,7 @@ def _merge_partition(
             )
             if part is None:
                 raise ValueError("Single tile-region is empty — nothing to merge")
+            root_attrs = _dimension_root_attrs(manifest.dimension_metadata, part.ndim)
             single_part_provenance = _single_part_provenance(part)
             if recipe is None:
                 # Pass the authoritative stacked-time barrier here too (K==1,
@@ -989,7 +1051,7 @@ def _merge_partition(
                 _drop_root_quality(part)
                 part.stats["part_provenance"] = single_part_provenance
                 part.stats.update(floor_stats)
-                part.save(final_path, barrier_dims=barrier_dims)
+                part.save(final_path, barrier_dims=barrier_dims, root_attrs=root_attrs)
                 if verbose:
                     aprint(f"  Wrote bare leaf: {part.n_splats:,} splats, {part.ndim}D")
             else:
@@ -1010,6 +1072,7 @@ def _merge_partition(
                     fitting_info={"part_provenance": single_part_provenance},
                     pipeline_info=pipeline_info,
                     barrier_dims=barrier_dims,
+                    root_attrs=root_attrs,
                 )
                 if verbose:
                     aprint(
@@ -1055,6 +1118,9 @@ def _merge_partition(
                 ]
             )
             part.stats.pop("part_provenance", None)
+            _drop_mismatched_partition_dimension_attrs(
+                root_attrs, manifest.dimension_metadata, part.ndim
+            )
             _stamp_recipe_floor(part, recipe, floor_stats)
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
@@ -1092,6 +1158,7 @@ def _merge_partition(
             barrier_dims=barrier_dims,
             # Resolved after the stream, when `kept_slots` is complete.
             bsp_tree=lambda: prune_serialized_bsp_tree(slot_tree, kept_slots),
+            root_attrs=root_attrs,
         )
         if verbose:
             aprint(f"  Wrote kind=partition with {n_written} parts{recipe_label}")
@@ -1124,7 +1191,6 @@ def _merge_flat(
     label = "box" if manifest.mode == "content" else "tile"
 
     t_indices, c_indices = _tile_indices(manifest)
-
     # ================================================================
     # Level 1: Merge tiles per (T, C)
     # ================================================================
@@ -1168,16 +1234,24 @@ def _merge_flat(
                         "nothing to merge for this (timepoint, channel)"
                     )
                 if len(tile_files) == 1:
-                    # Single non-empty slot — just copy.
-                    import shutil
-
-                    if out_path.exists():
-                        shutil.rmtree(out_path)
-                    shutil.copytree(tile_files[0], out_path)
+                    # A T=1 leaf can be the final output and needs metadata;
+                    # a T>1 leaf is intermediate and can stay a direct copy.
+                    _copy_or_resave_tile(
+                        tile_files[0],
+                        out_path,
+                        manifest.dimension_metadata if n_t == 1 else None,
+                    )
                 else:
                     datasets = [GSplatData.load(p) for p in tile_files]
                     merged = GSplatData.concatenate(datasets)
-                    merged.save(out_path)
+                    merged.save(
+                        out_path,
+                        root_attrs=_dimension_root_attrs(
+                            manifest.dimension_metadata, merged.ndim
+                        )
+                        if n_t == 1
+                        else None,
+                    )
 
                 if verbose:
                     aprint(
@@ -1207,7 +1281,12 @@ def _merge_flat(
                     values=[float(t) for t in t_indices],
                     sigma=0.0,
                 )
-                stacked.save(out_path)
+                stacked.save(
+                    out_path,
+                    root_attrs=_dimension_root_attrs(
+                        manifest.dimension_metadata, stacked.ndim
+                    ),
+                )
 
                 if verbose:
                     aprint(
@@ -1234,7 +1313,12 @@ def _merge_flat(
             ch_files = [channel_paths[c] for c in range(n_c)]
             datasets = [GSplatData.load(p) for p in ch_files]
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
-            final.save(final_path)
+            final.save(
+                final_path,
+                root_attrs=_dimension_root_attrs(
+                    manifest.dimension_metadata, final.ndim
+                ),
+            )
 
             if verbose:
                 aprint(f"  Merged {n_c} channels -> {final.n_splats:,} splats")
@@ -1252,7 +1336,12 @@ def _merge_flat(
                 ch_files = [channel_paths[c] for c in range(n_c)]
                 datasets = [GSplatData.load(p) for p in ch_files]
                 final = GSplatData.concatenate(datasets)
-                final.save(final_path)
+                final.save(
+                    final_path,
+                    root_attrs=_dimension_root_attrs(
+                        manifest.dimension_metadata, final.ndim
+                    ),
+                )
                 if verbose:
                     aprint(f"  Concatenated {n_c} channels")
 

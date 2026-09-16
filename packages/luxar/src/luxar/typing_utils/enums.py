@@ -95,7 +95,7 @@ class NodeType(str, Enum):
 
 
 class PhysicalUnit(str, Enum):
-    """Physical units for spatial dimensions.
+    """Physical units for scene dimensions.
 
     Supports metric, imperial, and specialized units.
     """
@@ -115,6 +115,7 @@ class PhysicalUnit(str, Enum):
 
     # Other units
     PIXEL = "px"
+    SECOND = "s"
     ASTRONOMICAL_UNIT = "au"
 
     @classmethod
@@ -149,6 +150,8 @@ class PhysicalUnit(str, Enum):
             "kilometre": cls.KILOMETER,
             "pixel": cls.PIXEL,
             "pixels": cls.PIXEL,
+            "second": cls.SECOND,
+            "seconds": cls.SECOND,
         }
 
         if normalized in unit_map:

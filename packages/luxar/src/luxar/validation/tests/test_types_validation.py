@@ -46,6 +46,7 @@ _ACCEPTED_UNIT_SPELLINGS = (
     "foot",
     "px",
     "au",
+    "s",
 )
 
 
