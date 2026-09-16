@@ -86,6 +86,18 @@ def _validate_parallel_content_frame(
         )
 
 
+def _cleanup_plan_before_parallel_refusal(
+    physical_coordinates: bool,
+    jobs: int,
+    created_plan: bool,
+    keep_boxes: bool,
+    plan_json_path: Path,
+) -> None:
+    """Remove an internal plan before rejecting its resolved worker count."""
+    if physical_coordinates and jobs > 1 and created_plan and not keep_boxes:
+        plan_json_path.unlink(missing_ok=True)
+
+
 def _fill_source_dtype(fit_config: dict, source_dtype: Optional[str]) -> None:
     """Use the loader dtype unless configured; mirrors fit._stamp_source_dtype."""
     if not fit_config.get("source_dtype") and source_dtype:
@@ -576,8 +588,9 @@ def run_content_fit(
         raise typer.Exit(1)
 
     report_auto_jobs(jobs, worker_limit)
-    if physical_coordinates and n_jobs > 1 and created_plan and not keep_boxes:
-        Path(plan_json_path).unlink(missing_ok=True)
+    _cleanup_plan_before_parallel_refusal(
+        physical_coordinates, n_jobs, created_plan, keep_boxes, plan_json_path
+    )
     _validate_parallel_content_frame(physical_coordinates, n_jobs)
 
     partition = not flat
