@@ -202,6 +202,12 @@ def run_fit_volume(
         hidden=True,
         help="Internal worker handoff: comma-separated physical voxel spacing.",
     ),
+    physical_coordinates: bool = typer.Option(
+        False,
+        "--physical-coordinates",
+        hidden=True,
+        help="Internal batch worker handoff: enable physical content-box geometry.",
+    ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
     ),
@@ -762,6 +768,7 @@ def run_fit_volume(
                     floor=floor,
                     norm_range=parsed_norm_range,
                     voxel_size=parsed_voxel_size,
+                    physical_coordinates=physical_coordinates,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,

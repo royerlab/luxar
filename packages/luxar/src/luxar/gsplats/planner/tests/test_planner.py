@@ -215,11 +215,39 @@ class TestFitPlanned:
             PlanBox(box=(8, 16, 8, 16, 8, 16), n_features=10, budget=10),
             overlap=2,
             cap=100,
+            content_physical=True,
             voxel_size=(5.0, 2.0, 1.0),
             output_space="real",
         )
 
         np.testing.assert_allclose(result.centers, [[40.0, 20.0, 10.0]])
+
+    def test_fit_planned_keeps_config_only_content_in_voxel_space(self, monkeypatch):
+        """Physical content geometry remains opt-in rather than a config side effect."""
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner.fit_planned import _fit_one_box
+        from luxar.gsplats.planner.spec import PlanBox
+
+        def fake_fit(sub, **kwargs):
+            assert "voxel_size" not in kwargs
+            return GSplatData(
+                centers=np.array([[4.0, 4.0, 4.0]], dtype=np.float32),
+                amplitudes=np.ones(1, dtype=np.float32),
+                cholesky_factors=np.ones((1, 6), dtype=np.float32),
+            )
+
+        monkeypatch.setattr("luxar.gsplats.fit_gsplats.fit_gaussian_splats", fake_fit)
+        with pytest.warns(UserWarning, match="fitting in voxel space"):
+            result = _fit_one_box(
+                np.ones((24, 24, 24), dtype=np.float32),
+                PlanBox(box=(4, 12, 4, 12, 4, 12), n_features=10, budget=10),
+                overlap=0,
+                cap=100,
+                voxel_size=(5.0, 2.0, 1.0),
+                output_space="real",
+            )
+
+        np.testing.assert_allclose(result.centers, [[8.0, 8.0, 8.0]])
 
     @pytest.mark.parametrize("partition", [False, True])
     def test_scoring_receives_the_merged_box_basis(self, monkeypatch, partition):

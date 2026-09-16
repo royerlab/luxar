@@ -235,6 +235,7 @@ def _fit_one_box(
     box: PlanBox,
     overlap: int,
     cap: int,
+    content_physical: bool = False,
     **fit_kwargs: Any,
 ) -> GSplatData:
     """Fit a single plan box and return its core-kept splats in GLOBAL coords.
@@ -269,6 +270,21 @@ def _fit_one_box(
 
     voxel_size = fit_kwargs.get("voxel_size")
     output_space = fit_kwargs.get("output_space", "real")
+    if not content_physical:
+        ignored_voxel_size = fit_kwargs.pop("voxel_size", None)
+        ignored_output_space = fit_kwargs.pop("output_space", None)
+        if ignored_voxel_size is not None and ignored_output_space != "voxel":
+            import warnings
+
+            warnings.warn(
+                "voxel_size/output_space='real' are not supported with content-"
+                "planned fitting unless the caller explicitly enables physical "
+                "content geometry; fitting in voxel space (voxel_size ignored).",
+                UserWarning,
+                stacklevel=2,
+            )
+        voxel_size = None
+        output_space = "voxel"
 
     V = np.asarray(volume, dtype=np.float32)
     ndim = V.ndim
@@ -435,6 +451,20 @@ def fit_planned(
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
     _ensure_planned_norm_range(V, fit_kwargs, verbose)
+    content_physical = bool(fit_kwargs.pop("_content_physical", False))
+    if not content_physical:
+        voxel_size = fit_kwargs.pop("voxel_size", None)
+        output_space = fit_kwargs.pop("output_space", None)
+        if voxel_size is not None and output_space != "voxel":
+            import warnings
+
+            warnings.warn(
+                "voxel_size/output_space='real' are not supported with content-"
+                "planned fitting unless the caller explicitly enables physical "
+                "content geometry; fitting in voxel space (voxel_size ignored).",
+                UserWarning,
+                stacklevel=2,
+            )
     from luxar.gsplats.tiling import resolve_grid_scale
 
     grid_scale = resolve_grid_scale(
@@ -463,7 +493,9 @@ def fit_planned(
             continue
         if progress_callback is not None:
             progress_callback(i, n, f"box {i + 1}/{n} budget={budget}")
-        region = _fit_one_box(V, b, pad, cap, **fit_kwargs)
+        region = _fit_one_box(
+            V, b, pad, cap, content_physical=content_physical, **fit_kwargs
+        )
         n_fit += 1
         n_kept = int(region.n_splats)
         if n_kept > 0:

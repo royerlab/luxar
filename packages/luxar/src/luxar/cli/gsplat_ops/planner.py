@@ -229,6 +229,7 @@ def run_content_fit(
     floor: Optional[str] = None,
     norm_range: "Optional[tuple[float, float]]" = None,
     voxel_size: "Optional[tuple[float, ...]]" = None,
+    physical_coordinates: bool = False,
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
@@ -317,6 +318,8 @@ def run_content_fit(
         fk.pop("seeds", None)
         fk.pop("device", None)
         fk["verbose"] = False
+        if physical_coordinates:
+            fk["_content_physical"] = True
         return fk
 
     # Validate the EFFECTIVE floor spec BEFORE the volume is read: a typo
@@ -359,8 +362,14 @@ def run_content_fit(
         # it here too rather than falling back to per-crop normalization.
         _ensure_planned_norm_range(vol, fk, False)
         cap = int(fitplan.density.get("saturation_cap", 0)) if fitplan.density else 0
+        content_physical = bool(fk.pop("_content_physical", False))
         box_result = _fit_one_box(
-            vol, fitplan.boxes[plan_box], int(fitplan.overlap), cap, **fk
+            vol,
+            fitplan.boxes[plan_box],
+            int(fitplan.overlap),
+            cap,
+            content_physical=content_physical,
+            **fk,
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         if box_result.n_splats == 0:
