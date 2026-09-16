@@ -86,6 +86,7 @@ from typing import Iterator as _Iterator
 
 import numpy as np
 import zarr
+import zarr.errors
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # The canonical home of the alias — `typing_utils.protocols` only re-imports
@@ -169,6 +170,11 @@ def _format_from_env() -> int:
 #: module all read the module attribute at CALL time, so an override applies to
 #: every write that follows it.
 ZARR_FORMAT = _format_from_env()
+
+_UNKNOWN_CODEC_ERRORS = (
+    KeyError,
+    getattr(zarr.errors, "UnknownCodecError", KeyError),
+)
 
 
 def zarr_format() -> int:
@@ -803,7 +809,7 @@ def _to_v3_filter(filter_obj: Any) -> Any:
     codec_id = config.pop("id", None)
     try:
         codec_cls = zarr.registry.get_codec_class(str(codec_id))
-    except (KeyError, getattr(zarr.errors, "UnknownCodecError", KeyError)):
+    except _UNKNOWN_CODEC_ERRORS:
         raise ValueError(
             f"filter {codec_id!r} has no format-3 codec registered under that "
             f"name; register one (entry-point group 'zarr.codecs') before "
