@@ -803,7 +803,7 @@ def _to_v3_filter(filter_obj: Any) -> Any:
     codec_id = config.pop("id", None)
     try:
         codec_cls = zarr.registry.get_codec_class(str(codec_id))
-    except KeyError:
+    except (KeyError, getattr(zarr.errors, "UnknownCodecError", KeyError)):
         raise ValueError(
             f"filter {codec_id!r} has no format-3 codec registered under that "
             f"name; register one (entry-point group 'zarr.codecs') before "
