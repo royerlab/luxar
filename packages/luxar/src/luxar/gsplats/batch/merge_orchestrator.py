@@ -186,6 +186,22 @@ def _tile_path(
     )
 
 
+def _copy_or_resave_tile(
+    source: Path, destination: Path, root_attrs: "Optional[Dict[str, Any]]"
+) -> None:
+    """Copy an intermediate tile, or re-save a final leaf with root metadata."""
+    if root_attrs is not None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        GSplatData.load(source).save(destination, root_attrs=root_attrs)
+        return
+    import shutil
+
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
+
+
 # ════════════════════════════════════════════════════════════════════════
 # Default: streaming spatial partition (tile-outer, O(1) memory per tile)
 # ════════════════════════════════════════════════════════════════════════
@@ -959,6 +975,11 @@ def _merge_partition(
     pipeline_info = _pipeline_info_with_floor(
         recipe, recipe_params, floor_stats, _manifest_part_coarsen_dims(manifest)
     )
+    root_attrs = (
+        {"dimension_metadata": manifest.dimension_metadata}
+        if manifest.dimension_metadata is not None
+        else None
+    )
 
     # Authoritative ordering barrier: when timepoints are stacked (n_timepoints
     # > 1) the merge appends them as the LAST axis (see _finalize_part_node /
@@ -989,7 +1010,7 @@ def _merge_partition(
                 _drop_root_quality(part)
                 part.stats["part_provenance"] = single_part_provenance
                 part.stats.update(floor_stats)
-                part.save(final_path, barrier_dims=barrier_dims)
+                part.save(final_path, barrier_dims=barrier_dims, root_attrs=root_attrs)
                 if verbose:
                     aprint(f"  Wrote bare leaf: {part.n_splats:,} splats, {part.ndim}D")
             else:
@@ -1010,6 +1031,7 @@ def _merge_partition(
                     fitting_info={"part_provenance": single_part_provenance},
                     pipeline_info=pipeline_info,
                     barrier_dims=barrier_dims,
+                    root_attrs=root_attrs,
                 )
                 if verbose:
                     aprint(
@@ -1092,6 +1114,7 @@ def _merge_partition(
             barrier_dims=barrier_dims,
             # Resolved after the stream, when `kept_slots` is complete.
             bsp_tree=lambda: prune_serialized_bsp_tree(slot_tree, kept_slots),
+            root_attrs=root_attrs,
         )
         if verbose:
             aprint(f"  Wrote kind=partition with {n_written} parts{recipe_label}")
@@ -1124,6 +1147,11 @@ def _merge_flat(
     label = "box" if manifest.mode == "content" else "tile"
 
     t_indices, c_indices = _tile_indices(manifest)
+    root_attrs = (
+        {"dimension_metadata": manifest.dimension_metadata}
+        if manifest.dimension_metadata is not None
+        else None
+    )
 
     # ================================================================
     # Level 1: Merge tiles per (T, C)
@@ -1168,16 +1196,15 @@ def _merge_flat(
                         "nothing to merge for this (timepoint, channel)"
                     )
                 if len(tile_files) == 1:
-                    # Single non-empty slot — just copy.
-                    import shutil
-
-                    if out_path.exists():
-                        shutil.rmtree(out_path)
-                    shutil.copytree(tile_files[0], out_path)
+                    # A T=1 leaf can be the final output and needs metadata;
+                    # a T>1 leaf is intermediate and can stay a direct copy.
+                    _copy_or_resave_tile(
+                        tile_files[0], out_path, root_attrs if n_t == 1 else None
+                    )
                 else:
                     datasets = [GSplatData.load(p) for p in tile_files]
                     merged = GSplatData.concatenate(datasets)
-                    merged.save(out_path)
+                    merged.save(out_path, root_attrs=root_attrs if n_t == 1 else None)
 
                 if verbose:
                     aprint(
@@ -1207,7 +1234,7 @@ def _merge_flat(
                     values=[float(t) for t in t_indices],
                     sigma=0.0,
                 )
-                stacked.save(out_path)
+                stacked.save(out_path, root_attrs=root_attrs)
 
                 if verbose:
                     aprint(
@@ -1234,7 +1261,7 @@ def _merge_flat(
             ch_files = [channel_paths[c] for c in range(n_c)]
             datasets = [GSplatData.load(p) for p in ch_files]
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
-            final.save(final_path)
+            final.save(final_path, root_attrs=root_attrs)
 
             if verbose:
                 aprint(f"  Merged {n_c} channels -> {final.n_splats:,} splats")
@@ -1252,7 +1279,7 @@ def _merge_flat(
                 ch_files = [channel_paths[c] for c in range(n_c)]
                 datasets = [GSplatData.load(p) for p in ch_files]
                 final = GSplatData.concatenate(datasets)
-                final.save(final_path)
+                final.save(final_path, root_attrs=root_attrs)
                 if verbose:
                     aprint(f"  Concatenated {n_c} channels")
 

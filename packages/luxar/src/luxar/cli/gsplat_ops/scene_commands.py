@@ -178,7 +178,9 @@ def convert_to_scene(
                     data = data.scale_intensity(scale_intensity)
 
                 with asection("Creating Luxar scene"):
-                    dims = build_dimensions_from_data(data.centers)
+                    dims = build_dimensions_from_data(
+                        data.centers, node.meta.get("dimension_metadata")
+                    )
                     with LuxarZarrCompiler(
                         output_path, encoding_mode=_resolve_encoding_mode(encoding)
                     ) as compiler:
@@ -223,7 +225,9 @@ def convert_to_scene(
                 box = np.array([bmin, bmax], dtype=np.float32)
 
                 with asection("Creating Luxar scene"):
-                    dims = build_dimensions_from_data(box)
+                    dims = build_dimensions_from_data(
+                        box, node.meta.get("dimension_metadata")
+                    )
                     with LuxarZarrCompiler(
                         output_path, encoding_mode=_resolve_encoding_mode(encoding)
                     ) as compiler:

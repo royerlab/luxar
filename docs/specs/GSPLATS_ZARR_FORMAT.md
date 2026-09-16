@@ -206,6 +206,13 @@ cache compares it to invalidate when a file is regenerated in place. The
 historical `[N, M_i]` matrix is just the "full pyramid" shape expressed as a node
 tree.
 
+A producer may also attach root `dimension_metadata`, an ordered list aligned
+with the columns of `centers`. Each entry carries a dimension `name`, `unit`, and
+positive physical `scale`. The batch-fit merger uses it to retain source
+OME-Zarr axis semantics; `luxar gsplat convert` overlays those descriptors onto
+the dimensions it derives from the fitted bounds. Consumers that do not know
+the attribute ignore it.
+
 ---
 
 ## Zarr Structure (v3.x — node tree)

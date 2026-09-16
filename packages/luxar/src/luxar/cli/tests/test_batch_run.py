@@ -436,6 +436,52 @@ def _plan(
     )
 
 
+def test_batch_plan_records_ngff_dimension_metadata_with_axes_override(
+    tmp_path: Path,
+) -> None:
+    import zarr
+
+    src = tmp_path / "recording.ome.zarr"
+    root = zarr.open_group(str(src), mode="w", zarr_format=2)
+    root.create_array(
+        "0",
+        data=np.zeros((4, 16, 24, 24), dtype=np.float32),
+        chunks=(1, 16, 24, 24),
+    )
+    root.attrs["multiscales"] = [
+        {
+            "axes": [
+                {"name": "t", "type": "time", "unit": "second"},
+                {"name": "z", "type": "space", "unit": "micrometer"},
+                {"name": "y", "type": "space", "unit": "micrometer"},
+                {"name": "x", "type": "space", "unit": "micrometer"},
+            ],
+            "datasets": [
+                {
+                    "path": "0",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [0.5, 2.0, 0.75, 0.75]}
+                    ],
+                }
+            ],
+        }
+    ]
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+    ).manifest
+
+    assert manifest.dimension_metadata == [
+        {"name": "z", "unit": "micrometer", "scale": 2.0},
+        {"name": "y", "unit": "micrometer", "scale": 0.75},
+        {"name": "x", "unit": "micrometer", "scale": 0.75},
+        {"name": "time", "unit": "second", "scale": 0.5},
+    ]
+
+
 @pytest.mark.parametrize(
     ("fit_kwargs", "denoise_kwargs", "expected_flag"),
     [

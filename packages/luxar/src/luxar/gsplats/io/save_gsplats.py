@@ -1093,6 +1093,7 @@ def write_partition_streaming(
     compressor: Optional[Any] = DEFAULT_COMP,
     barrier_dims: Optional[Sequence[int]] = None,
     bsp_tree: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
+    root_attrs: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Write a ``kind=partition`` file part-by-part, holding ≤1 part in memory.
 
@@ -1120,6 +1121,9 @@ def write_partition_streaming(
     so the caller prunes inside the provider. Omit it, or return ``None``, and the
     viewer falls back to a per-part centroid order, which is not a valid painter's
     order and pops at the seams under order-dependent blending (#1555).
+
+    ``root_attrs`` seeds optional root metadata before the structural partition
+    attrs are stamped, so caller metadata cannot override the node kind.
 
     The producer is responsible for skipping empty tile-regions (it must yield
     only non-empty subtrees). Compression is intentionally not supported here
@@ -1189,6 +1193,8 @@ def write_partition_streaming(
         # Root partition attrs — same set the GSplatPartition branch of
         # write_gsplat_node emits (type/kind/display_type/max_elements/position_bounds
         # + the optional bsp_tree).
+        if root_attrs:
+            root.attrs.update(root_attrs)
         root.attrs["type"] = "group"
         root.attrs["kind"] = "partition"
         root.attrs["display_type"] = "gsplats"

@@ -1800,6 +1800,24 @@ def _worker_spatial_shape(
     return tuple(size for size in spatial_shape if size != 1)
 
 
+def _batch_dimension_metadata(
+    info: "OMEZarrInfo", axes_list: Optional[List[str]], n_timepoints: int
+) -> List[dict[str, Any]]:
+    spatial_indices = list(info.spatial_indices)
+    if axes_list is None:
+        spatial_indices = [index for index in spatial_indices if info.shape[index] != 1]
+
+    def descriptor(index: int) -> dict[str, Any]:
+        unit = info.axis_units[index] if info.axis_units else None
+        scale = info.axis_scales[index] if info.axis_scales is not None else 1.0
+        return {"name": info.axes[index], "unit": unit or "", "scale": float(scale)}
+
+    metadata = [descriptor(index) for index in spatial_indices]
+    if n_timepoints > 1 and info.time_axis is not None:
+        metadata.append(descriptor(info.time_axis))
+    return metadata
+
+
 def _validate_content_spatial_shape(
     mode: str,
     spatial: Tuple[int, ...],
@@ -2254,6 +2272,7 @@ def plan_batch(
         channel_axes=ome_info.channel_axes,
         channel_shape=ome_info.channel_shape,
         spatial_shape=spatial,
+        dimension_metadata=_batch_dimension_metadata(ome_info, axes_list, n_t),
         mode=mode,
         tile_size=tile_size_resolved,
         tile_overlap=tile_overlap,

@@ -149,6 +149,24 @@ def _write_store(
     return path
 
 
+def test_axes_override_preserves_ngff_units_and_scales(tmp_path: Path) -> None:
+    path = _write_store(
+        tmp_path / "recording.ome.zarr",
+        (4, 8, 16, 32),
+        labels=_TZYX,
+        scale=(0.5, 2.0, 0.75, 0.75),
+        nested=False,
+        zarr_format=2,
+    )
+
+    info = discover_ome_zarr_shape(path, axes_override=["time", "z", "y", "x"])
+
+    assert info.axes == ["time", "z", "y", "x"]
+    assert info.axis_units == ["second", "micrometer", "micrometer", "micrometer"]
+    assert info.axis_scales == pytest.approx((0.5, 2.0, 0.75, 0.75))
+    assert info.voxel_size == pytest.approx((2.0, 0.75, 0.75))
+
+
 # ---------------------------------------------------------------------------
 # The resolver itself
 # ---------------------------------------------------------------------------

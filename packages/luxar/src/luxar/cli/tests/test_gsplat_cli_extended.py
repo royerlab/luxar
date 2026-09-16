@@ -835,6 +835,51 @@ class TestCullCommand:
 
 
 class TestConvertCommand:
+    def test_convert_applies_stored_dimension_metadata(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        partition_result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "partition",
+                str(sample_gsplats_4d),
+                str(partition),
+                "--parts",
+                "2",
+            ],
+        )
+        assert partition_result.exit_code == 0, partition_result.stdout
+        root = zarr.open_group(str(partition), mode="r+")
+        root.attrs["dimension_metadata"] = [
+            {"name": "z", "unit": "micrometer", "scale": 2.0},
+            {"name": "y", "unit": "micrometer", "scale": 0.75},
+            {"name": "x", "unit": "micrometer", "scale": 0.75},
+            {"name": "time", "unit": "second", "scale": 0.5},
+        ]
+
+        out = tmp_path / "scene.luxar.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "convert", str(partition), str(out), "--no-center"],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        dimensions = zarr.open_group(str(out), mode="r").attrs["scene_dimensions"]
+        descriptors = dimensions["dimensions"]
+        assert [item["name"] for item in descriptors] == ["z", "y", "x", "time"]
+        assert [item["unit"] for item in descriptors] == [
+            "micrometer",
+            "micrometer",
+            "micrometer",
+            "second",
+        ]
+        assert [item["scale"] for item in descriptors] == [2.0, 0.75, 0.75, 0.5]
+        assert descriptors[3]["step"] == 7.0
+
     def test_convert_basic(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
