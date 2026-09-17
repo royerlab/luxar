@@ -17,7 +17,7 @@ names the additive ordering, as on `gsplat lod`. The migration survives the move
 cluster` is recognised as a decimation method and pointed at `--subst-method cluster`,
 value carried.
 
-`--reveal-centre` / `--spatial-dims` are the same flags with the same parser as
+`--reveal-center` / `--spatial-dims` are the same flags with the same parser as
 `gsplat lod`, extracted to `cli/reveal_options.py` so the two commands cannot drift on
 what a centre — or a `--spatial-dims` ORDER, which pairs with the centre's coordinates —
 means.

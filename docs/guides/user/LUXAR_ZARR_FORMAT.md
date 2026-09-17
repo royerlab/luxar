@@ -209,7 +209,7 @@ The root `.zattrs` file contains scene-wide configuration:
 | `format_version` | 0.2+ | Scene format version (`"0.2"`). Checked by every reader against the contract's `supported` set: supported → silent, same-major newer minor → warn and load, anything else → refused. |
 | `format_type` | 0.2+ | `"luxar_zarr"` — identifies a compiled scene (a detached `.gsplats.zarr` root says `"gsplats_zarr"`). |
 | `type` | all | `"scene"`. |
-| `luxar_software_version` | 0.2+ | The `luxar.__version__` that wrote the store. Provenance only — **excluded from `content_hash`** by both hashers, so two releases compiling the same scene agree on the digest and a `luxar optimise` restamp never churns viewer caches. |
+| `luxar_software_version` | 0.2+ | The `luxar.__version__` that wrote the store. Provenance only — **excluded from `content_hash`** by both hashers, so two releases compiling the same scene agree on the digest and a `luxar optimize` restamp never churns viewer caches. |
 | `luxar_version` | 0.1 only | The legacy version key. Read as a fallback when `format_version` is absent; never written by a current compiler. |
 | `content_hash` | all | Post-order xxhash64 digest of the store: array bytes, storage identity, attrs (minus this key and `luxar_software_version`) and child digests, computed by `io/_compiler/finalize/hashing.py`. The viewer validates its cache against it. |
 | `scene_dimensions` | all | The nD dimension table (below). |
