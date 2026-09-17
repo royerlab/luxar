@@ -1232,9 +1232,12 @@ STORIES: tuple[UniverseStory, ...] = (
         min_distance=FAMILY_MIN_DISTANCE,
         facts=(
             "Nisin is a lanthipeptide: a short peptide whose amino acids are "
-            "stapled together into rings of sulfur. It was found in 1928, has "
-            "preserved cheese and canned food since the 1950s, and is "
-            "permitted in more than fifty countries.",
+            "stapled together into five rings, each one closed by a single "
+            "sulfur atom. An inhibitory substance from milk streptococci was "
+            "reported in 1928; it has been a commercial preservative for more "
+            "than half a century, starting with the processed cheese whose packs "
+            "clostridia blow open, and it is approved as a food additive in the "
+            "European Union, the United States and dozens of other countries.",
             "It kills by grabbing lipid II, the brick the bacterial cell wall "
             "is built from. That blocks construction of the wall, and the same "
             "captured brick then anchors the peptide while it punches pores in "
@@ -1251,10 +1254,12 @@ STORIES: tuple[UniverseStory, ...] = (
             "six clusters carrying nisin's own name.",
         ),
         mystery=(
-            "Seventy years in the food supply and resistance to nisin is still "
-            "uncommon, even though resistance genes are known. Why this "
-            "antibiotic has aged so much better than our clinical ones is not "
-            "settled."
+            "Seventy years in the food supply and no strain has yet been found "
+            "spreading stable, transmissible resistance to nisin — though "
+            "resistance genes are known and many wild strains are naturally "
+            "hard to kill with it. Part of the answer may be that nisin has "
+            "never been used the way we use clinical antibiotics. Part of it is "
+            "not settled."
         ),
         tags=("antibiotics", "medicine", "peptides"),
         pdb_id="2G0D",  # Nisin cyclase NisC (Li et al., Science 2006)
@@ -1266,72 +1271,83 @@ STORIES: tuple[UniverseStory, ...] = (
             "it punches holes in the membrane. Two attacks on one target. This "
             "knot is not the peptide but the enzymes that build it, three "
             "hundred and forty clusters of them, from soil and gut bacteria. "
-            "Seventy years of use, and resistance is still rare. Why has this "
-            "antibiotic aged so much better than ours?"
+            "Seventy years of use, and no strain has been caught spreading "
+            "resistance to it. Is that the molecule, or just the way we use it?"
         ),
     ),
     UniverseStory(
         key="Ice-binding proteins",
         title="Ice-binding proteins — surviving the cold",
-        subtitle="A knot of ice-binding domains from bacteria nobody has named",
+        subtitle=(
+            "Thirty-two clusters of ice-binding proteins, every one of them bacterial"
+        ),
         pattern="",
-        # PF07589 is the DUF3494 ice-binding C-terminal domain (2,076
-        # clusters), PF11999/PF20597 its ice-binding-like relatives, PF21300
-        # the grass antifreeze beta roll. Audit: 2,587 clusters map-wide in
-        # 197 components; the knot is 94 at 98% ball purity and r95 0.044 —
-        # Verrucomicrobiota 47, phylum unrecorded 32, Kiritimatiellota 11 —
-        # and 90 of the 94 are named nothing but "hypothetical protein".
-        # They are NOT dark in this map's sense (the ice-binding domain is a
-        # domain of known function, so the clusters count as characterised);
-        # what they lack is a product name, which is a different thing and the
-        # panel says so.
+        # PF11999 is the DUF3494 ice-binding domain, now named "Ice-binding-
+        # like" (271 clusters); PF20597 is its putative adhesive relative
+        # (134) and PF21300 the grass antifreeze beta roll (106). Audit: 511
+        # clusters map-wide by dominant domain, 1,118 carrying one of the
+        # three, 1,287 carrying any ice or antifreeze domain; the knot is 32 at
+        # r95 0.086 — Actinomycetota 20, Chloroflexota 5, Candidatus
+        # Saccharimonadota 4 — and 31 of the 32 are named for ice-binding.
         #
-        # TWO COUNTS, and the panel must not mix them: 2,587 clusters have one
-        # of these as their DOMINANT domain (which is what `pfam_mask` selects,
-        # so it is what the knot is drawn from), while 3,927 CARRY one anywhere
-        # in `cluster_top_pfam_domains`. An earlier draft said "2,587 clusters
-        # carrying an ice-binding domain", which reported the dominant count
-        # under the carrying word. The panel now states the carrying number,
-        # rounded down, because "carry" is the honest verb for a visitor.
-        pfam=("PF07589", "PF11999", "PF20597", "PF21300"),
+        # DO NOT ADD PF07589 BACK. The first draft of this story included it
+        # and drew a 94-cluster knot of Verrucomicrobiota and Kiritimatiellota
+        # that were 90/94 bare "hypothetical protein" — because **the Atlas's
+        # own `cluster_top_pfam_names` column mislabels PF07589 as
+        # "Ice-binding protein, C-terminal domain"**, while InterPro and
+        # current Pfam call it "PEP-CTERM protein-sorting motif"
+        # (PEP_exosort_dom). PEP-CTERM is characteristic of the PVC bacteria,
+        # which is exactly what that knot was, and a handful of its members
+        # still carried "PEP-CTERM sorting domain" in their product names —
+        # the tell we missed first time round. PF07589 supplied 2,076 of the
+        # 2,587 clusters that story used to claim, so the whole knot was the
+        # wrong protein family.
+        #
+        # Every other Pfam accession the nineteen stories use was checked
+        # against InterPro after this: 44 accessions, and PF07589 is the only
+        # one where the Atlas's name disagrees. Trust the accession, not the
+        # Atlas's name for it.
+        pfam=("PF11999", "PF20597", "PF21300"),
         color=(0.65, 0.92, 1.0),
         radius=FAMILY_RADIUS,
         min_distance=FAMILY_MIN_DISTANCE,
         facts=(
-            "Antifreeze proteins were found in Antarctic fish in 1969: "
-            "proteins that keep blood liquid below the freezing point of the "
-            "sea around them.",
-            "They do not work by chemistry. They stick to the face of a "
-            "growing ice crystal and stop it spreading, which opens a gap "
-            "between the temperature at which ice melts and the lower one at "
-            "which it will actually form.",
-            "The commonest ice-binding domain of all is not the fish one. It "
-            "is a domain shared by bacteria, algae, fungi and diatoms, in a "
-            "scattered pattern across the tree of life that is best explained "
-            "by the gene being passed sideways between species rather than "
-            "inherited.",
+            "Antifreeze proteins were found in Antarctic fish in 1969: proteins "
+            "that keep the blood liquid at the minus one point nine degrees of "
+            "ice-laden seawater, far colder than its dissolved salts alone could "
+            "manage.",
+            "They do not work the way an ordinary antifreeze does, by sheer "
+            "weight of dissolved material. They stick to the face of a growing "
+            "ice crystal and stop it spreading, which opens a gap between the "
+            "temperature at which ice melts and the lower one at which it will "
+            "actually form.",
+            "The most widespread ice-binding domain of all is not the fish one. "
+            "It is a domain shared by bacteria, archaea, algae, fungi and "
+            "diatoms, in a scattered pattern across the tree of life that is "
+            "best explained by the gene being passed sideways between species "
+            "rather than inherited.",
             # Audit numbers (2026-09-16).
-            "Nearly four thousand clusters in this map carry an ice-binding "
-            "domain. The 94 lit here are mostly environmental bacteria, and 90 of them "
-            "carry no name beyond “hypothetical protein”: the domain is "
-            "recognised, the protein itself is not.",
+            "Some thirteen hundred clusters in this map carry an ice-binding or "
+            "antifreeze domain. The 32 lit here are all bacteria — twenty of "
+            "them actinobacteria of the soil — and all but one is named for the "
+            "job: ice-binding, in an organism nobody has cultured.",
         ),
         mystery=(
             "How a protein recognises ice at all — a surface made of nothing "
             "but water, ordered — is still argued over."
         ),
-        tags=("cold", "metagenomics", "unknown function"),
+        tags=("cold", "metagenomics", "bacteria"),
         pdb_id="3WP9",  # Ice-binding protein, Antarctic sea-ice Colwellia sp.
         narration=(
             "Ice-binding proteins. Antifreeze proteins were found in Antarctic "
-            "fish in 1969, keeping their blood liquid below the freezing point "
-            "of the sea. They work mechanically, not chemically: they stick to "
-            "the face of a growing ice crystal and stop it spreading. The "
-            "commonest ice-binding domain is not the fish one but a bacterial "
-            "one, scattered across bacteria, algae, fungi and diatoms as if the "
-            "gene had been passed sideways. Ninety of the ninety-four clusters "
-            "lit here have no name at all. How a protein recognises ice, a "
-            "surface of nothing but ordered water, is still argued over."
+            "fish in 1969, keeping their blood liquid in water cold enough to "
+            "freeze it. They do not work by sheer weight of dissolved material: "
+            "they stick to the face of a growing ice crystal and stop it "
+            "spreading. The most widespread ice-binding domain is not the fish "
+            "one but a microbial one, scattered across bacteria, archaea, algae "
+            "and fungi as if the gene had been passed sideways. The thirty-two "
+            "clusters lit here are all bacterial. How a protein recognises ice, "
+            "a surface of nothing but ordered water, is still argued over."
         ),
     ),
     UniverseStory(
@@ -1354,13 +1370,20 @@ STORIES: tuple[UniverseStory, ...] = (
             "Every cell carries enzymes that take the twist out of its DNA. "
             "Reverse gyrase does the opposite: it is the only enzyme known "
             "that winds extra positive twist in, and it spends ATP to do it.",
-            "It is a chimera of two machines — a helicase-like motor bolted to "
-            "a topoisomerase — and it was found in a hot-spring archaeon in "
-            "1984.",
-            "It turns up in the hyperthermophiles, the organisms that grow "
-            "best above eighty degrees, and not in their cool-living "
-            "relatives. The extra twist helps hold the double helix shut at "
-            "temperatures that would otherwise pull it apart.",
+            "It was found in a hot-spring archaeon in 1984, and misfiled at "
+            "first. Nine years later it turned out to be a chimera of two "
+            "machines: a helicase-like motor fused to a topoisomerase in one "
+            "protein chain.",
+            "It turns up in every organism that grows best above eighty "
+            "degrees, and in a scattering of merely hot-living bacteria that "
+            "appear to have borrowed the gene from archaea. Cool-living "
+            "relatives do without it almost without exception.",
+            "The extra twist is thought to help hold the double helix shut at "
+            "temperatures that would otherwise pull it apart. That is the "
+            "standard explanation and it has never been shown directly: the DNA "
+            "inside these cells is not actually found positively supercoiled, "
+            "and the enzyme also protects DNA from breaking in a way that needs "
+            "no twist at all.",
             # Audit numbers (2026-09-16).
             "Only 29 clusters in 7.7 million are named for it, and the 14 lit "
             "here sit within two hundredths of a unit of one another: the "
@@ -1368,10 +1391,11 @@ STORIES: tuple[UniverseStory, ...] = (
             "archaea of the boiling springs.",
         ),
         mystery=(
-            "Deleting the gene in a hyperthermophile does not kill it outright, "
-            "only cripples it near the top of its temperature range. Whether "
-            "reverse gyrase is truly required for life in boiling water, or "
-            "merely a very good idea, is unsettled."
+            "Delete the gene in an archaeon that likes eighty-five degrees and "
+            "it does not die, it just grows badly, worse the hotter you push "
+            "it. Delete it in one that likes a hundred and it will not grow at "
+            "all above ninety. Something changes across those few degrees, and "
+            "nobody knows what."
         ),
         tags=("extremophiles", "DNA", "archaea"),
         pdb_id="1GKU",  # Reverse gyrase, Archaeoglobus fulgidus
@@ -1380,11 +1404,12 @@ STORIES: tuple[UniverseStory, ...] = (
             "has enzymes that take the twist out of its DNA. This one does the "
             "opposite: it is the only enzyme known that winds extra positive "
             "twist in, spending ATP to do it, and it is two machines fused into "
-            "one. It appears in the organisms that grow best above eighty "
-            "degrees and not in their cool-living relatives, because extra "
-            "twist helps hold the double helix shut. Fourteen clusters, the "
-            "tightest knot on this tour. Is it truly required for life in "
-            "boiling water, or merely a very good idea?"
+            "one. It appears in everything that grows best above eighty "
+            "degrees, and almost nowhere else. The extra twist is thought to "
+            "hold the double helix shut, though that has never been shown "
+            "directly. Fourteen clusters, the tightest knot on this tour. "
+            "Delete the gene at eighty-five degrees and the cell limps; at "
+            "ninety-five it dies. Nobody knows what changes."
         ),
     ),
     UniverseStory(
@@ -1406,37 +1431,44 @@ STORIES: tuple[UniverseStory, ...] = (
         min_distance=FAMILY_MIN_DISTANCE,
         facts=(
             "Something like four hundred working olfactory receptor genes sit "
-            "in the human genome, beside a comparable number of broken copies. "
-            "It is the largest gene family we have, and mice carry far more "
-            "still.",
+            "in the human genome, beside a slightly larger number of broken "
+            "copies. It is the largest family of receptor genes we have, and "
+            "mice carry close to three times as many working ones.",
             "Linda Buck and Richard Axel found the family in 1991, and shared "
             "the Nobel Prize for it in 2004.",
-            "Each sensory neuron in the nose commits to a single receptor, and "
-            "a smell is read as the pattern across many of them. That "
-            "combinatorial code is how a few hundred receptors cover so "
-            "enormous a range of odours.",
+            "Each mature sensory neuron in the nose settles on a single "
+            "receptor, and a smell is read as the pattern across many of them. "
+            "That combinatorial code is how a few hundred receptors cover so "
+            "enormous a range of odours — and the rule is not absolute: "
+            "immature neurons carry several before committing, and mosquito "
+            "neurons break it outright.",
             "The first structure of a human olfactory receptor arrived only in "
-            "2023, more than thirty years after the genes were found: OR51E2, "
-            "caught holding propionate, one of the smells of sour milk.",
+            "2023, thirty-two years after the genes were found: OR51E2, caught "
+            "holding propionate, the sour, cheesy acid behind Swiss cheese.",
             # Audit numbers (2026-09-16).
             "The knot here is 136 clusters, every single one from a "
             "vertebrate, and the largest of the three smell knots on this "
             "tour. Pull back a little and it dissolves into the far larger "
             "neighbourhood of other receptors built to the same plan.",
         ),
-        mystery=("Given a receptor's sequence, we still cannot say what it smells."),
+        mystery=(
+            "We can now predict fairly well what a molecule will smell like. "
+            "Going the other way — reading a receptor's sequence and saying "
+            "what it detects — is still mostly beyond us, and most human "
+            "receptors have no known odour at all."
+        ),
         tags=("senses", "receptors", "genomics"),
         pdb_id="8F76",  # Human OR51E2 with propionate (Billesbolle et al. 2023)
         narration=(
-            "Olfactory receptors, the largest gene family we have. About four "
-            "hundred working copies in the human genome, and about as many "
-            "broken ones. Linda Buck and Richard Axel found them in 1991 and "
-            "won the Nobel Prize in 2004. Each neuron in the nose commits to "
-            "one receptor, and a smell is the pattern across many of them. Yet "
-            "the first structure of a human one came only in 2023, thirty years "
-            "after the genes. This knot is a hundred and thirty-six clusters, "
-            "every one a vertebrate. Given a receptor's sequence, we still "
-            "cannot say what it smells."
+            "Olfactory receptors, the largest family of receptor genes we have. "
+            "About four hundred working copies in the human genome, and slightly "
+            "more broken ones. Linda Buck and Richard Axel found them in 1991 "
+            "and won the Nobel Prize in 2004. Each mature neuron in the nose "
+            "settles on one receptor, and a smell is the pattern across many of "
+            "them. Yet the first structure of a human one came only in 2023, "
+            "thirty-two years after the genes. This knot is a hundred and "
+            "thirty-six clusters, every one a vertebrate. Reading a receptor's "
+            "sequence and saying what it detects is still mostly beyond us."
         ),
     ),
     UniverseStory(
@@ -1457,14 +1489,17 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=(
             "Insects do not smell with our receptors, or with anything related "
             "to them. A vertebrate olfactory receptor passes its signal to a "
-            "G protein; an insect odorant receptor is an ion channel that "
-            "simply opens and lets current through.",
-            "Each one works as a pair with Orco, a partner subunit that is "
-            "nearly the same in every insect while the receptors beside it vary "
-            "enormously.",
-            "A fruit fly manages with about sixty receptors where we have four "
-            "hundred. Mosquitoes use theirs to find people, which is why this "
-            "family matters to malaria.",
+            "G protein; an insect odorant receptor is itself an ion channel, "
+            "opening to let current through when the odorant binds.",
+            "Each one works inside a four-subunit channel built around Orco, a "
+            "partner so conserved that it is recognisably the same protein in "
+            "flies, moths, beetles and aphids, while the receptors beside it "
+            "vary enormously. In the one complex anyone has solved, three Orco "
+            "subunits surround a single receptor.",
+            "A fruit fly manages with about sixty odorant receptors where we "
+            "have four hundred. Mosquitoes use theirs to find people: knock out "
+            "Orco and a malaria mosquito largely stops being drawn to human "
+            "odour, which is why this family matters to malaria.",
             # Audit numbers (2026-09-16).
             "The knot here is 75 clusters, every one an arthropod, and it sits "
             "about ten units from the vertebrate knot on a map whose bulk fits "
@@ -1472,9 +1507,10 @@ STORIES: tuple[UniverseStory, ...] = (
             "to smelling about as far apart as it files anything.",
         ),
         mystery=(
-            "How one near-constant partner subunit works with dozens of "
-            "different receptors, and what fixes each receptor's chemical "
-            "taste, is still being worked out."
+            "The near-constant partner turns out to be a scaffold: it holds the "
+            "pore open around whichever receptor sits beside it. What fixes each "
+            "receptor's chemical taste — and how to read that taste off its "
+            "sequence — is still being worked out."
         ),
         tags=("senses", "ion channels", "insects"),
         pdb_id="8Z9Z",  # Insect OR-Orco heterocomplex, Acyrthosiphon pisum
@@ -1482,12 +1518,12 @@ STORIES: tuple[UniverseStory, ...] = (
             "Smell, invented a second time. Insects do not use our receptors or "
             "anything related to them. A vertebrate receptor passes its signal "
             "to a G protein. An insect odorant receptor is an ion channel: it "
-            "opens and lets current through. Each works as a pair with Orco, a "
-            "partner that is nearly identical in every insect while the "
-            "receptors beside it vary enormously. A fruit fly gets by with "
-            "sixty where we have four hundred. This knot sits ten units from "
-            "the vertebrate one, about as far apart as this map puts anything. "
-            "Two solutions to the same problem, filed separately."
+            "opens and lets current through. Each works inside a four-subunit "
+            "channel built around Orco, a partner recognisable in every insect "
+            "while the receptors beside it vary enormously. A fruit fly gets by "
+            "with sixty odorant receptors where we have four hundred. This knot "
+            "sits ten units from the vertebrate one, about as far apart as this "
+            "map puts anything. Two solutions to the same problem, filed apart."
         ),
     ),
     UniverseStory(
@@ -1519,11 +1555,13 @@ STORIES: tuple[UniverseStory, ...] = (
         min_distance=FAMILY_MIN_DISTANCE,
         facts=(
             "A millimetre-long worm, Caenorhabditis elegans, spends something "
-            "like a thousand of its twenty thousand genes on chemoreceptors — "
-            "a far larger share of its genome than we spend on smell.",
-            "It has only a few dozen chemosensory neurons to put them in, so "
-            "each neuron has to carry many receptors at once. That is the "
-            "opposite of the rule in our own nose, where a neuron picks one.",
+            "like thirteen hundred of its twenty thousand genes on "
+            "chemoreceptors — about seven per cent of its genome, against the "
+            "two per cent we spend on smell.",
+            "It has only about thirty chemosensory neurons to put them in, so "
+            "each neuron has to carry many receptors at once — one of them "
+            "expresses close to a hundred. That is the opposite of the rule in "
+            "our own nose, where a neuron picks one.",
             "For almost all of them nobody knows what they detect. The "
             "receptor for diacetyl, the smell of butter, is one of the few "
             "that has been pinned to its odour.",
@@ -1531,25 +1569,27 @@ STORIES: tuple[UniverseStory, ...] = (
             # nematode chemoreceptor exists, hence the relative on the left.
             "The knot lit here is 55 clusters, every one a nematode, and the "
             "tightest of the three smell knots on this tour. Not one of these "
-            "receptors has ever had its structure solved: the turntable shows "
-            "a relative from the same worm instead.",
+            "receptors has ever had its structure solved. The turntable shows "
+            "the nearest thing the worm has on the shelf: a hormone receptor, "
+            "not a chemoreceptor.",
         ),
         mystery=(
             "What the rest of those receptors are for — and why an animal with "
-            "a few dozen sensory neurons needs a thousand of them — is open."
+            "about thirty sensory neurons needs thirteen hundred of them — is "
+            "open."
         ),
         tags=("senses", "receptors", "nematodes"),
         pdb_id="8W1Z",  # A C. elegans family-1 GPCR: the nearest solved relative
         narration=(
             "Smell, invented a third time. A millimetre-long worm spends "
-            "something like a thousand of its twenty thousand genes on "
+            "something like thirteen hundred of its twenty thousand genes on "
             "chemoreceptors, a far bigger share of its genome than we spend on "
-            "smell. It has only a few dozen sensory neurons to put them in, so "
+            "smell. It has only about thirty sensory neurons to put them in, so "
             "each neuron carries many receptors at once, the opposite of the "
             "rule in our nose. For almost all of them nobody knows what they "
             "detect. This is the tightest of the three smell knots, and not one "
             "of these receptors has ever had its structure solved. Why does a "
-            "worm need a thousand of them?"
+            "worm need thirteen hundred of them?"
         ),
     ),
     UniverseStory(
@@ -1580,8 +1620,9 @@ STORIES: tuple[UniverseStory, ...] = (
             "decarboxylase convert it to dopamine on the way — in the gut, "
             "where it is no longer any use.",
             "Patients are given a second drug, carbidopa, to block the human "
-            "version of that reaction. It does not block the bacterial one, so "
-            "the bacteria go on eating the dose.",
+            "version of that reaction. It barely touches the bacterial one — "
+            "hundreds to thousands of times weaker, and useless at any dose "
+            "that reaches the gut — so the bacteria go on eating theirs.",
             # Audit numbers (2026-09-16): the scatter is the finding.
             "Now look at what this map does with the enzyme. Fifty-two "
             "clusters out of 7.7 million are named for it, and they form no "
@@ -1589,10 +1630,10 @@ STORIES: tuple[UniverseStory, ...] = (
             "one bacterial phylum, eleven in another, and eight of them an "
             "archaeal enzyme doing an entirely different job.",
             "That scatter is the clinical problem in miniature. The enzyme sits "
-            "inside a fold shared by more than four thousand clusters of "
-            "decarboxylases that act on other molecules, so finding it in a "
-            "patient's gut means telling it apart from thousands of close "
-            "relatives.",
+            "in a fold shared by nearly two thousand other clusters of "
+            "decarboxylases that work on other molecules — glutamate, "
+            "histidine, the aromatic amino acids — so finding it in a patient's "
+            "gut means telling it apart from all of them.",
         ),
         mystery=(
             "How much of the difference between patients' responses to "
@@ -1607,11 +1648,11 @@ STORIES: tuple[UniverseStory, ...] = (
             "drug. Levodopa only works if it reaches the brain, and gut "
             "bacteria carrying this enzyme convert it to dopamine on the way, "
             "in the gut, where it is wasted. Patients take a second drug to "
-            "block the human version of that reaction, but it does not block "
+            "block the human version of that reaction, but it barely touches "
             "the bacterial one. And look what the map does with it: fifty-two "
             "clusters out of seven point seven million, no knot at all, "
-            "scattered right across the cloud inside a fold shared by "
-            "thousands of other decarboxylases. That scatter is the clinical "
+            "scattered right across the cloud inside a fold shared by nearly "
+            "two thousand other decarboxylases. That scatter is the clinical "
             "problem in miniature."
         ),
     ),

@@ -738,3 +738,21 @@ def test_only_one_story_claims_the_tour_is_tightest_knot() -> None:
     # And the one that claims it is the smallest knot is the same story.
     smallest = [s.key for s in STORIES if "smallest" in " ".join(s.facts).lower()]
     assert smallest == ["Reverse gyrase"], smallest
+
+
+def test_the_ice_story_never_selects_the_mislabelled_pfam_again() -> None:
+    """PF07589 is a protein-sorting motif, not an ice-binding domain.
+
+    The Atlas's own ``cluster_top_pfam_names`` column calls PF07589
+    "Ice-binding protein, C-terminal domain"; InterPro and current Pfam call it
+    "PEP-CTERM protein-sorting motif". Including it drew a 94-cluster knot of
+    PVC bacteria carrying a secretion signal, and it supplied 2,076 of the
+    2,587 clusters that story used to claim. This pins the corrected selector
+    so the Atlas's label cannot lead us back.
+    """
+    (ice,) = [s for s in STORIES if s.key == "Ice-binding proteins"]
+    assert "PF07589" not in ice.pfam
+    assert ice.pfam == ("PF11999", "PF20597", "PF21300")
+    # No other story may pick it up either.
+    for s in STORIES:
+        assert "PF07589" not in (s.pfam or ()), s.key
