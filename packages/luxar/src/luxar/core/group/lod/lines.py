@@ -60,6 +60,68 @@ DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
 DEFAULT_METHOD: LinesMethodName = DEFAULT_ADDITIVE_METHOD
 
 
+def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float]]:
+    """Pop and validate the Lines-only substitutive representation keys."""
+    coarse = str(kwargs.pop("coarse", "gsplats")).replace("-", "_")
+    if coarse not in {"gsplats", "lines"}:
+        raise ValueError(
+            "substitutive_lod for Lines: coarse must be one of "
+            f"['gsplats', 'lines']; got {coarse!r}"
+        )
+
+    brightness = kwargs.pop("brightness_compensation", "auto")
+    if brightness != "auto":
+        try:
+            brightness = float(brightness)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "brightness_compensation must be 'auto' or a finite value >= 0; "
+                f"got {brightness!r}"
+            ) from exc
+        if not np.isfinite(brightness) or brightness < 0.0:
+            raise ValueError(
+                "brightness_compensation must be 'auto' or a finite value >= 0; "
+                f"got {brightness!r}"
+            )
+
+    if coarse == "lines":
+        reasons = {
+            "truncation_radius": (
+                "it controls the Gaussian footprint used by the lift, and "
+                "same-type line levels are not lifted"
+            ),
+            "max_aspect": (
+                "it caps anisotropy on merged Gaussian levels, and same-type "
+                "line levels contain no Gaussians"
+            ),
+            "method": (
+                "it selects the Gaussian clustering algorithm, and same-type "
+                "line levels use seeded whole-polyline subsampling"
+            ),
+            "device": (
+                "it selects where Gaussian clustering runs, and same-type "
+                "line levels use the CPU polyline sampler"
+            ),
+            "coarsen_dims": (
+                "it selects Gaussian merge dimensions, and same-type line "
+                "levels preserve discrete hidden coordinates automatically"
+            ),
+        }
+        for key, reason in reasons.items():
+            if key in kwargs:
+                raise ValueError(
+                    f"substitutive_lod for Lines: {key!r} does not apply when "
+                    f"coarse='lines' — {reason}."
+                )
+    elif brightness != "auto":
+        raise ValueError(
+            "substitutive_lod for Lines: 'brightness_compensation' applies only "
+            "when coarse='lines'"
+        )
+
+    return coarse, brightness
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Polyline identification
 # ─────────────────────────────────────────────────────────────────────
@@ -758,11 +820,9 @@ LinesAdditiveSpec = Union[None, bool, dict]
 def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
     """Translate the ``substitutive_lod=`` kwarg value into a normalized dict.
 
-    The substitutive axis coarsens a line set by **synthesising gsplats**: each
-    segment is lifted to a string of isotropic "bead" Gaussians (view-independent,
-    summing to a smooth tube) and the gsplat substitutive pipeline builds
-    fewer-but-larger representative levels, which become the coarse levels of a
-    lines LOD ladder (the finest level stays the original Lines node).
+    The default coarsens by **synthesising gsplats**. ``coarse="lines"`` instead
+    writes seeded whole-polyline subsamples, with explicit blending-aware width
+    compensation, while keeping the finest level as the original Lines node.
 
     Thin wrapper over the shared
     :func:`luxar.core.group.lod.group.resolve_substitutive_axis` (one
@@ -771,4 +831,21 @@ def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
     """
     from .group import resolve_substitutive_axis
 
-    return resolve_substitutive_axis(spec, "Lines")
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        spec = {}
+    if not isinstance(spec, dict):
+        return resolve_substitutive_axis(spec, "Lines")
+
+    kwargs = dict(spec)
+    coarse, brightness = _resolve_lines_representation(kwargs)
+    resolved = resolve_substitutive_axis(
+        kwargs,
+        "Lines",
+        extra_valid_keys=("coarse", "brightness_compensation"),
+    )
+    assert resolved is not None
+    resolved["coarse"] = coarse
+    resolved["brightness_compensation"] = brightness
+    return resolved

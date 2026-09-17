@@ -16,6 +16,7 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.group import PARTITION_FINEST_AREA, WHOLE_OBJECT_FINEST_ANCHOR
 from luxar.core.group.lod.lines import resolve_substitutive_axis_lines
+from luxar.encoding import ArrayDecoder
 from luxar.gsplats.lift import (
     coarse_substitutive_levels,
     lift_lines_to_gsplats,
@@ -105,6 +106,24 @@ class TestResolveSubstitutiveAxisLines:
     def test_unknown_key_mentions_lines(self) -> None:
         with pytest.raises(ValueError, match="Lines"):
             resolve_substitutive_axis_lines(dict(bogus=1))
+
+    def test_lines_coarse_subsample_vocabulary(self) -> None:
+        resolved = resolve_substitutive_axis_lines(
+            dict(coarse="lines", brightness_compensation=2.5)
+        )
+        assert resolved["coarse"] == "lines"
+        assert resolved["brightness_compensation"] == 2.5
+
+    @pytest.mark.parametrize(
+        "key", ["truncation_radius", "max_aspect", "method", "device", "coarsen_dims"]
+    )
+    def test_lines_coarse_refuses_lift_only_keys(self, key: str) -> None:
+        with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
+            resolve_substitutive_axis_lines(dict(coarse="lines", **{key: 2.0}))
+
+    def test_brightness_compensation_only_applies_to_lines_coarse(self) -> None:
+        with pytest.raises(ValueError, match="applies only when coarse='lines'"):
+            resolve_substitutive_axis_lines(dict(brightness_compensation=2.0))
 
     def test_non_ascending_coverage_fractions_raises(self) -> None:
         with pytest.raises(ValueError, match="strictly increasing"):
@@ -1508,3 +1527,122 @@ class TestCoarsenDimsLines:
         assert resolve_substitutive_axis_lines(dict(coarsen_dims=["x", "y", "z"]))[
             "coarsen_dims"
         ] == ["x", "y", "z"]
+
+
+class TestSameTypeSubstitutiveLines:
+    @staticmethod
+    def _build_segments(tmp_path, *, blending_mode="additive", dimensions=None):
+        out = tmp_path / "same-type-lines.luxar.zarr"
+        starts = np.arange(8, dtype=np.float32)[:, None]
+        vertices = np.zeros((16, 3), dtype=np.float32)
+        vertices[0::2, 0] = starts[:, 0]
+        vertices[1::2, 0] = starts[:, 0] + 0.25
+        widths = np.linspace(1.0, 2.0, 16, dtype=np.float32)
+        labels = [f"line-{i // 2}" for i in range(16)]
+        keys = [f"key-{i // 2}" for i in range(16)]
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(
+                dimensions=dimensions or Dimensions.default_3d()
+            )
+            scene.add_lines(
+                "curves",
+                vertices,
+                widths,
+                labels=labels,
+                keys=keys,
+                line_type="segments",
+                blending_mode=blending_mode,
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=2, seed=7
+                ),
+            )
+        return zarr.open(str(out), mode="r")["curves"], vertices, widths
+
+    def test_coarse_levels_are_nested_whole_lines(self, tmp_path) -> None:
+        group, vertices, _ = self._build_segments(tmp_path)
+        children = [group[f"child_{i}"] for i in range(3)]
+        assert [child.attrs["type"] for child in children] == ["lines"] * 3
+        assert [int(child.attrs["n_segments"]) for child in children] == [2, 4, 8]
+
+        decoder = ArrayDecoder()
+        source_pairs = {
+            tuple(map(tuple, vertices[2 * i : 2 * i + 2])) for i in range(8)
+        }
+        selected: list[set[tuple]] = []
+        for child in children:
+            decoded = decoder.decode(child["vertices"], child).astype(np.float32)
+            segments = np.asarray(child["segments"], dtype=np.intp)
+            pairs = {
+                tuple(sorted(map(tuple, decoded[segment]))) for segment in segments
+            }
+            normalized_source = {tuple(sorted(pair)) for pair in source_pairs}
+            assert pairs <= normalized_source
+            selected.append(pairs)
+        assert selected[0] < selected[1] < selected[2]
+
+    def test_additive_auto_compensation_scales_widths_by_sampling_ratio(
+        self, tmp_path
+    ) -> None:
+        group, _, widths = self._build_segments(tmp_path, blending_mode="additive")
+        decoder = ArrayDecoder()
+        coarse_vertices = decoder.decode(group["child_0"]["vertices"], group["child_0"])
+        finest_vertices = decoder.decode(group["child_2"]["vertices"], group["child_2"])
+        coarse = decoder.decode(group["child_0"]["widths"], group["child_0"])
+        finest = decoder.decode(group["child_2"]["widths"], group["child_2"])
+        source_by_x = {
+            round(float(x), 2): float(width)
+            for x, width in zip(
+                np.ravel([[i, i + 0.25] for i in range(8)]), widths, strict=True
+            )
+        }
+        expected_coarse = np.array(
+            [4.0 * source_by_x[round(float(x), 2)] for x in coarse_vertices[:, 0]]
+        )
+        np.testing.assert_allclose(coarse, expected_coarse, rtol=0.02, atol=0.02)
+        expected_finest = np.array(
+            [source_by_x[round(float(x), 2)] for x in finest_vertices[:, 0]]
+        )
+        np.testing.assert_allclose(finest, expected_finest, rtol=0.02, atol=0.02)
+
+    def test_normal_blending_keeps_original_widths(self, tmp_path) -> None:
+        group, _, widths = self._build_segments(tmp_path, blending_mode="normal")
+        decoder = ArrayDecoder()
+        decoded_vertices = decoder.decode(
+            group["child_0"]["vertices"], group["child_0"]
+        )
+        decoded_widths = decoder.decode(group["child_0"]["widths"], group["child_0"])
+        source_by_x = {float(i): widths[2 * i : 2 * i + 2] for i in range(8)}
+        expected = np.concatenate(
+            [source_by_x[round(float(x))] for x in decoded_vertices[0::2, 0]]
+        )
+        np.testing.assert_allclose(decoded_widths, expected, rtol=0.02, atol=0.02)
+
+    def test_hidden_slice_capacity_is_counted_in_polylines(self, tmp_path) -> None:
+        out = tmp_path / "hidden-lines.luxar.zarr"
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
+        vertices = np.zeros((12, 4), dtype=np.float32)
+        vertices[:, 0] = np.repeat(np.arange(6, dtype=np.float32), 2)
+        vertices[1::2, 0] += 0.25
+        vertices[:, 3] = np.repeat(np.arange(3, dtype=np.float32), 4)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            with pytest.raises(ValueError, match="2 polylines for 3 hidden slices"):
+                scene.add_lines(
+                    "curves",
+                    vertices,
+                    1.0,
+                    line_type="segments",
+                    additive_lod=False,
+                    substitutive_lod=dict(
+                        coarse="lines", compression_factor=3, levels=1, seed=0
+                    ),
+                )
+        assert "curves" not in zarr.open(str(out), mode="r")
