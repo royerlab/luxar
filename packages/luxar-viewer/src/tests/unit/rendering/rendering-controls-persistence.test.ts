@@ -14,6 +14,7 @@ import {
   clearStoredSettings,
   loadSettingsFromStorage,
   stripDynamicClippingPlanes,
+  RENDERING_SETTINGS_VERSION,
 } from '../../../ui/rendering-controls/settings-persistence';
 import { config } from '../../../config';
 import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../../../config/cinematic-preset';
@@ -89,11 +90,20 @@ describe('settings-persistence — localStorage I/O', () => {
     localStorage.clear();
   });
 
-  it('saveSettingsToStorage writes a string under the StorageKeys.rendering(sceneId) key', () => {
+  it('saveSettingsToStorage writes a versioned envelope under the StorageKeys.rendering(sceneId) key', () => {
     const sceneId = 'demo_scene_42';
     saveSettingsToStorage(sceneId, buildBaseDefaults());
     const raw = localStorage.getItem(StorageKeys.rendering(sceneId));
     expect(raw).toBeTruthy();
+    const parsed = JSON.parse(raw!);
+    expect(parsed.version).toBe(RENDERING_SETTINGS_VERSION);
+    expect(parsed.settings.toneMapping).toBe(config.renderingControls.defaults.toneMapping);
+    // Settings live INSIDE the envelope, never at the top level.
+    expect(parsed).not.toHaveProperty('toneMapping');
+  });
+
+  it('RENDERING_SETTINGS_VERSION is the version this build writes and reads', () => {
+    expect(RENDERING_SETTINGS_VERSION).toBe(1);
   });
 
   it('saveSettingsToStorage with empty sceneId is a no-op', () => {
@@ -114,12 +124,63 @@ describe('settings-persistence — localStorage I/O', () => {
     expect(result.loaded?.toneMapping).toBe(config.renderingControls.defaults.toneMapping);
   });
 
-  it('loadSettingsFromStorage returns { stored: true, loaded: null } on parse failure', () => {
-    const sceneId = 'corrupt';
-    localStorage.setItem(StorageKeys.rendering(sceneId), 'not-json');
-    const result = loadSettingsFromStorage(sceneId);
-    expect(result.stored).toBe(true);
-    expect(result.loaded).toBeNull();
+  // Anything that is not a current-version envelope is treated as ABSENT and
+  // removed: the zarr viewer_config defaults then apply (load-dataset.ts
+  // keys that decision on `stored`), and a later save writes a fresh envelope.
+  describe('version envelope', () => {
+    const sceneId = 'versioned';
+    const key = StorageKeys.rendering(sceneId);
+
+    it('an unparsable document is removed and reported as not stored', () => {
+      localStorage.setItem(key, 'not-json');
+      expect(loadSettingsFromStorage(sceneId)).toEqual({ stored: false, loaded: null });
+      expect(localStorage.getItem(key)).toBeNull();
+    });
+
+    it('a pre-envelope bare settings object is removed and reported as not stored', () => {
+      localStorage.setItem(key, JSON.stringify({ toneMapping: 'None', fov: 42 }));
+      expect(loadSettingsFromStorage(sceneId)).toEqual({ stored: false, loaded: null });
+      expect(localStorage.getItem(key)).toBeNull();
+    });
+
+    it('an envelope from another version is removed, logged once, and reported as not stored', () => {
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: RENDERING_SETTINGS_VERSION + 1, settings: { fov: 42 } })
+      );
+      expect(loadSettingsFromStorage(sceneId)).toEqual({ stored: false, loaded: null });
+      expect(localStorage.getItem(key)).toBeNull();
+      const lines = [...infoSpy.mock.calls, ...logSpy.mock.calls].map((c) => c.join(' '));
+      expect(
+        lines.some(
+          (l) =>
+            l.includes(key) &&
+            l.includes(`version ${RENDERING_SETTINGS_VERSION + 1} != ${RENDERING_SETTINGS_VERSION}`)
+        )
+      ).toBe(true);
+      infoSpy.mockRestore();
+      logSpy.mockRestore();
+    });
+
+    it('a current-version envelope with a malformed settings member is removed', () => {
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: RENDERING_SETTINGS_VERSION, settings: 7 })
+      );
+      expect(loadSettingsFromStorage(sceneId)).toEqual({ stored: false, loaded: null });
+      expect(localStorage.getItem(key)).toBeNull();
+    });
+
+    it('a current-version envelope loads its settings member', () => {
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: RENDERING_SETTINGS_VERSION, settings: { fov: 42 } })
+      );
+      expect(loadSettingsFromStorage(sceneId)).toEqual({ stored: true, loaded: { fov: 42 } });
+      expect(localStorage.getItem(key)).not.toBeNull();
+    });
   });
 
   it('clearStoredSettings removes the key', () => {
@@ -180,7 +241,7 @@ describe('settings-persistence — dynamic clipping never persists its planes', 
     saveSettingsToStorage(sceneId, settings);
 
     const raw = localStorage.getItem(StorageKeys.rendering(sceneId))!;
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw).settings;
     expect(parsed).not.toHaveProperty('near');
     expect(parsed).not.toHaveProperty('far');
     // Everything else still round-trips — this is a targeted omission, not a

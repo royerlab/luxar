@@ -142,7 +142,7 @@ export class LuxarApp {
   private isDisposed = false;
   /**
    * App-level event listeners (beforeunload, focus, visibilitychange,
-   * open-dataset-browser, plus the picking system's mousemove + control
+   * luxar-open-dataset-browser, plus the picking system's mousemove + control
    * change subscriptions). Disposed in one call from {@link dispose}.
    */
   private events = new EventGroup();

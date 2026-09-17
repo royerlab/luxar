@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 import type { ChunkFetchOutcome, ChunkSource } from '../../../cache/chunk-source';
 import { hashUrl } from '../../../cache/multi-level-caching-store/fetch-retry';
 import type { RemoteValidationToken } from '../../../cache/multi-level-caching-store/validation-queue';
@@ -92,15 +93,7 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     // Previously this called `source.probeIdentityToken` itself and counted its
     // own call — `noOpfs` returns from init before validation ever runs, so the
     // store was not involved at all. Give it a fake OPFS so init proceeds.
-    const dir = {
-      getFileHandle: vi.fn(async () => {
-        throw new DOMException('not found', 'NotFoundError');
-      }),
-      getDirectoryHandle: vi.fn(async () => dir),
-      removeEntry: vi.fn(async () => undefined),
-      keys: async function* () {},
-    };
-    vi.stubGlobal('navigator', { storage: { getDirectory: async () => dir } });
+    const opfs = createFakeOpfsRoot().install();
 
     const { source, calls } = fakeSource();
     const store = new MultiLevelCachingStore(source, {});
@@ -113,12 +106,15 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     // The OPFS bucket must come from `identity`, never `describe` — the two
     // differ for a container whose identity is not its label, and nothing else
     // in the repo would notice the swap.
-    expect(dir.getDirectoryHandle).toHaveBeenCalledWith(await hashUrl('fake://identity'), {
-      create: true,
-    });
-    expect(dir.getDirectoryHandle).not.toHaveBeenCalledWith(await hashUrl('fake://describe'), {
-      create: true,
-    });
+    // Dataset directories are children of the `luxar/` namespace dir.
+    expect(opfs.luxarDir.getDirectoryHandle).toHaveBeenCalledWith(
+      await hashUrl('fake://identity'),
+      { create: true }
+    );
+    expect(opfs.luxarDir.getDirectoryHandle).not.toHaveBeenCalledWith(
+      await hashUrl('fake://describe'),
+      { create: true }
+    );
     await store.dispose();
   });
 

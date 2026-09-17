@@ -216,7 +216,7 @@ test.describe('First-Time User Experience', () => {
     // Regression guard: the Escape path must route through
     // `DatasetBrowser.close()` so `onClose` fires and
     // `LuxarApp.datasetBrowser` is cleared. Without that, the
-    // `open-dataset-browser` toggle still sees `hasOpenBrowser() === true`
+    // `luxar-open-dataset-browser` toggle still sees `hasOpenBrowser() === true`
     // and the next `O` closes a phantom browser instead of reopening
     // the real one.
     const browser = await openViewerReadyForShortcut(page);

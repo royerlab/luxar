@@ -46,7 +46,7 @@ describe('DirectoryNavigator', () => {
       const result = await navigator.navigate('dataset.zarr');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/dataset.zarr.zgroup',
+        'http://localhost:8000/dataset.zarr/.zgroup',
         expect.objectContaining({ method: 'HEAD' })
       );
       expect(result.isZarr).toBe(true);
@@ -71,7 +71,7 @@ describe('DirectoryNavigator', () => {
       const result = await navigator.navigate('not-a-zarr');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/not-a-zarr.zgroup',
+        'http://localhost:8000/not-a-zarr/.zgroup',
         expect.objectContaining({ method: 'HEAD' })
       );
       expect(result.isZarr).toBe(false);
@@ -317,7 +317,7 @@ describe('DirectoryNavigator', () => {
       const result = await navigator.navigate('datasets');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/datasets.luxar-index.json',
+        'http://localhost:8000/datasets/.luxar-index.json',
         expect.objectContaining({ signal: expect.any(AbortSignal) })
       );
       expect(result.strategy).toBe('index');

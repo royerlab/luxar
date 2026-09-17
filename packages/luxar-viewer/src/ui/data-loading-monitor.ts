@@ -1313,7 +1313,7 @@ export class DataLoadingMonitor {
     const sceneGraphState = this.sceneGraphModel.getSceneGraph();
     if (sceneGraphState.root) {
       return content.replace(
-        '<div id="loader-list-content"></div>',
+        '<div id="luxar-loader-list-content"></div>',
         renderSceneGraphTree(
           sceneGraphState,
           this.sceneGraphModel.expandedNodes,
@@ -1324,7 +1324,7 @@ export class DataLoadingMonitor {
       );
     } else {
       return content.replace(
-        '<div id="loader-list-content"></div>',
+        '<div id="luxar-loader-list-content"></div>',
         this.renderCompactLoaderList()
       );
     }

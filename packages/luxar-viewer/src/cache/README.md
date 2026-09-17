@@ -587,7 +587,8 @@ datasets.
 
 **`async listDatasets(): Promise<Array<{...}>>`**
 
-List all cached datasets in OPFS:
+List all cached datasets under the `luxar/` OPFS namespace dir (an origin
+that has never run the viewer resolves to `[]`):
 
 ```typescript
 [
@@ -684,16 +685,30 @@ Storing 65,000 files in a single directory can cause performance issues. Bucketi
 
 ### Structure
 
+Everything the viewer persists in OPFS lives under ONE namespace directory,
+`luxar/`, never at the origin's OPFS root (`opfs-store/opfs-root.ts`:
+`OPFS_NAMESPACE_DIR` + `getLuxarOpfsRoot({ create })`). An embedder's own OPFS
+usage on the same origin cannot collide with the dataset directories, and a
+host wipes the viewer's whole footprint with one
+`root.removeEntry('luxar', { recursive: true })`. `OPFSStore.listAll()` opens
+the namespace dir with `create: false` and treats a cold origin's
+`NotFoundError` as "nothing cached".
+
 ```
-zarr-cache-{url-hash}/
-├── 00/                      # Bucket directories (256 total)
-│   ├── cG9pbnRz...          # Base64-encoded zarr keys
-│   └── ...
-├── 01/
-├── ...
-├── ff/
-└── _cache_meta.json         # Index + LRU metadata
+luxar/                       # Viewer namespace dir (OPFS_NAMESPACE_DIR)
+└── zarr-cache-{url-hash}/   # One dataset dir per base URL (SHA-256)
+    ├── 00/                  # Bucket directories (256 total)
+    │   ├── cG9pbnRz...      # Base64-encoded zarr keys
+    │   └── ...
+    ├── 01/
+    ├── ...
+    ├── ff/
+    └── _cache_meta.json     # Index + LRU metadata
 ```
+
+The move under `luxar/` needed no `OPFS_ENCODING_VERSION` bump: a
+pre-namespace `zarr-cache-*` directory at the OPFS root is simply never read
+again.
 
 ### How It Works
 

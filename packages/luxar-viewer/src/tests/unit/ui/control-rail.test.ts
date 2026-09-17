@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlRail, RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
+import { StorageKeys } from '../../../utils/storage-keys';
 import {
   resetInputProfileForTests,
   setInputProfileOverride,
@@ -125,16 +126,16 @@ describe('ControlRail', () => {
 
     handle.click();
     expect(railEl.classList.contains('is-collapsed')).toBe(true);
-    expect(localStorage.getItem('luxar-control-rail-collapsed')).toBe('1');
+    expect(localStorage.getItem(StorageKeys.controlRailCollapsed)).toBe('1');
     expect(handle.getAttribute('aria-label')).toBe('Show controls');
 
     handle.click();
     expect(railEl.classList.contains('is-collapsed')).toBe(false);
-    expect(localStorage.getItem('luxar-control-rail-collapsed')).toBe('0');
+    expect(localStorage.getItem(StorageKeys.controlRailCollapsed)).toBe('0');
   });
 
   it('restores a persisted collapsed state on construction (and skips the hint)', () => {
-    localStorage.setItem('luxar-control-rail-collapsed', '1');
+    localStorage.setItem(StorageKeys.controlRailCollapsed, '1');
     rail = new ControlRail(items());
     expect(document.querySelector('.luxar-control-rail')?.classList.contains('is-collapsed')).toBe(
       true
@@ -261,7 +262,7 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail-hint')).not.toBeNull();
     document.querySelector<HTMLButtonElement>('.luxar-control-rail-hint__close')!.click();
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
-    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
+    expect(localStorage.getItem(StorageKeys.controlRailHintDismissed)).toBe('1');
 
     // A fresh rail does not show the hint again.
     rail.dispose();
@@ -307,7 +308,7 @@ describe('ControlRail', () => {
     expect(hint.classList.contains('is-leaving')).toBe(true);
     vi.advanceTimersByTime(400);
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
-    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
+    expect(localStorage.getItem(StorageKeys.controlRailHintDismissed)).toBe('1');
   });
 
   it('any pointerdown anywhere dismisses the first-run hint', () => {
@@ -315,7 +316,7 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail-hint')).not.toBeNull();
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
-    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
+    expect(localStorage.getItem(StorageKeys.controlRailHintDismissed)).toBe('1');
   });
 
   it('a routed keypress dismisses the first-run hint', () => {
@@ -323,7 +324,7 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail-hint')).not.toBeNull();
     rail.handleRoutedKeyDown();
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
-    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
+    expect(localStorage.getItem(StorageKeys.controlRailHintDismissed)).toBe('1');
   });
 
   it('a routed keypress after dispose does not burn the first-run hint', () => {
@@ -333,10 +334,10 @@ describe('ControlRail', () => {
     rail = new ControlRail(items());
     expect(document.querySelector('.luxar-control-rail-hint')).not.toBeNull();
     rail.dispose();
-    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBeNull();
+    expect(localStorage.getItem(StorageKeys.controlRailHintDismissed)).toBeNull();
 
     rail.handleRoutedKeyDown();
-    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBeNull();
+    expect(localStorage.getItem(StorageKeys.controlRailHintDismissed)).toBeNull();
   });
 
   it('returns focus to the body after a pointer click (keeps Space/global shortcuts working)', () => {

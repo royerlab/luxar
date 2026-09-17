@@ -33,11 +33,12 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { captureElementScreenshot, openLayersPanel } from './helpers';
+import { StorageKeys } from '../../utils/storage-keys';
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-  });
+  await page.addInitScript((hintKey) => {
+    localStorage.setItem(hintKey, '1');
+  }, StorageKeys.controlRailHintDismissed);
 });
 
 // Served by the E2E data server (playwright.config.ts webServer on :9000,

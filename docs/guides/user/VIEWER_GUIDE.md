@@ -106,6 +106,35 @@ anyway; naming the origin only matters when you want to keep the store readable
 from your own pages but not from arbitrary ones. Note that neither choice makes
 the data private — a public bucket is public to anyone with the URL, CORS or not.
 
+#### Directory listings and `.luxar-index.json`
+
+The Dataset Browser (`O`) can list a hosted folder of scenes so a reader
+picks one instead of typing a URL. It tries, in order: a Zarr root document
+(the folder is itself a scene), a WebDAV `PROPFIND`, the JSON or HTML listing a
+server such as `luxar serve`, nginx or Apache emits, and finally a manifest you
+write by hand, `.luxar-index.json`, at the folder root. Object stores and
+static hosts (S3, R2, GitHub Pages) have no listing at all, so the manifest is
+how a folder on them becomes browsable:
+
+```json
+{
+  "entries": [
+    { "name": "embryo.luxar.zarr", "type": "zarr", "size": 734003200, "modified": "2026-09-01T12:00:00Z" },
+    { "name": "archive", "type": "directory" },
+    { "name": "README.md", "type": "file" }
+  ]
+}
+```
+
+`name` is required and is the entry's path segment relative to the folder.
+`type` is one of `"zarr"`, `"directory"` or `"file"`; when omitted it is
+inferred — a `.zarr` or `.zarr.zip` name is a scene, `"isDirectory": true` a
+folder, anything else a file. `size` (bytes) and `modified` (any string) are
+optional and shown in the listing. The manifest is fetched as
+`<folder>/.luxar-index.json`, so a nested folder needs its own manifest at its
+own root, and the host has to serve the dotfile (some static hosts hide them by
+default). It is subject to the same CORS rules as the scenes it lists.
+
 If you would rather not host anything, `luxar export scene.luxar.zarr -o out/`
 writes a self-contained folder with the viewer and a stdlib-only `serve.py`; the
 recipient runs `python serve.py` (`file://` cannot open the viewer directly).

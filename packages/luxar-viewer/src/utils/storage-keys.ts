@@ -34,6 +34,10 @@ export const StorageKeys = Object.freeze({
   settings: 'luxar.settings',
   /** Listener audio preferences (rail mute + master gain) — see audio/audio-prefs.ts. */
   audio: 'luxar.audio',
+  /** `'1'` once the control rail's first-run hint has been dismissed — see ui/control-rail.ts. */
+  controlRailHintDismissed: 'luxar.controlRail.hintDismissed',
+  /** `'1'` / `'0'`: whether the control rail was left collapsed — see ui/control-rail.ts. */
+  controlRailCollapsed: 'luxar.controlRail.collapsed',
   /** Per-scene rendering settings (bloom, HDR, lens, etc). */
   rendering(sceneId: string): string {
     return `luxar.rendering.${sanitizeKeySegment(sceneId)}`;

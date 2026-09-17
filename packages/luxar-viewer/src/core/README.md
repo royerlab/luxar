@@ -63,7 +63,7 @@ core/
     │   ├── show-browser.ts          # Open the DatasetBrowser modal
     │   ├── should-show-browser.ts   # URL-classification + zarr-metadata HEAD probe
     │   ├── browser-decision.ts      # Pure URL classifier (must-browse / probe / load)
-    │   └── browser-shortcut.ts      # `open-dataset-browser` custom-event listener
+    │   └── browser-shortcut.ts      # `luxar-open-dataset-browser` custom-event listener
     ├── viewer-config/               # Zarr `viewer_config` + panel visibility
     │   ├── apply-state.ts           # Dispatch `viewer_config` fields to UI subsystems
     │   └── panel-visibility.ts      # Capture / restore RenderingControls + RecordingPanel state

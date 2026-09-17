@@ -21,8 +21,14 @@ const loadAndMeasure = async (
 ) => {
   const context = await browser.newContext();
   if (storedFov !== undefined) {
+    // The per-scene document is a `{ version, settings }` envelope
+    // (settings-persistence.ts); a bare `{ fov }` would be discarded as
+    // pre-envelope. `version: 1` = RENDERING_SETTINGS_VERSION, pinned by
+    // rendering-controls-persistence.test.ts (not imported here: that module
+    // pulls the viewer config into the Playwright Node context).
     await context.addInitScript(
-      ({ key, fov }) => localStorage.setItem(key, JSON.stringify({ fov })),
+      ({ key, fov }) =>
+        localStorage.setItem(key, JSON.stringify({ version: 1, settings: { fov } })),
       { key: StorageKeys.rendering(SCENE_ID), fov: storedFov }
     );
   }

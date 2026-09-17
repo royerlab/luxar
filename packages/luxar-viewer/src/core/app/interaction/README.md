@@ -150,7 +150,7 @@ without opening a real popup.
 The keyboard path arrives as a `luxar-open-element-menu` window event, because
 the Shift+F10 / ContextMenu binding is registered once for the app's lifetime
 while these listeners are rebuilt on every dataset load — the same decoupling
-`open-dataset-browser` uses.
+`luxar-open-dataset-browser` (`OPEN_DATASET_BROWSER_EVENT`) uses.
 
 ## Touch
 

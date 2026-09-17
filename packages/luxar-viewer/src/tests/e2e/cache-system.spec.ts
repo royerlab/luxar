@@ -29,14 +29,12 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     // Clear all caches before each test for isolation
     await page.goto('/?debug');
     await page.evaluate(() => {
-      // Clear OPFS completely
+      // Clear OPFS completely: every viewer-owned directory lives under the
+      // `luxar/` namespace dir (opfs-store/opfs-root.ts), so one recursive
+      // remove of that entry wipes all zarr-cache-* datasets.
       return navigator.storage
         .getDirectory()
-        .then((root) => root.getDirectoryHandle('luxar-cache', { create: false }).catch(() => null))
-        .then((dir) => {
-          if (!dir) return;
-          return (dir as any).removeEntry?.({ recursive: true });
-        })
+        .then((root) => root.removeEntry('luxar', { recursive: true }))
         .catch(() => {
           // OPFS might not be available or already clean
         });

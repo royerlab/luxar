@@ -72,10 +72,23 @@ import { resolveElementActions, type ResolvedElementActions } from './element-ac
  *
  * A `CustomEvent` rather than a threaded command because the keybinding is
  * registered once for the app's lifetime while these listeners are rebuilt on
- * every dataset load — the same decoupling `open-dataset-browser` already uses
- * (`input/input-handler/key-bindings/navigation-bindings.ts`).
+ * every dataset load — the same decoupling {@link OPEN_DATASET_BROWSER_EVENT}
+ * already uses (`input/input-handler/key-bindings/navigation-bindings.ts`).
  */
 export const OPEN_ELEMENT_MENU_EVENT = 'luxar-open-element-menu';
+
+/**
+ * Window event that toggles the dataset browser modal, dispatched by the `O`
+ * keybinding and the rail's dataset button; listened for by
+ * `core/app/dataset/browser-shortcut.ts`.
+ *
+ * `luxar-` prefixed like every other window event the viewer dispatches, so
+ * an embedding page's own events can never collide with it. The layer
+ * contract (`.dependency-cruiser.cjs`) forbids `input/` from importing `core/`,
+ * so the dispatch in `input/input-handler.ts` repeats the literal; the
+ * `dataset-browser-event-sync` unit test pins the two spellings together.
+ */
+export const OPEN_DATASET_BROWSER_EVENT = 'luxar-open-dataset-browser';
 
 /** Payload for the `element-click` / `element-contextmenu` embedder events. */
 export interface ElementPointerPayload {

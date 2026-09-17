@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { computeCacheBudgets, computeOpfsWriteQueueBudgetBytes } from '../../../cache/heap-budget';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 
 function forceAbortSignalAnyFallback(): () => void {
   const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
@@ -62,21 +63,14 @@ const createMocks = () => {
     async *keys() {},
   };
 
-  vi.stubGlobal('navigator', {
-    storage: {
-      async getDirectory() {
-        return {
-          async getDirectoryHandle() {
-            return mockDirHandle;
-          },
-          async *entries() {},
-        };
-      },
-      async estimate() {
-        return { quota: 10e9, usage: 1e9 };
-      },
+  // Origin root → `luxar/` → this flat dataset dir (see opfs.mock.ts).
+  createFakeOpfsRoot({
+    datasetDir: mockDirHandle,
+    onRemoveDataset: () => {
+      files.clear();
+      metaFiles.clear();
     },
-  });
+  }).install();
 
   // Audit C4 fix: constant `0xab` hash defeated chunk-key uniqueness —
   // every chunk hashed to the same value, so collision handling was
