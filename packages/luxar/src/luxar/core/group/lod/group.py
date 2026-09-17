@@ -1124,7 +1124,12 @@ def resolve_coarsen_dims(
     return _finalize(idxs)
 
 
-def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, Any]]:
+def resolve_substitutive_axis(
+    spec: Any,
+    geometry: str,
+    *,
+    extra_valid_keys: Sequence[str] = (),
+) -> Optional[Dict[str, Any]]:
     """Normalize the ``substitutive_lod=`` kwarg into a spec dict (or ``None``).
 
     Geometry-agnostic — ``geometry`` ("Points"/"Lines") only flavours the error
@@ -1234,11 +1239,21 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
             )
 
     if kwargs:
+        valid_keys = [
+            "compression_factor (K)",
+            "levels (n_lods)",
+            "method",
+            "truncation_radius",
+            "device",
+            "seed",
+            "coverage_fractions",
+            "coarsen_dims",
+            "max_aspect",
+            *extra_valid_keys,
+        ]
         raise ValueError(
             f"substitutive_lod for {geometry}: unrecognized keys {sorted(kwargs)}. "
-            "Valid keys: compression_factor (K), levels (n_lods), method, "
-            "truncation_radius, device, seed, coverage_fractions, coarsen_dims, "
-            "max_aspect."
+            f"Valid keys: {', '.join(valid_keys)}."
         )
 
     return {

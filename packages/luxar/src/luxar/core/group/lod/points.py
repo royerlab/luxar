@@ -81,7 +81,13 @@ def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]
 
     brightness = kwargs.pop("brightness_compensation", "auto")
     if brightness != "auto":
-        brightness = float(brightness)
+        try:
+            brightness = float(brightness)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "brightness_compensation must be 'auto' or a finite value >= 0; "
+                f"got {brightness!r}"
+            ) from exc
         if not np.isfinite(brightness) or brightness < 0.0:
             raise ValueError(
                 "brightness_compensation must be 'auto' or a finite value >= 0; "
@@ -97,6 +103,18 @@ def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]
             "max_aspect": (
                 "it caps anisotropy on merged Gaussian levels, and same-type "
                 "point levels contain no Gaussians"
+            ),
+            "method": (
+                "it selects the Gaussian clustering algorithm, and same-type "
+                "point levels are spatially stratified instead"
+            ),
+            "device": (
+                "it selects where Gaussian clustering runs, and same-type "
+                "point levels use the CPU point sampler"
+            ),
+            "coarsen_dims": (
+                "it selects Gaussian merge dimensions, and same-type point "
+                "levels preserve hidden coordinates automatically"
             ),
         }
         for key, reason in reasons.items():
@@ -118,7 +136,7 @@ def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
     """Translate the ``substitutive_lod=`` kwarg value into a normalized dict.
 
     The default coarsens by **synthesising gsplats**. ``coarse="points"`` instead
-    writes blue-noise point subsamples, with explicit blending-aware brightness
+    writes spatially stratified point subsamples, with explicit blending-aware brightness
     compensation, while keeping the finest level as the original Points node.
 
     The lift vocabulary remains delegated to the shared Points/Lines resolver;
@@ -136,7 +154,11 @@ def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
 
     kwargs = dict(spec)
     coarse, brightness = _resolve_points_representation(kwargs)
-    resolved = resolve_substitutive_axis(kwargs, "Points")
+    resolved = resolve_substitutive_axis(
+        kwargs,
+        "Points",
+        extra_valid_keys=("coarse", "brightness_compensation"),
+    )
     assert resolved is not None
     resolved["coarse"] = coarse
     resolved["brightness_compensation"] = brightness

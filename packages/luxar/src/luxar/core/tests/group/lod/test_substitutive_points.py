@@ -12,6 +12,8 @@ Covers:
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 import zarr
@@ -25,6 +27,7 @@ from luxar.core.group.lod.group import (
 from luxar.core.group.lod.points import resolve_substitutive_axis_points
 from luxar.gsplats.lift import (
     LIFT_TRUNCATION_RADIUS,
+    coarse_point_levels,
     coarse_substitutive_levels,
     lift_points_to_gsplats,
     render_light,
@@ -65,10 +68,26 @@ class TestResolveSubstitutiveAxisPoints:
         assert r["coarse"] == "points"
         assert r["brightness_compensation"] == 2.5
 
-    @pytest.mark.parametrize("key", ["truncation_radius", "max_aspect"])
+    @pytest.mark.parametrize(
+        "key", ["truncation_radius", "max_aspect", "method", "device", "coarsen_dims"]
+    )
     def test_points_coarse_refuses_lift_only_keys(self, key: str) -> None:
         with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
             resolve_substitutive_axis_points(dict(coarse="points", **{key: 2.0}))
+
+    @pytest.mark.parametrize("value", [None, "nonsense"])
+    def test_bad_brightness_compensation_has_stable_error(self, value) -> None:
+        with pytest.raises(ValueError, match="must be 'auto' or a finite value"):
+            resolve_substitutive_axis_points(
+                dict(coarse="points", brightness_compensation=value)
+            )
+
+    def test_unrecognized_key_lists_points_only_keys(self) -> None:
+        with pytest.raises(ValueError) as exc_info:
+            resolve_substitutive_axis_points(dict(coarse="points", coarse_mode="x"))
+        message = str(exc_info.value)
+        assert "coarse" in message
+        assert "brightness_compensation" in message
 
     def test_max_aspect_key_resolved(self) -> None:
         # Mirror of the Lines resolver test (shared implementation, but the
@@ -255,6 +274,149 @@ class TestAddPointsSubstitutiveLod:
         decoded = ArrayDecoder().decode(group["child_0"]["colors"], group)
         np.testing.assert_allclose(decoded, 0.25, rtol=1e-5)
 
+    def test_points_coarse_inherits_normal_blending_without_widening(
+        self, tmp_path
+    ) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        out = tmp_path / "points-inherited-normal.luxar.zarr"
+        positions = np.stack(np.meshgrid(np.arange(4), np.arange(4), np.arange(4)), -1)
+        positions = positions.reshape(-1, 3).astype(np.float32)
+        colors = np.full((64, 3), 64, dtype=np.uint8)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            parent = scene.add_group("parent", blending_mode="normal")
+            parent.add_points(
+                "cloud",
+                positions,
+                colors=colors,
+                substitutive_lod=dict(coarse="points", compression_factor=4, levels=1),
+            )
+
+        group = zarr.open(str(out), mode="r")["parent/cloud"]
+        decoded = ArrayDecoder().decode(group["child_0"]["colors"], group)
+        assert decoded.dtype == np.uint8
+        np.testing.assert_array_equal(decoded, 64)
+
+    def test_points_coarse_accepts_uniform_tuple_color(self, tmp_path) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        out = tmp_path / "points-broadcast.luxar.zarr"
+        positions = np.random.default_rng(0).uniform(0, 1, (64, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                positions,
+                colors=(1.0, 0.0, 0.0),
+                substitutive_lod=dict(coarse="points", levels=1),
+            )
+        group = zarr.open(str(out), mode="r")["cloud"]
+        decoded = ArrayDecoder().decode(group["child_0"]["colors"], group)
+        np.testing.assert_allclose(decoded[:, 0], 4.0)
+        np.testing.assert_allclose(decoded[:, 1:], 0.0)
+
+    def test_points_coarse_keeps_every_hidden_slice(self, tmp_path) -> None:
+        out = tmp_path / "points-slices.luxar.zarr"
+        n_slices = 40
+        points_per_slice = 32
+        rng = np.random.default_rng(0)
+        positions = np.column_stack(
+            [
+                np.repeat(np.arange(n_slices), points_per_slice),
+                rng.uniform(0, 1, (n_slices * points_per_slice, 3)),
+            ]
+        ).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension(
+                    "time", categories=list(map(str, range(n_slices))), display=False
+                ),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "cloud",
+                positions,
+                substitutive_lod=dict(coarse="points", compression_factor=4, levels=2),
+                additive_lod=False,
+            )
+        group = zarr.open(str(out), mode="r")["cloud"]
+        from luxar.encoding import ArrayDecoder
+
+        coarse_positions = ArrayDecoder().decode(
+            group["child_0/positions"], group["child_0"]
+        )
+        assert set(coarse_positions[:, 0]) == set(range(n_slices))
+
+    def test_numeric_compensation_is_exponentiated_per_level(self, tmp_path) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        out = tmp_path / "points-explicit-gain.luxar.zarr"
+        positions = np.random.default_rng(0).uniform(0, 1, (64, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                positions,
+                colors=np.ones((64, 3), dtype=np.float32),
+                substitutive_lod=dict(
+                    coarse="points",
+                    compression_factor=4,
+                    levels=2,
+                    brightness_compensation=2,
+                ),
+            )
+        group = zarr.open(str(out), mode="r")["cloud"]
+        decoder = ArrayDecoder()
+        np.testing.assert_allclose(decoder.decode(group["child_0/colors"], group), 4.0)
+        np.testing.assert_allclose(decoder.decode(group["child_1/colors"], group), 2.0)
+
+    def test_points_coarse_partitioned_finest_and_scalar_bake(self, tmp_path) -> None:
+        out = tmp_path / "points-partition-scalars.luxar.zarr"
+        rng = np.random.default_rng(0)
+        positions = rng.uniform(0, 20, (400, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                positions,
+                scalars=np.linspace(0, 1, len(positions), dtype=np.float32),
+                colormap="viridis",
+                partition={"max_elements": 100},
+                substitutive_lod=dict(coarse="points", levels=1),
+                additive_lod=False,
+            )
+        group = zarr.open(str(out), mode="r")["cloud"]
+        assert group["child_0"].attrs["type"] == "points"
+        assert group["child_0"].attrs.get("has_colors") is True
+        assert group["child_1"].attrs["kind"] == "partition"
+
+    def test_compensated_levels_do_not_warn_and_labels_stay_finest(
+        self, tmp_path
+    ) -> None:
+        out = tmp_path / "points-labels.luxar.zarr"
+        positions = np.random.default_rng(0).uniform(0, 1, (600, 3)).astype(np.float32)
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points(
+                    "cloud",
+                    positions,
+                    image_labels=[b"x"] * len(positions),
+                    substitutive_lod=dict(coarse="points", levels=2),
+                )
+        assert not [record for record in records if "HDR colors" in str(record.message)]
+        group = zarr.open(str(out), mode="r")["cloud"]
+        assert group["child_0"].attrs.get("has_image_labels") is not True
+        assert group["child_1"].attrs.get("has_image_labels") is not True
+        assert group["child_2"].attrs.get("has_image_labels") is True
+
     def test_group_is_kind_lod_points(self, tmp_path) -> None:
         grp, _ = _build(tmp_path)
         assert grp.attrs["kind"] == "lod"
@@ -427,6 +589,37 @@ class TestAddPointsSubstitutiveLod:
             lights.append(float(np.sum(a * det)))
         for li in lights[1:]:
             assert li == pytest.approx(lights[0], rel=0.03)
+
+
+class TestCoarsePointLevels:
+    def test_validation_and_degenerate_inputs(self) -> None:
+        with pytest.raises(ValueError, match="order has 2 entries"):
+            coarse_point_levels(
+                np.array([0, 1]),
+                np.array([1.0]),
+                compression_factor=4,
+                levels=2,
+            )
+        assert (
+            coarse_point_levels(
+                np.array([0]),
+                np.array([1.0]),
+                compression_factor=4,
+                levels=2,
+            )
+            == []
+        )
+
+    def test_duplicate_counts_and_zero_energy_fallback(self) -> None:
+        levels = coarse_point_levels(
+            np.arange(3),
+            np.zeros(3),
+            compression_factor=2,
+            levels=4,
+        )
+        assert len(levels) == 1
+        np.testing.assert_array_equal(levels[0][0], [0])
+        assert levels[0][1] == 1.0
 
 
 class TestSubstitutiveComposedWithAdditive:

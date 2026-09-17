@@ -247,21 +247,27 @@ With the default `coarse="gsplats"`, it:
    hand-built; this composition is the global-coarse `overview` shape.
 
 With `coarse="points"`, it instead takes exact `N/K^level` prefixes of a
-seeded Poisson-disk ordering and writes those rows as Points children. Radii and
-all selected point channels stay attached to the original rows. Under a locally
-authored/default `additive` or `luminous` mode,
+spatially stratified ordering and writes those rows as Points children. On a
+stacked node, each hidden coordinate is spatially ordered independently and the
+orders are round-robin interleaved so a coarse level does not starve individual
+slices. Radii and all selected point channels stay attached to the original
+rows. Under the effective nearest-setter-wins `additive` or `luminous` mode,
 `brightness_compensation="auto"` converts colours to float32 HDR and scales RGB
 by the finest/subsampled `compute_points_energy` ratio, preserving summed light
 at the finest radius rather than inflating screen coverage. Other blending modes
-default to a gain of 1; a numeric compensation overrides the per-level gain.
-`truncation_radius` and `max_aspect` are refused because this arm has no Gaussian
-footprint or anisotropy.
+default to a gain of 1 without widening the input colour dtype; a numeric
+compensation overrides the per-level gain. The expected HDR warning is suppressed
+for these synthesized compensated children. The gain conserves the summed light
+over the whole node, not within each neighbourhood, so sparse and dense regions
+can shift relative brightness. `truncation_radius`, `max_aspect`, `method`,
+`device`, and `coarsen_dims` are refused because this arm performs no Gaussian
+lift or merge.
 
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given
 a `stream:` ladder by default (`additive_lod=False` opts out), except that
-`image_labels` suppresses only the original finest Points child's ladder so its
-labels are preserved; synthesized coarse levels still stream — see "Composed
+`image_labels` are stored only on the original finest Points child and suppress
+only that child's ladder; synthesized coarse levels still stream — see "Composed
 axes" in `group.py`.
 The lift is strictly isotropic (brightness stays view-independent). Scalar +
 colormap points are supported by **baking** `scalars`→RGB through the colormap

@@ -282,13 +282,14 @@ class Group(Node):
                 ``False`` write no substitutive ladder. ``True`` / ``dict()``
                 use ``coarse="gsplats"`` (the default): each point is lifted to
                 an isotropic Gaussian and reduced by the gsplat substitutive
-                pipeline. ``coarse="points"`` instead writes blue-noise
-                subsamples as Points children, preserving the original radius;
-                under locally additive/luminous blending their float32 HDR RGB
+                pipeline. ``coarse="points"`` instead writes spatially
+                stratified subsamples as Points children, preserving the original radius;
+                under effective additive/luminous blending their float32 HDR RGB
                 values are scaled to preserve the finest level's summed point
                 energy. ``brightness_compensation="auto"`` selects that rule,
                 while a numeric value applies that per reduction level (use
-                ``1`` to disable it). Both forms assemble a ``kind="lod"`` Group
+                ``1`` to disable it); identity gain preserves the input colour
+                dtype. Both forms assemble a ``kind="lod"`` Group
                 whose finest child is the original Points node. ``dict(...)``
                 keys: ``compression_factor`` (``K``), ``coarse``,
                 ``brightness_compensation``,
