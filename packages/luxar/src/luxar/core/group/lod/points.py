@@ -114,7 +114,7 @@ def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]
             ),
             "coarsen_dims": (
                 "it selects Gaussian merge dimensions, and same-type point "
-                "levels preserve hidden coordinates automatically"
+                "levels preserve discrete hidden coordinates automatically"
             ),
         }
         for key, reason in reasons.items():

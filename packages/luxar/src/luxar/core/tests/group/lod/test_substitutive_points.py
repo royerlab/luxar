@@ -381,6 +381,96 @@ class TestAddPointsSubstitutiveLod:
                     ),
                 )
 
+    def test_points_coarse_sorted_sheet_remains_spatially_balanced(
+        self, tmp_path
+    ) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        side = 224
+        positions = np.column_stack(
+            [
+                np.repeat(np.linspace(0, 1, side), side),
+                np.tile(np.linspace(0, 1, side), side),
+                np.zeros(side * side),
+            ]
+        ).astype(np.float32)
+        out = tmp_path / "sorted-sheet.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                positions,
+                substitutive_lod=dict(
+                    coarse="points", compression_factor=4, levels=3, seed=7
+                ),
+                additive_lod=False,
+            )
+
+        group = zarr.open(str(out), mode="r")["cloud"]
+        coarse = ArrayDecoder().decode(group["child_0/positions"], group["child_0"])
+        first_quarter = np.mean(coarse[:, 0] < 0.25)
+        last_quarter = np.mean(coarse[:, 0] >= 0.75)
+        assert 0.18 < first_quarter < 0.32
+        assert 0.18 < last_quarter < 0.32
+
+    def test_points_coarse_seed_controls_order(self, tmp_path) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        decoder = ArrayDecoder()
+        positions = np.column_stack(
+            [np.arange(2000), np.zeros(2000), np.zeros(2000)]
+        ).astype(np.float32)
+
+        def build(seed: int, suffix: str) -> np.ndarray:
+            out = tmp_path / f"seed-{suffix}.luxar.zarr"
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points(
+                    "cloud",
+                    positions,
+                    substitutive_lod=dict(
+                        coarse="points", compression_factor=4, levels=1, seed=seed
+                    ),
+                    additive_lod=False,
+                )
+            group = zarr.open(str(out), mode="r")["cloud"]
+            return decoder.decode(group["child_0/positions"], group["child_0"])
+
+        first = build(7, "first")
+        repeated = build(7, "repeated")
+        different = build(8, "different")
+        np.testing.assert_array_equal(first, repeated)
+        assert not np.array_equal(first, different)
+
+    def test_points_coarse_allows_continuous_hidden_axis(self, tmp_path) -> None:
+        rng = np.random.default_rng(0)
+        positions = np.column_stack(
+            [rng.normal(size=(4000, 3)), np.linspace(0, 1, 4000)]
+        ).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("w", display=False, spatial=True),
+            ]
+        )
+        out = tmp_path / "continuous-hidden.luxar.zarr"
+        with pytest.warns(RuntimeWarning, match="continuous hidden dimensions"):
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_points(
+                    "cloud",
+                    positions,
+                    substitutive_lod=dict(
+                        coarse="points", compression_factor=4, levels=2
+                    ),
+                    additive_lod=False,
+                )
+
+        group = zarr.open(str(out), mode="r")["cloud"]
+        assert group["child_0"].attrs["n_points"] == 250
+
     def test_numeric_compensation_is_exponentiated_per_level(self, tmp_path) -> None:
         from luxar.encoding import ArrayDecoder
 

@@ -297,8 +297,13 @@ class Group(Node):
                 ``device``, ``seed``, ``coverage_fractions``, ``coarsen_dims``,
                 ``max_aspect`` (anisotropy cap on the coarse levels, default
                 3.0; ``None`` disables).
+                ``coarse="points"`` refuses ``method``, ``truncation_radius``,
+                ``device``, ``coarsen_dims``, and ``max_aspect`` because no
+                Gaussian lift or merge occurs.
                 Integer ``coarsen_dims`` entries name the scene-ordered position
                 columns after ``dim_order`` has been applied.
+                For stacked nodes, every discrete hidden coordinate must fit in
+                the coarsest point level; otherwise authoring raises.
                 Composes with ``additive_lod``, which then describes how
                 each level streams in (every level gets a streaming ladder by
                 default; pass ``additive_lod=False`` to opt out). When combined

@@ -812,29 +812,46 @@ def _point_colors_for_energy(colors: Any, n_points: int) -> Any:
     return array
 
 
+def _coarse_point_axes(
+    scene: Any, positions: np.ndarray
+) -> tuple[List[int], List[int], List[int]]:
+    """Displayed, discrete-hidden, and continuous-hidden position columns."""
+    dims = getattr(scene, "dimensions", None) if scene is not None else None
+    aligned = dims is not None and int(getattr(dims, "ndim", -1)) == positions.shape[1]
+    if not aligned or dims is None:
+        return list(range(min(3, positions.shape[1]))), [], []
+    displayed = list(dims.displayed)
+    discrete_hidden = [
+        column
+        for column in dims.non_displayed
+        if bool(dims.dimensions[column].discrete)
+    ]
+    continuous_hidden = [
+        column
+        for column in dims.non_displayed
+        if not bool(dims.dimensions[column].discrete)
+    ]
+    return displayed, discrete_hidden, continuous_hidden
+
+
 def _stratified_point_order(
-    scene: Any, positions: np.ndarray, compression: int
+    scene: Any, positions: np.ndarray, compression: int, seed: int
 ) -> np.ndarray:
     """Order displayed-space points evenly, round-robin across hidden slices."""
     from ..lod.spatial_uniform import stratified_grid_order
 
-    dims = getattr(scene, "dimensions", None) if scene is not None else None
-    aligned = dims is not None and int(getattr(dims, "ndim", -1)) == positions.shape[1]
-    if aligned and dims is not None:
-        displayed = list(dims.displayed)
-        hidden = list(dims.non_displayed)
-    else:
-        displayed = list(range(min(3, positions.shape[1])))
-        hidden = []
+    displayed, hidden, _ = _coarse_point_axes(scene, positions)
+    rng = np.random.default_rng(seed)
 
     def local_order(rows: np.ndarray) -> np.ndarray:
-        sample = positions[rows][:, displayed[:3]]
+        shuffled = rows[rng.permutation(rows.size)]
+        sample = positions[shuffled][:, displayed[:3]]
         if sample.shape[1] < 3:
             sample = np.pad(sample, ((0, 0), (0, 3 - sample.shape[1])))
         target = max(1, int(rows.size) // compression)
         depth = min(31, max(1, int(np.ceil(np.log2(target) / 3.0)) + 2))
         order, _ = stratified_grid_order(sample, depth)
-        return rows[order]
+        return shuffled[order]
 
     all_rows = np.arange(positions.shape[0], dtype=np.intp)
     if all_rows.size == 0 or not hidden:
@@ -845,8 +862,9 @@ def _stratified_point_order(
     )
     _, slice_ids = np.unique(hidden_values, axis=0, return_inverse=True)
     within_slice_rank = np.empty(positions.shape[0], dtype=np.intp)
-    for slice_id in range(int(slice_ids.max()) + 1):
-        rows = np.flatnonzero(slice_ids == slice_id).astype(np.intp, copy=False)
+    grouped_rows = np.argsort(slice_ids, kind="stable").astype(np.intp, copy=False)
+    boundaries = np.flatnonzero(np.diff(slice_ids[grouped_rows])) + 1
+    for rows in np.split(grouped_rows, boundaries):
         ordered = local_order(rows)
         within_slice_rank[ordered] = np.arange(ordered.size, dtype=np.intp)
     return np.lexsort((slice_ids, within_slice_rank)).astype(np.intp, copy=False)
@@ -930,10 +948,10 @@ def _add_points_subsampled_lod_wrapper_impl(
 ) -> Union["Group", Points]:
     """Write spatially stratified Points levels above the original Points node."""
     from ....gsplats.lift import coarse_point_levels
+    from ....utils.lod_breakpoints import hidden_coordinate_count
     from ..lod.group import (
         compose_additive_under_substitutive,
         level_additive_lod,
-        resident_slice_count,
         resolve_lod_ladder,
     )
     from ..lod.points import compute_points_energy, resolve_additive_axis_points
@@ -956,14 +974,31 @@ def _add_points_subsampled_lod_wrapper_impl(
 
     scene = group._find_scene()
     compression_factor = int(spec["compression_factor"])
-    resident_slices = resident_slice_count(scene, pos_arr)
+    _, discrete_hidden, continuous_hidden = _coarse_point_axes(scene, pos_arr)
+    resident_slices = hidden_coordinate_count(pos_arr, discrete_hidden)
+    if continuous_hidden:
+        warnings.warn(
+            f"substitutive_lod with coarse='points' found continuous hidden "
+            f"dimensions {tuple(continuous_hidden)}; they are not treated as "
+            "independent slices, so per-slice preservation is not applied. "
+            "Hidden slice dimensions should be discrete (categorical / "
+            "timepoint / channel).",
+            RuntimeWarning,
+            stacklevel=3,
+        )
     _assert_coarse_point_slice_capacity(
         n_points=n_points,
         resident_slices=resident_slices,
         compression_factor=compression_factor,
         levels=int(spec["levels"]),
     )
-    order = _stratified_point_order(scene, pos_arr, compression_factor)
+    aprint(f"  📐 Substitutive-LOD '{name}': ordering {n_points:,} points")
+    order = _stratified_point_order(
+        scene,
+        pos_arr,
+        compression_factor,
+        int(spec.get("seed") or 0),
+    )
     radii_for_energy = None
     if radii is not None:
         radii_for_energy = np.broadcast_to(

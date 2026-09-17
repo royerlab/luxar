@@ -248,10 +248,12 @@ With the default `coarse="gsplats"`, it:
 
 With `coarse="points"`, it instead takes exact `N/K^level` prefixes of a
 spatially stratified ordering and writes those rows as Points children. On a
-stacked node, each hidden coordinate is spatially ordered independently and the
-orders are round-robin interleaved so a coarse level does not starve individual
-slices. Radii and all selected point channels stay attached to the original
-rows. Under the effective nearest-setter-wins `additive` or `luminous` mode,
+stacked node, each discrete hidden coordinate is spatially ordered independently
+and the orders are round-robin interleaved so a coarse level does not starve
+individual slices. The coarsest level must have room for every discrete hidden
+coordinate or authoring raises; continuous hidden axes are not treated as slices
+and emit a warning. Radii and all selected point channels stay attached to the
+original rows. Under the effective nearest-setter-wins `additive` or `luminous` mode,
 `brightness_compensation="auto"` scales RGB by the finest/subsampled
 `compute_points_energy` ratio, preserving summed light at the finest radius
 rather than inflating screen coverage; a non-identity gain widens colours to
