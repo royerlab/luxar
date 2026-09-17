@@ -210,6 +210,31 @@ def test_every_table_row_reaches_both_projections() -> None:
         assert f"export type {vocab.ts_type} =" in ts
 
 
+@pytest.mark.skipif(
+    not GEN_SCRIPT.exists(),
+    reason="generator script not present (packaged install without repo scripts/)",
+)
+def test_ts_union_matches_prettier_line_breaks() -> None:
+    """Generated unions use Prettier's inline, continuation, and vertical layouts."""
+    mod = _load_generator()
+    assert mod._ts_union("Short", ["a", "b"]) == "export type Short = 'a' | 'b';"
+    assert mod._ts_union("LongTypeName", ["abcdefghij"] * 6) == (
+        "export type LongTypeName =\n"
+        "  'abcdefghij' | 'abcdefghij' | 'abcdefghij' | 'abcdefghij' | "
+        "'abcdefghij' | 'abcdefghij';"
+    )
+    assert mod._ts_union("LongTypeName", ["abcdefghij"] * 7) == (
+        "export type LongTypeName =\n"
+        "  | 'abcdefghij'\n"
+        "  | 'abcdefghij'\n"
+        "  | 'abcdefghij'\n"
+        "  | 'abcdefghij'\n"
+        "  | 'abcdefghij'\n"
+        "  | 'abcdefghij'\n"
+        "  | 'abcdefghij';"
+    )
+
+
 def test_scene_header_scalars_single_sourced() -> None:
     """The three 0.2 header scalars are the contract's, at every consumer."""
     from luxar.typing_utils.format_version import LEGACY_SCENE_VERSION_ATTR

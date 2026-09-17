@@ -776,9 +776,13 @@ def _ts_const(
 def _ts_union(name: str, values: List[str], doc: str = "") -> str:
     """Emit ``export type NAME = 'a' | 'b' | ...``, optionally prefixed by JSDoc."""
     prefix = _ts_jsdoc(doc) if doc else ""
-    inline = f"export type {name} = {' | '.join(_ts_str(v) for v in values)};"
+    union = " | ".join(_ts_str(v) for v in values)
+    inline = f"export type {name} = {union};"
     if len(inline) <= TS_WIDTH:
         return prefix + inline
+    continuation = f"  {union};"
+    if len(continuation) <= TS_WIDTH:
+        return prefix + f"export type {name} =\n{continuation}"
     body = "".join(f"  | {_ts_str(v)}\n" for v in values)
     # Replace the final newline with a semicolon terminator.
     return prefix + f"export type {name} =\n{body.rstrip()};"

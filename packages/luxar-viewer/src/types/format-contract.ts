@@ -370,13 +370,7 @@ export const TONE_MAPPINGS: readonly ToneMappingName[] = [
  * Union of the tone-mapping operator names.
  */
 export type ToneMappingName =
-  | 'None'
-  | 'Linear'
-  | 'Reinhard'
-  | 'Cineon'
-  | 'ACES'
-  | 'AgX'
-  | 'Neutral';
+  'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
 
 /**
  * Built-in colormap names a `colormap` attr may carry (the `'custom'`
@@ -452,18 +446,7 @@ export const PHYSICAL_UNITS: readonly PhysicalUnitName[] = [
  * Union of the canonical physical-unit spellings.
  */
 export type PhysicalUnitName =
-  | 'nm'
-  | 'um'
-  | 'mm'
-  | 'cm'
-  | 'm'
-  | 'metre'
-  | 'km'
-  | 'inch'
-  | 'foot'
-  | 'px'
-  | 's'
-  | 'au';
+  'nm' | 'um' | 'mm' | 'cm' | 'm' | 'metre' | 'km' | 'inch' | 'foot' | 'px' | 's' | 'au';
 
 /**
  * `ordering` attr values: how a geometry node's elements were spatially
