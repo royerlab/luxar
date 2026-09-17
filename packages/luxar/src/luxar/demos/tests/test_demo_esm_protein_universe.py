@@ -614,9 +614,14 @@ def test_the_scatter_story_is_the_one_family_that_is_not_a_family() -> None:
     scattered. A knot story here would claim a family the map does not show,
     so the panel's last two facts are about the scatter itself.
 
-    It is not a constellation either, though two of its components clear the
-    10-member floor: a line joining them would assert exactly the family
-    relation the story is about NOT finding.
+    It is not a constellation either, and the reason is measured rather than
+    stylistic (re-derived 2026-09-17). Two of its components DO clear the
+    10-member floor, so the rule would allow a figure: places of 21 and 13,
+    joined by exactly ONE line. But a constellation lights only the places it
+    joins, so that figure would light 34 of the 52 and HIDE 18 — 35% of the
+    story's subject, including every singleton, and the singletons are the
+    scatter. The one line would also assert precisely the family relation the
+    story exists to say is absent.
     """
     (story,) = [s for s in STORIES if s.scatter]
     assert story.key == "Levodopa and the gut"

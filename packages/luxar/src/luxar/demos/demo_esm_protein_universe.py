@@ -1909,9 +1909,10 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             # nematode chemoreceptor exists, hence the relative on the left.
             "The knot lit here is 55 clusters, every one a nematode, and the "
             "tightest of the three smell knots on this tour. Not one of these "
-            "receptors has ever had its structure solved. The turntable shows "
-            "the nearest thing the worm has on the shelf: a hormone receptor, "
-            "not a chemoreceptor.",
+            "receptors has ever had its structure solved — nor has any other "
+            "nematode chemoreceptor. So the turntable beside this panel is "
+            "not one of them: it is FSHR-1, the worm's hormone receptor, the "
+            "nearest thing on the shelf.",
         ),
         mystery=(
             "What the rest of those receptors are for — and why an animal with "
@@ -1920,6 +1921,25 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         ),
         tags=("senses", "receptors", "nematodes"),
         pdb_id="8W1Z",  # A C. elegans family-1 GPCR: the nearest solved relative
+        # The panel says no chemoreceptor has ever been solved and the
+        # turntable then shows a structure, which reads as a contradiction
+        # until you reach the panel's last clause — and a viewer reads the
+        # CAPTION, which was the deposited title, "Structure of a LGR dimer
+        # from Caenorhabditis elegans in apo state". Nothing there says it is
+        # a stand-in. So the caption carries the disclaimer now, and names the
+        # protein: 8W1Z is FSHR-1 (UniProt G5EG04), the worm's orthologue of
+        # the follicle-stimulating-hormone receptor — a leucine-rich-repeat
+        # GPCR, genuinely a hormone receptor.
+        #
+        # The absence is verified, not assumed: an RCSB search for
+        # Caenorhabditis elegans against "chemoreceptor" and against
+        # "serpentine receptor" returns zero entries, as does Nematoda-wide
+        # "chemoreceptor" (2026-09-17). The one "odorant receptor" hit is a
+        # false positive (3UA4, an arginine methyltransferase).
+        pdb_caption=(
+            "FSHR-1, a C. elegans hormone receptor — a stand-in, because no "
+            "nematode chemoreceptor has ever been solved"
+        ),
         narration=(
             "Smell, invented a third time. A millimetre-long worm spends "
             "something like thirteen hundred of its twenty thousand genes on "
