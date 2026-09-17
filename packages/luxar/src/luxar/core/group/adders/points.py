@@ -852,6 +852,20 @@ def _stratified_point_order(
     return np.lexsort((slice_ids, within_slice_rank)).astype(np.intp, copy=False)
 
 
+def _assert_coarse_point_slice_capacity(
+    *, n_points: int, resident_slices: int, compression_factor: int, levels: int
+) -> None:
+    """Refuse a ladder whose coarsest prefix cannot represent every slice."""
+    coarsest_count = max(1, n_points // (compression_factor**levels))
+    if resident_slices > coarsest_count:
+        raise ValueError(
+            "substitutive_lod with coarse='points' cannot preserve every hidden "
+            f"coordinate: the coarsest level has {coarsest_count} points for "
+            f"{resident_slices} hidden slices. Reduce levels/compression_factor "
+            "or use coarse='gsplats'."
+        )
+
+
 def _effective_point_blending_mode(parent: "Node", attrs: Dict[str, Any]) -> str:
     """Resolve nearest-setter-wins blending mode for a new Points child."""
     if "blending_mode" in attrs:
@@ -942,6 +956,13 @@ def _add_points_subsampled_lod_wrapper_impl(
 
     scene = group._find_scene()
     compression_factor = int(spec["compression_factor"])
+    resident_slices = resident_slice_count(scene, pos_arr)
+    _assert_coarse_point_slice_capacity(
+        n_points=n_points,
+        resident_slices=resident_slices,
+        compression_factor=compression_factor,
+        levels=int(spec["levels"]),
+    )
     order = _stratified_point_order(scene, pos_arr, compression_factor)
     radii_for_energy = None
     if radii is not None:
@@ -982,7 +1003,7 @@ def _add_points_subsampled_lod_wrapper_impl(
             **attrs,
         )
 
-    slices = resident_slice_count(scene, pos_arr) if additive_lod is None else 1
+    slices = resident_slices if additive_lod is None else 1
     resolved_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_points,

@@ -353,6 +353,34 @@ class TestAddPointsSubstitutiveLod:
         )
         assert set(coarse_positions[:, 0]) == set(range(n_slices))
 
+    def test_points_coarse_refuses_more_hidden_slices_than_coarse_points(
+        self, tmp_path
+    ) -> None:
+        positions = np.column_stack(
+            [
+                np.repeat(np.arange(20), 2),
+                np.zeros((40, 3), dtype=np.float32),
+            ]
+        ).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("time", categories=list(map(str, range(20))), display=False),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+        with pytest.raises(ValueError, match="coarsest level has 10 points for 20"):
+            with LuxarZarrCompiler(tmp_path / "starved.luxar.zarr") as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_points(
+                    "cloud",
+                    positions,
+                    substitutive_lod=dict(
+                        coarse="points", compression_factor=4, levels=1
+                    ),
+                )
+
     def test_numeric_compensation_is_exponentiated_per_level(self, tmp_path) -> None:
         from luxar.encoding import ArrayDecoder
 
