@@ -73,6 +73,21 @@ ok "working tree clean"
 git ls-files --error-unmatch "$WORKFLOW" >/dev/null 2>&1 || die "$WORKFLOW is not committed — commit it (via PR) before releasing."
 ok "PyPI publish workflow present and committed"
 
+# A PyPI *pending* trusted publisher does NOT reserve the project name: `luxar`
+# stays claimable by anyone until the first successful upload. Report the
+# registry state so the operator knows whether this tag CLAIMS the name (404)
+# or publishes into an EXISTING project (200 — verify it is ours). Never fatal:
+# a network blip must not block a release, and a 200 is the steady state after
+# the first release.
+if command -v curl >/dev/null 2>&1; then
+  PYPI_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://pypi.org/pypi/luxar/json || echo "000")"
+  case "$PYPI_CODE" in
+    404) info "PyPI project 'luxar' does not exist yet — this release will claim the name (a pending publisher does not reserve it)." ;;
+    200) info "PyPI project 'luxar' exists — verify https://pypi.org/project/luxar/ is ours before tagging." ;;
+    *)   warn "could not query pypi.org (HTTP $PYPI_CODE); skipped the project-name check." ;;
+  esac
+fi
+
 # The npm viewer publish is also tag-triggered on v*, but publish-npm.yml gates
 # the actual `npm publish` on ENABLE_NPM_PUBLISH from the job's vars context.
 # GitHub resolves that context environment -> repository -> organization and
