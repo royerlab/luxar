@@ -530,7 +530,20 @@ class UniverseStory(Story):
     #: :data:`SCATTER_HIGHLIGHT_RADIUS`). Requires ``whole``.
     scatter: bool = False
 
+    #: Draw lines joining the separate places this family sits, so a story
+    #: whose subject is scattered reads as one family rather than as unrelated
+    #: blobs (Alex Rives's suggestion, 2026-09-17). Only for Pfam-selected
+    #: stories: the edge means "same Pfam family", which is a homology
+    #: statement by construction, and NOT a path — see
+    #: :func:`family_link_graph`.
+    connect_family: bool = False
+
     def __post_init__(self) -> None:
+        if self.connect_family and not self.pfam:
+            raise ValueError(
+                f"story {self.key!r}: connect_family needs a pfam selector — the "
+                "line means 'same Pfam family', so there must be one"
+            )
         if self.scatter and not self.whole:
             raise ValueError(
                 f"story {self.key!r}: scatter=True needs whole=True — a scatter "
@@ -639,6 +652,87 @@ SCATTER_HIGHLIGHT_INTENSITY = 0.25
 LABELLED_MEMBER_CAP = 2_000
 
 
+#: A family's members are grouped into places by single-linkage at this
+#: radius — the same scale a knot lives at (see FAMILY_RADIUS), so "a place"
+#: means "what the tour would frame as one knot".
+FAMILY_LINK_RADIUS = 0.3
+#: Only places with at least this many clusters get a node on the line graph.
+#: Measured over the shipped families: at 10 a family draws 1-7 lines, which
+#: reads; every family has a long tail of singletons that would turn the map
+#: into a hairball (ice-binding alone has 197 places, 66 of them above 10).
+FAMILY_LINK_MIN_MEMBERS = 10
+#: World-space line width, sized like the backdrop point radius so the links
+#: read as threads over the cloud rather than as structure of their own.
+FAMILY_LINK_WIDTH = 0.02
+#: Dimmer than the highlight it accompanies: the lit clusters are the subject,
+#: the lines are the annotation.
+FAMILY_LINK_INTENSITY = 0.18
+
+
+def family_link_graph(
+    positions: np.ndarray,
+    mask: np.ndarray,
+    *,
+    min_members: int = FAMILY_LINK_MIN_MEMBERS,
+    radius: float = FAMILY_LINK_RADIUS,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The places a family occupies, and a minimum spanning tree over them.
+
+    Returns ``(centroids, edges)`` — one centroid per place with at least
+    ``min_members`` clusters, and ``(E, 2)`` index pairs forming an MST over
+    those centroids. An MST rather than every pair: it is the fewest lines that
+    still show the family is one family, and E = places - 1 stays legible.
+
+    **What a line means, and what it does not.** The edge is "these clusters
+    belong to the same Pfam family", which is a homology statement by
+    construction — a Pfam family is built from one seed alignment. It is NOT a
+    path, a distance, or an evolutionary trajectory. UMAP positions are not
+    metric, so the straight segment between two places carries no information
+    beyond joining them; the ESM Atlas preprint itself draws no lines between
+    UMAP points, and prints its similarity numbers on arrows between structures
+    instead.
+
+    Deliberately NOT the preprint's own edge metric (Jaccard over max-pooled
+    SAE features, "same family" at >= 0.6): measured on this tour's families,
+    no two different knots come close to that bar — the vertebrate and worm
+    chemoreceptor knots reach 0.38, photosystem II's D1 and D2 only 0.27,
+    against a 0.18 random-pair baseline. A feature line would therefore either
+    draw nothing at the calibrated threshold, or assert a relation the
+    preprint's own calibration calls unremarkable.
+    """
+    spatial = require_module("scipy.spatial")
+    csgraph = require_module("scipy.sparse.csgraph")
+    sparse = require_module("scipy.sparse")
+    member = positions[mask]
+    if len(member) < 2:
+        return np.zeros((0, positions.shape[1]), dtype=np.float32), np.zeros(
+            (0, 2), dtype=np.int64
+        )
+    tree = spatial.cKDTree(member)
+    pairs = np.asarray(list(tree.query_pairs(radius)), dtype=np.int64)
+    if len(pairs) == 0:
+        labels = np.arange(len(member))
+    else:
+        graph = sparse.coo_matrix(
+            (np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])),
+            shape=(len(member), len(member)),
+        )
+        _, labels = csgraph.connected_components(graph, directed=False)
+    sizes = np.bincount(labels)
+    keep = np.flatnonzero(sizes >= min_members)
+    if len(keep) < 2:
+        return np.zeros((0, positions.shape[1]), dtype=np.float32), np.zeros(
+            (0, 2), dtype=np.int64
+        )
+    centroids = np.stack([member[labels == c].mean(axis=0) for c in keep]).astype(
+        np.float32
+    )
+    dist = np.linalg.norm(centroids[:, None, :] - centroids[None, :, :], axis=2)
+    mst = csgraph.minimum_spanning_tree(dist).tocoo()
+    edges = np.stack([mst.row, mst.col], axis=1).astype(np.int64)
+    return centroids, edges
+
+
 def carries_labels(story: UniverseStory, n_members: int) -> bool:
     """Whether a story's highlight carries per-member hover labels.
 
@@ -690,6 +784,8 @@ BACKDROP_LOD_FACTOR = 4
 STORIES: tuple[UniverseStory, ...] = (
     _carry(
         "Hemoglobin",
+        # Lines join the places this family sits — the animal globins here, the bacterial flavohemoglobins its panel mentions elsewhere.
+        connect_family=True,
         subtitle="A hundred animal globin clusters, out of four hundred in the map",
         pattern="",
         pfam=("PF00042",),  # Globin
@@ -721,6 +817,8 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
     _carry(
         "Photosystem II",
+        # Lines join the places this family sits — D1, D2 and the purple-bacterial reaction centres sit in separate places.
+        connect_family=True,
         subtitle="D1, the water-splitting protein — in cyanobacteria and plants, and in the viruses that hijack them",
         pattern="",
         pfam=("PF00124",),  # Photo_RC: D1/D2 and the L/M chains
@@ -1213,6 +1311,8 @@ STORIES: tuple[UniverseStory, ...] = (
     # ---------------------------------------------------------------------
     UniverseStory(
         key="Lanthipeptides",
+        # Lines join the places this family sits — eight places.
+        connect_family=True,
         title="Lanthipeptides — antibiotics stitched into rings",
         subtitle=(
             "Three hundred and forty clusters of the enzymes that build nisin "
@@ -1414,6 +1514,8 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
     UniverseStory(
         key="Olfactory receptors",
+        # Lines join the places this family sits — the vertebrate receptors occupy four places.
+        connect_family=True,
         title="Olfactory receptors — the largest family in our genome",
         subtitle="A knot of 136 clusters, every one of them from a vertebrate",
         pattern="",
@@ -1473,6 +1575,8 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
     UniverseStory(
         key="Insect odorant receptors",
+        # Lines join the places this family sits — two places.
+        connect_family=True,
         title="Insect odorant receptors — smell invented a second time",
         subtitle="Seventy-five arthropod clusters, ten units from the vertebrate knot",
         pattern="",
@@ -1528,6 +1632,8 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
     UniverseStory(
         key="Worm chemoreceptors",
+        # Lines join the places this family sits — six places.
+        connect_family=True,
         title="Worm chemoreceptors — smell invented a third time",
         subtitle="Fifty-five nematode clusters, the tightest of the three smell knots",
         pattern="",
@@ -2215,6 +2321,54 @@ def _add_overlays(
     )
 
 
+def _add_family_links(
+    scene: Any,
+    stories: tuple[UniverseStory, ...],
+    universe: Universe,
+) -> None:
+    """One lines node per ``connect_family`` story, joining the places it sits.
+
+    The graph is built from the story's PFAM mask alone — not its `groups`
+    filter, and not its knot cut — because the claim being drawn is about the
+    whole family. Hemoglobin is the case that needs it: the story frames the
+    animal globins, and the line reaches the bacterial flavohemoglobin knot its
+    own panel already talks about.
+    """
+    for k, s in enumerate(stories, start=1):
+        if not s.connect_family:
+            continue
+        centroids, edges = family_link_graph(
+            universe.positions, universe.pfam_mask(s.pfam)
+        )
+        if len(edges) == 0:
+            aprint(f"{s.key}: no second place with enough members — no links drawn")
+            continue
+        vertices = np.column_stack(
+            [np.full(len(centroids), float(k), dtype=np.float32), centroids]
+        ).astype(np.float32)
+        aprint(
+            f"{s.key}: {len(centroids)} places linked by {len(edges)} lines "
+            f"(total {float(np.linalg.norm(centroids[edges[:, 0]] - centroids[edges[:, 1]], axis=1).sum()):.1f} units)"
+        )
+        scene.add_lines(
+            f"Links {k}: {s.key}",
+            vertices,
+            widths=np.full(len(centroids), FAMILY_LINK_WIDTH, dtype=np.float32),
+            colors=np.broadcast_to(
+                np.asarray(s.color, dtype=np.float32), (len(centroids), 3)
+            ).copy(),
+            indices=edges.astype(np.uint32),
+            line_type="indexed",
+            opacity=0.9,
+            intensity=FAMILY_LINK_INTENSITY,
+            layer=True,
+            blending_mode="additive",
+            # Under the highlight, over the backdrop: the lit clusters are the
+            # subject and must not be veiled by their own annotation.
+            layer_order=8,
+        )
+
+
 def _add_bubbles(
     scene: Any, stories: tuple[UniverseStory, ...], clusters: list[StoryCluster]
 ) -> None:
@@ -2504,6 +2658,8 @@ def build_universe_scene(
                     layer_order=10,
                 )
             _add_bubbles(scene, stories, clusters)
+            with asection("Family links"):
+                _add_family_links(scene, stories, universe)
             _add_overlays(scene, stories, clusters, assets, n, units)
             if audio:
                 with asection("Sound layer"):

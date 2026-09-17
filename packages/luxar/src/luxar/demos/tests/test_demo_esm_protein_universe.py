@@ -756,3 +756,82 @@ def test_the_ice_story_never_selects_the_mislabelled_pfam_again() -> None:
     # No other story may pick it up either.
     for s in STORIES:
         assert "PF07589" not in (s.pfam or ()), s.key
+
+
+# ---------------------------------------------------------------------------
+# Family links (2026-09-17: connect a family's scattered places with lines)
+# ---------------------------------------------------------------------------
+
+
+def test_family_link_graph_joins_the_big_places_and_skips_the_stragglers() -> None:
+    """Two dense places plus a singleton: one line, and the singleton is out."""
+    rng = np.random.default_rng(3)
+    a = np.array([0.0, 0.0, 0.0]) + rng.normal(size=(40, 3)) * 0.02
+    b = np.array([5.0, 0.0, 0.0]) + rng.normal(size=(30, 3)) * 0.02
+    stray = np.array([[-9.0, 0.0, 0.0]])
+    other = rng.normal(size=(200, 3)) * 3.0  # not in the family
+    positions = np.vstack([a, b, stray, other]).astype(np.float32)
+    mask = np.zeros(len(positions), dtype=bool)
+    mask[: len(a) + len(b) + 1] = True
+
+    centroids, edges = demo.family_link_graph(positions, mask)
+
+    assert len(centroids) == 2, "the one-member place is below the floor"
+    assert edges.shape == (1, 2)
+    # The two centroids are where the two dense places are.
+    got = sorted(float(c[0]) for c in centroids)
+    assert got[0] == pytest.approx(0.0, abs=0.02)
+    assert got[1] == pytest.approx(5.0, abs=0.02)
+    # An MST over n places has exactly n-1 edges.
+    assert len(edges) == len(centroids) - 1
+
+
+def test_family_link_graph_draws_nothing_when_the_family_sits_in_one_place() -> None:
+    """A family that is not scattered has nothing to join."""
+    rng = np.random.default_rng(4)
+    positions = np.vstack(
+        [np.zeros((50, 3)) + rng.normal(size=(50, 3)) * 0.02, rng.normal(size=(50, 3))]
+    ).astype(np.float32)
+    mask = np.zeros(len(positions), dtype=bool)
+    mask[:50] = True
+
+    centroids, edges = demo.family_link_graph(positions, mask)
+    assert len(edges) == 0 and len(centroids) == 0
+
+    # And an empty family is handled rather than raising.
+    empty = demo.family_link_graph(positions, np.zeros(len(positions), dtype=bool))
+    assert len(empty[1]) == 0
+
+
+def test_family_link_graph_respects_its_floor_and_radius() -> None:
+    rng = np.random.default_rng(5)
+    a = rng.normal(size=(12, 3)) * 0.02
+    b = np.array([4.0, 0.0, 0.0]) + rng.normal(size=(12, 3)) * 0.02
+    positions = np.vstack([a, b]).astype(np.float32)
+    mask = np.ones(len(positions), dtype=bool)
+
+    assert len(demo.family_link_graph(positions, mask, min_members=10)[1]) == 1
+    # Raise the floor above both places and the graph empties.
+    assert len(demo.family_link_graph(positions, mask, min_members=20)[1]) == 0
+    # Widen the linkage until the two places merge into one.
+    assert len(demo.family_link_graph(positions, mask, radius=9.0)[1]) == 0
+
+
+def test_only_pfam_selected_stories_may_carry_family_links() -> None:
+    """The line means "same Pfam family", so there must be a Pfam selector."""
+    with pytest.raises(ValueError, match="connect_family needs a pfam selector"):
+        _story(pattern="x", connect_family=True)
+    assert _story(pfam=("PF00042",), connect_family=True).connect_family
+
+    linked = [s.key for s in STORIES if s.connect_family]
+    assert linked == [
+        "Hemoglobin",
+        "Photosystem II",
+        "Lanthipeptides",
+        "Olfactory receptors",
+        "Insect odorant receptors",
+        "Worm chemoreceptors",
+    ]
+    for s in STORIES:
+        if s.connect_family:
+            assert s.pfam, s.key
