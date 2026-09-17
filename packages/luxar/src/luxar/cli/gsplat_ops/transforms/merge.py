@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -11,6 +11,30 @@ from arbol import aprint, asection
 from ..._traceback import exit_with_error
 from ..encoding import _resolve_encoding_mode
 from ..recipe_shared import carried_appearance_from_inputs
+
+if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import GSplatData
+
+
+def _summarized_input_provenance(
+    datasets: list[GSplatData],
+) -> list[dict[str, Any]]:
+    """Collect input fit metadata, then restore merge's metadata-free inputs."""
+    from luxar.gsplats.merged_quality import (
+        collect_part_provenance,
+        summarize_part_provenance,
+    )
+
+    provenance = collect_part_provenance(
+        datasets,
+        values=[float(index) for index in range(len(datasets))],
+        fit_reference=None,
+    )
+    for dataset in datasets:
+        dataset.stats.clear()
+    summary = summarize_part_provenance(provenance)
+    assert summary is not None
+    return summary
 
 
 def _mode_invalidated_appearance(
@@ -83,10 +107,6 @@ def run_merge_datasets(
         from luxar.cli.gsplat_config import parse_hex_color
         from luxar.cli.gsplat_ops.loading import load_matrix_gsplats
         from luxar.gsplats.gsplat_data import GSplatData
-        from luxar.gsplats.merged_quality import (
-            collect_part_provenance,
-            summarize_part_provenance,
-        )
 
         if len(inputs) < 2:
             aprint("Error: At least 2 input datasets required for merge")
@@ -111,13 +131,7 @@ def run_merge_datasets(
                     total_splats += ds.n_splats
             aprint(f"Total input splats: {total_splats:,}")
 
-            input_provenance = collect_part_provenance(
-                datasets,
-                values=[float(index) for index in range(len(datasets))],
-                fit_reference=None,
-            )
-            for dataset in datasets:
-                dataset.stats.clear()
+            input_provenance = _summarized_input_provenance(datasets)
 
             if channel_colors:
                 color_strs = [c.strip() for c in channel_colors.split(",")]
@@ -154,9 +168,7 @@ def run_merge_datasets(
                 with asection("Concatenating"):
                     merged = GSplatData.concatenate(datasets)
 
-            summary = summarize_part_provenance(input_provenance)
-            if summary is not None:
-                merged.stats["part_provenance"] = summary
+            merged.stats["part_provenance"] = input_provenance
 
             # The merge owns the STRUCTURE, not the look: without this the
             # writer's own defaults take over and every authored value on every
