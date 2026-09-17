@@ -523,4 +523,5 @@ __all__ = [
     "collect_part_provenance",
     "resolve_merged_reference",
     "stamp_merged_quality",
+    "summarize_part_provenance",
 ]

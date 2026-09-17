@@ -11,7 +11,10 @@ import pytest
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import split_fitting_info
 from luxar.gsplats.lod import RecipeParams, build_recipe
-from luxar.gsplats.merged_quality import collect_part_provenance
+from luxar.gsplats.merged_quality import (
+    collect_part_provenance,
+    summarize_part_provenance,
+)
 
 from ._gsplat_data_helpers import _make_3d_gsplat
 
@@ -132,6 +135,59 @@ def test_unknown_reference_and_nested_provenance_are_preserved() -> None:
     nested = reduced.stats["part_provenance"][0]["fitting"]["part_provenance"]
     assert "psnr_db" not in nested[0]["fitting"]
     assert nested[1]["fitting"] == {}
+
+
+def test_part_summary_distinguishes_shared_and_independent_sources() -> None:
+    provenance = [
+        {
+            "coordinate": 0.0,
+            "fitting": {
+                "source_shape": [8, 8, 8],
+                "source_dtype": "uint16",
+                "source_voxels": 512,
+                "source_bytes": 1024,
+                "time_seconds": 1.5,
+            },
+        },
+        {
+            "coordinate": 1.0,
+            "fitting": {
+                "source_shape": [8, 8, 8],
+                "source_dtype": "uint16",
+                "source_voxels": 512,
+                "source_bytes": 1024,
+                "time_seconds": 2.5,
+            },
+        },
+    ]
+
+    independent = summarize_part_provenance(provenance)
+    shared = summarize_part_provenance(provenance, shared_source=True)
+
+    assert independent == [
+        {
+            "part_count": 2,
+            "fitting": {
+                "source_shape": [8, 8, 8],
+                "source_dtype": "uint16",
+                "source_voxels": 1024,
+                "source_bytes": 2048,
+                "time_seconds": 4.0,
+            },
+        }
+    ]
+    assert shared == [
+        {
+            "part_count": 2,
+            "fitting": {
+                "source_shape": [8, 8, 8],
+                "source_dtype": "uint16",
+                "source_voxels": 512,
+                "source_bytes": 1024,
+                "time_seconds": 4.0,
+            },
+        }
+    ]
 
 
 def test_part_provenance_validates_reference_and_stack_cardinality() -> None:
