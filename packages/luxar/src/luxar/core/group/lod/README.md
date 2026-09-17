@@ -252,10 +252,11 @@ stacked node, each hidden coordinate is spatially ordered independently and the
 orders are round-robin interleaved so a coarse level does not starve individual
 slices. Radii and all selected point channels stay attached to the original
 rows. Under the effective nearest-setter-wins `additive` or `luminous` mode,
-`brightness_compensation="auto"` converts colours to float32 HDR and scales RGB
-by the finest/subsampled `compute_points_energy` ratio, preserving summed light
-at the finest radius rather than inflating screen coverage. Other blending modes
-default to a gain of 1 without widening the input colour dtype; a numeric
+`brightness_compensation="auto"` scales RGB by the finest/subsampled
+`compute_points_energy` ratio, preserving summed light at the finest radius
+rather than inflating screen coverage; a non-identity gain widens colours to
+float32 HDR. Other blending modes default to a gain of 1 without widening the
+input colour dtype; a numeric
 compensation overrides the per-level gain. The expected HDR warning is suppressed
 for these synthesized compensated children. The gain conserves the summed light
 over the whole node, not within each neighbourhood, so sparse and dense regions
