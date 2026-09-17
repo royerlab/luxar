@@ -97,6 +97,7 @@ def test_merge_replaces_input_provenance_with_one_summary(
             },
         }
     ]
+    assert "time_seconds" not in stats
 
 
 def test_merge_summary_omits_partial_and_disputed_fields(tmp_path: Path) -> None:

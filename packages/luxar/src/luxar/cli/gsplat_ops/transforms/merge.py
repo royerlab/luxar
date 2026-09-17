@@ -111,6 +111,14 @@ def run_merge_datasets(
                     total_splats += ds.n_splats
             aprint(f"Total input splats: {total_splats:,}")
 
+            input_provenance = collect_part_provenance(
+                datasets,
+                values=[float(index) for index in range(len(datasets))],
+                fit_reference=None,
+            )
+            for dataset in datasets:
+                dataset.stats.clear()
+
             if channel_colors:
                 color_strs = [c.strip() for c in channel_colors.split(",")]
                 if len(color_strs) != len(datasets):
@@ -146,11 +154,6 @@ def run_merge_datasets(
                 with asection("Concatenating"):
                     merged = GSplatData.concatenate(datasets)
 
-            input_provenance = collect_part_provenance(
-                datasets,
-                values=[float(index) for index in range(len(datasets))],
-                fit_reference=None,
-            )
             summary = summarize_part_provenance(input_provenance)
             if summary is not None:
                 merged.stats["part_provenance"] = summary
