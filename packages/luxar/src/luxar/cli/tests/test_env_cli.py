@@ -2,7 +2,7 @@
 
 The bake's browser half is replaced by an injected driver that writes a synthetic
 container, so what is exercised here is the ORCHESTRATION — serve the store and the
-viewer from one process, hand the driver a ``?bake-env`` URL against them, collect
+viewer from one process, hand the driver a ``?bakeEnv`` URL against them, collect
 the container, attach it — without a browser or a GPU.
 """
 
@@ -122,7 +122,7 @@ def test_bake_environment_serves_drives_and_attaches(tmp_path, built_viewer) -> 
         store, probe="node:cloud", resolution=RES, driver=fake_driver, timeout=42
     )
     url = str(seen["url"])
-    assert "&debug&bake-env&probe=node:cloud&env-resolution=16" in url
+    assert "&debug&bakeEnv&probe=node:cloud&envResolution=16" in url
     assert url.startswith("http://127.0.0.1:")
     assert seen["timeout"] == 42
     assert report.attach is not None and report.attach.status == "attached"

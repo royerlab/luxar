@@ -73,7 +73,7 @@ describe('setupCaches — cache telemetry state resolution', () => {
     expect(directory.cachingStore).not.toBeNull();
   });
 
-  it('?no-cache resolves to disabled-no-cache regardless of app config', async () => {
+  it('?noCache resolves to disabled-no-cache regardless of app config', async () => {
     appConfig.cache.enabled = true;
     appConfig.cache.l0Enabled = true;
 
@@ -192,7 +192,7 @@ describe('setupCaches — cache telemetry state resolution', () => {
 });
 
 // Regression tests (deep-double-check): the SliceCache wiring — creation
-// gating across sliceCacheEnabled / ?no-cache / ?no-slice-cache, and the
+// gating across sliceCacheEnabled / ?noCache / ?noSliceCache, and the
 // content-hash invalidation registration — previously had NO test at all
 // (mutating the gate condition or deleting the onInvalidate registration
 // passed the whole suite).
@@ -221,7 +221,7 @@ describe('setupCaches — SliceCache gating + invalidation wiring', () => {
     expect(result.sliceCache).not.toBeNull();
   });
 
-  it('?no-slice-cache disables ONLY the SliceCache (L0/L1/L2 stay on)', async () => {
+  it('?noSliceCache disables ONLY the SliceCache (L0/L1/L2 stay on)', async () => {
     appConfig.cache.enabled = true;
     appConfig.cache.l0Enabled = true;
     appConfig.cache.sliceCacheEnabled = true;
@@ -233,7 +233,7 @@ describe('setupCaches — SliceCache gating + invalidation wiring', () => {
     expect(result.cachingStore).not.toBeNull();
   });
 
-  it('?no-opfs keeps every other tier: caching store, L0 and SliceCache all construct', async () => {
+  it('?noOpfs keeps every other tier: caching store, L0 and SliceCache all construct', async () => {
     appConfig.cache.enabled = true;
     appConfig.cache.l0Enabled = true;
     appConfig.cache.sliceCacheEnabled = true;
@@ -253,7 +253,7 @@ describe('setupCaches — SliceCache gating + invalidation wiring', () => {
     expect(result.sliceCache).not.toBeNull();
   });
 
-  it('?no-cache disables the SliceCache along with every other tier', async () => {
+  it('?noCache disables the SliceCache along with every other tier', async () => {
     appConfig.cache.enabled = true;
     appConfig.cache.sliceCacheEnabled = true;
     const result = await setupCaches('http://example.com/scene.zarr/', {

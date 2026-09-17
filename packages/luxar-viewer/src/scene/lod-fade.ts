@@ -75,7 +75,7 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
  *   (`κ·splat-mass ≳ 1`) the per-splat self-screening `S(τ)` saturates
  *   emission, so a boosted splat deepens occlusion rather than brightening.
  *   Bounded by the shared `ENERGY_FLOOR` cap (≤ 10×), transient (decays as
- *   `e → 1`), and `?no-lod-energy` is the escape hatch; a volumetric-specific
+ *   `e → 1`), and `?noLodEnergy` is the escape hatch; a volumetric-specific
  *   floor is the obvious knob if a thick-splat scene ever shows transient
  *   dark blobs while streaming.
  *

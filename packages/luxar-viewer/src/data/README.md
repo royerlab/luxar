@@ -1033,7 +1033,7 @@ location /data/ {
 **Problem: Memory usage too high**
 
 ```typescript
-// Pass ?no-cache or { noCache: true } to disable caching entirely.
+// Pass ?noCache or { noCache: true } to disable caching entirely.
 const scene = await loadScene(url, { noCache: true });
 
 // Or inspect the live cache stats via SceneLoaderManager and clear

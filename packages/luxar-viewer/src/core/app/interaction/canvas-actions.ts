@@ -127,7 +127,7 @@ export interface CanvasActionsPorts {
   /** Discard residual camera damping when a touch release is classified as a tap. */
   settleTouchNavigation?: () => void;
   /**
-   * Whether links may be opened at all (`allowLinks` option / `?no-links`).
+   * Whether links may be opened at all (`allowLinks` option / `?noLinks`).
    * When false: no navigation, no link menu items, no pointer cursor — but
    * `Copy` still works, because writing to the clipboard is not navigation.
    */

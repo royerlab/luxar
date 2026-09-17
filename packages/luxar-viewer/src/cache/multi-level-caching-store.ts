@@ -54,15 +54,15 @@ export interface MultiLevelCachingStoreOptions {
   l2MaxSize?: number;
   /** Enable debug logging (default: false) */
   debug?: boolean;
-  /** Disable both cache tiers (e.g. driven by `?no-cache`). Default false. */
+  /** Disable both cache tiers (e.g. driven by `?noCache`). Default false. */
   noCache?: boolean;
   /**
-   * Skip the L2 OPFS tier entirely (e.g. driven by `?no-opfs`); L1 stays
+   * Skip the L2 OPFS tier entirely (e.g. driven by `?noOpfs`); L1 stays
    * on. The deterministic sibling of the OPFSStore circuit breaker for
    * environments whose OPFS is known to stall. Default false.
    */
   noOpfs?: boolean;
-  /** Clear caches on init (e.g. driven by `?clear-cache`). Default false. */
+  /** Clear caches on init (e.g. driven by `?clearCache`). Default false. */
   clearCache?: boolean;
   /**
    * Background L2 write-queue concurrency cap. Defaults to
@@ -101,11 +101,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private source: ChunkSource;
   private l2MaxSize: number;
   private enabled: boolean;
-  // Deliberate L2 skip (?no-opfs): distinct from `enabled` (which kills L1 too).
+  // Deliberate L2 skip (?noOpfs): distinct from `enabled` (which kills L1 too).
   private noOpfs = false;
   private debug: boolean;
   private shouldClearOnInit: boolean;
-  // S4: increments each time `?clear-cache` triggers a clearAll on
+  // S4: increments each time `?clearCache` triggers a clearAll on
   // init. Surfaced through getStats() so the E2E suite can prove the
   // clear actually ran rather than only checking that stats survived.
   private clearOnInitCount = 0;
@@ -240,7 +240,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * Initialization steps:
    * 1. Generate dataset ID from URL hash (for OPFS directory isolation)
    * 2. Initialize L2 OPFS store (creates directory structure)
-   * 3. Clear cache if ?clear-cache URL parameter present
+   * 3. Clear cache if ?clearCache URL parameter present
    * 4. Validate cache by comparing content_hash with remote .zattrs
    *
    * Cache validation is CRITICAL: fetches .zattrs directly from HTTP
@@ -248,7 +248,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * clears L2 completely and re-initializes. This prevents stale data.
    *
    * @returns Promise that resolves when cache is fully initialized and validated.
-   *          If caching is disabled (?no-cache), resolves immediately without setup.
+   *          If caching is disabled (?noCache), resolves immediately without setup.
    *
    * @throws {Error} If OPFS is not supported (Safari < 15.2, Firefox < 111)
    * @throws {Error} If HTTP fetch of .zattrs fails (network error, 404)
@@ -273,7 +273,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *   await store.init();
    * } catch (error) {
    *   console.error('Cache init failed:', error);
-   *   // Fall back to direct HTTP (no caching) by reloading with ?no-cache
+   *   // Fall back to direct HTTP (no caching) by reloading with ?noCache
    *   // (caching is controlled via URL parameters, not constructor options)
    * }
    * ```
@@ -290,7 +290,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     if (this.noOpfs) {
       // L2 deliberately skipped: l2Store stays null, which every consumer
       // tolerates (the read cascade falls through to the network, clearL2
-      // no-ops). Note this also skips ?clear-cache's L2 wipe — a no-opfs
+      // no-ops). Note this also skips ?clearCache's L2 wipe — a `noOpfs`
       // session never reads the persisted directory, so it stays inert
       // until the next normal session clears or validates it.
       this.log('L2 OPFS tier disabled (noOpfs)');
@@ -314,10 +314,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     // Clear cache if requested
     if (this.shouldClearOnInit) {
-      this.log('Clearing cache due to ?clear-cache parameter');
+      this.log('Clearing cache due to ?clearCache parameter');
       await this.clearAll();
       // S4: observable signal for the E2E suite — proves clearAll
-      // actually ran in response to `?clear-cache` on init.
+      // actually ran in response to `?clearCache` on init.
       this.clearOnInitCount++;
     }
 
@@ -873,11 +873,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
     };
 
     // S2: opfsAvailable signals whether L2 storage is operational.
-    // When caching is disabled (config / ?no-cache), L2 wasn't
+    // When caching is disabled (config / ?noCache), L2 wasn't
     // expected, so report `true` so the UI doesn't surface a
     // misleading badge.
     const l2Stats = this.l2Store?.getStats();
-    // A DELIBERATE disable (?no-cache / ?no-opfs) reports true: the
+    // A DELIBERATE disable (?noCache / ?noOpfs) reports true: the
     // opfs-unavailable badge is reserved for unrequested degradation
     // (init failure, circuit-breaker trip).
     const l2DeliberatelyOff = !this.enabled || this.noOpfs;
@@ -950,7 +950,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * stale bytes: not-yet-started tasks are dropped here, and an already-running
    * task self-drops on its epoch re-check (with the OPFS `generation` counter as
    * a final backstop). This is the single chokepoint for every L2-clearing path
-   * (`clearAll`, content-hash mismatch, TTL expiry, `?clear-cache`).
+   * (`clearAll`, content-hash mismatch, TTL expiry, `?clearCache`).
    */
   async clearL2(): Promise<void> {
     this.l2Epoch++;

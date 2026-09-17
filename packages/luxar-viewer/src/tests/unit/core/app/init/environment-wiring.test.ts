@@ -2,7 +2,7 @@
 /**
  * The scene environment's live wiring: WHEN a capture is asked for. A stale mark on a
  * geometry commit, a slice change and an appearance change; a per-frame tick; the
- * runtime attached once; the `?bake-env` one-shot armed only when requested and fired
+ * runtime attached once; the `?bakeEnv` one-shot armed only when requested and fired
  * only after the loader has stayed settled for the grace window.
  */
 
@@ -109,7 +109,7 @@ describe('wireSceneEnvironment', () => {
     expect(h.callbacks.size).toBe(0);
   });
 
-  it('under ?bake-env, bakes once after the loader stays settled for the grace window', async () => {
+  it('under ?bakeEnv, bakes once after the loader stays settled for the grace window', async () => {
     const h = makeHarness({ bakeEnvironment: { probe: 'node:shell', resolution: 32 } });
     const bake = h.callbacks.get('environment-bake')!;
     expect(bake).toBeDefined();

@@ -175,10 +175,10 @@ test.describe('Frame pacing (#1724)', () => {
   }) => {
     const consoleMessages = captureConsoleMessages(page);
 
-    // `&no-opfs` for the same reason as the smoke spec: nothing here asserts
+    // `&noOpfs` for the same reason as the smoke spec: nothing here asserts
     // the L2 OPFS tier, and automated Chromium's OPFS stalls systemically
     // (10 s per op — issue #1645), starving scene readiness past the budget.
-    await page.goto(`/?src=${EXAMPLES_BASE}/${DATASET}&debug&no-opfs`, {
+    await page.goto(`/?src=${EXAMPLES_BASE}/${DATASET}&debug&noOpfs`, {
       timeout: NAV_TIMEOUT_MS,
     });
     await waitForReadyWithDiagnostics(page, READY_TIMEOUT_MS, consoleMessages.errors);

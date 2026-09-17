@@ -558,6 +558,15 @@ From `./validation.ts`:
 
 From `./url-params.ts`:
 
+- `URL_PARAM_KEYS` / `UrlParamKey` — the wire-spelling table of every recognized
+  parameter (`noCache`, `lodFinest`, …; multi-word names are camelCase). The
+  single place a spelling lives: `readUrlParams` reads through it, the README
+  and `VIEWER_GUIDE.md` parity tests check every entry is documented, and it is
+  re-exported from the package barrel for embedders assembling a viewer URL.
+- `URL_PARAM_ALIASES` + `hasParam(params, key)` / `getParam(params, key)` — the
+  deprecated-spelling mechanism for a POST-release rename: an alias maps an old
+  spelling to a current key, is honored by every read, and warns once per page
+  load. Empty today (the 2026-09 camelCase rename was a pre-release hard cut).
 - `readUrlParams(search?)` — typed snapshot of recognized `?param=value` pairs.
   Includes `input: 'touch' | 'mouse' | null` (`?input=`), the JS-only input-profile
   override applied by `core/bootstrap.ts` via `utils/input-capabilities`.

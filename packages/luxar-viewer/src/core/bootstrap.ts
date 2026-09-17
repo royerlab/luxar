@@ -24,6 +24,7 @@ import { archiveFaultFrom } from '../cache/chunk-source';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { buildInfo, buildInfoLine } from '../config/build-info';
+import { VIEWER_VERSION } from '../version';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { cachePoolOverrideBytes } from '../cache/heap-budget';
@@ -334,8 +335,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // `?dpr=<value>` pins a fixed pixel ratio for deterministic
     // E2E/visual runs; undefined → normal adaptive-DPR behavior.
     pinnedDPR: urlParams.dpr ?? undefined,
-    // On-by-default rendering feature flags (`?no-lod-fade`,
-    // `?no-lod-energy`, `?depthSort=0` disable). Threaded as options so
+    // On-by-default rendering feature flags (`?noLodFade`,
+    // `?noLodEnergy`, `?depthSort=0` disable). Threaded as options so
     // an embedder-supplied `urlParams` object controls them too — the
     // init pipeline reads options, never window.location.
     lodFade: urlParams.lodFade,
@@ -348,16 +349,16 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
     densityGuard: urlParams.densityGuard,
-    // `?density-cap=<N>` sweeps the guard's threshold for one session.
+    // `?densityCap=<N>` sweeps the guard's threshold for one session.
     densityCap: urlParams.densityCap ?? undefined,
-    // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
+    // Opt-in capture-quality override (`?lodFinest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
-    // Session-wide replacement-LOD threshold bias (`?lod-bias=N`).
+    // Session-wide replacement-LOD threshold bias (`?lodBias=N`).
     lodBias: urlParams.lodBias ?? undefined,
     // The shared init pipeline applies the mobile default so direct LuxarApp
     // embedders and the standalone app behave identically.
     blendWarmup: urlParams.blendWarmup,
-    // `?bake-env[&probe=…][&env-resolution=…]` — the `luxar env bake` driver.
+    // `?bakeEnv[&probe=…][&envResolution=…]` — the `luxar env bake` driver.
     bakeEnvironment: urlParams.bakeEnv
       ? { probe: urlParams.probe ?? undefined, resolution: urlParams.envResolution ?? undefined }
       : undefined,
@@ -391,7 +392,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     window.__luxarDebug = {
       app,
       consoleInterceptor,
-      version: buildInfo().version,
+      version: VIEWER_VERSION,
       // Perf probes must not wait for the dataset load + blend warm-up that
       // gate the runtime surface (`getState` etc.): the load timeline is
       // readable from here on, and installDebugInterface swaps in the

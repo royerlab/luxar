@@ -94,7 +94,20 @@ export type { ViewerSnapshot } from './core/app/snapshot/viewer-snapshot';
 
 // URL parsing — useful for embedders that want to honor a few of the
 // standalone-app's URL flags without taking the whole bootstrap path.
-export { normalizeDataSourceUrl, readUrlParams, type UrlParams } from './config/url-params';
+// `URL_PARAM_KEYS` is the wire-spelling table (`noCache`, `lodFinest`, …) so a
+// host page assembling a viewer URL never hardcodes a parameter name.
+export {
+  normalizeDataSourceUrl,
+  readUrlParams,
+  URL_PARAM_KEYS,
+  type UrlParamKey,
+  type UrlParams,
+} from './config/url-params';
+
+// The release version as a plain string — `package.json`'s version in every
+// built bundle. The stamp below carries commit and build time as well; this is
+// the one constant an embedder compares against (`VIEWER_VERSION >= …`).
+export { VIEWER_VERSION } from './version';
 
 // Storage namespacing — exposed so an embedder can clear Luxar-owned keys
 // (e.g. on uninstall) without grepping the codebase for prefixes.

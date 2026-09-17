@@ -327,7 +327,7 @@ export function computeOpfsWriteQueueBudgetBytes(
  * fixed config sizes (`source: 'fixed'`, e.g. non-browser / no device signals).
  *
  * @param enabled - Which tiers are actually active this session. A disabled tier
- *   gets a 0 budget and does NOT reserve any pool: e.g. `?no-slice-cache` frees
+ *   gets a 0 budget and does NOT reserve any pool: e.g. `?noSliceCache` frees
  *   the S-cache floor back to the chunk caches, and disabling L0 gives its share
  *   to the S-cache. Defaults to all enabled (identical to the pre-flag behavior).
  */

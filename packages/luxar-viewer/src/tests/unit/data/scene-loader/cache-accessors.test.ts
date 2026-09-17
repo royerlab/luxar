@@ -4,7 +4,7 @@
  * These methods replaced 7+ `(loader as any).cachingStore` casts in
  * core/app.ts:setupDebugInterface. They give debug tools and embedders
  * a typed surface and behave gracefully when the cache layer is absent
- * (the no-cache code path that embedders are most likely to hit).
+ * (the `?noCache` code path that embedders are most likely to hit).
  */
 
 import { describe, expect, it } from 'vitest';

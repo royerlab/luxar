@@ -2,8 +2,14 @@ import { defineConfig } from 'vitest/config';
 
 import { COVERAGE_THRESHOLDS } from './coverage-thresholds.mjs';
 import { resolve } from 'path';
+import { viewerVersionDefine } from './tools/build-identity.ts';
 
 export default defineConfig({
+  // `VIEWER_VERSION` is the package.json version under vitest too, so
+  // `version.test.ts` can prove the define → module → barrel wiring against
+  // the file itself. Deliberately NOT the `__LUXAR_BUILD__` stamp: the
+  // build-info tests rely on vitest being the UNSTAMPED context.
+  define: viewerVersionDefine(),
   test: {
     // `node` is the DEFAULT; a file that needs a DOM opts in with a
     // `// @vitest-environment jsdom` docblock on its first line.

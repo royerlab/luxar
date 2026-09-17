@@ -99,11 +99,11 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       console.log(`\n[Smoke Test] Testing: ${example}`);
 
       // Navigate to example with debug interface
-      // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
+      // `&noOpfs` on every load: this spec never asserts the L2 OPFS tier, and
       // automated Chromium's OPFS stalls systemically (10s per op — issue #1645),
       // starving scene readiness past the test budget. The circuit breaker only
       // helps un-flagged real sessions (it still pays ~3 timeouts per fresh page).
-      const url = `/?src=${EXAMPLES_BASE}/${example}&debug&no-opfs`;
+      const url = `/?src=${EXAMPLES_BASE}/${example}&debug&noOpfs`;
       await page.goto(url);
 
       // Wait for Luxar to fully initialize
@@ -257,7 +257,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   // Deep validation for examples that exposed bugs
 
   test('mesh_basic - should report its rendered triangles', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/mesh_basic_example.luxar.zarr&debug&no-opfs`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/mesh_basic_example.luxar.zarr&debug&noOpfs`);
     await waitForLuxarReady(page, 60000);
 
     await assertNoConsoleErrors(page);
@@ -272,7 +272,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   });
 
   test('sharpness_showcase - should render all point clouds', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/sharpness_showcase_example.luxar.zarr&debug&no-opfs`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/sharpness_showcase_example.luxar.zarr&debug&noOpfs`);
     await waitForLuxarReady(page, 60000);
 
     // CRITICAL: This example exposed the LUT scalar mode bug
@@ -316,7 +316,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   });
 
   test('dense_grid_5d - should handle 5D nD data', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/dense_grid_5d_example.luxar.zarr&debug&no-opfs`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/dense_grid_5d_example.luxar.zarr&debug&noOpfs`);
     await waitForLuxarReady(page, 60000);
 
     await assertNoConsoleErrors(page);
@@ -335,7 +335,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   });
 
   test('hierarchy_example - should apply transforms correctly', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/hierarchy_example.luxar.zarr&debug&no-opfs`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/hierarchy_example.luxar.zarr&debug&noOpfs`);
     await waitForLuxarReady(page, 60000);
 
     await assertNoConsoleErrors(page);
@@ -354,7 +354,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   });
 
   test('radius_showcase - should demonstrate radius-based slicing', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/radius_showcase_example.luxar.zarr&debug&no-opfs`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/radius_showcase_example.luxar.zarr&debug&noOpfs`);
     await waitForLuxarReady(page, 60000);
 
     await assertNoConsoleErrors(page);

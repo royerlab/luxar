@@ -139,7 +139,7 @@ describe('formatKeepFraction / formatThinning', () => {
     expect(formatThinning(makeControl({ thinning: () => ({ nodes: 3, minKeep: 1 / 8 }) }))).toBe(
       '3 nodes · keep 1/8 · cap 4'
     );
-    // A `?density-cap=` sweep shows the value as typed — halving down from 4
+    // A `?densityCap=` sweep shows the value as typed — halving down from 4
     // reaches 0.25, which must not round to 0.3.
     expect(formatThinning(makeControl({ capElementsPerPixel: () => 2.5 }))).toBe('none · cap 2.5');
     expect(formatThinning(makeControl({ capElementsPerPixel: () => 0.25 }))).toBe(
@@ -217,7 +217,7 @@ describe('setupPerformanceControls — Density Guard', () => {
   });
 
   it('binds the toggle to the LIVE guard state, not the stored flag', () => {
-    // Stored says on, session says off (`?no-density-guard`).
+    // Stored says on, session says off (`?noDensityGuard`).
     const control = makeControl({ isEnabled: () => false, sessionDisabled: true });
     setupPerformanceControls(makeContext(control));
     expect(byName(folder, 'Density Guard')._target).toEqual({ enabled: false });

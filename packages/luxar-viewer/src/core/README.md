@@ -425,7 +425,7 @@ if (isDebugMode) {
   window.__luxarDebug = {
     app, // Access to main app instance
     consoleInterceptor, // Console message buffer
-    version: buildInfo().version, // Build stamp — see config/build-info.ts
+    version: VIEWER_VERSION, // package.json version — see src/version.ts
   };
   console.log('🔧 [Luxar] Debug interface available at window.__luxarDebug');
 }

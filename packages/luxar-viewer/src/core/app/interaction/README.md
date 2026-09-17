@@ -185,7 +185,7 @@ so at 4 px every tap read as a camera drag), and three gestures:
 
 ## The kill switch
 
-`allowLinks: false` (option) / `?no-links` (URL) suppresses navigation, both
+`allowLinks: false` (option) / `?noLinks` (URL) suppresses navigation, both
 link menu items and the pointer cursor, while leaving `Copy` working — the
 clipboard is not navigation. The `element-click` / `element-contextmenu`
 embedder events still fire, with `link: null`, so a host can implement its own

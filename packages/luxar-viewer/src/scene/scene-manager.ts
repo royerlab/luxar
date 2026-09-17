@@ -393,10 +393,10 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Opt-in to `WebGPURenderer({ trackTimestamp: true })` for the perf
-   * bench. Off by default; flipped via `?perf-timestamp` URL param.
+   * bench. Off by default; flipped via `?perfTimestamp` URL param.
    */
   private perfTimestamp = false;
-  /** WebGL-only blend-variant warm-up (`?no-blend-warmup` disables). */
+  /** WebGL-only blend-variant warm-up (`?noBlendWarmup` disables). */
   private blendWarmup = true;
 
   /**
@@ -421,13 +421,13 @@ export class SceneManager extends THREE.EventDispatcher<{
     /**
      * Diagnostic flag for `WebGPURenderer({ forceWebGL: true })`.
      * Threaded from `LuxarAppOptions.webgpuForceWebGL`, ultimately from
-     * the `?webgpu-force-webgl` URL parameter.
+     * the `?webgpuForceWebgl` URL parameter.
      */
     webgpuForceWebGL?: boolean;
     /**
      * Opt-in to GPU timestamp queries. Threaded from
      * `LuxarAppOptions.perfTimestamp`, ultimately from the
-     * `?perf-timestamp` URL flag set by the perf bench.
+     * `?perfTimestamp` URL flag set by the perf bench.
      */
     perfTimestamp?: boolean;
     /**
@@ -775,7 +775,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Load scene data from Zarr source.
    *
    * Cache and prefetch flags propagate through `loaderConfig` from
-   * LuxarApp (originally derived from `?no-cache`/`?cache-debug`/etc URL
+   * LuxarApp (originally derived from `?noCache`/`?cacheDebug`/etc URL
    * parameters in main.ts).
    * `options.applyViewerConfigFov` is the caller's localStorage-precedence
    * decision, not a feature switch. Returning visitors keep their stored FOV

@@ -460,8 +460,8 @@ For debugging and testing:
 
 | Parameter | Effect |
 |-----------|--------|
-| `?no-prefetch` | Disable prefetching entirely |
-| `?prefetch-debug` | Log prefetch operations to console |
+| `?noPrefetch` | Disable prefetching entirely |
+| `?prefetchDebug` | Log prefetch operations to console |
 
 ---
 
@@ -487,7 +487,7 @@ Prefetching can hurt performance when:
 2. **Bandwidth-constrained** - Prefetch competes with needed data
 3. **High-latency connections** - Queue fills up, stale prefetches
 
-The `?no-prefetch` parameter allows disabling for these cases.
+The `?noPrefetch` parameter allows disabling for these cases.
 
 ---
 
@@ -509,7 +509,7 @@ The `?no-prefetch` parameter allows disabling for these cases.
 
 1. **Prefetch reduces latency**: Measure time to load adjacent chunks
 2. **No resource leaks**: Verify in-flight requests complete without errors
-3. **Debug parameter works**: Verify `?no-prefetch` disables feature
+3. **Debug parameter works**: Verify `?noPrefetch` disables feature
 
 ---
 

@@ -235,7 +235,7 @@ luxar env bake scene.luxar.zarr --probe node:clusters/shell_3
 ```
 
 It drives the viewer through Playwright the way the gallery capture does (so it
-runs unattended on a GPU box), using a `?bake-env&probe=...` URL parameter that
+runs unattended on a GPU box), using a `?bakeEnv&probe=...` URL parameter that
 makes the viewer capture on load settle, read the six faces back as FLOATS
 (`readRenderTargetPixels` — a PNG would clip everything above 1.0 and destroy the
 highlights that make metals read) and download one binary blob with a JSON header
@@ -297,7 +297,7 @@ above):
   digest for tooling.
 - **`luxar env bake`** serves the store and the built viewer from one process
   (a stoppable `served_store`), drives a headless browser to
-  `?bake-env&probe=…&env-resolution=…` through the viewer's Playwright
+  `?bakeEnv&probe=…&envResolution=…` through the viewer's Playwright
   (`scripts/bake-env.mjs`, Node — Playwright is a devDependency of the viewer, not
   a Python dependency, so the command needs a development checkout), pulls the
   `LXENV001` container back through `page.evaluate` as base64 rather than a
@@ -421,7 +421,7 @@ described last below.
   full-screen quad repaints it from a copy; the pass-B quad and a second blit +
   restore quad before pass C do that, which is why the quads' `depthTest:false`,
   `depthWrite:false`, `transparent:false` and `frustumCulled:false` are pinned by
-  test. `WebGPURenderer`'s WebGL2 fallback (`?webgpu-force-webgl`) invalidates too
+  test. `WebGPURenderer`'s WebGL2 fallback (`?webgpuForceWebgl`) invalidates too
   and cannot take the GLSL quads, so that one combination with MSAA on falls back to
   a single pass with a warning.
 - **`transmissionResolutionScale` 0.5, pass B only** (config
@@ -602,7 +602,7 @@ thresholds `glass-refraction-partition.spec.ts` sits between.
 | 1 — **delivered** | `material="physical"`, `roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`, `iridescence`, `sheen`, `sheen_color`; default `RoomEnvironment` built lazily; Python validation; Layers-panel shows the physical knobs read-only; `mesh_physical_materials_example`; the A/B script | Metals, lacquer, pearlescent shells; a true Fresnel rim via `clearcoat` on a dark base | Small: one factory entry, one env builder, attrs plumbing |
 | 2 — **delivered** | `transmission`, `ior`, `thickness`, `attenuation_*`, `dispersion` with three's stock pass; glass ordered first in its band on both backends; the physical knobs as LIVE Layers-panel sliders (§6 item 2); three glass spheres and a checkerboard backdrop in the demo | Glass and lenses that refract the background and other meshes; tuning a material without a rebuild | Small; the §3.4 caveat is in the Layers panel tooltip |
 | 3 — **delivered** (opt-in) | `refract_data`: glass ranked LAST in its band, the `DataRefractionSplit` on both backends (glass depth pre-pass, data behind, glass — with a screen quad on WebGL — data in front), the per-fragment depth partition in every data shader (`uGlassPartition` / `uGlassDepth`, GLSL and TSL), `transmissionResolutionScale` 0.5 in pass B only, the transmitted alpha pinned to 1 on both backends (§3.4); a live Layers-panel switch; `mesh_glass_lens_example`; the `glass-refraction-partition` E2E spec | Glass that refracts the data behind it while the data in front of it stays crisp | Medium: one split module owned by `PostProcessingManager`, one `last` flag + two queries in the coordinator, a guard in ten fragment shaders, two shader hooks |
-| 4 — **delivered** | `viewer_config.environment.source = room \| scene \| hdri` with `probe`, `resolution`, `intensity`, `url`; live exact cube capture on commit / slice / appearance change once settled; `luxar env bake` / `?bake-env` / `luxar env attach` storing `environment/faces-<digest>` (uint16 half bits) with an exact `scene_content_hash` guard, the group excluded from the scene digest (§3.3 Phase 4 notes); `mesh_reflections_example` | Metals and glass that reflect the data they sit in; zero-cost baked environments for published scenes | Small: one more builder behind `SceneEnvironment.ensure()`, one CLI pair, one Playwright driver |
+| 4 — **delivered** | `viewer_config.environment.source = room \| scene \| hdri` with `probe`, `resolution`, `intensity`, `url`; live exact cube capture on commit / slice / appearance change once settled; `luxar env bake` / `?bakeEnv` / `luxar env attach` storing `environment/faces-<digest>` (uint16 half bits) with an exact `scene_content_hash` guard, the group excluded from the scene digest (§3.3 Phase 4 notes); `mesh_reflections_example` | Metals and glass that reflect the data they sit in; zero-cost baked environments for published scenes | Small: one more builder behind `SceneEnvironment.ensure()`, one CLI pair, one Playwright driver |
 
 ## 5. Explicitly out of scope
 

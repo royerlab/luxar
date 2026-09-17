@@ -147,7 +147,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
 
   // Push the explicit telemetry state BEFORE provider wiring so the
   // UI's brief pre-provider window reflects the policy decision (e.g.
-  // `?no-cache` shows as "disabled-no-cache", not "not-wired").
+  // `?noCache` shows as "disabled-no-cache", not "not-wired").
   monitor.setCacheTelemetryState(cacheTelemetryState);
 
   // Cache tab — L1/L2 (LRU + OPFS) and L0 (decompressed chunks).

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
  * Headless driver for `luxar env bake`: open the viewer on a scene with
- * `?bake-env&probe=…&env-resolution=…`, wait for the capture the viewer runs once
+ * `?bakeEnv&probe=…&envResolution=…`, wait for the capture the viewer runs once
  * the load settles, and write the container it hands back
  * (`__luxarDebug.environment.lastBake`, base64) to `--out`.
  *
  *   node scripts/bake-env.mjs \
- *     --url 'http://127.0.0.1:8123/viewer/?src=http://127.0.0.1:8123&debug&bake-env&probe=auto&env-resolution=128' \
+ *     --url 'http://127.0.0.1:8123/viewer/?src=http://127.0.0.1:8123&debug&bakeEnv&probe=auto&envResolution=128' \
  *     --out /tmp/scene.env.bin [--timeout 300000] [--channel chrome|chromium]
  *
  * The Python side (`luxar.environment.bake`) serves the store and the viewer and invokes this;
@@ -42,7 +42,7 @@ if (typeof url !== 'string' || typeof out !== 'string') {
   process.exit(2);
 }
 if (!/[?&]bake-env(&|$)/.test(url)) {
-  console.error('--url must carry ?bake-env (the viewer bakes only when asked to)');
+  console.error('--url must carry ?bakeEnv (the viewer bakes only when asked to)');
   process.exit(2);
 }
 

@@ -4,8 +4,11 @@
  *
  * Asserts that:
  *   1. The expected output files exist (JS, CSS, types).
- *   2. The JS bundle exports the public symbols (LuxarApp, LuxarLayer,
- *      bootstrapStandalone, readUrlParams, StorageKeys).
+ *   2. The JS bundle's runtime exports are EXACTLY the list in
+ *      scripts/public-api-exports.json — the same list the source barrel is
+ *      held to by src/tests/unit/api/barrel-side-effects.test.ts, so a lost
+ *      export and a leaked one both fail here. `VIEWER_VERSION` must also
+ *      equal package.json's version: the define is silent when it goes wrong.
  *   3. Importing the bundle does NOT monkey-patch the host console — the
  *      embedability contract from src/index.ts.
  *   4. `three` is externalized (not bundled). A bundled `three` would be a
@@ -25,6 +28,24 @@ import { dirname, resolve, sep } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(HERE, '..');
 const LIB_DIR = resolve(PKG_ROOT, 'dist/lib');
+
+/** The public value-export list, shared with the barrel unit test. */
+function publicApiExports() {
+  const parsed = JSON.parse(readFileSync(resolve(HERE, 'public-api-exports.json'), 'utf8'));
+  if (!Array.isArray(parsed.exports)) {
+    throw new Error('scripts/public-api-exports.json has no "exports" array');
+  }
+  return [...parsed.exports].sort();
+}
+
+/** The version the bundle must report, read from package.json — never a literal. */
+function expectedVersion() {
+  const pkg = JSON.parse(readFileSync(resolve(PKG_ROOT, 'package.json'), 'utf8'));
+  if (typeof pkg.version !== 'string' || pkg.version.length === 0) {
+    throw new Error('package.json has no version to check against');
+  }
+  return pkg.version;
+}
 
 const failures = [];
 function fail(msg) {
@@ -48,16 +69,26 @@ if (existsSync(jsPath)) {
 
   try {
     const mod = await import(pathToFileURL(jsPath).href);
-    for (const sym of [
-      'LuxarApp',
-      'LuxarLayer',
-      'bootstrapStandalone',
-      'readUrlParams',
-      'StorageKeys',
-    ]) {
-      if (!(sym in mod)) {
-        fail(`Bundle does not export "${sym}"`);
-      }
+    const expectedExports = publicApiExports();
+    const actualExports = Object.keys(mod).sort();
+    const missing = expectedExports.filter((sym) => !actualExports.includes(sym));
+    const extra = actualExports.filter((sym) => !expectedExports.includes(sym));
+    for (const sym of missing) {
+      fail(`Bundle does not export "${sym}" (listed in scripts/public-api-exports.json)`);
+    }
+    for (const sym of extra) {
+      fail(
+        `Bundle exports "${sym}", which scripts/public-api-exports.json does not list. ` +
+          'Either the export is a leak or the list needs updating (in the same change).'
+      );
+    }
+
+    const version = expectedVersion();
+    if (mod.VIEWER_VERSION !== version) {
+      fail(
+        `Bundle VIEWER_VERSION is ${JSON.stringify(mod.VIEWER_VERSION)}, package.json says ` +
+          `"${version}" — the __LUXAR_VIEWER_VERSION__ define did not reach the library build.`
+      );
     }
 
     if (console.log !== consoleBefore) {

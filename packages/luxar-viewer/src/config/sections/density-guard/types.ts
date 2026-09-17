@@ -12,7 +12,7 @@
  * cap on which additive rungs the refinement loop admits.
  */
 export interface DensityGuardConfig {
-  /** Master switch; the `?no-density-guard` URL flag clears it for a session. */
+  /** Master switch; the `?noDensityGuard` URL flag clears it for a session. */
   enabled: boolean;
   /**
    * Elements per drawing-buffer pixel above which a node counts as

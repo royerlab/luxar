@@ -756,7 +756,7 @@ to counts.
   measurement). The viewer retained that policy after the #2685 sweep.
   Missing, invalid, or mismatched stamps keep the occupancy selector unchanged;
   explicit legacy `coverage_fractions` are therefore never overridden.
-  `lod-bias` remains an area factor, so the accepted footprint scales by
+  `lodBias` remains an area factor, so the accepted footprint scales by
   `1/sqrt(b)`; for bias ≥ 1 it is inert once the finest stamped level is
   selected, while bias below 1 can select a coarser level.
   Content-changing rewrites drop both measured keys rather than carrying stale

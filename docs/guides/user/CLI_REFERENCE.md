@@ -191,7 +191,7 @@ the requested finest-level screen-area fraction for every whole-object ladder
 the pass processes, both legacy ladders being migrated and groups already on
 `screen-area`; partition-bound ladders remain pinned to fills-screen `1.0`.
 Repeating the same anchor is still a no-op. For a whole-object ladder,
-`--anchor a` corresponds to viewer `?lod-bias=0.5/a`; setting both compounds the
+`--anchor a` corresponds to viewer `?lodBias=0.5/a`; setting both compounds the
 effect. The equivalence does not extend to `overview` / `adaptive` partition
 ladders: viewer bias scales them too, while `--anchor` deliberately leaves them
 at `1.0`.
@@ -428,7 +428,7 @@ luxar env bake --build                            # SCENE: rebuild a stale viewe
 ```
 
 Serves the store and the built viewer from one process, drives a headless browser to
-`?bake-env&probe=…&env-resolution=…` through the viewer's Playwright
+`?bakeEnv&probe=…&envResolution=…` through the viewer's Playwright
 (`packages/luxar-viewer/scripts/bake-env.mjs`), and — by default — attaches the
 captured faces. `--probe` is `auto` (the scene bounds centre), `node:<path>` (that
 node's bounding-box centre, what a marker shell around a cluster wants) or `x,y,z`;

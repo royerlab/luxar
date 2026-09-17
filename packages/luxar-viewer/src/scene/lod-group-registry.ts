@@ -898,7 +898,7 @@ export interface LODGroupRegistryDeps {
    */
   isUpdateInProgress?: () => boolean;
   /**
-   * Whether the LOD cross-fade is enabled (ON by default; `?no-lod-fade`
+   * Whether the LOD cross-fade is enabled (ON by default; `?noLodFade`
    * disables). When true and a blendable (additive/luminous/volumetric — see
    * `BLENDABLE_MODES` in `scene/lod-fade.ts`) group is zooming across a LOD
    * boundary, the registry
@@ -927,7 +927,7 @@ export interface LODGroupRegistryDeps {
    * never coarsen off-screen) — for high-quality still/video capture (the
    * gallery harness), where a coarse level looks blurry even when the
    * subject is small in frame. Wired from `LuxarAppOptions.lodFinest`
-   * (the `?lod-finest` URL flag, threaded through the standalone
+   * (the `?lodFinest` URL flag, threaded through the standalone
    * bootstrap); omitted / false ⇒ normal coverage-driven selection. Read
    * live, like the sibling flags above.
    */
@@ -2008,7 +2008,7 @@ export class LODGroupRegistry {
             const recovery = this.deps.hasNetworkFailureUnder?.(entry.path)
               ? 'A network load failed under this group; use the monitor Retry action.'
               : 'This usually means inconsistent/stale data (e.g. a dataset regenerated at ' +
-                'the same URL with a poisoned cache); try reloading with ?clear-cache.';
+                'the same URL with a poisoned cache); try reloading with ?clearCache.';
             log.warning(
               Modules.SCENE_LOADER,
               `lod_group ${entry.path}: level ${displayIdx} is fresh but committed 0 ` +

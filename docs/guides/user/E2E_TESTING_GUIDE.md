@@ -129,7 +129,7 @@ The authoritative list is the directory itself — run
 | **transform-hierarchy.spec.ts** | ⭐ Transform correctness |
 | **tsl-codegen-snapshot.spec.ts** | TSL-generated GLSL/WGSL pinned to checked-in snapshots (bloat regression alarm) |
 | **tsl-shader-parity.spec.ts** | GLSL vs TSL shader parity |
-| **url-parameters.spec.ts** | URL parameters control initial state (`?theme=`, `?no-cache`, `?debug`, invalid params) |
+| **url-parameters.spec.ts** | URL parameters control initial state (`?theme=`, `?noCache`, `?debug`, invalid params) |
 | **viewer-initialization.spec.ts** | Viewer startup without data |
 | **visual-regression.spec.ts** | Screenshot comparison |
 | **webgl-errors.spec.ts** | WebGL error detection |

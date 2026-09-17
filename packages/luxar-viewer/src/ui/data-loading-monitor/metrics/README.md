@@ -79,7 +79,7 @@ consumers can import it from the same module that owns the aggregation.
 - **`telemetryState` precedence**: caller-supplied wins; otherwise
   inferred from `cacheStatsProvider` presence + `isEnabled()`. With
   no provider the default is `not-wired` (not `enabled`) so
-  `?no-cache` runs do not surface as enabled.
+  `?noCache` runs do not surface as enabled.
 - **Cross-tier demand hit rate**: consumers read
   `effectiveDemandHitRate`, which combines L0 hits with the
   L1 / L2 / network demand counters when available.

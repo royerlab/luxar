@@ -141,7 +141,7 @@ Without this, sorted or not, gsplat `normal` mode cannot reveal the framebuffer 
 - TSL/GLSL parity spec covers the new define/flag combination (guards the double-premult trap by construction).
 - Unit: `getGSplatNormalBlendingState` state shape; mode-switch round-trip normal↔additive restores the exact prior state.
 - Visual E2E fixture: two overlapping splats, `normal` mode, opacity 0.5 — background must show through (fails today). Add to `tests/fixtures/generate_test_data.py` (single source of truth; unit-test globalSetup auto-generates).
-- Existing additive/max visual baselines unchanged (regression gate). Run the WebGPU diagnostic path (`?renderer=webgpu` and `&webgpu-force-webgl`) on the fixture — the bridge's alpha-state sensitivity is exactly what this phase touches.
+- Existing additive/max visual baselines unchanged (regression gate). Run the WebGPU diagnostic path (`?renderer=webgpu` and `&webgpuForceWebgl`) on the fixture — the bridge's alpha-state sensitivity is exactly what this phase touches.
 
 **Risk**: low. Purely additive define + one new blend-state helper. `normal` blending will still be order-_dependent_ after this phase — visibly better, occasionally wrong on overlap, fully fixed by Phases 1–3.
 
@@ -177,7 +177,7 @@ The structural phase. After it, rendering is visually identical (identity orderi
 - Codegen snapshots (`LUXAR_UPDATE_SNAPSHOTS=1`, FRESH server — the spec false-passes against a stale :5173) regenerate for all gsplat surfaces; the full parity-variant inventory stays green: base/gamma-one/colormap, `gsplat-offcenter` (fragcoord convention), `gsplat-tiny-sigma-fade`/`-reject` (coverage fade), behind-camera trio, `gsplat-normal-premult`.
 - Context-loss E2E (`webgl-errors.spec.ts`): textures rebuilt on restore (recommit path).
 
-**Risks**: texture-unit pressure (uSplatTex + uColormapTex in the vertex stage = 2 of ≥16 guaranteed — fine); `maxTextureSize=4096`-class devices cap at 4.2M splats/node (warn + clamp; tiles idiom is 250K/part); WebGPU `textureLoad` parity (covered by the harness + `?renderer=webgpu&webgpu-force-webgl` diagnostic).
+**Risks**: texture-unit pressure (uSplatTex + uColormapTex in the vertex stage = 2 of ≥16 guaranteed — fine); `maxTextureSize=4096`-class devices cap at 4.2M splats/node (warn + clamp; tiles idiom is 250K/part); WebGPU `textureLoad` parity (covered by the harness + `?renderer=webgpu&webgpuForceWebgl` diagnostic).
 
 ---
 
@@ -285,7 +285,7 @@ One PR per phase, in order; each leaves `main` shippable. Phase 1 is the only hi
 
 ## 10. Risk register (ranked; what is actually hard about this)
 
-1. **Three r184 half-supported vertex paths — the twice-burned pattern (highest risk).** This repo has already been bitten twice by r184 vertex-pipeline gaps: `GLSLNodeBuilder` hardcoding `gl_PointSize = 1.0` (forced the Points→instanced-quad migration) and `gpuType: HalfFloatType` silently ignored on interleaved attributes (the `dd7c4478` Float16 revert that shipped a regression). Phase 1 bets on two more under-exercised paths: a **uint instanced attribute** and **vertex-stage `textureLoad`**, each through _both_ the raw-GLSL ShaderMaterial path and the TSL node-builder (including WebGPURenderer's WebGL2-fallback GLSL emission). Raw WebGL2 support is verified (§1); what is NOT verified is what three's node builders emit. **Mitigation — mandatory spike before Phase 1 is scoped**: a 1-day throwaway probe rendering one quad-instanced mesh with a uint attribute + vertex texelFetch on all three surfaces (WebGL, WebGPU-native, `webgpu-force-webgl`). Fallback if uint attributes are broken in the node builder: a float attribute carries exact integers to 2^24 = 16.7M — exactly our per-node cap, so it works but eliminates headroom.
+1. **Three r184 half-supported vertex paths — the twice-burned pattern (highest risk).** This repo has already been bitten twice by r184 vertex-pipeline gaps: `GLSLNodeBuilder` hardcoding `gl_PointSize = 1.0` (forced the Points→instanced-quad migration) and `gpuType: HalfFloatType` silently ignored on interleaved attributes (the `dd7c4478` Float16 revert that shipped a regression). Phase 1 bets on two more under-exercised paths: a **uint instanced attribute** and **vertex-stage `textureLoad`**, each through _both_ the raw-GLSL ShaderMaterial path and the TSL node-builder (including WebGPURenderer's WebGL2-fallback GLSL emission). Raw WebGL2 support is verified (§1); what is NOT verified is what three's node builders emit. **Mitigation — mandatory spike before Phase 1 is scoped**: a 1-day throwaway probe rendering one quad-instanced mesh with a uint attribute + vertex texelFetch on all three surfaces (WebGL, WebGPU-native, `webgpuForceWebgl`). Fallback if uint attributes are broken in the node builder: a float attribute carries exact integers to 2^24 = 16.7M — exactly our per-node cap, so it works but eliminates headroom.
 
     > **SPIKE VERDICT (2026-07-13, three 0.184.0 — RISK RETIRED, all three surfaces PASS).**
     > Probe: 16 instanced quads, `Uint32Array` `aSortedIndex` carrying the permutation `(7i+3) mod 16`, colors vertex-fetched from an RGBA32F `DataTexture` (`NearestFilter`); control row fetches by `gl_InstanceID`/`instanceIndex`. Verified by pixel classification against a 16-color palette.

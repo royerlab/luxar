@@ -42,7 +42,7 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
 - `LUXAR_PERF_AUDIT_LOD_BIASES=1,2,4` crosses only scenes carrying a
   substitutive ladder; non-ladder scenes remain single-arm frame/load rows. Bias
   1 is the neutral existing key, while non-neutral rows are keyed `-lod-bias-N`.
-  The bench pins `no-lod-fade` so committed counts and active levels describe one
+  The bench pins `noLodFade` so committed counts and active levels describe one
   selected level rather than a cross-fade pair. Rows include committed
   visible-element totals under substitutive groups (or the whole scene when
   none exists) plus the active level of every substitutive group at
@@ -112,7 +112,7 @@ Decision:
   and network cost. Bias 2 is the decision-relevant transfer arm because
   ZebraHub is already finest there; bias 4 selects the same levels and has
   identical opening-load request and byte totals.
-- Keep `lod-bias` available to both occupancy and footprint selection. It is a
+- Keep `lodBias` available to both occupancy and footprint selection. It is a
   no-op for bias ≥ 1 when a stamped ladder is already saturated at the finest
   level, but the stamped Tribolium `levels` ladder changes from level 1 to level
   2 after the 4x dolly at bias 4, raising committed scene elements 2.46x without

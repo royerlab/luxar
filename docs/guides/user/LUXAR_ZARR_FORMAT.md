@@ -1923,7 +1923,7 @@ any other value would be a *named* browsing context, which the browser opens
 with a live `window.opener` the destination could use to navigate the viewer
 tab. Links open with `noopener,noreferrer`.
 
-Viewers can refuse links entirely — `?no-links`, or `allowLinks: false` in the
+Viewers can refuse links entirely — `?noLinks`, or `allowLinks: false` in the
 embedder options. That suppresses navigation, the two link menu items and the
 pointer cursor, while leaving `Copy` working.
 

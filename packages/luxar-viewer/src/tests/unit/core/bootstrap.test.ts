@@ -76,6 +76,7 @@ vi.mock('zarrita', () => ({
 }));
 
 import { buildInfo, buildInfoLine } from '../../../config/build-info';
+import { VIEWER_VERSION } from '../../../version';
 import { config } from '../../../config';
 import { bootstrapStandalone } from '../../../core/bootstrap';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
@@ -115,7 +116,7 @@ const EMPTY_PARAMS: UrlParams = {
   depthSort: true,
   densityGuard: true,
   densityCap: null,
-  lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
+  lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lodFinest)
   lodBias: null,
   noPrefetch: false,
   prefetchDebug: false,
@@ -445,11 +446,11 @@ describe('bootstrapStandalone', () => {
         urlParams: { ...EMPTY_PARAMS, debug: true },
       });
       expect(window.__luxarDebug).toBeDefined();
-      // Derived, not a literal: the value is the build stamp, which is
-      // absent under vitest (no Vite `define`) and a real CalVer in a
-      // built bundle. Pinning a literal here is what let a hardcoded
-      // '1.0.0' survive in the shipped viewer for the whole project.
-      expect(window.__luxarDebug?.version).toBe(buildInfo().version);
+      // Derived, not a literal: the value is `VIEWER_VERSION`, which
+      // `version.test.ts` proves equals package.json. Pinning a literal here
+      // is what let a hardcoded '1.0.0' survive in the shipped viewer for
+      // the whole project.
+      expect(window.__luxarDebug?.version).toBe(VIEWER_VERSION);
       expect(window.__luxarDebug?.app).toBeDefined();
       expect(window.__luxarDebug?.consoleInterceptor).toBeDefined();
       // showError is exposed so visual-regression specs can drive the
@@ -733,7 +734,7 @@ describe('bootstrapStandalone', () => {
     });
 
     it('URL disable flags compose with stored preferences via OR', async () => {
-      // Stored prefs enable everything; ?no-slice-cache still disables S-cache.
+      // Stored prefs enable everything; ?noSliceCache still disables S-cache.
       saveUserSettings(defaultUserSettings());
       await bootstrapStandalone({
         canvas: CANVAS,
@@ -742,7 +743,7 @@ describe('bootstrapStandalone', () => {
       expect(initOptions().loaderConfig.noSliceCache).toBe(true);
     });
 
-    it('?no-opfs passes straight through to the loader config (param-only, no setting)', async () => {
+    it('?noOpfs passes straight through to the loader config (param-only, no setting)', async () => {
       await bootstrapStandalone({
         canvas: CANVAS,
         urlParams: { ...EMPTY_PARAMS, noOpfs: true },

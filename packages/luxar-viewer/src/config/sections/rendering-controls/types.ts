@@ -93,7 +93,7 @@ export interface RenderingSettings {
   /**
    * Runtime toggle for the projected-density guard (shader thinning of
    * over-dense blendable nodes + the refinement rung cap). Persisted per
-   * scene; `?no-density-guard` overrides it for one session without
+   * scene; `?noDensityGuard` overrides it for one session without
    * touching the stored value.
    */
   densityGuardEnabled: boolean;

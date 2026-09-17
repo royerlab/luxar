@@ -1038,12 +1038,12 @@ the native WKWebView launcher fall back to L1-only caching; see the
 | `?src=<url>` | Data source URL (Zarr store) |
 | `?theme=light` | Set UI theme (`light` or `dark`) |
 | `?debug` | Enable debug mode (`window.__luxarDebug`) |
-| `?no-cache` | Disable all caching tiers (S-cache + L0/L1/L2) |
-| `?cache-debug` | Show cache hit/miss statistics |
-| `?clear-cache` | Clear the OPFS persistent cache on load |
-| `?no-prefetch` | Disable predictive chunk prefetching |
+| `?noCache` | Disable all caching tiers (S-cache + L0/L1/L2) |
+| `?cacheDebug` | Show cache hit/miss statistics |
+| `?clearCache` | Clear the OPFS persistent cache on load |
+| `?noPrefetch` | Disable predictive chunk prefetching |
 | `?renderer=webgl\|webgpu` | Select WebGLRenderer + GLSL (production default) or opt into WebGPURenderer + TSL |
-| `?webgpu-force-webgl` | With `?renderer=webgpu`, keep WebGPURenderer + TSL but force Three.js's internal WebGL2 backend for diagnostics |
+| `?webgpuForceWebgl` | With `?renderer=webgpu`, keep WebGPURenderer + TSL but force Three.js's internal WebGL2 backend for diagnostics |
 
 ---
 
