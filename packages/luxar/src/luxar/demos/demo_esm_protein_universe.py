@@ -972,6 +972,22 @@ BACKDROP_LOD_FACTOR = 4
 _STORY_POOL: tuple[UniverseStory, ...] = (
     _carry(
         "Hemoglobin",
+        # The carried narration never mentioned the map, and on this tour the
+        # story is a CONSTELLATION — a visitor heard Perutz's balsa-wood model
+        # while looking at four beads joined by threads. Overridden here and
+        # not in the Swiss-Prot tour, whose map has no such figure.
+        narration=(
+            "Hemoglobin, the molecule of breath. Each red blood cell carries "
+            "some two hundred and eighty million of these, and each one holds "
+            "four oxygens. In 1949 Linus Pauling showed that sickle-cell "
+            "anaemia comes from a single swapped amino acid: the first "
+            "molecular disease. Max Perutz needed twenty-two years to see its "
+            "shape. The lines here join the four places this fold is filed "
+            "in: one of animal globins, three of bacterial enzymes that "
+            "destroy nitric oxide instead of carrying oxygen. And yet "
+            "hemoglobin also turns up inside dopamine neurons, nowhere near "
+            "blood. What it does there, nobody quite knows."
+        ),
         # A CONSTELLATION: the same fold in four places, one animal and three
         # bacterial, and the split is the story (see `UniverseStory.constellation`).
         constellation=True,
@@ -1010,6 +1026,20 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
     ),
     _carry(
         "Photosystem II",
+        # As for hemoglobin: a constellation on this tour, and the carried
+        # narration said nothing about the six places or the lines.
+        narration=(
+            "Photosystem II, the protein that made the sky breathable. Its D1 "
+            "subunit sits at the heart of the only enzyme known that splits "
+            "water. Cyanobacteria running this machine filled Earth's air "
+            "with oxygen, two and a half billion years ago. The chemistry is "
+            "so violent that D1 wrecks itself within the hour in bright sun; "
+            "a leaf rebuilds it all day long. The lines here join six places: "
+            "D1 itself, its partner D2, and the purple-bacterial chains that "
+            "split no water. Molecular clocks say water-splitting is far "
+            "older than the rise of oxygen. So why did the planet wait so "
+            "long to change?"
+        ),
         # A CONSTELLATION: the reaction centre taken apart — D1, D2 and the
         # purple-bacterial L/M chains are filed in separate places.
         constellation=True,
@@ -1115,6 +1145,18 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
     ),
     _carry(
         "ATP synthase",
+        # The carried narration was all mechanism and no map.
+        narration=(
+            "ATP synthase, the turbine in every cell. Protons flowing through "
+            "it turn an axle, and each turn presses out three molecules of "
+            "ATP. In 1997 a single motor was filmed spinning under a "
+            "microscope. You make and spend roughly your own body weight in "
+            "ATP every day. The knot lit here is nearly three hundred "
+            "clusters of the beta subunit as bacteria build it, with the "
+            "chloroplast copies of plants filed among them. It is one of the "
+            "most efficient motors known, wasting almost nothing as heat. "
+            "How a protein manages that is still debated."
+        ),
         subtitle="The rotary motor that makes the currency of life, in bacteria and in us",
         pattern=r"(?i)ATP synthase (subunit )?beta",
         radius=FAMILY_RADIUS,
@@ -1133,6 +1175,19 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
     ),
     _carry(
         "RuBisCO",
+        # The carried narration was all chemistry and no map.
+        narration=(
+            "RuBisCO, the most abundant enzyme on Earth, and one of the "
+            "slowest. Nearly every carbon atom in every living thing has "
+            "passed through it. It fixes about one CO2 every thirty seconds "
+            "and keeps confusing oxygen with carbon dioxide, so plants make "
+            "it by the tonne. The knot lit here is a hundred and seventeen "
+            "clusters of the large chain: half the plant enzyme, the rest "
+            "bacterial, with a few relatives that fix no carbon at all. "
+            "Three billion years of evolution never produced a fast, accurate "
+            "RuBisCO. Is that a wall that cannot be climbed, or has nobody "
+            "found the path?"
+        ),
         subtitle="The protein that pulls carbon out of the air for almost all life",
         pattern="",
         pfam=("PF00016", "PF02788"),  # RuBisCO_large, RuBisCO_large_N
@@ -1444,8 +1499,9 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "described in 1940, a year before the first patient was treated. "
             "Today antibiotic resistance is linked to nearly five million deaths "
             "a year, and these genes turn up in thirty-thousand-year-old "
-            "permafrost. Can new drugs keep pace with an enzyme that evolves in "
-            "real time?"
+            "permafrost. The knot lit here is four hundred clusters, almost "
+            "all class A, the family TEM-1 itself belongs to. Can new drugs "
+            "keep pace with an enzyme that evolves in real time?"
         ),
     ),
     UniverseStory(
@@ -1513,9 +1569,10 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "time. Noticed in 1987, understood in 2005, and in 2012 Doudna and "
             "Charpentier showed Cas9 could be pointed at any DNA at all. Eleven "
             "years later the first CRISPR medicine was approved, for sickle-cell "
-            "disease, the illness of the first story on this tour. Yet many "
-            "successful bacteria do without CRISPR. Why give up an immune "
-            "system?"
+            "disease, the illness of the first story on this tour. The knot "
+            "lit here is two hundred and sixty clusters of Cas9 itself. Yet "
+            "many successful bacteria do without CRISPR. Why give up an "
+            "immune system?"
         ),
     ),
     # ---------------------------------------------------------------------
@@ -2061,7 +2118,9 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "wherever that template matches. Enzymes like it are the stock the "
             "CRISPR editors arose from, recruited some fifty separate times. "
             "Their relatives in cells with nuclei turn up in fungi, algae, "
-            "amoebae, clams, and in giant viruses. The structure here is the "
+            "amoebae, clams, and in giant viruses. Six hundred clusters are "
+            "lit here, nearly all bacterial, the eukaryotic Fanzors just "
+            "beside them, and the structure turning alongside is the "
             "best-studied one, caught holding its RNA guide before it has "
             "found a target."
         ),

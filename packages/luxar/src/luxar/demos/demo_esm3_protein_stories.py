@@ -745,6 +745,15 @@ AMBIENT_BED_LOOP_CROSSFADE_S = 15.0
 NARRATION_CACHE_DIR = (
     Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "narration"
 )
+#: `alloy` is KEPT DELIBERATELY. It is OpenAI's neutral voice and the one
+#: listeners describe as gender-ambiguous — the owner heard it as female in
+#: some stories and male in others and, offered all eleven voices side by side
+#: on the same narration (2026-09-17), chose to keep it: "the ambiguity is
+#: perhaps a feature and not a bug". A kiosk narrator reading twenty pieces of
+#: science wants no persona of its own. So this is a decision, not a default —
+#: do not "fix" it to `fable` or `onyx` because a blog ranks those higher for
+#: audiobooks. The voice is part of the narration cache key, so changing it
+#: re-synthesises all 21 clips.
 NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
 NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
 # Narration is `on_arrive`: it starts when the story's flight lands (the waypoint
