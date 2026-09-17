@@ -83,6 +83,10 @@ def run_merge_datasets(
         from luxar.cli.gsplat_config import parse_hex_color
         from luxar.cli.gsplat_ops.loading import load_matrix_gsplats
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.merged_quality import (
+            collect_part_provenance,
+            summarize_part_provenance,
+        )
 
         if len(inputs) < 2:
             aprint("Error: At least 2 input datasets required for merge")
@@ -99,7 +103,7 @@ def run_merge_datasets(
                 with asection(f"Loading {inp.name}"):
                     ds = load_matrix_gsplats(
                         inp,
-                        include_stats=False,
+                        include_stats=True,
                         command="merge",
                     )
                     aprint(f"{ds.n_splats:,} splats ({ds.ndim}D)")
@@ -141,6 +145,15 @@ def run_merge_datasets(
             else:
                 with asection("Concatenating"):
                     merged = GSplatData.concatenate(datasets)
+
+            input_provenance = collect_part_provenance(
+                datasets,
+                values=[float(index) for index in range(len(datasets))],
+                fit_reference=None,
+            )
+            summary = summarize_part_provenance(input_provenance)
+            if summary is not None:
+                merged.stats["part_provenance"] = summary
 
             # The merge owns the STRUCTURE, not the look: without this the
             # writer's own defaults take over and every authored value on every

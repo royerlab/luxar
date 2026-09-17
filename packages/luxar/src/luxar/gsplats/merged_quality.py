@@ -277,6 +277,70 @@ def collect_part_provenance(
     return records
 
 
+def _summary_fitting(record: Any) -> dict[str, Any]:
+    """Resolve source/timing fields from a possibly nested component record."""
+    if not isinstance(record, dict):
+        return {}
+    fitting = record.get("fitting")
+    if not isinstance(fitting, dict):
+        return {}
+
+    nested = summarize_part_provenance(fitting.get("part_provenance"))
+    nested_fitting = nested[0]["fitting"] if nested is not None else {}
+    resolved: dict[str, Any] = {}
+    for key in (
+        "source_bytes",
+        "source_voxels",
+        "time_seconds",
+        "source_shape",
+        "source_dtype",
+    ):
+        if key in fitting:
+            resolved[key] = fitting[key]
+        elif key in nested_fitting:
+            resolved[key] = nested_fitting[key]
+    return resolved
+
+
+def summarize_part_provenance(
+    value: Any, *, shared_source: bool = False
+) -> Optional[list[dict[str, Any]]]:
+    """Collapse component records into one coordinate-free source summary.
+
+    ``shared_source`` is for spatial partition records whose repeated source
+    sizes describe the same parent volume. Independent merge inputs use the
+    default additive policy.
+    """
+    if not isinstance(value, list) or not value:
+        return None
+    fittings = [_summary_fitting(record) for record in value]
+
+    summary: dict[str, Any] = {}
+    for key in ("source_bytes", "source_voxels", "time_seconds"):
+        values = [fitting.get(key) for fitting in fittings]
+        if all(
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and math.isfinite(item)
+            for item in values
+        ):
+            if (
+                shared_source
+                and key != "time_seconds"
+                and all(item == values[0] for item in values[1:])
+            ):
+                summary[key] = values[0]
+            else:
+                summary[key] = sum(values)
+
+    for key in ("source_shape", "source_dtype"):
+        values = [fitting.get(key) for fitting in fittings]
+        if values[0] is not None and all(item == values[0] for item in values[1:]):
+            summary[key] = values[0]
+
+    return [{"part_count": len(value), "fitting": summary}]
+
+
 def announce_unscored_merge(reason: str) -> None:
     """Explain why a merged result carries no whole-volume quality metrics.
 
