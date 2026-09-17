@@ -23,6 +23,7 @@ from luxar._zarr_compat import open_group
 from luxar.cli.env_ops import bake as bake_module
 from luxar.cli.env_ops.bake import bake_environment
 from luxar.cli.main import app
+from luxar.conftest import viewer_source
 from luxar.environment import ENVIRONMENT_FORMAT, FACE_ORDER, pack
 from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 
@@ -133,6 +134,23 @@ def test_bake_environment_serves_drives_and_attaches(tmp_path, built_viewer) -> 
     root = zarr.open_group(str(store), mode="r")
     assert dict(root[ENVIRONMENT_GROUP].attrs)["faces"] == report.attach.array_name
     assert dict(root.attrs)["content_hash"] == scene_hash
+
+
+def test_bake_environment_url_matches_the_node_driver_guard(
+    tmp_path, built_viewer
+) -> None:
+    store = tmp_path / "scene.luxar.zarr"
+    scene_hash = _scene(store)
+    seen: dict[str, str] = {}
+
+    def fake_driver(url: str, out_path: Path, _timeout_s: float) -> None:
+        seen["url"] = url
+        out_path.write_bytes(_container(scene_hash))
+
+    bake_environment(store, attach=False, driver=fake_driver)
+    driver_source = viewer_source("scripts/bake-env.mjs").read_text(encoding="utf-8")
+    assert "/[?&]bakeEnv(&|$)/.test(url)" in driver_source
+    assert "&bakeEnv&" in seen["url"]
 
 
 def test_bake_environment_keeps_the_container_and_can_skip_attach(

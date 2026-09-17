@@ -385,6 +385,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_demos_cinematic_mode.py parses its default FOV",
     ),
     (
+        "packages/luxar-viewer/scripts/bake-env.mjs",
+        "py",
+        "test_env_cli.py locks the Python bake URL to the Node driver guard",
+    ),
+    (
         "packages/luxar-viewer/src/data/attrs-composer.ts",
         "py",
         "test_blending_warnings.py parses the scene-root exclusion from the "

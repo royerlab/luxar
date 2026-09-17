@@ -41,7 +41,7 @@ if (typeof url !== 'string' || typeof out !== 'string') {
   );
   process.exit(2);
 }
-if (!/[?&]bake-env(&|$)/.test(url)) {
+if (!/[?&]bakeEnv(&|$)/.test(url)) {
   console.error('--url must carry ?bakeEnv (the viewer bakes only when asked to)');
   process.exit(2);
 }
