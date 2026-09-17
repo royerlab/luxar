@@ -7678,7 +7678,7 @@ class TestFitProvenanceRewriteAudit:
         },
     ]
     REWRITERS: ClassVar[dict[str, list[str]]] = {
-        "slice": TestLODCarriesAuthoredAppearance.REWRITERS["slice"],
+        "slice": ["gsplat", "slice", "{in}", "{out}", "0:4, :, :"],
         "reencode": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
         "partition": TestLODCarriesAuthoredAppearance.REWRITERS["partition"],
         "lod": TestLODCarriesAuthoredAppearance.REWRITERS["lod:stream"],
@@ -7774,6 +7774,11 @@ class TestFitProvenanceRewriteAudit:
             ]
         elif label == "slice":
             assert [record["coordinate"] for record in provenance] == [0.0, 1.0]
+            assert all(
+                "source_bytes" not in record["fitting"]
+                and "psnr_db" not in record["fitting"]
+                for record in provenance
+            )
             assert [record["fitting"]["source_dtype"] for record in provenance] == [
                 "uint16",
                 "uint16",
