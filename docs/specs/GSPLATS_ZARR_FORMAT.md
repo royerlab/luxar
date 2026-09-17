@@ -972,16 +972,23 @@ Flattening a partition replaces its slot-keyed records with one summary entry
 when the record count matches the number of collapsed spatial leaves, because
 those spatial coordinates no longer exist in the resulting leaf. A list with a
 different cardinality describes an inherited component axis and is preserved
-verbatim. The summary entry records `part_count`; carries unanimous
+verbatim. Merging independent inputs without creating a new dimension likewise
+replaces their now-meaningless coordinates with one summary entry; stacking via
+`gsplat merge --as-dimension` keeps the per-input records keyed to the authored
+dimension values. The summary entry records `part_count`; carries unanimous
 `source_bytes`, `source_voxels`, and `source_stored_bytes` once or sums them when
 the parts describe distinct sources; sums complete `time_seconds` figures; and
-carries `source_shape`, `source_declared`, `source_dtype`, and `fit_reference`
-only when every part agrees. `source_declared` is carried only with its
-qualifying `source_shape`. A malformed or incompletely stamped matched input
-still records the part count but omits any aggregate that would otherwise be
-partial. The summary has no `coordinate`, and nested `part_provenance` records
-are deliberately collapsed with their parent spatial-part records rather than
-retained as a second level.
+carries `source_shape`, `source_declared`, and `source_dtype` only when every
+part agrees. Partition flatten also carries unanimous `fit_reference`; merge
+does not claim a root reference kind because the merged result has no root
+quality score. An independent-input merge prepends the input count to each
+common `source_shape` at every collapse level so the shape remains consistent
+with summed source totals; partition flatten keeps the common parent shape
+unchanged. `source_declared` is carried only with its qualifying `source_shape`.
+A malformed or incompletely stamped matched input still records the part count
+but omits any aggregate that would otherwise be partial. The summary has no
+`coordinate`, and nested `part_provenance` records are deliberately collapsed
+with their parent spatial-part records rather than retained as a second level.
 
 Composition may nest the same record recursively in an entry's `fitting` block.
 `batch-fit merge` uses this for its multi-level fan-in: root entries are spatial

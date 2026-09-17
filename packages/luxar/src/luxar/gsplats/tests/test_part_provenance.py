@@ -168,7 +168,7 @@ def test_part_summary_distinguishes_shared_and_independent_sources() -> None:
         {
             "part_count": 2,
             "fitting": {
-                "source_shape": [8, 8, 8],
+                "source_shape": [2, 8, 8, 8],
                 "source_dtype": "uint16",
                 "source_voxels": 1024,
                 "source_bytes": 2048,
@@ -185,6 +185,49 @@ def test_part_summary_distinguishes_shared_and_independent_sources() -> None:
                 "source_voxels": 512,
                 "source_bytes": 1024,
                 "time_seconds": 4.0,
+            },
+        }
+    ]
+
+
+def test_part_summary_counts_nested_collapsed_inputs() -> None:
+    provenance = [
+        {
+            "coordinate": 0.0,
+            "fitting": {
+                "part_provenance": [
+                    {
+                        "part_count": 2,
+                        "fitting": {
+                            "source_shape": [2, 8, 8, 8],
+                            "source_dtype": "uint16",
+                            "source_voxels": 1024,
+                            "source_bytes": 2048,
+                            "time_seconds": 3.0,
+                        },
+                    }
+                ]
+            },
+        },
+        {
+            "coordinate": 1.0,
+            "fitting": {
+                "source_shape": [8, 8, 8],
+                "source_dtype": "uint16",
+                "source_voxels": 512,
+                "source_bytes": 1024,
+                "time_seconds": 4.0,
+            },
+        },
+    ]
+
+    assert summarize_part_provenance(provenance) == [
+        {
+            "part_count": 3,
+            "fitting": {
+                "source_voxels": 1536,
+                "source_bytes": 3072,
+                "time_seconds": 7.0,
             },
         }
     ]

@@ -7704,13 +7704,7 @@ class TestFitProvenanceRewriteAudit:
             "lod",
             "flatten",
             "decimate",
-            pytest.param(
-                "merge",
-                marks=pytest.mark.xfail(
-                    strict=True,
-                    reason="merge drops fitting/part_provenance (#2768)",
-                ),
-            ),
+            "merge",
         ],
     )
     def test_rewriter_keeps_fit_provenance(

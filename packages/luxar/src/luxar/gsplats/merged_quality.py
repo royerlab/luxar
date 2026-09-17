@@ -290,16 +290,34 @@ def _summary_fitting(record: Any) -> dict[str, Any]:
     resolved: dict[str, Any] = {}
     for key in (
         "source_bytes",
+        "source_stored_bytes",
         "source_voxels",
         "time_seconds",
         "source_shape",
         "source_dtype",
+        "source_declared",
     ):
         if key in fitting:
             resolved[key] = fitting[key]
         elif key in nested_fitting:
             resolved[key] = nested_fitting[key]
     return resolved
+
+
+def _summary_part_count(record: Any) -> int:
+    """Count source parts represented by one possibly nested record."""
+    if not isinstance(record, dict):
+        return 1
+    part_count = record.get("part_count")
+    if isinstance(part_count, int) and not isinstance(part_count, bool):
+        return max(1, part_count)
+    fitting = record.get("fitting")
+    if not isinstance(fitting, dict):
+        return 1
+    nested = summarize_part_provenance(fitting.get("part_provenance"))
+    if nested is None:
+        return 1
+    return int(nested[0]["part_count"])
 
 
 def summarize_part_provenance(
@@ -316,7 +334,12 @@ def summarize_part_provenance(
     fittings = [_summary_fitting(record) for record in value]
 
     summary: dict[str, Any] = {}
-    for key in ("source_bytes", "source_voxels", "time_seconds"):
+    for key in (
+        "source_bytes",
+        "source_stored_bytes",
+        "source_voxels",
+        "time_seconds",
+    ):
         values = [fitting.get(key) for fitting in fittings]
         if all(
             isinstance(item, (int, float))
@@ -333,12 +356,46 @@ def summarize_part_provenance(
             else:
                 summary[key] = sum(values)
 
-    for key in ("source_shape", "source_dtype"):
-        values = [fitting.get(key) for fitting in fittings]
-        if values[0] is not None and all(item == values[0] for item in values[1:]):
-            summary[key] = values[0]
+    shapes = [fitting.get("source_shape") for fitting in fittings]
+    if (
+        "source_voxels" in summary
+        and isinstance(shapes[0], list)
+        and all(item == shapes[0] for item in shapes[1:])
+    ):
+        summary["source_shape"] = (
+            shapes[0] if shared_source else [len(value), *shapes[0]]
+        )
 
-    return [{"part_count": len(value), "fitting": summary}]
+    dtypes = [fitting.get("source_dtype") for fitting in fittings]
+    if (
+        "source_shape" in summary
+        and isinstance(dtypes[0], str)
+        and all(item == dtypes[0] for item in dtypes[1:])
+    ):
+        summary["source_dtype"] = dtypes[0]
+
+    declared = [fitting.get("source_declared") for fitting in fittings]
+    if (
+        "source_shape" in summary
+        and isinstance(declared[0], bool)
+        and all(item == declared[0] for item in declared[1:])
+    ):
+        summary["source_declared"] = declared[0]
+
+    part_count = len(value)
+    if not shared_source:
+        part_count = sum(_summary_part_count(record) for record in value)
+    result: dict[str, Any] = {"part_count": part_count, "fitting": summary}
+    if shared_source:
+        references = [
+            record.get("fit_reference") if isinstance(record, dict) else None
+            for record in value
+        ]
+        if references[0] is not None and all(
+            reference == references[0] for reference in references[1:]
+        ):
+            result["fit_reference"] = references[0]
+    return [result]
 
 
 def announce_unscored_merge(reason: str) -> None:
