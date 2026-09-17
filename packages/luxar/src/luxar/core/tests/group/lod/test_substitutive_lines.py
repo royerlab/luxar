@@ -1709,22 +1709,48 @@ class TestSameTypeSubstitutiveLines:
         assert "n_additive_sublods" not in group["child_0"].attrs
         assert "n_additive_sublods" not in group["child_1"].attrs
 
-    def test_image_labels_stay_on_finest_child(self, tmp_path) -> None:
-        out = tmp_path / "same-type-image-labels.luxar.zarr"
-        vertices = _segments(8)
+    def test_indexed_isolates_do_not_consume_coarse_budget(self, tmp_path) -> None:
+        out = tmp_path / "indexed-lines-isolates.luxar.zarr"
+        vertices = np.zeros((12, 3), dtype=np.float32)
+        vertices[:, 0] = np.arange(12, dtype=np.float32)
+        indices = np.array([0, 1, 2, 3], dtype=np.uint32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_lines(
                 "curves",
                 vertices,
                 1.0,
-                line_type="segments",
-                image_labels=[b"x"] * vertices.shape[0],
+                line_type="indexed",
+                indices=indices,
                 additive_lod=False,
                 substitutive_lod=dict(
                     coarse="lines", compression_factor=2, levels=1, seed=0
                 ),
             )
         group = zarr.open(str(out), mode="r")["curves"]
+        assert int(group["child_0"].attrs["n_segments"]) == 1
+        assert int(group["child_1"].attrs["n_segments"]) == 2
+
+    def test_image_labels_stay_on_finest_child(self, tmp_path) -> None:
+        out = tmp_path / "same-type-image-labels.luxar.zarr"
+        vertices = _segments(8)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    vertices,
+                    1.0,
+                    line_type="segments",
+                    image_labels=[b"x"] * vertices.shape[0],
+                    substitutive_lod=dict(
+                        coarse="lines", compression_factor=2, levels=1, seed=0
+                    ),
+                )
+        group = zarr.open(str(out), mode="r")["curves"]
         assert group["child_0"].attrs.get("has_image_labels") is not True
         assert group["child_1"].attrs["has_image_labels"] is True
+        assert not [
+            warning for warning in caught if "cannot be honoured" in str(warning)
+        ]

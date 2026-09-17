@@ -1073,6 +1073,8 @@ def _polyline_slice_ids(
     hidden_columns: List[int],
 ) -> tuple[np.ndarray, int]:
     """Assign each whole polyline to one discrete hidden coordinate."""
+    if not polylines:
+        return np.empty(0, dtype=np.intp), 1
     if not hidden_columns:
         return np.zeros(len(polylines), dtype=np.intp), 1
     coordinates = []
@@ -1087,6 +1089,21 @@ def _polyline_slice_ids(
         coordinates.append(values[0])
     _, slice_ids = np.unique(np.asarray(coordinates), axis=0, return_inverse=True)
     return slice_ids.astype(np.intp, copy=False), int(np.max(slice_ids)) + 1
+
+
+def _drawable_polylines(
+    polylines: List[np.ndarray],
+    *,
+    indices: Optional[np.ndarray],
+    line_type: str,
+    n_vertices: int,
+) -> List[np.ndarray]:
+    """Exclude indexed components with no authored edge."""
+    if line_type != "indexed" or indices is None:
+        return polylines
+    endpoint_mask = np.zeros(n_vertices, dtype=bool)
+    endpoint_mask[np.asarray(indices, dtype=np.intp).reshape(-1)] = True
+    return [polyline for polyline in polylines if bool(np.any(endpoint_mask[polyline]))]
 
 
 def _subsampled_polyline_order(slice_ids: np.ndarray, seed: int) -> np.ndarray:
@@ -1199,7 +1216,12 @@ def _add_lines_subsampled_lod_wrapper_impl(
     )
 
     n_vertices = int(vert_arr.shape[0])
-    polylines = identify_polylines(n_vertices, line_type, indices)
+    polylines = _drawable_polylines(
+        identify_polylines(n_vertices, line_type, indices),
+        indices=indices,
+        line_type=line_type,
+        n_vertices=n_vertices,
+    )
     n_polylines = len(polylines)
     compression_factor = int(spec["compression_factor"])
     hidden, continuous_hidden = _coarse_line_axes(group._find_scene(), vert_arr)
@@ -1261,13 +1283,28 @@ def _add_lines_subsampled_lod_wrapper_impl(
         )
         else None
     )
-    resolved_additive = compose_additive_under_substitutive(
+    coarse_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_lines,
         elements=n_vertices,
         name=name,
         slices=slices,
         suppress_reason=additive_suppress_reason,
+    )
+    finest_suppress_reason = (
+        "image_labels is set" if image_labels is not None else additive_suppress_reason
+    )
+    finest_additive = compose_additive_under_substitutive(
+        additive_lod,
+        resolve=resolve_additive_axis_lines,
+        elements=n_vertices,
+        name=name,
+        slices=slices,
+        suppress_reason=finest_suppress_reason,
+        suppression_outcome=(
+            "the finest level will load all-at-once; coarse levels keep their "
+            "ladder where one applies."
+        ),
     )
     parent_node = parent or group
     coarse_first = list(reversed(coarse))
@@ -1332,7 +1369,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
             extend_to_all=extend_to_all,
             partition=False,
             additive_lod=level_additive_lod(
-                resolved_additive,
+                coarse_additive,
                 level_n=int(vertex_indices.size),
                 compression_factor=compression_factor,
                 is_coarsest=(child_index == 0),
@@ -1359,7 +1396,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
         extend_to_all=extend_to_all,
         partition=False,
         additive_lod=level_additive_lod(
-            resolved_additive,
+            finest_additive,
             level_n=n_vertices,
             compression_factor=compression_factor,
             is_coarsest=False,
