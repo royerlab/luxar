@@ -89,11 +89,13 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Union,
 )
 
 from arbol import aprint
 
 from ....typing_utils.constants import (
+    DEFAULT_BLENDING_MODE_BY_GEOMETRY,
     DERIVED_LOD_SELECTOR,
     LEGACY_LOD_SELECTOR,
     LOD_SELECTORS,
@@ -1267,6 +1269,86 @@ def resolve_substitutive_axis(
         "coarsen_dims": coarsen_dims,
         "max_aspect": max_aspect,
     }
+
+
+def resolve_same_type_representation(
+    kwargs: Dict[str, Any],
+    *,
+    geometry: str,
+    same_type: str,
+    inapplicable_reasons: Dict[str, str],
+) -> tuple[str, Union[str, float]]:
+    """Resolve the shared ``coarse=`` and compensation vocabulary."""
+    coarse = str(kwargs.pop("coarse", "gsplats")).replace("-", "_")
+    allowed = ["gsplats", same_type]
+    if coarse not in allowed:
+        raise ValueError(
+            f"substitutive_lod for {geometry}: coarse must be one of "
+            f"{allowed}; got {coarse!r}"
+        )
+
+    brightness = kwargs.pop("brightness_compensation", "auto")
+    if brightness != "auto":
+        try:
+            brightness = float(brightness)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "brightness_compensation must be 'auto' or a finite value >= 0; "
+                f"got {brightness!r}"
+            ) from exc
+        if not math.isfinite(brightness) or brightness < 0.0:
+            raise ValueError(
+                "brightness_compensation must be 'auto' or a finite value >= 0; "
+                f"got {brightness!r}"
+            )
+
+    if coarse == same_type:
+        for key, reason in inapplicable_reasons.items():
+            if key in kwargs:
+                raise ValueError(
+                    f"substitutive_lod for {geometry}: {key!r} does not apply when "
+                    f"coarse={same_type!r} — {reason}."
+                )
+    elif brightness != "auto":
+        raise ValueError(
+            f"substitutive_lod for {geometry}: 'brightness_compensation' applies "
+            f"only when coarse={same_type!r}"
+        )
+    return coarse, brightness
+
+
+def effective_blending_mode(
+    parent: "Node", attrs: Dict[str, Any], geometry: str
+) -> str:
+    """Resolve nearest-setter-wins blending mode for a new geometry child."""
+    if "blending_mode" in attrs:
+        return str(attrs["blending_mode"])
+    current: Optional["Node"] = parent
+    while current is not None:
+        if "blending_mode" in current.attrs:
+            return str(current.attrs["blending_mode"])
+        current = current.parent
+    return DEFAULT_BLENDING_MODE_BY_GEOMETRY[geometry]
+
+
+def assert_same_type_slice_capacity(
+    *,
+    same_type: str,
+    element_name: str,
+    elements: int,
+    resident_slices: int,
+    compression_factor: int,
+    levels: int,
+) -> None:
+    """Refuse a ladder whose coarsest prefix cannot represent every slice."""
+    coarsest_count = max(1, elements // (compression_factor**levels))
+    if resident_slices > coarsest_count:
+        raise ValueError(
+            f"substitutive_lod with coarse={same_type!r} cannot preserve every "
+            f"hidden coordinate: the coarsest level has {coarsest_count} "
+            f"{element_name} for {resident_slices} hidden slices. Reduce "
+            f"levels/compression_factor or use coarse='gsplats'."
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────

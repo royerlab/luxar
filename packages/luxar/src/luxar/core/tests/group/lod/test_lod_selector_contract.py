@@ -623,7 +623,10 @@ _LOD_GROUP_CALLERS = frozenset(_LADDER_PRODUCERS) | frozenset(_EXEMPT_LOD_GROUP_
 #: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Most listed
 #: modules have exactly one call today; exceptions stay explicit.
 _EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {
-    rel: 2 if rel == "core/group/adders/points.py" else 1 for rel in _LOD_GROUP_CALLERS
+    rel: 2
+    if rel in {"core/group/adders/points.py", "core/group/adders/lines.py"}
+    else 1
+    for rel in _LOD_GROUP_CALLERS
 }
 
 

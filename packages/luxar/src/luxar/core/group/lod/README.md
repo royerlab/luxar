@@ -267,16 +267,20 @@ can shift relative brightness. `truncation_radius`, `max_aspect`, `method`,
 lift or merge.
 
 Lines keeps the lifted-GSplat default too. With `coarse="lines"`, it instead
-takes exact `P/K^level` prefixes of one seeded polyline permutation and writes
-every prefix as a Lines child, preserving whole-polyline topology and selected
-per-vertex channels. Discrete hidden coordinates are shuffled independently and
-round-robin interleaved; authoring refuses a ladder whose coarsest polyline count
-cannot represent every occupied slice, or a polyline that crosses slices. Under
-the effective `additive` or `luminous` mode,
-`brightness_compensation="auto"` scales widths by `P/P_selected`; other modes
-keep unit gain, and a numeric override applies per reduction level. The Gaussian
-lift controls (`truncation_radius`, `max_aspect`, `method`, `device`, and
-`coarsen_dims`) are refused on this same-type arm.
+takes exact `P/K^level` prefixes of a seeded salience ordering and writes every
+prefix as a Lines child, preserving whole-polyline topology and selected
+per-vertex channels. Discrete hidden coordinates are ordered independently and
+round-robin interleaved; dimensions named by `extend_to_all` are excluded because
+the node is not sliced there. Authoring refuses a ladder whose coarsest polyline
+count cannot represent every remaining occupied slice, or a polyline that crosses
+one. Under the effective `additive` or `luminous` mode,
+`brightness_compensation="auto"` measures `Σ(length × width × luminance)` and
+conserves it at each level. Width growth is capped near the shader's pixel floor
+at the level transition and the residual gain is carried by float32 HDR color,
+keeping coarse fibers fiber-shaped; other modes keep unit gain, and a numeric
+override applies per reduction level. The Gaussian lift controls
+(`truncation_radius`, `max_aspect`, `method`, `device`, and `coarsen_dims`) are
+refused on this same-type arm.
 
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given

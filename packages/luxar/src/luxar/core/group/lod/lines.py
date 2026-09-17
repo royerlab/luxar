@@ -62,30 +62,13 @@ DEFAULT_METHOD: LinesMethodName = DEFAULT_ADDITIVE_METHOD
 
 def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float]]:
     """Pop and validate the Lines-only substitutive representation keys."""
-    coarse = str(kwargs.pop("coarse", "gsplats")).replace("-", "_")
-    if coarse not in {"gsplats", "lines"}:
-        raise ValueError(
-            "substitutive_lod for Lines: coarse must be one of "
-            f"['gsplats', 'lines']; got {coarse!r}"
-        )
+    from .group import resolve_same_type_representation
 
-    brightness = kwargs.pop("brightness_compensation", "auto")
-    if brightness != "auto":
-        try:
-            brightness = float(brightness)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "brightness_compensation must be 'auto' or a finite value >= 0; "
-                f"got {brightness!r}"
-            ) from exc
-        if not np.isfinite(brightness) or brightness < 0.0:
-            raise ValueError(
-                "brightness_compensation must be 'auto' or a finite value >= 0; "
-                f"got {brightness!r}"
-            )
-
-    if coarse == "lines":
-        reasons = {
+    return resolve_same_type_representation(
+        kwargs,
+        geometry="Lines",
+        same_type="lines",
+        inapplicable_reasons={
             "truncation_radius": (
                 "it controls the Gaussian footprint used by the lift, and "
                 "same-type line levels are not lifted"
@@ -106,20 +89,8 @@ def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float]]
                 "it selects Gaussian merge dimensions, and same-type line "
                 "levels preserve discrete hidden coordinates automatically"
             ),
-        }
-        for key, reason in reasons.items():
-            if key in kwargs:
-                raise ValueError(
-                    f"substitutive_lod for Lines: {key!r} does not apply when "
-                    f"coarse='lines' — {reason}."
-                )
-    elif brightness != "auto":
-        raise ValueError(
-            "substitutive_lod for Lines: 'brightness_compensation' applies only "
-            "when coarse='lines'"
-        )
-
-    return coarse, brightness
+        },
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -571,6 +542,40 @@ def compute_lines_energy(
         else:
             mean_lum = 1.0
         out[i] = max(0.0, mean_lum) * max(0.0, tube_volume)
+    return out
+
+
+def compute_lines_light_integral(
+    vertices: NDArray,
+    polylines: List[NDArray[np.intp]],
+    widths: NDArray,
+    colors: Optional[NDArray],
+) -> NDArray[np.float64]:
+    """Per-polyline screen-light integral ``Σ(length × width × luminance)``."""
+    if not polylines:
+        return np.empty(0, dtype=np.float64)
+    pts3 = vertices[:, :3].astype(np.float64, copy=False)
+    vertex_widths = np.asarray(widths, dtype=np.float64)
+    vertex_luminance = (
+        np.ones(vertices.shape[0], dtype=np.float64)
+        if colors is None
+        else np.asarray(colors, dtype=np.float64)[:, :3]
+        @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
+    )
+    out = np.zeros(len(polylines), dtype=np.float64)
+    for polyline_index, members in enumerate(polylines):
+        if members.size < 2:
+            continue
+        segment_lengths = np.linalg.norm(pts3[members[1:]] - pts3[members[:-1]], axis=1)
+        segment_widths = 0.5 * (
+            vertex_widths[members[1:]] + vertex_widths[members[:-1]]
+        )
+        segment_luminance = 0.5 * (
+            vertex_luminance[members[1:]] + vertex_luminance[members[:-1]]
+        )
+        out[polyline_index] = float(
+            np.sum(segment_lengths * segment_widths * segment_luminance)
+        )
     return out
 
 

@@ -23,7 +23,7 @@ from typing import (
 import numpy as np
 from arbol import aprint
 
-from ....typing_utils.constants import DEFAULT_BLENDING_MODE_BY_GEOMETRY
+from ....typing_utils.constants import DERIVED_LOD_SELECTOR
 from ....typing_utils.json_safe import json_safe_value
 from ....validation.writing import (
     LINES_RESERVED_ATTRS,
@@ -1048,23 +1048,34 @@ def add_lines_multi_lod_wrapper_impl(
     )
 
 
-def _coarse_line_axes(scene: Any, vertices: np.ndarray) -> tuple[List[int], List[int]]:
+def _coarse_line_axes(
+    scene: Any,
+    vertices: np.ndarray,
+    extend_to_all: Optional[Union[List[str], str]],
+) -> tuple[List[int], List[int], List[int]]:
     """Discrete and continuous hidden position columns for Lines subsampling."""
     dims = getattr(scene, "dimensions", None) if scene is not None else None
     aligned = dims is not None and int(getattr(dims, "ndim", -1)) == vertices.shape[1]
     if not aligned or dims is None:
-        return [], []
+        return list(range(min(3, vertices.shape[1]))), [], []
+    extended = (
+        set(scene._resolve_extend_to_all(extend_to_all, vertices, "lines"))
+        if extend_to_all is not None
+        else set()
+    )
     discrete = [
         column
         for column in dims.non_displayed
         if bool(dims.dimensions[column].discrete)
+        and dims.dimensions[column].name not in extended
     ]
     continuous = [
         column
         for column in dims.non_displayed
         if not bool(dims.dimensions[column].discrete)
+        and dims.dimensions[column].name not in extended
     ]
-    return discrete, continuous
+    return list(dims.displayed), discrete, continuous
 
 
 def _polyline_slice_ids(
@@ -1077,17 +1088,23 @@ def _polyline_slice_ids(
         return np.empty(0, dtype=np.intp), 1
     if not hidden_columns:
         return np.zeros(len(polylines), dtype=np.intp), 1
-    coordinates = []
-    for polyline_index, rows in enumerate(polylines):
-        values = vertices[rows][:, hidden_columns]
-        if values.shape[0] > 1 and not np.all(values == values[0]):
-            raise ValueError(
-                "substitutive_lod with coarse='lines' requires every polyline "
-                "to stay within one discrete hidden coordinate; polyline "
-                f"{polyline_index} spans multiple coordinates."
-            )
-        coordinates.append(values[0])
-    _, slice_ids = np.unique(np.asarray(coordinates), axis=0, return_inverse=True)
+    lengths = np.fromiter((rows.size for rows in polylines), dtype=np.intp)
+    flat_rows = np.concatenate(polylines).astype(np.intp, copy=False)
+    owners = np.repeat(np.arange(len(polylines), dtype=np.intp), lengths)
+    starts = np.concatenate(
+        (np.array([0], dtype=np.intp), np.cumsum(lengths[:-1], dtype=np.intp))
+    )
+    values = vertices[flat_rows][:, hidden_columns]
+    first = values[starts]
+    spanning = np.any(values != first[owners], axis=1)
+    if np.any(spanning):
+        polyline_index = int(owners[np.flatnonzero(spanning)[0]])
+        raise ValueError(
+            "substitutive_lod with coarse='lines' requires every polyline "
+            "to stay within one discrete hidden coordinate; polyline "
+            f"{polyline_index} spans multiple coordinates."
+        )
+    _, slice_ids = np.unique(first, axis=0, return_inverse=True)
     return slice_ids.astype(np.intp, copy=False), int(np.max(slice_ids)) + 1
 
 
@@ -1106,8 +1123,16 @@ def _drawable_polylines(
     return [polyline for polyline in polylines if bool(np.any(endpoint_mask[polyline]))]
 
 
-def _subsampled_polyline_order(slice_ids: np.ndarray, seed: int) -> np.ndarray:
-    """Seeded random order, round-robin interleaved across hidden slices."""
+def _subsampled_polyline_order(
+    vertices: np.ndarray,
+    polylines: List[np.ndarray],
+    widths: np.ndarray,
+    slice_ids: np.ndarray,
+    seed: int,
+) -> np.ndarray:
+    """Seeded salience order, round-robin interleaved across hidden slices."""
+    from ..lod.lines import compute_additive_order_lines
+
     rng = np.random.default_rng(seed)
     if slice_ids.size == 0:
         return np.empty(0, dtype=np.intp)
@@ -1116,7 +1141,14 @@ def _subsampled_polyline_order(slice_ids: np.ndarray, seed: int) -> np.ndarray:
     boundaries = np.flatnonzero(np.diff(slice_ids[grouped])) + 1
     for rows in np.split(grouped, boundaries):
         shuffled = rows[rng.permutation(rows.size)]
-        within_slice_rank[shuffled] = np.arange(rows.size, dtype=np.intp)
+        local_order, _ = compute_additive_order_lines(
+            vertices,
+            [polylines[int(index)] for index in shuffled],
+            widths,
+            method="salience",
+        )
+        ordered = shuffled[local_order]
+        within_slice_rank[ordered] = np.arange(rows.size, dtype=np.intp)
     return np.lexsort((slice_ids, within_slice_rank)).astype(np.intp, copy=False)
 
 
@@ -1136,18 +1168,6 @@ def _coarse_polyline_levels(
     return out
 
 
-def _effective_line_blending_mode(parent: "Node", attrs: Dict[str, Any]) -> str:
-    """Resolve nearest-setter-wins blending mode for a new Lines child."""
-    if "blending_mode" in attrs:
-        return str(attrs["blending_mode"])
-    current: Optional["Node"] = parent
-    while current is not None:
-        if "blending_mode" in current.attrs:
-            return str(current.attrs["blending_mode"])
-        current = current.parent
-    return DEFAULT_BLENDING_MODE_BY_GEOMETRY["lines"]
-
-
 def _scaled_line_widths(
     widths: Any, vertex_indices: np.ndarray, n_vertices: int, gain: float
 ) -> Any:
@@ -1158,6 +1178,92 @@ def _scaled_line_widths(
     if np.isscalar(selected):
         return float(cast(Any, selected)) * gain
     return np.asarray(selected, dtype=np.float32) * np.float32(gain)
+
+
+def _line_colors_for_energy(colors: Any, n_vertices: int) -> Any:
+    """Broadcast a uniform line color without changing its numeric range."""
+    if colors is None:
+        return None
+    if is_broadcast_color(colors):
+        return np.broadcast_to(np.asarray(colors), (n_vertices, len(colors)))
+    array = np.asarray(colors)
+    if array.ndim == 2 and array.shape[0] == 1:
+        return np.broadcast_to(array, (n_vertices, array.shape[1]))
+    return array
+
+
+def _float_line_colors(colors: Any, n_vertices: int, indices: np.ndarray) -> np.ndarray:
+    """Materialize selected RGB(A) colors as normalized float32."""
+    if colors is None:
+        return np.ones((indices.size, 3), dtype=np.float32)
+    array = np.asarray(colors)
+    if is_broadcast_color(colors) or (array.ndim == 2 and array.shape[0] == 1):
+        array = np.broadcast_to(array.reshape(1, -1), (indices.size, array.size))
+    else:
+        array = array[indices]
+    source_dtype = array.dtype
+    result = np.asarray(array, dtype=np.float32).copy()
+    if np.issubdtype(source_dtype, np.integer):
+        result /= float(np.iinfo(source_dtype).max)
+    return result
+
+
+def _subsampled_line_level_channels(
+    *,
+    colors: Any,
+    colors_for_energy: Any,
+    scalars: Any,
+    vertex_indices: np.ndarray,
+    n_vertices: int,
+    color_gain: float,
+    child_attrs: Dict[str, Any],
+) -> tuple[Any, Any, Dict[str, Any]]:
+    """Prepare one same-type coarse level's color/scalar representation."""
+    level_attrs = dict(child_attrs)
+    if color_gain == 1.0 and scalars is not None and colors is None:
+        return (
+            None,
+            slice_optional_array(scalars, vertex_indices, n_vertices),
+            level_attrs,
+        )
+    if color_gain == 1.0 and colors_for_energy is None:
+        return None, None, level_attrs
+    if color_gain == 1.0 and colors is not None:
+        level_colors = (
+            colors
+            if is_broadcast_color(colors)
+            else slice_optional_array(colors, vertex_indices, n_vertices)
+        )
+        return level_colors, None, level_attrs
+    level_colors = _float_line_colors(colors_for_energy, n_vertices, vertex_indices)
+    level_colors[:, :3] *= np.float32(color_gain)
+    level_attrs.pop("colormap", None)
+    return level_colors, None, level_attrs
+
+
+def _line_width_gain_cap(
+    vertices: np.ndarray,
+    widths: np.ndarray,
+    displayed_columns: List[int],
+    threshold: float,
+    selector: str,
+) -> float:
+    """Maximum gain that keeps the widest line near the shader pixel floor."""
+    if threshold <= 0.0 or not displayed_columns:
+        return 1.0
+    extent = float(np.max(np.ptp(vertices[:, displayed_columns[:3]], axis=0)))
+    max_width = float(np.max(widths))
+    if extent <= 0.0 or max_width <= 0.0:
+        return 1.0
+    projected_axis = (
+        np.sqrt(threshold) * 1024.0
+        if selector == DERIVED_LOD_SELECTOR
+        else threshold * 0.5 * 1024.0
+    )
+    if projected_axis <= 0.0:
+        return 1.0
+    floor_world_width = 1.5 * extent / projected_axis
+    return max(1.0, floor_world_width / max_width)
 
 
 def _selected_line_topology(
@@ -1180,7 +1286,7 @@ def _selected_line_topology(
             indices, [vertex_indices], n_vertices
         )
         return vertex_indices, vertex_to_local[edges[buckets[0]]].reshape(-1), "indexed"
-    return vertex_indices, None, line_type
+    raise AssertionError(f"unsupported coarse Lines topology {line_type!r}")
 
 
 def _add_lines_subsampled_lod_wrapper_impl(
@@ -1205,17 +1311,38 @@ def _add_lines_subsampled_lod_wrapper_impl(
 ) -> Union["Group", Lines]:
     """Write seeded whole-polyline Lines levels above the original Lines node."""
     from ..lod.group import (
+        assert_same_type_slice_capacity,
         compose_additive_under_substitutive,
+        effective_blending_mode,
         level_additive_lod,
         resolve_lod_ladder,
     )
     from ..lod.lines import (
+        compute_lines_light_integral,
         identify_polylines,
         indexed_components_are_chains,
         resolve_additive_axis_lines,
     )
 
     n_vertices = int(vert_arr.shape[0])
+    colors_for_energy = colors
+    if scalars is not None and colors is None:
+        colormap = attrs.get("colormap")
+        if colormap is None:
+            raise ValueError(
+                "substitutive_lod on Lines with scalars requires a colormap "
+                "(scalars map to color via a colormap LUT). Pass colormap=..., "
+                "or provide explicit per-vertex colors."
+            )
+        from ....colormaps import scalars_to_colors
+
+        scalar_array = np.broadcast_to(
+            np.asarray(scalars, dtype=np.float64).reshape(-1), (n_vertices,)
+        )
+        colors_for_energy = scalars_to_colors(scalar_array, colormap)
+    widths_for_energy = np.broadcast_to(
+        np.asarray(widths, dtype=np.float64).reshape(-1), (n_vertices,)
+    )
     polylines = _drawable_polylines(
         identify_polylines(n_vertices, line_type, indices),
         indices=indices,
@@ -1224,7 +1351,9 @@ def _add_lines_subsampled_lod_wrapper_impl(
     )
     n_polylines = len(polylines)
     compression_factor = int(spec["compression_factor"])
-    hidden, continuous_hidden = _coarse_line_axes(group._find_scene(), vert_arr)
+    displayed, hidden, continuous_hidden = _coarse_line_axes(
+        group._find_scene(), vert_arr, extend_to_all
+    )
     slice_ids, resident_slices = _polyline_slice_ids(vert_arr, polylines, hidden)
     if continuous_hidden:
         warnings.warn(
@@ -1236,21 +1365,31 @@ def _add_lines_subsampled_lod_wrapper_impl(
             RuntimeWarning,
             stacklevel=3,
         )
-    coarsest_count = max(1, n_polylines // (compression_factor ** int(spec["levels"])))
-    if resident_slices > coarsest_count:
-        raise ValueError(
-            "substitutive_lod with coarse='lines' cannot preserve every hidden "
-            f"coordinate: the coarsest level has {coarsest_count} polylines for "
-            f"{resident_slices} hidden slices. Reduce levels/compression_factor "
-            "or use coarse='gsplats'."
-        )
-    order = _subsampled_polyline_order(slice_ids, int(spec.get("seed") or 0))
+    assert_same_type_slice_capacity(
+        same_type="lines",
+        element_name="polylines",
+        elements=n_polylines,
+        resident_slices=resident_slices,
+        compression_factor=compression_factor,
+        levels=int(spec["levels"]),
+    )
+    order = _subsampled_polyline_order(
+        vert_arr,
+        polylines,
+        widths_for_energy,
+        slice_ids,
+        int(spec.get("seed") or 0),
+    )
     coarse = _coarse_polyline_levels(
         order,
         compression_factor=compression_factor,
         levels=int(spec["levels"]),
     )
     if not coarse:
+        aprint(
+            f"  ⚠ substitutive_lod '{name}': input too small to synthesize coarse "
+            "levels; writing the flat Lines node."
+        )
         return add_lines_impl(
             group,
             name=name,
@@ -1331,18 +1470,53 @@ def _add_lines_subsampled_lod_wrapper_impl(
     )
     lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
-    blending_mode = _effective_line_blending_mode(parent_node, attrs)
+    light_integrals = compute_lines_light_integral(
+        vert_arr,
+        polylines,
+        widths_for_energy,
+        _line_colors_for_energy(colors_for_energy, n_vertices),
+    )
+    total_light = float(np.sum(light_integrals))
+    blending_mode = effective_blending_mode(parent_node, attrs, "lines")
     auto_compensates = blending_mode in {"additive", "luminous"}
     compensation = spec.get("brightness_compensation", "auto")
     for child_index, selected_ids in enumerate(coarse_first):
         reduction_level = len(coarse_first) - child_index
-        gain = (
-            n_polylines / int(selected_ids.size)
+        selected_light = float(np.sum(light_integrals[selected_ids]))
+        measured_gain = (
+            total_light / selected_light
+            if total_light > 0.0 and selected_light > 0.0
+            else 1.0
+        )
+        requested_gain = (
+            measured_gain
             if compensation == "auto" and auto_compensates
             else 1.0
             if compensation == "auto"
             else float(compensation) ** reduction_level
         )
+        width_gain = requested_gain
+        color_gain = 1.0
+        if compensation == "auto" and auto_compensates and requested_gain > 1.0:
+            activation_threshold = coverage_vals[
+                min(child_index + 1, len(coverage_vals) - 1)
+            ]
+            width_gain = min(
+                requested_gain,
+                _line_width_gain_cap(
+                    vert_arr,
+                    widths_for_energy,
+                    displayed,
+                    activation_threshold,
+                    lod_selector,
+                ),
+            )
+            color_gain = requested_gain / width_gain
+            if color_gain > 1.0:
+                aprint(
+                    f"  ↳ child_{child_index}: capped width gain at "
+                    f"{width_gain:.3g}×; carrying {color_gain:.3g}× in HDR color"
+                )
         vertex_indices, child_indices, child_line_type = _selected_line_topology(
             polylines=polylines,
             selected_ids=selected_ids,
@@ -1350,35 +1524,47 @@ def _add_lines_subsampled_lod_wrapper_impl(
             line_type=line_type,
             n_vertices=n_vertices,
         )
-        lod_group_node.add_lines(
-            f"child_{child_index}",
-            vert_arr[vertex_indices],
-            _scaled_line_widths(widths, vertex_indices, n_vertices, gain),
-            colors=(
-                colors
-                if is_broadcast_color(colors)
-                else slice_optional_array(colors, vertex_indices, n_vertices)
-            ),
-            sharpness=slice_optional_array(sharpness, vertex_indices, n_vertices),
-            scalars=slice_optional_array(scalars, vertex_indices, n_vertices),
-            labels=slice_optional_array(labels, vertex_indices, n_vertices),
-            keys=slice_optional_array(keys, vertex_indices, n_vertices),
-            image_labels=None,
-            indices=child_indices,
-            line_type=child_line_type,
-            extend_to_all=extend_to_all,
-            partition=False,
-            additive_lod=level_additive_lod(
-                coarse_additive,
-                level_n=int(vertex_indices.size),
-                compression_factor=compression_factor,
-                is_coarsest=(child_index == 0),
-                slices=slices,
-            ),
-            substitutive_lod=None,
-            coverage_fraction=coverage_vals[child_index],
-            **child_attrs,
+        level_colors, level_scalars, level_attrs = _subsampled_line_level_channels(
+            colors=colors,
+            colors_for_energy=colors_for_energy,
+            scalars=scalars,
+            vertex_indices=vertex_indices,
+            n_vertices=n_vertices,
+            color_gain=color_gain,
+            child_attrs=child_attrs,
         )
+        with warnings.catch_warnings():
+            if color_gain > 1.0:
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r".*HDR colors with maximum value .* detected.*",
+                    category=UserWarning,
+                )
+            lod_group_node.add_lines(
+                f"child_{child_index}",
+                vert_arr[vertex_indices],
+                _scaled_line_widths(widths, vertex_indices, n_vertices, width_gain),
+                colors=level_colors,
+                sharpness=slice_optional_array(sharpness, vertex_indices, n_vertices),
+                scalars=level_scalars,
+                labels=slice_optional_array(labels, vertex_indices, n_vertices),
+                keys=slice_optional_array(keys, vertex_indices, n_vertices),
+                image_labels=None,
+                indices=child_indices,
+                line_type=child_line_type,
+                extend_to_all=extend_to_all,
+                partition=False,
+                additive_lod=level_additive_lod(
+                    coarse_additive,
+                    level_n=int(vertex_indices.size),
+                    compression_factor=compression_factor,
+                    is_coarsest=(child_index == 0),
+                    slices=slices,
+                ),
+                substitutive_lod=None,
+                coverage_fraction=coverage_vals[child_index],
+                **level_attrs,
+            )
 
     finest_index = len(coarse_first)
     lod_group_node.add_lines(

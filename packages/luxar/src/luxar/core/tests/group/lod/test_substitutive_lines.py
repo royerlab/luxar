@@ -14,8 +14,12 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
+from luxar.core.group.adders.lines import _selected_line_topology
 from luxar.core.group.lod.group import PARTITION_FINEST_AREA, WHOLE_OBJECT_FINEST_ANCHOR
-from luxar.core.group.lod.lines import resolve_substitutive_axis_lines
+from luxar.core.group.lod.lines import (
+    identify_polylines,
+    resolve_substitutive_axis_lines,
+)
 from luxar.encoding import ArrayDecoder
 from luxar.gsplats.lift import (
     coarse_substitutive_levels,
@@ -1581,29 +1585,77 @@ class TestSameTypeSubstitutiveLines:
             selected.append(pairs)
         assert selected[0] < selected[1] < selected[2]
 
-    def test_additive_auto_compensation_scales_widths_by_sampling_ratio(
+    @staticmethod
+    def _integrated_light(child) -> float:
+        decoder = ArrayDecoder()
+        vertices = decoder.decode(child["vertices"], child)
+        widths = decoder.decode(child["widths"], child)
+        colors = (
+            decoder.decode(child["colors"], child)
+            if "colors" in child
+            else np.ones((vertices.shape[0], 3), dtype=np.float32)
+        )
+        colors = np.broadcast_to(colors, (vertices.shape[0], colors.shape[-1]))
+        luminance = colors[:, :3] @ np.array([0.2126, 0.7152, 0.0722])
+        segments = np.asarray(child["segments"], dtype=np.intp)
+        lengths = np.linalg.norm(
+            vertices[segments[:, 1], :3] - vertices[segments[:, 0], :3], axis=1
+        )
+        return float(
+            np.sum(
+                lengths
+                * 0.5
+                * (widths[segments[:, 0]] + widths[segments[:, 1]])
+                * 0.5
+                * (luminance[segments[:, 0]] + luminance[segments[:, 1]])
+            )
+        )
+
+    def test_additive_auto_compensation_preserves_integrated_light(
         self, tmp_path
     ) -> None:
-        group, _, widths = self._build_segments(tmp_path, blending_mode="additive")
+        group, _, _ = self._build_segments(tmp_path, blending_mode="additive")
+        lights = [self._integrated_light(group[f"child_{index}"]) for index in range(3)]
+        np.testing.assert_allclose(lights, lights[-1], rtol=0.025)
         decoder = ArrayDecoder()
-        coarse_vertices = decoder.decode(group["child_0"]["vertices"], group["child_0"])
-        finest_vertices = decoder.decode(group["child_2"]["vertices"], group["child_2"])
-        coarse = decoder.decode(group["child_0"]["widths"], group["child_0"])
-        finest = decoder.decode(group["child_2"]["widths"], group["child_2"])
-        source_by_x = {
-            round(float(x), 2): float(width)
-            for x, width in zip(
-                np.ravel([[i, i + 0.25] for i in range(8)]), widths, strict=True
+        coarse_widths = decoder.decode(group["child_0"]["widths"], group["child_0"])
+        finest_widths = decoder.decode(group["child_2"]["widths"], group["child_2"])
+        coarse_colors = decoder.decode(group["child_0"]["colors"], group["child_0"])
+        assert float(np.max(coarse_widths)) <= float(np.max(finest_widths)) * 1.02
+        assert float(np.max(coarse_colors)) > 1.0
+
+    def test_auto_compensation_conserves_unequal_length_bundle(self, tmp_path) -> None:
+        out = tmp_path / "unequal-length-lines.luxar.zarr"
+        lengths = np.array([0.2, 0.4, 0.7, 1.1, 1.8, 2.9, 4.7, 7.6])
+        vertices = np.zeros((16, 3), dtype=np.float32)
+        vertices[0::2, 0] = np.arange(8, dtype=np.float32) * 10.0
+        vertices[1::2, 0] = vertices[0::2, 0] + lengths
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                vertices,
+                0.3,
+                colors=np.ones((16, 3), dtype=np.float32),
+                line_type="segments",
+                blending_mode="additive",
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=2, seed=4
+                ),
             )
-        }
-        expected_coarse = np.array(
-            [4.0 * source_by_x[round(float(x), 2)] for x in coarse_vertices[:, 0]]
+        group = zarr.open(str(out), mode="r")["curves"]
+        lights = [self._integrated_light(group[f"child_{index}"]) for index in range(3)]
+        np.testing.assert_allclose(lights, lights[-1], rtol=0.025)
+        coarse_vertices = ArrayDecoder().decode(
+            group["child_0/vertices"], group["child_0"]
         )
-        np.testing.assert_allclose(coarse, expected_coarse, rtol=0.02, atol=0.02)
-        expected_finest = np.array(
-            [source_by_x[round(float(x), 2)] for x in finest_vertices[:, 0]]
+        coarse_segments = np.asarray(group["child_0/segments"], dtype=np.intp)
+        selected_lengths = np.abs(
+            coarse_vertices[coarse_segments[:, 1], 0]
+            - coarse_vertices[coarse_segments[:, 0], 0]
         )
-        np.testing.assert_allclose(finest, expected_finest, rtol=0.02, atol=0.02)
+        np.testing.assert_allclose(np.sort(selected_lengths), [4.7, 7.6], atol=0.05)
 
     def test_normal_blending_keeps_original_widths(self, tmp_path) -> None:
         group, _, widths = self._build_segments(tmp_path, blending_mode="normal")
@@ -1677,6 +1729,48 @@ class TestSameTypeSubstitutiveLines:
         decoded = ArrayDecoder().decode(child["vertices"], child)
         assert set(decoded[:, 3]) == {0.0, 1.0}
 
+    def test_extend_to_all_allows_tracks_to_cross_hidden_time(self, tmp_path) -> None:
+        out = tmp_path / "extended-track-lines.luxar.zarr"
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
+        vertices = np.array(
+            [
+                [0, 0, 0, 0],
+                [1, 0, 0, 1],
+                [2, 0, 0, 2],
+                [10, 0, 0, 0],
+                [12, 0, 0, 1],
+                [14, 0, 0, 2],
+            ],
+            dtype=np.float32,
+        )
+        indices = np.array([0, 1, 1, 2, 3, 4, 4, 5], dtype=np.uint32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_lines(
+                "tracks",
+                vertices,
+                1.0,
+                indices=indices,
+                line_type="indexed",
+                extend_to_all=["time"],
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=1, seed=0
+                ),
+            )
+        group = zarr.open(str(out), mode="r")["tracks"]
+        assert [int(group[f"child_{i}"].attrs["n_segments"]) for i in range(2)] == [
+            2,
+            4,
+        ]
+
     def test_indexed_components_preserve_authored_edges(self, tmp_path) -> None:
         out = tmp_path / "indexed-lines.luxar.zarr"
         vertices = np.array(
@@ -1708,6 +1802,66 @@ class TestSameTypeSubstitutiveLines:
         assert int(group["child_1"].attrs["n_segments"]) == 6
         assert "n_additive_sublods" not in group["child_0"].attrs
         assert "n_additive_sublods" not in group["child_1"].attrs
+
+    def test_indexed_unequal_chains_keep_only_complete_salient_component(
+        self, tmp_path
+    ) -> None:
+        out = tmp_path / "indexed-unequal-lines.luxar.zarr"
+        vertices = np.array(
+            [[x, 0, 0] for x in [0, 1, 10, 11, 12, 20, 21, 22, 23, 24]],
+            dtype=np.float32,
+        )
+        indices = np.array([0, 1, 3, 4, 2, 3, 7, 8, 5, 6, 8, 9, 6, 7], dtype=np.uint32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                vertices,
+                1.0,
+                line_type="indexed",
+                indices=indices,
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=1, seed=0
+                ),
+            )
+        child = zarr.open(str(out), mode="r")["curves/child_0"]
+        decoded = ArrayDecoder().decode(child["vertices"], child)
+        child_edges = np.asarray(child["segments"], dtype=np.intp)
+        edge_x = {tuple(decoded[edge, 0]) for edge in child_edges}
+        assert edge_x == {(22.0, 23.0), (20.0, 21.0), (23.0, 24.0), (21.0, 22.0)}
+        assert set(decoded[:, 0]) == {20.0, 21.0, 22.0, 23.0, 24.0}
+        polylines = identify_polylines(vertices.shape[0], "indexed", indices)
+        vertex_indices, local_edges, _ = _selected_line_topology(
+            polylines=polylines,
+            selected_ids=np.array([2], dtype=np.intp),
+            indices=indices,
+            line_type="indexed",
+            n_vertices=vertices.shape[0],
+        )
+        assert local_edges is not None
+        recovered = vertex_indices[local_edges].reshape(-1, 2)
+        np.testing.assert_array_equal(
+            recovered,
+            np.array([[7, 8], [5, 6], [8, 9], [6, 7]], dtype=np.intp),
+        )
+
+    def test_single_component_reports_flat_fallback(self, tmp_path, capsys) -> None:
+        out = tmp_path / "single-component-lines.luxar.zarr"
+        vertices = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0]], dtype=np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curve",
+                vertices,
+                1.0,
+                line_type="indexed",
+                indices=np.array([0, 1, 1, 2], dtype=np.uint32),
+                additive_lod=False,
+                substitutive_lod=dict(coarse="lines", levels=1),
+            )
+        assert "input too small to synthesize coarse levels" in capsys.readouterr().out
+        assert zarr.open(str(out), mode="r")["curve"].attrs["type"] == "lines"
 
     def test_indexed_isolates_do_not_consume_coarse_budget(self, tmp_path) -> None:
         out = tmp_path / "indexed-lines-isolates.luxar.zarr"

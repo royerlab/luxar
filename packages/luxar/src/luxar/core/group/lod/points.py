@@ -72,30 +72,13 @@ DEFAULT_METHOD: PointsMethodName = DEFAULT_ADDITIVE_METHOD
 
 def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]]:
     """Pop and validate the Points-only substitutive representation keys."""
-    coarse = str(kwargs.pop("coarse", "gsplats")).replace("-", "_")
-    if coarse not in {"gsplats", "points"}:
-        raise ValueError(
-            "substitutive_lod for Points: coarse must be one of "
-            f"['gsplats', 'points']; got {coarse!r}"
-        )
+    from .group import resolve_same_type_representation
 
-    brightness = kwargs.pop("brightness_compensation", "auto")
-    if brightness != "auto":
-        try:
-            brightness = float(brightness)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "brightness_compensation must be 'auto' or a finite value >= 0; "
-                f"got {brightness!r}"
-            ) from exc
-        if not np.isfinite(brightness) or brightness < 0.0:
-            raise ValueError(
-                "brightness_compensation must be 'auto' or a finite value >= 0; "
-                f"got {brightness!r}"
-            )
-
-    if coarse == "points":
-        reasons = {
+    return resolve_same_type_representation(
+        kwargs,
+        geometry="Points",
+        same_type="points",
+        inapplicable_reasons={
             "truncation_radius": (
                 "it controls the Gaussian footprint used by the lift, and "
                 "same-type point levels are not lifted"
@@ -116,20 +99,8 @@ def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]
                 "it selects Gaussian merge dimensions, and same-type point "
                 "levels preserve discrete hidden coordinates automatically"
             ),
-        }
-        for key, reason in reasons.items():
-            if key in kwargs:
-                raise ValueError(
-                    f"substitutive_lod for Points: {key!r} does not apply when "
-                    f"coarse='points' — {reason}."
-                )
-    elif brightness != "auto":
-        raise ValueError(
-            "substitutive_lod for Points: 'brightness_compensation' applies only "
-            "when coarse='points'"
-        )
-
-    return coarse, brightness
+        },
+    )
 
 
 def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
