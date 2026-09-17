@@ -68,6 +68,7 @@ _RECOVERED_SOURCE_FIELDS = (
     "source_shape",
     "source_dtype",
     "source_bytes",
+    "source_voxels",
     "frames",
 )
 
@@ -223,6 +224,15 @@ def _span(frames: list[dict[str, Any]], key: str) -> Optional[tuple[float, float
     return (min(values), max(values))  # type: ignore[type-var]
 
 
+def _common(frames: list[dict[str, Any]], key: str) -> Any:
+    """Shared non-null *key*, or ``None`` unless every record agrees."""
+    values = [frame.get(key) for frame in frames]
+    if any(value is None for value in values):
+        return None
+    first = values[0]
+    return first if all(value == first for value in values[1:]) else None
+
+
 def _read_part_provenance(value: Any, *, root_kind: Any) -> Optional[dict[str, Any]]:
     """Aggregate component fits without mistaking nested parts for frames."""
     if not isinstance(value, list) or not value:
@@ -240,12 +250,22 @@ def _read_part_provenance(value: Any, *, root_kind: Any) -> Optional[dict[str, A
     nested = any(
         isinstance(fitting.get("part_provenance"), list) for fitting in fittings
     )
+    summarized = any(isinstance(part.get("part_count"), int) for part in value)
+    partitioned = root_kind == "partition"
+    explicit_frames = _as_int(_common(fittings, "frames"))
     return {
-        "frames": None if root_kind == "partition" or nested else len(value),
+        "frames": explicit_frames
+        if explicit_frames is not None
+        else (None if partitioned or nested or summarized else len(value)),
         "quality_quotable": quotable,
-        "source_bytes": (
-            None if root_kind == "partition" else _total(fittings, "source_bytes")
-        ),
+        "source_shape": _common(fittings, "source_shape"),
+        "source_dtype": _common(fittings, "source_dtype"),
+        "source_bytes": _common(fittings, "source_bytes")
+        if partitioned
+        else _total(fittings, "source_bytes"),
+        "source_voxels": _common(fittings, "source_voxels")
+        if partitioned
+        else _total(fittings, "source_voxels"),
         "psnr_db": _span(fittings, "psnr_db") if quotable else None,
         "foreground_psnr_db": (
             _span(fittings, "foreground_psnr_db") if quotable else None
@@ -344,6 +364,22 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     part_info = _read_part_provenance(
         fit.get("part_provenance"), root_kind=root_attrs.get("kind")
     )
+    source_shape = fit.get("source_shape")
+    if source_shape is None:
+        source_shape = (part_info or {}).get("source_shape")
+    frames = _as_int(fit.get("frames"))
+    if frames is None:
+        frames = _as_int(root_attrs.get("frames"))
+    if (
+        frames is None
+        and part_info is not None
+        and root_attrs.get("ndim") == 4
+        and isinstance(source_shape, list)
+        and len(source_shape) == 4
+    ):
+        frames = _as_int(source_shape[0])
+    if frames is None:
+        frames = (part_info or {}).get("frames")
     n_splats = _as_int(root_attrs.get("n_splats"))
     groups = {
         n[len(root) :].rsplit("/", 1)[0]
@@ -366,12 +402,17 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
         if fit.get("foreground_psnr_db") is not None
         else (part_info or {}).get("foreground_psnr_db"),
         "foreground_fraction": fit.get("foreground_fraction"),
-        "source_shape": fit.get("source_shape"),
-        "source_dtype": fit.get("source_dtype"),
+        "source_shape": source_shape,
+        "source_dtype": fit.get("source_dtype")
+        if fit.get("source_dtype") is not None
+        else (part_info or {}).get("source_dtype"),
         "source_bytes": fit.get("source_bytes")
         if fit.get("source_bytes") is not None
         else (part_info or {}).get("source_bytes"),
-        "frames": (part_info or {}).get("frames"),
+        "source_voxels": fit.get("source_voxels")
+        if fit.get("source_voxels") is not None
+        else (part_info or {}).get("source_voxels"),
+        "frames": frames,
         "quality_quotable": (part_info or {}).get("quality_quotable"),
     }
 
@@ -544,6 +585,7 @@ def _retain_preferred_measurements(
         "source_shape",
         "source_dtype",
         "source_bytes",
+        "source_voxels",
         "frames",
     )
     retained_keys: set[str] = set()
@@ -565,6 +607,7 @@ def _retain_preferred_measurements(
                     "source_shape": None,
                     "source_dtype": None,
                     "source_bytes": None,
+                    "source_voxels": None,
                     "frames": None,
                     "measured_from": None,
                     "measured_sha256": None,

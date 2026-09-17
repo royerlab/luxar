@@ -55,6 +55,47 @@ def _contains_partition_group(group: Any) -> bool:
     )
 
 
+def _summarize_partition_provenance(value: Any) -> Optional[list[dict[str, Any]]]:
+    """Collapse slot-keyed component records into one partition summary."""
+    if not isinstance(value, list) or not value:
+        return None
+    fittings = [
+        part.get("fitting") if isinstance(part, dict) else None for part in value
+    ]
+
+    summary: dict[str, Any] = {}
+    for key in ("source_bytes", "source_voxels", "time_seconds"):
+        values = [
+            fitting.get(key) if isinstance(fitting, dict) else None
+            for fitting in fittings
+        ]
+        if all(
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and np.isfinite(item)
+            for item in values
+        ):
+            summary[key] = sum(values)
+
+    for key in ("source_shape", "source_dtype"):
+        values = [
+            fitting.get(key) if isinstance(fitting, dict) else None
+            for fitting in fittings
+        ]
+        if values[0] is not None and all(item == values[0] for item in values[1:]):
+            summary[key] = values[0]
+
+    return [{"part_count": len(value), "fitting": summary}]
+
+
+def _replace_partition_provenance_with_summary(stats: dict[str, Any]) -> None:
+    summary = _summarize_partition_provenance(stats.get("part_provenance"))
+    if summary is None:
+        stats.pop("part_provenance", None)
+        return
+    stats["part_provenance"] = summary
+
+
 def _leaf_splat_groups(root: Any, leaf_path: str) -> list[Any]:
     leaf = root[leaf_path] if leaf_path else root
     count = int(leaf.attrs.get("n_additive_sublods", 1))
@@ -545,7 +586,7 @@ def run_flatten_dataset(
 
                 carried_stats = stats_after_structure_change(stats)
                 if _contains_partition_group(root):
-                    carried_stats.pop("part_provenance", None)
+                    _replace_partition_provenance_with_summary(carried_stats)
                 fitting, config, provenance, pipeline = split_fitting_info(
                     carried_stats, include_fitting_info=True
                 )
