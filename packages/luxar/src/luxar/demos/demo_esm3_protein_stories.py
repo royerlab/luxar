@@ -548,7 +548,15 @@ STORIES: tuple[Story, ...] = (
             "or testing many sites at once — is still argued over."
         ),
         tags=("DNA repair", "cancer"),
-        pdb_id="3CMW",
+        # Wild-type E. coli RecA, 1.9 A, one chain, no engineering.
+        #
+        # This replaced 3CMW after a structure audit (2026-09-17). That entry,
+        # "Mechanism of homologous recombination from the RecA-ssDNA/dsDNA
+        # structures", is an ENGINEERED single chain of five RecA copies fused
+        # head to tail — its own entity 1 is a DNA 15-mer — and it contains no
+        # Rad51 at all, though this story is titled for both. Carried by
+        # `demo_esm_protein_universe` too, so the swap fixes both tours.
+        pdb_id="1U94",
         narration=(
             "RecA and Rad51, the machine that mends broken DNA. It coats a "
             "broken strand and searches the entire genome for the matching "

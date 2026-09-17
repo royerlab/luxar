@@ -129,6 +129,17 @@ def principal_frame(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Returns ``(center, R)`` with ``R`` a right-handed 3x3 rotation such that
     ``(p - center) @ R.T`` puts the largest principal axis along +y (vertical,
     the turntable axis), the second along +x and the smallest along +z.
+
+    **The long axis is oriented BULKY-END-UP, not arbitrarily.** An
+    eigenvector's sign is undetermined — ``eigh`` may hand back either
+    direction — so standing a structure on its long axis still leaves which
+    way up to numerical accident. For an asymmetric assembly that is a coin
+    flip a viewer notices immediately: a bacteriophage came out legs-up half
+    the time. The half of the cloud holding more points is therefore put at
+    +y, which for a phage is the capsid, so it hangs head up and legs down
+    and stays that way through the turn (the turntable spins about +y).
+    Ties within a per cent fall back to the fatter half, measured as mean
+    radial distance from the axis.
     """
     pts = np.asarray(points, dtype=np.float64)
     center = pts.mean(axis=0)
@@ -136,6 +147,19 @@ def principal_frame(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     evals, evecs = np.linalg.eigh(cov)
     order = np.argsort(evals)[::-1]  # largest first
     e_long, e_mid, e_short = (evecs[:, i] for i in order)
+
+    # Point the long axis at the bulkier end (see the note above).
+    along = (pts - center) @ e_long
+    upper, lower = along > 0, along <= 0
+    n_up, n_down = int(upper.sum()), int(lower.sum())
+    if abs(n_up - n_down) <= 0.01 * max(len(pts), 1):
+        radial = np.linalg.norm((pts - center) - along[:, None] * e_long, axis=1)
+        heavier_is_up = radial[upper].mean() >= radial[lower].mean()
+    else:
+        heavier_is_up = n_up >= n_down
+    if not heavier_is_up:
+        e_long = -e_long
+
     rows = np.stack([e_mid, e_long, e_short])  # rows: new x, new y, new z
     if np.linalg.det(rows) < 0:
         rows[2] = -rows[2]

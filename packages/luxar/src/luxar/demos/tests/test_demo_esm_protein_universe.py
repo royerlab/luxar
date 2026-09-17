@@ -647,10 +647,13 @@ def test_every_new_story_selects_by_pfam_or_name_and_names_its_structure() -> No
         "Levodopa and the gut",
     ]
     by_key = {s.key: s for s in STORIES}
-    assert [k for k in added if k in by_key] == added
-    # They come after the twelve the tour shipped with, so the kiosk chapter
-    # indices of the original stops do not move.
-    assert [s.key for s in STORIES][-8:] == added
+    assert sorted(added) == sorted(k for k in added if k in by_key)
+    # They used to be pinned to the last eight slots, so the kiosk chapter
+    # indices of the original twelve would not move. That is no longer the
+    # contract: the tour is walked in an explicit narrative order
+    # (`TOUR_ORDER`), which interleaves new stops with old ones and therefore
+    # DOES renumber the chapters. Nothing persists a chapter index across
+    # builds, so the cost is a stale bookmark, not a broken kiosk.
     for key in added:
         s = by_key[key]
         assert s.key not in {c.key for c in SWISSPROT_STORIES}  # not carried
@@ -760,11 +763,26 @@ def test_the_ice_story_never_selects_the_mislabelled_pfam_again() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Family links (2026-09-17: connect a family's scattered places with lines)
+# Constellations (2026-09-16: light every place a family sits, join them with
+# lines, and frame the whole figure)
 # ---------------------------------------------------------------------------
 
+_MAP_CENTRE = np.zeros(3)
 
-def test_family_link_graph_joins_the_big_places_and_skips_the_stragglers() -> None:
+
+def _figure_with_r_max(r_max: float) -> demo.Constellation:
+    return demo.Constellation(
+        places=(np.array([0]), np.array([1])),
+        centroids=np.zeros((2, 3), dtype=np.float32),
+        edges=np.array([[0, 1]]),
+        members=np.array([0, 1]),
+        centre=np.zeros(3),
+        r_max=r_max,
+        view=np.array([0.0, 0.0, 1.0]),
+    )
+
+
+def test_constellation_joins_the_big_places_and_skips_the_stragglers() -> None:
     """Two dense places plus a singleton: one line, and the singleton is out."""
     rng = np.random.default_rng(3)
     a = np.array([0.0, 0.0, 0.0]) + rng.normal(size=(40, 3)) * 0.02
@@ -775,20 +793,54 @@ def test_family_link_graph_joins_the_big_places_and_skips_the_stragglers() -> No
     mask = np.zeros(len(positions), dtype=bool)
     mask[: len(a) + len(b) + 1] = True
 
-    centroids, edges = demo.family_link_graph(positions, mask)
+    figure = demo.constellation_of(positions, mask, _MAP_CENTRE)
+    assert figure is not None
 
-    assert len(centroids) == 2, "the one-member place is below the floor"
-    assert edges.shape == (1, 2)
-    # The two centroids are where the two dense places are.
-    got = sorted(float(c[0]) for c in centroids)
+    assert len(figure.centroids) == 2, "the one-member place is below the floor"
+    assert figure.edges.shape == (1, 2)
+    got = sorted(float(c[0]) for c in figure.centroids)
     assert got[0] == pytest.approx(0.0, abs=0.02)
     assert got[1] == pytest.approx(5.0, abs=0.02)
     # An MST over n places has exactly n-1 edges.
-    assert len(edges) == len(centroids) - 1
+    assert len(figure.edges) == len(figure.centroids) - 1
+    # The stray is NOT lit: the highlight is exactly the joined places.
+    assert len(figure.members) == len(a) + len(b)
+    assert np.array_equal(figure.members, np.sort(np.concatenate(figure.places)))
 
 
-def test_family_link_graph_draws_nothing_when_the_family_sits_in_one_place() -> None:
-    """A family that is not scattered has nothing to join."""
+def test_constellation_endpoints_sit_on_lit_clusters() -> None:
+    """The bug the redesign fixes: a line must start and end on a lit place.
+
+    Every centroid is the mean of one place, and every place is a subset of
+    the lit members — so an endpoint can never float free of the blob it
+    appears to leave. Before the redesign the lines were drawn from the
+    family's components while the highlight lit a KNOT ball around a
+    purity-weighted seed, and the two disagreed by up to 0.45 world units.
+    """
+    rng = np.random.default_rng(11)
+    places = [
+        np.array(c) + rng.normal(size=(25, 3)) * 0.02
+        for c in ([0.0, 0.0, 0.0], [4.0, 1.0, 0.0], [-3.0, 2.0, 1.0])
+    ]
+    positions = np.vstack([*places, rng.normal(size=(150, 3)) * 5.0]).astype(np.float32)
+    mask = np.zeros(len(positions), dtype=bool)
+    mask[: 25 * 3] = True
+
+    figure = demo.constellation_of(positions, mask, _MAP_CENTRE)
+    assert figure is not None
+    assert len(figure.places) == 3 and len(figure.edges) == 2
+
+    lit = set(figure.members.tolist())
+    for place, centroid in zip(figure.places, figure.centroids, strict=True):
+        assert set(place.tolist()) <= lit
+        assert centroid == pytest.approx(positions[place].mean(axis=0), abs=1e-5)
+    # Every endpoint index addresses a real place.
+    assert int(figure.edges.min()) >= 0
+    assert int(figure.edges.max()) < len(figure.centroids)
+
+
+def test_constellation_is_none_when_the_family_sits_in_one_place() -> None:
+    """A family that is not scattered has no figure — the caller must not draw one."""
     rng = np.random.default_rng(4)
     positions = np.vstack(
         [np.zeros((50, 3)) + rng.normal(size=(50, 3)) * 0.02, rng.normal(size=(50, 3))]
@@ -796,43 +848,184 @@ def test_family_link_graph_draws_nothing_when_the_family_sits_in_one_place() -> 
     mask = np.zeros(len(positions), dtype=bool)
     mask[:50] = True
 
-    centroids, edges = demo.family_link_graph(positions, mask)
-    assert len(edges) == 0 and len(centroids) == 0
-
+    assert demo.constellation_of(positions, mask, _MAP_CENTRE) is None
     # And an empty family is handled rather than raising.
-    empty = demo.family_link_graph(positions, np.zeros(len(positions), dtype=bool))
-    assert len(empty[1]) == 0
+    empty = np.zeros(len(positions), dtype=bool)
+    assert demo.constellation_of(positions, empty, _MAP_CENTRE) is None
 
 
-def test_family_link_graph_respects_its_floor_and_radius() -> None:
+def test_constellation_respects_its_floor_and_radius() -> None:
     rng = np.random.default_rng(5)
     a = rng.normal(size=(12, 3)) * 0.02
     b = np.array([4.0, 0.0, 0.0]) + rng.normal(size=(12, 3)) * 0.02
     positions = np.vstack([a, b]).astype(np.float32)
     mask = np.ones(len(positions), dtype=bool)
 
-    assert len(demo.family_link_graph(positions, mask, min_members=10)[1]) == 1
-    # Raise the floor above both places and the graph empties.
-    assert len(demo.family_link_graph(positions, mask, min_members=20)[1]) == 0
+    assert demo.constellation_of(positions, mask, _MAP_CENTRE) is not None
+    # Raise the floor above both places and there is no figure.
+    assert demo.constellation_of(positions, mask, _MAP_CENTRE, min_members=20) is None
     # Widen the linkage until the two places merge into one.
-    assert len(demo.family_link_graph(positions, mask, radius=9.0)[1]) == 0
+    assert demo.constellation_of(positions, mask, _MAP_CENTRE, radius=9.0) is None
 
 
-def test_only_pfam_selected_stories_may_carry_family_links() -> None:
+def test_constellation_view_axis_is_the_thin_one_and_points_outward() -> None:
+    """The face-on direction: along the axis the figure is flattest."""
+    rng = np.random.default_rng(7)
+    # Three places strung along x and spread in y, but flat in z: the thin
+    # axis is z, so the camera must look down z. (The y spread matters — three
+    # isotropic blobs on a line leave y and z tied, and the "thinnest" axis of
+    # a tie is arbitrary.)
+    positions = np.vstack(
+        [
+            np.array([x, 0.0, 0.0])
+            + rng.normal(size=(30, 3)) * np.array([0.02, 1.5, 0.02])
+            for x in (-4.0, 0.0, 4.0)
+        ]
+    ).astype(np.float32)
+    map_centre = np.array([0.0, 0.0, -50.0])
+
+    figure = demo.constellation_of(
+        positions, np.ones(len(positions), dtype=bool), map_centre
+    )
+    assert figure is not None
+    assert abs(float(figure.view[2])) > 0.9, figure.view
+    # Signed AWAY from the map centre, so the camera sits outside looking in.
+    assert float(figure.view @ (figure.centre - map_centre)) > 0
+
+
+def test_constellation_camera_frames_the_whole_figure_from_every_angle() -> None:
+    """Distance is set from r_max, so auto-rotate cannot swing a node out of frame."""
+    rng = np.random.default_rng(9)
+    positions = np.vstack(
+        [
+            np.array([x, 0.0, 0.0]) + rng.normal(size=(30, 3)) * 0.02
+            for x in (-6.0, 0.0, 6.0)
+        ]
+    ).astype(np.float32)
+    figure = demo.constellation_of(
+        positions, np.ones(len(positions), dtype=bool), _MAP_CENTRE
+    )
+    assert figure is not None
+    story = _story(pfam=("PF00042",), constellation=True)
+    camera = demo.constellation_camera(figure, story)
+
+    distance = float(np.linalg.norm(np.asarray(camera.position) - figure.centre))
+    assert camera.target == pytest.approx(tuple(figure.centre), abs=1e-5)
+    half_height = distance * float(np.tan(np.radians(demo.STORY_LENS_FOV_DEG) / 2))
+    # Every member is inside the frame even at the worst viewing angle, where
+    # its whole distance from the centre is perpendicular to the view.
+    assert figure.r_max <= half_height
+    # And it is not framed so wide that the figure becomes a speck.
+    assert figure.r_max / half_height == pytest.approx(
+        demo.CONSTELLATION_FRAME_FRACTION, rel=1e-6
+    )
+
+
+def test_constellation_beads_hold_a_constant_angular_size() -> None:
+    """Marker radius scales with the figure, so a small one is not sub-pixel."""
+    story = _story(pfam=("PF00042",), constellation=True)
+    r_small, _ = demo.highlight_appearance(story, 100, figure=_figure_with_r_max(2.0))
+    r_large, _ = demo.highlight_appearance(story, 100, figure=_figure_with_r_max(12.0))
+    assert r_large / r_small == pytest.approx(6.0, rel=1e-6)
+    # Never below the knot marker, whatever the figure's scale.
+    tiny, _ = demo.highlight_appearance(story, 100, figure=_figure_with_r_max(0.01))
+    assert tiny == pytest.approx(demo.HIGHLIGHT_RADIUS)
+    # Bigger highlights are dimmed, as everywhere else on the tour.
+    _, bright = demo.highlight_appearance(story, 100, figure=_figure_with_r_max(5.0))
+    _, dim = demo.highlight_appearance(story, 900, figure=_figure_with_r_max(5.0))
+    assert dim < bright
+    # A constellation without its figure is a programming error, not a default.
+    with pytest.raises(ValueError, match="pass its figure"):
+        demo.highlight_appearance(story, 100)
+
+
+def test_constellation_lines_are_bright_and_still_tinted() -> None:
+    """The owner's brief: nearly white, holding some of the story's hue."""
+    color = (0.9, 0.25, 0.2)
+    line = demo.constellation_line_color(color)
+    assert line.min() > 0.7, "every channel is bright — the line reads as light"
+    assert line.max() <= 1.0
+    # The hue order survives, so the line still belongs to its story.
+    assert line[0] > line[1] > line[2]
+    # Brighter than the story colour it came from, channel by channel.
+    assert np.all(line >= np.asarray(color, dtype=np.float32))
+    # White stays white rather than overshooting.
+    assert demo.constellation_line_color((1.0, 1.0, 1.0)) == pytest.approx(
+        np.ones(3), abs=1e-6
+    )
+
+
+def test_only_pfam_selected_stories_may_be_constellations() -> None:
     """The line means "same Pfam family", so there must be a Pfam selector."""
-    with pytest.raises(ValueError, match="connect_family needs a pfam selector"):
-        _story(pattern="x", connect_family=True)
-    assert _story(pfam=("PF00042",), connect_family=True).connect_family
+    with pytest.raises(ValueError, match="constellation needs a pfam selector"):
+        _story(pattern="x", constellation=True)
+    assert _story(pfam=("PF00042",), constellation=True).constellation
 
-    linked = [s.key for s in STORIES if s.connect_family]
-    assert linked == [
+
+def test_constellation_excludes_every_other_framing_mode() -> None:
+    """A constellation is its own mode: no knot cut, no bubble, no groups filter."""
+    for kwargs in (
+        {"whole": True},
+        {"whole": True, "scatter": True},
+        {"side_on": True},
+    ):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            _story(pfam=("PF00042",), constellation=True, **kwargs)
+    with pytest.raises(ValueError, match="cannot take a groups filter"):
+        _story(pfam=("PF00042",), constellation=True, groups=("Bacteria",))
+
+
+def test_the_shipped_constellations_are_the_three_whose_split_means_something() -> None:
+    """Reduced from six on 2026-09-16: lines assert the split is meaningful.
+
+    The three smell families were measured and dropped — every place they
+    occupy is the same protein in another spot (four Chordata olfactory places
+    with nothing telling them apart; one big insect place plus a crumb; six
+    worm places all of mixed Sr families) — so a line between them would
+    assert a structure the data does not carry.
+    """
+    assert [s.key for s in STORIES if s.constellation] == [
         "Hemoglobin",
         "Photosystem II",
         "Lanthipeptides",
-        "Olfactory receptors",
-        "Insect odorant receptors",
-        "Worm chemoreceptors",
     ]
     for s in STORIES:
-        if s.connect_family:
+        if s.constellation:
             assert s.pfam, s.key
+            assert not s.whole and not s.scatter and not s.groups, s.key
+            # The panel must say what the lines mean, or the figure is decoration.
+            assert "lines join" in " ".join(s.facts).lower(), s.key
+
+
+# ---------------------------------------------------------------------------
+# Tour order (2026-09-16: an explicit narrative order, not authoring order)
+# ---------------------------------------------------------------------------
+
+
+def test_tour_order_is_a_permutation_of_the_authored_pool() -> None:
+    assert len(demo.TOUR_ORDER) == len(set(demo.TOUR_ORDER)) == len(demo._STORY_POOL)
+    assert set(demo.TOUR_ORDER) == {s.key for s in demo._STORY_POOL}
+    assert [s.key for s in STORIES] == list(demo.TOUR_ORDER)
+
+
+def test_tour_order_rejects_a_list_that_is_not_a_permutation() -> None:
+    pool = demo._STORY_POOL
+    with pytest.raises(ValueError, match="missing"):
+        demo._ordered(pool, demo.TOUR_ORDER[:-1])
+    with pytest.raises(ValueError, match="unknown"):
+        demo._ordered(pool, (*demo.TOUR_ORDER, "Not a story"))
+
+
+def test_tour_order_keeps_the_three_sequences_that_depend_on_it() -> None:
+    """Three adjacencies are load-bearing, not taste."""
+    order = list(demo.TOUR_ORDER)
+    # The owner asked for these two together (2026-09-16), and the TnpB story
+    # is titled against CRISPR ("the scissors CRISPR grew out of"), so CRISPR
+    # must come first or the title has no referent.
+    assert order.index("TnpB and Fanzor") == order.index("CRISPR-Cas") + 1
+    # Each smell narration counts itself: "a second time", "a third time".
+    smell = ["Olfactory receptors", "Insect odorant receptors", "Worm chemoreceptors"]
+    first = order.index(smell[0])
+    assert order[first : first + 3] == smell
+    # The map's own geography, in the order the dark story sets up.
+    assert [s.region for s in STORIES if s.region] == ["spur", "dark", "phage"]
