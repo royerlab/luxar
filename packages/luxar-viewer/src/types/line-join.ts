@@ -31,8 +31,17 @@
  * @module types/line-join
  */
 
-/** Authored / selectable join styles. */
-export type LineJoinStyle = 'none' | 'miter';
+import {
+  LINE_JOIN_STYLES as CONTRACT_LINE_JOIN_STYLES,
+  type LineJoinStyleName,
+} from './format-contract';
+
+/**
+ * Authored / selectable join styles. Single-sourced from
+ * `format-contract/contract.yaml::line_join_styles` (the Python writer's
+ * `LINE_JOIN_STYLES` is the same projection).
+ */
+export type LineJoinStyle = LineJoinStyleName;
 
 /**
  * The default when nothing is authored or overridden.
@@ -59,8 +68,8 @@ export const LINE_JOIN_UNIFORM: Readonly<Record<LineJoinStyle, number>> = {
   miter: 1,
 };
 
-/** Every valid style, for validation and for error messages. */
-export const LINE_JOIN_STYLES: readonly LineJoinStyle[] = ['none', 'miter'];
+/** Every valid style, for validation and for error messages (the contract's list). */
+export const LINE_JOIN_STYLES: readonly LineJoinStyle[] = CONTRACT_LINE_JOIN_STYLES;
 
 /**
  * Parse a join style from untrusted text (a URL parameter or an authored zarr

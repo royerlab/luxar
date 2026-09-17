@@ -14,6 +14,7 @@
  */
 
 import type { BlendingMode } from './blending';
+import type { OrderingMethodName } from './format-contract';
 import * as THREE from 'three';
 import type { DimensionMetadata } from './dims';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
@@ -259,7 +260,7 @@ export interface PointsMetadata {
   has_keys?: boolean;
 
   /** Spatial ordering method */
-  ordering?: 'morton' | 'hilbert' | 'none';
+  ordering?: OrderingMethodName;
 
   /** Elements per chunk */
   chunk_size?: number;

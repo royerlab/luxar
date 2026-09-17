@@ -4,7 +4,6 @@ This module provides the LuxarScene class for reading Luxar zarr format files.
 It supports automatic decoding of encoded arrays via ArrayDecoder.
 """
 
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Union
@@ -29,7 +28,11 @@ from ..core.transforms import read_transform_from_zarr
 from ..core.viewer_config import ViewerConfig
 from ..encoding.compression import WIDTH_AWARE_DEFAULT
 from ..encoding.decoder import ArrayDecoder
-from ..typing_utils.constants import LUXAR_VERSION_CURRENT, RESERVED_ROOT_GROUPS
+from ..typing_utils.constants import RESERVED_ROOT_GROUPS
+from ..typing_utils.format_version import (
+    enforce_scene_format_version,
+    read_scene_format_version,
+)
 
 # Default compressor: the width-aware policy sentinel — each array gets a
 # zstd-l9 configuration keyed on its stored dtype (byte shuffle for multi-byte
@@ -327,15 +330,11 @@ class LuxarScene:
                 "or metadata. Rebuild the scene from scratch."
             )
 
-        # Warn on version mismatch (non-fatal: older files should still load)
-        file_version = root.attrs.get("luxar_version")
-        if file_version is not None and str(file_version) != LUXAR_VERSION_CURRENT:
-            warnings.warn(
-                f"Version mismatch: file='{file_version}', "
-                f"library='{LUXAR_VERSION_CURRENT}'.",
-                UserWarning,
-                stacklevel=2,
-            )
+        # Format-version policy (shared with the viewer, see
+        # typing_utils/format_version.py): supported → silent, newer minor →
+        # warn and load, anything else → UnsupportedFormatVersionError. A 0.1
+        # root carrying only the legacy `luxar_version` key is a supported arm.
+        enforce_scene_format_version(dict(root.attrs), stacklevel=2)
 
         return cls(root, path)
 
@@ -346,8 +345,8 @@ class LuxarScene:
 
     @property
     def version(self) -> str:
-        """Luxar format version."""
-        return str(self._root.attrs.get("luxar_version", "unknown"))
+        """Scene format version (``format_version``, else the 0.1 legacy key)."""
+        return read_scene_format_version(dict(self._root.attrs)) or "unknown"
 
     @property
     def root_attrs(self) -> Dict[str, Any]:

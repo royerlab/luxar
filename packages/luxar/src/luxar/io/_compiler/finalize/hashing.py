@@ -18,7 +18,21 @@ from luxar._zarr_compat import (
     list_raw_keys,
     read_raw_bytes,
 )
+from luxar.typing_utils._format_contract import SOFTWARE_VERSION_ATTR
 from luxar.typing_utils.constants import ENVIRONMENT_GROUP
+
+# Root/group attrs that are NOT part of a node's content digest. Shared by this
+# compile-time walk and `luxar optimize`'s streaming twin
+# (`io/optimize.py::_compute_content_hashes_streaming`) so the two can never
+# disagree on what the digest covers:
+#
+# * `content_hash` — the digest itself (self-reference).
+# * `luxar_software_version` — the `luxar.__version__` that wrote the store.
+#   Provenance, not content: two Luxar releases compiling the same scene must
+#   agree on the digest, and an `optimize` restamp under a newer release must
+#   not churn every viewer's OPFS cache. Pinned by
+#   `io/tests/test_hash_reproducibility.py`.
+HASH_EXCLUDED_ATTRS: frozenset[str] = frozenset({"content_hash", SOFTWARE_VERSION_ATTR})
 
 # Attr keys whose value is the filename of a plain (non-zarr) payload file stored
 # *inside* the group's own directory. Such files have no chunk grid and no zarr
@@ -267,8 +281,11 @@ def compute_content_hashes(store: zarr.Group) -> str:
             hasher.update(json.dumps(identity, sort_keys=True, default=str).encode())
             hasher.update(dataset[:].tobytes())
 
-        # 2. Hash metadata (excluding content_hash to avoid recursion)
-        attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
+        # 2. Hash metadata, minus the digest itself and the provenance-only
+        #    software stamp (see HASH_EXCLUDED_ATTRS).
+        attrs = {
+            k: v for k, v in dict(group.attrs).items() if k not in HASH_EXCLUDED_ATTRS
+        }
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
 
         # 3. Hash plain payload files named by attrs (overlay images): neither

@@ -81,6 +81,7 @@ import { config } from '../../../config';
 import { bootstrapStandalone } from '../../../core/bootstrap';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
+import { UnsupportedFormatVersionError } from '../../../data/format-version';
 import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
@@ -629,6 +630,25 @@ describe('bootstrapStandalone', () => {
         help: 'help.toggle',
       });
       expect(resolveShortcut(shortcutActions.help)).toBe('F1');
+      expect(mocks.showError.mock.calls[0][3]).toEqual({ autoDismiss: false });
+    });
+
+    it('surfaces a refused format version verbatim in the persistent startup dialog', async () => {
+      // The refusal message names the version, the supported set and the
+      // remedy — the one startup failure (besides an archive fault) where the
+      // generic "check the console" text would hide exactly what the user
+      // needs. Pinned by format-version.spec.ts end to end.
+      const refusal = new UnsupportedFormatVersionError(
+        "Unsupported format_version: '9.9' for a scene store (newer major version; this viewer reads 0.1, 0.2). Upgrade the viewer to a build that supports this format."
+      );
+      mocks.init.mockRejectedValueOnce(new Error('Failed to load scene', { cause: refusal }));
+
+      await expect(
+        bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS })
+      ).rejects.toThrow('Failed to load scene');
+
+      expect(mocks.showError).toHaveBeenCalledTimes(1);
+      expect(mocks.showError.mock.calls[0][0]).toBe(refusal.message);
       expect(mocks.showError.mock.calls[0][3]).toEqual({ autoDismiss: false });
     });
 

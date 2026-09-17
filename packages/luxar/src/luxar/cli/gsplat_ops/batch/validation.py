@@ -120,12 +120,20 @@ def validate_tile(tile_path: Path) -> str:
     if attrs.get("format_type") != "gsplats_zarr":
         return f"bad_format_type: {attrs.get('format_type')}"
 
-    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
+    from luxar.gsplats.io.save_gsplats import FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS
+    from luxar.typing_utils.format_version import (
+        FormatVersionOutcome,
+        check_format_version,
+    )
 
     version = attrs.get("format_version")
-    if version not in SUPPORTED_FORMAT_VERSIONS:
+    outcome, _ = check_format_version(
+        "gsplats", version, FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS
+    )
+    if outcome is FormatVersionOutcome.REFUSE:
         # Not corrupt — just unmigrated. Surface it instead of classifying it as
-        # corrupt (which would let --fix delete a recoverable tile).
+        # corrupt (which would let --fix delete a recoverable tile). A newer
+        # MINOR is readable under the shared policy and falls through.
         return f"unsupported_format_version: {version} (run gsplat migrate-format)"
 
     return validate_node_dir(tile_path, ".")

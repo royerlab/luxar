@@ -39,8 +39,14 @@ deterministic order:
    where the reasoning lives: why layout and codec identity count as identity,
    why the per-array `encoding` attrs do, and why codec settings deliberately do
    not.
-2. the group's attrs as sorted JSON, **excluding** any existing `content_hash` to
-   avoid self-reference.
+2. the group's attrs as sorted JSON, **excluding** `HASH_EXCLUDED_ATTRS`: the
+   existing `content_hash` (self-reference) and the root's
+   `luxar_software_version` stamp (provenance, not content — two Luxar releases
+   compiling the same scene must agree on the digest, and an `optimize`
+   restamp under a newer release must not churn every viewer's cache). The
+   streaming twin in `io/optimize.py` imports the same set, and
+   `packages/luxar/src/luxar/io/tests/test_hash_reproducibility.py` fails if either hasher stops
+   honouring it.
 3. the bytes of any plain **payload file** those attrs name (see below).
 4. each child group's **name** (`group_keys()` sorted) together with its
    recursively-computed hash. The name is hashed because a node's own digest does

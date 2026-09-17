@@ -17,10 +17,22 @@
 # Source of record for the values below: docs/specs/GSPLATS_ZARR_FORMAT.md.
 
 # Scene (.luxar.zarr) format version.
-#   Python source of truth today: typing_utils/constants.py
+#   Python: typing_utils/constants.py + typing_utils/format_version.py
+#   TS:     data/format-version.ts
+#
+# 0.2 is the self-identifying root header: `format_version` + `format_type`
+# (mirroring the gsplats header) plus the software stamp `luxar_software_version`.
+# 0.1 wrote only `luxar_version` — the key survives as the LEGACY read fallback
+# (`legacy_scene_version_attr` below) because published, immutable stores carry
+# it (the DESI Zenodo record, every `datasets/**` store).
+#
+# No reserved future slots: a newer MINOR (e.g. a 0.3 store read by a 0.2
+# reader) is handled by POLICY — warn and load — not by pre-declaring it here;
+# see `check_format_version` in both languages. Only versions this build has
+# actually read end-to-end belong in `supported`.
 scene_format:
-  current: "0.1"
-  supported: ["0.1", "0.2", "0.3"]
+  current: "0.2"
+  supported: ["0.1", "0.2"]
 
 # Standalone gsplats (.gsplats.zarr) node-tree format version.
 #   Python: gsplats/io/save_gsplats.py   TS: data/scene-loader/.../load-scene.ts
@@ -30,6 +42,28 @@ gsplats_format:
 
 # Root-header `format_type` attr that identifies a standalone gsplats store.
 format_type_gsplats: "gsplats_zarr"
+
+# Root-header `format_type` attr that identifies a compiled scene (scene 0.2+).
+#   Python: io/compiler.py (writer), typing_utils/format_version.py (reader)
+#   TS:     data/format-version.ts (dispatches scene vs gsplats on this value)
+format_type_scene: "luxar_zarr"
+
+# The scene 0.1 root-header version key. Read-only compatibility: readers fall
+# back to it when `format_version` is absent; the writer no longer emits it.
+legacy_scene_version_attr: "luxar_version"
+
+# Root-header attr recording the Luxar SOFTWARE version (`luxar.__version__`)
+# that wrote a scene. Provenance only — it is EXCLUDED from `content_hash` by
+# both hashers (`io/_compiler/finalize/hashing.py`, `io/optimize.py` via
+# `HASH_EXCLUDED_ATTRS`), so two builds compiling the same scene agree on the
+# digest and a `luxar optimize` restamp never churns viewer caches.
+#
+# DELIBERATE ASYMMETRY with gsplats: a standalone `.gsplats.zarr` keeps its own
+# `luxar_gsplats_version` key for the same fact. Renaming a 3.4 header key
+# without bumping the gsplats format would make "3.4" mean two shapes, and every
+# published Zenodo gsplats store carries the old key. Unify on this attr at the
+# next gsplats format bump (3.5), not before.
+software_version_attr: "luxar_software_version"
 
 # Scene-graph node geometry/container types.
 #   Python: typing_utils/enums.py::NodeType   TS: types/data-monitor-types.ts
@@ -128,15 +162,26 @@ encodings:
   - uint32
   - uint64
 
-# Canonical metadata attribute keys on scene/gsplats nodes.
+# Canonical STRUCTURAL attribute keys on scene/gsplats nodes: the header,
+# identity and tree-shape keys every reader dispatches on. Appearance keys are
+# the separate `render_attr_keys` list below.
+#   Python: validation/writing.py::_ALLOWED_NODE_ATTRS (structural sub-block
+#           asserted ⊆ this list), io/compiler.py (root header)
+#   TS:     types/zarr.ts::ZarrSceneAttrs (type-level check)
 attr_keys:
   - format_version
   - format_type
+  - luxar_software_version
+  - type
   - content_hash
+  - scene_dimensions
   - display_type
   - max_elements
   - position_bounds
   - kind
+  - selector
+  - default_level
+  - child_index
 
 # Canonical array names inside a gsplats node (v3.1 split the packed
 # `cholesky_factors` into `_diag` + `_offdiag`; the packed name stays a read
@@ -149,3 +194,151 @@ array_names:
   - cholesky_factors_offdiag
   - colors
   - label_ids
+
+# ---------------------------------------------------------------------------
+# On-disk vocabularies that used to be hand-kept in two languages with a
+# "keep in step" comment. Each is now one list here, projected to both sides.
+# ---------------------------------------------------------------------------
+
+# `selector` attr on a kind=lod group — the UNITS of its children's
+# `coverage_fraction` thresholds. "screen-area" is what every derived ladder
+# stamps (projected bbox area / viewport area); "coverage" is the legacy
+# diagonal metric kept for existing stores and authored lists.
+#   Python: typing_utils/constants.py::LOD_SELECTORS   TS: types/lod-group.ts
+lod_selectors: ["coverage", "screen-area"]
+
+# `blending_mode` attr values, in the viewer's panel-dropdown order.
+#   Python: typing_utils/enums.py::BlendingMode (set-equal; the enum orders by
+#           semantics)   TS: types/blending.ts re-exports this list
+blending_modes: ["additive", "volumetric", "normal", "max", "opaque", "luminous"]
+
+# `viewer_config.tone_mapping` values (THREE tone-mapping operators by name).
+#   Python: core/viewer_config.py::VALID_TONE_MAPPINGS
+#   TS:     config/sections/rendering-controls/types.ts, post-processing/tone-mapping.ts
+tone_mappings: ["None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral"]
+
+# Built-in colormap names a `colormap` attr may carry (plus the `"custom"`
+# sentinel, which points at a sibling `colormap_lut` array and is NOT a name).
+# The LUT bytes themselves are generated by scripts/generate_builtin_colormaps.py,
+# which refuses to write a name set that differs from this list.
+#   Python: colormaps/builtins.py::BUILTIN_COLORMAP_NAMES
+#   TS:     rendering/colormap-data.ts::BUILTIN_COLORMAPS (keys)
+builtin_colormaps:
+  - green
+  - magenta
+  - cyan
+  - red
+  - blue
+  - yellow
+  - gray
+  - orange
+  - bop_blue
+  - bop_orange
+  - bop_purple
+  - viridis
+  - inferno
+  - plasma
+  - turbo
+  - fire
+  - ice
+  - phase
+  - RdBu
+  - coolwarm
+
+# Canonical `unit` spellings a dimension may carry on disk. The Python
+# `PhysicalUnit` enum is exactly this list; `meter` is an INPUT alias that the
+# validator canonicalises to `m` before writing, so it is deliberately absent.
+#   Python: typing_utils/enums.py::PhysicalUnit   TS: type export only
+physical_units: ["nm", "um", "mm", "cm", "m", "metre", "km", "inch", "foot", "px", "s", "au"]
+
+# `ordering` attr on a geometry node: how its elements were spatially sorted.
+# "none" is a valid on-disk value (no reordering) but not a SPATIAL method —
+# the writer's `ordering_method` parameter is the narrower
+# `typing_utils.aliases.SpatialOrderingMethod` (morton | hilbert), asserted to
+# be a subset of this list.
+#   Python: gsplats/io/save_gsplats.py, io/compiler.py
+#   TS:     types/{points,gsplats,lines}.ts, data/loaders/base-types.ts
+ordering_methods: ["morton", "hilbert", "none"]
+
+# Lines-only `join` attr: the vertex-stage strategy at a degree-2 polyline joint.
+#   Python: typing_utils/constants.py::LINE_JOIN_STYLES   TS: types/line-join.ts
+line_join_styles: ["none", "miter"]
+
+# `line_type` attr on a lines node (how `vertices` + `segments` are interpreted).
+#   Python: core/lines.py::LineType   TS: types/lines.ts::LineType
+line_types: ["segments", "polyline", "loop", "indexed"]
+
+# `nd_transform` entry shapes, keyed by dimension NAME: an affine entry carries
+# a subset of `nd_transform_affine_keys`; a categorical entry carries exactly
+# `nd_transform_permutation_key`. The two are mutually exclusive.
+#   Python: validation/nd_transforms.py   TS: types/zarr.ts::isPermutation
+nd_transform_affine_keys: ["scale", "offset"]
+nd_transform_permutation_key: "permutation"
+
+# Keys of one entry in the root `scene_dimensions.dimensions[]` list.
+#   Python: core/dimensions.py::Dimension.to_dict (+ the optional `categories`)
+#   TS:     types/zarr.ts::SceneDimensionAttrs (type-level check)
+dimension_attr_keys:
+  - name
+  - unit
+  - range
+  - step
+  - display
+  - discrete
+  - cyclic
+  - scale
+  - spatial
+  - description
+  - categories
+
+# Render / appearance attribute keys a caller may author on at least one node
+# type — the writer's typo allowlist (`KNOWN_RENDER_ATTRS`): a key outside this
+# list is refused at write time with a "did you mean" hint, so a misspelt
+# `blending="max"` can never be persisted and silently ignored by the viewer
+# (#787). Type-restricted keys stay here so the hint advertises the full
+# authoring surface; per-type refusals are enforced before writing.
+#   Python: validation/writing.py::KNOWN_RENDER_ATTRS (= this list)
+#   TS:     data/attrs-composer.ts::ComposableAttrs (keys ⊆ this list)
+render_attr_keys:
+  # Compositing / appearance shared by every geometry
+  - absorption
+  - blending_mode
+  - colormap
+  - gamma
+  - intensity
+  - layer
+  - layer_order
+  - offset
+  - opacity
+  - visible
+  # Per-element interaction templates (#1917)
+  - copy
+  - link
+  - link_target
+  # Lines-only join style (#790)
+  - join
+  # Mesh-only shading / material / texture knobs
+  - alpha_cutoff
+  - ambient
+  - material
+  - roughness
+  - metalness
+  - clearcoat
+  - clearcoat_roughness
+  - iridescence
+  - sheen
+  - sheen_color
+  - transmission
+  - ior
+  - thickness
+  - attenuation_color
+  - attenuation_distance
+  - dispersion
+  - refract_data
+  - shade_exponent
+  - shininess
+  - specular
+  - texture_filter
+  - texture_wrap
+  # Mesh-only nD LOADING knob, advertised here so a typo sees it in the hint
+  - slab_tolerance

@@ -2,7 +2,17 @@
 
 > For a version-policy and migration summary that distinguishes this scene format from the gsplats format, see [Formats & Migration](./FORMAT_AND_MIGRATION.md).
 
-## Version: 0.1
+## Version: 0.2
+
+**New in v0.2 — the self-identifying root header.** The root group now carries
+`format_version` + `format_type: "luxar_zarr"` (mirroring the standalone
+gsplats header, so a reader can tell the two store kinds apart from the root
+attrs alone) and `luxar_software_version` (the `luxar.__version__` that wrote
+the scene — provenance only, **excluded from `content_hash`**). The 0.1 key
+`luxar_version` is no longer written; every reader still accepts it as the
+legacy spelling, so published 0.1 stores load unchanged. Version checking
+follows one rule in Python and the viewer — see
+[Formats & Migration](./FORMAT_AND_MIGRATION.md#versioning-policy).
 
 **Features in v0.1:**
 - Chunk-based spatial index for efficient nD point queries
@@ -194,10 +204,25 @@ luxar installed fail loudly (unknown codec), never silently. Full wire-format sp
 
 The root `.zattrs` file contains scene-wide configuration:
 
+| Root attr | Written by | Meaning |
+|---|---|---|
+| `format_version` | 0.2+ | Scene format version (`"0.2"`). Checked by every reader against the contract's `supported` set: supported → silent, same-major newer minor → warn and load, anything else → refused. |
+| `format_type` | 0.2+ | `"luxar_zarr"` — identifies a compiled scene (a detached `.gsplats.zarr` root says `"gsplats_zarr"`). |
+| `type` | all | `"scene"`. |
+| `luxar_software_version` | 0.2+ | The `luxar.__version__` that wrote the store. Provenance only — **excluded from `content_hash`** by both hashers, so two releases compiling the same scene agree on the digest and a `luxar optimise` restamp never churns viewer caches. |
+| `luxar_version` | 0.1 only | The legacy version key. Read as a fallback when `format_version` is absent; never written by a current compiler. |
+| `content_hash` | all | Post-order xxhash64 digest of the store: array bytes, storage identity, attrs (minus this key and `luxar_software_version`) and child digests, computed by `io/_compiler/finalize/hashing.py`. The viewer validates its cache against it. |
+| `scene_dimensions` | all | The nD dimension table (below). |
+
+No `timestamp` is written on a scene: the digest must be reproducible across
+two compiles of the same script.
+
 ```javascript
 {
-  "luxar_version": "0.1",
+  "format_version": "0.2",
+  "format_type": "luxar_zarr",
   "type": "scene",
+  "luxar_software_version": "2026.9.16",  // provenance; NOT part of content_hash
   "units": "um",  // Physical units (nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au, s)
   "scene_dimensions": {  // Scene-level dimension specification (REQUIRED for nD data)
     "dimensions": [
@@ -2357,7 +2382,8 @@ After scene construction, call `# Context manager handles finalization automatic
 
 ## Version History
 
-- **0.1** (Current): Complete format with spatial index, nD support, HDR colors, transforms, scene dimensions
+- **0.2** (Current): Self-identifying root header — `format_version` + `format_type: "luxar_zarr"` replace the 0.1 `luxar_version` key (still read as a legacy fallback), plus the provenance-only `luxar_software_version` stamp (excluded from `content_hash`). Node schema, spatial index and encodings are unchanged from 0.1; only the root header differs, so a 0.1 store's `content_hash` differs from the same content compiled at 0.2 (one-time, expected). Readers apply one policy in Python and the viewer: supported → silent, same-major newer minor → warn and load, older/newer-major/unparsable → refused.
+- **0.1**: Complete format with spatial index, nD support, HDR colors, transforms, scene dimensions. Root header was `luxar_version: "0.1"` + `type: "scene"`.
 
 ## Best Practices
 

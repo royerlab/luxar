@@ -18,15 +18,21 @@
  * @module types/blending
  */
 
-/** The six canonical Luxar blending modes, in panel-dropdown order. */
-export const BLENDING_MODES = [
-  'additive',
-  'volumetric',
-  'normal',
-  'max',
-  'opaque',
-  'luminous',
-] as const;
+import {
+  BLENDING_MODES as CONTRACT_BLENDING_MODES,
+  type BlendingModeName,
+} from './format-contract';
 
-/** Union of the canonical mode strings — derived from {@link BLENDING_MODES}. */
-export type BlendingMode = (typeof BLENDING_MODES)[number];
+/**
+ * The canonical Luxar blending modes, in panel-dropdown order.
+ *
+ * Re-exported from the generated format contract
+ * (`format-contract/contract.yaml::blending_modes`), so the list the Python
+ * writer validates against and the one the panel offers are one projection.
+ * Typed as `readonly BlendingMode[]` (not a tuple) — consumers iterate it and
+ * index records by it; none needs positional literal types.
+ */
+export const BLENDING_MODES: readonly BlendingMode[] = CONTRACT_BLENDING_MODES;
+
+/** Union of the canonical mode strings — the contract's `BlendingModeName`. */
+export type BlendingMode = BlendingModeName;

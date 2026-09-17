@@ -123,6 +123,7 @@ from ..typing_utils.constants import (
 from ._compiler.chunking import _atom_aligned_rows
 from ._compiler.finalize.hashing import (
     _ZARR_METADATA_DOCS_LOWERCASED,
+    HASH_EXCLUDED_ATTRS,
     PAYLOAD_FILE_ATTRS,
     _is_safe_payload_name,
     _payload_terms,
@@ -1223,7 +1224,9 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
             identity = _storage_identity(name, dataset)
             hasher.update(json.dumps(identity, sort_keys=True, default=str).encode())
             _hash_array_streaming(hasher, dataset)
-        attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
+        attrs = {
+            k: v for k, v in dict(group.attrs).items() if k not in HASH_EXCLUDED_ATTRS
+        }
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
         for term in _payload_terms(group, attrs):
             hasher.update(term)

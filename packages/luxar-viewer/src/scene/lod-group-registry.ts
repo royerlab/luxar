@@ -70,6 +70,7 @@ import type { BoundingBox } from './scene-manager/clipping/bounds-math';
 import { log, Modules } from '../utils/log';
 import { isEffectivelyVisible } from '../utils/object-visibility';
 import type { LODGroupSelectorMode } from '../types/lod-group';
+import type { LodSelectorName } from '../types/format-contract';
 import {
   isFresh,
   isReady,
@@ -488,7 +489,7 @@ export interface LODGroupEntry {
    * absent, so older stores and test-constructed entries keep their
    * behaviour.
    */
-  selector?: 'coverage' | 'screen-area';
+  selector?: LodSelectorName;
   /** Current selector mode (``'auto'`` or ``{ lockLevel: i }``). */
   selectorMode: LODGroupSelectorMode;
   /** Initial active level, used when nothing else has selected yet. */

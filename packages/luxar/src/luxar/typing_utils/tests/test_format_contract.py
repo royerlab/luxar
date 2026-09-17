@@ -17,6 +17,7 @@ from __future__ import annotations
 import runpy
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -26,6 +27,28 @@ from luxar.typing_utils.enums import NodeType
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 GEN_SCRIPT = REPO_ROOT / "scripts" / "gen_format_contract.py"
+
+
+def _load_generator() -> ModuleType:
+    """Import ``scripts/gen_format_contract.py`` as a module object.
+
+    Registered in ``sys.modules`` under its own name BEFORE execution: the
+    generator's table rows are ``@dataclass`` classes, and on Python 3.14
+    dataclass creation resolves the class's ``__module__`` through
+    ``sys.modules`` — an unregistered spec-loaded module makes that lookup
+    return ``None`` and every test here dies in the decorator.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return mod
 
 
 def test_node_type_enum_matches_contract() -> None:
@@ -86,12 +109,7 @@ def test_generator_rejects_malformed_loader_types(
     TypeScript union, and a stray entry gives the viewer a dispatch kind no store
     can contain.
     """
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _load_generator()
 
     good = mod.load_contract()
     tampered = {**good, "loader_types": loader_types}
@@ -99,6 +117,107 @@ def test_generator_rejects_malformed_loader_types(
     with pytest.raises(SystemExit) as exc:
         mod._loader_types(tampered)
     assert expected in str(exc.value)
+
+
+@pytest.mark.skipif(
+    not GEN_SCRIPT.exists(),
+    reason="generator script not present (packaged install without repo scripts/)",
+)
+@pytest.mark.parametrize(
+    ("block", "expected"),
+    [
+        pytest.param(
+            {"current": "0.2", "supported": ["0.1", "0.2.1"]},
+            "not MAJOR.MINOR",
+            id="patch-component",
+        ),
+        pytest.param(
+            {"current": "v0.2", "supported": ["v0.2"]}, "not MAJOR.MINOR", id="v-prefix"
+        ),
+        pytest.param(
+            {"current": "0.3", "supported": ["0.1", "0.2"]},
+            "is not in supported",
+            id="current-not-supported",
+        ),
+        pytest.param(
+            {"current": "0.2", "supported": []}, "must not be empty", id="empty"
+        ),
+        pytest.param(
+            {"current": "0.2", "supported": ["0.2", "0.2"]},
+            "duplicate",
+            id="duplicates",
+        ),
+        pytest.param("0.2", "must be a mapping", id="not-a-mapping"),
+    ],
+)
+def test_generator_rejects_malformed_version_blocks(block, expected: str) -> None:
+    """``_format_versions`` enforces MAJOR.MINOR, non-empty, unique, current ∈ supported.
+
+    The version-check policy (``format_version.py`` / ``format-version.ts``)
+    parses exactly the MAJOR.MINOR shape, so a contract entry outside it would
+    be a version every reader refuses — better caught at codegen.
+    """
+    mod = _load_generator()
+    tampered = {**mod.load_contract(), "scene_format": block}
+    with pytest.raises(SystemExit) as exc:
+        mod.validate_contract(tampered)
+    assert expected in str(exc.value)
+
+
+@pytest.mark.skipif(
+    not GEN_SCRIPT.exists(),
+    reason="generator script not present (packaged install without repo scripts/)",
+)
+@pytest.mark.parametrize("key", ["node_types", "encodings", "attr_keys", "array_names"])
+def test_generator_rejects_empty_or_duplicate_vocabularies(key: str) -> None:
+    """Every plain list runs through ``_unique_nonempty``, not just the two
+    geometry lists that had bespoke validators."""
+    mod = _load_generator()
+    good = mod.load_contract()
+    with pytest.raises(SystemExit, match="must not be empty"):
+        mod.validate_contract({**good, key: []})
+    with pytest.raises(SystemExit, match="duplicate"):
+        mod.validate_contract({**good, key: [good[key][0], good[key][0]]})
+
+
+@pytest.mark.skipif(
+    not GEN_SCRIPT.exists(),
+    reason="generator script not present (packaged install without repo scripts/)",
+)
+def test_every_table_row_reaches_both_projections() -> None:
+    """Each table row's Python and TS symbols appear in the rendered output.
+
+    A row that renders on one side but not the other is exactly the drift the
+    contract exists to prevent; pinning the symbol names against the table
+    means a renamed row cannot silently drop out of one projection.
+    """
+    mod = _load_generator()
+    contract = mod.load_contract()
+    py = mod.render_python(contract)
+    ts = mod.render_typescript(contract)
+    for block in mod.VERSION_BLOCKS:
+        for name in (block.py_type, block.py_current, block.py_supported):
+            assert name in py
+        for name in (block.ts_current, block.ts_supported, block.ts_type):
+            assert f"export const {name}" in ts or f"export type {name}" in ts
+    for scalar in mod.SCALARS:
+        assert f"{scalar.py_name}: Final[str]" in py
+        assert f"export const {scalar.ts_name} =" in ts
+    for vocab in mod.VOCABULARIES:
+        assert f"{vocab.py_type} = Literal[" in py
+        assert f"{vocab.py_const}: Final[tuple[" in py
+        assert f"export const {vocab.ts_const}:" in ts
+        assert f"export type {vocab.ts_type} =" in ts
+
+
+def test_scene_header_scalars_single_sourced() -> None:
+    """The three 0.2 header scalars are the contract's, at every consumer."""
+    from luxar.typing_utils.format_version import LEGACY_SCENE_VERSION_ATTR
+
+    assert fc.FORMAT_TYPE_SCENE == "luxar_zarr"
+    assert fc.LEGACY_SCENE_VERSION_ATTR == "luxar_version" == LEGACY_SCENE_VERSION_ATTR
+    assert fc.SOFTWARE_VERSION_ATTR == "luxar_software_version"
+    assert fc.FORMAT_TYPE_SCENE != fc.FORMAT_TYPE_GSPLATS
 
 
 def test_scene_version_consumers_single_sourced() -> None:
@@ -142,12 +261,17 @@ def test_the_scene_validator_accepts_exactly_the_contract_versions() -> None:
     assert supported, "SUPPORTED_SCENE_VERSIONS is empty — the loop would be vacuous"
     for version in supported:
         validate_zarr_attributes(
+            {"type": "scene", "format_version": version, "scene_dimensions": {}},
+            is_root=True,
+        )
+        # The 0.1 legacy key is read through the same seam.
+        validate_zarr_attributes(
             {"type": "scene", "luxar_version": version, "scene_dimensions": {}},
             is_root=True,
         )
     with pytest.raises(ValidationError, match="Unsupported Luxar version"):
         validate_zarr_attributes(
-            {"type": "scene", "luxar_version": "0.0", "scene_dimensions": {}},
+            {"type": "scene", "format_version": "0.0", "scene_dimensions": {}},
             is_root=True,
         )
 
@@ -442,12 +566,7 @@ def test_drift_gate_detects_stale_projection(monkeypatch: pytest.MonkeyPatch) ->
     committed files. Writes nothing (``--check`` is read-only), so the committed
     projections are untouched.
     """
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _load_generator()
 
     good = mod.load_contract()
     tampered = {**good, "gsplats_format": {"current": "9.9", "supported": ["9.9"]}}
@@ -488,12 +607,7 @@ def test_generator_rejects_geometry_type_missing_from_node_types(
     absent from ``node_types`` would generate happily and only break far away,
     at write time.
     """
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _load_generator()
 
     good = mod.load_contract()
     tampered = {**good, "geometry_types": [*good["geometry_types"], "not_a_node_type"]}
@@ -527,14 +641,134 @@ def test_generator_rejects_malformed_geometry_types(
     dispatch with no loader behind it, and a duplicate widens the tuple while
     leaving the union unchanged.
     """
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _load_generator()
 
     tampered = {**mod.load_contract(), "geometry_types": geometry_types}
     with pytest.raises(SystemExit) as exc:
         mod._geometry_types(tampered)
     assert expected in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
+# Vocabularies moved INTO the contract (B1-B10): each hand-written Python
+# consumer must equal (or be the declared subset of) its contract projection.
+# --------------------------------------------------------------------------- #
+def test_lod_selector_constants_are_contract_members() -> None:
+    """B1: the named selector constants belong to the contract vocabulary."""
+    assert constants.LOD_SELECTORS == frozenset(fc.LOD_SELECTORS)
+    assert constants.DERIVED_LOD_SELECTOR in fc.LOD_SELECTORS
+    assert constants.LEGACY_LOD_SELECTOR in fc.LOD_SELECTORS
+    assert constants.DERIVED_LOD_SELECTOR != constants.LEGACY_LOD_SELECTOR
+
+
+def test_blending_mode_enum_matches_contract() -> None:
+    """B2: the enum orders by semantics, the contract by panel dropdown — set-equal."""
+    from luxar.typing_utils.enums import BlendingMode
+
+    assert {m.value for m in BlendingMode} == set(fc.BLENDING_MODES)
+    assert constants.DEFAULT_BLENDING_MODE in fc.BLENDING_MODES
+    assert set(constants.DEFAULT_BLENDING_MODE_BY_GEOMETRY.values()) <= set(
+        fc.BLENDING_MODES
+    )
+
+
+def test_tone_mappings_single_sourced() -> None:
+    """B3: ``ViewerConfig`` validates tone mapping against the contract tuple."""
+    from luxar.core.viewer_config import VALID_TONE_MAPPINGS
+
+    assert VALID_TONE_MAPPINGS is fc.TONE_MAPPINGS
+
+
+def test_builtin_colormap_names_match_contract() -> None:
+    """B4: the generated LUT table names exactly the contract's colormaps, in order."""
+    from luxar.colormaps.builtins import BUILTIN_COLORMAP_NAMES
+
+    assert tuple(BUILTIN_COLORMAP_NAMES) == fc.BUILTIN_COLORMAP_NAMES
+
+
+def test_physical_unit_enum_matches_contract() -> None:
+    """B5: the enum IS the on-disk vocabulary (compare the enum, not the alias map)."""
+    from luxar.typing_utils.enums import PhysicalUnit
+
+    assert tuple(u.value for u in PhysicalUnit) == fc.PHYSICAL_UNITS
+
+
+def test_spatial_ordering_method_is_a_subset_of_ordering_methods() -> None:
+    """B6: the writer's method alias is the contract vocabulary minus ``none``."""
+    from typing import get_args
+
+    from luxar.typing_utils.aliases import SpatialOrderingMethod
+
+    methods = set(get_args(SpatialOrderingMethod))
+    assert methods < set(fc.ORDERING_METHODS)
+    assert "none" in fc.ORDERING_METHODS and "none" not in methods
+
+
+def test_line_vocabularies_single_sourced() -> None:
+    """B7: join styles and line types come from the contract."""
+    from typing import get_args
+
+    from luxar.core.lines import LineType
+
+    assert constants.LINE_JOIN_STYLES == frozenset(fc.LINE_JOIN_STYLES)
+    assert constants.DEFAULT_LINE_JOIN in fc.LINE_JOIN_STYLES
+    assert tuple(get_args(LineType)) == fc.LINE_TYPES
+
+
+def test_nd_transform_keys_single_sourced() -> None:
+    """B8: the validator's accepted affine keys and the permutation key are the contract's."""
+    from luxar.validation.nd_transforms import validate_nd_transform
+
+    assert set(fc.ND_TRANSFORM_AFFINE_KEYS) == {"scale", "offset"}
+    assert fc.ND_TRANSFORM_PERMUTATION_KEY == "permutation"
+    # Every affine key is accepted; an unknown one is refused naming the set;
+    # the permutation key is recognised as the categorical shape.
+    validate_nd_transform({"t": {k: 1.0 for k in fc.ND_TRANSFORM_AFFINE_KEYS}})
+    validate_nd_transform({"c": {fc.ND_TRANSFORM_PERMUTATION_KEY: [1, 0]}})
+    with pytest.raises(ValueError, match="unknown keys"):
+        validate_nd_transform({"t": {"scale": 1.0, "bogus": 2.0}})
+
+
+def test_dimension_attr_keys_match_contract() -> None:
+    """B9: ``Dimension.to_dict()`` (+ the optional ``categories``) is the contract set."""
+    from luxar.core.dimensions import Dimension
+
+    keys = set(Dimension("x", unit="um").to_dict()) | {"categories"}
+    assert keys == set(fc.DIMENSION_ATTR_KEYS)
+    # `categories` is the one optional key: absent unless set.
+    assert "categories" not in Dimension("x", unit="um").to_dict()
+    assert "categories" in Dimension("c", unit="", categories=["a", "b"]).to_dict()
+
+
+def test_render_attr_keys_single_sourced() -> None:
+    """B10: the writer's typo allowlist IS the contract's render key list."""
+    from luxar.validation.writing import KNOWN_RENDER_ATTRS
+
+    assert KNOWN_RENDER_ATTRS == frozenset(fc.RENDER_ATTR_KEYS)
+    assert not (set(fc.RENDER_ATTR_KEYS) & set(fc.ATTR_KEYS)), (
+        "a key cannot be both structural and a render attr"
+    )
+
+
+def test_structural_node_attrs_are_contract_attr_keys() -> None:
+    """B10: the structural keys the writer accepts silently are declared in ``attr_keys``."""
+    structural = {
+        "type",
+        "child_index",
+        "kind",
+        "selector",
+        "default_level",
+        "display_type",
+        "max_elements",
+        "position_bounds",
+    }
+    assert structural <= set(fc.ATTR_KEYS)
+    # And the root header keys the compiler writes.
+    assert {
+        "format_version",
+        "format_type",
+        fc.SOFTWARE_VERSION_ATTR,
+        "type",
+        "scene_dimensions",
+        "content_hash",
+    } <= set(fc.ATTR_KEYS)

@@ -11,6 +11,7 @@
  */
 
 import type { BlendingMode } from './blending';
+import type { OrderingMethodName } from './format-contract';
 import type { ViewState } from '../data/data-loader-types';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
 import type { GSplatLabelEntry } from '../data/gsplats/label-channel';
@@ -87,7 +88,7 @@ export interface GSplatsMetadata {
   position_bounds?: CoordinateBounds;
 
   /** Spatial ordering method */
-  ordering: 'morton' | 'hilbert' | 'none';
+  ordering: OrderingMethodName;
 
   /** Min bounds for coordinate normalization (when ordering != 'none') */
   ordering_min?: number[];

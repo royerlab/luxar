@@ -59,6 +59,7 @@ from luxar.io.reader import DEFAULT_COMP
 from luxar.typing_utils._format_contract import (
     GSPLATS_FORMAT_VERSION,
     SUPPORTED_GSPLATS_VERSIONS,
+    OrderingMethodName,
 )
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.typing_utils.json_safe import json_safe_value
@@ -625,7 +626,7 @@ def write_gsplats_tree(
     path: str | Path,
     node: Any,  # luxar.gsplats.tree.GSplatNode
     *,
-    ordering: Literal["morton", "hilbert", "none"] = "hilbert",
+    ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
@@ -1082,7 +1083,7 @@ def write_partition_streaming(
     part_nodes: Callable[[], Iterator["GSplatNode"]],
     *,
     max_elements: int = 0,
-    ordering: Literal["morton", "hilbert", "none"] = "hilbert",
+    ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     fitting_info: Optional[
         Dict[str, Any] | Callable[[], Optional[Dict[str, Any]]]
@@ -1445,7 +1446,7 @@ def save_gsplats(
     colors: Optional[np.ndarray] = None,
     label_ids: Optional[np.ndarray] = None,
     label_vocabulary: Optional[Dict[int, str]] = None,
-    ordering: Literal["morton", "hilbert", "none"] = "hilbert",
+    ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,

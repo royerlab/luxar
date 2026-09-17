@@ -21,6 +21,7 @@ import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
 import { archiveFaultFrom } from '../cache/chunk-source';
+import { unsupportedFormatVersionFrom } from '../data/format-version';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { buildInfo, buildInfoLine } from '../config/build-info';
@@ -412,10 +413,14 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     await app.init(appOptions);
   } catch (error) {
     log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
-    const archiveFault = archiveFaultFrom(error);
+    // Two failures carry a user-actionable message of their own: an archive
+    // fault (wrong `?src=` path) and a refused format version (the message
+    // names the version, the supported set and the remedy). Everything else
+    // is a programming/environment error and keeps the generic text.
+    const surfaced = archiveFaultFrom(error) ?? unsupportedFormatVersionFrom(error);
     showError(
-      archiveFault
-        ? archiveFault.message
+      surfaced
+        ? surfaced.message
         : 'Failed to start the application. Please check the console for details.',
       shortcutForAction,
       {

@@ -441,11 +441,6 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_geometry_capabilities.py compares the viewer capability table",
     ),
     (
-        "packages/luxar-viewer/src/types/line-join.ts",
-        "py",
-        "test_constants.py compares the line-join vocabulary",
-    ),
-    (
         "packages/luxar-viewer/src/types/lod-group.ts",
         "py",
         "test_constants.py compares the LOD selector and display-type vocabularies",
