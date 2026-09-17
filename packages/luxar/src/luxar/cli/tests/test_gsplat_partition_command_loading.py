@@ -218,22 +218,34 @@ def test_flatten_summarizes_partition_slot_provenance(tmp_path: Path) -> None:
     source["fitting"].attrs["part_provenance"] = [
         {
             "coordinate": 0.0,
+            "fit_reference": {"kind": "acquisition"},
             "fitting": {
                 "source_shape": [10, 20, 30],
+                "source_declared": True,
                 "source_dtype": "uint16",
                 "source_bytes": 3000,
+                "source_stored_bytes": 2500,
                 "source_voxels": 1500,
                 "time_seconds": 2.5,
+                "part_provenance": [
+                    {"coordinate": 0.0, "fitting": {"source_bytes": 1500}}
+                ],
             },
         },
         {
             "coordinate": 1.0,
+            "fit_reference": {"kind": "acquisition"},
             "fitting": {
                 "source_shape": [10, 20, 30],
+                "source_declared": True,
                 "source_dtype": "uint16",
                 "source_bytes": 4000,
+                "source_stored_bytes": 3500,
                 "source_voxels": 2000,
                 "time_seconds": 3.5,
+                "part_provenance": [
+                    {"coordinate": 1.0, "fitting": {"source_bytes": 2000}}
+                ],
             },
         },
     ]
@@ -249,11 +261,75 @@ def test_flatten_summarizes_partition_slot_provenance(tmp_path: Path) -> None:
     assert output["fitting"].attrs["part_provenance"] == [
         {
             "part_count": 2,
+            "fit_reference": {"kind": "acquisition"},
             "fitting": {
                 "source_shape": [10, 20, 30],
+                "source_declared": True,
                 "source_dtype": "uint16",
                 "source_bytes": 7000,
+                "source_stored_bytes": 6000,
                 "source_voxels": 3500,
+                "time_seconds": 6.0,
+            },
+        }
+    ]
+
+
+def test_flatten_carries_unanimous_partition_source_figures_once(
+    tmp_path: Path,
+) -> None:
+    import zarr
+
+    partition_path, _, _ = _write_inputs(tmp_path)
+    output_path = tmp_path / "flattened.gsplats.zarr"
+    source = zarr.open_group(str(partition_path), mode="a")
+    source["fitting"].attrs["part_provenance"] = [
+        {
+            "coordinate": 0.0,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [100, 84, 580, 576],
+                "source_declared": True,
+                "source_dtype": "float32",
+                "source_bytes": 11_225_088_000,
+                "source_stored_bytes": 10_000_000_000,
+                "source_voxels": 2_806_272_000,
+                "time_seconds": 2.5,
+            },
+        },
+        {
+            "coordinate": 1.0,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [100, 84, 580, 576],
+                "source_declared": True,
+                "source_dtype": "float32",
+                "source_bytes": 11_225_088_000,
+                "source_stored_bytes": 10_000_000_000,
+                "source_voxels": 2_806_272_000,
+                "time_seconds": 3.5,
+            },
+        },
+    ]
+
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "flatten", str(partition_path), str(output_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = zarr.open_group(str(output_path), mode="r")
+    assert output["fitting"].attrs["part_provenance"] == [
+        {
+            "part_count": 2,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [100, 84, 580, 576],
+                "source_declared": True,
+                "source_dtype": "float32",
+                "source_bytes": 11_225_088_000,
+                "source_stored_bytes": 10_000_000_000,
+                "source_voxels": 2_806_272_000,
                 "time_seconds": 6.0,
             },
         }

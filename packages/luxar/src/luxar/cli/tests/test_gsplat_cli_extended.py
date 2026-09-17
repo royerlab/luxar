@@ -7661,6 +7661,7 @@ class TestFitProvenanceRewriteAudit:
                 "source_bytes": 4096,
                 "source_voxels": 2048,
                 "time_seconds": 2.5,
+                "psnr_db": 40.0,
             },
         },
         {
@@ -7672,6 +7673,7 @@ class TestFitProvenanceRewriteAudit:
                 "source_bytes": 4096,
                 "source_voxels": 2048,
                 "time_seconds": 3.5,
+                "psnr_db": 42.0,
             },
         },
     ]
@@ -7744,7 +7746,42 @@ class TestFitProvenanceRewriteAudit:
 
         assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
         output = zc_open_group(out, mode="r")
-        assert output["fitting"].attrs["part_provenance"]
+        provenance = output["fitting"].attrs["part_provenance"]
+        if label in {"reencode", "partition", "lod"}:
+            assert provenance == self.PROVENANCE
+        elif label == "flatten":
+            assert provenance == [
+                {
+                    "part_count": 2,
+                    "fit_reference": {"kind": "acquisition"},
+                    "fitting": {
+                        "source_shape": [4, 8, 8, 8],
+                        "source_dtype": "uint16",
+                        "source_bytes": 4096,
+                        "source_voxels": 2048,
+                        "time_seconds": 6.0,
+                    },
+                }
+            ]
+        elif label == "decimate":
+            assert [record["fitting"] for record in provenance] == [
+                {
+                    key: value
+                    for key, value in record["fitting"].items()
+                    if key != "psnr_db"
+                }
+                for record in self.PROVENANCE
+            ]
+        elif label == "slice":
+            assert [record["coordinate"] for record in provenance] == [0.0, 1.0]
+            assert [record["fitting"]["source_dtype"] for record in provenance] == [
+                "uint16",
+                "uint16",
+            ]
+            assert [record["fitting"]["time_seconds"] for record in provenance] == [
+                2.5,
+                3.5,
+            ]
 
 
 class TestAdditiveCommand:

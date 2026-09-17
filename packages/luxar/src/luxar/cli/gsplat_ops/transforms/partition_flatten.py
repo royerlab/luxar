@@ -64,7 +64,7 @@ def _summarize_partition_provenance(value: Any) -> Optional[list[dict[str, Any]]
     ]
 
     summary: dict[str, Any] = {}
-    for key in ("source_bytes", "source_voxels", "time_seconds"):
+    for key in ("source_bytes", "source_voxels", "source_stored_bytes"):
         values = [
             fitting.get(key) if isinstance(fitting, dict) else None
             for fitting in fittings
@@ -75,9 +75,23 @@ def _summarize_partition_provenance(value: Any) -> Optional[list[dict[str, Any]]
             and np.isfinite(item)
             for item in values
         ):
-            summary[key] = sum(values)
+            summary[key] = (
+                values[0] if all(item == values[0] for item in values) else sum(values)
+            )
 
-    for key in ("source_shape", "source_dtype"):
+    time_values = [
+        fitting.get("time_seconds") if isinstance(fitting, dict) else None
+        for fitting in fittings
+    ]
+    if all(
+        isinstance(item, (int, float))
+        and not isinstance(item, bool)
+        and np.isfinite(item)
+        for item in time_values
+    ):
+        summary["time_seconds"] = sum(time_values)
+
+    for key in ("source_shape", "source_declared", "source_dtype"):
         values = [
             fitting.get(key) if isinstance(fitting, dict) else None
             for fitting in fittings
@@ -85,7 +99,15 @@ def _summarize_partition_provenance(value: Any) -> Optional[list[dict[str, Any]]
         if values[0] is not None and all(item == values[0] for item in values[1:]):
             summary[key] = values[0]
 
-    return [{"part_count": len(value), "fitting": summary}]
+    result: dict[str, Any] = {"part_count": len(value), "fitting": summary}
+    references = [
+        part.get("fit_reference") if isinstance(part, dict) else None for part in value
+    ]
+    if references[0] is not None and all(
+        reference == references[0] for reference in references[1:]
+    ):
+        result["fit_reference"] = references[0]
+    return [result]
 
 
 def _replace_partition_provenance_with_summary(stats: dict[str, Any]) -> None:

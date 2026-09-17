@@ -252,11 +252,8 @@ def _read_part_provenance(value: Any, *, root_kind: Any) -> Optional[dict[str, A
     )
     summarized = any(isinstance(part.get("part_count"), int) for part in value)
     partitioned = root_kind == "partition"
-    explicit_frames = _as_int(_common(fittings, "frames"))
     return {
-        "frames": explicit_frames
-        if explicit_frames is not None
-        else (None if partitioned or nested or summarized else len(value)),
+        "frames": None if partitioned or nested or summarized else len(value),
         "quality_quotable": quotable,
         "source_shape": _common(fittings, "source_shape"),
         "source_dtype": _common(fittings, "source_dtype"),

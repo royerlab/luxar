@@ -84,8 +84,16 @@ def _print_fitting_value(
             suffix = f", nested component records ({depth} levels)"
         else:
             suffix = ""
-        part_word = "part" if len(value) == 1 else "parts"
-        aprint(f"  {key}: {len(value)} {part_word}{suffix}")
+        part_count = len(value)
+        if (
+            len(value) == 1
+            and isinstance(value[0], dict)
+            and isinstance(value[0].get("part_count"), int)
+            and not isinstance(value[0]["part_count"], bool)
+        ):
+            part_count = value[0]["part_count"]
+        part_word = "part" if part_count == 1 else "parts"
+        aprint(f"  {key}: {part_count} {part_word}{suffix}")
         return
     if isinstance(value, float):
         aprint(f"  {key}: {value:.6f}")

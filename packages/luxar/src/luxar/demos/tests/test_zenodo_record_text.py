@@ -650,6 +650,7 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
             part_provenance=[
                 {
                     "part_count": 2,
+                    "fit_reference": {"kind": "acquisition"},
                     "fitting": {"source_bytes": 7000},
                 }
             ],
@@ -659,6 +660,7 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
 
         assert info["frames"] is None
         assert info["source_bytes"] == 7000
+        assert info["quality_quotable"] is True
 
     def test_check_does_not_demand_scores_classified_as_unquotable(
         self, gen: Any, monkeypatch: pytest.MonkeyPatch
@@ -1858,6 +1860,7 @@ def test_refresh_description_matches_the_committed_sidecar(
         "source_shape",
         "source_dtype",
         "source_bytes",
+        "source_voxels",
         "frames",
         "quality_quotable",
         "measured_from",
