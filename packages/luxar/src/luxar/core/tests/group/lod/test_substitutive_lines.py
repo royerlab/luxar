@@ -1,8 +1,8 @@
-"""Tests for substitutive-LOD on Lines (coarse levels = synthesised gsplats).
+"""Tests for substitutive-LOD on Lines.
 
-Mirror of ``test_substitutive_points.py``: each segment is lifted to isotropic
-"bead" gaussians, reduced by the gsplat substitutive pipeline, and assembled as
-a ``kind=lod`` Group whose finest child is the original Lines node.
+The default lifts segments to isotropic Gaussian beads. ``coarse="lines"``
+instead writes seeded nested subsamples of whole polylines. Both assemble a
+``kind=lod`` Group whose finest child is the original Lines node.
 """
 
 from __future__ import annotations
@@ -1646,3 +1646,85 @@ class TestSameTypeSubstitutiveLines:
                     ),
                 )
         assert "curves" not in zarr.open(str(out), mode="r")
+
+    def test_hidden_slices_are_round_robin_represented(self, tmp_path) -> None:
+        out = tmp_path / "hidden-lines-success.luxar.zarr"
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
+        vertices = np.zeros((16, 4), dtype=np.float32)
+        vertices[:, 0] = np.repeat(np.arange(8, dtype=np.float32), 2)
+        vertices[1::2, 0] += 0.25
+        vertices[:, 3] = np.repeat([0.0, 1.0], 8)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_lines(
+                "curves",
+                vertices,
+                1.0,
+                line_type="segments",
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=2, seed=0
+                ),
+            )
+        child = zarr.open(str(out), mode="r")["curves/child_0"]
+        decoded = ArrayDecoder().decode(child["vertices"], child)
+        assert set(decoded[:, 3]) == {0.0, 1.0}
+
+    def test_indexed_components_preserve_authored_edges(self, tmp_path) -> None:
+        out = tmp_path / "indexed-lines.luxar.zarr"
+        vertices = np.array(
+            [
+                [0, 0, 0],
+                [1, 0, 0],
+                [0, 1, 0],
+                [10, 0, 0],
+                [11, 0, 0],
+                [10, 1, 0],
+            ],
+            dtype=np.float32,
+        )
+        indices = np.array([0, 1, 1, 2, 2, 0, 3, 4, 4, 5, 5, 3], dtype=np.uint32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                vertices,
+                1.0,
+                line_type="indexed",
+                indices=indices,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=1, seed=0
+                ),
+            )
+        group = zarr.open(str(out), mode="r")["curves"]
+        assert int(group["child_0"].attrs["n_segments"]) == 3
+        assert int(group["child_1"].attrs["n_segments"]) == 6
+        assert "n_additive_sublods" not in group["child_0"].attrs
+        assert "n_additive_sublods" not in group["child_1"].attrs
+
+    def test_image_labels_stay_on_finest_child(self, tmp_path) -> None:
+        out = tmp_path / "same-type-image-labels.luxar.zarr"
+        vertices = _segments(8)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                vertices,
+                1.0,
+                line_type="segments",
+                image_labels=[b"x"] * vertices.shape[0],
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=1, seed=0
+                ),
+            )
+        group = zarr.open(str(out), mode="r")["curves"]
+        assert group["child_0"].attrs.get("has_image_labels") is not True
+        assert group["child_1"].attrs["has_image_labels"] is True

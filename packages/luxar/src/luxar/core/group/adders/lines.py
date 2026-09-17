@@ -1139,7 +1139,7 @@ def _scaled_line_widths(
     if gain == 1.0:
         return selected
     if np.isscalar(selected):
-        return float(selected) * gain
+        return float(cast(Any, selected)) * gain
     return np.asarray(selected, dtype=np.float32) * np.float32(gain)
 
 
@@ -1192,7 +1192,11 @@ def _add_lines_subsampled_lod_wrapper_impl(
         level_additive_lod,
         resolve_lod_ladder,
     )
-    from ..lod.lines import identify_polylines, resolve_additive_axis_lines
+    from ..lod.lines import (
+        identify_polylines,
+        indexed_components_are_chains,
+        resolve_additive_axis_lines,
+    )
 
     n_vertices = int(vert_arr.shape[0])
     polylines = identify_polylines(n_vertices, line_type, indices)
@@ -1247,12 +1251,23 @@ def _add_lines_subsampled_lod_wrapper_impl(
         )
 
     slices = resident_slices if additive_lod is None else 1
+    additive_suppress_reason = (
+        "line_type='indexed' has an explicit edge multiset that the streaming "
+        "writer cannot preserve"
+        if line_type == "indexed"
+        and indices is not None
+        and not indexed_components_are_chains(
+            n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+        )
+        else None
+    )
     resolved_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_lines,
         elements=n_vertices,
         name=name,
         slices=slices,
+        suppress_reason=additive_suppress_reason,
     )
     parent_node = parent or group
     coarse_first = list(reversed(coarse))

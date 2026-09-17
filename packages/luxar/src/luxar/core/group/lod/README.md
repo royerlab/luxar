@@ -266,6 +266,18 @@ can shift relative brightness. `truncation_radius`, `max_aspect`, `method`,
 `device`, and `coarsen_dims` are refused because this arm performs no Gaussian
 lift or merge.
 
+Lines keeps the lifted-GSplat default too. With `coarse="lines"`, it instead
+takes exact `P/K^level` prefixes of one seeded polyline permutation and writes
+every prefix as a Lines child, preserving whole-polyline topology and selected
+per-vertex channels. Discrete hidden coordinates are shuffled independently and
+round-robin interleaved; authoring refuses a ladder whose coarsest polyline count
+cannot represent every occupied slice, or a polyline that crosses slices. Under
+the effective `additive` or `luminous` mode,
+`brightness_compensation="auto"` scales widths by `P/P_selected`; other modes
+keep unit gain, and a numeric override applies per reduction level. The Gaussian
+lift controls (`truncation_radius`, `max_aspect`, `method`, `device`, and
+`coarsen_dims`) are refused on this same-type arm.
+
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given
 a `stream:` ladder by default (`additive_lod=False` opts out), except that

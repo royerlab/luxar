@@ -446,8 +446,12 @@ class Group(Node):
                 synthesise coarse LOD levels as Gaussian splats: each segment is
                 lifted to isotropic "bead" gaussians and reduced by the gsplat
                 substitutive pipeline, assembled as a ``kind="lod"`` Group whose
-                finest child is the original Lines node. Same dict vocabulary as
-                Points; ``scalars``+``colormap`` are baked for the coarse levels.
+                finest child is the original Lines node. ``coarse="lines"``
+                instead writes nested seeded subsamples of whole polylines,
+                preserving selected channels and scaling widths under additive /
+                luminous blending; the coarsest level must represent every
+                occupied discrete hidden coordinate. ``scalars``+``colormap``
+                are baked only for the Gaussian coarse path.
                 Composes with ``additive_lod`` (which then describes how each
                 level streams in; every level is laddered by default, pass
                 ``additive_lod=False`` to opt out). Mutually exclusive with
