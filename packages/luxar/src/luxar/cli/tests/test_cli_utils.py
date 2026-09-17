@@ -11,10 +11,12 @@ Tests cover:
 - format_memory_size function
 - get_zarr_info function
 - validate_zarr_store function
+- deprecated_option function
 """
 
 import tempfile
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -26,6 +28,7 @@ from luxar._zarr_compat import create_array, is_consolidated
 from luxar.cli.utils import (
     check_port_available,
     check_viewer_built,
+    deprecated_option,
     find_available_port,
     format_memory_size,
     format_tree_node,
@@ -994,3 +997,45 @@ class TestDatasetTitle:
             append_title_param(base, "Rivers of Earth & Fjords")
             == f"{base}&title=Rivers%20of%20Earth%20%26%20Fjords"
         )
+
+
+class TestDeprecatedOption:
+    """Tests for deprecated_option (the CLI half of luxar.utils.deprecation)."""
+
+    WINDOW: ClassVar[dict[str, str]] = {
+        "since": "2026.10.01",
+        "remove_after": "2027.04.01",
+    }
+
+    def test_prints_the_standard_notice_to_stderr_and_returns_the_value(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        value = deprecated_option(
+            "0,0,0", "--reveal-centre", "--reveal-center", **self.WINDOW
+        )
+        assert value == "0,0,0"
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == (
+            "Warning: --reveal-centre is deprecated since Luxar 2026.10.01 and "
+            "will be removed after 2027.04.01; use --reveal-center instead.\n"
+        )
+
+    def test_silent_when_the_hidden_alias_was_not_typed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert (
+            deprecated_option(None, "--reveal-centre", "--reveal-center", **self.WINDOW)
+            is None
+        )
+        captured = capsys.readouterr()
+        assert captured.out == "" and captured.err == ""
+
+    def test_does_not_raise_a_python_warning(self) -> None:
+        # The CLI path is stderr-only by design: a DeprecationWarning would be
+        # hidden by Python's default filters in a command-line process.
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert deprecated_option(True, "--legacy", None, **self.WINDOW) is True

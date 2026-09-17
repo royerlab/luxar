@@ -21,6 +21,8 @@ Python, `scene.add_gsplats_from_file(...)`.
 
 ## Versioning policy
 
+What readers do with a version they do not know, and how long deprecated names keep working, is the [Compatibility & Deprecation Policy](./COMPATIBILITY_POLICY.md).
+
 Both version numbers and their supported ranges are single-sourced in
 [`format-contract/contract.yaml`](../../../format-contract/contract.yaml). That
 file is projected to Python (`typing_utils/_format_contract.py`) and TypeScript

@@ -1493,8 +1493,11 @@ Also run, report-only, at deploy time:
 python scripts/gallery/audit_readme_demo_count.py --page <deploy-tree>/index.html
 ```
 
-The README states the live demo count in two places and nothing else watches it
-(`sync_demo_counts.py` owns the *bundled* count). It has drifted twice.
+The README states the live demo count in two places. `scripts/sync_demo_counts.py`
+owns those claims (and the matching `docs/index.rst` line), projecting the length
+of `scripts/gallery/manifest.json` onto them under the CI gate
+`hatch run check-demo-counts`; the deploy-time audit reads the same claim table
+and checks it against the tiles actually in the built page, which CI cannot see.
 
 ### 8.2 `noOrbitVideo` — two tiles are deliberately static
 

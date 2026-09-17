@@ -356,6 +356,14 @@ CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
         "docs/specs/GSPLATS_ZARR_FORMAT.md",
         r"The current format is \*\*v(\d+\.\d+)\*\*",
     ),
+    (
+        "docs/guides/user/CLI_REFERENCE.md",
+        r"layout to the current v(\d+\.\d+) format",
+    ),
+    (
+        "docs/api/gsplats.rst",
+        r"the v(\d+\.\d+) ``\.gsplats\.zarr`` on-disk structure",
+    ),
 )
 
 

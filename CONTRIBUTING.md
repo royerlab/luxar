@@ -236,6 +236,34 @@ not proof that the patches are equivalent; inspect both diffs for unique hunks.
 Also copy any materially different review conclusion onto the surviving PR so
 the disagreement remains visible where the work continues.
 
+### Deprecations and renames
+
+Before the first release, a public rename is a hard cut: change the name, fix
+every caller, no alias. After it, every rename of a public surface (a Python
+name or keyword argument, a CLI command or flag, a viewer export, a URL
+parameter) keeps the old spelling working for the window the
+[Compatibility & Deprecation Policy](docs/guides/user/COMPATIBILITY_POLICY.md)
+promises — two releases or six months, whichever is longer — and says so in one
+voice:
+
+- Python: alias the old name to the new one and call
+  `luxar.utils.warn_deprecated(old, new, since=…, remove_after=…)` from inside
+  the alias; for a renamed keyword, `luxar.utils.deprecated_kwarg_alias(kwargs,
+  old, new, …)` at the top of the function body.
+- CLI: keep the old flag as a `hidden=True` typer option defaulting to `None`
+  and pass it through `luxar.cli.utils.deprecated_option(...)`, which prints
+  the notice to stderr.
+- Viewer URL parameter: add the old key to `URL_PARAM_ALIASES` in
+  `packages/luxar-viewer/src/config/url-params.ts`.
+
+Use the release date you are targeting for `since` and the date six months
+later for `remove_after` (the two-releases half of the rule is checked when the
+removal PR is opened, not when the deprecation lands). Add a test that the old
+spelling still works *and* warns (`pytest.warns(DeprecationWarning)`), and a
+`changelog.d/` fragment whose title starts with `Deprecated:`; the eventual
+removal PR's fragment starts with `Removed:`. A change that cannot be given a
+window is titled `Breaking:` and says what to do.
+
 ### Before Submitting
 
 GitHub pre-fills the canonical [pull request template](.github/PULL_REQUEST_TEMPLATE.md).
