@@ -72,12 +72,53 @@ from .gsplat_data import GSplatData
 
 __all__ = [
     "LIFT_TRUNCATION_RADIUS",
+    "coarse_point_levels",
     "coarse_substitutive_levels",
     "compute_ray_integral_factor",
     "lift_lines_to_gsplats",
     "lift_points_to_gsplats",
     "render_light",
 ]
+
+
+def coarse_point_levels(
+    order: NDArray[np.integer],
+    energy: NDArray[np.floating],
+    *,
+    compression_factor: int,
+    levels: int,
+) -> List[tuple[NDArray[np.intp], float]]:
+    """Build exact-count same-type point levels from a spatial sampling order.
+
+    The returned levels are finest→coarsest. Each entry contains the selected
+    original-row indices and the float gain that exactly conserves the finest
+    level's :func:`~luxar.core.group.lod.points.compute_points_energy` sum.
+    Callers apply that gain only for additive/luminous projection; preserving
+    summed light keeps the original point radius rather than inflating coverage.
+    """
+    permutation = np.asarray(order, dtype=np.intp).reshape(-1)
+    weights = np.asarray(energy, dtype=np.float64).reshape(-1)
+    if permutation.size != weights.size:
+        raise ValueError(
+            f"order has {permutation.size} entries but energy has {weights.size}"
+        )
+    n_points = int(permutation.size)
+    if n_points < 2:
+        return []
+
+    reference_energy = float(np.sum(weights))
+    out: List[tuple[NDArray[np.intp], float]] = []
+    previous_count = n_points
+    for level in range(1, int(levels) + 1):
+        count = max(1, n_points // (int(compression_factor) ** level))
+        if count >= previous_count:
+            continue
+        indices = permutation[:count].copy()
+        selected_energy = float(np.sum(weights[indices]))
+        gain = reference_energy / selected_energy if selected_energy > 0.0 else 1.0
+        out.append((indices, gain))
+        previous_count = count
+    return out
 
 
 #: Truncation radius ``T`` used by the lift — deliberately NOT

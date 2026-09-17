@@ -209,17 +209,20 @@ levels still ends with an N/4-sized commit, which is not a progressive paint.
 
 `DEFAULT_METHOD` is `random`; `DEFAULT_N_LODS` is `4`.
 
-#### Points substitutive (lift to gsplats)
+#### Points substitutive (gsplat or points coarse levels)
 
 `resolve_substitutive_axis_points(spec)` normalizes the `substitutive_lod=`
 kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
-`method`, `truncation_radius`, `device`, `seed`, `coverage_fractions`
+`coarse`, `brightness_compensation`, `method`, `truncation_radius`, `device`,
+`seed`, `coverage_fractions`
 (explicit per-level viewport-relative thresholds, strict-ascending in
 `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`
 (per-splat anisotropy cap on the
 coarse levels, default 3.0; `None` disables)).
 `add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
+
+With the default `coarse="gsplats"`, it:
 
 1. **Lifts** each point to an isotropic Gaussian
    (`gsplats.lift.lift_points_to_gsplats`): `σ = 2R/T`, `a = opacity/(uRIF·σ)`
@@ -243,11 +246,31 @@ coarse levels, default 3.0; `None` disables)).
    `adaptive` shape used by `demo_biodiversity_planetary_scale` remains
    hand-built; this composition is the global-coarse `overview` shape.
 
+With `coarse="points"`, it instead takes exact `N/K^level` prefixes of a
+spatially stratified ordering and writes those rows as Points children. On a
+stacked node, each discrete hidden coordinate is spatially ordered independently
+and the orders are round-robin interleaved so a coarse level does not starve
+individual slices. The coarsest level must have room for every discrete hidden
+coordinate or authoring raises; continuous hidden axes are not treated as slices
+and emit a warning. Radii and all selected point channels stay attached to the
+original rows. Under the effective nearest-setter-wins `additive` or `luminous` mode,
+`brightness_compensation="auto"` scales RGB by the finest/subsampled
+`compute_points_energy` ratio, preserving summed light at the finest radius
+rather than inflating screen coverage; a non-identity gain widens colours to
+float32 HDR. Other blending modes default to a gain of 1 without widening the
+input colour dtype; a numeric
+compensation overrides the per-level gain. The expected HDR warning is suppressed
+for these synthesized compensated children. The gain conserves the summed light
+over the whole node, not within each neighbourhood, so sparse and dense regions
+can shift relative brightness. `truncation_radius`, `max_aspect`, `method`,
+`device`, and `coarsen_dims` are refused because this arm performs no Gaussian
+lift or merge.
+
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given
 a `stream:` ladder by default (`additive_lod=False` opts out), except that
-`image_labels` suppresses only the original finest Points child's ladder so its
-labels are preserved; synthesized coarse levels still stream — see "Composed
+`image_labels` are stored only on the original finest Points child and suppress
+only that child's ladder; synthesized coarse levels still stream — see "Composed
 axes" in `group.py`.
 The lift is strictly isotropic (brightness stays view-independent). Scalar +
 colormap points are supported by **baking** `scalars`→RGB through the colormap
@@ -522,21 +545,26 @@ points the finest pass rejected.
 ```python
 # Points: 4-level energy-weighted additive ladder
 scene.add_points(
-    "cloud", positions, colors=colors, radii=radii,
+    "cloud",
+    positions,
+    colors=colors,
+    radii=radii,
     additive_lod=dict(method="salience", salience_kind="energy", n_lods=4),
 )
 
 # Points: explicit cumulative-count breakpoints, spatial-uniform ordering
 scene.add_points(
-    "cloud", positions,
+    "cloud",
+    positions,
     additive_lod=dict(method="spatial-uniform", counts=[1500, 8000, 40000]),
 )
 
 # GSplats: keep the stored substitutive pyramid as a kind=lod Group,
 # and add a 4-level additive ladder per level
 scene.add_gsplats_from_data(
-    "splats", gsplat_data,
-    substitutive_lod=True,     # require/use stored substitutive levels
+    "splats",
+    gsplat_data,
+    substitutive_lod=True,  # require/use stored substitutive levels
     additive_lod=dict(n_lods=4),
 )
 ```

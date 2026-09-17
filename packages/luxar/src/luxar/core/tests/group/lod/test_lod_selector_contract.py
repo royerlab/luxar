@@ -620,9 +620,11 @@ _LOD_GROUP_CALLERS = frozenset(_LADDER_PRODUCERS) | frozenset(_EXEMPT_LOD_GROUP_
 #: How many ``add_lod_group(...)`` CALLS each of those modules makes. Asserted as
 #: well as the key set, because a SECOND call added inside an already-listed
 #: module changes no key and would otherwise slip past every structural guard
-#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Every listed
-#: module has exactly one call today.
-_EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {rel: 1 for rel in _LOD_GROUP_CALLERS}
+#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Most listed
+#: modules have exactly one call today; exceptions stay explicit.
+_EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {
+    rel: 2 if rel == "core/group/adders/points.py" else 1 for rel in _LOD_GROUP_CALLERS
+}
 
 
 def _luxar_root() -> Path:

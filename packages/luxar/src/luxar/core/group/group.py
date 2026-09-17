@@ -280,27 +280,41 @@ class Group(Node):
                 when using ``dim_order``. Defaults to 0.0 for unspecified dims.
             substitutive_lod: Substitutive-LOD control. ``None`` (default) /
                 ``False`` write no substitutive ladder. ``True`` / ``dict()``
-                synthesise coarse LOD levels as Gaussian splats: each point is
-                lifted to an isotropic Gaussian and reduced by the gsplat
-                substitutive pipeline (mass-preserving), assembled as a
-                ``kind="lod"`` Group whose finest child is the original Points
-                node. ``dict(...)`` keys: ``compression_factor`` (``K``),
+                use ``coarse="gsplats"`` (the default): each point is lifted to
+                an isotropic Gaussian and reduced by the gsplat substitutive
+                pipeline. ``coarse="points"`` instead writes spatially
+                stratified subsamples as Points children, preserving the
+                original radius; under effective additive/luminous blending
+                their RGB values are scaled to preserve the finest level's
+                summed point energy, widening to float32 HDR only when the gain
+                is not 1. ``brightness_compensation="auto"`` selects that rule,
+                while a numeric value applies that per reduction level (use
+                ``1`` to disable it). Both forms assemble a ``kind="lod"`` Group
+                whose finest child is the original Points node. ``dict(...)``
+                keys: ``compression_factor`` (``K``), ``coarse``,
+                ``brightness_compensation``,
                 ``levels`` (``n_lods``), ``method``, ``truncation_radius``,
                 ``device``, ``seed``, ``coverage_fractions``, ``coarsen_dims``,
                 ``max_aspect`` (anisotropy cap on the coarse levels, default
                 3.0; ``None`` disables).
+                ``coarse="points"`` refuses ``method``, ``truncation_radius``,
+                ``device``, ``coarsen_dims``, and ``max_aspect`` because no
+                Gaussian lift or merge occurs.
                 Integer ``coarsen_dims`` entries name the scene-ordered position
                 columns after ``dim_order`` has been applied.
+                For stacked nodes, every discrete hidden coordinate must fit in
+                the coarsest point level; otherwise authoring raises.
                 Composes with ``additive_lod``, which then describes how
                 each level streams in (every level gets a streaming ladder by
                 default; pass ``additive_lod=False`` to opt out). When combined
                 with an explicit ``partition=``, authors an overview topology:
-                global coarse gsplat levels above a spatially partitioned finest
+                global coarse levels above a spatially partitioned finest
                 Points branch, selected only once it fills the viewport.
                 ``scalars``+``colormap``
-                points are supported by baking scalars→RGB for the coarse gsplat
-                levels (the finest Points child stays scalar-driven; a live
-                colormap change re-colours only the finest level). See
+                points are supported by baking scalars→RGB where coarse-level
+                brightness compensation is required (the finest Points child
+                stays scalar-driven; a live colormap change then re-colours only
+                the finest level). See
                 :func:`luxar.core.group.lod.points.resolve_substitutive_axis_points`.
             partition: Spatial-decomposition control. ``None`` (default) writes
                 a single Points node. ``True`` decomposes via balanced median

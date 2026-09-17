@@ -64,30 +64,105 @@ PointsMethodName = Literal[
 DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
 DEFAULT_METHOD: PointsMethodName = DEFAULT_ADDITIVE_METHOD
 
-# Defaults for ``substitutive_lod=True`` / ``substitutive_lod=dict()`` — the
-# coarse levels are synthesised gsplats (each point lifted to an isotropic
-# Gaussian, then reduced by the gsplat substitutive pipeline). The substitutive
-# vocabulary/defaults are shared with Lines — see
-# :func:`luxar.core.group.lod.group.resolve_substitutive_axis`.
+# Defaults for ``substitutive_lod=True`` / ``substitutive_lod=dict()`` keep the
+# legacy synthesised-gsplat path. Points owns the optional ``coarse="points"``
+# vocabulary; Lines deliberately still delegates only to the shared lift
+# resolver until its same-type arm lands.
+
+
+def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]]:
+    """Pop and validate the Points-only substitutive representation keys."""
+    coarse = str(kwargs.pop("coarse", "gsplats")).replace("-", "_")
+    if coarse not in {"gsplats", "points"}:
+        raise ValueError(
+            "substitutive_lod for Points: coarse must be one of "
+            f"['gsplats', 'points']; got {coarse!r}"
+        )
+
+    brightness = kwargs.pop("brightness_compensation", "auto")
+    if brightness != "auto":
+        try:
+            brightness = float(brightness)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "brightness_compensation must be 'auto' or a finite value >= 0; "
+                f"got {brightness!r}"
+            ) from exc
+        if not np.isfinite(brightness) or brightness < 0.0:
+            raise ValueError(
+                "brightness_compensation must be 'auto' or a finite value >= 0; "
+                f"got {brightness!r}"
+            )
+
+    if coarse == "points":
+        reasons = {
+            "truncation_radius": (
+                "it controls the Gaussian footprint used by the lift, and "
+                "same-type point levels are not lifted"
+            ),
+            "max_aspect": (
+                "it caps anisotropy on merged Gaussian levels, and same-type "
+                "point levels contain no Gaussians"
+            ),
+            "method": (
+                "it selects the Gaussian clustering algorithm, and same-type "
+                "point levels are spatially stratified instead"
+            ),
+            "device": (
+                "it selects where Gaussian clustering runs, and same-type "
+                "point levels use the CPU point sampler"
+            ),
+            "coarsen_dims": (
+                "it selects Gaussian merge dimensions, and same-type point "
+                "levels preserve discrete hidden coordinates automatically"
+            ),
+        }
+        for key, reason in reasons.items():
+            if key in kwargs:
+                raise ValueError(
+                    f"substitutive_lod for Points: {key!r} does not apply when "
+                    f"coarse='points' — {reason}."
+                )
+    elif brightness != "auto":
+        raise ValueError(
+            "substitutive_lod for Points: 'brightness_compensation' applies only "
+            "when coarse='points'"
+        )
+
+    return coarse, brightness
 
 
 def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
     """Translate the ``substitutive_lod=`` kwarg value into a normalized dict.
 
-    The substitutive axis coarsens a point cloud by **synthesising gsplats**:
-    each point is lifted to an isotropic Gaussian and the gsplat substitutive
-    pipeline builds fewer-but-larger representative levels (mass-preserving),
-    which become the coarse levels of a points LOD ladder (the finest level
-    stays the original Points node).
+    The default coarsens by **synthesising gsplats**. ``coarse="points"`` instead
+    writes spatially stratified point subsamples, with explicit blending-aware brightness
+    compensation, while keeping the finest level as the original Points node.
 
-    Thin wrapper over the shared
-    :func:`luxar.core.group.lod.group.resolve_substitutive_axis` (one
-    implementation shared with Lines so the two can't drift). See it for the
-    full value vocabulary.
+    The lift vocabulary remains delegated to the shared Points/Lines resolver;
+    the same-type representation keys are parsed here so they do not become
+    accidentally valid for Lines.
     """
     from .group import resolve_substitutive_axis
 
-    return resolve_substitutive_axis(spec, "Points")
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        spec = {}
+    if not isinstance(spec, dict):
+        return resolve_substitutive_axis(spec, "Points")
+
+    kwargs = dict(spec)
+    coarse, brightness = _resolve_points_representation(kwargs)
+    resolved = resolve_substitutive_axis(
+        kwargs,
+        "Points",
+        extra_valid_keys=("coarse", "brightness_compensation"),
+    )
+    assert resolved is not None
+    resolved["coarse"] = coarse
+    resolved["brightness_compensation"] = brightness
+    return resolved
 
 
 # ─────────────────────────────────────────────────────────────────────
