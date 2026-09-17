@@ -15,6 +15,15 @@ from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS
 from luxar.typing_utils.json_safe import json_safe_value
 
 _FIT_REFERENCE_KINDS = frozenset(("acquisition", "preprocessed", "synthetic"))
+PART_PROVENANCE_SUMMARY_FIELDS = (
+    "source_bytes",
+    "source_stored_bytes",
+    "source_voxels",
+    "time_seconds",
+    "source_shape",
+    "source_dtype",
+    "source_declared",
+)
 
 #: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
 #: Above it the score is SKIPPED — and says so out loud, because an archive that
@@ -288,15 +297,7 @@ def _summary_fitting(record: Any) -> dict[str, Any]:
     nested = summarize_part_provenance(fitting.get("part_provenance"))
     nested_fitting = nested[0]["fitting"] if nested is not None else {}
     resolved: dict[str, Any] = {}
-    for key in (
-        "source_bytes",
-        "source_stored_bytes",
-        "source_voxels",
-        "time_seconds",
-        "source_shape",
-        "source_dtype",
-        "source_declared",
-    ):
+    for key in PART_PROVENANCE_SUMMARY_FIELDS:
         if key in fitting:
             resolved[key] = fitting[key]
         elif key in nested_fitting:
@@ -325,12 +326,7 @@ def _summed_summary_fields(
 ) -> dict[str, Any]:
     """Complete finite totals that can survive provenance collapse."""
     summary: dict[str, Any] = {}
-    for key in (
-        "source_bytes",
-        "source_stored_bytes",
-        "source_voxels",
-        "time_seconds",
-    ):
+    for key in PART_PROVENANCE_SUMMARY_FIELDS[:4]:
         values = [fitting.get(key) for fitting in fittings]
         if not all(
             isinstance(item, (int, float))
@@ -357,9 +353,13 @@ def _common_summary_source_fields(
     shared_source: bool,
 ) -> None:
     """Add source identity fields only when the aggregate remains coherent."""
+    dtypes = [fitting.get("source_dtype") for fitting in fittings]
+    if isinstance(dtypes[0], str) and all(item == dtypes[0] for item in dtypes[1:]):
+        summary["source_dtype"] = dtypes[0]
+
     shapes = [fitting.get("source_shape") for fitting in fittings]
     if (
-        "source_voxels" not in summary
+        (not shared_source and "source_voxels" not in summary)
         or not isinstance(shapes[0], list)
         or any(item != shapes[0] for item in shapes[1:])
     ):
@@ -367,10 +367,6 @@ def _common_summary_source_fields(
     summary["source_shape"] = (
         shapes[0] if shared_source else [len(fittings), *shapes[0]]
     )
-
-    dtypes = [fitting.get("source_dtype") for fitting in fittings]
-    if isinstance(dtypes[0], str) and all(item == dtypes[0] for item in dtypes[1:]):
-        summary["source_dtype"] = dtypes[0]
 
     declared = [fitting.get("source_declared") for fitting in fittings]
     if isinstance(declared[0], bool) and all(
@@ -588,6 +584,7 @@ def stamp_merged_quality(
 
 
 __all__ = [
+    "PART_PROVENANCE_SUMMARY_FIELDS",
     "announce_unscored_merge",
     "collect_part_provenance",
     "resolve_merged_reference",

@@ -190,6 +190,62 @@ def test_part_summary_distinguishes_shared_and_independent_sources() -> None:
     ]
 
 
+def test_shared_part_summary_keeps_dtype_when_shapes_disagree() -> None:
+    provenance = [
+        {
+            "coordinate": 0.0,
+            "fitting": {
+                "source_shape": [8, 8, 8],
+                "source_dtype": "uint16",
+                "source_voxels": 512,
+            },
+        },
+        {
+            "coordinate": 1.0,
+            "fitting": {
+                "source_shape": [4, 8, 8],
+                "source_dtype": "uint16",
+                "source_voxels": 256,
+            },
+        },
+    ]
+
+    assert summarize_part_provenance(provenance, shared_source=True) == [
+        {
+            "part_count": 2,
+            "fitting": {
+                "source_dtype": "uint16",
+                "source_voxels": 768,
+            },
+        }
+    ]
+
+
+def test_shared_part_summary_keeps_source_identity_without_voxel_total() -> None:
+    provenance = [
+        {
+            "coordinate": coordinate,
+            "fitting": {
+                "source_shape": [8, 8, 8],
+                "source_dtype": "uint16",
+                "source_declared": True,
+            },
+        }
+        for coordinate in (0.0, 1.0)
+    ]
+
+    assert summarize_part_provenance(provenance, shared_source=True) == [
+        {
+            "part_count": 2,
+            "fitting": {
+                "source_shape": [8, 8, 8],
+                "source_dtype": "uint16",
+                "source_declared": True,
+            },
+        }
+    ]
+
+
 def test_part_summary_counts_nested_collapsed_inputs() -> None:
     provenance = [
         {
@@ -225,6 +281,7 @@ def test_part_summary_counts_nested_collapsed_inputs() -> None:
         {
             "part_count": 3,
             "fitting": {
+                "source_dtype": "uint16",
                 "source_voxels": 1536,
                 "source_bytes": 3072,
                 "time_seconds": 7.0,

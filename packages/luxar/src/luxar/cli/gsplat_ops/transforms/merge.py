@@ -16,19 +16,6 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
 
-_SUMMARY_FIELDS = frozenset(
-    (
-        "source_bytes",
-        "source_stored_bytes",
-        "source_voxels",
-        "time_seconds",
-        "source_shape",
-        "source_dtype",
-        "source_declared",
-    )
-)
-
-
 def _input_provenance(
     datasets: list[GSplatData], values: list[float]
 ) -> list[dict[str, Any]]:
@@ -44,6 +31,8 @@ def _input_provenance(
 
 def _provenance_summary_fields(value: Any) -> set[str]:
     """Source/timing fields present anywhere in component provenance."""
+    from luxar.gsplats.merged_quality import PART_PROVENANCE_SUMMARY_FIELDS
+
     if not isinstance(value, list):
         return set()
     fields: set[str] = set()
@@ -53,7 +42,7 @@ def _provenance_summary_fields(value: Any) -> set[str]:
         fitting = record.get("fitting")
         if not isinstance(fitting, dict):
             continue
-        fields.update(_SUMMARY_FIELDS.intersection(fitting))
+        fields.update(key for key in PART_PROVENANCE_SUMMARY_FIELDS if key in fitting)
         fields.update(_provenance_summary_fields(fitting.get("part_provenance")))
     return fields
 

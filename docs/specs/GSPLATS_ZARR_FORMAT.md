@@ -985,10 +985,12 @@ quality score. An independent-input merge prepends the input count to each
 common `source_shape` at every collapse level so the shape remains consistent
 with summed source totals; partition flatten keeps the common parent shape
 unchanged. `source_declared` is carried only with its qualifying `source_shape`.
-A malformed or incompletely stamped matched input still records the part count
-but omits any aggregate that would otherwise be partial. The summary has no
-`coordinate`, and nested `part_provenance` records are deliberately collapsed
-with their parent spatial-part records rather than retained as a second level.
+A malformed or incompletely stamped matched partition still records the part
+count but omits any aggregate that would otherwise be partial. An
+independent-input merge omits the record entirely when no source fact survives
+the collapse. The summary has no `coordinate`, and nested `part_provenance`
+records are deliberately collapsed with their parent spatial-part records
+rather than retained as a second level.
 
 Composition may nest the same record recursively in an entry's `fitting` block.
 `batch-fit merge` uses this for its multi-level fan-in: root entries are spatial
