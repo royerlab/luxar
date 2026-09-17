@@ -103,7 +103,7 @@ export function resolveStartCoordinate(range, step, requestedStart) {
 
 function buildViewerUrl(baseUrl, concurrency, prefetch) {
   const separator = baseUrl.includes('?') ? '&' : '?';
-  const noPrefetch = prefetch ? '' : '&no-prefetch';
+  const noPrefetch = prefetch ? '' : '&noPrefetch';
   return `${baseUrl}${separator}debug&dpr=1${noPrefetch}&opfsReadConcurrency=${concurrency}`;
 }
 

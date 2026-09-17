@@ -1,0 +1,22 @@
+{
+  "$comment": "The complete, sorted list of RUNTIME value exports of the public barrel (src/index.ts). Type-only exports are erased and do not appear. Two consumers assert EXACT equality against it: src/tests/unit/api/barrel-side-effects.test.ts (the source barrel, under vitest) and scripts/check-lib-exports.mjs (the built dist/lib bundle, under `pnpm build:lib:check`). Adding or removing a public value export means editing this file in the same change; a leak or a lost export then fails in both places. Keep the list sorted (the test checks) so a diff reads as one line per change.",
+  "exports": [
+    "InputContext",
+    "KeyAction",
+    "LuxarApp",
+    "LuxarLayer",
+    "StorageKeys",
+    "URL_PARAM_KEYS",
+    "VIEWER_VERSION",
+    "applyBlendingStateToMaterial",
+    "applyColormapTextureToMaterial",
+    "applyScalarRangeToMaterial",
+    "bootstrapStandalone",
+    "buildInfo",
+    "buildInfoLine",
+    "getCompleteBlendingState",
+    "normalizeDataSourceUrl",
+    "readUrlParams",
+    "supportsScalarColormap"
+  ]
+}

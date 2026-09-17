@@ -245,7 +245,7 @@ interface DemoEntry {
     // developmental series is empty at t0, so the poster wants a late timepoint.
     framePoint?: number;
   };
-  // Force the finest LOD (adds ``&lod-finest``). Default TRUE — a coarse level
+  // Force the finest LOD (adds ``&lodFinest``). Default TRUE — a coarse level
   // looks blurry in a hero still. Set FALSE for a very heavy scene (e.g. the
   // 2.3M-segment global rivers globe) where forcing all elements makes each
   // software-GL frame take minutes: the viewport-relative coverage LOD then
@@ -1375,11 +1375,11 @@ for (const demo of DEMOS) {
 
     const dataUrl = `${DATA_SERVER}/${demo.dataset}`;
     const bakedDimensionStep = await readBakedDimensionStep(dataUrl);
-    // &lod-finest forces the finest LOD level regardless of screen coverage —
+    // &lodFinest forces the finest LOD level regardless of screen coverage —
     // a coarse level looks blurry in a hero still even when the subject is small.
     // Opt out (lodFinest:false) for a very heavy scene where forcing every
     // element makes each software-GL frame take minutes (see DemoEntry.lodFinest).
-    const finestParam = demo.lodFinest === false ? '' : '&lod-finest';
+    const finestParam = demo.lodFinest === false ? '' : '&lodFinest';
     const viewerUrl = `${VIEWER_URL}/?src=${dataUrl}&debug${finestParam}`;
     console.log(`[${demo.id}] ${dataUrl}`);
 

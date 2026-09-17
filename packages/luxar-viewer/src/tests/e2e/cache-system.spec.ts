@@ -29,14 +29,12 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     // Clear all caches before each test for isolation
     await page.goto('/?debug');
     await page.evaluate(() => {
-      // Clear OPFS completely
+      // Clear OPFS completely: every viewer-owned directory lives under the
+      // `luxar/` namespace dir (opfs-store/opfs-root.ts), so one recursive
+      // remove of that entry wipes all zarr-cache-* datasets.
       return navigator.storage
         .getDirectory()
-        .then((root) => root.getDirectoryHandle('luxar-cache', { create: false }).catch(() => null))
-        .then((dir) => {
-          if (!dir) return;
-          return (dir as any).removeEntry?.({ recursive: true });
-        })
+        .then((root) => root.removeEntry('luxar', { recursive: true }))
         .catch(() => {
           // OPFS might not be available or already clean
         });
@@ -44,7 +42,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
   });
 
   test('should cache chunks on first load (L0, L1, L2)', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&cache-debug`);
+    await page.goto(`/?src=${DATASET}&debug&cacheDebug`);
     await waitForLuxarReady(page);
 
     const state = await getLuxarState(page);
@@ -72,11 +70,11 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
   });
 
   test('should serve from L1 cache on second access (same session)', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&cache-debug`);
+    await page.goto(`/?src=${DATASET}&debug&cacheDebug`);
     await waitForLuxarReady(page);
 
     // Reload scene (trigger new load)
-    await page.goto(`/?src=${DATASET}&debug&cache-debug`);
+    await page.goto(`/?src=${DATASET}&debug&cacheDebug`);
     await waitForLuxarReady(page);
 
     // Second load should be much faster due to L1 cache
@@ -181,7 +179,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
   });
 
   test('should track L0 cache hits on second chunk access', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&cache-debug`);
+    await page.goto(`/?src=${DATASET}&debug&cacheDebug`);
     await waitForLuxarReady(page);
 
     // Wait for initial load to complete
@@ -216,14 +214,14 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     await assertNoConsoleErrors(page);
   });
 
-  test('should disable all caching with ?no-cache parameter (L0, L1, L2)', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-cache&cache-debug`);
+  test('should disable all caching with ?noCache parameter (L0, L1, L2)', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug&noCache&cacheDebug`);
     await waitForLuxarReady(page);
 
     const state = await getLuxarState(page);
     expect(state.totalPoints).toBeGreaterThan(0);
 
-    // With no-cache, all cache layers should be disabled or empty
+    // With `?noCache`, all cache layers should be disabled or empty
     const cacheStats = await page.evaluate(async () => {
       const debug = (window as any).__luxarDebug;
       try {
@@ -249,7 +247,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
   });
 
   test('should respect segmented LRU (metadata vs chunks)', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&cache-debug`);
+    await page.goto(`/?src=${DATASET}&debug&cacheDebug`);
     await waitForLuxarReady(page);
 
     const cacheStats = await page.evaluate(async () => {
@@ -269,7 +267,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
   });
 
   test('should handle OPFS operations without errors', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&cache-debug`);
+    await page.goto(`/?src=${DATASET}&debug&cacheDebug`);
     await waitForLuxarReady(page);
 
     // Wait for OPFS writes to settle (async/debounced)
@@ -290,10 +288,10 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     await assertNoConsoleErrors(page);
   });
 
-  test('?no-opfs skips ONLY the L2 tier: scene renders, in-memory tiers stay on, no badge', async ({
+  test('?noOpfs skips ONLY the L2 tier: scene renders, in-memory tiers stay on, no badge', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-opfs&cache-debug`);
+    await page.goto(`/?src=${DATASET}&debug&noOpfs&cacheDebug`);
     await waitForLuxarReady(page);
 
     const state = await getLuxarState(page);
@@ -336,7 +334,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
   });
 
   test('should cache content hash for validation', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&cache-debug`);
+    await page.goto(`/?src=${DATASET}&debug&cacheDebug`);
     await waitForLuxarReady(page);
 
     // Wait for data to actually load (cache activity happens during data loading)
@@ -378,13 +376,13 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
       });
     });
 
-    // Should see cache-related logs (if cache-debug is enabled)
+    // Should see cache-related logs (if `?cacheDebug` is enabled)
     const cacheRelated = consoleLogs.filter((log: string) => {
       const logStr = String(log).toLowerCase();
       return logStr.includes('cache') || logStr.includes('opfs');
     });
 
-    // With cache-debug, we should see some cache activity
+    // With `?cacheDebug`, we should see some cache activity
     expect(cacheRelated.length).toBeGreaterThan(0);
 
     await assertNoConsoleErrors(page);

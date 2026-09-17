@@ -7,7 +7,7 @@
  * - Scrub-back HITS: revisiting frames restores decoded slices from the
  *   cache (including the round-5 departure store: partial ladders are
  *   snapshotted when the view leaves a slice, so fast scrubbing stays warm).
- * - `?no-slice-cache` disables ONLY the S-cache (L0/L1/L2 stay wired).
+ * - `?noSliceCache` disables ONLY the S-cache (L0/L1/L2 stay wired).
  * - The Data Loading Monitor's Cache tab surfaces the SLICE CACHE section
  *   with live values, collapsible section headers (mouse + keyboard), and
  *   a working per-section Clear action.
@@ -66,11 +66,11 @@ test.describe('SliceCache (S-cache)', () => {
   test('scrub-back revisits are served from the S-cache (hit count grows, entries stored)', async ({
     page,
   }) => {
-    // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
+    // `&noOpfs` on every load: this spec never asserts the L2 OPFS tier, and
     // automated Chromium's OPFS stalls systemically (10s per op — issue #1645),
     // starving scene readiness past the test budget. The circuit breaker only
     // helps un-flagged real sessions (it still pays ~3 timeouts per fresh page).
-    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1500);
 
@@ -92,19 +92,19 @@ test.describe('SliceCache (S-cache)', () => {
     expect(state.totalPoints).toBeGreaterThan(0);
   });
 
-  // L2 is off here by `&no-opfs` (see above), so the claim this test can make
-  // is that the chunk-cache stack stays WIRED — unlike `?no-cache`, which
+  // L2 is off here by `&noOpfs` (see above), so the claim this test can make
+  // is that the chunk-cache stack stays WIRED — unlike `?noCache`, which
   // tears it down entirely.
-  test('?no-slice-cache disables ONLY the S-cache (the chunk-cache stack stays wired)', async ({
+  test('?noSliceCache disables ONLY the S-cache (the chunk-cache stack stays wired)', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-slice-cache&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noSliceCache&noOpfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1000);
 
     expect(await getSliceStats(page)).toBeNull(); // S-cache not constructed
 
-    // The chunk-cache stack is still wired (unlike ?no-cache).
+    // The chunk-cache stack is still wired (unlike ?noCache).
     const cacheStats = await page.evaluate(async () => {
       const debug = (window as any).__luxarDebug;
       return await debug.cache.getStats();
@@ -113,10 +113,10 @@ test.describe('SliceCache (S-cache)', () => {
     expect(cacheStats.l1).toBeTruthy();
   });
 
-  test('scrubbing with ?no-slice-cache still renders every frame (bypass is safe)', async ({
+  test('scrubbing with ?noSliceCache still renders every frame (bypass is safe)', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-slice-cache&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noSliceCache&noOpfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1500);
 
@@ -141,7 +141,7 @@ test.describe('Data Loading Monitor — S-cache section', () => {
   test('SLICE CACHE section renders with live values and collapse toggles by mouse + keyboard', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1500);
     // Generate some cache traffic first so values are non-trivial.
@@ -181,7 +181,7 @@ test.describe('Data Loading Monitor — S-cache section', () => {
   test('Clear button empties the S-cache without collapsing the section state', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1500);
     await goToFrame(page, 1);
@@ -210,7 +210,7 @@ test.describe('Data Loading Monitor — S-cache section', () => {
   test('tab-switch entrance animation is one-shot (marker cleared by live rebuilds)', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await page.keyboard.press('m');
     await page.waitForTimeout(300);

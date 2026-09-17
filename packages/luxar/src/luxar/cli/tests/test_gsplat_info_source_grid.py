@@ -135,6 +135,21 @@ def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
         assert full.exit_code == 0, full.output
         assert "psnr_db" in normalized_cli_output(full)
 
+    summary_path = tmp_path / "summary.gsplats.zarr"
+    GSplatData(
+        centers=centers,
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky_factors,
+        stats={
+            "part_provenance": [{"part_count": 47, "fitting": {"source_bytes": 3000}}]
+        },
+    ).save(summary_path, ordering="none")
+    summary = CliRunner().invoke(
+        app, ["gsplat", "info", str(summary_path), "--no-histograms"]
+    )
+    assert summary.exit_code == 0, summary.output
+    assert "part_provenance: 47 parts" in normalized_cli_output(summary)
+
     help_result = CliRunner().invoke(app, ["gsplat", "info", "--help"])
     assert help_result.exit_code == 0, help_result.output
     assert "--full-provenance" in normalized_cli_output(help_result)

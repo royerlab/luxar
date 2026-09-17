@@ -258,7 +258,7 @@ export interface ViewerState {
  *   right-clicks an element without dragging (issue #1917). Unlike
  *   `selection`, these are gesture-driven. They fire ALONGSIDE the built-in
  *   behaviour rather than instead of it: a host that wants exclusive control
- *   should also pass `allowLinks: false` (or load with `?no-links`), which
+ *   should also pass `allowLinks: false` (or load with `?noLinks`), which
  *   suppresses navigation while still delivering the events. Like `selection`,
  *   a listener present at dataset-load time provisions the picking pipeline,
  *   so subscribe BEFORE `init()` / `switchDataset()` — on a scene with no

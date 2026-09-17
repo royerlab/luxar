@@ -1053,7 +1053,7 @@ def list_raw_keys(group: zarr.Group) -> frozenset[str]:
     DOCUMENT's bytes, and "no such key" is unobservable for precisely the names
     where the distinction decides whether a payload contributes bytes to the
     content hash (``luxar.io._compiler.finalize.hashing._payload_terms``) or is
-    safe to copy (``luxar.io.optimise._copy_payload_files``). A directory
+    safe to copy (``luxar.io.optimize._copy_payload_files``). A directory
     LISTING is not folded: the store reports the names it actually stores, and
     Python compares them case-sensitively on every platform.
 
@@ -1121,7 +1121,7 @@ def write_raw_bytes(group: zarr.Group, key: str, payload: bytes) -> None:
     case-insensitive filesystem. Callers still own the REST of the name check —
     that a payload name is a single path component at all, and what to do about a
     refused one — since only they know whether skipping, refusing or renaming is
-    the right answer (``luxar.io.optimise._copy_payload_files`` decides all
+    the right answer (``luxar.io.optimize._copy_payload_files`` decides all
     three).
 
     Args:

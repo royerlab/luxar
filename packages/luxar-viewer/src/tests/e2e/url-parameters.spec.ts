@@ -3,7 +3,7 @@
  *
  * Validates that URL parameters correctly control initial viewer state:
  * - ?theme= sets the UI theme
- * - ?no-cache disables persistent caching
+ * - ?noCache disables persistent caching
  * - ?debug enables the debug interface
  * - Invalid parameters are handled gracefully
  */
@@ -45,11 +45,11 @@ test.describe('URL Parameters', () => {
     expect(theme).toBeTruthy();
   });
 
-  test('should disable caching with ?no-cache', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-cache`);
+  test('should disable caching with ?noCache', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug&noCache`);
     await waitForLuxarReady(page);
 
-    // With no-cache, L2 persistent cache should be empty or disabled
+    // With `?noCache`, L2 persistent cache should be empty or disabled
     const cacheStats = await page.evaluate(async () => {
       const debug = (window as any).__luxarDebug;
       if (!debug?.cache?.getStats) return null;

@@ -367,7 +367,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    approach. Under an ORTHOGRAPHIC projection nothing degenerates (`w`
    stays 1), so neither function ever saturates and each metric's plain
    value is used directly.
-   A session-wide replacement-LOD bias (`?lod-bias` / `LuxarAppOptions.lodBias`)
+   A session-wide replacement-LOD bias (`?lodBias` / `LuxarAppOptions.lodBias`)
    is applied between measurement and selection: `b` multiplies `screen-area`,
    while `sqrt(b)` multiplies legacy diagonal `coverage`, so both move by the
    same area factor. The neutral default is `b = 1`.
@@ -376,7 +376,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    node-local scene-unit medians through the node transform and camera using
    logical CSS pixels. Pick the coarsest level whose typical footprint is at
    most 1.5 px, with a 10% downgrade deadband. This avoids an adaptive-DPR
-   feedback loop. `lod-bias` keeps its area-unit meaning, so the footprint
+   feedback loop. `lodBias` keeps its area-unit meaning, so the footprint
    limit is divided by `sqrt(b)`. Missing, invalid, or display-dimension-
    mismatched stamps fall through to the occupancy path, as do explicit
    `coverage_fractions` ladders. Per-tile `adaptive` ladders are stamped, so
@@ -624,7 +624,7 @@ thinned, and `applyLodFade` multiplies the node's opacity by `1/keep`
 (`densityCompensation`) so the composited brightness stays at the unthinned
 aggregate; `max` / `normal` / `opaque` nodes are never thinned. The pick pass
 mirrors the visual material's drop per node so a thinned-away element cannot
-be picked. `?no-density-guard` disables both the walker and the ladder for a
+be picked. `?noDensityGuard` disables both the walker and the ladder for a
 session.
 
 ---

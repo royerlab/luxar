@@ -35,7 +35,7 @@ import type { RendererCapabilities } from '../../renderer-capabilities';
  *
  * - `framebufferYDown = true` — any `WebGPURenderer` (real WebGPU OR
  *   WebGPURenderer running on its WebGL2 compat backend, including
- *   `?webgpu-force-webgl`). Three.js's WebGPURenderer normalises Y
+ *   `?webgpuForceWebgl`). Three.js's WebGPURenderer normalises Y
  *   internally so it presents a top-down framebuffer on both
  *   backends. Vertex (-1,-1) sits at screen-bottom-left and needs
  *   `uv.y = 1` to sample the bottom row of the source target.

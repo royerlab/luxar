@@ -17,9 +17,15 @@
 
 import * as THREE from 'three';
 import { config } from '../../config';
+import type { ToneMappingName } from '../../types/format-contract';
 
-/** Tone-mapping mode names, as spelled in config / GUI / zarr metadata. */
-export type ToneMappingName = typeof config.renderingControls.defaults.toneMapping;
+/**
+ * Tone-mapping mode names, as spelled in config / GUI / zarr metadata.
+ * Single-sourced from `format-contract/contract.yaml::tone_mappings` (the
+ * Python `VALID_TONE_MAPPINGS` is the same projection); re-exported here so
+ * the historical import site keeps working.
+ */
+export type { ToneMappingName };
 
 /** Name → THREE enum. Exhaustive over {@link ToneMappingName} by type. */
 export const TONE_MAPPING_BY_NAME: Record<ToneMappingName, THREE.ToneMapping> = {

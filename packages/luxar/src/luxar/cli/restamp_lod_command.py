@@ -2,7 +2,7 @@
 
 A thin Typer layer over :mod:`luxar.io.lod_restamp`; every decision about what
 may change and what must not lives there. Registered onto the root app by
-:func:`register_restamp_lod_command`, mirroring ``optimise_command.py``.
+:func:`register_restamp_lod_command`, mirroring ``optimize_command.py``.
 """
 
 from __future__ import annotations

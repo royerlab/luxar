@@ -4259,10 +4259,10 @@ class TestLODCommand:
             assert "energy_fraction_cum" in stats, f"additive_{i} is unstamped"
         assert "reference_energy" in dict(root.attrs["level_stats"])
 
-    def test_reveal_centre_relocates_the_first_shell(
+    def test_reveal_center_relocates_the_first_shell(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--reveal-centre` must change the OUTPUT, not merely be accepted.
+        """`--reveal-center` must change the OUTPUT, not merely be accepted.
 
         Pinned to a corner, the first shell must sit closer to that corner than
         the default (bbox-centred) ladder's first shell does.
@@ -4285,7 +4285,7 @@ class TestLODCommand:
 
         assert runner.invoke(app, base + [str(default_out)] + tail).exit_code == 0
         pinned = runner.invoke(
-            app, base + [str(pinned_out)] + tail + ["--reveal-centre", "0,0,0"]
+            app, base + [str(pinned_out)] + tail + ["--reveal-center", "0,0,0"]
         )
         assert pinned.exit_code == 0, pinned.output
 
@@ -4301,7 +4301,7 @@ class TestLODCommand:
         Silently ignoring them would hand back an energy-ordered ladder while the
         user believed they had asked for a repositioned reveal.
         """
-        for flag, value in (("--reveal-centre", "0,0,0"), ("--spatial-dims", "0,1")):
+        for flag, value in (("--reveal-center", "0,0,0"), ("--spatial-dims", "0,1")):
             out = tmp_path / f"x{flag}.gsplats.zarr"
             result = runner.invoke(
                 app,
@@ -4345,7 +4345,7 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
-    def test_reveal_centre_length_must_match_spatial_dims(
+    def test_reveal_center_length_must_match_spatial_dims(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
         """The centre carries one coordinate per measured axis."""
@@ -4364,7 +4364,7 @@ class TestLODCommand:
                 "radial",
                 "--spatial-dims",
                 "0,1",
-                "--reveal-centre",
+                "--reveal-center",
                 "1,2,3",
             ],
             # fmt: on
@@ -4373,9 +4373,9 @@ class TestLODCommand:
         assert not out.exists()
 
     def test_spatial_dims_preserves_the_listed_order(self) -> None:
-        """`--spatial-dims` must NOT sort — the order pairs with `--reveal-centre`.
+        """`--spatial-dims` must NOT sort — the order pairs with `--reveal-center`.
 
-        It went through `sorted(set(...))`, so `--spatial-dims 2,0 --reveal-centre
+        It went through `sorted(set(...))`, so `--spatial-dims 2,0 --reveal-center
         10,20` silently meant "axis 0 centred at 10, axis 2 at 20" rather than the
         pairing the user typed. Deliberately unlike `--coarsen-dims`, where a
         barrier SET is order-free.
@@ -4388,17 +4388,17 @@ class TestLODCommand:
     @pytest.mark.parametrize(
         "spec", ["nan,0,0", "inf,0,0", "0,-inf,0"], ids=["nan", "inf", "-inf"]
     )
-    def test_reveal_centre_rejects_non_finite_coordinates(self, spec: str) -> None:
+    def test_reveal_center_rejects_non_finite_coordinates(self, spec: str) -> None:
         """`float("nan")` parses happily, so this needed an explicit check.
 
         With a non-finite centre every distance is non-finite; they all compare
         equal under the stable argsort, so the ladder comes out in input order and
         the user gets no reveal and no error.
         """
-        from luxar.cli.reveal_options import parse_reveal_centre
+        from luxar.cli.reveal_options import parse_reveal_center
 
         with pytest.raises(typer.BadParameter, match="finite"):
-            parse_reveal_centre(spec)
+            parse_reveal_center(spec)
 
     def test_spatial_dims_rejects_duplicates(self) -> None:
         """A duplicate was silently collapsed by `set()`; it now errors, because a
@@ -7648,6 +7648,145 @@ class TestLODCarriesAuthoredAppearance:
         assert got["kind"] == "lod"
         assert got["type"] == "group"
         assert got["blending_mode"] == "volumetric"
+
+
+class TestFitProvenanceRewriteAudit:
+    PROVENANCE: ClassVar[list[dict[str, Any]]] = [
+        {
+            "coordinate": 0.0,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [4, 8, 8, 8],
+                "source_dtype": "uint16",
+                "source_bytes": 4096,
+                "source_voxels": 2048,
+                "time_seconds": 2.5,
+                "psnr_db": 40.0,
+            },
+        },
+        {
+            "coordinate": 1.0,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [4, 8, 8, 8],
+                "source_dtype": "uint16",
+                "source_bytes": 4096,
+                "source_voxels": 2048,
+                "time_seconds": 3.5,
+                "psnr_db": 42.0,
+            },
+        },
+    ]
+    REWRITERS: ClassVar[dict[str, list[str]]] = {
+        "slice": ["gsplat", "slice", "{in}", "{out}", "0:4, :, :"],
+        "reencode": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
+        "partition": TestLODCarriesAuthoredAppearance.REWRITERS["partition"],
+        "lod": TestLODCarriesAuthoredAppearance.REWRITERS["lod:stream"],
+        "flatten": TestLODCarriesAuthoredAppearance.REWRITERS["flatten"],
+        "decimate": TestLODCarriesAuthoredAppearance.REWRITERS["decimate"],
+        "merge": TestLODCarriesAuthoredAppearance.REWRITERS["merge"],
+    }
+
+    @staticmethod
+    def _stamp_provenance(path: Path) -> None:
+        root = zc_open_group(path, mode="r+")
+        root.require_group("fitting").attrs["part_provenance"] = (
+            TestFitProvenanceRewriteAudit.PROVENANCE
+        )
+        zc_consolidate(root)
+
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "slice",
+            "reencode",
+            "partition",
+            "lod",
+            "flatten",
+            "decimate",
+            pytest.param(
+                "merge",
+                marks=pytest.mark.xfail(
+                    strict=True,
+                    reason="merge drops fitting/part_provenance (#2768)",
+                ),
+            ),
+        ],
+    )
+    def test_rewriter_keeps_fit_provenance(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        label: str,
+    ) -> None:
+        self._stamp_provenance(medium_gsplats)
+        input_path = medium_gsplats
+        if label == "flatten":
+            input_path = tmp_path / "partitioned-input.gsplats.zarr"
+            partition = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "partition",
+                    str(medium_gsplats),
+                    str(input_path),
+                    "--parts",
+                    "2",
+                ],
+            )
+            assert partition.exit_code == 0, partition.stdout
+
+        out = tmp_path / f"provenance-{label}.gsplats.zarr"
+        argv = TestLODCarriesAuthoredAppearance._resolve(
+            self.REWRITERS[label], input_path, out, tmp_path
+        )
+
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
+        output = zc_open_group(out, mode="r")
+        provenance = output["fitting"].attrs["part_provenance"]
+        if label in {"reencode", "partition", "lod"}:
+            assert provenance == self.PROVENANCE
+        elif label == "flatten":
+            assert provenance == [
+                {
+                    "part_count": 2,
+                    "fit_reference": {"kind": "acquisition"},
+                    "fitting": {
+                        "source_shape": [4, 8, 8, 8],
+                        "source_dtype": "uint16",
+                        "source_bytes": 4096,
+                        "source_voxels": 2048,
+                        "time_seconds": 6.0,
+                    },
+                }
+            ]
+        elif label == "decimate":
+            assert [record["fitting"] for record in provenance] == [
+                {
+                    key: value
+                    for key, value in record["fitting"].items()
+                    if key != "psnr_db"
+                }
+                for record in self.PROVENANCE
+            ]
+        elif label == "slice":
+            assert [record["coordinate"] for record in provenance] == [0.0, 1.0]
+            assert all(
+                "source_bytes" not in record["fitting"]
+                and "psnr_db" not in record["fitting"]
+                for record in provenance
+            )
+            assert [record["fitting"]["source_dtype"] for record in provenance] == [
+                "uint16",
+                "uint16",
+            ]
+            assert [record["fitting"]["time_seconds"] for record in provenance] == [
+                2.5,
+                3.5,
+            ]
 
 
 class TestAdditiveCommand:

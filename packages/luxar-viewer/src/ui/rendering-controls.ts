@@ -473,7 +473,7 @@ export class RenderingControls {
   }
 
   /**
-   * Apply the stored Density Guard choice — unless `?no-density-guard` turned
+   * Apply the stored Density Guard choice — unless `?noDensityGuard` turned
    * the guard off for this session, in which case the stored flag is left
    * alone (neither applied nor overwritten), like a URL DPR pin.
    */

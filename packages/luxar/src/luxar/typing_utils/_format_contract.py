@@ -13,9 +13,9 @@ from __future__ import annotations
 from typing import Final, Literal
 
 # --- scene (.luxar.zarr) format version ---
-SceneFormatVersion = Literal["0.1", "0.2", "0.3"]
-SCENE_FORMAT_VERSION: Final[SceneFormatVersion] = "0.1"
-SUPPORTED_SCENE_VERSIONS: Final[tuple[SceneFormatVersion, ...]] = ("0.1", "0.2", "0.3")
+SceneFormatVersion = Literal["0.1", "0.2"]
+SCENE_FORMAT_VERSION: Final[SceneFormatVersion] = "0.2"
+SUPPORTED_SCENE_VERSIONS: Final[tuple[SceneFormatVersion, ...]] = ("0.1", "0.2")
 
 # --- standalone gsplats (.gsplats.zarr) node-tree format version ---
 GSplatsFormatVersion = Literal["3.0", "3.1", "3.2", "3.3", "3.4"]
@@ -30,6 +30,19 @@ SUPPORTED_GSPLATS_VERSIONS: Final[tuple[GSplatsFormatVersion, ...]] = (
 
 # --- root-header format_type identifying a standalone gsplats store ---
 FORMAT_TYPE_GSPLATS: Final[str] = "gsplats_zarr"
+
+# --- root-header format_type identifying a compiled scene (0.2+) ---
+FORMAT_TYPE_SCENE: Final[str] = "luxar_zarr"
+
+# --- scene 0.1 root-header version key (read fallback only; never written) ---
+LEGACY_SCENE_VERSION_ATTR: Final[str] = "luxar_version"
+
+# --- root-header attr recording the writing luxar.__version__ (provenance
+#     only; excluded from content_hash by both hashers) ---
+SOFTWARE_VERSION_ATTR: Final[str] = "luxar_software_version"
+
+# --- the one key a categorical nd_transform entry carries ---
+ND_TRANSFORM_PERMUTATION_KEY: Final[str] = "permutation"
 
 # --- scene-graph node types ---
 NodeTypeName = Literal["scene", "group", "points", "lines", "gsplats", "mesh", "sound"]
@@ -126,20 +139,32 @@ ENCODING_NAMES: Final[tuple[EncodingName, ...]] = (
 AttrKey = Literal[
     "format_version",
     "format_type",
+    "luxar_software_version",
+    "type",
     "content_hash",
+    "scene_dimensions",
     "display_type",
     "max_elements",
     "position_bounds",
     "kind",
+    "selector",
+    "default_level",
+    "child_index",
 ]
 ATTR_KEYS: Final[tuple[AttrKey, ...]] = (
     "format_version",
     "format_type",
+    "luxar_software_version",
+    "type",
     "content_hash",
+    "scene_dimensions",
     "display_type",
     "max_elements",
     "position_bounds",
     "kind",
+    "selector",
+    "default_level",
+    "child_index",
 )
 
 # --- canonical gsplats array names ---
@@ -162,6 +187,254 @@ ARRAY_NAMES: Final[tuple[ArrayName, ...]] = (
     "label_ids",
 )
 
+# --- render / appearance attribute keys (the writer's typo allowlist,
+#     validation/writing.py::KNOWN_RENDER_ATTRS) ---
+RenderAttrKey = Literal[
+    "absorption",
+    "blending_mode",
+    "colormap",
+    "gamma",
+    "intensity",
+    "layer",
+    "layer_order",
+    "offset",
+    "opacity",
+    "visible",
+    "copy",
+    "link",
+    "link_target",
+    "join",
+    "alpha_cutoff",
+    "ambient",
+    "material",
+    "roughness",
+    "metalness",
+    "clearcoat",
+    "clearcoat_roughness",
+    "iridescence",
+    "sheen",
+    "sheen_color",
+    "transmission",
+    "ior",
+    "thickness",
+    "attenuation_color",
+    "attenuation_distance",
+    "dispersion",
+    "refract_data",
+    "shade_exponent",
+    "shininess",
+    "specular",
+    "texture_filter",
+    "texture_wrap",
+    "slab_tolerance",
+]
+RENDER_ATTR_KEYS: Final[tuple[RenderAttrKey, ...]] = (
+    "absorption",
+    "blending_mode",
+    "colormap",
+    "gamma",
+    "intensity",
+    "layer",
+    "layer_order",
+    "offset",
+    "opacity",
+    "visible",
+    "copy",
+    "link",
+    "link_target",
+    "join",
+    "alpha_cutoff",
+    "ambient",
+    "material",
+    "roughness",
+    "metalness",
+    "clearcoat",
+    "clearcoat_roughness",
+    "iridescence",
+    "sheen",
+    "sheen_color",
+    "transmission",
+    "ior",
+    "thickness",
+    "attenuation_color",
+    "attenuation_distance",
+    "dispersion",
+    "refract_data",
+    "shade_exponent",
+    "shininess",
+    "specular",
+    "texture_filter",
+    "texture_wrap",
+    "slab_tolerance",
+)
+
+# --- kind=lod `selector` attr values (units of coverage_fraction) ---
+LodSelectorName = Literal["coverage", "screen-area"]
+LOD_SELECTORS: Final[tuple[LodSelectorName, ...]] = ("coverage", "screen-area")
+
+# --- `blending_mode` attr values (panel-dropdown order) ---
+BlendingModeName = Literal[
+    "additive",
+    "volumetric",
+    "normal",
+    "max",
+    "opaque",
+    "luminous",
+]
+BLENDING_MODES: Final[tuple[BlendingModeName, ...]] = (
+    "additive",
+    "volumetric",
+    "normal",
+    "max",
+    "opaque",
+    "luminous",
+)
+
+# --- `viewer_config.tone_mapping` values ---
+ToneMappingName = Literal[
+    "None",
+    "Linear",
+    "Reinhard",
+    "Cineon",
+    "ACES",
+    "AgX",
+    "Neutral",
+]
+TONE_MAPPINGS: Final[tuple[ToneMappingName, ...]] = (
+    "None",
+    "Linear",
+    "Reinhard",
+    "Cineon",
+    "ACES",
+    "AgX",
+    "Neutral",
+)
+
+# --- built-in colormap names a `colormap` attr may carry ---
+BuiltinColormapName = Literal[
+    "green",
+    "magenta",
+    "cyan",
+    "red",
+    "blue",
+    "yellow",
+    "gray",
+    "orange",
+    "bop_blue",
+    "bop_orange",
+    "bop_purple",
+    "viridis",
+    "inferno",
+    "plasma",
+    "turbo",
+    "fire",
+    "ice",
+    "phase",
+    "RdBu",
+    "coolwarm",
+]
+BUILTIN_COLORMAP_NAMES: Final[tuple[BuiltinColormapName, ...]] = (
+    "green",
+    "magenta",
+    "cyan",
+    "red",
+    "blue",
+    "yellow",
+    "gray",
+    "orange",
+    "bop_blue",
+    "bop_orange",
+    "bop_purple",
+    "viridis",
+    "inferno",
+    "plasma",
+    "turbo",
+    "fire",
+    "ice",
+    "phase",
+    "RdBu",
+    "coolwarm",
+)
+
+# --- canonical dimension `unit` spellings (= PhysicalUnit enum) ---
+PhysicalUnitName = Literal[
+    "nm",
+    "um",
+    "mm",
+    "cm",
+    "m",
+    "metre",
+    "km",
+    "inch",
+    "foot",
+    "px",
+    "s",
+    "au",
+]
+PHYSICAL_UNITS: Final[tuple[PhysicalUnitName, ...]] = (
+    "nm",
+    "um",
+    "mm",
+    "cm",
+    "m",
+    "metre",
+    "km",
+    "inch",
+    "foot",
+    "px",
+    "s",
+    "au",
+)
+
+# --- `ordering` attr values (spatial sort of a node's elements) ---
+OrderingMethodName = Literal["morton", "hilbert", "none"]
+ORDERING_METHODS: Final[tuple[OrderingMethodName, ...]] = ("morton", "hilbert", "none")
+
+# --- lines-only `join` attr values ---
+LineJoinStyleName = Literal["none", "miter"]
+LINE_JOIN_STYLES: Final[tuple[LineJoinStyleName, ...]] = ("none", "miter")
+
+# --- `line_type` attr values on a lines node ---
+LineTypeName = Literal["segments", "polyline", "loop", "indexed"]
+LINE_TYPES: Final[tuple[LineTypeName, ...]] = (
+    "segments",
+    "polyline",
+    "loop",
+    "indexed",
+)
+
+# --- keys an affine nd_transform entry may carry ---
+NdTransformAffineKey = Literal["scale", "offset"]
+ND_TRANSFORM_AFFINE_KEYS: Final[tuple[NdTransformAffineKey, ...]] = ("scale", "offset")
+
+# --- keys of one `scene_dimensions.dimensions[]` entry ---
+DimensionAttrKey = Literal[
+    "name",
+    "unit",
+    "range",
+    "step",
+    "display",
+    "discrete",
+    "cyclic",
+    "scale",
+    "spatial",
+    "description",
+    "categories",
+]
+DIMENSION_ATTR_KEYS: Final[tuple[DimensionAttrKey, ...]] = (
+    "name",
+    "unit",
+    "range",
+    "step",
+    "display",
+    "discrete",
+    "cyclic",
+    "scale",
+    "spatial",
+    "description",
+    "categories",
+)
+
 __all__ = [
     "SceneFormatVersion",
     "SCENE_FORMAT_VERSION",
@@ -170,6 +443,10 @@ __all__ = [
     "GSPLATS_FORMAT_VERSION",
     "SUPPORTED_GSPLATS_VERSIONS",
     "FORMAT_TYPE_GSPLATS",
+    "FORMAT_TYPE_SCENE",
+    "LEGACY_SCENE_VERSION_ATTR",
+    "SOFTWARE_VERSION_ATTR",
+    "ND_TRANSFORM_PERMUTATION_KEY",
     "NodeTypeName",
     "NODE_TYPES",
     "GeometryTypeName",
@@ -184,4 +461,26 @@ __all__ = [
     "ATTR_KEYS",
     "ArrayName",
     "ARRAY_NAMES",
+    "RenderAttrKey",
+    "RENDER_ATTR_KEYS",
+    "LodSelectorName",
+    "LOD_SELECTORS",
+    "BlendingModeName",
+    "BLENDING_MODES",
+    "ToneMappingName",
+    "TONE_MAPPINGS",
+    "BuiltinColormapName",
+    "BUILTIN_COLORMAP_NAMES",
+    "PhysicalUnitName",
+    "PHYSICAL_UNITS",
+    "OrderingMethodName",
+    "ORDERING_METHODS",
+    "LineJoinStyleName",
+    "LINE_JOIN_STYLES",
+    "LineTypeName",
+    "LINE_TYPES",
+    "NdTransformAffineKey",
+    "ND_TRANSFORM_AFFINE_KEYS",
+    "DimensionAttrKey",
+    "DIMENSION_ATTR_KEYS",
 ]

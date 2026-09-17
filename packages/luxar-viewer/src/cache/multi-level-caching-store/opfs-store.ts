@@ -3,6 +3,7 @@ import { log, Modules } from '../../utils/log';
 import { getErrorMessage } from '../../utils/format-error';
 import { config } from '../../config';
 import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
+import { getLuxarOpfsRoot } from './opfs-store/opfs-root';
 import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
 import { withTimeout } from './opfs-store/opfs-timeout';
 import { getOpfsReadGateStats, withOpfsReadGate } from './opfs-read-gate';
@@ -37,9 +38,10 @@ export interface CachedDatasetSummary {
  * Uses 256 bucket directories to distribute files and avoid filesystem limits.
  * Files are stored as: `{bucket}/{base64-encoded-key}`
  *
- * Structure:
+ * Structure (everything under the viewer's `luxar/` OPFS namespace dir, see
+ * `opfs-store/opfs-root.ts`):
  * ```
- * zarr-cache-{hash}/
+ * luxar/zarr-cache-{hash}/
  * ├── 00/           (~250 files per bucket)
  * │   ├── UG9pbnRz...
  * │   └── ...
@@ -253,16 +255,25 @@ export class OPFSStore {
   }
 
   /**
-   * Enumerate every `zarr-cache-*` dataset present in OPFS. Reads each
-   * dataset's `_cache_meta.json` directly — no OPFSStore instance is
-   * created. Used by the debug-cache helpers (`window.__luxarDebug`)
-   * and the cache E2E suite to inspect persisted datasets without
-   * mounting them.
+   * Enumerate every `zarr-cache-*` dataset present under the viewer's
+   * `luxar/` OPFS namespace directory. Reads each dataset's
+   * `_cache_meta.json` directly — no OPFSStore instance is created. Used by
+   * the debug-cache helpers (`window.__luxarDebug`) and the cache E2E suite
+   * to inspect persisted datasets without mounting them.
+   *
+   * Never creates the namespace directory: on a cold origin (no `luxar/`
+   * yet) the lookup's `NotFoundError` resolves to an empty list.
    */
   static async listAll(): Promise<CachedDatasetSummary[]> {
     const datasets: CachedDatasetSummary[] = [];
     try {
-      const opfsRoot = await navigator.storage.getDirectory();
+      let opfsRoot: FileSystemDirectoryHandle;
+      try {
+        opfsRoot = await getLuxarOpfsRoot({ create: false });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'NotFoundError') return datasets;
+        throw error;
+      }
       const iterableRoot = opfsRoot as IterableFileSystemDirectoryHandle;
       for await (const [name, handle] of iterableRoot.entries()) {
         if (!name.startsWith('zarr-cache-') || handle.kind !== 'directory') continue;
@@ -307,7 +318,7 @@ export class OPFSStore {
     // structural rather than incidental.
     if (this.breakerTripped) return;
     try {
-      const root = await navigator.storage.getDirectory();
+      const root = await getLuxarOpfsRoot({ create: true });
       // dispose() may land during any of these awaits. Re-check after each so
       // a disposed store never probe-writes, runs orphan-cleanup deletes, or
       // resurrects a live opfsRoot handle (which would undo dispose()'s null).
@@ -961,8 +972,8 @@ export class OPFSStore {
         // Atomic approach: remove entire dataset directory and recreate it.
         // This is more robust than iterating entries, which can fail if a
         // previous page context still holds open file handles on bucket dirs.
-        const root = await navigator.storage.getDirectory();
-        // dispose() may have landed while we awaited getDirectory(). Null the
+        const root = await getLuxarOpfsRoot({ create: true });
+        // dispose() may have landed while we awaited the namespace dir. Null the
         // root and bail before the destructive removeEntry — a newer same-URL
         // store may be about to take over this directory.
         if (this.disposed) {
@@ -996,7 +1007,7 @@ export class OPFSStore {
         }
         // Re-obtain a fresh root handle regardless
         try {
-          const root = await navigator.storage.getDirectory();
+          const root = await getLuxarOpfsRoot({ create: true });
           this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
         } catch {
           this.opfsRoot = null;

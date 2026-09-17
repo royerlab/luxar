@@ -21,17 +21,17 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
   test.fixme('fullscreen is blocked in headless Chromium', async ({ page }) => {
     // Fullscreen API requires user gesture and is blocked by security policy
     // in headless Chromium. This test cannot meaningfully verify fullscreen toggling.
-    // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
+    // `&noOpfs` on every load: this spec never asserts the L2 OPFS tier, and
     // automated Chromium's OPFS stalls systemically (10s per op — issue #1645),
     // starving scene readiness past the test budget. The circuit breaker only
     // helps un-flagged real sessions (it still pays ~3 timeouts per fresh page).
-    await page.goto('/?debug&no-opfs');
+    await page.goto('/?debug&noOpfs');
     await waitForLuxarReady(page);
     await page.keyboard.press('Space');
   });
 
   test('should show help overlay with H key', async ({ page }) => {
-    await page.goto('/?debug&no-opfs');
+    await page.goto('/?debug&noOpfs');
     await waitForLuxarReady(page);
 
     // Dismiss the dataset browser modal so keyboard events reach the app
@@ -74,7 +74,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
   });
 
   test('typing filters the help overlay from the first keystroke', async ({ page }) => {
-    await page.goto('/?debug&no-opfs');
+    await page.goto('/?debug&noOpfs');
     await waitForLuxarReady(page);
     await dismissDatasetBrowser(page);
 
@@ -104,7 +104,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
   });
 
   test('should track camera position changes via mouse drag', async ({ page }) => {
-    await page.goto('/?debug&no-opfs');
+    await page.goto('/?debug&noOpfs');
     await waitForLuxarReady(page);
 
     // Dismiss the dataset browser modal so mouse events reach the canvas
@@ -163,7 +163,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
   });
 
   test('should switch control modes', async ({ page }) => {
-    await page.goto('/?debug&no-opfs');
+    await page.goto('/?debug&noOpfs');
     await waitForLuxarReady(page);
 
     // Dismiss the dataset browser modal so keyboard events reach the app
@@ -210,7 +210,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
   });
 
   test('should access console interceptor', async ({ page }) => {
-    await page.goto('/?debug&no-opfs');
+    await page.goto('/?debug&noOpfs');
     await waitForLuxarReady(page);
 
     // Verify console interceptor is available
@@ -236,7 +236,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
   });
 
   test('should verify FOV within valid range', async ({ page }) => {
-    await page.goto('/?debug&no-opfs');
+    await page.goto('/?debug&noOpfs');
     await waitForLuxarReady(page);
 
     const state = await getLuxarState(page);

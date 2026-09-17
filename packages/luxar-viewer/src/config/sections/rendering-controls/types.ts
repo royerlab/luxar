@@ -3,6 +3,7 @@
  */
 
 import type { AutoRotateAxis } from '../../../controls/types';
+import type { ToneMappingName } from '../../../types/format-contract';
 
 export interface RenderingSettings {
   // Camera settings
@@ -26,7 +27,8 @@ export interface RenderingSettings {
   msaaSamples: number;
   ssaaEnabled: boolean;
   ssaaMultiplier: number;
-  toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
+  /** Tone-mapping operator by name; single-sourced from `format-contract/contract.yaml::tone_mappings`. */
+  toneMapping: ToneMappingName;
   vignetteEnabled: boolean;
   vignetteDarkness: number;
   vignetteOffset: number;
@@ -93,7 +95,7 @@ export interface RenderingSettings {
   /**
    * Runtime toggle for the projected-density guard (shader thinning of
    * over-dense blendable nodes + the refinement rung cap). Persisted per
-   * scene; `?no-density-guard` overrides it for one session without
+   * scene; `?noDensityGuard` overrides it for one session without
    * touching the stored value.
    */
   densityGuardEnabled: boolean;

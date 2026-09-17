@@ -192,7 +192,7 @@ def _validated_score_dims(
     return dims
 
 
-def resolve_reveal_centre(
+def resolve_reveal_center(
     centre: Optional[List[float]],
     coords: NDArray,
     scored: NDArray,
@@ -218,7 +218,7 @@ def resolve_reveal_centre(
         return centre
     # Checked BEFORE the bbox so bad data is reported as bad data: without this a
     # NaN vertex produced a NaN origin here, which then tripped the scorer's
-    # `reveal_centre must be finite` check and blamed a knob the caller never
+    # `reveal_center must be finite` check and blamed a knob the caller never
     # passed — the derived default wearing the knob's name.
     dims = _validated_score_dims(
         np.asarray(scored, dtype=np.float64), spatial_dims, "vertices"
@@ -232,14 +232,14 @@ def resolve_reveal_centre(
     return [float(c) for c in 0.5 * (pts.min(axis=0) + pts.max(axis=0))]
 
 
-def wants_reveal_centre_preflight(spec: Optional[Dict[str, Any]]) -> bool:
-    """Whether :func:`preflight_reveal_centre` would check anything for ``spec``.
+def wants_reveal_center_preflight(spec: Optional[Dict[str, Any]]) -> bool:
+    """Whether :func:`preflight_reveal_center` would check anything for ``spec``.
 
-    Only an EXPLICIT ``reveal_centre`` under a reveal ordering has a length to
+    Only an EXPLICIT ``reveal_center`` under a reveal ordering has a length to
     cross-check; every other spec makes the preflight a no-op. Exposed so a
     caller whose ``coords`` argument is expensive to build can skip building it:
     the Lines wrapper has to run :func:`~luxar.core.group.lod.lines.identify_polylines`
-    plus :func:`~luxar.core.group.lod.lines.polyline_bbox_centres` to get the
+    plus :func:`~luxar.core.group.lod.lines.polyline_bbox_centers` to get the
     per-polyline representatives, which is a Python loop over polylines —
     measured at ~2.5 s for a 400k-vertex ``segments`` node, on every
     ``add_lines(substitutive_lod=…)`` call, since the composed ladder defaults to
@@ -248,15 +248,15 @@ def wants_reveal_centre_preflight(spec: Optional[Dict[str, Any]]) -> bool:
     """
     if not spec:
         return False
-    return spec.get("reveal_centre") is not None and is_reveal_additive_method(
+    return spec.get("reveal_center") is not None and is_reveal_additive_method(
         str(spec.get("method"))
     )
 
 
-def preflight_reveal_centre(
+def preflight_reveal_center(
     spec: Optional[Dict[str, Any]], scene: Any, coords: NDArray, what: str
 ) -> None:
-    """Cross-check an explicit ``reveal_centre`` against the axes it will pair with.
+    """Cross-check an explicit ``reveal_center`` against the axes it will pair with.
 
     :func:`pop_reveal_knobs` already does this when the caller names BOTH knobs,
     but it cannot when ``spatial_dims`` is left to be DERIVED — from the scene's
@@ -274,9 +274,9 @@ def preflight_reveal_centre(
     scorer: the derivation IS :func:`_validated_score_dims`. That also brings the
     finite-coordinate check forward, which was late for the same reason.
     """
-    if spec is None or not wants_reveal_centre_preflight(spec):
+    if spec is None or not wants_reveal_center_preflight(spec):
         return
-    centre = spec["reveal_centre"]
+    centre = spec["reveal_center"]
     arr = np.asarray(coords, dtype=np.float64)
     if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] == 0:
         # Degenerate shapes have their own (better) messages downstream, and the
@@ -287,7 +287,7 @@ def preflight_reveal_centre(
     )
     if len(centre) != len(dims):
         raise ValueError(
-            f"reveal_centre has {len(centre)} coordinates but the shell axes "
+            f"reveal_center has {len(centre)} coordinates but the shell axes "
             f"resolve to {[int(d) for d in dims]} ({len(dims)} axes); they must "
             f"match (one coordinate per shell axis). Pass spatial_dims= to name "
             f"the axes explicitly."
@@ -313,7 +313,7 @@ def radial_element_score(
     For Lines the scored representative is each polyline's own bbox centre, whose
     bounding box is NOT the node's — so ``add_lines`` must not leave the default
     to this function. It resolves the origin up front with
-    :func:`resolve_reveal_centre` and passes a concrete ``centre``. Points can use
+    :func:`resolve_reveal_center` and passes a concrete ``centre``. Points can use
     the default, because its representative IS its position.
 
     ``spatial_dims`` defaults to the columns with **non-zero extent** — the
@@ -355,7 +355,7 @@ def radial_element_score(
         origin = np.asarray(centre, dtype=np.float64)
         if origin.shape != (len(dims),):
             raise ValueError(
-                f"reveal_centre must have one coordinate per spatial axis "
+                f"reveal_center must have one coordinate per spatial axis "
                 f"{[int(d) for d in dims]}; got {len(origin)}"
             )
         if not bool(np.all(np.isfinite(origin))):
@@ -363,7 +363,7 @@ def radial_element_score(
             # non-finite, they all compare equal under a stable argsort, and the
             # ladder silently degrades to input order instead of revealing.
             raise ValueError(
-                f"reveal_centre must be finite (a NaN/inf coordinate makes every "
+                f"reveal_center must be finite (a NaN/inf coordinate makes every "
                 f"distance non-finite, degrading the ordering to input order); "
                 f"got {[float(c) for c in origin]}"
             )
@@ -388,20 +388,20 @@ def pop_reveal_knobs(
     Mutates ``kwargs`` (pops the two keys) so the caller's leftover-keys check
     still catches genuinely unknown names.
     """
-    reveal_centre = kwargs.pop("reveal_centre", None)
-    if reveal_centre is not None:
-        reveal_centre = [float(c) for c in reveal_centre]
-        if not reveal_centre:
-            raise ValueError("reveal_centre must not be empty")
-        if not all(math.isfinite(c) for c in reveal_centre):
+    reveal_center = kwargs.pop("reveal_center", None)
+    if reveal_center is not None:
+        reveal_center = [float(c) for c in reveal_center]
+        if not reveal_center:
+            raise ValueError("reveal_center must not be empty")
+        if not all(math.isfinite(c) for c in reveal_center):
             # Checked HERE and not only in the scorer for the same reason as the
             # rest of this function: under a substitutive ladder the wrapper group
             # is on disk before the scorer ever runs, so a late raise leaves a
             # partial group behind.
             raise ValueError(
-                f"reveal_centre must be finite (a NaN/inf coordinate makes every "
+                f"reveal_center must be finite (a NaN/inf coordinate makes every "
                 f"distance non-finite, degrading the ordering to input order); "
-                f"got {reveal_centre}"
+                f"got {reveal_center}"
             )
 
     spatial_dims = kwargs.pop("spatial_dims", None)
@@ -418,12 +418,12 @@ def pop_reveal_knobs(
         if any(d < 0 for d in spatial_dims):
             raise ValueError(f"spatial_dims must be non-negative; got {spatial_dims}")
 
-    if (reveal_centre is not None or spatial_dims is not None) and not (
+    if (reveal_center is not None or spatial_dims is not None) and not (
         is_reveal_additive_method(method)
     ):
         # Silently ignoring these would look like the centre had been honoured.
         raise ValueError(
-            "additive_lod: 'reveal_centre' / 'spatial_dims' apply only to a "
+            "additive_lod: 'reveal_center' / 'spatial_dims' apply only to a "
             f"reveal ordering ({' / '.join(sorted(REVEAL_ADDITIVE_METHODS))}); "
             f"got method={method!r}"
         )
@@ -440,13 +440,13 @@ def pop_reveal_knobs(
     # Only checkable when both are explicit: a derived `spatial_dims`
     # (displayed dims / non-zero extent) is not known until the data is in hand.
     if (
-        reveal_centre is not None
+        reveal_center is not None
         and spatial_dims is not None
-        and len(reveal_centre) != len(spatial_dims)
+        and len(reveal_center) != len(spatial_dims)
     ):
         raise ValueError(
-            f"reveal_centre has {len(reveal_centre)} coordinates but "
+            f"reveal_center has {len(reveal_center)} coordinates but "
             f"spatial_dims lists {len(spatial_dims)} axes; they must match "
             f"(one coordinate per shell axis)"
         )
-    return reveal_centre, spatial_dims
+    return reveal_center, spatial_dims

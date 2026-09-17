@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { computeCacheBudgets, computeOpfsWriteQueueBudgetBytes } from '../../../cache/heap-budget';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 
 function forceAbortSignalAnyFallback(): () => void {
   const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
@@ -62,21 +63,14 @@ const createMocks = () => {
     async *keys() {},
   };
 
-  vi.stubGlobal('navigator', {
-    storage: {
-      async getDirectory() {
-        return {
-          async getDirectoryHandle() {
-            return mockDirHandle;
-          },
-          async *entries() {},
-        };
-      },
-      async estimate() {
-        return { quota: 10e9, usage: 1e9 };
-      },
+  // Origin root → `luxar/` → this flat dataset dir (see opfs.mock.ts).
+  createFakeOpfsRoot({
+    datasetDir: mockDirHandle,
+    onRemoveDataset: () => {
+      files.clear();
+      metaFiles.clear();
     },
-  });
+  }).install();
 
   // Audit C4 fix: constant `0xab` hash defeated chunk-key uniqueness —
   // every chunk hashed to the same value, so collision handling was
@@ -412,7 +406,7 @@ describe('MultiLevelCachingStore', () => {
   describe('Content Hash Validation', () => {
     // Removed: 'should validate cache on init' was an unfailable
     // expect(stats).toBeDefined() check (cache.md W2). The init-time
-    // validation behavior is covered by the explicit clear-cache /
+    // validation behavior is covered by the explicit ?clearCache /
     // TTL / content-hash-mismatch tests below.
     // Removed: 'should skip validation for datasets without content_hash'
     // was an expect(noHashStore).toBeDefined() check on a freshly-
@@ -2149,10 +2143,10 @@ describe('MultiLevelCachingStore', () => {
   });
 
   describe('URL Parameter Handling', () => {
-    it('should disable caching with ?no-cache', async () => {
+    it('should disable caching with ?noCache', async () => {
       // [cache.md/Wn][P2] Previously asserted r1/r2 `toBeDefined()` and
       // `>=1` fetches. Strengthen to: (a) exact bytes for both results,
-      // (b) exact-2 fetches (one per get) — proves no-cache truly bypasses
+      // (b) exact-2 fetches (one per get) — proves ?noCache truly bypasses
       // L1 (a regression that still cached in L1 would show only 1 fetch).
       const noCacheStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
         noCache: true,
@@ -2161,17 +2155,17 @@ describe('MultiLevelCachingStore', () => {
 
       mocks.fetchedUrls.length = 0;
 
-      // Should always fetch from HTTP  (no-cache bypasses L1/L2)
+      // Should always fetch from HTTP  (?noCache bypasses L1/L2)
       const result1 = await noCacheStore.get('test');
       const result2 = await noCacheStore.get('test'); // Second time
 
       expect(result1).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
       expect(result2).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
-      // With no-cache, EVERY get() must fetch — exact 2 fetches of /test.
+      // With ?noCache, EVERY get() must fetch — exact 2 fetches of /test.
       expect(mocks.fetchedUrls.filter((u) => u.includes('test')).length).toBe(2);
     });
 
-    it('should skip ONLY the L2 tier with ?no-opfs (#1645)', async () => {
+    it('should skip ONLY the L2 tier with ?noOpfs (#1645)', async () => {
       // The deterministic sibling of the OPFS circuit breaker: no OPFSStore is
       // ever constructed (so nothing can stall), while L1 keeps serving. A
       // DELIBERATE disable must not raise the degradation badges — neither
@@ -2190,7 +2184,7 @@ describe('MultiLevelCachingStore', () => {
         const result2 = await noOpfsStore.get('test');
         expect(result1).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
         expect(result2).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
-        // L1 still serves the repeat: exactly ONE fetch, unlike ?no-cache's two.
+        // L1 still serves the repeat: exactly ONE fetch, unlike ?noCache's two.
         expect(mocks.fetchedUrls.filter((u) => u.includes('test')).length).toBe(1);
 
         const stats = noOpfsStore.getStats();
@@ -2203,7 +2197,7 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
-    it('should enable debug logging with ?cache-debug', async () => {
+    it('should enable debug logging with ?cacheDebug', async () => {
       // Debug logging is routed through `log.info`, which calls `console.log`
       // (the central log utility's standardised channel for INFO-level output).
       const consoleLog = vi.spyOn(console, 'log');
@@ -2219,13 +2213,13 @@ describe('MultiLevelCachingStore', () => {
       consoleLog.mockRestore();
     });
 
-    it('should clear cache with ?clear-cache', async () => {
+    it('should clear cache with ?clearCache', async () => {
       // [cache.md/W10][P2] Previous version constructed a fresh `clearStore`
       // and asserted `l2.size === 0` — but a fresh store's l2.size is
       // unconditionally 0 in this mock (no cross-instance persistence),
       // so the assertion passes whether `clearCache` did anything or not.
       // Strengthen by pinning `clearOnInitCount`, the observable side-effect
-      // of the ?clear-cache flow surfaced by getStats().
+      // of the ?clearCache flow surfaced by getStats().
       await store.get('test1');
       await store.dispose();
 
@@ -2236,7 +2230,7 @@ describe('MultiLevelCachingStore', () => {
 
       const stats = clearStore.getStats();
       expect(stats.l2.size).toBe(0); // Documented in MultiLevelCacheStats.l2.size
-      // The real ?clear-cache observable: clearOnInitCount === 1.
+      // The real ?clearCache observable: clearOnInitCount === 1.
       expect(stats.clearOnInitCount).toBe(1);
     });
   });
@@ -2489,10 +2483,10 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.health.opfsAvailable).toBe(true);
     });
 
-    // S4: clearOnInitCount counts ?clear-cache invocations. A store
+    // S4: clearOnInitCount counts ?clearCache invocations. A store
     // constructed without clearCache stays at 0; one with clearCache
     // increments to 1 after init.
-    it('clearOnInitCount stays 0 when ?clear-cache was not requested', () => {
+    it('clearOnInitCount stays 0 when ?clearCache was not requested', () => {
       const stats = store.getStats();
       expect(stats.clearOnInitCount).toBe(0);
     });
@@ -2809,7 +2803,7 @@ describe('MultiLevelCachingStore', () => {
       const s = new MultiLevelCachingStore('https://example.com/gate-a.zarr', {
         l1MaxSize: 20 * 1024 * 1024,
         l2MaxSize: 4096,
-        clearCache: true, // even with ?clear-cache, clearAll must not run
+        clearCache: true, // even with ?clearCache, clearAll must not run
       });
       const opfsInitSpy = vi.spyOn(OPFSStore.prototype, 'init');
       const clearAllSpy = vi.spyOn(s, 'clearAll');
@@ -2870,7 +2864,7 @@ describe('MultiLevelCachingStore', () => {
       expect(validateSpy).not.toHaveBeenCalled();
     });
 
-    it('(c) ?clear-cache + dispose before the clear step: clearAll does not run on the dead instance', async () => {
+    it('(c) ?clearCache + dispose before the clear step: clearAll does not run on the dead instance', async () => {
       let releaseL2Init!: () => void;
       const l2InitGate = new Promise<void>((resolve) => {
         releaseL2Init = resolve;
@@ -2880,7 +2874,7 @@ describe('MultiLevelCachingStore', () => {
       const s = new MultiLevelCachingStore('https://example.com/gate-c.zarr', {
         l1MaxSize: 20 * 1024 * 1024,
         l2MaxSize: 4096,
-        clearCache: true, // ?clear-cache → shouldClearOnInit
+        clearCache: true, // ?clearCache → shouldClearOnInit
       });
       const clearAllSpy = vi.spyOn(s, 'clearAll');
 
@@ -2895,7 +2889,7 @@ describe('MultiLevelCachingStore', () => {
       await initPromise;
 
       // The clear step is guarded by the post-await disposed check, so a
-      // disposed ?clear-cache store never wipes the shared OPFS directory.
+      // disposed ?clearCache store never wipes the shared OPFS directory.
       expect(clearAllSpy).not.toHaveBeenCalled();
     });
   });

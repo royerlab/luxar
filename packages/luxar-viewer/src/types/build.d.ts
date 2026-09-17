@@ -11,3 +11,11 @@
  * for why it is double-encoded), not an object.
  */
 declare const __LUXAR_BUILD__: string;
+
+/**
+ * The bare `package.json` version, injected by the same three configs plus
+ * `vitest.config.ts` (see `viewerVersionDefine` in `tools/build-identity.ts`).
+ * Absent in a consumer that bundles `src/` with its own config; `src/version.ts`
+ * is the one `typeof`-guarded reader and nothing else should name this symbol.
+ */
+declare const __LUXAR_VIEWER_VERSION__: string;

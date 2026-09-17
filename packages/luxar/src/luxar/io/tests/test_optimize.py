@@ -1,4 +1,4 @@
-"""``luxar optimise`` — re-chunking must change the grid and nothing else.
+"""``luxar optimize`` — re-chunking must change the grid and nothing else.
 
 Every assertion here is about something that fails SILENTLY if it regresses: a
 dropped attr decodes to wrong values rather than raising, a lost consolidated
@@ -35,16 +35,16 @@ from luxar._zarr_compat import (
 )
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.io import LuxarZarrCompiler
-from luxar.io import optimise as optimise_mod
-from luxar.io.optimise import (
+from luxar.io import optimize as optimize_mod
+from luxar.io.optimize import (
     _INDEX_ARRAYS,
     CHUNK_PROFILES,
     _compute_content_hashes_streaming,
     _verify,
-    optimise_store,
-    plan_optimisation,
+    optimize_store,
+    plan_optimization,
     resolve_target_bytes,
-    summarise_chunk_layout,
+    summarize_chunk_layout,
 )
 
 # --------------------------------------------------------------------------
@@ -146,7 +146,7 @@ def assert_values_identical(src_path: Path, dst_path: Path) -> int:
 
 
 def assert_attrs_identical(src_path: Path, dst_path: Path) -> None:
-    """Group and array attrs match exactly, except the two the optimiser is
+    """Group and array attrs match exactly, except the two the optimizer is
     contractually required to move (``content_hash``) or add
     (``chunk_layout``)."""
     src = open_group(src_path, mode="r")
@@ -202,7 +202,7 @@ def _rng(seed: int = 0) -> np.random.Generator:
 
 
 def build_scene(path: Path, **kwargs: Any) -> Path:
-    """A scene with every structural shape the optimiser has to handle."""
+    """A scene with every structural shape the optimizer has to handle."""
     n = 20_000
     rng = _rng(7)
     with LuxarZarrCompiler(str(path), **kwargs) as compiler:
@@ -489,7 +489,7 @@ def formatted_scene(
 class TestRoundTrip:
     def test_flat_leaves_are_bit_identical(self, scene: Path, tmp_path: Path) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        plan = optimise_store(scene, dst, verify=True)
+        plan = optimize_store(scene, dst, verify=True)
         assert plan.n_rechunked > 0, "nothing was re-chunked — test is vacuous"
         assert plan.target_n_chunks < plan.source_n_chunks
         assert assert_values_identical(scene, dst) > 0
@@ -498,7 +498,7 @@ class TestRoundTrip:
         self, scene: Path, tmp_path: Path
     ) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        plan = optimise_store(scene, dst)
+        plan = optimize_store(scene, dst)
         before = dict(open_group(scene, mode="r")["curve"].attrs)
         after = dict(open_group(dst, mode="r")["curve"].attrs)
         # Lines nests its atom, unlike Points/GSplats — the exact shape that a
@@ -514,12 +514,12 @@ class TestRoundTrip:
 
     def test_every_attr_survives(self, scene: Path, tmp_path: Path) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(scene, dst)
+        optimize_store(scene, dst)
         assert_attrs_identical(scene, dst)
 
     def test_additive_ladder(self, ladder_scene: Path, tmp_path: Path) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(ladder_scene, dst, verify=True)
+        optimize_store(ladder_scene, dst, verify=True)
         root = open_group(dst, mode="r")
         assert int(root["pts"].attrs["n_additive_sublods"]) == 4
         assert "additive_0" in root["pts"]
@@ -528,7 +528,7 @@ class TestRoundTrip:
 
     def test_substitutive_lod_group(self, lod_scene: Path, tmp_path: Path) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(lod_scene, dst, verify=True)
+        optimize_store(lod_scene, dst, verify=True)
         assert dict(open_group(dst, mode="r")["pts"].attrs).get("kind") == "lod"
         assert_values_identical(lod_scene, dst)
         assert_attrs_identical(lod_scene, dst)
@@ -536,7 +536,7 @@ class TestRoundTrip:
 
     def test_partition(self, partition_scene: Path, tmp_path: Path) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(partition_scene, dst, verify=True)
+        optimize_store(partition_scene, dst, verify=True)
         root = open_group(dst, mode="r")
         assert dict(root["pts"].attrs).get("kind") == "partition"
         assert "part_0" in root["pts"]
@@ -550,7 +550,7 @@ class TestRoundTrip:
         shows as a vanished overlay rather than an error."""
         src = build_scene_with_an_overlay_image(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         filename = str(
             dict(open_group(dst, mode="r")["overlays/logo"].attrs)["image_file"]
         )
@@ -562,7 +562,7 @@ class TestRoundTrip:
     def test_an_overlay_video_and_poster_survive_the_copy(self, tmp_path: Path) -> None:
         src = build_scene_with_an_overlay_video(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
 
         clip = open_group(dst, mode="r")["overlays/clip"]
         attrs = dict(clip.attrs)
@@ -589,7 +589,7 @@ class TestRoundTrip:
         self, scene: Path, tmp_path: Path
     ) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(scene, dst)
+        optimize_store(scene, dst)
         # Load-bearing: the viewer builds the whole scene graph from this index
         # and has no directory-walk fallback.
         assert is_consolidated(dst)
@@ -620,7 +620,7 @@ class TestRoundTrip:
         assert "content_hash" in before
 
         dst = tmp_path / "out.gsplats.zarr"
-        plan = optimise_store(src, dst, verify=True)
+        plan = optimize_store(src, dst, verify=True)
         assert plan.n_rechunked > 0
         after = dict(open_group(dst, mode="r").attrs)
         assert after["content_hash"] != before["content_hash"]
@@ -674,7 +674,7 @@ class TestPayloadFiles:
             tmp_path / "src.luxar.zarr", "../evil.png", payload=None
         )
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
         assert attrs["image_file"] == "../evil.png"
         assert not any(p.name == "evil.png" for p in dst.rglob("*"))
@@ -692,7 +692,7 @@ class TestPayloadFiles:
             tmp_path / "src.luxar.zarr", ".zattrs", payload=None
         )
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
         assert attrs["image_file"] == ".zattrs"
         assert attrs["type"] == "overlay_image"
@@ -718,7 +718,7 @@ class TestPayloadFiles:
                 source_url="https://example.org/bed",
             )
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         assert (dst / "bed" / "positions" / "c" / "0" / "0").is_file()
 
     def test_a_payload_named_like_a_metadata_document_is_refused(
@@ -740,7 +740,7 @@ class TestPayloadFiles:
         (src / "overlays" / "logo" / "Zarr.json").write_bytes(_TINY_PNG)
         dst = tmp_path / "out.luxar.zarr"
         with pytest.raises(ValueError, match=r"Zarr\.json"):
-            optimise_store(src, dst, verify=True)
+            optimize_store(src, dst, verify=True)
         assert not dst.exists()
         # The source's own node document survived — asserted by READING the group
         # back rather than by naming the document, which only exists as
@@ -764,7 +764,7 @@ class TestPayloadFiles:
             tmp_path / "src.luxar.zarr", ".ZMetadata", payload=None
         )
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
         assert attrs["image_file"] == ".ZMetadata"
         assert attrs["type"] == "overlay_image"
@@ -796,25 +796,25 @@ class TestPayloadFiles:
         src = _store_with_a_payload_attr(
             tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
         )
-        exact_read = optimise_mod.read_raw_bytes
+        exact_read = optimize_mod.read_raw_bytes
 
         def case_insensitive_read(group: Any, filename: str) -> bytes | None:
             """What macOS does: fall back to a case-blind match on the key."""
             found = exact_read(group, filename)
             if found is not None:
                 return found
-            for key in optimise_mod.list_raw_keys(group):
+            for key in optimize_mod.list_raw_keys(group):
                 if key.lower() == filename.lower():
                     return exact_read(group, key)
             return None
 
-        monkeypatch.setattr(optimise_mod, "read_raw_bytes", case_insensitive_read)
+        monkeypatch.setattr(optimize_mod, "read_raw_bytes", case_insensitive_read)
         # The patch really does fold, or the test proves nothing.
         logo = open_group(src, mode="r")["overlays/logo"]
         assert case_insensitive_read(logo, "Zarr.json") is not None
 
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
         assert attrs["image_file"] == "Zarr.json"
         assert attrs["type"] == "overlay_image"
@@ -842,10 +842,10 @@ class TestPayloadFiles:
         # The fixture really does pose the question: the name lists, so only the
         # read outcome can separate it from the refusable shape.
         logo = open_group(src, mode="r")["overlays/logo"]
-        assert "Zarr.json" in optimise_mod.list_raw_keys(logo)
+        assert "Zarr.json" in optimize_mod.list_raw_keys(logo)
 
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
         assert attrs["image_file"] == "Zarr.json"
         assert attrs["type"] == "overlay_image"
@@ -891,7 +891,7 @@ class TestPayloadFiles:
 
         dst = tmp_path / "out.luxar.zarr"
         with pytest.raises(ValueError, match=rf"dropping the {len(payload)} bytes"):
-            optimise_store(src, dst, verify=True)
+            optimize_store(src, dst, verify=True)
         assert not dst.exists()
 
     def test_a_payload_the_source_does_not_have_is_skipped(
@@ -904,7 +904,7 @@ class TestPayloadFiles:
             tmp_path / "src.luxar.zarr", "gone.png", payload=None
         )
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
         assert attrs["image_file"] == "gone.png"
         assert not (dst / "overlays" / "logo" / "gone.png").exists()
@@ -926,7 +926,7 @@ class TestPayloadFiles:
         (src / "overlays" / "logo" / "logo.png").chmod(0o000)
         dst = tmp_path / "out.luxar.zarr"
         with pytest.raises(ValueError, match=r"logo\.png"):
-            optimise_store(src, dst)
+            optimize_store(src, dst)
         assert not dst.exists()
         assert not any(p.name.startswith(".out.luxar.zarr") for p in tmp_path.iterdir())
 
@@ -937,7 +937,7 @@ class TestPayloadFiles:
         read it back through a ``ZipStore`` rather than a directory."""
         src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
         dst = tmp_path / "out.luxar.zarr.zip"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         with zipfile.ZipFile(dst) as archive:
             assert "overlays/logo/logo.png" in archive.namelist()
             assert archive.read("overlays/logo/logo.png") == _TINY_PNG
@@ -949,7 +949,7 @@ class TestPayloadFiles:
         verify walk skipped by construction."""
         src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         counts = _verify(open_group(src, mode="r"), open_group(dst, mode="r"))
         assert counts == (1, 1)
 
@@ -962,15 +962,15 @@ class TestPayloadFiles:
         damage is provoked by monkeypatching the narrowest thing that can
         produce a short write — the copy's own byte writer."""
         src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
-        write = optimise_mod.write_raw_bytes
+        write = optimize_mod.write_raw_bytes
         monkeypatch.setattr(
-            optimise_mod,
+            optimize_mod,
             "write_raw_bytes",
             lambda group, key, payload: write(group, key, payload[:-1]),
         )
         dst = tmp_path / "out.luxar.zarr"
         with pytest.raises(ValueError, match=r"payload 'logo\.png'.*differs"):
-            optimise_store(src, dst, verify=True)
+            optimize_store(src, dst, verify=True)
         assert not dst.exists()
 
     def test_verify_catches_a_payload_missing_from_the_output(
@@ -981,11 +981,11 @@ class TestPayloadFiles:
         at the same single seam as the truncation above."""
         src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
         monkeypatch.setattr(
-            optimise_mod, "write_raw_bytes", lambda group, key, payload: None
+            optimize_mod, "write_raw_bytes", lambda group, key, payload: None
         )
         dst = tmp_path / "out.luxar.zarr"
         with pytest.raises(ValueError, match=r"payload 'logo\.png'.*is missing"):
-            optimise_store(src, dst, verify=True)
+            optimize_store(src, dst, verify=True)
         assert not dst.exists()
 
 
@@ -999,7 +999,7 @@ class TestAlignment:
         self, scene: Path, tmp_path: Path
     ) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        plan = optimise_store(scene, dst)
+        plan = optimize_store(scene, dst)
         assert assert_atom_aligned(dst) > 0, "no indexed arrays checked"
         # Non-vacuity: at least one array must land on a PROPER multiple of its
         # atom rather than trivially on one whole-array chunk, or the invariant
@@ -1019,7 +1019,7 @@ class TestAlignment:
         self, scene: Path, tmp_path: Path, profile: str
     ) -> None:
         dst = tmp_path / f"out_{profile}.luxar.zarr"
-        optimise_store(
+        optimize_store(
             scene, dst, target_bytes=CHUNK_PROFILES[profile], profile=profile
         )
         assert assert_atom_aligned(dst) > 0
@@ -1062,7 +1062,7 @@ class TestAlignment:
         )
         consolidate(root)
 
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=64)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=64)
         (pos,) = [a for a in plan.arrays if a.path == "positions"]
         assert pos.atom == atom
         # Without the floor the 64-byte budget asks for 5 rows, which rounds to
@@ -1071,7 +1071,7 @@ class TestAlignment:
         assert pos.target_chunks == (atom, 3), "the atom floor did not hold"
 
         dst = tmp_path / "out.zarr"
-        optimise_store(src, dst, target_bytes=64, verify=True)
+        optimize_store(src, dst, target_bytes=64, verify=True)
         assert assert_atom_aligned(dst) > 0
 
 
@@ -1092,7 +1092,7 @@ class TestFormatPreservation:
         # Flip the process default so an output that merely follows it fails.
         set_zarr_format(2 if fmt == 3 else 3)
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         out = open_group(dst, mode="r")
         assert int(out.metadata.zarr_format) == fmt
         for path, arr in _arrays(out).items():
@@ -1119,7 +1119,7 @@ class TestFormatPreservation:
         )
         consolidate(root)
         dst = tmp_path / "out.zarr"
-        optimise_store(src, dst, generic=True, verify=True)
+        optimize_store(src, dst, generic=True, verify=True)
         out = open_group(dst, mode="r")["raw"]
         assert tuple(out.compressors) == (), "a RAW array picked up a compressor"
         assert out.chunks[0] > 1000
@@ -1155,7 +1155,7 @@ class TestFormatPreservation:
         source = open_group(src, mode="r")["z"]
 
         dst = tmp_path / "out.zarr"
-        plan = optimise_store(src, dst, verify=True)
+        plan = optimize_store(src, dst, verify=True)
         assert plan.n_rechunked == 1
         out = open_group(dst, mode="r")["z"]
         assert _codec_configs(out) == _codec_configs(source)
@@ -1193,7 +1193,7 @@ class TestFormatPreservation:
         consolidate(root)
 
         dst = tmp_path / "out.zarr"
-        plan = optimise_store(src, dst, verify=True)
+        plan = optimize_store(src, dst, verify=True)
         assert plan.n_rechunked == 1
         out = open_group(dst, mode="r")["coded"]
         assert [f.get_config()["id"] for f in out.filters] == ["delta"]
@@ -1225,7 +1225,7 @@ class TestFormatPreservation:
         assert (src / "y" / "0" / "0").is_file(), "the fixture is not nested"
 
         dst = tmp_path / "out.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         out = open_group(dst, mode="r")["y"]
         assert out.metadata.dimension_separator == "/"
         assert (dst / "y" / "0" / "0").is_file()
@@ -1256,7 +1256,7 @@ class TestFormatPreservation:
         assert (src / "y" / "c.0.0").is_file(), "the fixture is not dot-separated"
 
         dst = tmp_path / "out.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         out = open_group(dst, mode="r")["y"]
         assert out.metadata.chunk_key_encoding.separator == "."
         assert (dst / "y" / "c.0.0").is_file()
@@ -1280,7 +1280,7 @@ class TestFormatPreservation:
         arr[:] = _rng(6).random((50_000, 3)).astype(np.float32)
         consolidate(root)
         dst = tmp_path / "out.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         out = open_group(dst, mode="r")["v"]
         assert tuple(out.metadata.dimension_names) == ("element", "axis")
 
@@ -1312,7 +1312,7 @@ class TestSharding:
         src = self._sharded_store(tmp_path / "sharded.zarr")
         before_files = _chunk_files(src)
         dst = tmp_path / "out.zarr"
-        plan = optimise_store(src, dst, verify=True)
+        plan = optimize_store(src, dst, verify=True)
 
         (x,) = plan.arrays
         assert x.skip_reason == "sharded"
@@ -1325,11 +1325,11 @@ class TestSharding:
     def test_the_plan_counts_shards_not_inner_chunks(self, tmp_path: Path) -> None:
         src = self._sharded_store(tmp_path / "sharded.zarr")
         root = open_group(src, mode="r")
-        (x,) = plan_optimisation(root).arrays
+        (x,) = plan_optimization(root).arrays
         # 200000/50000 = 4 objects, not 200000/1000 = 200 nominal grid cells.
         assert x.source_n_chunks == 4
         assert x.target_n_chunks == 4
-        assert summarise_chunk_layout(root).n_chunks == 4
+        assert summarize_chunk_layout(root).n_chunks == 4
 
 
 # --------------------------------------------------------------------------
@@ -1350,7 +1350,7 @@ class TestSlabWalking:
         """A copy that stops after one slab writes a store whose tail is
         ``fill_value`` — silently, because the shapes and the metadata are all
         correct."""
-        monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 4096)
+        monkeypatch.setattr(optimize_mod, "_SLAB_BYTES", 4096)
         n = 100_000
         src = tmp_path / "slabs.zarr"
         root = open_group(src, mode="w")
@@ -1366,7 +1366,7 @@ class TestSlabWalking:
         consolidate(root)
 
         dst = tmp_path / "out.zarr"
-        plan = optimise_store(src, dst, target_bytes=1024, verify=True)
+        plan = optimize_store(src, dst, target_bytes=1024, verify=True)
         (v,) = plan.arrays
         assert v.target_chunks == (1024,)
         # Slabs are chunk-aligned: 1024 rows x (4096 // 1024) = 4096 per slab.
@@ -1382,7 +1382,7 @@ class TestSlabWalking:
         n = 20_000
         src, dst = _pair(tmp_path, a=np.arange(n, dtype=np.float32))
         dst["a"][n - 1] = -1.0
-        monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 4096)  # 1024 rows
+        monkeypatch.setattr(optimize_mod, "_SLAB_BYTES", 4096)  # 1024 rows
         # The damage is in the LAST slab, so only a loop that reaches it fails.
         with pytest.raises(ValueError, match="differs at rows 19456:20000"):
             _verify(src, dst)
@@ -1400,7 +1400,7 @@ class TestDegenerate:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_points("pts", np.zeros((1, 3), dtype=np.float32))
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         assert assert_values_identical(src, dst) > 0
 
     def test_array_ref_and_broadcast_shapes_are_left_alone(
@@ -1444,7 +1444,7 @@ class TestDegenerate:
         consolidate(root)
 
         dst = tmp_path / "out.zarr"
-        plan = optimise_store(src, dst, verify=True)
+        plan = optimize_store(src, dst, verify=True)
         reasons = {a.path: a.skip_reason for a in plan.arrays}
         assert reasons == {
             "ref": "array_ref",
@@ -1469,7 +1469,7 @@ class TestDegenerate:
         Both are ordinary in the third-party stores ``--generic`` exists for (an
         AnnData/cellxgene ``.zarr``, an OME-Zarr label table), and the ``TypeError``
         surfaced on the two READ-ONLY paths only: ``luxar info --stats`` exited 1
-        on a store its own ``--format json`` path printed fine, and ``optimise
+        on a store its own ``--format json`` path printed fine, and ``optimize
         --dry-run`` died with a traceback while the real copy of the same store
         succeeded — a dry run strictly less capable than the run it predicts.
         """
@@ -1500,18 +1500,18 @@ class TestDegenerate:
         consolidate(root)
 
         # The plan's byte properties are what `--dry-run` and `--stats` read.
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=65_536)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=65_536)
         for a in plan.arrays:
             assert a.itemsize > 0, a.path
             assert a.target_chunk_bytes > 0, a.path
             assert a.source_file_bytes > 0, a.path
-        assert summarise_chunk_layout(open_group(src, mode="r")).n_arrays == 2
+        assert summarize_chunk_layout(open_group(src, mode="r")).n_arrays == 2
 
         assert _run(str(src), "--dry-run").exit_code == 0
         assert _info(str(src), "--stats").exit_code == 0
 
         dst = tmp_path / "out.zarr"
-        optimise_store(src, dst, verify=True)
+        optimize_store(src, dst, verify=True)
         assert_values_identical(src, dst)
 
     def test_a_skip_reason_does_not_claim_more_than_it_knows(
@@ -1546,7 +1546,7 @@ class TestDegenerate:
         )
         consolidate(root)
 
-        plan = plan_optimisation(open_group(src, mode="r"))
+        plan = plan_optimization(open_group(src, mode="r"))
         reasons = {a.path: a.skip_reason for a in plan.arrays}
         assert reasons == {
             "level": "rows already in one chunk",
@@ -1583,7 +1583,7 @@ class TestDegenerate:
         consolidate(root)
 
         dst = tmp_path / "out.zarr"
-        plan = optimise_store(src, dst, verify=True)
+        plan = optimize_store(src, dst, verify=True)
         assert {a.path: a.skip_reason for a in plan.arrays} == {
             "scalar": "scalar array",
             "empty": "empty",
@@ -1605,7 +1605,7 @@ class TestDegenerate:
         segment grid is 4096) — wrong on a public field, and inert today only
         because the structural skip fires before the atom is used.
         """
-        plan = plan_optimisation(open_group(scene, mode="r"))
+        plan = plan_optimization(open_group(scene, mode="r"))
         bounds = [a for a in plan.arrays if a.path.rsplit("/", 1)[-1] in _INDEX_ARRAYS]
         assert bounds, "the fixture carries no spatial index"
         assert {a.path.rsplit("/", 1)[-1] for a in bounds} >= {
@@ -1618,7 +1618,7 @@ class TestDegenerate:
 
     def test_bounds_arrays_are_never_rechunked(self, scene: Path) -> None:
         root = open_group(scene, mode="r")
-        plan = plan_optimisation(root, target_bytes=CHUNK_PROFILES["archive"])
+        plan = plan_optimization(root, target_bytes=CHUNK_PROFILES["archive"])
         bounds = [a for a in plan.arrays if a.path.rsplit("/", 1)[-1] in _INDEX_ARRAYS]
         assert bounds, "the fixture grew no spatial index"
         for a in bounds:
@@ -1633,7 +1633,7 @@ class TestDegenerate:
             for p in _arrays(open_group(scene_without_index, mode="r"))
         ), "the fixture grew a spatial index"
         dst = tmp_path / "out.luxar.zarr"
-        plan = optimise_store(scene_without_index, dst, verify=True)
+        plan = optimize_store(scene_without_index, dst, verify=True)
         assert plan.n_rechunked > 0
         # No bounds array anywhere, so no node has a trustworthy atom — the
         # vestigial `chunk_size` a gsplat leaf gets under `ordering="none"`
@@ -1671,7 +1671,7 @@ class TestDegenerate:
         dst = tmp_path / "out.zarr"
         # 100_000 bytes is deliberately NOT a multiple of 1024: an atom-aligned
         # chunk would round down to 99_328 rows, so the two answers differ.
-        plan = optimise_store(src, dst, target_bytes=100_000, verify=True)
+        plan = optimize_store(src, dst, target_bytes=100_000, verify=True)
         (amps,) = [a for a in plan.arrays if a.path == "amplitudes"]
         assert amps.atom is None
         assert amps.target_chunks == (100_000,)
@@ -1685,12 +1685,12 @@ class TestDegenerate:
         src_zip = tmp_path / "src.luxar.zarr.zip"
         assert src_zip.is_file()
 
-        from_zip = optimise_store(
+        from_zip = optimize_store(
             src_zip, tmp_path / "from_zip.luxar.zarr", verify=True
         )
         assert from_zip.target_n_chunks < from_zip.source_n_chunks
 
-        to_zip = optimise_store(scene, tmp_path / "out.luxar.zarr.zip", verify=True)
+        to_zip = optimize_store(scene, tmp_path / "out.luxar.zarr.zip", verify=True)
         assert to_zip.target_n_chunks < to_zip.source_n_chunks
         assert_values_identical(scene, tmp_path / "out.luxar.zarr.zip")
 
@@ -1706,7 +1706,7 @@ class TestDegenerate:
         empty scene.
         """
         dst = tmp_path / "out.luxar.zarr.zip"
-        optimise_store(scene, dst)
+        optimize_store(scene, dst)
         with zipfile.ZipFile(dst) as archive:
             names = archive.namelist()
         duplicates = {n for n in names if names.count(n) > 1}
@@ -1739,7 +1739,7 @@ class TestDegenerate:
         )
         consolidate(root)
         dst = tmp_path / f"out_{n_rows}.zarr"
-        plan = optimise_store(src, dst, verify=True)
+        plan = optimize_store(src, dst, verify=True)
         (vals,) = [a for a in plan.arrays if a.path == "values"]
         assert vals.atom == atom
         rows = vals.target_chunks[0]
@@ -1766,25 +1766,25 @@ class TestNeverShrink:
         )
         consolidate(root)
         dst = tmp_path / "out.zarr"
-        plan = optimise_store(src, dst, target_bytes=64 * 1024, verify=True)
+        plan = optimize_store(src, dst, target_bytes=64 * 1024, verify=True)
         (vals,) = plan.arrays
         assert vals.skip_reason == "already at or above target"
         assert tuple(open_group(dst, mode="r")["values"].chunks) == (250_000,)
 
-    def test_optimising_twice_is_a_fixed_point(
+    def test_optimizing_twice_is_a_fixed_point(
         self, scene: Path, tmp_path: Path
     ) -> None:
         once = tmp_path / "once.luxar.zarr"
         twice = tmp_path / "twice.luxar.zarr"
-        optimise_store(scene, once)
-        second = optimise_store(once, twice)
+        optimize_store(scene, once)
+        second = optimize_store(once, twice)
         assert second.n_rechunked == 0
         assert second.source_n_chunks == second.target_n_chunks
 
     def test_no_array_ever_gains_chunks(self, scene: Path) -> None:
         root = open_group(scene, mode="r")
         for target in (1024, 64 * 1024, 1024 * 1024):
-            plan = plan_optimisation(root, target_bytes=target)
+            plan = plan_optimization(root, target_bytes=target)
             for a in plan.arrays:
                 assert a.target_n_chunks <= a.source_n_chunks, (a.path, target)
 
@@ -1800,7 +1800,7 @@ class TestPlaybackWarnings:
         src = build_animated_lines_store(
             tmp_path / f"animated-{node_type}.luxar.zarr", node_type=node_type
         )
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=480)
 
         assert len(plan.playback_warnings) == 1
         warning = plan.playback_warnings[0]
@@ -1844,7 +1844,7 @@ class TestPlaybackWarnings:
             laddered=laddered,
             n_frames=n_frames,
         )
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=target_bytes)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=target_bytes)
 
         assert plan.playback_warnings == []
 
@@ -1854,7 +1854,7 @@ class TestPlaybackWarnings:
         del root["tracks/vertex_chunk_bounds"]
         consolidate(root)
 
-        plan = plan_optimisation(root, target_bytes=480)
+        plan = plan_optimization(root, target_bytes=480)
 
         assert plan.playback_warnings == []
 
@@ -1865,7 +1865,7 @@ class TestPlaybackWarnings:
             vertex_slice_major=False,
         )
 
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=480)
 
         assert len(plan.playback_warnings) == 1
         warning = plan.playback_warnings[0]
@@ -1888,7 +1888,7 @@ class TestPlaybackWarnings:
             step_size=step_size,
         )
 
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=480)
 
         assert plan.playback_warnings == []
 
@@ -1901,7 +1901,7 @@ class TestPlaybackWarnings:
             step_size=0.5,
         )
 
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=480)
 
         assert plan.playback_warnings[0].frames_per_chunk == pytest.approx(5.0)
 
@@ -1914,7 +1914,7 @@ class TestPlaybackWarnings:
             dimension_discrete=True,
         )
 
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=480)
 
         assert plan.playback_warnings[0].frames_per_chunk == pytest.approx(3.0)
 
@@ -1924,7 +1924,7 @@ class TestPlaybackWarnings:
             step_size=-3.0,
         )
 
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=480)
 
         assert plan.playback_warnings[0].frames_per_chunk == pytest.approx(3.0)
 
@@ -1943,7 +1943,7 @@ class TestPlaybackWarnings:
         vertices[:] = 0
         consolidate(root)
 
-        plan = plan_optimisation(root, target_bytes=480)
+        plan = plan_optimization(root, target_bytes=480)
 
         assert plan.playback_warnings == []
 
@@ -1953,7 +1953,7 @@ class TestPlaybackWarnings:
             include_segments=True,
         )
 
-        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=480)
+        plan = plan_optimization(open_group(src, mode="r"), target_bytes=480)
 
         assert plan.playback_warnings[0].array_path == "tracks/segments"
 
@@ -1969,7 +1969,7 @@ class TestPlaybackWarnings:
         bounds[...] = widened
         consolidate(root)
 
-        plan = plan_optimisation(root, target_bytes=480)
+        plan = plan_optimization(root, target_bytes=480)
 
         assert len(plan.playback_warnings) == 1
         assert plan.playback_warnings[0].node_path == "tracks/part_5"
@@ -1988,12 +1988,12 @@ class TestPlaybackWarnings:
 #: Why a hash-equivalence failure below is never "just a flaky assert".
 _HASH_DRIFT = (
     "the finalize-time content hash has CHANGED. "
-    "`_compute_content_hashes_streaming` in luxar/io/optimise.py is a "
+    "`_compute_content_hashes_streaming` in luxar/io/optimize.py is a "
     "deliberate slab-wise copy of "
     "luxar/io/_compiler/finalize/hashing.py::compute_content_hashes (it exists "
     "only to avoid that one's whole-array materialisation), and it must be "
     "updated to match the new digest — term for term, including any shard or "
-    "chunk-shape terms. Until it is, `luxar optimise` writes stores whose "
+    "chunk-shape terms. Until it is, `luxar optimize` writes stores whose "
     "content_hash disagrees with the compiler's, and the viewer's cache "
     "validation compares exactly that field."
 )
@@ -2005,7 +2005,7 @@ class TestCacheInvalidation:
         ``content_hash``, so an unchanged hash means a warm client keeps
         serving chunks whose keys now cover different rows."""
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(scene, dst)
+        optimize_store(scene, dst)
         before = dict(open_group(scene, mode="r").attrs)["content_hash"]
         after = dict(open_group(dst, mode="r").attrs)["content_hash"]
         assert before != after
@@ -2019,7 +2019,7 @@ class TestCacheInvalidation:
         ``mode: 'content-hash'`` as soon as one exists and never falls back to a
         byte digest, so a warm OPFS cache serves chunks whose keys moved."""
         dst = tmp_path / "out.luxar.zarr"
-        plan = optimise_store(scene, dst, generic=True)
+        plan = optimize_store(scene, dst, generic=True)
         assert plan.n_rechunked > 0, "nothing moved — the test cannot fail"
         before = dict(open_group(scene, mode="r").attrs)["content_hash"]
         after = dict(open_group(dst, mode="r").attrs)["content_hash"]
@@ -2036,10 +2036,10 @@ class TestCacheInvalidation:
         once = tmp_path / "once.luxar.zarr"
         twice = tmp_path / "twice.luxar.zarr"
         thrice = tmp_path / "thrice.luxar.zarr"
-        optimise_store(scene, once)
-        second = optimise_store(once, twice)
+        optimize_store(scene, once)
+        second = optimize_store(once, twice)
         assert second.n_rechunked == 0
-        optimise_store(twice, thrice)
+        optimize_store(twice, thrice)
 
         def h(p: Path) -> str:
             return str(dict(open_group(p, mode="r").attrs)["content_hash"])
@@ -2050,7 +2050,7 @@ class TestCacheInvalidation:
     def test_the_streaming_hash_is_byte_identical(
         self, scene: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The optimiser recomputes the scene hash slab-wise instead of calling
+        """The optimizer recomputes the scene hash slab-wise instead of calling
         ``compute_content_hashes``, which does ``dataset[:].tobytes()`` and peaks
         at twice an array's size. That is only sound if the digest is IDENTICAL
         — a divergent hash is a silent format break — so it is pinned here,
@@ -2062,7 +2062,7 @@ class TestCacheInvalidation:
         shutil.copytree(scene, work)
         root = open_group(work, mode="r+")
 
-        monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 4096)
+        monkeypatch.setattr(optimize_mod, "_SLAB_BYTES", 4096)
         streamed = _compute_content_hashes_streaming(root)
         per_node_streamed = {
             p: dict(n.attrs)["content_hash"] for p, n, a in _walk(root) if not a
@@ -2116,7 +2116,7 @@ class TestCacheInvalidation:
         consolidate(root)
         assert open_group(src, mode="r")["sharded"].shards == (5_000, 4)
 
-        monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 4096)
+        monkeypatch.setattr(optimize_mod, "_SLAB_BYTES", 4096)
         assert _compute_content_hashes_streaming(root) == compute_content_hashes(
             root
         ), _HASH_DRIFT
@@ -2154,7 +2154,7 @@ class TestCacheInvalidation:
         )
         consolidate(root)
 
-        monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 512)
+        monkeypatch.setattr(optimize_mod, "_SLAB_BYTES", 512)
         assert _compute_content_hashes_streaming(root) == compute_content_hashes(
             root
         ), _HASH_DRIFT
@@ -2222,7 +2222,7 @@ class TestCacheInvalidation:
         self, scene: Path, tmp_path: Path
     ) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        plan = optimise_store(
+        plan = optimize_store(
             scene, dst, target_bytes=CHUNK_PROFILES["hosting"], profile="hosting"
         )
         layout = dict(open_group(dst, mode="r").attrs)["chunk_layout"]
@@ -2260,13 +2260,13 @@ class TestDestinationGuards:
     def test_in_place_is_refused(self, tmp_path: Path) -> None:
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         with pytest.raises(ValueError, match="in place"):
-            optimise_store(src, src, overwrite=True)
+            optimize_store(src, src, overwrite=True)
         assert (src / "x").exists()
 
     def test_a_destination_containing_the_source_is_refused(
         self, tmp_path: Path
     ) -> None:
-        """The measured footgun: ``luxar optimise mydata/s.luxar.zarr mydata
+        """The measured footgun: ``luxar optimize mydata/s.luxar.zarr mydata
         --overwrite`` deleted all of ``mydata/`` — the source and an unrelated
         file beside it — and only then raised ``FileNotFoundError``."""
         holder = tmp_path / "mydata"
@@ -2276,14 +2276,14 @@ class TestDestinationGuards:
         src = _tiny_store(holder / "s.luxar.zarr")
 
         with pytest.raises(ValueError, match="CONTAINS the source"):
-            optimise_store(src, holder, overwrite=True)
+            optimize_store(src, holder, overwrite=True)
         assert precious.read_text() == "not a zarr store"
         assert (src / "x").exists()
 
     def test_a_destination_inside_the_source_is_refused(self, tmp_path: Path) -> None:
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         with pytest.raises(ValueError, match="inside the source"):
-            optimise_store(src, src / "nested", overwrite=True)
+            optimize_store(src, src / "nested", overwrite=True)
         assert (src / "x").exists()
 
     def test_overwrite_refuses_a_destination_that_is_not_a_store(
@@ -2297,13 +2297,13 @@ class TestDestinationGuards:
         (occupied / "thesis.tex").write_text("years of work")
 
         with pytest.raises(ValueError, match="neither a zarr store"):
-            optimise_store(src, occupied, overwrite=True)
+            optimize_store(src, occupied, overwrite=True)
         assert (occupied / "thesis.tex").read_text() == "years of work"
 
     def test_the_source_is_validated_before_the_destination_is_touched(
         self, tmp_path: Path
     ) -> None:
-        """``luxar optimise plain.zarr known-good.zarr --overwrite`` used to
+        """``luxar optimize plain.zarr known-good.zarr --overwrite`` used to
         delete ``known-good.zarr`` and THEN refuse to work for want of
         ``--generic``."""
         plain = _tiny_store(tmp_path / "plain.zarr", luxar=False)
@@ -2311,23 +2311,23 @@ class TestDestinationGuards:
         before = sorted(p.name for p in known_good.rglob("*"))
 
         with pytest.raises(ValueError, match="--generic"):
-            optimise_store(plain, known_good, overwrite=True)
+            optimize_store(plain, known_good, overwrite=True)
         assert sorted(p.name for p in known_good.rglob("*")) == before
 
     def test_an_empty_directory_destination_is_accepted(self, tmp_path: Path) -> None:
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr"
         dst.mkdir()
-        optimise_store(src, dst, overwrite=True, verify=True)
+        optimize_store(src, dst, overwrite=True, verify=True)
         assert_values_identical(src, dst)
 
     def test_an_existing_output_needs_overwrite(self, tmp_path: Path) -> None:
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst)
+        optimize_store(src, dst)
         with pytest.raises(FileExistsError, match="--overwrite"):
-            optimise_store(src, dst)
-        optimise_store(src, dst, overwrite=True)
+            optimize_store(src, dst)
+        optimize_store(src, dst, overwrite=True)
         assert_values_identical(src, dst)
 
     def test_an_existing_zipped_output_is_replaced(self, tmp_path: Path) -> None:
@@ -2335,20 +2335,20 @@ class TestDestinationGuards:
         and the one place the replace is an unlink rather than an rmtree."""
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr.zip"
-        optimise_store(src, dst)
+        optimize_store(src, dst)
         assert dst.is_file()
         with pytest.raises(FileExistsError, match="--overwrite"):
-            optimise_store(src, dst)
-        optimise_store(src, dst, overwrite=True, verify=True)
+            optimize_store(src, dst)
+        optimize_store(src, dst, overwrite=True, verify=True)
         assert dst.is_file()
         assert_values_identical(src, dst)
 
     def test_a_plain_zarr_store_needs_generic(self, tmp_path: Path) -> None:
         src = _tiny_store(tmp_path / "plain.zarr", luxar=False)
         with pytest.raises(ValueError, match="--generic"):
-            optimise_store(src, tmp_path / "a.zarr")
+            optimize_store(src, tmp_path / "a.zarr")
         assert not (tmp_path / "a.zarr").exists()
-        plan = optimise_store(src, tmp_path / "b.zarr", generic=True, verify=True)
+        plan = optimize_store(src, tmp_path / "b.zarr", generic=True, verify=True)
         assert plan.n_rechunked == 1
         # `--generic` must not stamp scene semantics onto a foreign store.
         assert "content_hash" not in dict(
@@ -2373,7 +2373,7 @@ class TestDestinationGuards:
         consolidate(root)
 
         dst = tmp_path / "out.zarr"
-        plan = optimise_store(src, dst, generic=True, verify=True)
+        plan = optimize_store(src, dst, generic=True, verify=True)
 
         (temperature,) = plan.arrays
         assert temperature.path == "environment/temperature"
@@ -2400,7 +2400,7 @@ class TestDestinationGuards:
         consolidate(root)
 
         dst = tmp_path / "out.zarr"
-        optimise_store(src, dst, generic=True, verify=True)
+        optimize_store(src, dst, generic=True, verify=True)
 
         output = open_group(dst, mode="r")
         assert dict(output["environment"].attrs) == {"units": "celsius"}
@@ -2436,10 +2436,10 @@ class TestDestinationGuards:
         consolidate(root)
 
         with pytest.raises(ValueError, match="--generic"):
-            optimise_store(src, tmp_path / "a.zarr")
+            optimize_store(src, tmp_path / "a.zarr")
         assert not (tmp_path / "a.zarr").exists()
         # And the real markers still let a Luxar store through untouched.
-        assert optimise_store(src, tmp_path / "b.zarr", generic=True).n_rechunked == 1
+        assert optimize_store(src, tmp_path / "b.zarr", generic=True).n_rechunked == 1
 
     @pytest.mark.parametrize(
         "attrs",
@@ -2462,7 +2462,7 @@ class TestDestinationGuards:
         root = open_group(src, mode="a")
         root.attrs.update(attrs)
         consolidate(root)
-        assert optimise_store(src, tmp_path / "out.zarr").n_rechunked == 1
+        assert optimize_store(src, tmp_path / "out.zarr").n_rechunked == 1
 
     def test_a_failed_run_leaves_no_output_behind(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2474,16 +2474,16 @@ class TestDestinationGuards:
         which a retry then refuses to touch without ``--overwrite``."""
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr"
-        real_copy = optimise_mod._copy_array
+        real_copy = optimize_mod._copy_array
 
         def explode(*args: Any, **kwargs: Any) -> Any:
             result = real_copy(*args, **kwargs)
             raise OSError("disk full")
             return result  # pragma: no cover - unreachable, documents intent
 
-        monkeypatch.setattr(optimise_mod, "_copy_array", explode)
+        monkeypatch.setattr(optimize_mod, "_copy_array", explode)
         with pytest.raises(OSError, match="disk full"):
-            optimise_store(src, dst)
+            optimize_store(src, dst)
         assert not dst.exists()
         assert sorted(p.name for p in tmp_path.iterdir()) == ["src.luxar.zarr"]
 
@@ -2493,19 +2493,19 @@ class TestDestinationGuards:
         """The one window the all-or-nothing promise did not cover. The artifact
         path used to be bound from ``_package``'s RETURN, so an archive write
         that failed partway (ENOSPC on the last member) left a hidden
-        ``.<name>.optimise-<pid>-<uuid>.zip`` beside the destination that the
+        ``.<name>.optimize-<pid>-<uuid>.zip`` beside the destination that the
         ``finally`` never saw."""
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr.zip"
-        real_package = optimise_mod._package
+        real_package = optimize_mod._package
 
         def explode(staging: Path, artifact: Path) -> None:
             real_package(staging, artifact)  # the archive now exists on disk
             raise OSError("disk full")
 
-        monkeypatch.setattr(optimise_mod, "_package", explode)
+        monkeypatch.setattr(optimize_mod, "_package", explode)
         with pytest.raises(OSError, match="disk full"):
-            optimise_store(src, dst)
+            optimize_store(src, dst)
         assert not dst.exists()
         # Hidden files included: the leak was a dotfile.
         assert sorted(p.name for p in tmp_path.iterdir()) == ["src.luxar.zarr"]
@@ -2518,11 +2518,11 @@ class TestDestinationGuards:
         an interrupt) propagated before the artifact was marked consumed, so the
         ``finally`` deleted the new store too — and for a directory destination
         the artifact IS the staging tree. One ``--overwrite`` onto a good store
-        could cost both copies, which is exactly what ``optimise_store``'s
+        could cost both copies, which is exactly what ``optimize_store``'s
         docstring promises cannot happen."""
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, target_bytes=8192)
+        optimize_store(src, dst, target_bytes=8192)
         good = tuple(open_group(dst, mode="r")["x"].chunks)
         real_replace = os.replace
         failed: list[Any] = []
@@ -2535,9 +2535,9 @@ class TestDestinationGuards:
                 raise OSError("EBUSY: device or resource busy")
             return real_replace(a, b)
 
-        monkeypatch.setattr(optimise_mod.os, "replace", flaky)
+        monkeypatch.setattr(optimize_mod.os, "replace", flaky)
         with pytest.raises(OSError, match="EBUSY"):
-            optimise_store(src, dst, overwrite=True, target_bytes=32_768)
+            optimize_store(src, dst, overwrite=True, target_bytes=32_768)
 
         # The previous store is still there, still readable, still ITS grid.
         assert tuple(open_group(dst, mode="r")["x"].chunks) == good
@@ -2562,7 +2562,7 @@ class TestDestinationGuards:
         link.symlink_to(real, target_is_directory=True)
 
         with pytest.raises(ValueError, match="symlink"):
-            optimise_store(src, link, overwrite=True)
+            optimize_store(src, link, overwrite=True)
         assert link.is_symlink()
         assert (real / "x").exists()
         assert sorted(p.name for p in tmp_path.iterdir()) == [
@@ -2580,7 +2580,7 @@ class TestDestinationGuards:
         link.symlink_to(tmp_path / "gone", target_is_directory=True)
 
         with pytest.raises(ValueError, match="symlink"):
-            optimise_store(src, link)  # no --overwrite: the link is not a store
+            optimize_store(src, link)  # no --overwrite: the link is not a store
         assert link.is_symlink()
         assert not (tmp_path / "gone").exists()
         assert sorted(p.name for p in tmp_path.iterdir()) == [
@@ -2593,15 +2593,15 @@ class TestDestinationGuards:
     ) -> None:
         src = _tiny_store(tmp_path / "src.luxar.zarr")
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(src, dst, target_bytes=8192)
+        optimize_store(src, dst, target_bytes=8192)
         good = tuple(open_group(dst, mode="r")["x"].chunks)
 
         def refuse(*args: Any, **kwargs: Any) -> int:
             raise ValueError("verify: 'x' differs")
 
-        monkeypatch.setattr(optimise_mod, "_verify", refuse)
+        monkeypatch.setattr(optimize_mod, "_verify", refuse)
         with pytest.raises(ValueError, match="verify"):
-            optimise_store(src, dst, overwrite=True, verify=True)
+            optimize_store(src, dst, overwrite=True, verify=True)
         assert tuple(open_group(dst, mode="r")["x"].chunks) == good
         assert sorted(p.name for p in tmp_path.iterdir()) == [
             "out.luxar.zarr",
@@ -2739,7 +2739,7 @@ class TestVerifyDiscriminates:
 
         # And no false positive: a real copy of the same store still passes.
         out = tmp_path / "s_out.zarr"
-        optimise_store(paths[0], out, verify=True)
+        optimize_store(paths[0], out, verify=True)
         assert _verify(src, open_group(out, mode="r")) == (1, 0)
 
     @pytest.mark.parametrize(
@@ -2773,13 +2773,13 @@ class TestVerifyDiscriminates:
 
 
 class TestSummary:
-    def test_the_summary_improves_after_optimising(
+    def test_the_summary_improves_after_optimizing(
         self, scene: Path, tmp_path: Path
     ) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(scene, dst)
-        before = summarise_chunk_layout(open_group(scene, mode="r"))
-        after = summarise_chunk_layout(open_group(dst, mode="r"))
+        optimize_store(scene, dst)
+        before = summarize_chunk_layout(open_group(scene, mode="r"))
+        after = summarize_chunk_layout(open_group(dst, mode="r"))
         assert after.n_chunks < before.n_chunks
         assert after.mean_chunk_bytes > before.mean_chunk_bytes
         assert after.n_arrays == before.n_arrays
@@ -2816,7 +2816,7 @@ class TestSummary:
             )
         consolidate(root)
 
-        summary = summarise_chunk_layout(open_group(src, mode="r"))
+        summary = summarize_chunk_layout(open_group(src, mode="r"))
         assert summary.n_chunks == 1
         assert summary.n_arrays == 1, "a zero-file array was counted"
         assert summary.n_arrays_under_floor == 1
@@ -2859,7 +2859,7 @@ class TestSummary:
 
         on_disk = _chunk_files(src)
         assert on_disk == 54, on_disk
-        assert summarise_chunk_layout(open_group(src, mode="r")).n_chunks == on_disk
+        assert summarize_chunk_layout(open_group(src, mode="r")).n_chunks == on_disk
 
 
 # --------------------------------------------------------------------------
@@ -2872,7 +2872,7 @@ def _run(*args: str):
 
     from luxar.cli.main import app
 
-    return CliRunner().invoke(app, ["optimise", *args])
+    return CliRunner().invoke(app, ["optimize", *args])
 
 
 def _info(*args: str):
@@ -2913,11 +2913,11 @@ class TestCli:
         assert allowed.exit_code == 0, allowed.output
         assert "Would re-chunk" in allowed.output
 
-    def test_dry_run_on_an_optimised_store_says_so(
+    def test_dry_run_on_an_optimized_store_says_so(
         self, scene: Path, tmp_path: Path
     ) -> None:
         dst = tmp_path / "out.luxar.zarr"
-        optimise_store(scene, dst)
+        optimize_store(scene, dst)
         result = _run(str(dst), "--dry-run")
         assert result.exit_code == 0, result.output
         assert "Nothing to re-chunk" in result.output
@@ -2991,11 +2991,11 @@ class TestCli:
         assert "Chunk Layout" in result.output
         assert "Projected requests" in result.output
 
-    def test_info_stats_recommends_optimise_when_the_plan_is_real(
+    def test_info_stats_recommends_optimize_when_the_plan_is_real(
         self, tmp_path: Path
     ) -> None:
         src = _tiny_store(tmp_path / "small.luxar.zarr")  # 400-byte chunks
-        assert plan_optimisation(open_group(src, mode="r")).n_rechunked == 1
+        assert plan_optimization(open_group(src, mode="r")).n_rechunked == 1
 
         from typer.testing import CliRunner
 
@@ -3010,8 +3010,8 @@ class TestCli:
     ) -> None:
         """A 400-byte-chunk store is round-trip bound on an HTTP/1.1 host (which
         ``luxar serve`` is); a 128 KB single-chunk array is not. The warning is
-        gated on the mean chunk size alone — unlike the optimise hint, it also
-        applies to a store the optimiser could not re-chunk, because the round
+        gated on the mean chunk size alone — unlike the optimize hint, it also
+        applies to a store the optimizer could not re-chunk, because the round
         trips are paid either way."""
         from typer.testing import CliRunner
 
@@ -3021,7 +3021,7 @@ class TestCli:
         result = CliRunner().invoke(app, ["info", str(small), "--stats", "--no-tree"])
         assert result.exit_code == 0, result.output
         assert "HTTP/1.1" in result.output
-        assert "luxar optimise --profile hosting" in result.output
+        assert "luxar optimize --profile hosting" in result.output
 
         big = tmp_path / "big.luxar.zarr"
         root = open_group(big, mode="w")
@@ -3059,7 +3059,7 @@ class TestCli:
                 compressor=None,
             )
         consolidate(root)
-        assert plan_optimisation(open_group(src, mode="r")).n_rechunked == 0
+        assert plan_optimization(open_group(src, mode="r")).n_rechunked == 0
 
         result = CliRunner().invoke(app, ["info", str(src), "--stats", "--no-tree"])
         assert result.exit_code == 0, result.output

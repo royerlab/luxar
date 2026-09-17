@@ -767,7 +767,7 @@ class Group(Node):
             additive_lod: ``True`` / ``{...}`` to write a reveal ladder of
                 ``additive_<i>/`` levels inside the leaf. Keys: ``method``
                 (``"radial"`` only), ``n_lods``, ``counts`` (alias ``breakpoints``),
-                ``reveal_centre``, ``spatial_dims``. Levels hold concentric shells of
+                ``reveal_center``, ``spatial_dims``. Levels hold concentric shells of
                 FACES — a triangle is the indivisible unit, as it is for
                 ``partition`` — and are cumulative when concatenated, so the surface
                 grows outward as it loads.

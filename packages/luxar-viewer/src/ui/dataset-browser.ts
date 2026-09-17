@@ -216,7 +216,7 @@ export class DatasetBrowser {
    * The resolver only ever names the SEARCH field, and only while the search
    * bar is actually shown: it returns `null` while that bar is hidden
    * (loading, error, empty directory, manual-entry fallback), and the
-   * keystroke is then contained by the modal. The manual-entry `#manual-path`
+   * keystroke is then contained by the modal. The manual-entry `#luxar-dataset-browser-manual-path`
    * field is deliberately NOT a resolver target — it is a URL entry field,
    * not a filter, so stray keystrokes should not be routed into it. The user
    * clicks or Tabs into that field, which is a deliberate act, and from there
@@ -881,16 +881,16 @@ export class DatasetBrowser {
 
     content.innerHTML = `
       <div class="luxar-dataset-browser__manual-entry">
-        <label for="manual-path" class="luxar-dataset-browser__manual-entry-title">Directory listing not available. Enter dataset path manually:</label>
+        <label for="luxar-dataset-browser-manual-path" class="luxar-dataset-browser__manual-entry-title">Directory listing not available. Enter dataset path manually:</label>
         <input
           type="text"
-          id="manual-path"
+          id="luxar-dataset-browser-manual-path"
           class="luxar-dataset-browser__manual-entry-input"
           placeholder="e.g., datasets/example.luxar.zarr"
           aria-label="Dataset path"
         />
         <div>
-          <button id="manual-load" type="button" class="luxar-dataset-browser__manual-entry-btn">Load Dataset</button>
+          <button id="luxar-dataset-browser-manual-load" type="button" class="luxar-dataset-browser__manual-entry-btn">Load Dataset</button>
         </div>
         <p class="luxar-dataset-browser__manual-entry-tip">
           Tip: Ask your server administrator to enable directory listing or WebDAV
@@ -898,8 +898,10 @@ export class DatasetBrowser {
       </div>
     `;
 
-    const input = content.querySelector('#manual-path') as HTMLInputElement;
-    const loadBtn = content.querySelector('#manual-load') as HTMLButtonElement;
+    const input = content.querySelector('#luxar-dataset-browser-manual-path') as HTMLInputElement;
+    const loadBtn = content.querySelector(
+      '#luxar-dataset-browser-manual-load'
+    ) as HTMLButtonElement;
 
     loadBtn.onclick = () => {
       const path = input.value.trim();

@@ -30,7 +30,7 @@ export function parseLodBiasArms(raw: string | undefined): LodBiasArm[] {
   return values.map((value) => ({
     value,
     scenarioSuffix: value === 1 ? '' : `-lod-bias-${value}`,
-    query: value === 1 ? '' : `&lod-bias=${value}`,
+    query: value === 1 ? '' : `&lodBias=${value}`,
   }));
 }
 

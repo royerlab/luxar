@@ -282,7 +282,7 @@ describe('getCacheHitRateColorClassWithGuard (S3)', () => {
 });
 
 describe('renderCacheContent status rows in non-full cache views', () => {
-  it('renders the no-cache badge in the disabled ?no-cache view', () => {
+  it('renders the no-cache badge in the disabled ?noCache view', () => {
     const html = renderCacheContent(
       makeGlobalStats(),
       makeCacheMetrics({
@@ -292,7 +292,7 @@ describe('renderCacheContent status rows in non-full cache views', () => {
       })
     );
 
-    expect(html).toContain('Caching disabled by ?no-cache');
+    expect(html).toContain('Caching disabled by ?noCache');
     expect(html).toContain('data-field="cache-status-row"');
     expect(html).toContain('data-badge="no-cache"');
   });

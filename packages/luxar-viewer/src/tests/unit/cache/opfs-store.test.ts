@@ -6,91 +6,16 @@ import {
   resetOpfsReadGate,
   withOpfsReadGate,
 } from '../../../cache/multi-level-caching-store/opfs-read-gate';
-
-// Mock File System Access API
-const createMockFileSystem = () => {
-  const files = new Map<string, Uint8Array>();
-  const metaFiles = new Map<string, string>();
-
-  const mockFileHandle = (path: string) => ({
-    async getFile() {
-      const data = files.get(path) || new Uint8Array(0);
-      return {
-        async arrayBuffer() {
-          return data.buffer;
-        },
-        async text() {
-          return metaFiles.get(path) || '{}';
-        },
-      };
-    },
-    async createWritable() {
-      return {
-        async write(data: ArrayBuffer | string) {
-          if (typeof data === 'string') {
-            metaFiles.set(path, data);
-          } else {
-            files.set(path, new Uint8Array(data));
-          }
-        },
-        async close() {},
-      };
-    },
-  });
-
-  const mockDirHandle: any = {
-    async getFileHandle(name: string, opts?: { create?: boolean }) {
-      const fullPath = name;
-      if (!files.has(fullPath) && !metaFiles.has(fullPath) && !opts?.create) {
-        throw new Error('File not found');
-      }
-      return mockFileHandle(fullPath);
-    },
-    async getDirectoryHandle(_name: string, _opts?: { create?: boolean }) {
-      return mockDirHandle; // Simplified: all paths return same handle
-    },
-    async removeEntry(name: string) {
-      if (!files.has(name) && !metaFiles.has(name)) {
-        throw new DOMException(`Entry not found: ${name}`, 'NotFoundError');
-      }
-      files.delete(name);
-      metaFiles.delete(name);
-    },
-    async *keys() {
-      // Return empty for simplicity
-    },
-  };
-
-  return { mockDirHandle, files, metaFiles };
-};
+import { OPFS_NAMESPACE_DIR } from '../../../cache/multi-level-caching-store/opfs-store/opfs-root';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 
 describe('OPFSStore', () => {
   let store: OPFSStore;
-  let mockFS: ReturnType<typeof createMockFileSystem>;
+  let mockFS: ReturnType<typeof createFakeOpfsRoot>;
 
   beforeEach(async () => {
-    mockFS = createMockFileSystem();
-
-    // Mock navigator.storage
-    vi.stubGlobal('navigator', {
-      storage: {
-        async getDirectory() {
-          return {
-            async getDirectoryHandle(_id: string, _opts?: any) {
-              return mockFS.mockDirHandle;
-            },
-            async removeEntry(_name: string, _opts?: any) {
-              // Simulate atomic directory removal (clear all files)
-              mockFS.files.clear();
-              mockFS.metaFiles.clear();
-            },
-          };
-        },
-        async estimate() {
-          return { quota: 10e9, usage: 1e9 }; // 10GB quota, 1GB used
-        },
-      },
-    });
+    // In-memory OPFS: origin root → `luxar/` → dataset dir (see opfs.mock.ts).
+    mockFS = createFakeOpfsRoot().install();
 
     // Mock crypto.subtle for SHA-256
     vi.stubGlobal('crypto', {
@@ -178,7 +103,7 @@ describe('OPFSStore', () => {
       // failed EVERY put (tens of thousands of write errors, empty L2,
       // all-miss reads). The probe must catch it at init instead.
       const webkitDir: any = {
-        ...mockFS.mockDirHandle,
+        ...mockFS.datasetDir,
         async getFileHandle() {
           return {
             async getFile() {
@@ -198,20 +123,8 @@ describe('OPFSStore', () => {
         },
         async removeEntry() {},
       };
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return webkitDir;
-              },
-              async removeEntry() {},
-            };
-          },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
-        },
+      mockFS.install({
+        datasetDir: webkitDir,
       });
 
       const webkitStore = new OPFSStore('webkit-id', 'https://example.com', 1000);
@@ -263,14 +176,14 @@ describe('OPFSStore', () => {
       );
       await Promise.all(keys.map((key) => store.set(key, new Uint8Array([1]))));
 
-      const originalGetFileHandle = mockFS.mockDirHandle.getFileHandle.bind(mockFS.mockDirHandle);
+      const originalGetFileHandle = mockFS.datasetDir.getFileHandle.bind(mockFS.datasetDir);
       let activeReads = 0;
       let peakReads = 0;
       let releaseReads!: () => void;
       const readsBlocked = new Promise<void>((resolve) => {
         releaseReads = resolve;
       });
-      mockFS.mockDirHandle.getFileHandle = async (...args: unknown[]) => {
+      mockFS.datasetDir.getFileHandle = async (...args: unknown[]) => {
         const handle = await originalGetFileHandle(...args);
         const originalGetFile = handle.getFile.bind(handle);
         return {
@@ -311,14 +224,14 @@ describe('OPFSStore', () => {
         [...activeKeys, ...queuedKeys].map((key) => store.set(key, new Uint8Array([1])))
       );
 
-      const originalGetFileHandle = mockFS.mockDirHandle.getFileHandle.bind(mockFS.mockDirHandle);
+      const originalGetFileHandle = mockFS.datasetDir.getFileHandle.bind(mockFS.datasetDir);
       let activeReads = 0;
       let fileReads = 0;
       let releaseReads!: () => void;
       const readsBlocked = new Promise<void>((resolve) => {
         releaseReads = resolve;
       });
-      mockFS.mockDirHandle.getFileHandle = async (...args: unknown[]) => {
+      mockFS.datasetDir.getFileHandle = async (...args: unknown[]) => {
         const handle = await originalGetFileHandle(...args);
         const originalGetFile = handle.getFile.bind(handle);
         return {
@@ -362,8 +275,8 @@ describe('OPFSStore', () => {
       const readsBlocked = new Promise<void>((resolve) => {
         releaseReads = resolve;
       });
-      const originalGetFileHandle = mockFS.mockDirHandle.getFileHandle.bind(mockFS.mockDirHandle);
-      mockFS.mockDirHandle.getFileHandle = async (...args: unknown[]) => {
+      const originalGetFileHandle = mockFS.datasetDir.getFileHandle.bind(mockFS.datasetDir);
+      mockFS.datasetDir.getFileHandle = async (...args: unknown[]) => {
         const handle = await originalGetFileHandle(...args);
         const originalGetFile = handle.getFile.bind(handle);
         return {
@@ -430,8 +343,8 @@ describe('OPFSStore', () => {
         withOpfsReadGate(() => slotsBlocked)
       );
       let fileReads = 0;
-      const originalGetFileHandle = mockFS.mockDirHandle.getFileHandle.bind(mockFS.mockDirHandle);
-      mockFS.mockDirHandle.getFileHandle = async (...args: unknown[]) => {
+      const originalGetFileHandle = mockFS.datasetDir.getFileHandle.bind(mockFS.datasetDir);
+      mockFS.datasetDir.getFileHandle = async (...args: unknown[]) => {
         const handle = await originalGetFileHandle(...args);
         const originalGetFile = handle.getFile.bind(handle);
         return {
@@ -654,8 +567,8 @@ describe('OPFSStore', () => {
       const hangGate = new Promise<void>((resolve) => {
         releaseHang = resolve; // hangs until the finally block below releases it
       });
-      const originalRemoveEntry = mockFS.mockDirHandle.removeEntry;
-      mockFS.mockDirHandle.removeEntry = () => hangGate;
+      const originalRemoveEntry = mockFS.datasetDir.removeEntry;
+      mockFS.datasetDir.removeEntry = () => hangGate;
 
       const { config: realConfig } = await import('../../../config');
       const originalTimeout = realConfig.cache.opfsOperationTimeoutMs;
@@ -673,7 +586,7 @@ describe('OPFSStore', () => {
           expect(stats.count).toBe(before.count);
         } finally {
           realConfig.cache.opfsOperationTimeoutMs = originalTimeout;
-          mockFS.mockDirHandle.removeEntry = originalRemoveEntry;
+          mockFS.datasetDir.removeEntry = originalRemoveEntry;
         }
 
         // With the handle working again, the retry completes the deletion.
@@ -717,8 +630,8 @@ describe('OPFSStore', () => {
       // Swap in a removeEntry that throws to simulate an OPFS I/O error
       // mid-delete (file locked by concurrent op, transient permission
       // error, etc.). The previous removeEntry is restored after.
-      const originalRemoveEntry = mockFS.mockDirHandle.removeEntry;
-      mockFS.mockDirHandle.removeEntry = async () => {
+      const originalRemoveEntry = mockFS.datasetDir.removeEntry;
+      mockFS.datasetDir.removeEntry = async () => {
         throw new Error('simulated transient OPFS error');
       };
 
@@ -733,7 +646,7 @@ describe('OPFSStore', () => {
         expect(stats.size).toBe(sizeBefore);
         expect(stats.count).toBe(countBefore);
       } finally {
-        mockFS.mockDirHandle.removeEntry = originalRemoveEntry;
+        mockFS.datasetDir.removeEntry = originalRemoveEntry;
       }
 
       // After restoring the working removeEntry, a retry succeeds and
@@ -768,7 +681,7 @@ describe('OPFSStore', () => {
       });
       // Armed only AFTER init so the init-time write probe passes through.
       let blockWrites = false;
-      const baseDir = mockFS.mockDirHandle;
+      const baseDir = mockFS.datasetDir;
       const slowDir: any = {
         ...baseDir,
         async getFileHandle(name: string, opts?: { create?: boolean }) {
@@ -788,23 +701,8 @@ describe('OPFSStore', () => {
           };
         },
       };
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return slowDir;
-              },
-              async removeEntry() {
-                mockFS.files.clear();
-                mockFS.metaFiles.clear();
-              },
-            };
-          },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
-        },
+      mockFS.install({
+        datasetDir: slowDir,
       });
 
       const slowStore = new OPFSStore('slow-id', 'https://example.com', 100 * 1024 * 1024);
@@ -902,27 +800,14 @@ describe('OPFSStore', () => {
       // (after eviction freed space) reports plenty. The store should
       // succeed on the post-eviction estimate.
       let estimateCall = 0;
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return mockFS.mockDirHandle;
-              },
-              async removeEntry() {
-                mockFS.files.clear();
-                mockFS.metaFiles.clear();
-              },
-            };
-          },
-          async estimate() {
-            estimateCall++;
-            // Always report enough headroom — eviction-then-quota
-            // ordering means quota is checked after eviction; our
-            // assertion here is that the write succeeds, not that the
-            // estimate reflects in-process eviction.
-            return { quota: 10e9, usage: 1e9 };
-          },
+      mockFS.install({
+        estimate: async () => {
+          estimateCall++;
+          // Always report enough headroom — eviction-then-quota
+          // ordering means quota is checked after eviction; our
+          // assertion here is that the write succeeds, not that the
+          // estimate reflects in-process eviction.
+          return { quota: 10e9, usage: 1e9 };
         },
       });
 
@@ -949,7 +834,7 @@ describe('OPFSStore', () => {
       // this test covers TRANSIENT mid-session I/O failures.
       let failWrites = false;
       const failingDir: any = {
-        ...mockFS.mockDirHandle,
+        ...mockFS.datasetDir,
         async getFileHandle() {
           return {
             async getFile() {
@@ -973,20 +858,8 @@ describe('OPFSStore', () => {
         },
         async removeEntry() {},
       };
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return failingDir;
-              },
-              async removeEntry() {},
-            };
-          },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
-        },
+      mockFS.install({
+        datasetDir: failingDir,
       });
 
       const failStore = new OPFSStore('fail-id', 'https://example.com', 1000);
@@ -1008,7 +881,7 @@ describe('OPFSStore', () => {
       let failWrites = false;
       let createWritableCalls = 0;
       const failingDir: any = {
-        ...mockFS.mockDirHandle,
+        ...mockFS.datasetDir,
         async getFileHandle() {
           return {
             async getFile() {
@@ -1030,20 +903,8 @@ describe('OPFSStore', () => {
         },
         async removeEntry() {},
       };
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return failingDir;
-              },
-              async removeEntry() {},
-            };
-          },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
-        },
+      mockFS.install({
+        datasetDir: failingDir,
       });
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -1068,7 +929,7 @@ describe('OPFSStore', () => {
       let armStale = false;
       let createWritableCalls = 0;
       const dir: any = {
-        ...mockFS.mockDirHandle,
+        ...mockFS.datasetDir,
         async getFileHandle() {
           return {
             async getFile() {
@@ -1092,20 +953,8 @@ describe('OPFSStore', () => {
         },
         async removeEntry() {},
       };
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return dir;
-              },
-              async removeEntry() {},
-            };
-          },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
-        },
+      mockFS.install({
+        datasetDir: dir,
       });
 
       const store = new OPFSStore('stale-id', 'https://example.com', 1000);
@@ -1120,22 +969,9 @@ describe('OPFSStore', () => {
 
     it('quota-skipped writes increment quotaWriteSkipped and do not write data', async () => {
       // checkQuota returns false → doSet skips the write.
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return mockFS.mockDirHandle;
-              },
-              async removeEntry() {
-                mockFS.files.clear();
-                mockFS.metaFiles.clear();
-              },
-            };
-          },
-          async estimate() {
-            return { quota: 100, usage: 100 }; // no headroom
-          },
+      mockFS.install({
+        estimate: async () => {
+          return { quota: 100, usage: 100 }; // no headroom
         },
       });
 
@@ -1153,18 +989,9 @@ describe('OPFSStore', () => {
   describe('Quota Management', () => {
     it('should check quota before writing', async () => {
       // Mock quota exceeded
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return mockFS.mockDirHandle;
-              },
-            };
-          },
-          async estimate() {
-            return { quota: 1000, usage: 999 }; // Almost full!
-          },
+      mockFS.install({
+        estimate: async () => {
+          return { quota: 1000, usage: 999 }; // Almost full!
         },
       });
 
@@ -1313,20 +1140,8 @@ describe('OPFSStore', () => {
         },
         async removeEntry() {},
       };
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return hangDir;
-              },
-              async removeEntry() {},
-            };
-          },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
-        },
+      mockFS.install({
+        datasetDir: hangDir,
       });
 
       const { config: realConfig } = await import('../../../config');
@@ -1505,22 +1320,9 @@ describe('OPFSStore', () => {
       // Simulate "browser quota almost full" → write should be
       // skipped. Then "quota cleared" → next write should succeed.
       let quotaReportsFull = true;
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return mockFS.mockDirHandle;
-              },
-              async removeEntry() {
-                mockFS.files.clear();
-                mockFS.metaFiles.clear();
-              },
-            };
-          },
-          async estimate() {
-            return quotaReportsFull ? { quota: 100, usage: 100 } : { quota: 10e9, usage: 1e9 };
-          },
+      mockFS.install({
+        estimate: async () => {
+          return quotaReportsFull ? { quota: 100, usage: 100 } : { quota: 10e9, usage: 1e9 };
         },
       });
       const cycleStore = new OPFSStore('cycle-id', 'https://example.com', 1024 * 1024);
@@ -1542,22 +1344,9 @@ describe('OPFSStore', () => {
     });
 
     it('concurrent quota-skipped writes increment counter atomically (no double-count)', async () => {
-      vi.stubGlobal('navigator', {
-        storage: {
-          async getDirectory() {
-            return {
-              async getDirectoryHandle() {
-                return mockFS.mockDirHandle;
-              },
-              async removeEntry() {
-                mockFS.files.clear();
-                mockFS.metaFiles.clear();
-              },
-            };
-          },
-          async estimate() {
-            return { quota: 100, usage: 100 }; // no headroom
-          },
+      mockFS.install({
+        estimate: async () => {
+          return { quota: 100, usage: 100 }; // no headroom
         },
       });
       const burstStore = new OPFSStore('burst-id', 'https://example.com', 1024 * 1024);
@@ -1763,23 +1552,17 @@ describe('OPFSStore', () => {
         releaseDir = resolve;
       });
       let getDirEntered = false;
-      let getDirectoryHandleCalls = 0;
+      // Dataset-dir lookups happen on the `luxar/` namespace dir; count from
+      // here on (the beforeEach store already mounted once).
+      mockFS.luxarDir.getDirectoryHandle.mockClear();
       vi.stubGlobal('navigator', {
         storage: {
           async getDirectory() {
             getDirEntered = true;
             await dirGate;
-            return {
-              async getDirectoryHandle(_id: string, _opts?: unknown) {
-                getDirectoryHandleCalls++;
-                return mockFS.mockDirHandle;
-              },
-              async removeEntry() {},
-            };
+            return mockFS.root;
           },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
+          estimate: mockFS.storage.estimate,
         },
       });
 
@@ -1813,7 +1596,7 @@ describe('OPFSStore', () => {
       await initPromise;
 
       // init check #1 returned before opening the directory handle.
-      expect(getDirectoryHandleCalls).toBe(0);
+      expect(mockFS.luxarDir.getDirectoryHandle).not.toHaveBeenCalled();
       expect(racing.getStats().available).toBe(false);
       expect((racing as unknown as { opfsRoot: unknown }).opfsRoot).toBeNull();
       // No probe write, and the good on-disk metadata is untouched.
@@ -1834,16 +1617,9 @@ describe('OPFSStore', () => {
           async getDirectory() {
             getDirEntered = true;
             await dirGate;
-            return {
-              async getDirectoryHandle(_id: string, _opts?: unknown) {
-                return mockFS.mockDirHandle;
-              },
-              async removeEntry() {},
-            };
+            return mockFS.root;
           },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
+          estimate: mockFS.storage.estimate,
         },
       });
 
@@ -1905,7 +1681,7 @@ describe('OPFSStore', () => {
       let probeWrites = 0;
       let probeRemoves = 0;
       let probeGateEntered = false;
-      const dir = mockFS.mockDirHandle;
+      const dir = mockFS.datasetDir;
       const origGetFileHandle = dir.getFileHandle.bind(dir);
       const origRemoveEntry = dir.removeEntry.bind(dir);
       dir.getFileHandle = async (name: string, opts?: { create?: boolean }) => {
@@ -1989,25 +1765,13 @@ describe('OPFSStore', () => {
       const dirGate = new Promise<void>((resolve) => {
         releaseDir = resolve;
       });
-      let rootRemoveEntryCalls = 0;
       vi.stubGlobal('navigator', {
         storage: {
           async getDirectory() {
             await dirGate;
-            return {
-              async getDirectoryHandle(_id: string, _opts?: unknown) {
-                return mockFS.mockDirHandle;
-              },
-              async removeEntry(_name: string, _opts?: unknown) {
-                rootRemoveEntryCalls++;
-                mockFS.files.clear();
-                mockFS.metaFiles.clear();
-              },
-            };
+            return mockFS.root;
           },
-          async estimate() {
-            return { quota: 10e9, usage: 1e9 };
-          },
+          estimate: mockFS.storage.estimate,
         },
       });
 
@@ -2033,7 +1797,7 @@ describe('OPFSStore', () => {
       // shared directory was neither wiped nor recreated, and the data file
       // is untouched. Goes RED if the post-getDirectory disposed check (or
       // dispose()'s pendingClear await) is removed.
-      expect(rootRemoveEntryCalls).toBe(0);
+      expect(mockFS.luxarDir.removeEntry).not.toHaveBeenCalled();
       expect(mockFS.files.size).toBe(filesBefore);
       expect(store.getStats().available).toBe(false);
     });
@@ -2063,3 +1827,89 @@ describe('OPFSStore', () => {
 // The real getBucket has dedicated coverage in
 // tests/unit/cache/opfs-store/buckets.test.ts which imports the production
 // symbol. See delme/test-audit-luxar-viewer.src/cache.md (C1).
+
+// Every OPFS directory the viewer owns lives under ONE namespace dir,
+// `luxar/`, never at the origin root (opfs-store/opfs-root.ts). The fake root
+// REJECTS any other name, so a store that reverted to the flat layout would
+// fail every mount above; these tests additionally pin the exact calls so the
+// failure names the layout rather than a downstream symptom.
+describe('OPFSStore OPFS namespace (luxar/)', () => {
+  let opfs: ReturnType<typeof createFakeOpfsRoot>;
+
+  beforeEach(() => {
+    opfs = createFakeOpfsRoot().install();
+    vi.stubGlobal('crypto', {
+      subtle: {
+        async digest() {
+          return new Uint8Array(32).fill(0xab).buffer;
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('init() creates the dataset directory under luxar/, not at the OPFS root', async () => {
+    const store = new OPFSStore('zarr-cache-abc', 'https://example.com/data.zarr', 1024 * 1024);
+    await store.init();
+    try {
+      expect(store.getStats().available).toBe(true);
+      // The origin root saw exactly one lookup, for the namespace dir.
+      expect(opfs.root.getDirectoryHandle.mock.calls).toEqual([
+        [OPFS_NAMESPACE_DIR, { create: true }],
+      ]);
+      expect(opfs.root.getDirectoryHandle).not.toHaveBeenCalledWith(
+        'zarr-cache-abc',
+        expect.anything()
+      );
+      // The dataset dir was asked of the namespace dir.
+      expect(opfs.luxarDir.getDirectoryHandle).toHaveBeenCalledWith('zarr-cache-abc', {
+        create: true,
+      });
+      expect(opfs.datasetIds).toEqual(['zarr-cache-abc']);
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it('listAll() on a cold origin resolves [] without creating the namespace dir', async () => {
+    await expect(OPFSStore.listAll()).resolves.toEqual([]);
+    expect(opfs.root.getDirectoryHandle).toHaveBeenCalledWith(OPFS_NAMESPACE_DIR, {
+      create: false,
+    });
+    // Still cold: a read-only lookup keeps throwing NotFoundError.
+    await expect(
+      opfs.root.getDirectoryHandle(OPFS_NAMESPACE_DIR, { create: false })
+    ).rejects.toMatchObject({ name: 'NotFoundError' });
+  });
+
+  it('listAll() enumerates zarr-cache-* datasets found under luxar/', async () => {
+    const store = new OPFSStore('zarr-cache-abc', 'https://example.com/data.zarr', 1024 * 1024);
+    await store.init();
+    await store.set('k', new Uint8Array([1, 2, 3]));
+    await store.dispose(); // persists _cache_meta.json
+
+    const datasets = await OPFSStore.listAll();
+    expect(datasets).toHaveLength(1);
+    expect(datasets[0].url).toBe('https://example.com/data.zarr');
+    expect(datasets[0].count).toBe(1);
+  });
+
+  it('clear() removes the dataset directory from luxar/, not from the OPFS root', async () => {
+    const store = new OPFSStore('zarr-cache-abc', 'https://example.com/data.zarr', 1024 * 1024);
+    await store.init();
+    try {
+      await store.set('k', new Uint8Array([1, 2, 3]));
+      await store.clear();
+      expect(opfs.luxarDir.removeEntry).toHaveBeenCalledWith('zarr-cache-abc', {
+        recursive: true,
+      });
+      expect(opfs.files.size).toBe(0);
+      expect(store.getStats().count).toBe(0);
+    } finally {
+      await store.dispose();
+    }
+  });
+});

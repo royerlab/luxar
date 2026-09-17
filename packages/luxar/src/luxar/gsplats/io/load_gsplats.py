@@ -11,6 +11,7 @@ from arbol import aprint
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats import GSplatData
 from luxar.gsplats.io._archive import read_archive_root_attrs, resolve_store_path
+from luxar.typing_utils.format_version import enforce_gsplats_format_version
 
 
 def load_gsplats(
@@ -571,17 +572,11 @@ def read_gsplat_root_stats(root: Any, *, include_stats: bool = True) -> Dict[str
             ".gsplats.zarr store root instead."
         )
 
-    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
-
+    # Shared policy (typing_utils/format_version.py): supported → silent,
+    # same-major newer minor → warn and load, else UnsupportedFormatVersionError
+    # (a ValueError) whose message carries the `migrate-format` remedy.
+    enforce_gsplats_format_version(dict(root.attrs), stacklevel=3)
     format_version = root.attrs.get("format_version")
-    if format_version not in SUPPORTED_FORMAT_VERSIONS:
-        raise ValueError(
-            f"Unsupported format_version: {format_version!r} "
-            f"(expected one of {SUPPORTED_FORMAT_VERSIONS}). The on-disk "
-            f"format is a detached node-tree subtree. Convert legacy "
-            f"v1.x / v2.0 files (and old substitutive directories) with "
-            f"`luxar gsplat migrate-format <input> <output.gsplats.zarr>`."
-        )
 
     if not include_stats:
         return {}

@@ -32,15 +32,15 @@ import { log, Modules } from '../../../utils/log';
 export interface DensityGuardWiringDeps {
   /** `config.densityGuard.enabled`. */
   configEnabled: boolean;
-  /** `LuxarAppOptions.densityGuard` (`?no-density-guard` → false). */
+  /** `LuxarAppOptions.densityGuard` (`?noDensityGuard` → false). */
   option: boolean | undefined;
   config: DensityGuardConfig;
   /**
-   * `LuxarAppOptions.densityCap` (`?density-cap=N`): session-only override of
+   * `LuxarAppOptions.densityCap` (`?densityCap=N`): session-only override of
    * the blendable cap, followed by BOTH consumers (ladder + rung gate).
    */
   capOverride?: number;
-  /** The `?no-lod-energy` flag, passed through to `applyLodFade`. */
+  /** The `?noLodEnergy` flag, passed through to `applyLodFade`. */
   energyComp: boolean;
   sceneManager: {
     readonly scene: THREE.Object3D | null;
@@ -124,7 +124,7 @@ export function summarizeThinning(tracker: ProjectedDensityTracker): {
 
 /**
  * The config the guard actually runs with: the configured slice, or a copy
- * with the blendable cap replaced by a valid `?density-cap=N` override. The
+ * with the blendable cap replaced by a valid `?densityCap=N` override. The
  * non-blendable cap is documented as the TIGHTER of the two ("one element per
  * pixel already saturates a max projection"), so an override below it pulls it
  * down too; an override above it leaves it alone.
@@ -151,7 +151,7 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
     log.info(
       Modules.RENDERER,
       `Density guard cap overridden for this session: ${cfg.capElementsPerPixel} el/px ` +
-        `(configured ${deps.config.capElementsPerPixel}; ?density-cap)`
+        `(configured ${deps.config.capElementsPerPixel}; ?densityCap)`
     );
   }
   const tracker = deps.tracker ?? getProjectedDensityTracker();

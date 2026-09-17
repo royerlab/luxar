@@ -148,7 +148,7 @@ describe('wireDensityGuard', () => {
     expect(wiring.thinning()).toEqual({ nodes: 0, minKeep: 1 });
   });
 
-  it('a ?density-cap override reaches the ladder, the rung gate caps and the readout', () => {
+  it('a ?densityCap override reaches the ladder, the rung gate caps and the readout', () => {
     const deps = makeDeps({ capOverride: 64 });
     const wiring = wireDensityGuard(deps);
     expect(wiring.capElementsPerPixel()).toBe(64);

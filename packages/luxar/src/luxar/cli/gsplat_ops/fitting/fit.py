@@ -322,7 +322,7 @@ def run_fit_volume(
         "--add-method",
         help=f"[--recipe stream] {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
         "greedy ((1-1/e)-optimal) at small N, self_energy (cheap O(N log N)) "
-        "for large parts. radial reveals outward from the bbox centre.",
+        "for large parts. radial reveals outward from the bbox center.",
         rich_help_panel="Per-part LOD",
     ),
     recipe_breakpoints: Optional[str] = typer.Option(

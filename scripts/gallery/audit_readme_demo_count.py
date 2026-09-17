@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Report whether the README's live-demo count matches the gallery being deployed.
 
-The README states how many demos are live on the site, in two places. Nothing
-watched that number: ``sync_demo_counts.py`` owns the *bundled* demo count and
-the sample banner, not this one. It has drifted twice.
+The README states how many demos are live on the site, in two places.
+``scripts/sync_demo_counts.py`` owns those claims: it projects the length of
+``scripts/gallery/manifest.json`` onto them and ``hatch run check-demo-counts``
+fails CI when they drift. What CI cannot see is whether the page actually being
+DEPLOYED agrees with the manifest — a tile dropped by the build, a manifest entry
+without a store — so this audit compares the README's claims against the tiles
+in the built page, at the only moment that fact exists.
 
 Report-only by design, and intended to run at DEPLOY time rather than in CI:
 
@@ -15,10 +19,12 @@ Report-only by design, and intended to run at DEPLOY time rather than in CI:
 Counts tiles in the page about to be deployed, not the currently-live one — that
 is the number the README will be wrong about a minute later.
 
-Claims are located by their surrounding words rather than by line number, so the
-check survives the README being reorganised. If BOTH patterns stop matching it
-says so loudly instead of passing on an empty match set, which is the failure
-mode that lets a guard quietly stop guarding.
+The claim sites are not duplicated here: :func:`find_claims` reads the
+``HOSTED_README_CLAIMS`` table from ``sync_demo_counts.py`` (loaded by path, so
+this stays runnable in a deploy environment without ``luxar`` installed). One
+table, two readers, no way for them to disagree about where the claims live. If
+BOTH patterns stop matching it says so loudly instead of passing on an empty match
+set, which is the failure mode that lets a guard quietly stop guarding.
 
 Usage::
 
@@ -28,8 +34,10 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 from pathlib import Path
+from types import ModuleType
 from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,10 +45,17 @@ README_PATH = REPO_ROOT / "README.md"
 TILE_PATTERN = re.compile(
     r'href="(?:/viewer/index\.html|https://luxarviewer\.dev/)\?src='
 )
-CLAIM_PATTERNS = (
-    (re.compile(r"(\d+)\s+live demos"), "intro banner"),
-    (re.compile(r"(\d+)\s+demos as interactive scenes"), "docs table row"),
-)
+SYNC_SCRIPT = REPO_ROOT / "scripts" / "sync_demo_counts.py"
+
+
+def _load_sync_demo_counts() -> ModuleType:
+    """Load ``scripts/sync_demo_counts.py`` by path (it is a script, not a package)."""
+    spec = importlib.util.spec_from_file_location("sync_demo_counts", SYNC_SCRIPT)
+    if spec is None or spec.loader is None:  # pragma: no cover - broken checkout
+        raise ImportError(f"cannot load {SYNC_SCRIPT}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def count_tiles(page_html: str) -> int:
@@ -48,11 +63,14 @@ def count_tiles(page_html: str) -> int:
 
 
 def find_claims(readme_text: str) -> list[tuple[int, str]]:
-    """Every stated live-demo count, as ``(number, where)``."""
-    claims: list[tuple[int, str]] = []
-    for pattern, where in CLAIM_PATTERNS:
-        for match in pattern.finditer(readme_text):
-            claims.append((int(match.group(1)), where))
+    """Every stated live-demo count, as ``(number, where)``.
+
+    Delegates to the claim table ``sync_demo_counts.py`` owns, so a README
+    rewording is fixed in one place and both readers follow.
+    """
+    claims: list[tuple[int, str]] = _load_sync_demo_counts().find_hosted_claims(
+        readme_text
+    )
     return claims
 
 

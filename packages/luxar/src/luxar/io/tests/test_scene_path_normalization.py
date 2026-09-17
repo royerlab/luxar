@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
-from luxar.io import optimise as optimise_mod
+from luxar.io import optimize as optimize_mod
 
 
 def _write_minimal_scene(compiler) -> None:
@@ -286,7 +286,7 @@ class TestSceneExtensionNormalization:
             artifact.write_bytes(b"partial archive")
             raise OSError("disk full")
 
-        monkeypatch.setattr(optimise_mod, "_package", fail_packaging)
+        monkeypatch.setattr(optimize_mod, "_package", fail_packaging)
         with pytest.raises(ValueError, match="disk full"):
             with LuxarZarrCompiler(requested) as compiler:
                 _write_minimal_scene(compiler)
@@ -309,7 +309,7 @@ class TestSceneExtensionNormalization:
             attempts += 1
             raise OSError("transient packaging failure")
 
-        monkeypatch.setattr(optimise_mod, "_package", fail_once)
+        monkeypatch.setattr(optimize_mod, "_package", fail_once)
         with LuxarZarrCompiler(requested) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points(
@@ -343,7 +343,7 @@ class TestSceneExtensionNormalization:
         def fail_packaging(staging, artifact):
             raise OSError("disk full")
 
-        monkeypatch.setattr(optimise_mod, "_package", fail_packaging)
+        monkeypatch.setattr(optimize_mod, "_package", fail_packaging)
         with LuxarZarrCompiler(requested) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("pts", np.zeros((1, 3), dtype=np.float32))

@@ -99,6 +99,7 @@ FIXTURE_NAMES: list[str] = [
     "test_labelled_partitioned_points.luxar.zarr",
     "test_labelled_points.luxar.zarr",
     "test_layer_4d_gsplats.luxar.zarr",
+    "test_legacy_scene_v0_1.luxar.zarr",
     "test_line_joins.luxar.zarr",
     "test_lines.luxar.zarr",
     "test_lines_blending_modes.luxar.zarr",
@@ -126,10 +127,96 @@ FIXTURE_NAMES: list[str] = [
     "test_points_normal_overlap_reversed.luxar.zarr",
     "test_points_volumetric_reversed.luxar.zarr",
     "test_quantization.luxar.zarr",
+    "test_scene_newer_major.luxar.zarr",
+    "test_scene_older_unsupported.luxar.zarr",
+    "test_scene_unparsable_version.luxar.zarr",
     "test_sharpness_range.luxar.zarr",
     "test_standalone_gsplats.gsplats.zarr",
     "test_uint16_quantization.luxar.zarr",
 ]
+
+
+def _patch_root_header(path: Path, attrs: dict, *, drop: tuple[str, ...] = ()) -> None:
+    """Rewrite a finished store's root header, then re-stamp and re-consolidate.
+
+    ``attrs`` are merged over the root attrs and every key in ``drop`` removed,
+    BEFORE ``compute_content_hashes`` runs — so the store stays internally
+    consistent (the viewer validates cached chunks against ``content_hash``)
+    and its consolidated index (the only thing the viewer enumerates) reflects
+    the patched header. Used to fabricate root headers the current compiler
+    will never write: a legacy 0.1 scene and the three refused-version arms.
+    """
+    root = zarr_open_group(path, mode="r+")
+    for key in drop:
+        if key in root.attrs:
+            del root.attrs[key]
+    root.attrs.update(attrs)
+    compute_content_hashes(root)
+    zarr_consolidate(root)
+
+
+def generate_format_version_fixtures() -> None:
+    """Root headers for the format-version policy's e2e arms.
+
+    One ordinary scene is compiled, then cloned with its header patched
+    (``_patch_root_header``) into four stores the viewer's
+    ``format-version.spec.ts`` opens directly:
+
+    * ``test_legacy_scene_v0_1`` — the 0.1 header (``luxar_version`` only, the
+      0.2 keys removed): what every published pre-0.2 store looks like, incl.
+      the DESI Zenodo record. Must render, silently.
+    * ``test_scene_newer_major`` — ``format_version: "9.9"``: refused.
+    * ``test_scene_unparsable_version`` — ``format_version: "abc"``: refused.
+    * ``test_scene_older_unsupported`` — ``format_version: "0.0"``: refused.
+
+    The refused arms surface on the error overlay naming the version; the
+    policy is `luxar/typing_utils/format_version.py` mirrored by
+    `src/data/format-version.ts`.
+    """
+    with asection("Generating format-version header fixtures"):
+        base = FIXTURES_DIR / "test_format_version_base.luxar.zarr"
+        rng = np.random.default_rng(7)
+        positions = rng.uniform(0.0, 100.0, size=(400, 3)).astype(np.float32)
+        colors = rng.uniform(0.2, 1.0, size=(400, 3)).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um", display=True, range=(0.0, 100.0)),
+                Dimension("y", unit="um", display=True, range=(0.0, 100.0)),
+                Dimension("z", unit="um", display=True, range=(0.0, 100.0)),
+            ]
+        )
+        with LuxarZarrCompiler(
+            base,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=COMPRESSOR_DISABLED,
+            float16_allowed=FLOAT16_ALLOWED,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points("cloud", positions, colors=colors, radii=1.5)
+
+        variants: dict[str, tuple[dict, tuple[str, ...]]] = {
+            "test_legacy_scene_v0_1.luxar.zarr": (
+                {"luxar_version": "0.1"},
+                ("format_version", "format_type", "luxar_software_version"),
+            ),
+            "test_scene_newer_major.luxar.zarr": ({"format_version": "9.9"}, ()),
+            "test_scene_unparsable_version.luxar.zarr": (
+                {"format_version": "abc"},
+                (),
+            ),
+            "test_scene_older_unsupported.luxar.zarr": (
+                {"format_version": "0.0"},
+                (),
+            ),
+        }
+        for name, (attrs, drop) in variants.items():
+            output = FIXTURES_DIR / name
+            if output.exists():
+                shutil.rmtree(output)
+            shutil.copytree(base, output)
+            _patch_root_header(output, attrs, drop=drop)
+            aprint(f"  Created {output} ({attrs}, dropped {list(drop)})")
+        shutil.rmtree(base)
 
 
 def generate_broadcasting_test() -> None:
@@ -4992,6 +5079,9 @@ def main() -> None:
 
         generate_mesh_nd_test()
         generate_mesh_reveal_ladder_test()
+        aprint("")
+
+        generate_format_version_fixtures()
         aprint("")
 
         aprint("=" * 70)

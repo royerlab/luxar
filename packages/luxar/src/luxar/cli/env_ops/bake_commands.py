@@ -44,7 +44,7 @@ def bake_command(
     """Capture the scene-derived environment and store it as environment/faces.
 
     Serves the store and the built viewer, drives a headless browser to
-    ?bake-env, collects the six half-float cube faces and (by default) attaches
+    ?bakeEnv, collects the six half-float cube faces and (by default) attaches
     them with `luxar env attach`. Needs a development checkout: the driver is the
     viewer's Playwright (packages/luxar-viewer/scripts/bake-env.mjs).
     """

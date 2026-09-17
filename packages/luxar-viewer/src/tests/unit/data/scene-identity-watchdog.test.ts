@@ -13,7 +13,7 @@ import { SceneIdentityWatchdog, canonicalJson } from '../../../data/scene-identi
 import { clearNotifierBackend, setNotifierBackend } from '../../../utils/cross-layer/notifier';
 
 const HASH = 'abc123';
-const ATTRS = JSON.stringify({ content_hash: HASH, luxar_version: '0.1' });
+const ATTRS = JSON.stringify({ content_hash: HASH, format_version: '0.2' });
 const OTHER_ATTRS = JSON.stringify({ content_hash: 'zzz999' });
 
 type FetchStub = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;

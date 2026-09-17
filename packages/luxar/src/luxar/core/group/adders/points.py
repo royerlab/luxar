@@ -363,7 +363,7 @@ def add_points_impl(
                     colors=colors_for_energy,
                     scalars=scalars_for_energy,
                     salience_kind=additive_spec.get("salience_kind", "size"),
-                    reveal_centre=additive_spec.get("reveal_centre"),
+                    reveal_center=additive_spec.get("reveal_center"),
                     spatial_dims=resolve_reveal_spatial_dims(
                         additive_spec, scene, ndim
                     ),
@@ -837,7 +837,7 @@ def add_points_substitutive_lod_wrapper_impl(
         resolve_lod_ladder,
     )
     from ..lod.points import resolve_additive_axis_points
-    from ..lod.reveal import is_reveal_additive_method, preflight_reveal_centre
+    from ..lod.reveal import is_reveal_additive_method, preflight_reveal_center
 
     # The coarse gsplat children never carry image_labels, so only the original
     # Points child must refuse its additive ladder when image_labels is present.
@@ -859,7 +859,7 @@ def add_points_substitutive_lod_wrapper_impl(
         slices=slices,
     )
     reveal_note = (
-        " Coarse levels use self_energy ordering, so reveal_centre is not applied."
+        " Coarse levels use self_energy ordering, so reveal_center is not applied."
         if coarse_additive is not None
         and is_reveal_additive_method(str(coarse_additive.get("method")))
         else ""
@@ -880,9 +880,9 @@ def add_points_substitutive_lod_wrapper_impl(
         ),
     )
     # Same reason as the channel check above: the finest child is written LAST, so
-    # a reveal_centre that does not match the DERIVED shell axes would otherwise
+    # a reveal_center that does not match the DERIVED shell axes would otherwise
     # raise once every coarse level is already on disk.
-    preflight_reveal_centre(finest_additive, group._find_scene(), pos_arr, "positions")
+    preflight_reveal_center(finest_additive, group._find_scene(), pos_arr, "positions")
     compression_factor = int(spec["compression_factor"])
 
     # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake

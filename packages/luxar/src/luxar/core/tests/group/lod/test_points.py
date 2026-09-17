@@ -125,14 +125,14 @@ class TestRadialOrderPoints:
         "bad", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"]
     )
     def test_non_finite_positions_are_refused(self, bad: float) -> None:
-        """Bad DATA is the same silent no-op as a bad ``reveal_centre``.
+        """Bad DATA is the same silent no-op as a bad ``reveal_center``.
 
         Measured before the guard: this returned the identity permutation — the
         distances all came back non-finite, compared equal under the stable
         argsort, and the ladder was emitted in INPUT order. A streaming node that
         fills in at random instead of growing outward, with nothing to say why.
         The three geometries also DISAGREED (Lines raised, blaming a
-        ``reveal_centre`` the caller never passed), so this is a symmetry fix as
+        ``reveal_center`` the caller never passed), so this is a symmetry fix as
         much as a validation one.
         """
         pts = self._PTS.copy()
@@ -160,7 +160,7 @@ class TestRadialOrderPoints:
 
     def test_orders_innermost_first(self) -> None:
         perm, counts = compute_additive_order_points(
-            self._PTS, method="radial", reveal_centre=[0.0, 0.0, 0.0]
+            self._PTS, method="radial", reveal_center=[0.0, 0.0, 0.0]
         )
         assert perm.tolist() == [2, 0, 1, 3]
         assert counts == [], "radial must leave slicing to the breakpoint vocabularies"
@@ -176,7 +176,7 @@ class TestRadialOrderPoints:
         assert pos[perm[0], 0] == 12.0
 
         pinned, _ = compute_additive_order_points(
-            pos, method="radial", reveal_centre=[0.0]
+            pos, method="radial", reveal_center=[0.0]
         )
         assert pos[pinned[0], 0] == 10.0
 
@@ -207,7 +207,7 @@ class TestRadialOrderPoints:
             [[0.0, 50.0, 0.0], [9.0, 0.0, 0.0], [1.0, 40.0, 0.0]], dtype=np.float32
         )
         perm, _ = compute_additive_order_points(
-            pos, method="radial", reveal_centre=[0.0], spatial_dims=[0]
+            pos, method="radial", reveal_center=[0.0], spatial_dims=[0]
         )
         assert pos[perm, 0].tolist() == [0.0, 1.0, 9.0]
 
@@ -236,7 +236,7 @@ class TestRadialOrderPoints:
         DOUBLE-COUNTS that axis in the distance, an empty list scores every
         element 0.0 — degrading the ordering to input order with no indication —
         and a fractional index is TRUNCATED (`[1.9]` -> axis 1), measuring a
-        different column than the one named and, with `reveal_centre`, pairing
+        different column than the one named and, with `reveal_center`, pairing
         that centre coordinate with the wrong axis.
         """
         with pytest.raises(ValueError, match=match):
@@ -269,7 +269,7 @@ class TestRadialOrderPoints:
     def test_wrong_length_centre_raises(self) -> None:
         with pytest.raises(ValueError, match="one coordinate per spatial axis"):
             compute_additive_order_points(
-                self._PTS, method="radial", reveal_centre=[0.0, 0.0]
+                self._PTS, method="radial", reveal_center=[0.0, 0.0]
             )
 
     def test_nested_spatial_dims_raise_rather_than_misorder(self) -> None:
@@ -298,7 +298,7 @@ class TestRadialOrderPoints:
         """
         with pytest.raises(ValueError, match="must be finite"):
             compute_additive_order_points(
-                self._PTS, method="radial", reveal_centre=[bad, 0.0, 0.0]
+                self._PTS, method="radial", reveal_center=[bad, 0.0, 0.0]
             )
 
     def test_spec_rejects_a_non_finite_centre_before_anything_is_written(self) -> None:
@@ -312,7 +312,7 @@ class TestRadialOrderPoints:
 
         with pytest.raises(ValueError, match="must be finite"):
             resolve_additive_axis_points(
-                {"method": "radial", "reveal_centre": [float("nan"), 0.0, 0.0]}
+                {"method": "radial", "reveal_center": [float("nan"), 0.0, 0.0]}
             )
 
     def test_works_in_2d_unlike_the_samplers(self) -> None:
@@ -320,7 +320,7 @@ class TestRadialOrderPoints:
         # and 2D scenes are a first-class authoring path.
         pos = np.array([[3.0, 1.0], [1.0, 2.0], [5.0, 3.0]], dtype=np.float32)
         perm, _ = compute_additive_order_points(
-            pos, method="radial", reveal_centre=[0.0, 0.0]
+            pos, method="radial", reveal_center=[0.0, 0.0]
         )
         assert pos[perm, 0].tolist() == [1.0, 3.0, 5.0]
 
@@ -403,7 +403,7 @@ class TestMakeAdditiveLodPoints:
         pos[:, 0] = np.linspace(0.0, 39.0, 40)
 
         pinned = make_additive_lod_points(
-            pos, method="radial", n_lods=4, reveal_centre=[0.0]
+            pos, method="radial", n_lods=4, reveal_center=[0.0]
         )
         assert float(pos[pinned[0], 0].max()) < 10.0
 
@@ -419,7 +419,7 @@ class TestMakeAdditiveLodPoints:
         pos[:, 1] = np.linspace(500.0, 0.0, 40)  # opposing, much larger spread
 
         restricted = make_additive_lod_points(
-            pos, method="radial", n_lods=4, reveal_centre=[0.0], spatial_dims=[0]
+            pos, method="radial", n_lods=4, reveal_center=[0.0], spatial_dims=[0]
         )
         assert float(pos[restricted[0], 0].max()) < 10.0
 
@@ -430,7 +430,7 @@ class TestMakeAdditiveLodPoints:
 
 
 class TestResolveRevealKnobs:
-    """The RESOLVER's validation of ``reveal_centre`` / ``spatial_dims``.
+    """The RESOLVER's validation of ``reveal_center`` / ``spatial_dims``.
 
     This is the outer half of a deliberate defense-in-depth pair — the resolver
     rejects early (before any group is written, which matters because a
@@ -442,36 +442,36 @@ class TestResolveRevealKnobs:
 
     def test_valid_radial_spec_returns_both_knobs(self) -> None:
         spec = resolve_additive_axis_points(
-            {"method": "radial", "reveal_centre": [1, 2, 3], "spatial_dims": [0, 1, 2]}
+            {"method": "radial", "reveal_center": [1, 2, 3], "spatial_dims": [0, 1, 2]}
         )
         assert spec is not None
-        assert spec["reveal_centre"] == [1.0, 2.0, 3.0]
+        assert spec["reveal_center"] == [1.0, 2.0, 3.0]
         assert spec["spatial_dims"] == [0, 1, 2]
-        assert all(isinstance(c, float) for c in spec["reveal_centre"])
+        assert all(isinstance(c, float) for c in spec["reveal_center"])
         assert all(isinstance(d, int) for d in spec["spatial_dims"])
 
     def test_defaults_are_none_and_present(self) -> None:
         """Absent knobs must still be PRESENT as None — a consumer reading
-        ``spec["reveal_centre"]`` must not care which branch produced the dict."""
+        ``spec["reveal_center"]`` must not care which branch produced the dict."""
         for spec in (
             resolve_additive_axis_points(True),
             resolve_additive_axis_points({"method": "radial"}),
         ):
             assert spec is not None
-            assert spec["reveal_centre"] is None
+            assert spec["reveal_center"] is None
             assert spec["spatial_dims"] is None
 
     @pytest.mark.parametrize(
         ("spec", "match"),
         [
-            ({"method": "radial", "reveal_centre": []}, "must not be empty"),
+            ({"method": "radial", "reveal_center": []}, "must not be empty"),
             ({"method": "radial", "spatial_dims": []}, "must not be empty"),
             ({"method": "radial", "spatial_dims": [0, 0]}, "must not repeat"),
             ({"method": "radial", "spatial_dims": [-1]}, "non-negative"),
             # `int(1.9)` is 1: without this the spec resolver stored axis 1 and
             # the node was built measuring a column the caller never named.
             ({"method": "radial", "spatial_dims": [1.9]}, "integer column indices"),
-            ({"method": "random", "reveal_centre": [0.0]}, "only to a\n? *reveal"),
+            ({"method": "random", "reveal_center": [0.0]}, "only to a\n? *reveal"),
             ({"method": "random", "spatial_dims": [0]}, "only to a\n? *reveal"),
             # One coordinate per shell axis. Deferring this to the scorer left a
             # substitutive wrapper group (and its coarse children) on disk before
@@ -479,7 +479,7 @@ class TestResolveRevealKnobs:
             (
                 {
                     "method": "radial",
-                    "reveal_centre": [0.0, 0.0, 0.0],
+                    "reveal_center": [0.0, 0.0, 0.0],
                     "spatial_dims": [0, 1],
                 },
                 "3 coordinates but spatial_dims lists 2 axes",
@@ -520,7 +520,7 @@ class TestResolveRevealKnobs:
                     substitutive_lod={"levels": 2, "compression_factor": 4},
                     additive_lod={
                         "method": "radial",
-                        "reveal_centre": [0.0, 0.0, 0.0],
+                        "reveal_center": [0.0, 0.0, 0.0],
                         "spatial_dims": [0, 1],
                     },
                 )
@@ -548,7 +548,7 @@ class TestResolveRevealKnobs:
                     substitutive_lod={"levels": 2, "compression_factor": 4},
                     additive_lod={
                         "method": "radial",
-                        "reveal_centre": [0.0, 0.0, 7.0],
+                        "reveal_center": [0.0, 0.0, 7.0],
                     },
                 )
         assert not (output / "p").exists()
@@ -566,7 +566,7 @@ class TestResolveRevealKnobs:
                 "p",
                 positions,
                 substitutive_lod={"levels": 2, "compression_factor": 4},
-                additive_lod={"method": "radial", "reveal_centre": [0.5, 0.5]},
+                additive_lod={"method": "radial", "reveal_center": [0.5, 0.5]},
             )
         assert (output / "p" / "child_2").exists()
 

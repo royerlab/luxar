@@ -14,8 +14,8 @@ describe('parseLodBiasArms', () => {
   it('builds distinct URL and result-key arms for the requested sweep', () => {
     expect(parseLodBiasArms('1, 2,4,2')).toEqual([
       { value: 1, scenarioSuffix: '', query: '' },
-      { value: 2, scenarioSuffix: '-lod-bias-2', query: '&lod-bias=2' },
-      { value: 4, scenarioSuffix: '-lod-bias-4', query: '&lod-bias=4' },
+      { value: 2, scenarioSuffix: '-lod-bias-2', query: '&lodBias=2' },
+      { value: 4, scenarioSuffix: '-lod-bias-4', query: '&lodBias=4' },
     ]);
   });
 

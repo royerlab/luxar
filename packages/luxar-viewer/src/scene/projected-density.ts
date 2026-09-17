@@ -249,7 +249,7 @@ export class ProjectedDensityTracker {
   }
 }
 
-/** Config master switch AND the per-session option (`?no-density-guard` → false). */
+/** Config master switch AND the per-session option (`?noDensityGuard` → false). */
 export function resolveDensityGuardEnabled(
   configEnabled: boolean,
   option: boolean | undefined

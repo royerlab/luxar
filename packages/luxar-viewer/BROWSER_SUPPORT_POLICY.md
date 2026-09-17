@@ -24,7 +24,7 @@ highest precedence first:
 
 1. **URL parameter**: `?renderer=webgl` or `?renderer=webgpu`.
    `webgl2` is accepted as an alias for `webgl`. Add
-   `?webgpu-force-webgl` alongside `?renderer=webgpu` to construct
+   `?webgpuForceWebgl` alongside `?renderer=webgpu` to construct
    `WebGPURenderer({ forceWebGL: true })`; Luxar still uses TSL
    `NodeMaterial` shaders and the WebGPURenderer API surface, while Three.js
    routes draw calls through its internal WebGL2 backend.
@@ -42,7 +42,7 @@ Common invocations:
 http://localhost:5173/                   # default WebGL2
 http://localhost:5173/?renderer=webgl    # pin WebGL2 explicitly
 http://localhost:5173/?renderer=webgpu   # opt into WebGPU + TSL
-http://localhost:5173/?renderer=webgpu&webgpu-force-webgl
+http://localhost:5173/?renderer=webgpu&webgpuForceWebgl
                                          # WebGPURenderer + TSL via WebGL2 backend
 ```
 

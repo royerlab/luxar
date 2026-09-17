@@ -292,7 +292,7 @@ interface ScenarioResult {
    * True when `apiSurface === 'webgpu'` but WebGPURenderer is
    * dispatching through its internal WebGL2 backend — either because
    * the host has no real WebGPU adapter or because
-   * `?webgpu-force-webgl` is set. Consumers benchmarking native
+   * `?webgpuForceWebgl` is set. Consumers benchmarking native
    * WebGPU specifically should discount runs where this is true.
    */
   isWebGLBackend: boolean;
@@ -390,7 +390,7 @@ async function measureScenario(
   // render at different (and shifting) resolutions — measured live in the
   // G1 gate, where it invalidated a whole run. A perf bench must measure
   // the primitive, not the adaptive controller.
-  // `?perf-timestamp` opts WebGPURenderer into `{trackTimestamp: true}`
+  // `?perfTimestamp` opts WebGPURenderer into `{trackTimestamp: true}`
   // so we can read per-frame GPU duration via
   // `renderer.resolveTimestampsAsync('render')` below. On WebGL or on a
   // WebGPU adapter without the `timestamp-query` feature, the renderer
@@ -403,8 +403,8 @@ async function measureScenario(
   // measureScenario try/catch upstream.
   const navUrl =
     scn.type === 'zarr'
-      ? `/?src=${scn.url}&renderer=${backend}&debug&perf-timestamp&dpr=1${primitiveParam}`
-      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perf-timestamp&dpr=1${primitiveParam}`;
+      ? `/?src=${scn.url}&renderer=${backend}&debug&perfTimestamp&dpr=1${primitiveParam}`
+      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perfTimestamp&dpr=1${primitiveParam}`;
   await page.goto(navUrl, { timeout: 300_000 });
   await waitForLuxarReady(page, 120_000);
 
@@ -478,7 +478,7 @@ async function measureScenario(
   // `apiSurface` distinguishes the renderer *class* (WebGLRenderer vs
   // WebGPURenderer), but a WebGPURenderer can be running its internal
   // WebGL2 fallback backend (real WebGPU adapter unavailable, or
-  // `?webgpu-force-webgl`). For benchmarking native-WebGPU performance
+  // `?webgpuForceWebgl`). For benchmarking native-WebGPU performance
   // specifically, we also surface `isWebGLBackend` so a consumer can
   // discount fallback runs.
   const probe = await page.evaluate((onlySynthetic: boolean) => {
@@ -726,7 +726,7 @@ async function measureScenario(
   const frameMs = statsOf(timing.frameDtMs);
 
   // GPU timestamp-query support is best-effort: the renderer was
-  // constructed with `trackTimestamp: true` (via `?perf-timestamp`),
+  // constructed with `trackTimestamp: true` (via `?perfTimestamp`),
   // but the feature only fires when the WebGPU adapter exposes
   // `timestamp-query`. On WebGL2 / WebGL-backed WebGPURenderer / older
   // GPUs the supportsTimestamp probe is false and we fall through to

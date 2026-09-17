@@ -51,7 +51,7 @@ object is never created, so there is zero overhead in production.
 | `window.__luxarBuild` | `BuildInfo` | Unconditional pre-initialization build identity: version, commit, build time, and whether the bundle was stamped. |
 | `app` | `LuxarApp` | The application instance. |
 | `consoleInterceptor` | `ConsoleInterceptor` | Captures all console output for replay. |
-| `version` | `string` | Build-stamp version from `buildInfo().version`: a CalVer in a built bundle, or `"unknown"` in an unstamped development or embedder context. |
+| `version` | `string` | `VIEWER_VERSION` (`src/version.ts`): the `package.json` version injected at build time (a semver-normalized CalVer such as `2026.6.5`), or `0.0.0-dev` in a consumer that bundles `src/` without the define. Commit and build time live on `window.__luxarBuild`. |
 
 ### Runtime components (from `installDebugInterface()`, available once `runtimeReady` is `true`)
 

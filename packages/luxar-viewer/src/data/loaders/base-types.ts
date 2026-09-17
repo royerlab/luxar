@@ -8,6 +8,7 @@
  */
 
 import type * as zarr from '../zarr';
+import type { OrderingMethodName } from '../../types/format-contract';
 import type * as THREE from 'three';
 import type { DimensionMetadata } from '../../types/dims';
 import type { UpdateSession } from '../../profiling/update-profiler';
@@ -84,7 +85,7 @@ export interface BaseChunkSpatialIndex {
   /** Base metadata fields shared across all types */
   metadata: {
     ndim: number;
-    ordering: 'morton' | 'hilbert' | 'none';
+    ordering: OrderingMethodName;
   };
 }
 

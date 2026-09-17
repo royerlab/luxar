@@ -1,5 +1,5 @@
 /**
- * `?bake-env`: capture the scene-derived environment once and hand it back as the
+ * `?bakeEnv`: capture the scene-derived environment once and hand it back as the
  * container `luxar env attach` writes into the store.
  *
  * The capture is the very same `SceneEnvironment.captureScene` a live `scene` source

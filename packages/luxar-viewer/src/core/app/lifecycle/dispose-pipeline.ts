@@ -186,7 +186,7 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   safeDispose('themeManager', () => ThemeManager.disposeInstance());
   safeDispose('cleanupUI', () => cleanupUI());
   // App-level event listeners (focus, visibility, beforeunload,
-  // open-dataset-browser, picking-system subscriptions).
+  // luxar-open-dataset-browser, picking-system subscriptions).
   safeDispose('events', () => ports.events.dispose());
 
   // Process-global singletons that hold cross-app state. Resetting them on

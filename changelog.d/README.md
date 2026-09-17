@@ -22,6 +22,23 @@ meanwhile cancelled it. The merge daemon now brings exactly one PR up to date at
 time, so each rebased head gets an uninterrupted CI window.
 ```
 
+**Compatibility events carry a title prefix.** A fragment announcing that a
+public name now emits a deprecation notice starts its title with `Deprecated:`;
+one that removes a name whose window has closed starts with `Removed:`; one that
+changes something incompatibly without a window (a format major bump, say) starts
+with `Breaking:`. Ordinary entries carry no prefix. The prefixes are what lets a
+reader scan a release's notes for compatibility events, and the
+[Compatibility & Deprecation Policy](../docs/guides/user/COMPATIBILITY_POLICY.md)
+defines when each applies. For example:
+
+```markdown
+#### Deprecated: `luxar.io.optimise_store` in favour of `optimize_store`
+
+The British spelling stays importable as an alias that warns (`DeprecationWarning`,
+"deprecated since Luxar 2026.10.01 … removed after 2027.04.01") and forwards to the
+American one, which is now the documented name.
+```
+
 Name the file after the PR number when you know it (e.g. `1490.md`); an issue number
 or a short slug also works. Numeric names are folded in ascending order.
 

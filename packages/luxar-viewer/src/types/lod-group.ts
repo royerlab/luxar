@@ -1,4 +1,5 @@
 import type { BlendingMode } from './blending';
+import type { LodSelectorName } from './format-contract';
 /**
  * LOD-kind Group type definitions for luxar-viewer.
  *
@@ -56,8 +57,9 @@ export interface LODGroupMetadata {
    * doc): `'screen-area'` = literal screen-area fractions (what derived
    * ladders stamp), `'coverage'` = the legacy diagonal metric. An unknown /
    * missing value falls back to `'coverage'` so older stores keep rendering.
+   * Single-sourced from `format-contract/contract.yaml::lod_selectors`.
    */
-  selector: 'coverage' | 'screen-area';
+  selector: LodSelectorName;
 
   /**
    * Initial active level index for the manual-override UI. Stored 0-based

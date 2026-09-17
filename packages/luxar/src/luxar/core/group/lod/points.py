@@ -101,7 +101,7 @@ def compute_additive_order_points(
     method: PointsMethodName = DEFAULT_METHOD,
     n_lods: int = DEFAULT_N_LODS,
     seed: Optional[int] = None,
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> Tuple[NDArray[np.intp], List[int]]:
     """Compute an additive ordering permutation over Points.
@@ -117,7 +117,7 @@ def compute_additive_order_points(
             and ``radial`` return a single permutation; the slicing into LOD
             levels happens later in :func:`make_additive_lod_points`.
         seed: For ``random``; ignored by others.
-        reveal_centre: ``radial`` only — centre of the shells, defaulting to the
+        reveal_center: ``radial`` only — centre of the shells, defaulting to the
             spatial bounding-box centre (NOT the scene origin, so a dataset far
             from the origin still grows from its own middle). One coordinate per
             spatial axis.
@@ -180,7 +180,7 @@ def compute_additive_order_points(
         # those, so the caller does the slicing.
         return (
             np.argsort(
-                radial_element_score(positions, reveal_centre, spatial_dims),
+                radial_element_score(positions, reveal_center, spatial_dims),
                 kind="stable",
             ).astype(np.intp),
             [],
@@ -365,7 +365,7 @@ def make_additive_lod_points(
     colors: Optional[NDArray] = None,
     scalars: Optional[NDArray] = None,
     salience_kind: Literal["size", "energy"] = "size",
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> List[NDArray[np.intp]]:
     """Compute per-LOD-level index arrays for Points.
@@ -416,7 +416,7 @@ def make_additive_lod_points(
             sorts by radius alone (legacy). ``'energy'`` sorts by
             ``luminance × radius**3`` — the same per-element score the
             ``energy:`` breakpoints accumulate against.
-        reveal_centre: For ``method='radial'`` — centre of the concentric
+        reveal_center: For ``method='radial'`` — centre of the concentric
             shells, defaulting to the spatial bounding-box centre.
         spatial_dims: For ``method='radial'`` — the position columns the
             shell distance is measured over, defaulting to the columns with
@@ -448,7 +448,7 @@ def make_additive_lod_points(
             method=method,
             n_lods=n_lods,
             seed=seed,
-            reveal_centre=reveal_centre,
+            reveal_center=reveal_center,
             spatial_dims=spatial_dims,
         )
 

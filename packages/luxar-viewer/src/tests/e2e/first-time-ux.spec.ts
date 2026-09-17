@@ -187,7 +187,7 @@ test.describe('First-Time User Experience', () => {
    * Must be `waitForLuxarReady`, NOT `__luxarDebug.app`: the latter is
    * published at construction, before the input handler binds `O` and before
    * dataset routing decides whether the browser should open automatically.
-   * `&no-opfs` because neither test asserts
+   * `&noOpfs` because neither test asserts
    * the L2 OPFS cache tier and automated Chromium's OPFS stalls systemically
    * (10 s per op — issue #1645), which can eat the readiness budget before
    * the circuit breaker trips. The 30 s bound (vs the 45 s default) only helps
@@ -195,7 +195,7 @@ test.describe('First-Time User Experience', () => {
    * instead of the whole test timeout.
    */
   async function openViewerReadyForShortcut(page: Page): Promise<Locator> {
-    await page.goto(`/?src=${TEST_4D_DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${TEST_4D_DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page, 30000);
 
     const browser = page.locator('.luxar-dataset-browser').first();
@@ -216,7 +216,7 @@ test.describe('First-Time User Experience', () => {
     // Regression guard: the Escape path must route through
     // `DatasetBrowser.close()` so `onClose` fires and
     // `LuxarApp.datasetBrowser` is cleared. Without that, the
-    // `open-dataset-browser` toggle still sees `hasOpenBrowser() === true`
+    // `luxar-open-dataset-browser` toggle still sees `hasOpenBrowser() === true`
     // and the next `O` closes a phantom browser instead of reopening
     // the real one.
     const browser = await openViewerReadyForShortcut(page);

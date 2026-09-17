@@ -29,9 +29,9 @@ The main orchestrator. Owns:
 - **Button construction** — one button per `ControlRailItem` (passed at construction)
 - **Active-state refresh** — event-driven (click/routed keydown/luxar-layers-changed/luxar-control-mode-changed), rAF-debounced, reads each item's `isActive()` or `openSelector` to highlight open panels
 - **Idle-dim behavior** — wakes on pointer movement (expanded) or hover (collapsed/fullscreen); schedules sleep after `IDLE_MS` (2600ms) unless `:hover` or `:focus-within`
-- **Collapse/expand** — chevron handle at the bottom; persisted to localStorage
+- **Collapse/expand** — chevron handle at the bottom; persisted to localStorage under `StorageKeys.controlRailCollapsed` (`luxar.controlRail.collapsed`)
 - **Fullscreen sync** — hides the rail (hover-to-reveal) when `document.fullscreenElement` exists
-- **First-run hint** — localStorage-gated one-time nudge that says "Hover these controls" when hover is available and "Tap these controls (hold for options)" otherwise; auto-fades after 10s and dismisses on any click or handled routed keypress
+- **First-run hint** — localStorage-gated (`StorageKeys.controlRailHintDismissed`, `luxar.controlRail.hintDismissed`) one-time nudge that says "Hover these controls" when hover is available and "Tap these controls (hold for options)" otherwise; auto-fades after 10s and dismisses on any click or handled routed keypress
 - **Docked footer** — optional element (e.g. the performance readout) inserted above the collapse handle
 - **Overlay delegation** — opens flyouts/popovers via `RailOverlay` and re-syncs active-state when the overlay changes
 - **Routed-keydown reception** — `InputHandler` calls `handleRoutedKeyDown()` after it handles a key; dismisses the hint and schedules a refresh

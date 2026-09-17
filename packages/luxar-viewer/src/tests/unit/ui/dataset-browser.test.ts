@@ -254,8 +254,8 @@ describe('DatasetBrowser', () => {
       await vi.waitFor(() => {
         expect(container.querySelector('.luxar-dataset-browser__manual-entry')).not.toBeNull();
       });
-      expect(container.querySelector('#manual-path')).not.toBeNull();
-      expect(container.querySelector('#manual-load')).not.toBeNull();
+      expect(container.querySelector('#luxar-dataset-browser-manual-path')).not.toBeNull();
+      expect(container.querySelector('#luxar-dataset-browser-manual-load')).not.toBeNull();
     });
 
     it('filters entries live via the search bar (case-insensitive substring)', async () => {
@@ -836,11 +836,15 @@ describe('DatasetBrowser', () => {
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
       await vi.waitFor(() => {
-        expect(container.querySelector('#manual-path')).not.toBeNull();
+        expect(container.querySelector('#luxar-dataset-browser-manual-path')).not.toBeNull();
       });
 
-      const input = container.querySelector('#manual-path') as HTMLInputElement;
-      const loadBtn = container.querySelector('#manual-load') as HTMLButtonElement;
+      const input = container.querySelector(
+        '#luxar-dataset-browser-manual-path'
+      ) as HTMLInputElement;
+      const loadBtn = container.querySelector(
+        '#luxar-dataset-browser-manual-load'
+      ) as HTMLButtonElement;
 
       input.value = 'mydata.zarr';
       loadBtn.click();
@@ -857,11 +861,15 @@ describe('DatasetBrowser', () => {
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
       await vi.waitFor(() => {
-        expect(container.querySelector('#manual-path')).not.toBeNull();
+        expect(container.querySelector('#luxar-dataset-browser-manual-path')).not.toBeNull();
       });
 
-      const input = container.querySelector('#manual-path') as HTMLInputElement;
-      const loadBtn = container.querySelector('#manual-load') as HTMLButtonElement;
+      const input = container.querySelector(
+        '#luxar-dataset-browser-manual-path'
+      ) as HTMLInputElement;
+      const loadBtn = container.querySelector(
+        '#luxar-dataset-browser-manual-load'
+      ) as HTMLButtonElement;
 
       input.value = 'https://other.example/dataset.zarr';
       loadBtn.click();
@@ -878,12 +886,14 @@ describe('DatasetBrowser', () => {
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
       await vi.waitFor(() => {
-        expect(container.querySelector('#manual-path')).not.toBeNull();
+        expect(container.querySelector('#luxar-dataset-browser-manual-path')).not.toBeNull();
       });
 
-      const input = container.querySelector('#manual-path') as HTMLInputElement;
+      const input = container.querySelector(
+        '#luxar-dataset-browser-manual-path'
+      ) as HTMLInputElement;
       input.value = 'mydata.zarr';
-      (container.querySelector('#manual-load') as HTMLButtonElement).click();
+      (container.querySelector('#luxar-dataset-browser-manual-load') as HTMLButtonElement).click();
 
       expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/mydata.zarr');
       expect(container.querySelector('#luxar-dataset-browser')).not.toBeNull();
@@ -897,11 +907,15 @@ describe('DatasetBrowser', () => {
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
       await vi.waitFor(() => {
-        expect(container.querySelector('#manual-path')).not.toBeNull();
+        expect(container.querySelector('#luxar-dataset-browser-manual-path')).not.toBeNull();
       });
 
-      const input = container.querySelector('#manual-path') as HTMLInputElement;
-      const loadBtn = container.querySelector('#manual-load') as HTMLButtonElement;
+      const input = container.querySelector(
+        '#luxar-dataset-browser-manual-path'
+      ) as HTMLInputElement;
+      const loadBtn = container.querySelector(
+        '#luxar-dataset-browser-manual-load'
+      ) as HTMLButtonElement;
 
       input.value = '   '; // whitespace only — `.trim()` empties it.
       loadBtn.click();
@@ -916,10 +930,12 @@ describe('DatasetBrowser', () => {
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
       await vi.waitFor(() => {
-        expect(container.querySelector('#manual-path')).not.toBeNull();
+        expect(container.querySelector('#luxar-dataset-browser-manual-path')).not.toBeNull();
       });
 
-      const input = container.querySelector('#manual-path') as HTMLInputElement;
+      const input = container.querySelector(
+        '#luxar-dataset-browser-manual-path'
+      ) as HTMLInputElement;
       input.value = 'foo.zarr';
 
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
@@ -1018,12 +1034,14 @@ describe('DatasetBrowser', () => {
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
       await vi.waitFor(() => {
-        expect(container.querySelector('#manual-path')).not.toBeNull();
+        expect(container.querySelector('#luxar-dataset-browser-manual-path')).not.toBeNull();
       });
 
-      const label = container.querySelector('label[for="manual-path"]');
+      const label = container.querySelector('label[for="luxar-dataset-browser-manual-path"]');
       expect(label).not.toBeNull();
-      const input = container.querySelector('#manual-path') as HTMLInputElement;
+      const input = container.querySelector(
+        '#luxar-dataset-browser-manual-path'
+      ) as HTMLInputElement;
       expect(input.getAttribute('aria-label')).toBe('Dataset path');
     });
 
@@ -1540,13 +1558,13 @@ describe('DatasetBrowser', () => {
         navigateMock.mockResolvedValue(defaultNavigateResult({ entries: [], strategy: 'manual' }));
         new DatasetBrowser({ container, onDatasetSelect, onClose });
         await vi.waitFor(() => {
-          expect(container.querySelector('#manual-path')).not.toBeNull();
+          expect(container.querySelector('#luxar-dataset-browser-manual-path')).not.toBeNull();
         });
         return container.querySelector('#luxar-dataset-browser') as HTMLElement;
       }
 
       const manualInput = (): HTMLInputElement =>
-        container.querySelector('#manual-path') as HTMLInputElement;
+        container.querySelector('#luxar-dataset-browser-manual-path') as HTMLInputElement;
 
       it('does not autofocus the manual path field', async () => {
         const panel = await openManualEntry();
@@ -1561,7 +1579,7 @@ describe('DatasetBrowser', () => {
       it('does NOT route type-to-filter into the manual path field', async () => {
         const panel = await openManualEntry();
 
-        // `#manual-path` is a URL entry field, not a filter, so stray
+        // `#luxar-dataset-browser-manual-path` is a URL entry field, not a filter, so stray
         // keystrokes must not be routed into it: a printable key pressed at
         // the container types nothing and leaves focus where it was (the
         // modal contains it instead). The user clicks or Tabs into the field
@@ -1730,7 +1748,7 @@ describe('DatasetBrowser', () => {
           });
         }, ['h', 'o']);
 
-        // This state has no filter and no `#manual-path`, and it persists for
+        // This state has no filter and no `#luxar-dataset-browser-manual-path`, and it persists for
         // as long as the directory stays empty — the chip must not be dead.
         expect(seen).toEqual(['h', 'o']);
       });

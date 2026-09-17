@@ -16,7 +16,7 @@ This package implements a transparent caching and prefetching layer for zarr dat
   (Firefox/Safari). A slice revisit — e.g. scrubbing back
   to a timepoint — skips the whole query + fetch + decode pipeline; only the
   cheap nD→3D projection re-runs. Sits ABOVE L0; in-memory, per-session,
-  cleared on content-hash invalidation. Disable with `?no-slice-cache`.
+  cleared on content-hash invalidation. Disable with `?noSliceCache`.
 - **Eager line working set (`heap-budget.ts::computeWorkingSetBudgetBytes`)**:
   resolves from the explicit cache-pool override, measured heap, device class,
   or fixed fallback in that order. Pool- and heap-derived budgets reserve half
@@ -127,20 +127,20 @@ await store.dispose();
 
 Override cache behavior via URL parameters:
 
-- `?no-cache` - Disable all caching (S-cache + L0 + L1 + L2) for this session
-- `?no-slice-cache` - Disable only the SliceCache (S-cache); L0/L1/L2 stay on
-- `?no-opfs` - Disable only the L2 OPFS tier; L0/L1/S-cache stay on. The deterministic sibling of the OPFS circuit breaker, for environments whose OPFS is known to stall (automated Chromium). A deliberate disable does NOT raise the `opfs-unavailable` badge
+- `?noCache` - Disable all caching (S-cache + L0 + L1 + L2) for this session
+- `?noSliceCache` - Disable only the SliceCache (S-cache); L0/L1/L2 stay on
+- `?noOpfs` - Disable only the L2 OPFS tier; L0/L1/S-cache stay on. The deterministic sibling of the OPFS circuit breaker, for environments whose OPFS is known to stall (automated Chromium). A deliberate disable does NOT raise the `opfs-unavailable` badge
 - `?opfsReadConcurrency=<N>` - Override the page-wide concurrent OPFS read cap (default 64) for diagnosis
-- `?cache-debug` - Enable verbose cache logging for all layers
-- `?clear-cache` - Clear all persistent/persisted caches (L0 + L1 + L2) before loading dataset (the in-memory S-cache is created fresh per load)
-- `?no-prefetch` - Disable prefetching (caches still active)
-- `?prefetch-debug` - Enable verbose prefetch logging
-- `?cache-stats` - Auto-open the data-loading monitor expanded on the Cache tab
+- `?cacheDebug` - Enable verbose cache logging for all layers
+- `?clearCache` - Clear all persistent/persisted caches (L0 + L1 + L2) before loading dataset (the in-memory S-cache is created fresh per load)
+- `?noPrefetch` - Disable prefetching (caches still active)
+- `?prefetchDebug` - Enable verbose prefetch logging
+- `?cacheStats` - Auto-open the data-loading monitor expanded on the Cache tab
 
 Example:
 
 ```
-http://localhost:5173/?src=http://example.com/data.luxar.zarr&cache-debug&prefetch-debug
+http://localhost:5173/?src=http://example.com/data.luxar.zarr&cacheDebug&prefetchDebug
 ```
 
 ## Cache invariants and lifecycle
@@ -245,16 +245,16 @@ summarising the cache's operational state. Each badge is also exposed
 on `CacheMetrics.status: CacheStatusBadge[]` so programmatic consumers
 (debug snapshots, E2E tests) can assert on the same set.
 
-| Badge                          | Meaning                                                       | Source                                                                                                                                                                                                                                                                |
-| ------------------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                                                                                                                                                                                                                                   |
-| `no-cache`                     | The `?no-cache` URL flag is set; all tiers disabled.          | `telemetryState.kind === 'disabled-no-cache'`                                                                                                                                                                                                                         |
-| `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                                                                                                                                                                                                                           |
-| `opfs-unavailable`             | OPFS is absent OR mounts read-only; L2 is disabled.           | OPFS provider absent, the init write probe failed (WebKit/WKWebView has no main-thread `createWritable`), or the circuit breaker tripped after `opfsTimeoutTripThreshold` consecutive OPFS timeouts (#1645). A DELIBERATE `?no-opfs` / `?no-cache` does NOT raise it. |
-| `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                                                                                                                                                                                                                            |
-| `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0`                                                                                                                                                                                                     |
-| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                                                                                                                                                                                                                          |
-| `provider-missing`             | Telemetry says cache is enabled but no provider is attached.  | classifier/provider contradiction                                                                                                                                                                                                                                     |
+| Badge                          | Meaning                                                       | Source                                                                                                                                                                                                                                                              |
+| ------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                                                                                                                                                                                                                                 |
+| `no-cache`                     | The `?noCache` URL flag is set; all tiers disabled.           | `telemetryState.kind === 'disabled-no-cache'`                                                                                                                                                                                                                       |
+| `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                                                                                                                                                                                                                         |
+| `opfs-unavailable`             | OPFS is absent OR mounts read-only; L2 is disabled.           | OPFS provider absent, the init write probe failed (WebKit/WKWebView has no main-thread `createWritable`), or the circuit breaker tripped after `opfsTimeoutTripThreshold` consecutive OPFS timeouts (#1645). A DELIBERATE `?noOpfs` / `?noCache` does NOT raise it. |
+| `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                                                                                                                                                                                                                          |
+| `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0`                                                                                                                                                                                                   |
+| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                                                                                                                                                                                                                        |
+| `provider-missing`             | Telemetry says cache is enabled but no provider is attached.  | classifier/provider contradiction                                                                                                                                                                                                                                   |
 
 Several badges may coexist — for example, a Luxar dataset on a near-full
 browser disk can show `cache-enabled` + `quota-constrained` simultaneously.
@@ -271,7 +271,7 @@ this origin. Cleared by:
 - `__luxarDebug.cache.clearL2()` from the JS console
 - The cache tab's **Clear L2** button (with confirmation)
 - The user's browser data-clearing UI (origin-wide)
-- `?clear-cache` URL param at the next page load
+- `?clearCache` URL param at the next page load
 - A content-hash mismatch (Luxar datasets) or TTL expiry (external
   datasets)
 
@@ -290,7 +290,7 @@ WKWebView launcher therefore fail the init write probe and run L1-only. See the
 browsers also fall back to L1-only (no L2 persistence). The cache tab surfaces:
 
 - `cache-enabled`: caching is operational.
-- `no-cache`: `?no-cache` URL flag set.
+- `no-cache`: `?noCache` URL flag set.
 - `disabled-config`: app config disabled the cache.
 - `quota-constrained`: at least one write was skipped due to quota.
 - `cache-errors-detected`: writeFailures / corruptedEntries /
@@ -458,8 +458,8 @@ new MultiLevelCachingStore(source: string | ChunkSource, options?: {
   l1MaxSize?: number;             // L1 size in bytes (default: 100MB)
   l2MaxSize?: number;             // L2 size in bytes (default: 2GB)
   debug?: boolean;                // Enable debug logging (default: false)
-  noCache?: boolean;              // Disable both tiers, e.g. `?no-cache` (default: false)
-  clearCache?: boolean;           // Clear caches on init, e.g. `?clear-cache` (default: false)
+  noCache?: boolean;              // Disable both tiers, e.g. `?noCache` (default: false)
+  clearCache?: boolean;           // Clear caches on init, e.g. `?clearCache` (default: false)
   opfsWriteConcurrency?: number;  // L2 write-queue concurrency (default: config.cache.opfsWriteConcurrency)
   opfsWriteQueueMax?: number;     // L2 write-queue max depth (default: config.cache.opfsWriteQueueMax)
   opfsWriteQueueMaxBytes?: number; // Max bytes retained by pending L2 writes
@@ -537,7 +537,7 @@ data-loading monitor, debug overlay, and cache E2E suite:
     unvalidatedExternalDataset: boolean,
     opfsAvailable: boolean
   },
-  clearOnInitCount: number    // Times ?clear-cache fired on init
+  clearOnInitCount: number    // Times ?clearCache fired on init
 }
 ```
 
@@ -557,7 +557,7 @@ Clear both L1 and L2 caches.
 
 **`isEnabled(): boolean`**
 
-Check if caching is enabled. Returns `false` when `?no-cache` URL parameter is present.
+Check if caching is enabled. Returns `false` when `?noCache` URL parameter is present.
 
 **`onInvalidate(callback: () => void): void`**
 
@@ -587,7 +587,8 @@ datasets.
 
 **`async listDatasets(): Promise<Array<{...}>>`**
 
-List all cached datasets in OPFS:
+List all cached datasets under the `luxar/` OPFS namespace dir (an origin
+that has never run the viewer resolves to `[]`):
 
 ```typescript
 [
@@ -684,16 +685,30 @@ Storing 65,000 files in a single directory can cause performance issues. Bucketi
 
 ### Structure
 
+Everything the viewer persists in OPFS lives under ONE namespace directory,
+`luxar/`, never at the origin's OPFS root (`opfs-store/opfs-root.ts`:
+`OPFS_NAMESPACE_DIR` + `getLuxarOpfsRoot({ create })`). An embedder's own OPFS
+usage on the same origin cannot collide with the dataset directories, and a
+host wipes the viewer's whole footprint with one
+`root.removeEntry('luxar', { recursive: true })`. `OPFSStore.listAll()` opens
+the namespace dir with `create: false` and treats a cold origin's
+`NotFoundError` as "nothing cached".
+
 ```
-zarr-cache-{url-hash}/
-├── 00/                      # Bucket directories (256 total)
-│   ├── cG9pbnRz...          # Base64-encoded zarr keys
-│   └── ...
-├── 01/
-├── ...
-├── ff/
-└── _cache_meta.json         # Index + LRU metadata
+luxar/                       # Viewer namespace dir (OPFS_NAMESPACE_DIR)
+└── zarr-cache-{url-hash}/   # One dataset dir per base URL (SHA-256)
+    ├── 00/                  # Bucket directories (256 total)
+    │   ├── cG9pbnRz...      # Base64-encoded zarr keys
+    │   └── ...
+    ├── 01/
+    ├── ...
+    ├── ff/
+    └── _cache_meta.json     # Index + LRU metadata
 ```
+
+The move under `luxar/` needed no `OPFS_ENCODING_VERSION` bump: a
+pre-namespace `zarr-cache-*` directory at the OPFS root is simply never read
+again.
 
 ### How It Works
 
@@ -775,7 +790,7 @@ store.onInvalidate(() => decompressedCache.clear());
 ```
 
 This is required because L0 stores decoded typed arrays derived from compressed
-L1/L2 bytes. When `clearAll()`, `?clear-cache`, or content-hash mismatch clears
+L1/L2 bytes. When `clearAll()`, `?clearCache`, or content-hash mismatch clears
 L1/L2, every L0 wrapper for that dataset must clear too; otherwise stale decoded
 arrays can survive even though the compressed source cache was invalidated. New
 cache layers should either register their own invalidation callback or be owned
@@ -893,7 +908,7 @@ await window.__luxarDebug.cache.clearAll(); // Clear L0 + L1 + L2
 ```
 
 L0 cache statistics are also surfaced by the Data Monitor's Cache tab
-(press `M` to cycle the data monitor; `?cache-stats` auto-opens it
+(press `M` to cycle the data monitor; `?cacheStats` auto-opens it
 expanded on the Cache tab).
 
 Example usage:

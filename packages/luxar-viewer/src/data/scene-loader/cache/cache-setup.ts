@@ -34,9 +34,9 @@ import type { CacheTelemetryState } from '../../../types/data-monitor-types';
  *  the original inline code consulted. */
 export interface CacheSetupFlags {
   noCache?: boolean;
-  /** Disable ONLY the SliceCache (`?no-slice-cache`); L0/L1/L2 stay on. */
+  /** Disable ONLY the SliceCache (`?noSliceCache`); L0/L1/L2 stay on. */
   noSliceCache?: boolean;
-  /** Disable ONLY the L2 OPFS tier (`?no-opfs`); L0/L1/S-cache stay on. */
+  /** Disable ONLY the L2 OPFS tier (`?noOpfs`); L0/L1/S-cache stay on. */
   noOpfs?: boolean;
   cacheDebug?: boolean;
   clearCache?: boolean;
@@ -60,7 +60,7 @@ export interface CacheSetupResult {
   /**
    * Resolved cache telemetry state for the UI monitor. Reflects the
    * actual policy decision the cache stack made:
-   *   - `disabled-no-cache`: URL `?no-cache` flag.
+   *   - `disabled-no-cache`: URL `?noCache` flag.
    *   - `disabled-config` : `appConfig.cache.enabled === false`.
    *   - `enabled`         : at least one tier (L0 or L1/L2) is active.
    * Pushed to the monitor via `setCacheTelemetryState()` in
@@ -130,12 +130,12 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   let l0Cache: DecompressedChunkCache | null = null;
 
   // SliceCache ("S-cache"): shared per-slice decoded-geometry cache. Gated by
-  // its own config flag + `?no-slice-cache`, and also off when `?no-cache`
+  // its own config flag + `?noSliceCache`, and also off when `?noCache`
   // disables all tiers. It is cleared on content-hash invalidation alongside L0
   // (see the onInvalidate registration below).
   let sliceCache: SliceCache | null = null;
   if (sliceEnabled) {
-    // No `?clear-cache` handling here (unlike L0/L1/L2 below): the SliceCache
+    // No `?clearCache` handling here (unlike L0/L1/L2 below): the SliceCache
     // is in-memory only and constructed fresh for every loadScene, so there is
     // never a prior session's state to clear.
     sliceCache = new SliceCache({
@@ -147,7 +147,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
       `SliceCache (S-cache) enabled (max size: ${toMB(budgets.sliceBytes)}MB, ${budgets.source})`
     );
   } else if (noSliceCache) {
-    log.info(Modules.SCENE_LOADER, 'SliceCache disabled via ?no-slice-cache URL parameter');
+    log.info(Modules.SCENE_LOADER, 'SliceCache disabled via ?noSliceCache URL parameter');
   }
 
   if (l0Enabled) {
@@ -158,7 +158,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
     if (clearCache) {
       l0Cache.clear();
-      log.info(Modules.SCENE_LOADER, 'L0 cache cleared via ?clear-cache URL parameter');
+      log.info(Modules.SCENE_LOADER, 'L0 cache cleared via ?clearCache URL parameter');
     }
 
     log.info(
@@ -166,7 +166,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
       `L0 decompressed chunk cache enabled (max size: ${toMB(budgets.l0Bytes)}MB)`
     );
   } else if (noCache) {
-    log.info(Modules.SCENE_LOADER, 'L0 cache disabled via ?no-cache URL parameter');
+    log.info(Modules.SCENE_LOADER, 'L0 cache disabled via ?noCache URL parameter');
   }
 
   let rawStore: zarr.AsyncReadable;
@@ -194,7 +194,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     );
     await cachingStore.init();
     if (noOpfs) {
-      log.info(Modules.SCENE_LOADER, 'L2 OPFS tier disabled via ?no-opfs URL parameter');
+      log.info(Modules.SCENE_LOADER, 'L2 OPFS tier disabled via ?noOpfs URL parameter');
     }
 
     const prefetcher = new ChunkPrefetcher(cachingStore, {

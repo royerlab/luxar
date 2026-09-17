@@ -15,7 +15,7 @@
  * trigger: a cube map from a fixed probe is view-independent, and the one camera-driven
  * change — LOD residency — arrives as a commit.
  *
- * Under `?bake-env` this module also runs the one-shot bake once the first load has
+ * Under `?bakeEnv` this module also runs the one-shot bake once the first load has
  * settled: capture, read back, expose the container on `__luxarDebug.environment.lastBake`
  * for the `luxar env bake` driver, and download it for a human at the keyboard.
  *

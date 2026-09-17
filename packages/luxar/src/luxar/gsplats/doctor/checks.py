@@ -173,10 +173,17 @@ def check_gsplat_readable(root: "zarr.Group") -> List[Finding]:
     if root.attrs.get("format_type") != "gsplats_zarr":
         return []
 
-    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
+    from luxar.gsplats.io.save_gsplats import FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS
+    from luxar.typing_utils.format_version import (
+        FormatVersionOutcome,
+        check_format_version,
+    )
 
     version = root.attrs.get("format_version")
-    if version not in SUPPORTED_FORMAT_VERSIONS:
+    outcome, message = check_format_version(
+        "gsplats", version, FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS
+    )
+    if outcome is FormatVersionOutcome.REFUSE:
         return [
             Finding(
                 check="format-version",
@@ -185,12 +192,25 @@ def check_gsplat_readable(root: "zarr.Group") -> List[Finding]:
                 summary=f"unsupported gsplat format version {version!r}",
                 detail=(
                     "The current Luxar reader cannot open this store; supported "
-                    f"versions are {SUPPORTED_FORMAT_VERSIONS}."
+                    f"versions are {SUPPORTED_FORMAT_VERSIONS}. " + message
                 ),
                 remedy=(
                     "Convert it with `luxar gsplat migrate-format <input> "
                     "<output.gsplats.zarr>`."
                 ),
+            )
+        ]
+    if outcome is FormatVersionOutcome.NEWER_MINOR:
+        # Same policy as every reader: a newer minor loads with a warning, so
+        # the doctor reports it as such rather than as an unreadable store.
+        return [
+            Finding(
+                check="format-version",
+                severity="warning",
+                path="",
+                summary=f"newer gsplat format version {version!r}",
+                detail=message,
+                remedy="Upgrade Luxar to read the newer content.",
             )
         ]
 

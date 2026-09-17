@@ -17,7 +17,11 @@
 
 import * as THREE from 'three';
 import type { SimpleDims } from '../../../types/dims';
-import { LOADER_TYPES, type LoaderTypeName } from '../../../types/format-contract';
+import {
+  LOADER_TYPES,
+  type LoaderTypeName,
+  type LodSelectorName,
+} from '../../../types/format-contract';
 import { readVisibleElementCount } from '../../../data/scene-loader/monitor/visible-counts';
 import type { RefinementResidencyStop } from '../../../data/scene-loader/progressive/residency-budget';
 
@@ -134,7 +138,7 @@ export interface LODGroupDebugInfo {
   name: string;
   levelCount: number;
   activeLevel: number;
-  selector: 'screen-area' | 'coverage';
+  selector: LodSelectorName;
   footprintStamped: boolean;
 }
 
@@ -350,7 +354,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     if (kind === 'lod') {
       const children = object.children;
       const metadata = object.userData as {
-        lodSelector?: 'screen-area' | 'coverage';
+        lodSelector?: LodSelectorName;
         footprintStamped?: boolean;
       };
       lodGroups.push({

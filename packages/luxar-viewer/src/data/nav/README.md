@@ -46,7 +46,12 @@ Re-exported from `data/index.ts` as `DirectoryNavigator`,
 match; if none succeed it falls back to `'manual'` so the caller can
 prompt for a path:
 
-1. **`'webdav'` (Zarr short-circuit)** — `HEAD` for `<url>/.zgroup`.
+`navigate` first normalises the probed URL to a DIRECTORY URL (one trailing
+slash), so every document below is looked up INSIDE the path — never as the
+sibling `datasets.luxar-index.json`.
+
+1. **`'webdav'` (Zarr short-circuit)** — `HEAD` for `<url>/zarr.json` and
+   `<url>/.zgroup` (both formats, concurrently).
    When the path is itself a Zarr dataset, returns empty `entries`
    with `isZarr: true`.
 2. **`'webdav'` (listing)** — `PROPFIND` with `Depth: 1`. Parses
@@ -55,9 +60,14 @@ prompt for a path:
    to detect `luxar serve`'s `{ entries: [...] }` payload, then falls
    back to HTML scraping of three patterns: nginx `<pre><a>`,
    Apache/IIS `<tr>` rows, generic `<li><a>`. Deduped by name.
-4. **`'index'`** — `GET` for `<url>/.luxar-index.json`. Uses each
-   entry's explicit `type`, else infers from `.zarr`, `.zarr.zip`, or
-   `isDirectory`.
+4. **`'index'`** — `GET` for `<url>/.luxar-index.json`, a hand-written
+   manifest for hosts with no directory listing (S3, GitHub Pages):
+   `{ "entries": [ { "name", "type"?, "size"?, "isDirectory"?, "modified"? } ] }`
+   with `type` one of `"zarr" | "directory" | "file"`. Uses each entry's
+   explicit `type`, else infers from `.zarr`, `.zarr.zip`, or
+   `isDirectory`. The user-facing description lives in
+   `docs/guides/user/VIEWER_GUIDE.md` ("Directory listings and
+   `.luxar-index.json`").
 5. **`'manual'`** — fallback. Empty entries.
 
 Each probe is wrapped in a 10-second `AbortController`
@@ -65,8 +75,9 @@ Each probe is wrapped in a 10-second `AbortController`
 
 ## Invariants
 
-- **Trailing slash on `baseUrl`.** The constructor normalises it;
-  callers can pass either form.
+- **Trailing slash on `baseUrl` AND on the probed path.** The constructor
+  normalises `baseUrl`; `navigate` normalises `path` once, so strategies
+  concatenate document names without re-checking.
 - **`currentPath` is internal state.** `navigate` updates it before
   probing so the listing parsers can compose child paths as
   `${currentPath}/${name}`. Two concurrent `navigate` calls on the

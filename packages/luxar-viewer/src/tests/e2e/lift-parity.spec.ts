@@ -33,11 +33,12 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { captureElementScreenshot, openLayersPanel } from './helpers';
+import { StorageKeys } from '../../utils/storage-keys';
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-  });
+  await page.addInitScript((hintKey) => {
+    localStorage.setItem(hintKey, '1');
+  }, StorageKeys.controlRailHintDismissed);
 });
 
 // Served by the E2E data server (playwright.config.ts webServer on :9000,
@@ -512,11 +513,11 @@ test.describe('Lifted-gsplat / Points parity', () => {
 
   test.beforeEach(async ({ page }) => {
     // ?dpr=1 pins the pixel ratio so the crops land on the same geometry.
-    // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
+    // `&noOpfs` on every load: this spec never asserts the L2 OPFS tier, and
     // automated Chromium's OPFS stalls systemically (10s per op — issue #1645),
     // starving scene readiness past the test budget. The circuit breaker only
     // helps un-flagged real sessions (it still pays ~3 timeouts per fresh page).
-    await page.goto(`/?src=${FIXTURE}&debug&dpr=1&no-opfs`);
+    await page.goto(`/?src=${FIXTURE}&debug&dpr=1&noOpfs`);
     await page.waitForFunction(() => !!(window as any).__luxarDebug, null, { timeout: 60000 });
     // All eight leaves must have materials AND committed geometry before
     // anything is measured. Waiting only for the material is not enough: a

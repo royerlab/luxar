@@ -21,26 +21,13 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 
 describe('Invalidation chain (commit 9.1)', () => {
   let store: MultiLevelCachingStore;
 
   beforeEach(async () => {
-    vi.stubGlobal('navigator', {
-      storage: {
-        async getDirectory() {
-          return {
-            async getDirectoryHandle() {
-              return { async *entries() {}, async *keys() {} };
-            },
-            async *entries() {},
-          };
-        },
-        async estimate() {
-          return { quota: 10e9, usage: 1e9 };
-        },
-      },
-    });
+    createFakeOpfsRoot().install();
     vi.stubGlobal('crypto', {
       subtle: {
         async digest() {

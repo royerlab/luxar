@@ -9,4 +9,4 @@ than the occupancy selector's cross-fade band.
 This deliberately holds fine geometry much longer than occupancy selection: in
 a representative 300k-splat ladder it committed up to 16.7 times as many splats
 across the multi-object viewing range. The #2685 scene sweep retained the
-current 1.5 px viewer policy and the explicit `lod-bias` override.
+current 1.5 px viewer policy and the explicit `lodBias` override.

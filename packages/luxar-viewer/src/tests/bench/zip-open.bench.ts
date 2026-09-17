@@ -18,7 +18,7 @@
  * measuring only time/requests/bytes could bless a change that makes the
  * viewer stutter. The shipped demo archives are 100% DEFLATE.
  *
- * FAIRNESS NOTE: the default run gives every variant `?no-cache`. That makes
+ * FAIRNESS NOTE: the default run gives every variant `?noCache`. That makes
  * it an uncached-vs-uncached comparison, which is the right A/B for the store
  * layer. Revisit mode instead leaves L1/L2 enabled for every variant and
  * measures the second load in the same browser context.
@@ -39,8 +39,8 @@ const READY_TIMEOUT_MS = Number(process.env.LUXAR_BENCH_READY_TIMEOUT_MS ?? 240_
  * `LUXAR_BENCH_REVISIT=1` measures the SECOND load in the same browser context,
  * with the chunk cache ON.
  *
- * The default run is deliberately `?no-cache`, which is the right A/B for the
- * store layer but says nothing about caching. And simply dropping `?no-cache`
+ * The default run is deliberately `?noCache`, which is the right A/B for the
+ * store layer but says nothing about caching. And simply dropping `?noCache`
  * would say almost as little: every sample gets a fresh context, so L1 is empty
  * and L2/OPFS starts cold — a "cached" first visit is an uncached visit plus the
  * cost of populating the cache. The question caching actually answers is what a
@@ -134,7 +134,7 @@ async function sample(page: import('@playwright/test').Page, datasetUrl: string)
     }).observe({ entryTypes: ['longtask'] });
   });
 
-  const query = REVISIT ? 'debug' : 'debug&no-cache';
+  const query = REVISIT ? 'debug' : 'debug&noCache';
 
   if (REVISIT) {
     // First visit: populate the cache, then discard its counters entirely.

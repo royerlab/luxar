@@ -518,26 +518,29 @@ class TestValidateZarrAttributes:
         validate_zarr_attributes(attrs, is_root=False)
 
     def test_root_attributes_with_version(self) -> None:
-        """Test root-specific attributes with version."""
-        attrs = {
-            "type": "scene",
-            "luxar_version": "0.1",
-        }
-        # Should not raise
-        validate_zarr_attributes(attrs, is_root=True)
+        """Test root-specific attributes with version (both spellings)."""
+        # 0.2+: the self-identifying header.
+        validate_zarr_attributes(
+            {"type": "scene", "format_version": "0.2", "format_type": "luxar_zarr"},
+            is_root=True,
+        )
+        # 0.1: the legacy key alone is still a complete root.
+        validate_zarr_attributes(
+            {"type": "scene", "luxar_version": "0.1"}, is_root=True
+        )
 
     def test_root_missing_type(self) -> None:
         """Test root missing type attribute raises error."""
-        attrs = {"luxar_version": "0.1.0"}
+        attrs = {"format_version": "0.2"}
 
         with pytest.raises(ValidationError, match="type"):
             validate_zarr_attributes(attrs, is_root=True)
 
     def test_root_missing_version(self) -> None:
-        """Test root missing version attribute raises error."""
+        """Test root missing version attribute raises error (names BOTH keys)."""
         attrs = {"type": "scene"}
 
-        with pytest.raises(ValidationError, match="luxar_version"):
+        with pytest.raises(ValidationError, match="format_version.*luxar_version"):
             validate_zarr_attributes(attrs, is_root=True)
 
     def test_missing_type(self) -> None:
@@ -559,7 +562,7 @@ class TestValidateZarrAttributes:
         for node_type in ["scene", "group", "points", "lines", "gsplats"]:
             attrs = {"type": node_type}
             if node_type == "scene":
-                attrs["luxar_version"] = "0.1"
+                attrs["format_version"] = "0.2"
                 validate_zarr_attributes(attrs, is_root=True)
             else:
                 validate_zarr_attributes(attrs, is_root=False)
@@ -570,12 +573,12 @@ class TestValidateZarrAttributes:
 
         attrs = {
             "type": "scene",
-            "luxar_version": "999.999.999",
+            "format_version": "999.999.999",
         }
 
-        if "999.999.999" not in SUPPORTED_SCENE_VERSIONS:
-            with pytest.raises(ValidationError, match="Unsupported"):
-                validate_zarr_attributes(attrs, is_root=True)
+        assert "999.999.999" not in SUPPORTED_SCENE_VERSIONS
+        with pytest.raises(ValidationError, match="Unsupported"):
+            validate_zarr_attributes(attrs, is_root=True)
 
     def test_validation_error_has_suggestions(self) -> None:
         """Test that ValidationErrors include helpful suggestions."""

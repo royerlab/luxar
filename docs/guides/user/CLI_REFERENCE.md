@@ -43,7 +43,7 @@ invented flag fails too, not just a stale command path.
 
 ```bash
 luxar info      # Dataset structure, dimensions, and compression statistics (--stats, --format json)
-luxar optimise  # Re-chunk an existing store for streaming; values stay bit-identical
+luxar optimize  # Re-chunk an existing store for streaming; values stay bit-identical
 luxar restamp-lod  # Re-derive legacy LOD switch thresholds in place (attrs only)
 luxar serve     # Serve a .luxar.zarr over HTTP, optionally with the viewer (--viewer, --open)
 luxar viewer    # Serve the Luxar viewer, optionally with a dataset (--data)
@@ -74,7 +74,7 @@ therefore pays one round trip per chunk file: measured at 25 Mbps / 30 ms RTT, t
 1.5 M-point example (1,548 chunks, 10.7 MB) loaded in 10.6 s from `luxar serve`
 and in 4.0 s when the same files were served over HTTP/2. The `luxar info`
 chunk-layout report warns when the mean chunk is under 32 KB; re-chunk with the
-`hosting` profile of `luxar optimise`, or put an HTTP/2 front (a CDN, nginx,
+`hosting` profile of `luxar optimize`, or put an HTTP/2 front (a CDN, nginx,
 Caddy) in front of the data server for hosting.
 
 `luxar export` also requires a directory store; passing an archive fails with
@@ -83,20 +83,20 @@ not add byte-range support for archives. See the
 [viewer guide](./VIEWER_GUIDE.md#opening-a-zipped-scene) for the direct-URL form
 and the full limitations.
 
-## `luxar optimise`
+## `luxar optimize`
 
 Re-chunk a store that already exists so it streams well, in one
 structure-preserving pass. No refit, no source volume, no GPU: only zarr chunk
 shapes change, and array values stay bit-identical.
 
 ```bash
-luxar optimise                    # Re-chunk SOURCE into OUTPUT at the 64 KB default
-luxar optimise --dry-run          # Report the plan and write nothing (omit OUTPUT)
-luxar optimise --target-kb 128    # Set the chunk budget directly
-luxar optimise --profile hosting  # Preset budget: hosting / local / archive
-luxar optimise --verify           # Re-read the output; compare arrays and payload files
-luxar optimise --overwrite        # Replace an existing OUTPUT store
-luxar optimise --generic          # Allow a plain (non-Luxar) zarr store
+luxar optimize                    # Re-chunk SOURCE into OUTPUT at the 64 KB default
+luxar optimize --dry-run          # Report the plan and write nothing (omit OUTPUT)
+luxar optimize --target-kb 128    # Set the chunk budget directly
+luxar optimize --profile hosting  # Preset budget: hosting / local / archive
+luxar optimize --verify           # Re-read the output; compare arrays and payload files
+luxar optimize --overwrite        # Replace an existing OUTPUT store
+luxar optimize --generic          # Allow a plain (non-Luxar) zarr store
 ```
 
 It takes a source store and, unless `--dry-run` is given, a destination store —
@@ -191,7 +191,7 @@ the requested finest-level screen-area fraction for every whole-object ladder
 the pass processes, both legacy ladders being migrated and groups already on
 `screen-area`; partition-bound ladders remain pinned to fills-screen `1.0`.
 Repeating the same anchor is still a no-op. For a whole-object ladder,
-`--anchor a` corresponds to viewer `?lod-bias=0.5/a`; setting both compounds the
+`--anchor a` corresponds to viewer `?lodBias=0.5/a`; setting both compounds the
 effect. The equivalence does not extend to `overview` / `adaptive` partition
 ladders: viewer bias scales them too, while `--anchor` deliberately leaves them
 at `1.0`.
@@ -217,7 +217,7 @@ spelled as the store spells them (`tiled/part_0`), and the store root is `/` —
 the only way to name the ladder of a `.gsplats.zarr` whose root IS the
 `kind=lod` group.
 
-Sibling of `luxar optimise`, not a flag on it: that pass preserves every
+Sibling of `luxar optimize`, not a flag on it: that pass preserves every
 attribute and refuses same-path work, this one changes only attributes and works
 in place. Give it an uncompressed `.luxar.zarr` or `.gsplats.zarr`
 **directory** — a `.zarr.zip` is refused, since an archive is read through a
@@ -428,7 +428,7 @@ luxar env bake --build                            # SCENE: rebuild a stale viewe
 ```
 
 Serves the store and the built viewer from one process, drives a headless browser to
-`?bake-env&probe=…&env-resolution=…` through the viewer's Playwright
+`?bakeEnv&probe=…&envResolution=…` through the viewer's Playwright
 (`packages/luxar-viewer/scripts/bake-env.mjs`), and — by default — attaches the
 captured faces. `--probe` is `auto` (the scene bounds centre), `node:<path>` (that
 node's bounding-box centre, what a marker shell around a cluster wants) or `x,y,z`;
@@ -538,7 +538,7 @@ knob aimed at the other recipe is refused by name rather than silently dropped.
 Takes an input scene and an output scene, plus `--node` and `--overwrite`, and then the
 knobs of the chosen recipe — `-L/--levels` (default 3), `-K/--compression-factor`
 (default 4 — level *i* targets `V / K**i` vertices) and `--subst-method` for `levels`;
-`-m/--add-method`, `--n-lods`, `--counts`, `--reveal-centre` and `--spatial-dims` for
+`-m/--add-method`, `--n-lods`, `--counts`, `--reveal-center` and `--spatial-dims` for
 `reveal`. The output path is normalized to the
 canonical `<stem>.luxar.zarr`, so an output argument of `out` writes `out.luxar.zarr`; that
 normalized path is what `--overwrite` replaces and what the same-path guard
@@ -580,7 +580,7 @@ explicitly as **cumulative** face counts (`--counts 500,2000,10000` → four lev
 1500, 8000 and the remainder), or a streaming ladder as `stream:<c>`. Pass one or the
 other, not both.
 
-`--reveal-centre` and `--spatial-dims` are the same flags, with the same meanings and the
+`--reveal-center` and `--spatial-dims` are the same flags, with the same meanings and the
 same shared parser, as on `luxar gsplat lod`. The centre defaults to the mesh's own
 bounding-box centre, so a surface far from the origin still grows from its middle. The
 **order** of `--spatial-dims` is significant: it pairs one-for-one with the centre's
@@ -590,7 +590,7 @@ stacked time or channel column out of the distance, so shells do not expand thro
 
 So, given an input and an output scene: `--recipe reveal --n-lods 4` for an
 equal-count ladder, `--recipe reveal --counts 500,2000,10000` for explicit boundaries,
-and `--recipe reveal --reveal-centre 0,0 --spatial-dims 0,1` to grow the shells from a
+and `--recipe reveal --reveal-center 0,0 --spatial-dims 0,1` to grow the shells from a
 chosen point on a chosen pair of axes.
 
 (Written as prose rather than a fenced block on purpose: `test_docs_command_coverage`

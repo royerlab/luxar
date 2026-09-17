@@ -53,7 +53,7 @@ def make_lod_pyramid(
     coarsen_dims: Optional[Sequence[int]] = None,
     n_additive_lods: int = 4,
     additive_method: AdditiveMethodName = "auto",
-    additive_reveal_centre: Optional[Sequence[float]] = None,
+    additive_reveal_center: Optional[Sequence[float]] = None,
     additive_spatial_dims: Optional[Sequence[int]] = None,
     breakpoints: BreakpointSpec = "equal-count",
     truncation_sigmas: Optional[float] = None,
@@ -170,7 +170,7 @@ def make_lod_pyramid(
             max_n_dense=max_n_dense,
             seed=None if seed is None else seed + s,
             substitutive_level=s,
-            reveal_centre=additive_reveal_centre,
+            reveal_center=additive_reveal_center,
             spatial_dims=additive_spatial_dims,
         )
     return out

@@ -32,6 +32,9 @@ export function getBucket(key: string): string {
  *
  * Bumping OPFS_ENCODING_VERSION invalidates any directory persisted
  * with a different output; loadMetadata treats it as a cold cache.
+ * (The move of every dataset directory under the `luxar/` namespace dir —
+ * see `opfs-root.ts` — needed no bump: pre-namespace directories at the
+ * OPFS root are simply never read again.)
  */
 export function keyToFileName(key: string): string {
   const bytes = new TextEncoder().encode(key);

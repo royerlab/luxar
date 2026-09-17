@@ -161,7 +161,7 @@ _OPTION_TOKENS = {
     "--bytes-per-splat": "additive",
     "--truncation-sigmas": "additive",
     "--max-n-dense": "additive",
-    "--reveal-centre": "additive",
+    "--reveal-center": "additive",
     "--spatial-dims": "additive",
     "--max-elements": "partition",
     "--parts": "partition",
@@ -282,7 +282,7 @@ def lod_recipe(
         help=f"Additive ordering: {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
         "greedy at small N, self_energy for large N to avoid greedy's "
         "O(N·nnz·logN) blowup. radial orders concentric shells around the "
-        "bbox centre, so a streaming prefix grows outward from the middle "
+        "bbox center, so a streaming prefix grows outward from the middle "
         "(a reveal); its ladder carries no energy stamps.",
     ),
     # Renamed spellings, declared only so the body can raise a pointer. Typer
@@ -465,15 +465,15 @@ def lod_recipe(
         "--array-key",
         help="Array path inside a nested --target zarr group (e.g. 'a/fused').",
     ),
-    reveal_centre: Optional[str] = typer.Option(
+    reveal_center: Optional[str] = typer.Option(
         None,
-        "--reveal-centre",
-        help="[-m radial] Comma-separated centre of the concentric shells, one "
+        "--reveal-center",
+        help="[-m radial] Comma-separated center of the concentric shells, one "
         "coordinate per spatial axis. Default: the dataset's own bounding-box "
-        "centre — NOT the scene origin, so a dataset far from the origin still "
+        "center — NOT the scene origin, so a dataset far from the origin still "
         "reveals from its own middle. On a PARTITIONED recipe "
         "(tiles/overview/adaptive) the ladder is built per part, so the default "
-        "centres EACH PART on itself (N local reveals); pass this flag to make "
+        "centers EACH PART on itself (N local reveals); pass this flag to make "
         "the whole object grow from one point.",
     ),
     spatial_dims: Optional[str] = typer.Option(
@@ -633,7 +633,7 @@ def lod_recipe(
             "--timepoint": target_timepoint,
             "--array-key": target_array_key,
             "--target-axes": target_axes,
-            "--reveal-centre": reveal_centre,
+            "--reveal-center": reveal_center,
             "--spatial-dims": spatial_dims,
             "--coarsen-dims": coarsen_dims,
             "--quality-stamps": quality_stamps,
@@ -874,8 +874,8 @@ def lod_recipe(
                     f"~{_MULTISCALE_CAP_TARGET:,}); pass -K to override"
                 )
 
-            parsed_reveal_centre, parsed_spatial_dims = _parse_reveal_knobs(
-                reveal_centre, spatial_dims, method_norm, data.ndim
+            parsed_reveal_center, parsed_spatial_dims = _parse_reveal_knobs(
+                reveal_center, spatial_dims, method_norm, data.ndim
             )
 
             # Barrier dims for substitutive coarsening. Standalone gsplats carry
@@ -930,7 +930,7 @@ def lod_recipe(
             params = RecipeParams(
                 n_lods=n_lods if n_lods is not None else 4,
                 additive_method=method_norm,  # type: ignore[arg-type]
-                reveal_centre=parsed_reveal_centre,
+                reveal_center=parsed_reveal_center,
                 spatial_dims=parsed_spatial_dims,
                 breakpoints=bp,
                 # Passed through as-is: None means "the dataset's own

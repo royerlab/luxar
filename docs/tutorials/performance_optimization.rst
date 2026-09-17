@@ -194,13 +194,13 @@ Optimization 4: Prefetching Configuration
 .. code-block:: text
 
    ?src=data.luxar.zarr                # Prefetching enabled by default
-   ?src=data.luxar.zarr&no-prefetch    # Disable prefetching (debugging)
-   ?src=data.luxar.zarr&prefetch-debug # Enable prefetch debug logging
+   ?src=data.luxar.zarr&noPrefetch    # Disable prefetching (debugging)
+   ?src=data.luxar.zarr&prefetchDebug # Enable prefetch debug logging
 
 **Impact**:
 
 * Prefetching enabled (default): 80-95% cache hit rate
-* Prefetching disabled (``no-prefetch``): 20-30% cache hit rate (only repeat views cached)
+* Prefetching disabled (``noPrefetch``): 20-30% cache hit rate (only repeat views cached)
 
 Optimization 5: Viewer Configuration
 -------------------------------------
@@ -218,9 +218,9 @@ The viewer applies several optimizations automatically:
 .. code-block:: text
 
    ?src=data.luxar.zarr                # Default: all caching enabled
-   ?src=data.luxar.zarr&no-cache       # Disable all caching tiers (S-cache + L0/L1/L2)
-   ?src=data.luxar.zarr&clear-cache    # Clear all caches on startup
-   ?src=data.luxar.zarr&cache-debug    # Enable cache debug logging
+   ?src=data.luxar.zarr&noCache       # Disable all caching tiers (S-cache + L0/L1/L2)
+   ?src=data.luxar.zarr&clearCache    # Clear all caches on startup
+   ?src=data.luxar.zarr&cacheDebug    # Enable cache debug logging
 
 **Rendering Configuration** can be controlled via ``viewer_config`` in the Zarr scene metadata
 (set at write time in Python) or interactively via the rendering controls panel (press **R**).
@@ -454,8 +454,8 @@ Issue: High Memory Usage
 **Solutions**:
 
 * The viewer uses LRU eviction automatically when caches are full
-* Use ``?clear-cache`` URL parameter to reset caches on startup
-* Use ``?no-cache`` to disable caching entirely for debugging
+* Use ``?clearCache`` URL parameter to reset caches on startup
+* Use ``?noCache`` to disable caching entirely for debugging
 * Cache sizes are managed automatically by the viewer
 
 Advanced: Custom Culling

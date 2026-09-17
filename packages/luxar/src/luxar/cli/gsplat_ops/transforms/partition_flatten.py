@@ -55,6 +55,84 @@ def _contains_partition_group(group: Any) -> bool:
     )
 
 
+def _summarize_partition_provenance(value: Any) -> Optional[list[dict[str, Any]]]:
+    """Collapse slot-keyed component records into one partition summary."""
+    if not isinstance(value, list) or not value:
+        return None
+    fittings = [
+        part.get("fitting") if isinstance(part, dict) else None for part in value
+    ]
+
+    summary: dict[str, Any] = {}
+    for key in ("source_bytes", "source_voxels", "source_stored_bytes"):
+        values = [
+            fitting.get(key) if isinstance(fitting, dict) else None
+            for fitting in fittings
+        ]
+        if all(
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and np.isfinite(item)
+            for item in values
+        ):
+            summary[key] = (
+                values[0] if all(item == values[0] for item in values) else sum(values)
+            )
+
+    time_values = [
+        fitting.get("time_seconds") if isinstance(fitting, dict) else None
+        for fitting in fittings
+    ]
+    if all(
+        isinstance(item, (int, float))
+        and not isinstance(item, bool)
+        and np.isfinite(item)
+        for item in time_values
+    ):
+        summary["time_seconds"] = sum(time_values)
+
+    for key in ("source_shape", "source_dtype"):
+        values = [
+            fitting.get(key) if isinstance(fitting, dict) else None
+            for fitting in fittings
+        ]
+        if values[0] is not None and all(item == values[0] for item in values[1:]):
+            summary[key] = values[0]
+
+    declared_values = [
+        fitting.get("source_declared") if isinstance(fitting, dict) else None
+        for fitting in fittings
+    ]
+    if (
+        "source_shape" in summary
+        and declared_values[0] is not None
+        and all(item == declared_values[0] for item in declared_values[1:])
+    ):
+        summary["source_declared"] = declared_values[0]
+
+    result: dict[str, Any] = {"part_count": len(value), "fitting": summary}
+    references = [
+        part.get("fit_reference") if isinstance(part, dict) else None for part in value
+    ]
+    if references[0] is not None and all(
+        reference == references[0] for reference in references[1:]
+    ):
+        result["fit_reference"] = references[0]
+    return [result]
+
+
+def _replace_partition_provenance_with_summary(
+    stats: dict[str, Any], *, part_count: int
+) -> None:
+    provenance = stats.get("part_provenance")
+    if not isinstance(provenance, list) or len(provenance) != part_count:
+        return
+    summary = _summarize_partition_provenance(provenance)
+    if summary is None:
+        return
+    stats["part_provenance"] = summary
+
+
 def _leaf_splat_groups(root: Any, leaf_path: str) -> list[Any]:
     leaf = root[leaf_path] if leaf_path else root
     count = int(leaf.attrs.get("n_additive_sublods", 1))
@@ -545,7 +623,9 @@ def run_flatten_dataset(
 
                 carried_stats = stats_after_structure_change(stats)
                 if _contains_partition_group(root):
-                    carried_stats.pop("part_provenance", None)
+                    _replace_partition_provenance_with_summary(
+                        carried_stats, part_count=len(leaf_paths)
+                    )
                 fitting, config, provenance, pipeline = split_fitting_info(
                     carried_stats, include_fitting_info=True
                 )

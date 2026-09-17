@@ -54,6 +54,17 @@ def test_claims_found_by_wording_not_line_number():
     assert stale == []
 
 
+def test_claim_sites_are_the_ones_sync_demo_counts_owns():
+    """One table, two readers: the audit must not carry its own copy."""
+    sync_mod = audit_mod._load_sync_demo_counts()
+    assert not hasattr(audit_mod, "CLAIM_PATTERNS")
+    assert audit_mod.find_claims(README_OK) == sync_mod.find_hosted_claims(README_OK)
+    assert {where for _, where in sync_mod.HOSTED_README_CLAIMS} == {
+        "intro banner",
+        "docs table row",
+    }
+
+
 def test_real_readme_contains_both_claim_sites():
     claims = audit_mod.find_claims(audit_mod.README_PATH.read_text())
     assert {where for _, where in claims} == {"intro banner", "docs table row"}

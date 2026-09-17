@@ -773,7 +773,7 @@ def test_partitioned_radial_centres_each_part_on_itself_by_default(
     pinned here: if someone changes the default, this test should make them do it
     deliberately.
 
-    Passing `reveal_centre` switches to one coherent global reveal, which the
+    Passing `reveal_center` switches to one coherent global reveal, which the
     second half asserts.
     """
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -800,7 +800,7 @@ def test_partitioned_radial_centres_each_part_on_itself_by_default(
             additive_method="radial",
             max_elements=250,
             seed=0,
-            reveal_centre=centre,
+            reveal_center=centre,
         )
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 

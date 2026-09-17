@@ -11,14 +11,16 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TypeVar
 from urllib.parse import quote
 
+import typer
 import zarr
 from arbol import aprint
 
 from .._zarr_compat import array_keys, group_keys
 from .._zarr_compat import open_group as zarr_open_group
+from ..utils.deprecation import deprecation_message
 from ..utils.hosts import ALL_INTERFACES_HOSTS as _ALL_INTERFACES_HOSTS
 from ..utils.hosts import is_loopback_host as _is_loopback_host
 
@@ -39,6 +41,58 @@ _DEFAULT_CORS_ORIGIN = "local"
 # ABOVE `luxar.cli` in the layering contract.
 ALL_INTERFACES_HOSTS = _ALL_INTERFACES_HOSTS
 is_loopback_host = _is_loopback_host
+
+T = TypeVar("T")
+
+
+def deprecated_option(
+    value: T,
+    old_flag: str,
+    new_flag: Optional[str],
+    *,
+    since: str,
+    remove_after: str,
+) -> T:
+    """Report a deprecated CLI flag on stderr and hand its value back.
+
+    The CLI half of ``luxar.utils.deprecation``. Pair it with a *hidden* typer
+    alias that defaults to ``None`` (the idiom already used for
+    ``--method`` in ``luxar.cli.lod``)::
+
+        reveal_center: Optional[str] = typer.Option(None, "--reveal-center"),
+        legacy_centre: Optional[str] = typer.Option(
+            None, "--reveal-centre", hidden=True
+        ),
+        ...
+        reveal_center = reveal_center or deprecated_option(
+            legacy_centre, "--reveal-centre", "--reveal-center",
+            since="2026.10.01", remove_after="2027.04.01",
+        )
+
+    Nothing is printed when ``value`` is ``None`` — the alias was not typed —
+    so the modern path stays silent. The notice goes to **stderr** through
+    ``typer.echo(err=True)`` rather than ``warnings.warn``: Python hides
+    ``DeprecationWarning`` by default outside ``__main__``, and a command the
+    user just typed must tell them about the rename now, not in a future
+    release when the alias disappears.
+
+    Args:
+        value: What typer parsed for the hidden alias (``None`` = not given).
+        old_flag: The deprecated spelling, e.g. ``"--reveal-centre"``.
+        new_flag: The replacement, or ``None`` when the flag is going away.
+        since: Release that introduced the deprecation (``YYYY.MM.DD``).
+        remove_after: Earliest release or date the alias may be removed after.
+
+    Returns:
+        ``value`` unchanged, so the call can sit inline in an assignment.
+    """
+    if value is None:
+        return value
+    message = deprecation_message(
+        old_flag, new_flag, since=since, remove_after=remove_after
+    )
+    typer.echo(f"Warning: {message}", err=True)
+    return value
 
 
 def primary_lan_address() -> Optional[str]:

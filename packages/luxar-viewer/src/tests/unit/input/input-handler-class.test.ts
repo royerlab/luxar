@@ -27,6 +27,10 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  OPEN_DATASET_BROWSER_EVENT,
+  OPEN_ELEMENT_MENU_EVENT,
+} from '../../../core/app/interaction/canvas-actions';
 import { InputContext, InputHandler, type ContextConfig, type KeyBinding } from '../../../input';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
@@ -494,8 +498,8 @@ describe('InputHandler — help overlay', () => {
     );
     const browserListener = vi.fn();
     const elementMenuListener = vi.fn();
-    window.addEventListener('open-dataset-browser', browserListener);
-    window.addEventListener('luxar-open-element-menu', elementMenuListener);
+    window.addEventListener(OPEN_DATASET_BROWSER_EVENT, browserListener);
+    window.addEventListener(OPEN_ELEMENT_MENU_EVENT, elementMenuListener);
 
     try {
       handler.init();
@@ -509,8 +513,8 @@ describe('InputHandler — help overlay', () => {
       expect(event.defaultPrevented).toBe(true);
     } finally {
       handler.dispose();
-      window.removeEventListener('open-dataset-browser', browserListener);
-      window.removeEventListener('luxar-open-element-menu', elementMenuListener);
+      window.removeEventListener(OPEN_DATASET_BROWSER_EVENT, browserListener);
+      window.removeEventListener(OPEN_ELEMENT_MENU_EVENT, elementMenuListener);
     }
   });
 });

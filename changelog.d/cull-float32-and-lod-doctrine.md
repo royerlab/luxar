@@ -51,7 +51,7 @@ range. The two pathology slides keep `adaptive`, which is what parts are for.
 
 One catch travels with `stream`: a flat store needs re-chunking or scrubbing gets
 worse rather than better — 173 requests per timepoint step as built, two after
-`luxar optimise --profile archive`. Additive-only and re-chunking are a package.
+`luxar optimize --profile archive`. Additive-only and re-chunking are a package.
 
 #### Adding the 4D Drosophila embryogenesis demo
 

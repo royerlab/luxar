@@ -20,7 +20,7 @@ mocks/
 ├── webgl.mock.ts            # MockWebGLRenderingContext + installWebGLMock
 ├── browser-apis.mock.ts     # matchMedia, ResizeObserver, IntersectionObserver,
 │                            #   requestAnimationFrame/cancelAnimationFrame, performance.now
-└── opfs.mock.ts             # navigator.storage stub that rejects getDirectory()
+└── opfs.mock.ts             # navigator.storage stub (rejecting default + in-memory luxar/ root)
 ```
 
 ---
@@ -81,13 +81,25 @@ in `afterEach` to drain leftover frames before teardown.
 
 ### `opfs.mock.ts`
 
-`installOPFSMock()` replaces `navigator.storage` with:
+Two flavours. `installOPFSMock()` (the global default) replaces `navigator.storage` with:
 
 - `getDirectory()` — `vi.fn().mockRejectedValue(new Error('OPFS not available in test environment'))`
 - `estimate()` — resolves to `{ quota: 0, usage: 0 }`
 
 The cache layer is expected to handle this rejection by falling back
 to in-memory only; cache tests assert that fallback.
+
+`createFakeOpfsRoot(options?)` builds an in-memory OPFS root for the cache
+tests that need a WORKING L2. It models exactly the levels production walks:
+the origin root accepts ONLY the viewer's `luxar/` namespace dir
+(`OPFS_NAMESPACE_DIR`, throwing for any other name and `NotFoundError` on a
+cold `create: false` lookup), the `luxar/` dir hands out one flat dataset dir
+for every `zarr-cache-*` id (recording them in `datasetIds`, with `vi.fn`
+wrapped `getDirectoryHandle` / `removeEntry` for call assertions), and the
+dataset dir keeps `files` / `metaFiles` by name (bucket dirs collapse onto
+it). `install({ datasetDir?, estimate? })` stubs `navigator.storage`; a test
+with its own instrumented dataset handle passes it as `datasetDir` plus an
+`onRemoveDataset` wipe of its maps.
 
 ---
 

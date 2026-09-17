@@ -1,6 +1,10 @@
 import numpy as np
 import zarr
 
+from luxar.typing_utils._format_contract import (
+    FORMAT_TYPE_SCENE,
+    SCENE_FORMAT_VERSION,
+)
 from luxar.utils.scenes import create_lorenz_attractor
 
 
@@ -12,7 +16,9 @@ def test_random_demo_roundtrip(tmp_path) -> None:
 
     root = zarr.open_group(store, mode="r")
     # ---- root attrs
-    assert root.attrs["luxar_version"] == "0.1"
+    assert root.attrs["format_version"] == SCENE_FORMAT_VERSION
+    assert root.attrs["format_type"] == FORMAT_TYPE_SCENE
+    assert "luxar_version" not in root.attrs  # the 0.1 key is read-only legacy
     # Units are now specified per-dimension via scene_dimensions, not globally
 
     # ---- hierarchy

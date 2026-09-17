@@ -196,7 +196,7 @@ def test_malformed_citation_never_reaches_the_data(tmp_path) -> None:
 
 
 def test_citation_survives_a_re_chunk(tmp_path) -> None:
-    """`optimise` rebuilds a store's metadata; the credit must come through.
+    """`optimize` rebuilds a store's metadata; the credit must come through.
 
     The format spec promises the attribution "travels with the store", and a
     re-chunk is the journey most likely to break that promise: it rewrites every
@@ -204,11 +204,11 @@ def test_citation_survives_a_re_chunk(tmp_path) -> None:
     would leave a published, re-chunked scene uncredited while the demo that
     produced it still claims otherwise.
     """
-    from luxar.io.optimise import optimise_store
+    from luxar.io.optimize import optimize_store
 
     src = _write(tmp_path, "before", citation=FULL)
     dst = tmp_path / "after.luxar.zarr"
-    optimise_store(src, dst)
+    optimize_store(src, dst)
 
     assert dict(zarr.open_group(dst, mode="r").attrs["citation"]) == FULL
 

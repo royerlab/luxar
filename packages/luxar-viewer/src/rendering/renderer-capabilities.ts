@@ -151,7 +151,7 @@ export interface RendererCapabilities {
  * to distinguish real WebGPU from compat WebGL2, but that flag is about
  * the *backing API*, not the *effective framebuffer Y orientation*.
  * Branching on it left the image visibly flipped under
- * `?webgpu-force-webgl` because the geometry factory assumed WebGL's
+ * `?webgpuForceWebgl` because the geometry factory assumed WebGL's
  * bottom-up FBO while WebGPURenderer was producing top-down output.
  *
  * @internal — exported only so SceneManager can pass the result through
@@ -167,7 +167,7 @@ export function detectFramebufferYDown(renderer: Renderer): boolean {
  * feature (or, under the WebGL2 compat backend, the equivalent GL extension).
  *
  * Read from the backend that is actually running rather than from the API
- * surface, for the same reason `maxTextureSize` is below: `?webgpu-force-webgl`
+ * surface, for the same reason `maxTextureSize` is below: `?webgpuForceWebgl`
  * runs a WebGL2 context behind the WebGPU renderer, and assuming a real device's
  * feature set there would overestimate it.
  */
@@ -313,7 +313,7 @@ export function createRendererCapabilities(
   // actually running (createRendererCapabilities runs post-init on the
   // production path). Real WebGPU exposes `device.limits`; the WebGL2
   // compat backend exposes the raw `gl` context instead — probe it so a
-  // 4096-class device under `?webgpu-force-webgl` isn't overestimated.
+  // 4096-class device under `?webgpuForceWebgl` isn't overestimated.
   // Fall back to WebGPU's guaranteed default limit (8192).
   const backend = (
     renderer as unknown as {
