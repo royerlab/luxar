@@ -50,6 +50,9 @@ class _FrameWriter(Protocol):
         gsplats: bool = True,
         kind: str | None = None,
         part_provenance: list[dict[str, Any]] | None = None,
+        extra_root_attrs: dict[str, Any] | None = None,
+        fitting_attrs: dict[str, Any] | None = None,
+        zarr_format: int = 2,
     ) -> None: ...
 
 
@@ -106,20 +109,21 @@ def _write_frame(
     gsplats: bool = True,
     kind: str | None = None,
     part_provenance: list[dict[str, Any]] | None = None,
+    extra_root_attrs: dict[str, Any] | None = None,
+    fitting_attrs: dict[str, Any] | None = None,
+    zarr_format: int = 2,
     layout: _ArchiveLayout,
 ) -> None:
     """Write a store zipped from outside its directory or from inside it."""
     prefix = f"{path.name.split('.')[0]}.gsplats.zarr/" if layout == "wrapped" else ""
     with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
         root_attrs = {
             "format_type": "gsplats_zarr" if gsplats else "luxar_zarr",
             "n_splats": n_splats,
         }
         if kind is not None:
             root_attrs["kind"] = kind
-        zf.writestr(f"{prefix}.zattrs", json.dumps(root_attrs))
-        zf.writestr(f"{prefix}fitting/.zgroup", json.dumps({"zarr_format": 2}))
+        root_attrs.update(extra_root_attrs or {})
         fitting = {}
         if psnr is not None:
             fitting["psnr_db"] = psnr
@@ -129,7 +133,21 @@ def _write_frame(
             fitting["source_bytes"] = source_bytes
         if part_provenance is not None:
             fitting["part_provenance"] = part_provenance
-        zf.writestr(f"{prefix}fitting/.zattrs", json.dumps(fitting))
+        fitting.update(fitting_attrs or {})
+        if zarr_format == 2:
+            zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
+            zf.writestr(f"{prefix}.zattrs", json.dumps(root_attrs))
+            zf.writestr(f"{prefix}fitting/.zgroup", json.dumps({"zarr_format": 2}))
+            zf.writestr(f"{prefix}fitting/.zattrs", json.dumps(fitting))
+        else:
+            zf.writestr(
+                f"{prefix}zarr.json",
+                json.dumps({"zarr_format": 3, "attributes": root_attrs}),
+            )
+            zf.writestr(
+                f"{prefix}fitting/zarr.json",
+                json.dumps({"zarr_format": 3, "attributes": fitting}),
+            )
 
 
 @pytest.fixture(params=get_args(_ArchiveLayout), ids=lambda layout: f"{layout}-store")
@@ -524,7 +542,82 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         info = gen._read_archive(path)
 
         assert info["frames"] is None
-        assert info["source_bytes"] is None
+        assert info["source_bytes"] == 1000
+
+    def test_new_partition_layout_recovers_source_grid_and_frames(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
+        path = tmp_path / "partition-timelapse.gsplats.zarr.zip"
+        fitting = {
+            "source_shape": [500, 108, 1352, 532],
+            "source_dtype": "uint16",
+            "source_bytes": 77_680_512_000,
+            "source_voxels": 38_840_256_000,
+        }
+        write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            kind="partition",
+            extra_root_attrs={"ndim": 4},
+            zarr_format=3,
+            part_provenance=[
+                {"coordinate": 0.0, "fitting": fitting},
+                {"coordinate": 1.0, "fitting": dict(fitting)},
+            ],
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["source_shape"] == [500, 108, 1352, 532]
+        assert info["source_dtype"] == "uint16"
+        assert info["source_bytes"] == 77_680_512_000
+        assert info["source_voxels"] == 38_840_256_000
+        assert info["frames"] == 500
+
+    def test_plain_4d_source_is_not_assumed_to_be_a_timelapse(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
+        path = tmp_path / "plain-4d.gsplats.zarr.zip"
+        write_frame(
+            path,
+            extra_root_attrs={"ndim": 4},
+            fitting_attrs={"source_shape": [5, 6, 7, 8]},
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["source_shape"] == [5, 6, 7, 8]
+        assert info["frames"] is None
+
+    def test_legacy_layout_keeps_explicit_frames_with_per_frame_shape(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
+        path = tmp_path / "legacy-timelapse.gsplats.zarr.zip"
+        fitting = {
+            "source_shape": [108, 1352, 532],
+            "source_dtype": "uint16",
+            "source_bytes": 155_361_024,
+            "source_voxels": 77_680_512,
+        }
+        write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            fitting_attrs={"frames": 500},
+            part_provenance=[
+                {"coordinate": 0.0, "fitting": fitting},
+                {"coordinate": 1.0, "fitting": dict(fitting)},
+            ],
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["source_shape"] == [108, 1352, 532]
+        assert info["source_dtype"] == "uint16"
+        assert info["source_bytes"] == 310_722_048
+        assert info["source_voxels"] == 155_361_024
+        assert info["frames"] == 500
 
     def test_nested_single_part_is_not_reported_as_one_frame(
         self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
@@ -545,6 +638,29 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         info = gen._read_archive(path)
 
         assert info["frames"] is None
+
+    def test_flatten_summary_is_not_reported_as_one_frame(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
+        path = tmp_path / "flattened-partition.gsplats.zarr.zip"
+        write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            part_provenance=[
+                {
+                    "part_count": 2,
+                    "fit_reference": {"kind": "acquisition"},
+                    "fitting": {"source_bytes": 7000},
+                }
+            ],
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] is None
+        assert info["source_bytes"] == 7000
+        assert info["quality_quotable"] is True
 
     def test_check_does_not_demand_scores_classified_as_unquotable(
         self, gen: Any, monkeypatch: pytest.MonkeyPatch
@@ -1643,6 +1759,7 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
         "source_shape": None,
         "source_dtype": None,
         "source_bytes": None,
+        "source_voxels": None,
         "frames": None,
         "measured_from": None,
         "measured_sha256": None,
@@ -1743,6 +1860,7 @@ def test_refresh_description_matches_the_committed_sidecar(
         "source_shape",
         "source_dtype",
         "source_bytes",
+        "source_voxels",
         "frames",
         "quality_quotable",
         "measured_from",

@@ -968,9 +968,20 @@ coordinate, so a later rewrite can scrub stale fitting/source fields but cannot
 generically remove records for coordinates eliminated wholesale. After such a
 rewrite, the list length is provenance cardinality from stack time, not a
 surviving-frame count; re-stack the rewritten components to refresh it.
-Flattening a partition discards its slot-keyed record because those spatial part
-coordinates no longer exist in the resulting leaf, even when only one part
-survives.
+Flattening a partition replaces its slot-keyed records with one summary entry
+when the record count matches the number of collapsed spatial leaves, because
+those spatial coordinates no longer exist in the resulting leaf. A list with a
+different cardinality describes an inherited component axis and is preserved
+verbatim. The summary entry records `part_count`; carries unanimous
+`source_bytes`, `source_voxels`, and `source_stored_bytes` once or sums them when
+the parts describe distinct sources; sums complete `time_seconds` figures; and
+carries `source_shape`, `source_declared`, `source_dtype`, and `fit_reference`
+only when every part agrees. `source_declared` is carried only with its
+qualifying `source_shape`. A malformed or incompletely stamped matched input
+still records the part count but omits any aggregate that would otherwise be
+partial. The summary has no `coordinate`, and nested `part_provenance` records
+are deliberately collapsed with their parent spatial-part records rather than
+retained as a second level.
 
 Composition may nest the same record recursively in an entry's `fitting` block.
 `batch-fit merge` uses this for its multi-level fan-in: root entries are spatial

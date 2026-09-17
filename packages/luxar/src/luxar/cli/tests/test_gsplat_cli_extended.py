@@ -7650,6 +7650,145 @@ class TestLODCarriesAuthoredAppearance:
         assert got["blending_mode"] == "volumetric"
 
 
+class TestFitProvenanceRewriteAudit:
+    PROVENANCE: ClassVar[list[dict[str, Any]]] = [
+        {
+            "coordinate": 0.0,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [4, 8, 8, 8],
+                "source_dtype": "uint16",
+                "source_bytes": 4096,
+                "source_voxels": 2048,
+                "time_seconds": 2.5,
+                "psnr_db": 40.0,
+            },
+        },
+        {
+            "coordinate": 1.0,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [4, 8, 8, 8],
+                "source_dtype": "uint16",
+                "source_bytes": 4096,
+                "source_voxels": 2048,
+                "time_seconds": 3.5,
+                "psnr_db": 42.0,
+            },
+        },
+    ]
+    REWRITERS: ClassVar[dict[str, list[str]]] = {
+        "slice": ["gsplat", "slice", "{in}", "{out}", "0:4, :, :"],
+        "reencode": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
+        "partition": TestLODCarriesAuthoredAppearance.REWRITERS["partition"],
+        "lod": TestLODCarriesAuthoredAppearance.REWRITERS["lod:stream"],
+        "flatten": TestLODCarriesAuthoredAppearance.REWRITERS["flatten"],
+        "decimate": TestLODCarriesAuthoredAppearance.REWRITERS["decimate"],
+        "merge": TestLODCarriesAuthoredAppearance.REWRITERS["merge"],
+    }
+
+    @staticmethod
+    def _stamp_provenance(path: Path) -> None:
+        root = zc_open_group(path, mode="r+")
+        root.require_group("fitting").attrs["part_provenance"] = (
+            TestFitProvenanceRewriteAudit.PROVENANCE
+        )
+        zc_consolidate(root)
+
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "slice",
+            "reencode",
+            "partition",
+            "lod",
+            "flatten",
+            "decimate",
+            pytest.param(
+                "merge",
+                marks=pytest.mark.xfail(
+                    strict=True,
+                    reason="merge drops fitting/part_provenance (#2768)",
+                ),
+            ),
+        ],
+    )
+    def test_rewriter_keeps_fit_provenance(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        label: str,
+    ) -> None:
+        self._stamp_provenance(medium_gsplats)
+        input_path = medium_gsplats
+        if label == "flatten":
+            input_path = tmp_path / "partitioned-input.gsplats.zarr"
+            partition = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "partition",
+                    str(medium_gsplats),
+                    str(input_path),
+                    "--parts",
+                    "2",
+                ],
+            )
+            assert partition.exit_code == 0, partition.stdout
+
+        out = tmp_path / f"provenance-{label}.gsplats.zarr"
+        argv = TestLODCarriesAuthoredAppearance._resolve(
+            self.REWRITERS[label], input_path, out, tmp_path
+        )
+
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
+        output = zc_open_group(out, mode="r")
+        provenance = output["fitting"].attrs["part_provenance"]
+        if label in {"reencode", "partition", "lod"}:
+            assert provenance == self.PROVENANCE
+        elif label == "flatten":
+            assert provenance == [
+                {
+                    "part_count": 2,
+                    "fit_reference": {"kind": "acquisition"},
+                    "fitting": {
+                        "source_shape": [4, 8, 8, 8],
+                        "source_dtype": "uint16",
+                        "source_bytes": 4096,
+                        "source_voxels": 2048,
+                        "time_seconds": 6.0,
+                    },
+                }
+            ]
+        elif label == "decimate":
+            assert [record["fitting"] for record in provenance] == [
+                {
+                    key: value
+                    for key, value in record["fitting"].items()
+                    if key != "psnr_db"
+                }
+                for record in self.PROVENANCE
+            ]
+        elif label == "slice":
+            assert [record["coordinate"] for record in provenance] == [0.0, 1.0]
+            assert all(
+                "source_bytes" not in record["fitting"]
+                and "psnr_db" not in record["fitting"]
+                for record in provenance
+            )
+            assert [record["fitting"]["source_dtype"] for record in provenance] == [
+                "uint16",
+                "uint16",
+            ]
+            assert [record["fitting"]["time_seconds"] for record in provenance] == [
+                2.5,
+                3.5,
+            ]
+
+
 class TestAdditiveCommand:
     """`gsplat additive` gives every leaf of an existing tree an additive
     ladder, structure-preservingly (the per-leaf counterpart of `lod --recipe
