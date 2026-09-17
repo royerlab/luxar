@@ -91,13 +91,24 @@ def _summarize_partition_provenance(value: Any) -> Optional[list[dict[str, Any]]
     ):
         summary["time_seconds"] = sum(time_values)
 
-    for key in ("source_shape", "source_declared", "source_dtype"):
+    for key in ("source_shape", "source_dtype"):
         values = [
             fitting.get(key) if isinstance(fitting, dict) else None
             for fitting in fittings
         ]
         if values[0] is not None and all(item == values[0] for item in values[1:]):
             summary[key] = values[0]
+
+    declared_values = [
+        fitting.get("source_declared") if isinstance(fitting, dict) else None
+        for fitting in fittings
+    ]
+    if (
+        "source_shape" in summary
+        and declared_values[0] is not None
+        and all(item == declared_values[0] for item in declared_values[1:])
+    ):
+        summary["source_declared"] = declared_values[0]
 
     result: dict[str, Any] = {"part_count": len(value), "fitting": summary}
     references = [
@@ -110,10 +121,14 @@ def _summarize_partition_provenance(value: Any) -> Optional[list[dict[str, Any]]
     return [result]
 
 
-def _replace_partition_provenance_with_summary(stats: dict[str, Any]) -> None:
-    summary = _summarize_partition_provenance(stats.get("part_provenance"))
+def _replace_partition_provenance_with_summary(
+    stats: dict[str, Any], *, part_count: int
+) -> None:
+    provenance = stats.get("part_provenance")
+    if not isinstance(provenance, list) or len(provenance) != part_count:
+        return
+    summary = _summarize_partition_provenance(provenance)
     if summary is None:
-        stats.pop("part_provenance", None)
         return
     stats["part_provenance"] = summary
 
@@ -608,7 +623,9 @@ def run_flatten_dataset(
 
                 carried_stats = stats_after_structure_change(stats)
                 if _contains_partition_group(root):
-                    _replace_partition_provenance_with_summary(carried_stats)
+                    _replace_partition_provenance_with_summary(
+                        carried_stats, part_count=len(leaf_paths)
+                    )
                 fitting, config, provenance, pipeline = split_fitting_info(
                     carried_stats, include_fitting_info=True
                 )
