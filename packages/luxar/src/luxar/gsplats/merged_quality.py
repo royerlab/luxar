@@ -15,11 +15,14 @@ from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS
 from luxar.typing_utils.json_safe import json_safe_value
 
 _FIT_REFERENCE_KINDS = frozenset(("acquisition", "preprocessed", "synthetic"))
-PART_PROVENANCE_SUMMARY_FIELDS = (
+_SUMMABLE_SUMMARY_FIELDS = (
     "source_bytes",
     "source_stored_bytes",
     "source_voxels",
     "time_seconds",
+)
+PART_PROVENANCE_SUMMARY_FIELDS = (
+    *_SUMMABLE_SUMMARY_FIELDS,
     "source_shape",
     "source_dtype",
     "source_declared",
@@ -326,7 +329,7 @@ def _summed_summary_fields(
 ) -> dict[str, Any]:
     """Complete finite totals that can survive provenance collapse."""
     summary: dict[str, Any] = {}
-    for key in PART_PROVENANCE_SUMMARY_FIELDS[:4]:
+    for key in _SUMMABLE_SUMMARY_FIELDS:
         values = [fitting.get(key) for fitting in fittings]
         if not all(
             isinstance(item, (int, float))
