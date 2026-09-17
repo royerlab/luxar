@@ -985,6 +985,8 @@ quality score. An independent-input merge prepends the input count to each
 common `source_shape` at every collapse level so the shape remains consistent
 with summed source totals; partition flatten keeps the common parent shape
 unchanged. `source_declared` is carried only with its qualifying `source_shape`.
+A unanimous `source_dtype` is carried even when the part shapes cannot be
+aggregated.
 A malformed or incompletely stamped matched partition still records the part
 count but omits any aggregate that would otherwise be partial. An
 independent-input merge omits the record entirely when no source fact survives
