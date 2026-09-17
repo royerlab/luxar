@@ -28,6 +28,19 @@ Reusable Demo Generators
    :members:
    :undoc-members:
 
+Deprecation Notices
+-------------------
+
+The post-release deprecation mechanism, built ahead of its first use. Public
+names that change after the first release keep working for the window promised
+in :doc:`/guides/user/COMPATIBILITY_POLICY` and announce the rename through
+these helpers; the CLI half, ``luxar.cli.utils.deprecated_option``, prints the
+same sentence to stderr.
+
+.. automodule:: luxar.utils.deprecation
+   :members:
+   :undoc-members:
+
 Console Output
 --------------
 

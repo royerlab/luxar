@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { OPEN_DATASET_BROWSER_EVENT } from '../../../core/app/interaction/canvas-actions';
 
 const jsdomDocument = document;
 const ownershipMocks = vi.hoisted(() => ({ install: vi.fn() }));
@@ -1178,12 +1179,12 @@ describe('LuxarApp', () => {
       expect(mockClearError).toHaveBeenCalled();
     });
 
-    it('should register open-dataset-browser event listener', async () => {
+    it('should register the OPEN_DATASET_BROWSER_EVENT listener', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(mockAddEventListener).toHaveBeenCalledWith(
-        'open-dataset-browser',
+        OPEN_DATASET_BROWSER_EVENT,
         expect.any(Function)
       );
     });
@@ -1204,7 +1205,7 @@ describe('LuxarApp', () => {
 
       try {
         const openBrowser = mockAddEventListener.mock.calls.find(
-          (call) => call[0] === 'open-dataset-browser'
+          (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
         )?.[1] as (() => void) | undefined;
         expect(openBrowser).toBeDefined();
 
@@ -1235,11 +1236,11 @@ describe('LuxarApp', () => {
       ).rejects.toThrow('initial load failed');
 
       const browserRegistration = mockAddEventListener.mock.calls.find(
-        (call) => call[0] === 'open-dataset-browser'
+        (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
       );
       expect(browserRegistration).toBeDefined();
       expect(mockRemoveEventListener).toHaveBeenCalledWith(
-        'open-dataset-browser',
+        OPEN_DATASET_BROWSER_EVENT,
         browserRegistration![1]
       );
       expect(() => app.switchDataset('http://example.com/retry.zarr')).toThrow(/before init/);
@@ -1345,7 +1346,7 @@ describe('LuxarApp', () => {
       const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
       const onClose = browserCall[0].onClose as () => void;
       const openBrowser = mockAddEventListener.mock.calls.find(
-        (call) => call[0] === 'open-dataset-browser'
+        (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
       )?.[1] as (() => void) | undefined;
       expect(openBrowser).toBeDefined();
 

@@ -47,7 +47,7 @@
  * `depthTest: false`, `depthWrite: false`, `transparent: false`, `frustumCulled: false`
  * — are pinned by test. `WebGPURenderer`'s native backend keeps its multisampled colour
  * between passes; its WebGL2 fallback does not and cannot take the GLSL quad, so that
- * one combination (`?webgpu-force-webgl` + MSAA, both diagnostic switches) falls back
+ * one combination (`?webgpuForceWebgl` + MSAA, both diagnostic switches) falls back
  * to the single pass and says so once.
  *
  * **Passes B and C run with `scene.background` taken away.** Both renderers FORCE a

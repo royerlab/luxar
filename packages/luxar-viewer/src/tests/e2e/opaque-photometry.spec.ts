@@ -227,7 +227,7 @@ for (const [nodeType, fixture] of [
 ] as const) {
   test(`opaque ${nodeType} preserve fragment photometry`, async ({ page }) => {
     test.slow();
-    await page.goto(`/?src=${fixture}&debug&dpr=1&no-opfs`);
+    await page.goto(`/?src=${fixture}&debug&dpr=1&noOpfs`);
     await waitForLuxarReady(page);
     await page.waitForFunction(
       (type) => {
@@ -293,7 +293,7 @@ for (const [nodeType, fixture] of [
 
   test(`dim opaque ${nodeType} do not erase luminous geometry behind`, async ({ page }) => {
     test.slow();
-    await page.goto(`/?src=${fixture}&debug&dpr=1&no-opfs`);
+    await page.goto(`/?src=${fixture}&debug&dpr=1&noOpfs`);
     await waitForLuxarReady(page);
     await page.waitForFunction(
       (type) => {

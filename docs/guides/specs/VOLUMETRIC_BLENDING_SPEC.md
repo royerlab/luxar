@@ -649,7 +649,7 @@ and rendering agree.
   individually optically-thick splats the per-splat self-screening `S(Bτᵢ)`
   saturates emission, so a large boost deepens occlusion more than it brightens;
   bounded by the shared `ENERGY_FLOOR = 0.1` cap (≤ 10×), transient (decays as
-  e(k) → 1), with `?no-lod-energy` as the escape hatch and a volumetric-specific
+  e(k) → 1), with `?noLodEnergy` as the escape hatch and a volumetric-specific
   floor the obvious knob should a thick-splat scene ever show transient dark
   blobs while streaming. A deliberate single-set/shared-cap policy rather than a
   split predicate. Chunks arrive in energy order, not depth order: fine, the sort
@@ -689,7 +689,7 @@ and rendering agree.
   not restate this as "absorption is conserved exactly"; the accurate summary is
   *transmittance is order-exact; emission ordering error is thin-regime second
   order in the alphas and always bounded by the local radiance difference*.
-  `?no-lod-fade` is the escape hatch.
+  `?noLodFade` is the escape hatch.
 - **Tone mapping / HDR**: pure additive accumulates without bound and can blow
   out under ACES; volumetric bounds accumulated radiance near c/κ, improving
   tone-mapped appearance on dense scenes. Emission remains unclamped HDR — a

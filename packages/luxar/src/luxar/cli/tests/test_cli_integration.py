@@ -184,7 +184,8 @@ class TestServeIntegration:
         response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.status_code == 200
         data = _node_attrs(response.json())
-        assert "luxar_version" in data  # Changed from "version" to match implementation
+        assert "format_version" in data
+        assert data["format_type"] == "luxar_zarr"
         assert data["type"] == "scene"
 
     def test_scene_metadata(self, test_server):
@@ -194,9 +195,7 @@ class TestServeIntegration:
         metadata = _node_attrs(response.json())
 
         # Verify expected metadata structure
-        assert (
-            metadata["luxar_version"] == "0.1"
-        )  # Changed from "version" to "luxar_version"
+        assert metadata["format_version"] == "0.2"
         assert "scene_dimensions" in metadata
 
     def test_zarr_group_listing(self, test_server):

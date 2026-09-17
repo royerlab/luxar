@@ -12,15 +12,15 @@
 /**
  * Current `.luxar.zarr` scene format version — the version the Python writer emits and this build treats as current.
  */
-export const SCENE_FORMAT_VERSION = '0.1';
+export const SCENE_FORMAT_VERSION = '0.2';
 /**
  * Scene format versions declared loadable by this build.
  */
-export const SUPPORTED_SCENE_VERSIONS: readonly string[] = ['0.1', '0.2', '0.3'];
+export const SUPPORTED_SCENE_VERSIONS: readonly string[] = ['0.1', '0.2'];
 /**
  * Union of the supported scene format version strings.
  */
-export type SceneFormatVersion = '0.1' | '0.2' | '0.3';
+export type SceneFormatVersion = '0.1' | '0.2';
 
 /**
  * Current standalone `.gsplats.zarr` node-tree format version — the version the Python writer emits and this build treats as current.
@@ -45,6 +45,30 @@ export type GSplatsFormatVersion = '3.0' | '3.1' | '3.2' | '3.3' | '3.4';
  * Root-header `format_type` value identifying a standalone gsplats store.
  */
 export const FORMAT_TYPE_GSPLATS = 'gsplats_zarr';
+
+/**
+ * Root-header `format_type` value identifying a compiled `.luxar.zarr` scene (format 0.2+).
+ */
+export const FORMAT_TYPE_SCENE = 'luxar_zarr';
+
+/**
+ * The scene 0.1 root-header version key. Readers fall back to it when
+ * `format_version` is absent; the writer no longer emits it.
+ */
+export const LEGACY_SCENE_VERSION_ATTR = 'luxar_version';
+
+/**
+ * Root-header attr recording the Luxar SOFTWARE version that wrote a
+ * scene. Provenance only — excluded from `content_hash`, so it never
+ * invalidates a viewer cache.
+ */
+export const SOFTWARE_VERSION_ATTR = 'luxar_software_version';
+
+/**
+ * The one key a categorical `nd_transform` entry carries; an affine entry
+ * carries `ND_TRANSFORM_AFFINE_KEYS` instead (mutually exclusive).
+ */
+export const ND_TRANSFORM_PERMUTATION_KEY = 'permutation';
 
 /**
  * All scene-graph node type names.
@@ -164,11 +188,17 @@ export type EncodingName =
 export const ATTR_KEYS: readonly AttrKey[] = [
   'format_version',
   'format_type',
+  'luxar_software_version',
+  'type',
   'content_hash',
+  'scene_dimensions',
   'display_type',
   'max_elements',
   'position_bounds',
   'kind',
+  'selector',
+  'default_level',
+  'child_index',
 ];
 /**
  * Union of the canonical metadata attribute key names.
@@ -176,11 +206,17 @@ export const ATTR_KEYS: readonly AttrKey[] = [
 export type AttrKey =
   | 'format_version'
   | 'format_type'
+  | 'luxar_software_version'
+  | 'type'
   | 'content_hash'
+  | 'scene_dimensions'
   | 'display_type'
   | 'max_elements'
   | 'position_bounds'
-  | 'kind';
+  | 'kind'
+  | 'selector'
+  | 'default_level'
+  | 'child_index';
 
 /**
  * Canonical gsplats array names.
@@ -205,3 +241,280 @@ export type ArrayName =
   | 'cholesky_factors_offdiag'
   | 'colors'
   | 'label_ids';
+
+/**
+ * Render / appearance attribute keys a caller may author on at least one
+ * node type — the Python writer's typo allowlist. `ComposableAttrs` keys
+ * must be a subset.
+ */
+export const RENDER_ATTR_KEYS: readonly RenderAttrKey[] = [
+  'absorption',
+  'blending_mode',
+  'colormap',
+  'gamma',
+  'intensity',
+  'layer',
+  'layer_order',
+  'offset',
+  'opacity',
+  'visible',
+  'copy',
+  'link',
+  'link_target',
+  'join',
+  'alpha_cutoff',
+  'ambient',
+  'material',
+  'roughness',
+  'metalness',
+  'clearcoat',
+  'clearcoat_roughness',
+  'iridescence',
+  'sheen',
+  'sheen_color',
+  'transmission',
+  'ior',
+  'thickness',
+  'attenuation_color',
+  'attenuation_distance',
+  'dispersion',
+  'refract_data',
+  'shade_exponent',
+  'shininess',
+  'specular',
+  'texture_filter',
+  'texture_wrap',
+  'slab_tolerance',
+];
+/**
+ * Union of the render / appearance attribute key names.
+ */
+export type RenderAttrKey =
+  | 'absorption'
+  | 'blending_mode'
+  | 'colormap'
+  | 'gamma'
+  | 'intensity'
+  | 'layer'
+  | 'layer_order'
+  | 'offset'
+  | 'opacity'
+  | 'visible'
+  | 'copy'
+  | 'link'
+  | 'link_target'
+  | 'join'
+  | 'alpha_cutoff'
+  | 'ambient'
+  | 'material'
+  | 'roughness'
+  | 'metalness'
+  | 'clearcoat'
+  | 'clearcoat_roughness'
+  | 'iridescence'
+  | 'sheen'
+  | 'sheen_color'
+  | 'transmission'
+  | 'ior'
+  | 'thickness'
+  | 'attenuation_color'
+  | 'attenuation_distance'
+  | 'dispersion'
+  | 'refract_data'
+  | 'shade_exponent'
+  | 'shininess'
+  | 'specular'
+  | 'texture_filter'
+  | 'texture_wrap'
+  | 'slab_tolerance';
+
+/**
+ * `selector` values a kind=lod group may carry — the units of its
+ * children's `coverage_fraction` thresholds.
+ */
+export const LOD_SELECTORS: readonly LodSelectorName[] = ['coverage', 'screen-area'];
+/**
+ * Union of the kind=lod `selector` attr values.
+ */
+export type LodSelectorName = 'coverage' | 'screen-area';
+
+/**
+ * The canonical `blending_mode` values, in panel-dropdown order.
+ */
+export const BLENDING_MODES: readonly BlendingModeName[] = [
+  'additive',
+  'volumetric',
+  'normal',
+  'max',
+  'opaque',
+  'luminous',
+];
+/**
+ * Union of the canonical `blending_mode` values.
+ */
+export type BlendingModeName = 'additive' | 'volumetric' | 'normal' | 'max' | 'opaque' | 'luminous';
+
+/**
+ * Tone-mapping operator names a `viewer_config.tone_mapping` may carry.
+ */
+export const TONE_MAPPINGS: readonly ToneMappingName[] = [
+  'None',
+  'Linear',
+  'Reinhard',
+  'Cineon',
+  'ACES',
+  'AgX',
+  'Neutral',
+];
+/**
+ * Union of the tone-mapping operator names.
+ */
+export type ToneMappingName =
+  'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
+
+/**
+ * Built-in colormap names a `colormap` attr may carry (the `'custom'`
+ * sentinel is not a name). Must equal the keys of
+ * `rendering/colormap-data.ts::BUILTIN_COLORMAPS`.
+ */
+export const BUILTIN_COLORMAP_NAMES: readonly BuiltinColormapName[] = [
+  'green',
+  'magenta',
+  'cyan',
+  'red',
+  'blue',
+  'yellow',
+  'gray',
+  'orange',
+  'bop_blue',
+  'bop_orange',
+  'bop_purple',
+  'viridis',
+  'inferno',
+  'plasma',
+  'turbo',
+  'fire',
+  'ice',
+  'phase',
+  'RdBu',
+  'coolwarm',
+];
+/**
+ * Union of the built-in colormap names.
+ */
+export type BuiltinColormapName =
+  | 'green'
+  | 'magenta'
+  | 'cyan'
+  | 'red'
+  | 'blue'
+  | 'yellow'
+  | 'gray'
+  | 'orange'
+  | 'bop_blue'
+  | 'bop_orange'
+  | 'bop_purple'
+  | 'viridis'
+  | 'inferno'
+  | 'plasma'
+  | 'turbo'
+  | 'fire'
+  | 'ice'
+  | 'phase'
+  | 'RdBu'
+  | 'coolwarm';
+
+/**
+ * Canonical dimension `unit` spellings on disk (the Python `PhysicalUnit`
+ * enum). Input aliases such as `meter` never reach the store.
+ */
+export const PHYSICAL_UNITS: readonly PhysicalUnitName[] = [
+  'nm',
+  'um',
+  'mm',
+  'cm',
+  'm',
+  'metre',
+  'km',
+  'inch',
+  'foot',
+  'px',
+  's',
+  'au',
+];
+/**
+ * Union of the canonical physical-unit spellings.
+ */
+export type PhysicalUnitName =
+  'nm' | 'um' | 'mm' | 'cm' | 'm' | 'metre' | 'km' | 'inch' | 'foot' | 'px' | 's' | 'au';
+
+/**
+ * `ordering` attr values: how a geometry node's elements were spatially
+ * sorted (`none` = not reordered).
+ */
+export const ORDERING_METHODS: readonly OrderingMethodName[] = ['morton', 'hilbert', 'none'];
+/**
+ * Union of the `ordering` attr values.
+ */
+export type OrderingMethodName = 'morton' | 'hilbert' | 'none';
+
+/**
+ * Lines-only `join` attr values (joint strategy at a degree-2 joint).
+ */
+export const LINE_JOIN_STYLES: readonly LineJoinStyleName[] = ['none', 'miter'];
+/**
+ * Union of the line join style names.
+ */
+export type LineJoinStyleName = 'none' | 'miter';
+
+/**
+ * `line_type` attr values: how a lines node's vertices + segments are read.
+ */
+export const LINE_TYPES: readonly LineTypeName[] = ['segments', 'polyline', 'loop', 'indexed'];
+/**
+ * Union of the `line_type` attr values.
+ */
+export type LineTypeName = 'segments' | 'polyline' | 'loop' | 'indexed';
+
+/**
+ * Keys an affine `nd_transform` entry may carry; a categorical entry
+ * carries `ND_TRANSFORM_PERMUTATION_KEY` instead.
+ */
+export const ND_TRANSFORM_AFFINE_KEYS: readonly NdTransformAffineKey[] = ['scale', 'offset'];
+/**
+ * Union of the affine `nd_transform` entry keys.
+ */
+export type NdTransformAffineKey = 'scale' | 'offset';
+
+/**
+ * Keys of one entry in the root `scene_dimensions.dimensions[]` list
+ * (`SceneDimensionAttrs` is checked against this at the type level).
+ */
+export const DIMENSION_ATTR_KEYS: readonly DimensionAttrKey[] = [
+  'name',
+  'unit',
+  'range',
+  'step',
+  'display',
+  'discrete',
+  'cyclic',
+  'scale',
+  'spatial',
+  'description',
+  'categories',
+];
+/**
+ * Union of the per-dimension attr keys.
+ */
+export type DimensionAttrKey =
+  | 'name'
+  | 'unit'
+  | 'range'
+  | 'step'
+  | 'display'
+  | 'discrete'
+  | 'cyclic'
+  | 'scale'
+  | 'spatial'
+  | 'description'
+  | 'categories';

@@ -72,7 +72,7 @@ rasterization and are not what a user sees. What is valid is the _difference_ be
 rows: the scene, the renderer and the machine are identical, and only the store layer
 changes. `zip (DEFLATE) − directory` in the long-task column is the inflate cost.
 
-**The default run gives every variant `?no-cache`.** This is an
+**The default run gives every variant `?noCache`.** This is an
 uncached-vs-uncached comparison — the right A/B for the store layer. Set
 `LUXAR_BENCH_REVISIT=1` to measure the second load in the same browser context
 with the L1/L2 chunk cache enabled for every variant.

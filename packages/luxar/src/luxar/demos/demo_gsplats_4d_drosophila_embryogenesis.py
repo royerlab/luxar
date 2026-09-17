@@ -170,7 +170,7 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
     #    per timepoint step, and a 7.7% smaller zip. The tradeoff at 500 frames
     #    is 47 MB / 115 requests for first paint; `--profile hosting` measures
     #    18 MB / 68 requests instead, but about 12 requests per timepoint step.
-    luxar optimise um.gsplats.zarr \
+    luxar optimize um.gsplats.zarr \
         drosophila_embryogenesis_500tp.gsplats.zarr.zip --profile archive
 
 Three choices in there are measured rather than conventional:
@@ -225,7 +225,7 @@ DEMO_META = {
         # The largest payload in the corpus by some margin: 863,811,020 bytes
         # MEASURED on the shipped artifact, not projected. A one-time download,
         # after which advancing one timepoint costs 0-2.3 MB in 0-4 requests
-        # (the store is re-chunked with `optimise --profile archive`, without
+        # (the store is re-chunked with `optimize --profile archive`, without
         # which it would be 173 requests per step).
         "download_mb": 824,
         # Not a fit — but the scene build loads ~82M splats into memory
@@ -450,7 +450,7 @@ def _validate_rebuilt_archive(node: Any, expected_splats: int) -> int:
     if got != expected_splats:
         raise RuntimeError(
             f"rebuild changed the fitted splat count from {expected_splats:,} "
-            f"to {got:,} during transform or optimise"
+            f"to {got:,} during transform or optimize"
         )
     return got
 
@@ -548,7 +548,7 @@ def recompute_archive(work_dir: Path) -> Path:
             ",".join(f"{value:g}" for value in VOXEL_SCALE),
         )
         run_luxar_cli(
-            "optimise",
+            "optimize",
             str(scaled),
             str(final),
             "--profile",

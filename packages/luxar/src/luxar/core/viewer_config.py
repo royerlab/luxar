@@ -20,10 +20,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlsplit
 
+from ..typing_utils._format_contract import TONE_MAPPINGS
 from ..validation.overlays import validate_visible_range
 
-# Valid enum values (must match TypeScript RenderingSettings union types)
-VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
+# Tone-mapping operator names: single-sourced from
+# `format-contract/contract.yaml::tone_mappings` (the viewer's
+# `RenderingSettings.toneMapping` union is the same projection).
+VALID_TONE_MAPPINGS = TONE_MAPPINGS
 # Playback detail keywords (`ViewerConfig.playback_lod_depth`); an int >= 1 pins
 # that many additive-ladder rungs instead.
 VALID_PLAYBACK_LOD_DEPTHS = ("auto", "all", "fast")

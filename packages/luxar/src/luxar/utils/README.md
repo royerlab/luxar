@@ -1,9 +1,9 @@
 # Utils Package
 
 The `utils` package provides cross-cutting utility functions for Luxar, including
-array manipulation, atomic directory copies, console verbosity, LOD policy,
-paths, and reusable scene generators. Demo-owned downloads, dataset resolution,
-and runtime helpers live under `luxar.demos` and are imported through that
+array manipulation, atomic directory copies, console verbosity, deprecation
+notices, LOD policy, paths, and reusable scene generators. Demo-owned
+downloads, dataset resolution, and runtime helpers live under `luxar.demos` and are imported through that
 package's public barrel.
 
 ## Quick Start
@@ -95,6 +95,26 @@ success, so the destination either exists in full or not at all. Used by
 
 **Key Functions:**
 - `atomic_copytree(src, dst)`: Copy `src` to `dst` atomically. `dst` must not already exist (the caller clears it for overwrite, matching `shutil.copytree`). Cleans up the temp dir and re-raises on failure.
+
+### `deprecation.py`
+The post-release deprecation mechanism. Before the first PyPI release a rename
+is a hard cut (`luxar.cli.lod` rejects `--method` with a pointer; the LOD recipe
+names error with a did-you-mean); after it, a public name that changes keeps
+working for the window promised by
+[`docs/guides/user/COMPATIBILITY_POLICY.md`](../../../../../docs/guides/user/COMPATIBILITY_POLICY.md)
+(two releases or six months, whichever is longer) and says so through these
+helpers, in one voice.
+
+**Key Functions:**
+- `warn_deprecated(old, new, *, since, remove_after, stacklevel=3)`: Emit the
+  standard sentence as a `DeprecationWarning`; call it from inside the
+  deprecated function so the default `stacklevel` lands on the user's call site
+- `deprecated_kwarg_alias(kwargs, old, new, *, since, remove_after)`: Move a
+  renamed keyword from its old name onto its new one in the caller's `**kwargs`
+  and warn; silent when the old name is absent, `TypeError` when both are given
+- `deprecation_message(old, new, *, since, remove_after)`: The sentence itself,
+  shared with the CLI half — `luxar.cli.utils.deprecated_option` prints it to
+  stderr because a command-line process hides `DeprecationWarning` by default
 
 ### `lod_breakpoints.py`
 Streaming-ladder breakpoint math, shared by all three geometries (Points, Lines,

@@ -1,6 +1,6 @@
 """Re-chunk an existing zarr store in one structure-preserving pass.
 
-``luxar optimise`` exists because a store that is already on disk is usually
+``luxar optimize`` exists because a store that is already on disk is usually
 badly chunked for STREAMING, and regenerating it is not an option: the source
 volume may be gone, the fit may have cost GPU-days, and the copy on Zenodo has a
 DOI. The demo corpus measured 606,349 files for 2.94 GB — an average file of
@@ -123,6 +123,7 @@ from ..typing_utils.constants import (
 from ._compiler.chunking import _atom_aligned_rows
 from ._compiler.finalize.hashing import (
     _ZARR_METADATA_DOCS_LOWERCASED,
+    HASH_EXCLUDED_ATTRS,
     PAYLOAD_FILE_ATTRS,
     _is_safe_payload_name,
     _payload_terms,
@@ -133,13 +134,13 @@ __all__ = [
     "CHUNK_PROFILES",
     "ArrayPlan",
     "ChunkLayoutSummary",
-    "OptimisePlan",
+    "OptimizePlan",
     "PlaybackChunkWarning",
-    "optimise_store",
-    "plan_optimisation",
+    "optimize_store",
+    "plan_optimization",
     "resolve_target_bytes",
-    "summarise_chunk_layout",
-    "summarise_plan",
+    "summarize_chunk_layout",
+    "summarize_plan",
 ]
 
 
@@ -228,7 +229,7 @@ class ArrayPlan:
     #: ``TypeError`` on exactly the third-party stores (AnnData/cellxgene, an
     #: OME-Zarr label table) ``--generic`` exists for: ``luxar info --stats``
     #: exited 1 on a store its own ``--format json`` path handled, and
-    #: ``optimise --dry-run`` died with a traceback while the real copy of the
+    #: ``optimize --dry-run`` died with a traceback while the real copy of the
     #: same store succeeded.
     itemsize: int
     source_chunks: tuple[int, ...]
@@ -238,7 +239,7 @@ class ArrayPlan:
     atom: int | None
     #: The grid whose cells are FILES — the shard grid when the array is
     #: sharded, its chunk grid otherwise. Recorded rather than re-derived so
-    #: :func:`summarise_plan` can measure a store off the plan's single walk.
+    #: :func:`summarize_plan` can measure a store off the plan's single walk.
     source_file_grid: tuple[int, ...]
     #: Empty when the array is being re-chunked; otherwise the reason it is not.
     skip_reason: str = ""
@@ -260,8 +261,8 @@ class ArrayPlan:
 
 
 @dataclass(frozen=True)
-class OptimisePlan:
-    """The whole-store plan — what :func:`optimise_store` will do, in advance."""
+class OptimizePlan:
+    """The whole-store plan — what :func:`optimize_store` will do, in advance."""
 
     target_bytes: int
     profile: str | None
@@ -309,8 +310,8 @@ class PlaybackChunkWarning:
 class ChunkLayoutSummary:
     """The streaming-shape diagnostic ``luxar info --stats`` reports.
 
-    Computed off the same walk the optimiser plans from, so "is this store worth
-    optimising?" is answerable without hosting it first.
+    Computed off the same walk the optimizer plans from, so "is this store worth
+    optimizing?" is answerable without hosting it first.
     """
 
     #: Arrays that produce at least one object. A ``(0, D)`` ``array_ref``
@@ -576,7 +577,7 @@ def _plan_array(
     if rows <= chunks[0]:
         # Never shrink. A smaller chunk is strictly more requests, and on a
         # store already chunked above the requested target that is the honest
-        # answer rather than an "optimisation".
+        # answer rather than an "optimization".
         return keep("already at or above target")
 
     target_chunks = (rows, *chunks[1:])
@@ -594,12 +595,12 @@ def _plan_array(
     )
 
 
-def plan_optimisation(
+def plan_optimization(
     root: zarr.Group,
     *,
     target_bytes: int = TARGET_CHUNK_BYTES,
     profile: str | None = None,
-) -> OptimisePlan:
+) -> OptimizePlan:
     """Plan the re-chunk of ``root`` without writing anything.
 
     Every leaf is planned independently — a ``kind=lod`` level, a
@@ -628,7 +629,7 @@ def plan_optimisation(
             )
     by_path = {plan.path: plan for plan in plans}
     warnings = _plan_playback_warnings(root, by_path)
-    return OptimisePlan(
+    return OptimizePlan(
         target_bytes=target_bytes,
         profile=profile,
         arrays=plans,
@@ -862,16 +863,16 @@ def _walk_groups(group: zarr.Group, path: str = "") -> Iterator[tuple[str, zarr.
         yield from _walk_groups(group[name], f"{path}/{name}" if path else name)
 
 
-def summarise_chunk_layout(root: zarr.Group) -> ChunkLayoutSummary:
+def summarize_chunk_layout(root: zarr.Group) -> ChunkLayoutSummary:
     """Measure a store's streaming shape: chunk sizes and request count."""
-    return summarise_plan(plan_optimisation(root))
+    return summarize_plan(plan_optimization(root))
 
 
-def summarise_plan(plan: OptimisePlan) -> ChunkLayoutSummary:
+def summarize_plan(plan: OptimizePlan) -> ChunkLayoutSummary:
     """The same diagnostic, off a plan that has already been walked.
 
     ``luxar info --stats`` wants both the summary and a real plan (the "try
-    ``luxar optimise``" hint is gated on one), and the corpus this tool exists
+    ``luxar optimize``" hint is gated on one), and the corpus this tool exists
     for holds 606,349 files — so the two share one walk rather than opening
     every array twice.
 
@@ -1024,7 +1025,7 @@ def _read_payload_or_refuse(
     naming the file: shipping a re-chunked store whose overlay silently vanished
     is exactly the failure this pass exists to prevent, and refusing costs
     nothing, because the destination is still in staging and
-    :func:`optimise_store` removes it on any raise. So the same store the hasher
+    :func:`optimize_store` removes it on any raise. So the same store the hasher
     completes over can stop this pass — deliberately.
 
     Shared by the copy and by ``--verify`` so that a source read failing on the
@@ -1036,12 +1037,12 @@ def _read_payload_or_refuse(
         return read_raw_bytes(group, filename)
     except (OSError, ValueError) as unreadable:
         raise ValueError(
-            f"optimise cannot read the payload file {filename!r} named by "
+            f"optimize cannot read the payload file {filename!r} named by "
             f"{attr_key!r} on group {group.path or '/'!r}: {unreadable}. "
             f"The re-chunk is refused rather than shipping a store whose "
             f"overlay silently vanished — repair the file (permissions, or "
             f"the name it is stored under), remove it, or clear the "
-            f"{attr_key!r} attr, then run optimise again."
+            f"{attr_key!r} attr, then run optimize again."
         ) from unreadable
 
 
@@ -1131,14 +1132,14 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
                 )
                 continue
             raise ValueError(
-                f"optimise cannot copy the payload file {filename!r} named by "
+                f"optimize cannot copy the payload file {filename!r} named by "
                 f"{attr_key!r} on group {source.path or '/'!r}: on a "
                 f"case-insensitive filesystem that name resolves to the group's "
                 f"own zarr metadata document, so writing it would replace the "
                 f"document the whole store is read through. The re-chunk is "
                 f"refused rather than dropping the {len(held)} bytes the source "
                 f"really holds — rename the payload file and the {attr_key!r} "
-                f"attr that names it, then run optimise again."
+                f"attr that names it, then run optimize again."
             )
         payload = _read_payload_or_refuse(source, attr_key, filename)
         if payload is None:
@@ -1155,7 +1156,7 @@ def _hash_array_streaming(hasher: Any, dataset: zarr.Array) -> None:
     the array's memory order, so the concatenation of the row slabs' bytes is
     the whole array's bytes, and an xxhash update is order-preserving over a
     concatenation. Pinned by
-    ``test_optimise.py::test_the_streaming_hash_is_byte_identical``.
+    ``test_optimize.py::test_the_streaming_hash_is_byte_identical``.
 
     That holds for every FIXED-WIDTH dtype, i.e. every store the value walk can
     hash reproducibly at all. A variable-width dtype (numpy's ``StringDType``, a
@@ -1201,7 +1202,7 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     variable-width dtype has no stable digest under EITHER walk (see
     :func:`_hash_array_streaming`). So "identical" is a statement about every
     store the reference can hash stably, not about every store. Pinned by
-    ``test_optimise.py::TestCacheInvalidation``.
+    ``test_optimize.py::TestCacheInvalidation``.
 
     Only the peak memory differs otherwise: the
     finalize-time version does ``dataset[:].tobytes()``, which holds the ndarray
@@ -1223,7 +1224,9 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
             identity = _storage_identity(name, dataset)
             hasher.update(json.dumps(identity, sort_keys=True, default=str).encode())
             _hash_array_streaming(hasher, dataset)
-        attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
+        attrs = {
+            k: v for k, v in dict(group.attrs).items() if k not in HASH_EXCLUDED_ATTRS
+        }
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
         for term in _payload_terms(group, attrs):
             hasher.update(term)
@@ -1493,7 +1496,7 @@ def _as_marker(raw: Any) -> str | None:
 def ensure_luxar_store(source_path: Path, root: zarr.Group, *, generic: bool) -> None:
     """Refuse a foreign store unless ``generic`` says the caller meant it.
 
-    Shared by :func:`optimise_store` and the CLI's ``--dry-run`` path, which
+    Shared by :func:`optimize_store` and the CLI's ``--dry-run`` path, which
     must not diverge: a dry run that happily plans a store the real run refuses
     is a plan the user cannot act on.
     """
@@ -1505,7 +1508,7 @@ def ensure_luxar_store(source_path: Path, root: zarr.Group, *, generic: bool) ->
     )
 
 
-def optimise_store(
+def optimize_store(
     source_path: str | Path,
     dest_path: str | Path,
     *,
@@ -1514,7 +1517,7 @@ def optimise_store(
     overwrite: bool = False,
     verify: bool = False,
     generic: bool = False,
-) -> OptimisePlan:
+) -> OptimizePlan:
     """Copy ``source_path`` to ``dest_path``, re-chunked, values untouched.
 
     Raises rather than writing in place: the pass reads the source while writing
@@ -1539,9 +1542,9 @@ def optimise_store(
     # The SOURCE is opened and fully validated before the destination is
     # touched, and the write goes to a temp sibling that is moved into place
     # last. Neither is fussiness. The earlier order deleted `dest_path` first,
-    # so `luxar optimise mydata/s.luxar.zarr mydata --overwrite` removed the
+    # so `luxar optimize mydata/s.luxar.zarr mydata --overwrite` removed the
     # whole containing directory and only then raised FileNotFoundError, and
-    # `luxar optimise plain.zarr known-good.zarr --overwrite` destroyed a good
+    # `luxar optimize plain.zarr known-good.zarr --overwrite` destroyed a good
     # store before refusing to work for want of `--generic`. `luxar export
     # --native` carries the same pre-validation for the same reason.
     source = open_group(source_path, mode="r")
@@ -1549,7 +1552,7 @@ def optimise_store(
         ensure_luxar_store(source_path, source, generic=generic)
 
         source_format = int(source.metadata.zarr_format)
-        plan = plan_optimisation(source, target_bytes=target_bytes, profile=profile)
+        plan = plan_optimization(source, target_bytes=target_bytes, profile=profile)
         by_path = {p.path: p for p in plan.arrays}
         _check_destination_state(dest_path, overwrite=overwrite)
 
@@ -1565,7 +1568,7 @@ def optimise_store(
             staging = _staging_path(dest_path)
             # Computed BEFORE anything is written, so the cleanup below can
             # remove it however far the run got. Binding it to `_package`'s
-            # RETURN left a hidden partial `.<name>.optimise-<pid>-<uuid>.zip`
+            # RETURN left a hidden partial `.<name>.optimize-<pid>-<uuid>.zip`
             # beside the destination whenever the archive write itself failed
             # (ENOSPC on the last member) — the one window the all-or-nothing
             # promise did not cover.
@@ -1617,7 +1620,7 @@ _ROOT_DOCS = frozenset({"zarr.json", ".zgroup", ".zarray"})
 def _check_destination_path(source_path: Path, dest_path: Path) -> None:
     """Refuse a destination that is, contains, or lives inside the source.
 
-    Equality alone is not enough. ``optimise s/scene.luxar.zarr s`` passes an
+    Equality alone is not enough. ``optimize s/scene.luxar.zarr s`` passes an
     equality test while naming the source's own parent, and ``--overwrite`` then
     deletes the source (plus whatever else shares that directory) before the
     source is ever read. Both containment directions are refused: a destination
@@ -1627,20 +1630,20 @@ def _check_destination_path(source_path: Path, dest_path: Path) -> None:
     dst = dest_path.resolve()
     if src == dst:
         raise ValueError(
-            "optimise cannot rewrite a store in place; give a different output "
+            "optimize cannot rewrite a store in place; give a different output "
             "path (and prefer a NEW URL prefix when republishing, so warm "
             "client caches cannot serve chunks under keys that moved)"
         )
     if dst in src.parents:
         raise ValueError(
-            f"optimise refuses to write to {dest_path}: it CONTAINS the source "
+            f"optimize refuses to write to {dest_path}: it CONTAINS the source "
             f"{source_path}, so replacing it would delete the input (and "
             f"everything else in that directory). Give an output path outside "
             f"the source's directory."
         )
     if src in dst.parents:
         raise ValueError(
-            f"optimise refuses to write to {dest_path}: it is inside the source "
+            f"optimize refuses to write to {dest_path}: it is inside the source "
             f"store {source_path}, which would copy the store into itself."
         )
 
@@ -1685,7 +1688,7 @@ def _check_destination_state(dest_path: Path, *, overwrite: bool) -> None:
     """
     if dest_path.is_symlink():
         raise ValueError(
-            f"optimise refuses to write to {dest_path}: it is a symlink (→ "
+            f"optimize refuses to write to {dest_path}: it is a symlink (→ "
             f"{os.readlink(dest_path)}). The output is renamed into place, "
             f"which would replace the LINK rather than what it points at. "
             f"Give the link's target as the output path, or remove the link "
@@ -1720,7 +1723,7 @@ def _staging_path(dest_path: Path) -> Path:
     compresses it for the same reason.
     """
     return dest_path.parent / (
-        f".{dest_path.name}.optimise-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        f".{dest_path.name}.optimize-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     )
 
 
@@ -1728,7 +1731,7 @@ def _write_store(
     source: zarr.Group,
     staging: Path,
     by_path: dict[str, ArrayPlan],
-    plan: OptimisePlan,
+    plan: OptimizePlan,
     source_format: int,
     target_bytes: int,
     profile: str | None,
@@ -1743,7 +1746,7 @@ def _write_store(
         # Written BEFORE the hash is recomputed, so it is folded into it — the
         # attr is what actually MOVES the hash (see the module docstring).
         dest.attrs["chunk_layout"] = {
-            "tool": "luxar optimise",
+            "tool": "luxar optimize",
             "target_bytes": int(target_bytes),
             "profile": profile,
             "arrays_total": len(plan.arrays),
@@ -1798,7 +1801,7 @@ def _replace(new: Path, dest_path: Path) -> None:
     consumed, so its ``finally`` then deletes the freshly built output too —
     and for a directory destination the artifact IS the staging tree. A single
     ``--overwrite`` could take out a good previous store and its replacement,
-    which is precisely what :func:`optimise_store` promises cannot happen.
+    which is precisely what :func:`optimize_store` promises cannot happen.
 
     So: rename the old one out of the way (atomic, and it works for a directory,
     a file or a symlink), swap the new one in, and only then delete the aside —
@@ -1809,7 +1812,7 @@ def _replace(new: Path, dest_path: Path) -> None:
         os.replace(str(new), str(dest_path))
         return
     aside = dest_path.parent / (
-        f".{dest_path.name}.optimise-old-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        f".{dest_path.name}.optimize-old-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     )
     os.replace(str(dest_path), str(aside))
     try:
@@ -1819,7 +1822,7 @@ def _replace(new: Path, dest_path: Path) -> None:
             os.replace(str(aside), str(dest_path))
         except OSError as restore_failed:
             raise OSError(
-                f"optimise could not swap the new store into {dest_path}, and "
+                f"optimize could not swap the new store into {dest_path}, and "
                 f"could not move the previous one back either. It is intact at "
                 f"{aside} — rename it to {dest_path.name} by hand."
             ) from restore_failed

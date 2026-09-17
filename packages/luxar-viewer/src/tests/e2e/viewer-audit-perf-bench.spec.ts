@@ -87,7 +87,7 @@ interface AuditScene {
   playback?: boolean;
   /** Bound on waiting for `isSettled` after load. */
   settleTimeoutMs?: number;
-  /** Carries a substitutive ladder whose selector responds to lod-bias. */
+  /** Carries a substitutive ladder whose selector responds to lodBias. */
   lodLadder?: boolean;
 }
 
@@ -159,7 +159,7 @@ function currentCommitSha(): string {
 }
 
 function sceneUrl(scene: AuditScene, bias: LodBiasArm, extra = '&dpr=1'): string {
-  return `/?src=${DATA_BASE}/${scene.path}&debug&no-lod-fade${bias.query}${extra}`;
+  return `/?src=${DATA_BASE}/${scene.path}&debug&noLodFade${bias.query}${extra}`;
 }
 
 /** Skip cleanly when the store is not served (datasets live in the main checkout). */
@@ -429,7 +429,7 @@ function aggregate(runs: RunMetrics[]): {
 
 test.describe('viewer audit bench', () => {
   for (const { scene, bias } of auditCases) {
-    test(`audit ${scene.id}${bias.value === null ? '' : ` lod-bias=${bias.value}`}${NET ? ` (${NET})` : ''}`, async ({
+    test(`audit ${scene.id}${bias.value === null ? '' : ` lodBias=${bias.value}`}${NET ? ` (${NET})` : ''}`, async ({
       browser,
     }) => {
       test.setTimeout(900_000);

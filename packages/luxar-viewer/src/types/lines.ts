@@ -8,6 +8,7 @@
  */
 
 import type { BlendingMode } from './blending';
+import { LINE_TYPES, type LineTypeName, type OrderingMethodName } from './format-contract';
 import type { ViewState } from '../data/data-loader-types';
 import type { ScalarArray } from './points';
 import type { PositionBounds } from './zarr';
@@ -52,7 +53,7 @@ export interface OrderingMetadata {
  * - 'loop': Polyline with first and last vertex connected
  * - 'indexed': Explicit vertex/segment indices (most flexible)
  */
-export type LineType = 'segments' | 'polyline' | 'loop' | 'indexed';
+export type LineType = LineTypeName;
 
 /**
  * Lines node metadata from zarr .zattrs
@@ -129,7 +130,7 @@ export interface LinesMetadata {
   has_keys?: boolean;
 
   /** Spatial ordering method */
-  ordering: 'morton' | 'hilbert' | 'none';
+  ordering: OrderingMethodName;
 
   /** Vertex ordering metadata (when ordering != 'none') */
   vertex_ordering?: OrderingMetadata;
@@ -585,10 +586,5 @@ export function isLinesUserData(userData: unknown): userData is LinesUserData {
  * @returns True if lineType is a valid LineType
  */
 export function isValidLineType(lineType: unknown): lineType is LineType {
-  return (
-    lineType === 'segments' ||
-    lineType === 'polyline' ||
-    lineType === 'loop' ||
-    lineType === 'indexed'
-  );
+  return typeof lineType === 'string' && (LINE_TYPES as readonly string[]).includes(lineType);
 }

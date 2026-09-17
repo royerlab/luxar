@@ -915,7 +915,7 @@ export class SceneLoader {
    * @param url - Complete URL to the Zarr store. Can be:
    *              - HTTP URL: 'https://example.com/data.zarr'
    *              - Local path: '/path/to/data.zarr'
-   *              - With query params: 'https://example.com/data.zarr?no-cache'
+   *              - With query params: 'https://example.com/data.zarr?noCache'
    *
    * @returns Promise resolving to a THREE.Group containing the complete scene graph.
    *          The group's userData contains:

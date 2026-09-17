@@ -651,7 +651,7 @@ def additive_dataset(
         "-m",
         help=f"Additive ordering per leaf: {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the "
         "default) is greedy at small N, self_energy above. radial reveals "
-        "outward from the bbox centre.",
+        "outward from the bbox center.",
     ),
     breakpoints: Optional[str] = typer.Option(
         None,

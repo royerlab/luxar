@@ -240,11 +240,11 @@ real store per declared input dtype (float16 positions, uint8/uint16 colors,
 float16/uint8 scalar attributes) so the aliases are pinned to what the write
 path accepts rather than to what either signature claims.
 
-### Re-chunking an existing store (`optimise.py`)
+### Re-chunking an existing store (`optimize.py`)
 
-`luxar.io.optimise` re-chunks a store that is **already on disk**, in one
+`luxar.io.optimize` re-chunks a store that is **already on disk**, in one
 structure-preserving pass — no refit, no source volume, no GPU. It backs the
-`luxar optimise` CLI command and the `luxar info --stats` chunk diagnostic.
+`luxar optimize` CLI command and the `luxar info --stats` chunk diagnostic.
 
 Everything but the zarr chunk grid survives verbatim: values bit-for-bit, dtype,
 codecs, filters, serializer, `fill_value`, memory order, the on-disk zarr format,
@@ -255,26 +255,26 @@ which is restamped, and the `chunk_layout` summary written beside it (see *Cache
 invalidation* below).
 
 ```python
-from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
+from luxar.io.optimize import optimize_store, plan_optimization, summarize_chunk_layout
 
-plan = optimise_store(
+plan = optimize_store(
     "scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536, verify=True
 )
 print(plan.source_n_chunks, "→", plan.target_n_chunks)
 ```
 
-- `plan_optimisation(root, target_bytes=…)` → `OptimisePlan` — what would change,
+- `plan_optimization(root, target_bytes=…)` → `OptimizePlan` — what would change,
   per array, without writing. Each `ArrayPlan` carries the source/target chunk
   shape, the resolved spatial atom, and a `skip_reason` when the array is left
   alone.
-- `optimise_store(src, dst, …)` — does it. `verify=True` re-reads the output and
+- `optimize_store(src, dst, …)` — does it. `verify=True` re-reads the output and
   compares every array — and every payload file it copied — byte for byte,
   reporting both counts.
-- `summarise_chunk_layout(root)` → `ChunkLayoutSummary` — average chunk bytes,
+- `summarize_chunk_layout(root)` → `ChunkLayoutSummary` — average chunk bytes,
   arrays under the 16 KB floor, and the chunk-file count a full load fetches.
   Counts objects, so a shard is one file and a `(0, D)` placeholder is none —
   and an array that fetches nothing is left out of the floor share entirely.
-  `summarise_plan(plan)` is the same diagnostic off a plan already walked, which
+  `summarize_plan(plan)` is the same diagnostic off a plan already walked, which
   is how `luxar info --stats` reports both from a single pass.
 - `resolve_target_bytes(target_bytes=…, target_kb=…, profile=…)` — the three
   mutually exclusive size flags, and `CHUNK_PROFILES` (`hosting` 256 KB,
@@ -336,7 +336,7 @@ that would peak at twice a 629 MB array's size.
 
 `luxar.io.lod_restamp` rewrites the LOD switch thresholds of a store that is
 **already on disk**, in place. It backs the `luxar restamp-lod` CLI command. The
-sibling of `optimise.py`, deliberately not a flag on it: that pass preserves
+sibling of `optimize.py`, deliberately not a flag on it: that pass preserves
 every attribute and refuses same-path work, this one changes **only** attributes
 and moves no chunk.
 

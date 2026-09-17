@@ -3,7 +3,7 @@
 The capture is the viewer's own (``rendering/environment/`` in the viewer; spec
 ``MESH_PHYSICAL_MATERIALS_SPEC.md`` §3.3): this module only arranges for it to
 run unattended — serve the store and the built viewer from one process, drive
-a browser to ``?bake-env&probe=…&env-resolution=…`` through the Node Playwright
+a browser to ``?bakeEnv&probe=…&envResolution=…`` through the Node Playwright
 script ``packages/luxar-viewer/scripts/bake-env.mjs``, collect the container it
 hands back, and :func:`~luxar.environment.attach.attach_environment` it.
 
@@ -102,8 +102,8 @@ def bake_environment(
             with served_store(store_path) as served:
                 url = (
                     f"{served.viewer_url}?src={quote(served.data_url, safe=':/')}"
-                    f"&debug&bake-env&probe={quote(probe, safe=':,/')}"
-                    f"&env-resolution={int(resolution)}"
+                    f"&debug&bakeEnv&probe={quote(probe, safe=':,/')}"
+                    f"&envResolution={int(resolution)}"
                 )
                 aprint(f"driving {url}")
                 run_driver(url, out_path, timeout)

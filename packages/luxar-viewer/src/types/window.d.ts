@@ -222,7 +222,7 @@ declare global {
       perfReady?: boolean;
       /**
        * The scene environment (`rendering/environment/`): what lights
-       * `material="physical"` meshes, and — under `?bake-env` — the last bake's
+       * `material="physical"` meshes, and — under `?bakeEnv` — the last bake's
        * container for the `luxar env bake` driver to pull (`lastBake`).
        */
       environment?: {

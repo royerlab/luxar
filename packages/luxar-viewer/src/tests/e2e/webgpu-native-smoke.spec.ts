@@ -56,7 +56,7 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
     // The gate is the physical backend alone, so both capability
     // fields below stay falsifiable claims about what the viewer
     // derived from it. Skipping on the WebGL2 fallback is deliberate:
-    // `?webgpu-force-webgl` pins that path in `renderer-url-param.spec.ts`
+    // `?webgpuForceWebgl` pins that path in `renderer-url-param.spec.ts`
     // and the first `y-orientation.spec.ts` case.
     const probe = await probeWebGPUBackend(page);
     test.skip(!probe.isNative, SKIP_REASON);

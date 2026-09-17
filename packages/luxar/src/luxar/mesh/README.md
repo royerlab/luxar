@@ -46,6 +46,12 @@ scene.add_mesh(
 Use `import_mesh_directory(...)` to stack `T<number>`-indexed files, or supply
 `index_regex=` for other filename conventions.
 
+The decimation API is public on the package too — `from luxar.mesh import decimate,
+decimate_ladder, decimate_cluster, DecimatedMesh, DECIMATION_METHODS,
+resolve_decimation_method` — so `luxar.mesh.decimate(...)` reads the way the
+`add_mesh(substitutive_lod=…)` docs describe it. (`import luxar.mesh.decimate as m`
+still reaches the submodule.)
+
 ```bash
 luxar mesh import bunny.ply bunny.luxar.zarr
 ```

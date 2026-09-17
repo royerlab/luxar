@@ -139,7 +139,7 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
   ports.applyViewerConfigState(viewerConfig);
 
-  // ?cache-stats: open the data-loading monitor on the Cache tab. The
+  // ?cacheStats: open the data-loading monitor on the Cache tab. The
   // monitor was created during sceneManager.loadSceneData() above, so
   // it's safe to look it up via DataMonitorManager now.
   if (ports.openCacheStats) {

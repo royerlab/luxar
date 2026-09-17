@@ -316,7 +316,7 @@ leaf's progressive refinement loop can still be climbing its ladder while
 the capture runs and early frames can be exported at a partial prefix.
 Same artifact class; not covered here.
 
-Waiting rather than forcing is deliberate. `?lod-finest`
+Waiting rather than forcing is deliberate. `?lodFinest`
 (`LODGroupRegistryDeps.getForceFinestLOD`) would pin the finest level and
 skip the off-screen gate outright, but a capture visits the whole scene:
 peak residency would become the entire dataset, which is exactly what the

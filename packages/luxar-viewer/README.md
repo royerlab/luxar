@@ -68,29 +68,29 @@ group table.
 
 ### `LuxarAppOptions`
 
-| Option             | Type                  | Default         | Notes                                                                                                                                                                                                        |
-| ------------------ | --------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `canvas`           | `HTMLCanvasElement`   | —               | The canvas the viewer renders into. Required.                                                                                                                                                                |
-| `container`        | `HTMLElement`         | `document.body` | Host element the viewer mounts all overlays/panels/toasts/dialogs into. A non-`body` container is promoted to a containing block (`contain: layout`) so fixed overlays scope to it; restored on `dispose()`. |
-| `src`              | `string`              | config          | Initial Zarr URL. Empty/missing shows the dataset browser.                                                                                                                                                   |
-| `debug`            | `boolean`             | `false`         | Exposes `window.__luxarDebug` for Playwright / dev console.                                                                                                                                                  |
-| `loaderConfig`     | `LoaderConfig`        | —               | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).                                                                                                             |
-| `gpuPoolMaxBytes`  | `number \| null`      | config          | Session-wide GPU geometry budget in bytes. `null` auto-sizes from device memory, measured heap, and device class; `0` disables byte-budget eviction; a positive value pins it.                              |
-| `updateBrowserUrl` | `boolean`             | `false`         | Opt in to mirroring picked datasets into the browser URL. `bootstrapStandalone()` sets this to `true`.                                                                                                       |
-| `wasmPath`         | `string`              | —               | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.). Serving the published package unbundled usually costs one benign 404 before the next candidate wins.        |
-| `workerPath`       | `string`              | —               | Same, for the data worker.                                                                                                                                                                                   |
-| `renderer`         | `'webgl' \| 'webgpu'` | `'webgl'`       | Force the rendering backend. `'webgpu'` uses `WebGPURenderer` + TSL `NodeMaterial`, falling back to WebGL2 when no adapter.                                                                                  |
-| `webgpuForceWebGL` | `boolean`             | `false`         | Diagnostic: with `renderer: 'webgpu'`, route through Three.js's internal WebGL2 backend while keeping the WebGPU/TSL API surface.                                                                            |
-| `perfTimestamp`    | `boolean`             | `false`         | Opt in to WebGPU `timestamp-query` GPU profiling. Tiny runtime cost; ignored under WebGL.                                                                                                                    |
-| `openCacheStats`   | `boolean`             | `false`         | Open the data-loading monitor (Cache tab, expanded) once the scene is wired up — useful for profiling cache behaviour.                                                                                       |
-| `pinnedDPR`        | `number`              | —               | Pin DPR to `[0.25, native]` and disable adaptive DPR; intended for deterministic tests, captures, and bug reproduction.                                                                                      |
-| `lodFade`          | `boolean`             | `true`          | Cross-fade adjacent replacement LOD levels instead of swapping abruptly.                                                                                                                                     |
-| `lodEnergyComp`    | `boolean`             | `true`          | Compensate incomplete stream ladders by their committed energy fraction to reduce brightness popping.                                                                                                        |
-| `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                           |
-| `lodBias`          | `number`              | `1`             | Bias replacement LOD selection in screen-area units; `2` selects one occupancy-halved level finer and `4` selects two. Below `1`, a partition-anchored ladder cannot reach its finest level; below `0.5`, neither can a whole-object ladder.               |
-| `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                               |
-| `allowLinks`       | `boolean`             | `true`          | Allow element-authored links to navigate. Set `false` to keep `element-click` / `element-contextmenu` events and copy actions while suppressing navigation and link menu items.                              |
-| `factories`        | `AppFactories`        | —               | Construction overrides for the heavy components built by `init()` (scene manager, recording panel, …). For tests and advanced embedders; omit for the production path.                                       |
+| Option             | Type                  | Default         | Notes                                                                                                                                                                                                                                        |
+| ------------------ | --------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canvas`           | `HTMLCanvasElement`   | —               | The canvas the viewer renders into. Required.                                                                                                                                                                                                |
+| `container`        | `HTMLElement`         | `document.body` | Host element the viewer mounts all overlays/panels/toasts/dialogs into. A non-`body` container is promoted to a containing block (`contain: layout`) so fixed overlays scope to it; restored on `dispose()`.                                 |
+| `src`              | `string`              | config          | Initial Zarr URL. Empty/missing shows the dataset browser.                                                                                                                                                                                   |
+| `debug`            | `boolean`             | `false`         | Exposes `window.__luxarDebug` for Playwright / dev console.                                                                                                                                                                                  |
+| `loaderConfig`     | `LoaderConfig`        | —               | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).                                                                                                                                             |
+| `gpuPoolMaxBytes`  | `number \| null`      | config          | Session-wide GPU geometry budget in bytes. `null` auto-sizes from device memory, measured heap, and device class; `0` disables byte-budget eviction; a positive value pins it.                                                               |
+| `updateBrowserUrl` | `boolean`             | `false`         | Opt in to mirroring picked datasets into the browser URL. `bootstrapStandalone()` sets this to `true`.                                                                                                                                       |
+| `wasmPath`         | `string`              | —               | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.). Serving the published package unbundled usually costs one benign 404 before the next candidate wins.                                        |
+| `workerPath`       | `string`              | —               | Same, for the data worker.                                                                                                                                                                                                                   |
+| `renderer`         | `'webgl' \| 'webgpu'` | `'webgl'`       | Force the rendering backend. `'webgpu'` uses `WebGPURenderer` + TSL `NodeMaterial`, falling back to WebGL2 when no adapter.                                                                                                                  |
+| `webgpuForceWebGL` | `boolean`             | `false`         | Diagnostic: with `renderer: 'webgpu'`, route through Three.js's internal WebGL2 backend while keeping the WebGPU/TSL API surface.                                                                                                            |
+| `perfTimestamp`    | `boolean`             | `false`         | Opt in to WebGPU `timestamp-query` GPU profiling. Tiny runtime cost; ignored under WebGL.                                                                                                                                                    |
+| `openCacheStats`   | `boolean`             | `false`         | Open the data-loading monitor (Cache tab, expanded) once the scene is wired up — useful for profiling cache behaviour.                                                                                                                       |
+| `pinnedDPR`        | `number`              | —               | Pin DPR to `[0.25, native]` and disable adaptive DPR; intended for deterministic tests, captures, and bug reproduction.                                                                                                                      |
+| `lodFade`          | `boolean`             | `true`          | Cross-fade adjacent replacement LOD levels instead of swapping abruptly.                                                                                                                                                                     |
+| `lodEnergyComp`    | `boolean`             | `true`          | Compensate incomplete stream ladders by their committed energy fraction to reduce brightness popping.                                                                                                                                        |
+| `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                                                           |
+| `lodBias`          | `number`              | `1`             | Bias replacement LOD selection in screen-area units; `2` selects one occupancy-halved level finer and `4` selects two. Below `1`, a partition-anchored ladder cannot reach its finest level; below `0.5`, neither can a whole-object ladder. |
+| `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                                                               |
+| `allowLinks`       | `boolean`             | `true`          | Allow element-authored links to navigate. Set `false` to keep `element-click` / `element-contextmenu` events and copy actions while suppressing navigation and link menu items.                                                              |
+| `factories`        | `AppFactories`        | —               | Construction overrides for the heavy components built by `init()` (scene manager, recording panel, …). For tests and advanced embedders; omit for the production path.                                                                       |
 
 ### Programmatic API
 
@@ -811,28 +811,36 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?src=<path>` — Path to a Zarr dataset (trailing slashes are normalized away)
 - `?theme=<id>` — Select `dark`, `light`, `frosted-glass`, or `liquid-glass`
 - `?debug` — Expose `window.__luxarDebug` for Playwright / dev console
-- `?bake-env` — Capture the scene environment and expose the encoded result through the debug API
-- `?probe=<auto|node:<path>|x,y,z>` — Select the environment-capture probe used by `?bake-env`
-- `?env-resolution=<16-1024>` — Set the cube-face resolution used by `?bake-env`
-- `?no-cache` — Disable all cache tiers (S-cache + L0 + L1 + L2) for this session
-- `?no-slice-cache` — Disable only S-cache; L0/L1/L2 remain active
-- `?no-opfs` — Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache remain active. For environments whose OPFS stalls; the automatic circuit breaker covers the un-flagged case
+- `?title=<text>` — Browser tab title; `luxar serve --open` derives it from the dataset file name, a scene's authored `viewer_config.title` overrides it, and it is dropped when you switch datasets
+- `?kiosk` — Force kiosk mode on as a hard operator override (locks a scene; cannot unlock authored kiosk mode)
+- `?control` / `?control=<ws-url>` — Attach to the serving app's remote-control hub; an explicit URL must be same-origin unless `?controlAllowCrossOrigin` is also present
+- `?controlToken=<secret>` — Shared control-hub token, matching `luxar serve --control-token`
+- `?controlAllowCrossOrigin` — Permit an explicit `?control=` URL to cross the page origin (LAN kiosks with an authenticated hub only)
+- `?panel=<module-url>` — On `control.html`, load an alternative same-origin control-panel module
+- `?bakeEnv` — Capture the scene environment and expose the encoded result through the debug API
+- `?probe=<auto|node:<path>|x,y,z>` — Select the environment-capture probe used by `?bakeEnv`
+- `?envResolution=<16-1024>` — Set the cube-face resolution used by `?bakeEnv`
+- `?noCache` — Disable all cache tiers (S-cache + L0 + L1 + L2) for this session
+- `?noSliceCache` — Disable only S-cache; L0/L1/L2 remain active
+- `?noOpfs` — Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache remain active. For environments whose OPFS stalls; the automatic circuit breaker covers the un-flagged case
 - `?opfsReadConcurrency=<N>` — Override the page-wide concurrent OPFS read cap (default 64) for diagnosis
-- `?cache-debug` — Verbose cache logging
-- `?clear-cache` — Clear stored cache tiers before loading; the per-load S-cache starts empty
-- `?cache-stats` — Open the data-loading monitor on its Cache tab after initialization
-- `?no-prefetch` — Disable adjacent-chunk prefetching (caches still active)
-- `?prefetch-debug` — Verbose prefetch logging
-- `?no-lod-fade` — Disable replacement-LOD cross-fading (enabled by default)
-- `?no-lod-energy` — Disable stream-ladder energy compensation (enabled by default)
-- `?lod-finest` — Force the finest replacement LOD regardless of projected coverage
-- `?lod-bias=<N>` — Bias replacement LOD selection in screen-area units (`2` = one level finer on occupancy-halved ladders; positive values only). Because finite screen-area coverage tops out at `1`, values below `1` make a partition-anchored finest threshold of `1` unreachable, and values below `0.5` make a whole-object finest threshold of `0.5` unreachable; near-plane saturation can still select finest
-- `?no-blend-warmup` — Disable the WebGL blend-variant program warm-up (enabled by default): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
-- `?no-links` — Disable element-authored navigation and link menu items while preserving copy actions and `element-click` / `element-contextmenu` events
+- `?cacheDebug` — Verbose cache logging
+- `?clearCache` — Clear stored cache tiers before loading; the per-load S-cache starts empty
+- `?cacheStats` — Open the data-loading monitor on its Cache tab after initialization
+- `?noPrefetch` — Disable adjacent-chunk prefetching (caches still active)
+- `?prefetchDebug` — Verbose prefetch logging
+- `?noLodFade` — Disable replacement-LOD cross-fading (enabled by default)
+- `?noLodEnergy` — Disable stream-ladder energy compensation (enabled by default)
+- `?lodFinest` — Force the finest replacement LOD regardless of projected coverage
+- `?lodBias=<N>` — Bias replacement LOD selection in screen-area units (`2` = one level finer on occupancy-halved ladders; positive values only). Because finite screen-area coverage tops out at `1`, values below `1` make a partition-anchored finest threshold of `1` unreachable, and values below `0.5` make a whole-object finest threshold of `0.5` unreachable; near-plane saturation can still select finest
+- `?noBlendWarmup` — Disable the WebGL blend-variant program warm-up (enabled by default): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
+- `?noLinks` — Disable element-authored navigation and link menu items while preserving copy actions and `element-click` / `element-contextmenu` events
 - `?depthSort=0` — Disable worker depth sorting (`false` and `off` are also accepted)
+- `?noDensityGuard` — Disable the projected-density guard (per-node keep-fraction thinning + refinement rung cap on over-drawn nodes; enabled by default) for the session
+- `?densityCap=<N>` — Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (configured default 4)
 - `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
-- `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
-- `?perf-timestamp` — Enable WebGPU timestamp-query profiling for performance tests
+- `?renderer=webgpu&webgpuForceWebgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
+- `?perfTimestamp` — Enable WebGPU timestamp-query profiling for performance tests
 - `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to `[0.25, native]`) and lock adaptive resolution off
 - `?input=<touch|mouse>` — Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including iPadOS masquerading as macOS
 - `?lineJoin=<none|miter>` — Force the line join style for the session; applies only to `linePrimitive=screen-space` (the capsule partitions joints unconditionally)

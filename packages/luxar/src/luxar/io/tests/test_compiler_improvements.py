@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import zarr
 
+import luxar
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.transforms import prepare_transform_for_zarr, translate
 from luxar.typing_utils.constants import MAX_COPY_CHARS, MAX_LINK_CHARS
@@ -17,7 +18,7 @@ class TestVersionUpdate:
     """Test that the version is correctly set to 0.1."""
 
     def test_compiler_writes_correct_version(self) -> None:
-        """Verify compiler writes version 0.1 to zarr attributes."""
+        """Verify the compiler writes the 0.2 self-identifying root header."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
@@ -28,8 +29,15 @@ class TestVersionUpdate:
 
             # Read back and check version
             store = zarr.open_group(zarr_path, mode="r")
-            assert store.attrs["luxar_version"] == "0.1"
+            assert store.attrs["format_version"] == "0.2"
+            assert store.attrs["format_type"] == "luxar_zarr"
             assert store.attrs["type"] == "scene"
+            assert store.attrs["luxar_software_version"] == luxar.__version__
+            # The 0.1 key is a READ fallback only; the writer must not emit it,
+            # or two spellings of one fact would ship in every new store.
+            assert "luxar_version" not in store.attrs
+            # No timestamp: the scene digest must be reproducible.
+            assert "timestamp" not in store.attrs
 
 
 class TestChunkAlignment:
@@ -997,7 +1005,7 @@ class TestZarrAttributeValidation:
         """Test validation passes for complete root attributes."""
         attrs = {
             "type": "scene",
-            "luxar_version": "0.3",
+            "format_version": "0.2",
             "units": "um",
             "scene_dimensions": {},
         }
@@ -1006,7 +1014,7 @@ class TestZarrAttributeValidation:
 
     def test_validate_root_missing_required(self) -> None:
         """Test validation fails for missing required root attributes."""
-        attrs = {"units": "um"}  # Missing type and luxar_version
+        attrs = {"units": "um"}  # Missing type and format_version
 
         with pytest.raises(ValidationError, match="Missing required"):
             validate_zarr_attributes(attrs, is_root=True)
@@ -1026,7 +1034,7 @@ class TestZarrAttributeValidation:
 
     def test_validate_unsupported_version(self) -> None:
         """Test validation fails for unsupported version."""
-        attrs = {"type": "scene", "luxar_version": "99.9"}
+        attrs = {"type": "scene", "format_version": "99.9"}
 
         with pytest.raises(ValidationError, match="Unsupported Luxar version"):
             validate_zarr_attributes(attrs, is_root=True)
@@ -1035,7 +1043,7 @@ class TestZarrAttributeValidation:
         """Test validation warns about missing recommended attributes."""
         attrs = {
             "type": "scene",
-            "luxar_version": "0.3",
+            "format_version": "0.2",
             # Missing units and scene_dimensions (recommended)
         }
 

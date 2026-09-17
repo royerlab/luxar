@@ -2,7 +2,7 @@
 /**
  * Unit tests for core/app/dataset/browser-shortcut.ts (G5).
  *
- * `installBrowserShortcut` wires a window `open-dataset-browser` listener
+ * `installBrowserShortcut` wires a window `OPEN_DATASET_BROWSER_EVENT` listener
  * through the supplied EventGroup. Contract:
  *   - TOGGLES the browser: fires `showBrowser` when none is open, and
  *     `closeBrowser` when one already is (so the dataset control behaves
@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { installBrowserShortcut } from '../../../../../core/app/dataset/browser-shortcut';
+import { OPEN_DATASET_BROWSER_EVENT } from '../../../../../core/app/interaction/canvas-actions';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 
 describe('installBrowserShortcut', () => {
@@ -38,7 +39,7 @@ describe('installBrowserShortcut', () => {
 
   it('fires showBrowser when the event fires and no browser is open', () => {
     install();
-    window.dispatchEvent(new Event('open-dataset-browser'));
+    window.dispatchEvent(new Event(OPEN_DATASET_BROWSER_EVENT));
     expect(showBrowser).toHaveBeenCalledOnce();
     expect(closeBrowser).not.toHaveBeenCalled();
     expect(hasOpenBrowser).toHaveBeenCalledOnce();
@@ -47,7 +48,7 @@ describe('installBrowserShortcut', () => {
   it('fires closeBrowser when a browser is already open (toggle)', () => {
     hasOpenBrowser.mockReturnValue(true);
     install();
-    window.dispatchEvent(new Event('open-dataset-browser'));
+    window.dispatchEvent(new Event(OPEN_DATASET_BROWSER_EVENT));
     expect(hasOpenBrowser).toHaveBeenCalledOnce();
     expect(closeBrowser).toHaveBeenCalledOnce();
     expect(showBrowser).not.toHaveBeenCalled();
@@ -59,19 +60,19 @@ describe('installBrowserShortcut', () => {
     installBrowserShortcut({ events, hasOpenBrowser: pred, showBrowser, closeBrowser });
 
     // closed → open
-    window.dispatchEvent(new Event('open-dataset-browser'));
+    window.dispatchEvent(new Event(OPEN_DATASET_BROWSER_EVENT));
     expect(showBrowser).toHaveBeenCalledTimes(1);
     expect(closeBrowser).toHaveBeenCalledTimes(0);
 
     // now open → close
     isOpen = true;
-    window.dispatchEvent(new Event('open-dataset-browser'));
+    window.dispatchEvent(new Event(OPEN_DATASET_BROWSER_EVENT));
     expect(showBrowser).toHaveBeenCalledTimes(1);
     expect(closeBrowser).toHaveBeenCalledTimes(1);
 
     // closed again → open
     isOpen = false;
-    window.dispatchEvent(new Event('open-dataset-browser'));
+    window.dispatchEvent(new Event(OPEN_DATASET_BROWSER_EVENT));
     expect(showBrowser).toHaveBeenCalledTimes(2);
     expect(closeBrowser).toHaveBeenCalledTimes(1);
   });
@@ -79,7 +80,7 @@ describe('installBrowserShortcut', () => {
   it('disposing the EventGroup unregisters the listener', () => {
     install();
     events.dispose();
-    window.dispatchEvent(new Event('open-dataset-browser'));
+    window.dispatchEvent(new Event(OPEN_DATASET_BROWSER_EVENT));
     expect(hasOpenBrowser).not.toHaveBeenCalled();
     expect(showBrowser).not.toHaveBeenCalled();
     expect(closeBrowser).not.toHaveBeenCalled();
@@ -97,7 +98,7 @@ describe('installBrowserShortcut', () => {
 
   it('the toggle callbacks are invoked with no arguments', () => {
     install();
-    window.dispatchEvent(new Event('open-dataset-browser'));
+    window.dispatchEvent(new Event(OPEN_DATASET_BROWSER_EVENT));
     expect(showBrowser).toHaveBeenCalledExactlyOnceWith();
   });
 });

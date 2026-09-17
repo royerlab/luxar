@@ -77,7 +77,8 @@ Enumeration types and configuration classes.
 Constant values used throughout Luxar.
 
 **Categories:**
-- **Version**: `LUXAR_VERSION_CURRENT`, `DEFAULT_ZARR_VERSION`
+- **Version**: `LUXAR_VERSION_CURRENT`, `DEFAULT_ZARR_VERSION` (both `= _format_contract.SCENE_FORMAT_VERSION`, currently `"0.2"`)
+- **Contract-projected vocabularies**: `LOD_SELECTORS`, `LINE_JOIN_STYLES` are `frozenset`s built from the generated `_format_contract` tuples (single source: `format-contract/contract.yaml`); the named members `DERIVED_LOD_SELECTOR` / `LEGACY_LOD_SELECTOR` / `DEFAULT_LINE_JOIN` are hand-kept and asserted to belong
 - **Rendering**: `OPACITY_MIN/MAX`, `ABSORPTION_MIN`/`DEFAULT_ABSORPTION`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`, `SHARPNESS_MIN/MAX`
 - **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based single source of truth). Legacy element-count constants (`CHUNK_SIZE_*`, `DEFAULT_CHUNK_SIZE`) have been removed; use the byte-based names directly.
 - **Limits**: `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`, `DEFAULT_POINT_RADIUS` (the radius a point with no `radii` array is authored, bounded and drawn at; mirrored in the viewer's `packages/luxar-viewer/src/config/constants.ts`); `MAX_SEGMENTS_PER_LINES_NODE`, `MAX_POINTS_PER_POINTS_NODE`, `MAX_SPLATS_PER_GSPLATS_NODE`, and `max_elements_per_node()` mirror the per-geometry layouts in `packages/luxar-viewer/src/rendering/element-texture-layout.ts`
@@ -85,6 +86,30 @@ Constant values used throughout Luxar.
 - **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_GROUP`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`, `NODE_TYPE_MESH`
 
 **Purpose**: Centralize magic numbers and limits
+
+### `format_version.py`
+The on-disk format-version POLICY every reader applies — one rule for a compiled
+scene and a standalone gsplats store, mirrored line for line by the viewer's
+`packages/luxar-viewer/src/data/format-version.ts` and pinned by the same case table in both test
+suites (`packages/luxar/src/luxar/typing_utils/tests/test_format_version.py` ⇔ `packages/luxar-viewer/src/tests/unit/data/format-version.test.ts`):
+
+- `check_format_version(kind, version, current, supported) -> (FormatVersionOutcome, message)` — `SUPPORTED` (in the allowlist), `NEWER_MINOR` (same major, higher minor: load + warn), `REFUSE` (older-unsupported, newer-major, unparsable; the gsplats message keeps the `luxar gsplat migrate-format <in> <out>` hint).
+- `read_scene_format_version(attrs)` — `format_version`, else the 0.1 legacy `luxar_version` key (`LEGACY_SCENE_VERSION_ATTR`), else `None`.
+- `enforce_scene_format_version(attrs)` / `enforce_gsplats_format_version(attrs)` — raise `UnsupportedFormatVersionError` (a `ValueError`) on REFUSE, `warnings.warn` on NEWER_MINOR. A scene root with a `format_type` but no version is refused; one with neither is tolerated (pre-header store).
+- Consumers: `io/reader.py::LuxarScene.load`, `validation/base.py::validate_zarr_attributes`, `gsplats/io/{load_gsplats,inspect_gsplats}.py`, `gsplats/doctor/checks.py`, `cli/gsplat_ops/batch/validation.py`.
+
+### `_format_contract.py` (generated)
+Projected from `format-contract/contract.yaml` by `scripts/gen_format_contract.py`
+(`make gen-contract`; `hatch run check-contract` gates drift). Do not edit by hand.
+Carries the two format-version blocks, the scene header scalars
+(`FORMAT_TYPE_SCENE`, `LEGACY_SCENE_VERSION_ATTR`, `SOFTWARE_VERSION_ATTR`) and
+every cross-language vocabulary as a `Literal` + tuple pair: node types/kinds,
+encodings, `ATTR_KEYS` (structural) and `RENDER_ATTR_KEYS` (the writer's typo
+allowlist), `LOD_SELECTORS`, `BLENDING_MODES`, `TONE_MAPPINGS`,
+`BUILTIN_COLORMAP_NAMES`, `PHYSICAL_UNITS`, `ORDERING_METHODS`,
+`LINE_JOIN_STYLES`, `LINE_TYPES`, `ND_TRANSFORM_AFFINE_KEYS` /
+`ND_TRANSFORM_PERMUTATION_KEY`, `DIMENSION_ATTR_KEYS`, `ARRAY_NAMES`.
+`tests/test_format_contract.py` asserts every hand-written consumer against it.
 
 ### `config.py` (removed)
 There was a `config.py` here, described as "centralized configuration". Of its

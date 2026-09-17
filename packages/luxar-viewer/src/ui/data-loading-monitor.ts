@@ -246,7 +246,7 @@ export class DataLoadingMonitor {
     this.advisor.clear();
 
     // Drop closures bound to the previous scene's loader. Without this,
-    // a `?no-cache` reload (which never re-installs L1/L2 providers)
+    // a `?noCache` reload (which never re-installs L1/L2 providers)
     // leaves us calling `() => this.l0Cache!.getStats()` against a
     // disposed loader.
     this.resetSceneProviders();
@@ -283,9 +283,9 @@ export class DataLoadingMonitor {
   /**
    * Push the cache telemetry state resolved by `cache-setup.ts`.
    * Called once per scene load so the UI shows the right
-   * disabled-reason (`?no-cache` URL flag vs app-config disable vs
+   * disabled-reason (`?noCache` URL flag vs app-config disable vs
    * pre-wiring transition). Without this, the aggregator falls back
-   * to provider-presence inference and misrepresents `?no-cache` runs
+   * to provider-presence inference and misrepresents `?noCache` runs
    * as `not-wired`.
    */
   public setCacheTelemetryState(state: CacheTelemetryState): void {
@@ -377,7 +377,7 @@ export class DataLoadingMonitor {
    * provider was a closure that captured the now-disposed loader's
    * fields (`this.l0Cache`, etc.). Calling them after dispose throws —
    * e.g. the L0 closure `() => this.l0Cache!.getStats()` NPEs once the
-   * previous loader nulled its `l0Cache`. Under `?no-cache` the next
+   * previous loader nulled its `l0Cache`. Under `?noCache` the next
    * scene never installs replacements either, so without this reset the
    * stale closures live until tab close.
    */
@@ -1313,7 +1313,7 @@ export class DataLoadingMonitor {
     const sceneGraphState = this.sceneGraphModel.getSceneGraph();
     if (sceneGraphState.root) {
       return content.replace(
-        '<div id="loader-list-content"></div>',
+        '<div id="luxar-loader-list-content"></div>',
         renderSceneGraphTree(
           sceneGraphState,
           this.sceneGraphModel.expandedNodes,
@@ -1324,7 +1324,7 @@ export class DataLoadingMonitor {
       );
     } else {
       return content.replace(
-        '<div id="loader-list-content"></div>',
+        '<div id="luxar-loader-list-content"></div>',
         this.renderCompactLoaderList()
       );
     }

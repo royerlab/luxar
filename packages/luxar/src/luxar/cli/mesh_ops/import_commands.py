@@ -219,7 +219,7 @@ def import_command(
     center: bool = typer.Option(
         True,
         "--center/--no-center",
-        help="Recentre on the bounding-box midpoint. Most mesh files sit far from the "
+        help="Recenter on the bounding-box midpoint. Most mesh files sit far from the "
         "origin, which fights the viewer's default framing.",
     ),
     scale: float = typer.Option(

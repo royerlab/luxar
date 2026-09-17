@@ -7,7 +7,17 @@ For constants, see constants.py.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Generator, List, MutableMapping, Optional, Tuple, Union
+from typing import (
+    Any,
+    Dict,
+    Generator,
+    List,
+    Literal,
+    MutableMapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import numpy as np
 from numpy.typing import NDArray
@@ -46,6 +56,13 @@ NdTransformEntry = Dict[
     str, Any
 ]  # {"scale": float, "offset": float} or {"permutation": [int]}
 NdTransform = Dict[str, NdTransformEntry]  # Maps dim name → transform entry
+
+# Spatial ordering METHODS a writer may be asked to apply. Deliberately narrower
+# than the on-disk `ordering` attr vocabulary (`_format_contract.ORDERING_METHODS`,
+# which also carries "none" = not reordered): a caller picks a curve, the writer
+# stamps whichever value applied. Asserted to be a subset of the contract list in
+# `typing_utils/tests/test_format_contract.py`.
+SpatialOrderingMethod = Literal["morton", "hilbert"]
 
 # Path-like types
 PathLike = Union[str, Path]

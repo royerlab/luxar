@@ -215,7 +215,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 
       <!-- Scene graph or loader list (injected by monitor) -->
       <div class="luxar-overview__scene-loaders">
-        <div id="loader-list-content"></div>
+        <div id="luxar-loader-list-content"></div>
       </div>
     </div>
   `;

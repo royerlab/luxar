@@ -15,7 +15,7 @@
  *     spec.
  *
  * The test renders the same scene through `?renderer=webgl` and
- * `?renderer=webgpu&webgpu-force-webgl`, compares the resulting
+ * `?renderer=webgpu&webgpuForceWebgl`, compares the resulting
  * `renderToImageData()` outputs as per-row luminance profiles
  * (resilient to small canvas-size differences between contexts),
  * and asserts they match. If a future change breaks the orientation
@@ -123,12 +123,12 @@ test.describe('Y-orientation contract — renderToImageData cross-backend parity
     const pageB = await ctxB.newPage();
     try {
       await load(pageA, `/?renderer=webgl&src=${DATASET}&debug`);
-      await load(pageB, `/?renderer=webgpu&webgpu-force-webgl&src=${DATASET}&debug`);
+      await load(pageB, `/?renderer=webgpu&webgpuForceWebgl&src=${DATASET}&debug`);
       await assertOrientationParity(
         pageA,
         pageB,
         '?renderer=webgl',
-        '?renderer=webgpu&webgpu-force-webgl'
+        '?renderer=webgpu&webgpuForceWebgl'
       );
     } finally {
       await ctxA.close();

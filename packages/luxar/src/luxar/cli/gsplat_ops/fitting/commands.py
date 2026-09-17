@@ -171,7 +171,7 @@ def calibrate_command(
             "Fit preset: draft, standard, hifi, ultra, n2s. "
             "Default 'n2s' matches the manuscript's blind-spot protocol "
             "(n_iters=20000, early_stop_patience=500, cull_retention=0.999) "
-            "so the held-out PSNR curve has enough optimiser budget to enter "
+            "so the held-out PSNR curve has enough optimizer budget to enter "
             "the overfit regime at high K. Lower presets undertrain at high K "
             "and bias K* upward."
         ),
@@ -312,7 +312,7 @@ def calibrate_command(
     peak) plus the dataset's noise-floor PSNR ceiling.
 
     The fit at each K runs against a 5%-donut-median-filled volume so the
-    optimiser never sees the original noisy values at masked positions —
+    optimizer never sees the original noisy values at masked positions —
     this is the Noise2Self protocol from Batson & Royer (2019), as used
     in the Luxar manuscript's model-selection analysis.
 

@@ -729,7 +729,7 @@ def test_radial_explicit_centre_overrides_the_bbox():
     radii = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
     data = _ray_gsplat(radii)
 
-    order = compute_additive_order(data, method="radial", reveal_centre=[1.0, 0.0, 0.0])
+    order = compute_additive_order(data, method="radial", reveal_center=[1.0, 0.0, 0.0])
 
     # Aimed at the near end, so it reveals strictly outward from r=1.
     assert list(radii[order]) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -799,7 +799,7 @@ def test_radial_still_reveals_when_every_axis_is_degenerate():
 def test_radial_rejects_a_mis_shaped_centre():
     data = _ray_gsplat(np.array([1.0, 2.0], dtype=np.float32))
     with pytest.raises(ValueError, match="one coordinate per spatial axis"):
-        compute_additive_order(data, method="radial", reveal_centre=[0.0, 0.0])
+        compute_additive_order(data, method="radial", reveal_center=[0.0, 0.0])
 
 
 @pytest.mark.parametrize(
@@ -814,7 +814,7 @@ def test_radial_rejects_a_non_finite_centre(bad: float) -> None:
     """
     data = _make_random_gsplat(n=8, ndim=3, seed=4)
     with pytest.raises(ValueError, match="must be finite"):
-        compute_additive_order(data, method="radial", reveal_centre=[bad, 0.0, 0.0])
+        compute_additive_order(data, method="radial", reveal_center=[bad, 0.0, 0.0])
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
@@ -824,7 +824,7 @@ def test_radial_refuses_non_finite_centers(bad: float) -> None:
     Measured before the guard: `compute_additive_order(..., method="radial")`
     returned the identity permutation — every distance non-finite, all equal under
     the stable argsort, ladder emitted in INPUT order. The element side behaved the
-    same way and Lines raised a misleading `reveal_centre` error, so the three
+    same way and Lines raised a misleading `reveal_center` error, so the three
     implementations of one ordering disagreed about malformed data. Now they share
     `validate_finite_reveal_coords` and each names its own array.
     """
@@ -1017,7 +1017,7 @@ def test_radial_excludes_an_asymmetric_degenerate_time_axis() -> None:
 def test_radial_spatial_dims_override_selects_the_shell_axes() -> None:
     """`spatial_dims=` overrides the default selection: a ray that varies only
     along axis 3 is ordered by axis 3 when it is named explicitly, and
-    `reveal_centre` carries one coordinate PER SELECTED axis (not per ndim)."""
+    `reveal_center` carries one coordinate PER SELECTED axis (not per ndim)."""
     r = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
     n = r.size
     centers = np.zeros((n, 4), dtype=np.float32)
@@ -1032,20 +1032,20 @@ def test_radial_spatial_dims_override_selects_the_shell_axes() -> None:
     )
 
     order = compute_additive_order(
-        data, method="radial", spatial_dims=[3], reveal_centre=[1.0]
+        data, method="radial", spatial_dims=[3], reveal_center=[1.0]
     )
 
     # Aimed at r=1 along the selected axis -> reveals strictly outward.
     assert list(r[order]) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0])
 
 
-def test_radial_reveal_centre_length_checked_against_selected_dims() -> None:
-    """`reveal_centre` is validated against the SELECTED axes, not ndim: one
+def test_radial_reveal_center_length_checked_against_selected_dims() -> None:
+    """`reveal_center` is validated against the SELECTED axes, not ndim: one
     selected axis but a three-vector centre is a mismatch and must be rejected."""
     data = _ray_gsplat(np.array([1.0, 2.0, 3.0], dtype=np.float32))  # 3D
     with pytest.raises(ValueError, match="one coordinate per spatial axis"):
         compute_additive_order(
-            data, method="radial", spatial_dims=[0], reveal_centre=[0.0, 0.0, 0.0]
+            data, method="radial", spatial_dims=[0], reveal_center=[0.0, 0.0, 0.0]
         )
 
 

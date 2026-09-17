@@ -596,7 +596,7 @@ def test_list_raw_keys_answers_case_exactly(tmp_path: Path) -> None:
     """The question :func:`read_raw_bytes` cannot answer: is a key spelled
     EXACTLY this one there? An open-by-name goes through the filesystem, and on
     a case-insensitive one ``Zarr.json`` resolves to the node's own
-    ``zarr.json`` — so ``luxar.io.optimise`` cannot tell a dangling payload attr
+    ``zarr.json`` — so ``luxar.io.optimize`` cannot tell a dangling payload attr
     from a real file that would clobber that document. A listing compared in
     Python is folded by nothing."""
     root = zc.open_group(tmp_path / "s.zarr", mode="w", zarr_format=3)

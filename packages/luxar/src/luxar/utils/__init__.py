@@ -10,6 +10,11 @@ from .array import (
     validate_array_shape,
 )
 from .atomic_copy import atomic_copy_file, atomic_copytree
+from .deprecation import (
+    deprecated_kwarg_alias,
+    deprecation_message,
+    warn_deprecated,
+)
 from .paths import (
     get_datasets_dir,
     get_demos_output_dir,
@@ -32,6 +37,10 @@ __all__ = [
     # From atomic_copy
     "atomic_copy_file",
     "atomic_copytree",
+    # From deprecation
+    "deprecated_kwarg_alias",
+    "deprecation_message",
+    "warn_deprecated",
     # From scenes
     "create_lorenz_attractor",
     "create_random_spheres",

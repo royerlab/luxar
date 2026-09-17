@@ -39,8 +39,14 @@ deterministic order:
    where the reasoning lives: why layout and codec identity count as identity,
    why the per-array `encoding` attrs do, and why codec settings deliberately do
    not.
-2. the group's attrs as sorted JSON, **excluding** any existing `content_hash` to
-   avoid self-reference.
+2. the group's attrs as sorted JSON, **excluding** `HASH_EXCLUDED_ATTRS`: the
+   existing `content_hash` (self-reference) and the root's
+   `luxar_software_version` stamp (provenance, not content — two Luxar releases
+   compiling the same scene must agree on the digest, and an `optimize`
+   restamp under a newer release must not churn every viewer's cache). The
+   streaming twin in `io/optimize.py` imports the same set, and
+   `packages/luxar/src/luxar/io/tests/test_hash_reproducibility.py` fails if either hasher stops
+   honouring it.
 3. the bytes of any plain **payload file** those attrs name (see below).
 4. each child group's **name** (`group_keys()` sorted) together with its
    recursively-computed hash. The name is hashed because a node's own digest does
@@ -61,8 +67,8 @@ their overlay image bytes got the *same* root hash. `content_hash` is advertised
 as a content fingerprint and consumed as one (the viewer's
 `scene-identity-watchdog`, cache validation), so a rebuild whose only change was
 the logo looked exactly like no change at all. Two walks in the repo hash a
-store this way: this compile-time one, and `luxar optimise`'s slab-wise
-re-chunk walk (`luxar.io.optimise._compute_content_hashes_streaming`), which
+store this way: this compile-time one, and `luxar optimize`'s slab-wise
+re-chunk walk (`luxar.io.optimize._compute_content_hashes_streaming`), which
 imports `_payload_terms` and folds the same bytes over a store that is already
 finished. Nothing else restamps one — swapping the PNG inside an
 already-finalized `.luxar.zarr` changes no hash until the scene is recompiled or

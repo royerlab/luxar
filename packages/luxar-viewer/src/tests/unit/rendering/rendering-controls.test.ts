@@ -538,7 +538,7 @@ describe('RenderingControls', () => {
       expect(controls.settings.densityGuardEnabled).toBe(true);
       expect(control.setEnabled).toHaveBeenLastCalledWith(true);
 
-      // `?no-density-guard`: the stored flag is left alone in both directions.
+      // `?noDensityGuard`: the stored flag is left alone in both directions.
       control.setEnabled.mockClear();
       control.sessionDisabled = true;
       controls.settings.densityGuardEnabled = false;

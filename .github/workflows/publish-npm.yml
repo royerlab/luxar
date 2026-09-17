@@ -11,17 +11,18 @@
 # barrel is side-effect-free). This is independent of the standalone viewer app
 # that `pnpm build` produces and that the Python wheel bundles.
 #
-# ── ONE-TIME npm-side setup (NOT done yet — do this at launch) ────────────────
+# ── ONE-TIME npm-side setup (Step 1 DONE 2026-09-02; Steps 2-4 at launch) ─────
 # Target end-state: token-less OIDC trusted publishing with provenance, mirroring
 # the PyPI setup in publish.yml. KEY GOTCHA: unlike PyPI, npm has no "pending
 # publisher" — a trusted publisher can only be attached to a package that ALREADY
 # exists, so the FIRST publish must bootstrap with a token (Step 2); OIDC takes
 # over from the second release on (Steps 3-4).
 #
-#   1. ACCOUNT + ORG (once):
-#      - Create an npm account (npmjs.com), enable 2FA (Account -> Two-Factor Auth).
-#      - Create the free `luxar` org (Add Organization -> Free plan). The scope
-#        must exist before any `@luxar/*` publish.
+#   1. ACCOUNT + ORG (once) — DONE 2026-09-02: account `royerloic` with 2FA, the
+#      free `luxar` org created (scope reserved; `royerlab` held defensively),
+#      org-wide 2FA enforcement on. The scope had to exist before any `@luxar/*`
+#      publish; it does. Note the UNSCOPED `luxar` on npm belongs to an unrelated
+#      package, which is one reason the viewer is published under the scope.
 #
 #   2. BOOTSTRAP THE FIRST PUBLISH (token, once — npm needs the package to exist
 #      before a trusted publisher can be attached). Easiest locally:

@@ -9,7 +9,7 @@ import type { DensityGuardConfig } from './types';
  * pathological views sat at 600–100 000 elements per pixel.
  */
 export const densityGuardConfig: DensityGuardConfig = {
-  enabled: true, // URL escape hatch: ?no-density-guard
+  enabled: true, // URL escape hatch: ?noDensityGuard
   capElementsPerPixel: 4,
   nonBlendableCapElementsPerPixel: 1,
   minKeepFraction: 1 / 64,

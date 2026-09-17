@@ -350,7 +350,7 @@ class TestRadialOrderLines:
     def test_orders_innermost_polyline_first(self) -> None:
         verts, polys = self._fan()
         perm, counts = compute_additive_order_lines(
-            verts, polys, method="radial", reveal_centre=[0.0]
+            verts, polys, method="radial", reveal_center=[0.0]
         )
 
         # Each polyline's representative is its own bbox centre; here that is
@@ -369,11 +369,11 @@ class TestRadialOrderLines:
         assert sorted(perm.tolist()) == list(range(5))
 
     def test_non_finite_vertices_are_refused_naming_the_vertices(self) -> None:
-        """The error must blame the VERTICES, not ``reveal_centre``.
+        """The error must blame the VERTICES, not ``reveal_center``.
 
         Lines derives its default origin from the vertices, so before the
         data-side guard a NaN vertex produced a NaN origin that then tripped the
-        scorer's ``reveal_centre must be finite`` check — an error naming a knob
+        scorer's ``reveal_center must be finite`` check — an error naming a knob
         the caller never passed. Points and GSplats meanwhile returned input order
         silently. One shared validator makes all three agree AND report the input
         the caller actually supplied.
@@ -551,7 +551,7 @@ class TestMakeAdditiveLodLines:
             line_type="segments",
             method="radial",
             n_lods=4,
-            reveal_centre=[0.0],
+            reveal_center=[0.0],
         )
         first_xs = [float(verts[p, 0].mean()) for p in pinned[0]]
         assert max(first_xs) < 10.0
@@ -575,7 +575,7 @@ class TestMakeAdditiveLodLines:
             line_type="segments",
             method="radial",
             n_lods=4,
-            reveal_centre=[0.0],
+            reveal_center=[0.0],
             spatial_dims=[0],
         )
         first_xs = [float(verts[p, 0].mean()) for p in restricted[0]]
@@ -1377,7 +1377,7 @@ class TestRevealSpatialDimsFromSceneLines:
         )
 
     def test_derived_shell_axes_write_no_partial_group(self, tmp_path) -> None:
-        """A mismatched ``reveal_centre`` must not strand a partial LOD group.
+        """A mismatched ``reveal_center`` must not strand a partial LOD group.
 
         The resolver can only cross-check the centre against ``spatial_dims``
         when the caller names both; here the axes are DERIVED. A planar cloud
@@ -1408,7 +1408,7 @@ class TestRevealSpatialDimsFromSceneLines:
                     substitutive_lod={"levels": 2, "compression_factor": 4},
                     additive_lod={
                         "method": "radial",
-                        "reveal_centre": [0.0, 0.0, 7.0],
+                        "reveal_center": [0.0, 0.0, 7.0],
                     },
                 )
         assert not (output / "ln").exists()
@@ -1423,7 +1423,7 @@ class TestRevealSpatialDimsFromSceneLines:
                 widths=widths,
                 line_type="segments",
                 substitutive_lod={"levels": 2, "compression_factor": 4},
-                additive_lod={"method": "radial", "reveal_centre": [0.0, 0.0]},
+                additive_lod={"method": "radial", "reveal_center": [0.0, 0.0]},
             )
         assert (ok / "ln" / "child_2").exists()
 
@@ -1433,9 +1433,9 @@ class TestRevealSpatialDimsFromSceneLines:
         """The wrapper must not derive polyline representatives it will not use.
 
         The preflight only has something to cross-check when the caller named a
-        ``reveal_centre`` under a reveal ordering. Getting its ``coords`` argument
+        ``reveal_center`` under a reveal ordering. Getting its ``coords`` argument
         is the expensive part on Lines — ``identify_polylines`` plus
-        ``polyline_bbox_centres`` loop in Python over every polyline (~2.5 s for a
+        ``polyline_bbox_centers`` loop in Python over every polyline (~2.5 s for a
         400k-vertex ``segments`` node) — and the composed ladder is ON by default,
         so an unguarded call paid that on every ``add_lines(substitutive_lod=…)``.
 
@@ -1446,7 +1446,7 @@ class TestRevealSpatialDimsFromSceneLines:
         def _boom(*_args, **_kwargs):  # pragma: no cover - must not be called
             raise AssertionError("polyline representatives derived for a non-reveal")
 
-        monkeypatch.setattr(lines_lod, "polyline_bbox_centres", _boom)
+        monkeypatch.setattr(lines_lod, "polyline_bbox_centers", _boom)
 
         rng = np.random.RandomState(0)
         verts = rng.uniform(-50, 50, (200, 3)).astype(np.float32)
@@ -1478,7 +1478,7 @@ class TestRevealSpatialDimsFromSceneLines:
                     substitutive_lod={"levels": 2, "compression_factor": 4},
                     additive_lod={
                         "method": "radial",
-                        "reveal_centre": [0.0, 0.0, 0.0],
+                        "reveal_center": [0.0, 0.0, 0.0],
                     },
                 )
 

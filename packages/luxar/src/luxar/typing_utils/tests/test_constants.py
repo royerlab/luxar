@@ -16,29 +16,11 @@ from luxar.conftest import read_ts_string_literals, viewer_source
 from luxar.typing_utils.constants import (
     DEFAULT_POINT_RADIUS,
     DEFAULT_TRUNCATION_RADIUS,
-    LINE_JOIN_STYLES,
-    LOD_SELECTORS,
 )
 from luxar.typing_utils.geometry_capabilities import (
     lod_capable_types,
     partition_capable_types,
 )
-
-
-def test_line_join_styles_match_the_viewer_union() -> None:
-    """Writer validation and viewer parsing accept exactly the same spellings."""
-    source = viewer_source("src/types/line-join.ts").read_text(encoding="utf-8")
-    assert read_ts_string_literals(source, "LineJoinStyle") == LINE_JOIN_STYLES
-    assert read_ts_string_literals(source, "LINE_JOIN_STYLES") == LINE_JOIN_STYLES
-
-
-def test_lod_selectors_match_the_viewer_metadata_union() -> None:
-    """Authored selector units stay valid on both sides of the file format."""
-    viewer_selectors = read_ts_string_literals(
-        viewer_source("src/types/lod-group.ts").read_text(encoding="utf-8"),
-        "selector",
-    )
-    assert viewer_selectors == LOD_SELECTORS
 
 
 def test_lod_display_types_match_the_capability_table() -> None:

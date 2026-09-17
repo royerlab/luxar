@@ -41,9 +41,6 @@ export class ThemeManager {
   /** Theme change observers */
   private observers: Set<ThemeChangeHandler> = new Set();
 
-  /** LocalStorage key for theme persistence (see {@link StorageKeys.theme}). */
-  private readonly STORAGE_KEY = StorageKeys.theme;
-
   /** Cleanup function for the glass refraction observer */
   private glassRefractionObserverCleanup: (() => void) | null = null;
 
@@ -492,7 +489,7 @@ export class ThemeManager {
    */
   private saveTheme(themeId: string): void {
     try {
-      localStorage.setItem(this.STORAGE_KEY, themeId);
+      localStorage.setItem(StorageKeys.theme, themeId);
     } catch (error) {
       log.warning(Modules.UI, 'Failed to save theme to localStorage', error);
     }
@@ -505,7 +502,7 @@ export class ThemeManager {
    */
   private loadTheme(): string | null {
     try {
-      return localStorage.getItem(this.STORAGE_KEY);
+      return localStorage.getItem(StorageKeys.theme);
     } catch (error) {
       log.warning(Modules.UI, 'Failed to load theme from localStorage', error);
       return null;

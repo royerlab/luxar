@@ -13,13 +13,15 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+import pytest
 import zarr
 from arbol import aprint
 
 from luxar.core.dimensions import Dimensions
 from luxar.io.compiler import LuxarZarrCompiler
 from luxar.io.reader import LuxarScene
-from luxar.typing_utils.constants import LUXAR_VERSION_CURRENT
+from luxar.typing_utils._format_contract import SCENE_FORMAT_VERSION
+from luxar.typing_utils.format_version import UnsupportedFormatVersionError
 
 
 class TestReaderNodeCollection:
@@ -148,36 +150,75 @@ class TestReaderNodeCollection:
 
 
 class TestReaderVersionCheck:
-    """Test that LuxarScene.load() warns on version mismatch."""
+    """``LuxarScene.load()`` applies the shared format-version policy.
 
-    def _create_scene_with_version(self, path: Path, version: str) -> None:
-        """Helper: create a minimal valid scene zarr with a specific version."""
+    The arm table below is the one in ``typing_utils/tests/test_format_version.py``
+    (and the viewer's ``format-version.test.ts``), exercised through the real
+    entry point on a real on-disk root so the enforcement seam itself — not just
+    the policy function — is what is pinned.
+    """
+
+    @staticmethod
+    def _root(path: Path, attrs: dict) -> None:
         store = zarr.open_group(path, mode="w")
-        store.attrs["type"] = "scene"
-        store.attrs["luxar_version"] = version
+        store.attrs.update({"type": "scene", **attrs})
 
-    def test_version_mismatch_warns(self, tmp_path: Path) -> None:
-        """Loading a scene with a different version should emit a UserWarning."""
-        scene_path = tmp_path / "old.luxar.zarr"
-        self._create_scene_with_version(scene_path, "99.99")
-
-        with warnings.catch_warnings(record=True) as w:
+    def _load(self, path: Path) -> list[warnings.WarningMessage]:
+        with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            LuxarScene.load(scene_path)
+            LuxarScene.load(path)
+        return [w for w in caught if issubclass(w.category, UserWarning)]
 
-        version_warnings = [x for x in w if "Version mismatch" in str(x.message)]
-        assert len(version_warnings) == 1
-        assert "99.99" in str(version_warnings[0].message)
-        assert LUXAR_VERSION_CURRENT in str(version_warnings[0].message)
+    @pytest.mark.parametrize(
+        "attrs",
+        [
+            pytest.param(
+                {"format_version": "0.2", "format_type": "luxar_zarr"}, id="supported"
+            ),
+            pytest.param({"luxar_version": "0.1"}, id="legacy-key-fallback"),
+            pytest.param({}, id="missing-without-format-type"),
+        ],
+    )
+    def test_supported_arms_load_silently(self, tmp_path: Path, attrs: dict) -> None:
+        path = tmp_path / "scene.luxar.zarr"
+        self._root(path, attrs)
+        assert self._load(path) == []
 
-    def test_matching_version_no_warning(self, tmp_path: Path) -> None:
-        """Loading a scene with the current version should not warn."""
-        scene_path = tmp_path / "current.luxar.zarr"
-        self._create_scene_with_version(scene_path, LUXAR_VERSION_CURRENT)
+    def test_newer_minor_warns_and_loads(self, tmp_path: Path) -> None:
+        path = tmp_path / "newer.luxar.zarr"
+        self._root(path, {"format_version": "0.3", "format_type": "luxar_zarr"})
+        caught = self._load(path)
+        assert len(caught) == 1
+        message = str(caught[0].message)
+        assert "0.3" in message and SCENE_FORMAT_VERSION in message
+        assert "Loading anyway" in message
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            LuxarScene.load(scene_path)
+    @pytest.mark.parametrize(
+        ("attrs", "needle"),
+        [
+            pytest.param({"format_version": "0.0"}, "0.0", id="older-unsupported"),
+            pytest.param({"format_version": "9.9"}, "9.9", id="newer-major"),
+            pytest.param({"format_version": "abc"}, "abc", id="unparsable"),
+            pytest.param(
+                {"format_type": "luxar_zarr"},
+                "format_type",
+                id="missing-with-format-type",
+            ),
+        ],
+    )
+    def test_refused_arms_raise(self, tmp_path: Path, attrs: dict, needle: str) -> None:
+        path = tmp_path / "bad.luxar.zarr"
+        self._root(path, attrs)
+        with pytest.raises(UnsupportedFormatVersionError, match=needle):
+            LuxarScene.load(path)
 
-        version_warnings = [x for x in w if "Version mismatch" in str(x.message)]
-        assert len(version_warnings) == 0
+    def test_version_property_reads_both_spellings(self, tmp_path: Path) -> None:
+        new = tmp_path / "new.luxar.zarr"
+        self._root(new, {"format_version": "0.2", "format_type": "luxar_zarr"})
+        assert LuxarScene.load(new).version == "0.2"
+        legacy = tmp_path / "legacy.luxar.zarr"
+        self._root(legacy, {"luxar_version": "0.1"})
+        assert LuxarScene.load(legacy).version == "0.1"
+        bare = tmp_path / "bare.luxar.zarr"
+        self._root(bare, {})
+        assert LuxarScene.load(bare).version == "unknown"

@@ -82,7 +82,7 @@ export function nextKeepFraction(
 
 export interface DensityGuardDeps {
   config(): DensityLadderConfig;
-  /** The `?no-lod-energy` flag — passed through to `applyLodFade` unchanged. */
+  /** The `?noLodEnergy` flag — passed through to `applyLodFade` unchanged. */
   energyComp(): boolean;
   /** Keeps a clone-on-first-fade material on the camera-uniform loop. */
   registerMaterial?(material: THREE.Material): void;

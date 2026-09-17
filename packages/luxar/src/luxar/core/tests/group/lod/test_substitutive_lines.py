@@ -578,7 +578,7 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
             "equal its consecutive vertex pairs, so the ladder would rewrite edges); the "
             "finest level will load all-at-once; coarse levels keep their ladder "
             "where one applies. Coarse levels use self_energy ordering, so "
-            "reveal_centre is not applied."
+            "reveal_center is not applied."
         ]
 
         grp = zarr.open(str(out), mode="r")["curves"]

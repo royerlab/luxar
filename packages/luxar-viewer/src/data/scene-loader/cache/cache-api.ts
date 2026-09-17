@@ -17,7 +17,7 @@
  *
  * Each helper gracefully no-ops when the corresponding cache layer is
  * `null` — matching the behavior the SceneLoader had inline, where
- * caches are absent under `?no-cache` or when the global config disables
+ * caches are absent under `?noCache` or when the global config disables
  * them.
  *
  * @module data/scene-loader/cache/cache-api
@@ -48,7 +48,7 @@ export interface CacheStatsSnapshot {
   prefetch?: { queued: number; inFlight: number; enabled: boolean } | null;
   health?: ReturnType<MultiLevelCachingStore['getStats']>['health'] | null;
   /**
-   * S4: number of times `?clear-cache` triggered a clearAll on init
+   * S4: number of times `?clearCache` triggered a clearAll on init
    * for the active store. Surfaced so E2E tests can assert that a
    * clear actually ran rather than only checking that stats survived.
    */

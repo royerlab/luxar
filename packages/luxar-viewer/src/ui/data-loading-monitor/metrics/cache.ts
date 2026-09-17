@@ -108,7 +108,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
 
   // Derive telemetry state. Caller-supplied wins; otherwise infer
   // from provider presence. Default-on-no-provider is `not-wired`,
-  // not `enabled` — `?no-cache` runs have no provider and must not
+  // not `enabled` — `?noCache` runs have no provider and must not
   // surface as enabled.
   let telemetryState: CacheTelemetryState;
   if (params.telemetryState) {

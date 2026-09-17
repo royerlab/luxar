@@ -51,7 +51,12 @@ export class DirectoryNavigator {
    */
   async navigate(path: string = ''): Promise<NavigationResult> {
     this.currentPath = path;
-    const fullUrl = this.baseUrl + path;
+    // Normalise ONCE to a directory URL (trailing slash): every strategy
+    // appends a document name (`.zgroup`, `zarr.json`, `.luxar-index.json`),
+    // and `baseUrl + 'datasets' + '.luxar-index.json'` would probe the
+    // non-existent sibling `datasets.luxar-index.json` instead of the index
+    // inside the directory.
+    const fullUrl = this.baseUrl + (path && !path.endsWith('/') ? path + '/' : path);
 
     // Strategy 1: Check if it's a Zarr dataset
     const isZarr = await this.checkIfZarr(fullUrl);

@@ -5,7 +5,7 @@ import { DataMonitorManager } from '../../../ui/data-monitor-manager';
  * Best-effort: silently skips when no monitor was created (e.g.
  * embedded contexts that disable the monitor). Called by LuxarApp
  * during init when the `openCacheStats` option is set, or when the
- * `?cache-stats` URL flag is present.
+ * `?cacheStats` URL flag is present.
  */
 export function openCacheStatsView(): void {
   const monitor = DataMonitorManager.getInstance().getDefaultMonitor();

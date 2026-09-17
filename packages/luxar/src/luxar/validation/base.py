@@ -9,11 +9,21 @@ from typing import Any, Optional, Sequence, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ..typing_utils._format_contract import NODE_TYPES, SUPPORTED_SCENE_VERSIONS
+from ..typing_utils._format_contract import (
+    LEGACY_SCENE_VERSION_ATTR,
+    NODE_TYPES,
+    SCENE_FORMAT_VERSION,
+    SUPPORTED_SCENE_VERSIONS,
+)
 from ..typing_utils.constants import (
     MESH_DECODE_BUDGET_BYTES,
     SHARPNESS_MAX,
     SHARPNESS_MIN,
+)
+from ..typing_utils.format_version import (
+    FormatVersionOutcome,
+    check_format_version,
+    read_scene_format_version,
 )
 
 
@@ -1598,7 +1608,7 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
     """
     if is_root:
         # Root scene requires additional attributes
-        required = {"type", "luxar_version"}
+        required = {"type"}
         recommended = {"scene_dimensions"}
     else:
         # Child nodes only require type
@@ -1611,6 +1621,16 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
         raise ValidationError(
             f"Missing required zarr attributes: {missing_required}",
             f"Add these attributes: {', '.join(missing_required)}",
+        )
+
+    # A root must carry a format version under ONE of the two spellings: the
+    # 0.2+ `format_version` or the 0.1 legacy `luxar_version`. Neither is
+    # individually required — a published 0.1 store has only the legacy key.
+    if is_root and read_scene_format_version(attrs) is None:
+        raise ValidationError(
+            "Missing required zarr attribute: format_version "
+            f"(or the legacy {LEGACY_SCENE_VERSION_ATTR!r})",
+            f"Add format_version={SCENE_FORMAT_VERSION!r}",
         )
 
     # Check for missing recommended attributes
@@ -1637,15 +1657,23 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
                 f"Use one of: {', '.join(NODE_TYPES)}",
             )
 
-    # Validate version against the contract vocabulary too. Both of these used
-    # to be function-local imports; the version one carried a comment about a
-    # cycle through ``typing_utils.config`` -> ``io.reader`` -> ``core.dimensions``
-    # -> ``validation.category_validation``. That module is gone, and
-    # ``_format_contract`` is generated code importing nothing but ``typing``,
-    # so there is no chain left to re-enter.
-    if "luxar_version" in attrs:
-        if attrs["luxar_version"] not in SUPPORTED_SCENE_VERSIONS:
+    # Validate the version through the shared policy (typing_utils/
+    # format_version.py, mirrored by the viewer): supported → pass, same-major
+    # newer minor → warn, anything else → ValidationError. Both spellings of
+    # the key are read; `_format_contract` is generated code importing nothing
+    # but ``typing``, so there is no import cycle to route around here.
+    version = read_scene_format_version(attrs)
+    if version is not None:
+        outcome, message = check_format_version(
+            "scene", version, SCENE_FORMAT_VERSION, SUPPORTED_SCENE_VERSIONS
+        )
+        if outcome is FormatVersionOutcome.REFUSE:
             raise ValidationError(
-                f"Unsupported Luxar version: '{attrs['luxar_version']}'",
-                f"Supported versions: {', '.join(SUPPORTED_SCENE_VERSIONS)}",
+                f"Unsupported Luxar version: '{version}'",
+                f"Supported versions: {', '.join(SUPPORTED_SCENE_VERSIONS)}. "
+                + message,
             )
+        if outcome is FormatVersionOutcome.NEWER_MINOR:
+            import warnings
+
+            warnings.warn(message, UserWarning, stacklevel=2)

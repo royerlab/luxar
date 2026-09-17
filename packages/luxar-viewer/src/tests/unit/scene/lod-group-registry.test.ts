@@ -3420,7 +3420,7 @@ describe('LODGroupRegistry — fresh-but-empty display guard', () => {
     }
   });
 
-  it('directs network-backed empty levels to Retry instead of clear-cache', () => {
+  it('directs network-backed empty levels to Retry instead of ?clearCache', () => {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();
     camera.projectionMatrix.identity();
@@ -3441,7 +3441,7 @@ describe('LODGroupRegistry — fresh-but-empty display guard', () => {
       expect.anything(),
       expect.stringContaining('use the monitor Retry action')
     );
-    expect(warning.mock.calls[0]?.[1]).not.toContain('?clear-cache');
+    expect(warning.mock.calls[0]?.[1]).not.toContain('?clearCache');
     warning.mockRestore();
   });
 
@@ -4291,7 +4291,7 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// Coverage-band cross-fade (on by default; ?no-lod-fade disables) — two adjacent
+// Coverage-band cross-fade (on by default; ?noLodFade disables) — two adjacent
 // blendable (additive/luminous/volumetric) levels
 // render with complementary opacity as the DISTANCE (coverage metric) crosses
 // their boundary. Distance-driven, independent of streaming. Off / non-blendable
@@ -4601,7 +4601,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   });
 });
 
-// Streaming energy compensation (ON by default; ?no-lod-energy disables) — as a
+// Streaming energy compensation (ON by default; ?noLodEnergy disables) — as a
 // blendable (additive/luminous/volumetric) leaf's additive ladder streams in,
 // its committed prefix carries only
 // e(k) of the leaf's full energy, so it renders at e·E and brightens toward E as
@@ -4763,7 +4763,7 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
   });
 });
 
-describe('LODGroupRegistry — force-finest capture override (?lod-finest / LuxarAppOptions.lodFinest)', () => {
+describe('LODGroupRegistry — force-finest capture override (?lodFinest / LuxarAppOptions.lodFinest)', () => {
   function makeForceFinestRegistry(force: boolean): LODGroupRegistry {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();

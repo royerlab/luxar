@@ -33,6 +33,17 @@ export const UNKNOWN = 'unknown';
 /** The compile-time constant name that carries the stamp into the bundle. */
 export const BUILD_DEFINE = '__LUXAR_BUILD__';
 
+/**
+ * The compile-time constant that carries the bare package version into the
+ * bundle — `src/version.ts` reads it as `VIEWER_VERSION`.
+ *
+ * Separate from {@link BUILD_DEFINE} on purpose: the stamp is a diagnostic
+ * that legitimately degrades to `'unknown'`, while the version is a public
+ * constant an embedder compares against (`import { VIEWER_VERSION }`), so it
+ * must be a plain string with no JSON envelope and no commit/timestamp noise.
+ */
+export const VERSION_DEFINE = '__LUXAR_VIEWER_VERSION__';
+
 export interface BuildIdentity {
   /** Semver-normalized CalVer from package.json, e.g. `2026.6.5`. */
   version: string;
@@ -105,6 +116,17 @@ export function buildIdentity(now: Date = new Date()): BuildIdentity {
  */
 export function buildDefine(identity: BuildIdentity = buildIdentity()): Record<string, string> {
   return { [BUILD_DEFINE]: JSON.stringify(JSON.stringify(identity)) };
+}
+
+/**
+ * The `define:` entry for {@link VERSION_DEFINE}: `package.json`'s version as a
+ * quoted string literal. Applied by every Vite config that compiles `src/`
+ * (application, library, and vitest), so `VIEWER_VERSION` is the real release
+ * version in each of them. Never throws; an unreadable `package.json` yields
+ * `'unknown'`, which `src/version.ts` maps to its development fallback.
+ */
+export function viewerVersionDefine(root: string = viewerRoot()): Record<string, string> {
+  return { [VERSION_DEFINE]: JSON.stringify(packageVersion(root)) };
 }
 
 /**

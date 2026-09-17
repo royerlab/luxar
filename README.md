@@ -855,7 +855,7 @@ luxar demo run <key|#> [-- ARGS]       # Run a demo (forwards ARGS to it)
 luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar viewer [--data PATH] [OPTIONS]    # Serve viewer only or viewer + data
 luxar info PATH [--stats]               # Dataset information (--stats also reports the chunk layout)
-luxar optimise SRC DST [--profile ...]  # Re-chunk an existing store for streaming (values stay bit-identical)
+luxar optimize SRC DST [--profile ...]  # Re-chunk an existing store for streaming (values stay bit-identical)
 luxar restamp-lod STORE [--dry-run]     # Re-derive LOD thresholds in place (attrs only)
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
@@ -1038,12 +1038,12 @@ the native WKWebView launcher fall back to L1-only caching; see the
 | `?src=<url>` | Data source URL (Zarr store) |
 | `?theme=light` | Set UI theme (`light` or `dark`) |
 | `?debug` | Enable debug mode (`window.__luxarDebug`) |
-| `?no-cache` | Disable all caching tiers (S-cache + L0/L1/L2) |
-| `?cache-debug` | Show cache hit/miss statistics |
-| `?clear-cache` | Clear the OPFS persistent cache on load |
-| `?no-prefetch` | Disable predictive chunk prefetching |
+| `?noCache` | Disable all caching tiers (S-cache + L0/L1/L2) |
+| `?cacheDebug` | Show cache hit/miss statistics |
+| `?clearCache` | Clear the OPFS persistent cache on load |
+| `?noPrefetch` | Disable predictive chunk prefetching |
 | `?renderer=webgl\|webgpu` | Select WebGLRenderer + GLSL (production default) or opt into WebGPURenderer + TSL |
-| `?webgpu-force-webgl` | With `?renderer=webgpu`, keep WebGPURenderer + TSL but force Three.js's internal WebGL2 backend for diagnostics |
+| `?webgpuForceWebgl` | With `?renderer=webgpu`, keep WebGPURenderer + TSL but force Three.js's internal WebGL2 backend for diagnostics |
 
 ---
 

@@ -14,6 +14,31 @@
  */
 
 import { describe, expect, it, beforeAll, vi } from 'vitest';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+
+/**
+ * The public value-export list shared with `scripts/check-lib-exports.mjs`.
+ * Read through `fs` rather than a JSON import so the test's view of the file
+ * is the file itself, not a module-cache copy. `import.meta.url` is not a
+ * `file:` URL under the jsdom environment this file runs in, so the path is
+ * resolved from the process cwd — the viewer package when vitest runs from
+ * its own config, the repo root under `make test-fast`.
+ */
+function publicApiExports(): string[] {
+  const candidates = [
+    join(process.cwd(), 'scripts', 'public-api-exports.json'),
+    join(process.cwd(), 'packages', 'luxar-viewer', 'scripts', 'public-api-exports.json'),
+  ];
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (path === undefined) {
+    throw new Error(`public-api-exports.json not found at ${candidates.join(' or ')}`);
+  }
+  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  const exportsList = (parsed as { exports?: unknown }).exports;
+  if (!Array.isArray(exportsList)) throw new Error('public-api-exports.json has no exports array');
+  return exportsList as string[];
+}
 
 type ConsoleMethod = 'log' | 'warn' | 'error' | 'info' | 'debug';
 const CONSOLE_METHODS: readonly ConsoleMethod[] = ['log', 'warn', 'error', 'info', 'debug'];
@@ -203,27 +228,21 @@ describe('Public barrel side effects', () => {
   it('does not leak additional unexpected exports (public surface lock)', async () => {
     // api.md G3 fix: a mutation that adds a leaky export would silently
     // expand the public surface and never fail any test. Pin the FULL
-    // value-export set; new public APIs must update this list.
+    // value-export set against scripts/public-api-exports.json — the SAME
+    // list `scripts/check-lib-exports.mjs` holds the built dist/lib bundle
+    // to, so the source barrel and the shipped bundle cannot disagree about
+    // what is public. New public APIs must update that file.
     const mod = await import('../../../index');
     const valueExports = Object.keys(mod).sort();
-    expect(valueExports).toEqual(
-      [
-        'InputContext',
-        'KeyAction',
-        'LuxarApp',
-        'LuxarLayer',
-        'StorageKeys',
-        'applyBlendingStateToMaterial',
-        'applyColormapTextureToMaterial',
-        'applyScalarRangeToMaterial',
-        'bootstrapStandalone',
-        'buildInfo',
-        'buildInfoLine',
-        'getCompleteBlendingState',
-        'normalizeDataSourceUrl',
-        'readUrlParams',
-        'supportsScalarColormap',
-      ].sort()
-    );
+    expect(valueExports).toEqual(publicApiExports());
+  });
+
+  it('keeps scripts/public-api-exports.json sorted and duplicate-free', () => {
+    // The list is the canonical form both consumers compare against; an
+    // unsorted or duplicated entry would still "match" a sorted actual set
+    // by accident in one consumer and not the other.
+    const listed = publicApiExports();
+    expect(listed).toEqual([...new Set(listed)].sort());
+    expect(listed.length).toBeGreaterThan(0);
   });
 });

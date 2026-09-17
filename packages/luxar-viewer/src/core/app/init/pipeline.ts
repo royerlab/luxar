@@ -214,14 +214,14 @@ export async function runInitPipeline(
   // only the DEFAULT loader's registry is evaluated per frame. The
   // registry DEPS below are per-owner already, so when per-loader
   // callbacks arrive no further wiring changes are needed.)
-  // LOD cross-fade is ON by default; ?no-lod-fade disables it. Streaming energy
-  // compensation is ON by default; ?no-lod-energy disables it. Both come in as
+  // LOD cross-fade is ON by default; ?noLodFade disables it. Streaming energy
+  // compensation is ON by default; ?noLodEnergy disables it. Both come in as
   // app OPTIONS (the standalone bootstrap threads them from the URL params;
   // embedders set them directly — the pipeline never reads window.location)
   // and are captured once at wiring time (a reload re-reads them).
   const lodCrossFadeEnabled = ports.options.lodFade ?? true;
   const lodEnergyCompEnabled = ports.options.lodEnergyComp ?? true;
-  // Opt-in: force the finest LOD for capture-quality output (?lod-finest).
+  // Opt-in: force the finest LOD for capture-quality output (?lodFinest).
   const lodFinestEnabled = ports.options.lodFinest ?? false;
   // The registry owns the neutral default and validates the live value.
   const lodBias = ports.options.lodBias;
@@ -270,20 +270,20 @@ export async function runInitPipeline(
       // (it commits outside the per-slice sweep and can outlast the idle
       // timeout), so the swap-up to the fresh level fires when it lands.
       requestRender: () => animationController.startAnimation(),
-      // LOD cross-fade (ON by default; ?no-lod-fade disables): the registry
+      // LOD cross-fade (ON by default; ?noLodFade disables): the registry
       // blends adjacent LOD levels' opacity across a zoom transition instead of
       // a hard swap (blendable modes only: additive/luminous/volumetric).
       // Read once at wiring time.
       getCrossFadeEnabled: () => lodCrossFadeEnabled,
-      // Streaming brightness compensation (ON by default; ?no-lod-energy disables):
+      // Streaming brightness compensation (ON by default; ?noLodEnergy disables):
       // scale a streaming additive/luminous/volumetric leaf's opacity by 1/e(k) so its
       // partial ladder prefix renders at full-level brightness (no brightening
       // pop as chunks arrive). Read once at wiring time.
       getEnergyCompEnabled: () => lodEnergyCompEnabled,
-      // Force-finest capture override (?lod-finest via LuxarAppOptions.lodFinest):
+      // Force-finest capture override (?lodFinest via LuxarAppOptions.lodFinest):
       // always select the finest level and never coarsen off-screen.
       getForceFinestLOD: () => lodFinestEnabled,
-      // Area-unit threshold bias (?lod-bias via LuxarAppOptions.lodBias).
+      // Area-unit threshold bias (?lodBias via LuxarAppOptions.lodBias).
       getLodBias: () => lodBias,
       // Register a fade's clone-on-first-use material so it keeps receiving
       // per-frame camera-uniform updates (an unregistered gsplat clone would
@@ -353,7 +353,7 @@ export async function runInitPipeline(
   animationController.addPerFrameCallback('depth-sort-scheduler', () => {
     evaluateDepthSortPerFrame();
   });
-  // Projected-density guard walker (config.densityGuard; `?no-density-guard`):
+  // Projected-density guard walker (config.densityGuard; `?noDensityGuard`):
   // measures elements per drawing-buffer pixel for every committed data mesh
   // once per frame. Consumers read it through getProjectedDensityTracker()
   // (shader keep fraction, refinement rung cap, getPerf().density).
@@ -433,7 +433,7 @@ export async function runInitPipeline(
 
   // The scene environment's live behaviour (re-capture on commit / slice /
   // appearance change once SETTLED — the same predicate, inverted) and the
-  // `?bake-env` one-shot.
+  // `?bakeEnv` one-shot.
   wireSceneEnvironment({
     sceneManager,
     animationController,

@@ -47,7 +47,7 @@ def test_info_command_success(runner, sample_scene) -> None:
     assert (
         "Total points: 100" in result.stdout or "✨ Total points: 100" in result.stdout
     )
-    assert "luxar_version" in result.stdout
+    assert "format_version" in result.stdout
     assert "units" in result.stdout
 
 

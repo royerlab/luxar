@@ -4259,10 +4259,10 @@ class TestLODCommand:
             assert "energy_fraction_cum" in stats, f"additive_{i} is unstamped"
         assert "reference_energy" in dict(root.attrs["level_stats"])
 
-    def test_reveal_centre_relocates_the_first_shell(
+    def test_reveal_center_relocates_the_first_shell(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--reveal-centre` must change the OUTPUT, not merely be accepted.
+        """`--reveal-center` must change the OUTPUT, not merely be accepted.
 
         Pinned to a corner, the first shell must sit closer to that corner than
         the default (bbox-centred) ladder's first shell does.
@@ -4285,7 +4285,7 @@ class TestLODCommand:
 
         assert runner.invoke(app, base + [str(default_out)] + tail).exit_code == 0
         pinned = runner.invoke(
-            app, base + [str(pinned_out)] + tail + ["--reveal-centre", "0,0,0"]
+            app, base + [str(pinned_out)] + tail + ["--reveal-center", "0,0,0"]
         )
         assert pinned.exit_code == 0, pinned.output
 
@@ -4301,7 +4301,7 @@ class TestLODCommand:
         Silently ignoring them would hand back an energy-ordered ladder while the
         user believed they had asked for a repositioned reveal.
         """
-        for flag, value in (("--reveal-centre", "0,0,0"), ("--spatial-dims", "0,1")):
+        for flag, value in (("--reveal-center", "0,0,0"), ("--spatial-dims", "0,1")):
             out = tmp_path / f"x{flag}.gsplats.zarr"
             result = runner.invoke(
                 app,
@@ -4345,7 +4345,7 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
-    def test_reveal_centre_length_must_match_spatial_dims(
+    def test_reveal_center_length_must_match_spatial_dims(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
         """The centre carries one coordinate per measured axis."""
@@ -4364,7 +4364,7 @@ class TestLODCommand:
                 "radial",
                 "--spatial-dims",
                 "0,1",
-                "--reveal-centre",
+                "--reveal-center",
                 "1,2,3",
             ],
             # fmt: on
@@ -4373,9 +4373,9 @@ class TestLODCommand:
         assert not out.exists()
 
     def test_spatial_dims_preserves_the_listed_order(self) -> None:
-        """`--spatial-dims` must NOT sort — the order pairs with `--reveal-centre`.
+        """`--spatial-dims` must NOT sort — the order pairs with `--reveal-center`.
 
-        It went through `sorted(set(...))`, so `--spatial-dims 2,0 --reveal-centre
+        It went through `sorted(set(...))`, so `--spatial-dims 2,0 --reveal-center
         10,20` silently meant "axis 0 centred at 10, axis 2 at 20" rather than the
         pairing the user typed. Deliberately unlike `--coarsen-dims`, where a
         barrier SET is order-free.
@@ -4388,17 +4388,17 @@ class TestLODCommand:
     @pytest.mark.parametrize(
         "spec", ["nan,0,0", "inf,0,0", "0,-inf,0"], ids=["nan", "inf", "-inf"]
     )
-    def test_reveal_centre_rejects_non_finite_coordinates(self, spec: str) -> None:
+    def test_reveal_center_rejects_non_finite_coordinates(self, spec: str) -> None:
         """`float("nan")` parses happily, so this needed an explicit check.
 
         With a non-finite centre every distance is non-finite; they all compare
         equal under the stable argsort, so the ladder comes out in input order and
         the user gets no reveal and no error.
         """
-        from luxar.cli.reveal_options import parse_reveal_centre
+        from luxar.cli.reveal_options import parse_reveal_center
 
         with pytest.raises(typer.BadParameter, match="finite"):
-            parse_reveal_centre(spec)
+            parse_reveal_center(spec)
 
     def test_spatial_dims_rejects_duplicates(self) -> None:
         """A duplicate was silently collapsed by `set()`; it now errors, because a

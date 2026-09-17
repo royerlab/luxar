@@ -19,7 +19,7 @@ rebuilt rather than pinning programs that no longer match. The set is rebuilt
 across scene replacement, material disposal, and WebGL context loss/restore.
 
 Warming is WebGL-only — WebGPU/TSL sessions never configure it — and
-`?no-blend-warmup` turns it off.
+`?noBlendWarmup` turns it off.
 
 A dataset load waits for the warm-up before reporting readiness, so an
 interaction cannot race the initial queue, but it waits on a *budget* rather than

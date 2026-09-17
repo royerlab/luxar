@@ -102,7 +102,7 @@ describe('aggregateCacheMetrics', () => {
     expect(result.l2).toBeUndefined();
     expect(result.network).toBeUndefined();
     // No provider → not-wired (must NOT default-enabled — that
-    // would mislead `?no-cache` users into thinking caching is on).
+    // would mislead `?noCache` users into thinking caching is on).
     expect(result.enabled).toBe(false);
     expect(result.telemetryState?.kind).toBe('not-wired');
     expect(metricsCache.size).toBe(0);

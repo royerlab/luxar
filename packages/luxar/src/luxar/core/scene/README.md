@@ -122,7 +122,7 @@ finalize-in-place; the destination also cannot live inside the source store.
 For an archive-backed scene, `path` must be the selected archive path;
 finalization publishes there and replaces an existing archive. A
 directory-backed scene cannot be copied directly to a `.zip` destination —
-create it with `LuxarZarrCompiler` or use `luxar optimise` instead. Because
+create it with `LuxarZarrCompiler` or use `luxar optimize` instead. Because
 finalization closes the writer, **do not add more nodes after calling
 `to_zarr()`**; create a new compiler for further writes.
 

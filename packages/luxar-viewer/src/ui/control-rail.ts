@@ -31,6 +31,7 @@ import { RailOverlay } from './control-rail/rail-overlay';
 import { isPanelVisible, escapeHtml } from './control-rail/dom-helpers';
 import type { ControlRailItem } from './control-rail/types';
 import { attachLongPress } from '../utils/long-press';
+import { StorageKeys } from '../utils/storage-keys';
 
 /**
  * Rail item descriptors, re-exported so callers configuring a rail need only
@@ -44,12 +45,10 @@ import { attachLongPress } from '../utils/long-press';
 export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './control-rail/types';
 export { RAIL_ICONS } from './control-rail/icons';
 
-const HINT_STORAGE_KEY = 'luxar-control-rail-hint-dismissed';
 /** First-run hint fades away on its own if the user never interacts. */
 const HINT_AUTO_HIDE_MS = 10_000;
 /** Matches the .is-leaving opacity transition in control-rail.css. */
 const HINT_FADE_MS = 400;
-const COLLAPSED_STORAGE_KEY = 'luxar-control-rail-collapsed';
 const IDLE_MS = 2600;
 /** Collapsed handle lingers a little longer, then fades to barely-visible. */
 const COLLAPSED_IDLE_MS = 5000;
@@ -203,7 +202,7 @@ export class ControlRail {
     // Restore persisted collapsed state.
     let startCollapsed = false;
     try {
-      startCollapsed = localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1';
+      startCollapsed = localStorage.getItem(StorageKeys.controlRailCollapsed) === '1';
     } catch {
       /* ignore */
     }
@@ -283,7 +282,7 @@ export class ControlRail {
     if (collapsed) this.dismissHint();
     if (persist) {
       try {
-        localStorage.setItem(COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0');
+        localStorage.setItem(StorageKeys.controlRailCollapsed, collapsed ? '1' : '0');
       } catch {
         /* ignore */
       }
@@ -479,7 +478,7 @@ export class ControlRail {
   private maybeShowHint(): void {
     let seen = false;
     try {
-      seen = localStorage.getItem(HINT_STORAGE_KEY) === '1';
+      seen = localStorage.getItem(StorageKeys.controlRailHintDismissed) === '1';
     } catch {
       /* private mode / storage blocked — just show it */
     }
@@ -524,7 +523,7 @@ export class ControlRail {
     this.hintFadeTimer = undefined;
     if (!this.hint) return;
     try {
-      localStorage.setItem(HINT_STORAGE_KEY, '1');
+      localStorage.setItem(StorageKeys.controlRailHintDismissed, '1');
     } catch {
       /* ignore */
     }

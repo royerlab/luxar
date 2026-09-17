@@ -85,4 +85,4 @@ precedence and fallbacks, the capture orchestration against a stub renderer (six
 params push/restore, physical meshes hidden and restored exactly), the stale/debounce/
 settled gating, probe parsing and resolution, the container layout and face-index
 threading. `tests/unit/core/app/init/environment-wiring.test.ts` pins the triggers and the
-`?bake-env` one-shot; `tests/unit/data/loaders/environment/` the store contract.
+`?bakeEnv` one-shot; `tests/unit/data/loaders/environment/` the store contract.

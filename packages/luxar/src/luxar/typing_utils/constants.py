@@ -7,6 +7,8 @@ maintainability and provide clear documentation of their purposes.
 import math
 from typing import Final
 
+from ._format_contract import LINE_JOIN_STYLES as _LINE_JOIN_STYLES
+from ._format_contract import LOD_SELECTORS as _LOD_SELECTORS
 from ._format_contract import SCENE_FORMAT_VERSION
 
 # Version constants (single-sourced from format-contract/contract.yaml)
@@ -69,9 +71,10 @@ DEFAULT_BLENDING_MODE_BY_GEOMETRY: Final[dict[str, str]] = {
 #         TILE. Coverage becomes a partition, so there is nothing to sum and
 #         every blending mode is correct by construction.
 #
-# The viewer mirror is `packages/luxar-viewer/src/types/line-join.ts`; keep the
-# spellings and the default in step with it.
-LINE_JOIN_STYLES: Final[frozenset[str]] = frozenset({"none", "miter"})
+# Single-sourced from `format-contract/contract.yaml::line_join_styles`; the
+# viewer's `types/line-join.ts` reads the same projection, so the spellings
+# cannot drift (the default is still hand-kept on both sides, see below).
+LINE_JOIN_STYLES: Final[frozenset[str]] = frozenset(_LINE_JOIN_STYLES)
 # Documentation of the shared default, deliberately WITHOUT a reader here: the
 # writer must not bake a join style into the file, or an unset node would freeze
 # today's default forever and the viewer could never move it. Not dead code.
@@ -122,20 +125,16 @@ MAX_COPY_CHARS: Final[int] = 8 * 1024
 #                for explicit `coverage_fractions=[...]` lists, whose authored
 #                values were tuned in these units.
 #
-# The viewer mirror is `packages/luxar-viewer/src/types/lod-group.ts`; keep the
-# spellings in step with it.
-#
-# The two spellings are defined FIRST and `LOD_SELECTORS` is built from them, so
-# the vocabulary cannot drift from the constants that name its members.
+# Single-sourced from `format-contract/contract.yaml::lod_selectors`; the viewer's
+# `types/lod-group.ts` reads the same projection. The two named members below
+# are asserted to belong to it (`test_format_contract.py`).
 # The selector every derived (auto-computed) ladder stamps.
 DERIVED_LOD_SELECTOR: Final[str] = "screen-area"
 # The UNITS an explicitly authored `coverage_fractions=[...]` list is in — the
 # legacy diagonal metric, whose values were tuned against it — and the
 # `add_lod_group` default (a hand-built ladder is authored, not derived).
 LEGACY_LOD_SELECTOR: Final[str] = "coverage"
-LOD_SELECTORS: Final[frozenset[str]] = frozenset(
-    {LEGACY_LOD_SELECTOR, DERIVED_LOD_SELECTOR}
-)
+LOD_SELECTORS: Final[frozenset[str]] = frozenset(_LOD_SELECTORS)
 
 # Absorption (kappa) — the volumetric blending mode's per-node coefficient.
 # Multiplicative composition, identity 1.0; no upper bound (physical

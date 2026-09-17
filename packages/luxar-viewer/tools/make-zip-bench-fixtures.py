@@ -8,14 +8,14 @@ One scene, packaged three ways:
 * ``bench-deflate.luxar.zarr.zip``   — flat, ``ZIP_DEFLATED``
 
 Both compressions are built because both are in circulation and they stress
-different things: ``optimise.py``'s packaging step writes ``ZIP_STORED``, while
+different things: ``optimize.py``'s packaging step writes ``ZIP_STORED``, while
 the shipped demo archives (e.g. ``desi_dr1_cosmic_web.luxar.zarr.zip``) are
 100% DEFLATE. DEFLATE matters disproportionately here because ``unzipit`` ships
 ``useWorkers: false``, so every member it inflates runs on the MAIN THREAD —
 a cost that shows up as jank rather than as wall-clock latency.
 
 Members are keyed STORE-RELATIVE (flat), which is what `ZipFileStore` expects
-and what `zarr.storage.ZipStore` writes. Mirrors `io/optimise.py::_package`.
+and what `zarr.storage.ZipStore` writes. Mirrors `io/optimize.py::_package`.
 
 Usage::
 

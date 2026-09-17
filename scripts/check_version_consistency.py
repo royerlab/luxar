@@ -6,7 +6,9 @@ The Python ``__version__`` (CalVer, zero-padded ``YYYY.MM.DD``), the viewer
 ``CITATION.cff`` (zero-padded, plus a ``date-released`` derived from the same
 date) are three representations of ONE release. ``scripts/set_version.py``
 writes all three; this script is the gate that keeps them from drifting — run
-in CI, ``hatch run check``, and the release preflight.
+in CI, ``hatch run check``, and the release preflight. The viewer bundle needs
+no fourth copy: Vite reads ``package.json`` at build time and injects it as
+``VIEWER_VERSION`` (``packages/luxar-viewer/src/version.ts``).
 
 Exit code 0 if consistent, 1 if they disagree (with a clear diff), 2 on a
 read/parse error.

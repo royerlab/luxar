@@ -1360,7 +1360,8 @@ def _handwritten_mesh_store(tmp_path, mutate):
     root.attrs.update(
         {
             "type": "scene",
-            "luxar_version": "0.3",
+            "format_version": "0.2",
+            "format_type": "luxar_zarr",
             "scene_dimensions": {
                 "dimensions": [
                     {

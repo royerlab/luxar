@@ -19,7 +19,6 @@ from typing import (
     Dict,
     Iterator,
     List,
-    Literal,
     Mapping,
     Optional,
     Sequence,
@@ -54,6 +53,7 @@ from ..encoding import (
 )
 from ..io.reader import DEFAULT_COMP
 from ..io.writer import RollbackState, ZarrWriterProtocol
+from ..typing_utils._format_contract import FORMAT_TYPE_SCENE, SOFTWARE_VERSION_ATTR
 from ..typing_utils.aliases import (
     ChunkSpec,
     ColorArray,
@@ -62,6 +62,7 @@ from ..typing_utils.aliases import (
     PointsMetadata,
     PositionArray,
     ScalarArray,
+    SpatialOrderingMethod,
 )
 from ..typing_utils.constants import LUXAR_VERSION_CURRENT, RESERVED_ROOT_GROUPS
 from ..utils.arbol_warnings import arbol_warnings
@@ -170,7 +171,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         version: str = LUXAR_VERSION_CURRENT,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
-        ordering_method: Literal["morton", "hilbert"] = "hilbert",
+        ordering_method: SpatialOrderingMethod = "hilbert",
         float16_allowed: bool = False,
         auto_partition_max_elements: Optional[int] = None,
     ) -> None:
@@ -280,12 +281,29 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._encoding_mode = encoding_mode
         self._float16_allowed = float16_allowed
 
-        # Create root Zarr group
+        # Create root Zarr group with the scene 0.2 self-identifying header:
+        # `format_version` + `format_type` mirror the gsplats header so a reader
+        # can tell the two store kinds apart from the root attrs alone, and
+        # `luxar_software_version` records the writing release for provenance
+        # (excluded from `content_hash` by both hashers — see
+        # `_compiler/finalize/hashing.py::HASH_EXCLUDED_ATTRS`). No `timestamp`:
+        # a scene digest must be reproducible across two compiles of the same
+        # script. The 0.1 `luxar_version` key is no longer written; readers keep
+        # it as a legacy fallback (`typing_utils/format_version.py`).
+        #
+        # Lazy import: `luxar/__init__.py` defines `__version__` before it
+        # imports `io`, but this module is also importable on its own, and a
+        # module-level `from .. import __version__` would make that order
+        # load-bearing.
+        from .. import __version__ as luxar_software_version
+
         self.store = zarr_open_group(self._store_path, mode="w")
         self.store.attrs.update(
             {
-                "luxar_version": version,
+                "format_version": version,
+                "format_type": FORMAT_TYPE_SCENE,
                 "type": "scene",
+                SOFTWARE_VERSION_ATTR: luxar_software_version,
             }
         )
 
@@ -406,7 +424,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Package the finalized directory store and atomically publish it."""
         if self._archive_path is None or self._archive_artifact_path is None:
             return
-        from .optimise import _package
+        from .optimize import _package
 
         try:
             aprint(f"📦 Packaging scene archive at {self._archive_path}")

@@ -1824,6 +1824,39 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('format-version policy (shared with the Python reader)', () => {
+    // The policy itself is pinned by format-version.test.ts (same case table
+    // as typing_utils/tests/test_format_version.py). These assert the SEAM:
+    // that loadScene actually routes the root attrs through it, so a refused
+    // version reaches the dataset-error overlay and a newer minor only toasts.
+    it('refuses a newer-major scene (9.9) naming the version', async () => {
+      mockZarrGroup.attrs = { ...mockZarrGroup.attrs, type: 'scene', format_version: '9.9' };
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).rejects.toThrow(
+        /9\.9/
+      );
+    });
+
+    it('refuses an unparsable scene version (abc)', async () => {
+      mockZarrGroup.attrs = { ...mockZarrGroup.attrs, type: 'scene', format_version: 'abc' };
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).rejects.toThrow(/abc/);
+    });
+
+    it('loads a newer-minor scene (0.3) with a toast instead of refusing', async () => {
+      mockZarrGroup.attrs = { ...mockZarrGroup.attrs, type: 'scene', format_version: '0.3' };
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).resolves.toBeDefined();
+      expect(notifierMocks.toast).toHaveBeenCalledWith(expect.stringContaining('0.3'), 6000);
+    });
+
+    it('loads a legacy 0.1 root (luxar_version only) silently', async () => {
+      mockZarrGroup.attrs = { ...mockZarrGroup.attrs, type: 'scene', luxar_version: '0.1' };
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).resolves.toBeDefined();
+      expect(notifierMocks.toast).not.toHaveBeenCalledWith(
+        expect.stringContaining('format'),
+        expect.anything()
+      );
+    });
+  });
+
   describe('retryAllFailedLoaders — deferred vs failed', () => {
     it('flags a lock-refused batch as deferred:true (nothing was retried)', async () => {
       // Regression: the deferred branch returned {succeeded:[], failed:<all>}

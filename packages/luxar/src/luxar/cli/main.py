@@ -42,7 +42,7 @@ from .network_simulation import (
     has_network_simulation,
     print_network_params,
 )
-from .optimise_command import register_optimise_command
+from .optimize_command import register_optimize_command
 from .restamp_lod_command import register_restamp_lod_command
 from .serving import (
     DirectoryListingStaticFiles,
@@ -141,8 +141,8 @@ app.add_typer(app_env, name="env")
 # Register the `info` inspection command (defined in info_command.py).
 register_info_command(app)
 
-# Register the `optimise` re-chunking command (defined in optimise_command.py).
-register_optimise_command(app)
+# Register the `optimize` re-chunking command (defined in optimize_command.py).
+register_optimize_command(app)
 
 # Register the `restamp-lod` LOD-threshold re-derivation command (defined in
 # restamp_lod_command.py).

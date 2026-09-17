@@ -63,7 +63,7 @@ core/
     │   ├── show-browser.ts          # Open the DatasetBrowser modal
     │   ├── should-show-browser.ts   # URL-classification + zarr-metadata HEAD probe
     │   ├── browser-decision.ts      # Pure URL classifier (must-browse / probe / load)
-    │   └── browser-shortcut.ts      # `open-dataset-browser` custom-event listener
+    │   └── browser-shortcut.ts      # `luxar-open-dataset-browser` custom-event listener
     ├── viewer-config/               # Zarr `viewer_config` + panel visibility
     │   ├── apply-state.ts           # Dispatch `viewer_config` fields to UI subsystems
     │   └── panel-visibility.ts      # Capture / restore RenderingControls + RecordingPanel state
@@ -425,7 +425,7 @@ if (isDebugMode) {
   window.__luxarDebug = {
     app, // Access to main app instance
     consoleInterceptor, // Console message buffer
-    version: buildInfo().version, // Build stamp — see config/build-info.ts
+    version: VIEWER_VERSION, // package.json version — see src/version.ts
   };
   console.log('🔧 [Luxar] Debug interface available at window.__luxarDebug');
 }

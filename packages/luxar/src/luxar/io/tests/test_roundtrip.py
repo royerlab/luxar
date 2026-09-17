@@ -733,7 +733,8 @@ class TestSceneAPI:
         assert isinstance(attrs, dict)
         assert "type" in attrs
         assert attrs["type"] == "scene"
-        assert "luxar_version" in attrs
+        assert "format_version" in attrs
+        assert scene.version == attrs["format_version"]
 
     def test_scene_with_minimal_dimensions(self, tmp_path) -> None:
         """Test that scene with minimal dimensions works correctly."""

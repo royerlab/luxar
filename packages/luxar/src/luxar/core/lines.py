@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
 from arbol import aprint
 
+from ..typing_utils._format_contract import LineTypeName
 from ..typing_utils.enums import NodeType
 from .datanode import DataNode
 
 if TYPE_CHECKING:
     from ..io.writer import ZarrWriterProtocol
 
-LineType = Literal["segments", "polyline", "loop", "indexed"]
+# Single-sourced from `format-contract/contract.yaml::line_types`; the viewer's
+# `types/lines.ts::LineType` is the same projection.
+LineType = LineTypeName
 
 
 class Lines(DataNode):

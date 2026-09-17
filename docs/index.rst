@@ -112,6 +112,7 @@ Features
    specs/GSPLATS_ZARR_FORMAT
    specs/MESH_NODE_SPEC
    guides/user/FORMAT_AND_MIGRATION
+   guides/user/COMPATIBILITY_POLICY
 
 .. toctree::
    :maxdepth: 2

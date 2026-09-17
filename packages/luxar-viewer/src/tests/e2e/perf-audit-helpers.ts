@@ -203,7 +203,7 @@ export async function readOpfsWrites(page: Page): Promise<number | null> {
  * `__luxarDebug.cache.getStats().health.opfsAvailable`, or null when
  * unavailable. `false` means UNREQUESTED degradation only — an OPFS the store
  * could not acquire, or a tripped circuit breaker (a documented hazard under
- * automated Chromium). A deliberate `?no-cache` / `?no-opfs` reports `true`.
+ * automated Chromium). A deliberate `?noCache` / `?noOpfs` reports `true`.
  * Lets a caller tell "the tier never ran" from "the tier ran and dropped
  * nothing", which the write counter alone cannot: it reads 0 for both.
  */

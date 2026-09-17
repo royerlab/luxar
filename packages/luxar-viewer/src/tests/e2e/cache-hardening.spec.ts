@@ -88,7 +88,7 @@ test.describe('Cache hardening — debug snapshot diagnostics', () => {
 
   // R3: cache-tab now renders the badge row and Cache Health section.
   test('cache tab renders status badges and Cache Health section', async ({ page }) => {
-    await page.goto(`/?src=${POINTS_DATASET}&debug&cache-stats`);
+    await page.goto(`/?src=${POINTS_DATASET}&debug&cacheStats`);
     await waitForLuxarReady(page);
 
     // Wait for the cache tab DOM to be populated. The monitor poll
@@ -111,7 +111,7 @@ test.describe('Cache hardening — debug snapshot diagnostics', () => {
   });
 
   test('@visual cache tab screenshot captures status/health layout', async ({ page }) => {
-    await page.goto(`/?src=${POINTS_DATASET}&debug&cache-stats`);
+    await page.goto(`/?src=${POINTS_DATASET}&debug&cacheStats`);
     await waitForLuxarReady(page);
 
     await page.waitForFunction(

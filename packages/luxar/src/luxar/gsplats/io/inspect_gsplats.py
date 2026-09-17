@@ -10,6 +10,7 @@ import zarr
 
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats.io._archive import resolve_store_path
+from luxar.typing_utils.format_version import enforce_gsplats_format_version
 
 
 def _add_label_info(info: Dict[str, Any], attrs: Dict[str, Any]) -> None:
@@ -98,15 +99,10 @@ def _inspect_store(path: Path, zarr_path: Path) -> Dict[str, Any]:
     if format_type != "gsplats_zarr":
         raise ValueError(f"Invalid format_type: {format_type}, expected 'gsplats_zarr'")
 
-    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
-
+    # Shared policy (typing_utils/format_version.py): a newer minor warns and
+    # loads; older / newer-major / unparsable raise with the migrate hint.
+    enforce_gsplats_format_version(dict(root.attrs), stacklevel=3)
     format_version = root.attrs.get("format_version")
-    if format_version not in SUPPORTED_FORMAT_VERSIONS:
-        raise ValueError(
-            f"Unsupported format_version: {format_version!r} "
-            f"(expected one of {SUPPORTED_FORMAT_VERSIONS}). "
-            f"Convert legacy files with `luxar gsplat migrate-format`."
-        )
 
     # Extract metadata
     info: Dict[str, Any] = {}

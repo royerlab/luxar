@@ -511,7 +511,7 @@ class TestCopyZarrData:
 
         root = zarr.open_group(dest, mode="r")
         assert root.attrs["type"] == "scene"
-        assert "luxar_version" in root.attrs
+        assert "format_version" in root.attrs
 
     def test_complex_hierarchy(self, tmp_path: Path) -> None:
         """Verify a scene with nested groups is copied correctly."""

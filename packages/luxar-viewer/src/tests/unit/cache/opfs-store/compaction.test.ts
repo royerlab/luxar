@@ -21,6 +21,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OPFSStore } from '../../../../cache/multi-level-caching-store/opfs-store';
+import { createFakeOpfsRoot } from '../../../mocks/opfs.mock';
 
 describe('OPFSStore.compactOrderCounter', () => {
   let mockFS: { files: Map<string, ArrayBuffer>; metaFiles: Map<string, string> };
@@ -28,16 +29,11 @@ describe('OPFSStore.compactOrderCounter', () => {
 
   beforeEach(async () => {
     mockFS = { files: new Map(), metaFiles: new Map() };
-    vi.stubGlobal('navigator', {
-      storage: {
-        async getDirectory() {
-          return createMockDirHandle(mockFS);
-        },
-        async estimate() {
-          return { quota: 10 * 1024 * 1024 * 1024, usage: 1 * 1024 * 1024 * 1024 };
-        },
-      },
-    });
+    // Origin root → `luxar/` → this file's dataset dir (see opfs.mock.ts).
+    createFakeOpfsRoot({
+      datasetDir: createMockDirHandle(mockFS),
+      estimate: async () => ({ quota: 10 * 1024 * 1024 * 1024, usage: 1 * 1024 * 1024 * 1024 }),
+    }).install();
     vi.stubGlobal('crypto', {
       subtle: {
         async digest() {

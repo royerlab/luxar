@@ -36,6 +36,7 @@ from typing import Any, Dict, FrozenSet, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
+from ..typing_utils._format_contract import RENDER_ATTR_KEYS
 from ..typing_utils.aliases import (
     ColorArray,
     PositionArray,
@@ -740,82 +741,15 @@ def validate_gsplat_inputs(
 # ignored by the viewer (issue #787); these are the legitimate render keys a
 # caller may set on at least one node type. Type-restricted keys remain here so
 # the typo hint can advertise the full authoring surface, with per-type refusals
-# enforced before writing. Keep in sync with the per-key validators in
+# enforced before writing.
+#
+# Single-sourced from ``format-contract/contract.yaml::render_attr_keys`` (the
+# per-key rationale — which keys are lines-only, mesh-only, interaction
+# templates — lives as comments beside that list). The viewer's
+# ``data/attrs-composer.ts::ComposableAttrs`` keys are checked against the same
+# projection at the type level. Keep in sync with the per-key validators in
 # :func:`validate_render_attrs`.
-KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
-    {
-        "absorption",
-        "alpha_cutoff",
-        "ambient",
-        "blending_mode",
-        "colormap",
-        # Per-element interaction templates (issue #1917). ``link`` builds a
-        # URL opened on left-click, ``copy`` a plain string offered by the
-        # right-click menu, both substituting the hover vocabulary
-        # (``{hover_label}`` / ``{hover_key}`` / ``{hover_node}`` /
-        # ``{hover_index}``).
-        # ``link_target`` picks the browsing context. Advertised here rather
-        # than hidden in ``_ALLOWED_NODE_ATTRS`` for the same reason as
-        # lines-only ``join``: they are real knobs a user authors, so a typo
-        # deserves to see them in the hint.
-        "copy",
-        # Authored cross-layer draw order (higher = nearer the camera = drawn
-        # later). Advertised here for the same reason as lines-only ``join``:
-        # a real knob a user authors, so a typo must see it in the hint. See
-        # ``docs/guides/specs/LAYER_ORDER_SPEC.md``.
-        "layer_order",
-        "gamma",
-        "intensity",
-        "link",
-        "link_target",
-        # Lines-only join style at degree-2 polyline joints (issue #790).
-        # Advertised here rather than hidden in ``_ALLOWED_NODE_ATTRS``
-        # because it is a real appearance knob a user authors, so it belongs
-        # in the "known render attributes" hint a typo prints.
-        "join",
-        "layer",
-        # Mesh-only material family (``luxar`` | ``physical``) and the physically
-        # based knobs it unlocks (Phase 1 surface knobs, Phase 2 glass family,
-        # Phase 3's ``refract_data`` flag).
-        # Advertised for the same reason as the shading controls below: real
-        # knobs an author types, so a typo must see them in the hint. The adder
-        # cross-checks them against each other (a physical knob needs
-        # ``material="physical"``; a physical mesh refuses the house-shader
-        # knobs; the glass knobs need ``transmission > 0``) — see ``adders/mesh.py``.
-        "material",
-        "roughness",
-        "metalness",
-        "clearcoat",
-        "clearcoat_roughness",
-        "iridescence",
-        "sheen",
-        "sheen_color",
-        "transmission",
-        "ior",
-        "thickness",
-        "attenuation_color",
-        "attenuation_distance",
-        "dispersion",
-        "refract_data",
-        "offset",
-        "opacity",
-        # Mesh-only shading controls. Advertised for the same reason as
-        # lines-only ``join``; :func:`reject_mesh_only_appearance` refuses
-        # them on points, lines, gsplats, and groups before anything is written.
-        "shade_exponent",
-        "shininess",
-        # Mesh-only nD LOADING knob rather than an appearance one, but advertised
-        # here for the same reason: a typo must print in the "known render
-        # attributes" hint instead of being reported as an unknown key.
-        "slab_tolerance",
-        "specular",
-        # Mesh-only texture sampling. Same reasoning again: authorable knobs, so
-        # a typo should see them in the hint.
-        "texture_filter",
-        "texture_wrap",
-        "visible",
-    }
-)
+KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(RENDER_ATTR_KEYS)
 
 
 # Non-appearance keys that legitimately reach :func:`validate_render_attrs` and

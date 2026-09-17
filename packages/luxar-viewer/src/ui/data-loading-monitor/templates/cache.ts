@@ -187,9 +187,9 @@ export const CACHE_BADGE_TOOLTIP: Record<CacheStatusBadge, string> = {
     'L1 raw in memory, L2 on disk in browser private storage) are retained, so re-slicing and ' +
     'revisits are served locally instead of re-downloading. Nothing to do — this is the healthy state.',
   'no-cache':
-    'Caching is turned off for this session by the ?no-cache URL parameter: every chunk is ' +
+    'Caching is turned off for this session by the ?noCache URL parameter: every chunk is ' +
     'fetched from the network each time it is needed and nothing persists across reloads. ' +
-    'Remove ?no-cache from the URL to re-enable caching.',
+    'Remove ?noCache from the URL to re-enable caching.',
   'disabled-config':
     'Caching is turned off in the viewer configuration (cache.enabled / cache.l0Enabled): every ' +
     'chunk is fetched from the network each time it is needed. Enable it in the app config to ' +
@@ -449,8 +449,8 @@ export function renderCacheContent(
     let hint: string;
     switch (stateKind) {
       case 'disabled-no-cache':
-        message = 'Caching disabled by ?no-cache';
-        hint = 'Remove ?no-cache from URL to enable';
+        message = 'Caching disabled by ?noCache';
+        hint = 'Remove ?noCache from URL to enable';
         break;
       case 'disabled-config':
         message = 'Caching disabled by configuration';

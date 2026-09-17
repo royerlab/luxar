@@ -234,9 +234,8 @@ installAllMocks(); // Sets up all mocks at once
 
 **What it mocks**:
 
-- `navigator.storage.getDirectory()` - OPFS root access
-- File handle operations (read, write, remove)
-- Directory iteration
+- `navigator.storage.getDirectory()` - OPFS root access (the global default REJECTS, exercising the L1-only fallback)
+- `createFakeOpfsRoot()` - an in-memory root → `luxar/` namespace dir → dataset dir chain for tests that need a working L2 (file read/write/remove, directory iteration)
 
 **Usage**: Enables cache tests without real browser storage
 

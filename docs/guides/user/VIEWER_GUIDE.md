@@ -106,6 +106,35 @@ anyway; naming the origin only matters when you want to keep the store readable
 from your own pages but not from arbitrary ones. Note that neither choice makes
 the data private — a public bucket is public to anyone with the URL, CORS or not.
 
+#### Directory listings and `.luxar-index.json`
+
+The Dataset Browser (`O`) can list a hosted folder of scenes so a reader
+picks one instead of typing a URL. It tries, in order: a Zarr root document
+(the folder is itself a scene), a WebDAV `PROPFIND`, the JSON or HTML listing a
+server such as `luxar serve`, nginx or Apache emits, and finally a manifest you
+write by hand, `.luxar-index.json`, at the folder root. Object stores and
+static hosts (S3, R2, GitHub Pages) have no listing at all, so the manifest is
+how a folder on them becomes browsable:
+
+```json
+{
+  "entries": [
+    { "name": "embryo.luxar.zarr", "type": "zarr", "size": 734003200, "modified": "2026-09-01T12:00:00Z" },
+    { "name": "archive", "type": "directory" },
+    { "name": "README.md", "type": "file" }
+  ]
+}
+```
+
+`name` is required and is the entry's path segment relative to the folder.
+`type` is one of `"zarr"`, `"directory"` or `"file"`; when omitted it is
+inferred — a `.zarr` or `.zarr.zip` name is a scene, `"isDirectory": true` a
+folder, anything else a file. `size` (bytes) and `modified` (any string) are
+optional and shown in the listing. The manifest is fetched as
+`<folder>/.luxar-index.json`, so a nested folder needs its own manifest at its
+own root, and the host has to serve the dotfile (some static hosts hide them by
+default). It is subject to the same CORS rules as the scenes it lists.
+
 If you would rather not host anything, `luxar export scene.luxar.zarr -o out/`
 writes a self-contained folder with the viewer and a stdlib-only `serve.py`; the
 recipient runs `python serve.py` (`file://` cannot open the viewer directly).
@@ -128,11 +157,11 @@ with LuxarZarrCompiler("scene.luxar.zarr.zip") as compiler:
     ...
 ```
 
-You can also package an existing store by giving `luxar optimise` a `.zip`
+You can also package an existing store by giving `luxar optimize` a `.zip`
 destination:
 
 ```bash
-luxar optimise scene.luxar.zarr scene.luxar.zarr.zip
+luxar optimize scene.luxar.zarr scene.luxar.zarr.zip
 ```
 
 Serve the directory containing the archive, then select it in the dataset browser:
@@ -177,18 +206,30 @@ Append parameters to the viewer URL to control startup behavior.
 | `panel` | module URL | On the `control.html` panel page, load an alternative same-origin control-panel module. Cross-origin modules are rejected. |
 | `kiosk` | flag | Force kiosk mode on as a hard operator override. It can lock a scene but cannot unlock authored kiosk mode. |
 | `debug` | flag | Enable the debug interface (developer use). |
-| `no-cache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
-| `no-slice-cache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
-| `no-opfs` | flag | Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache stay on. For environments whose OPFS stalls — the deterministic sibling of the automatic circuit breaker. |
+| `noCache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
+| `noSliceCache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
+| `noOpfs` | flag | Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache stay on. For environments whose OPFS stalls — the deterministic sibling of the automatic circuit breaker. |
 | `opfsReadConcurrency` | positive integer | Override the page-wide concurrent OPFS read cap (default 64) for diagnosis. |
-| `cache-debug` | flag | Enable cache debug logging to the browser console. |
-| `clear-cache` | flag | Clear all caches on startup. |
-| `no-prefetch` | flag | Disable adjacent-chunk prefetching. |
-| `prefetch-debug` | flag | Enable prefetch logging to the browser console. |
-| `cache-stats` | flag | Auto-open the data-loading monitor expanded on the Cache tab (L0/L1/L2 hit rates). |
+| `cacheDebug` | flag | Enable cache debug logging to the browser console. |
+| `clearCache` | flag | Clear all caches on startup. |
+| `noPrefetch` | flag | Disable adjacent-chunk prefetching. |
+| `prefetchDebug` | flag | Enable prefetch logging to the browser console. |
+| `cacheStats` | flag | Auto-open the data-loading monitor expanded on the Cache tab (L0/L1/L2 hit rates). |
+| `noLodFade` | flag | Disable the replacement-LOD cross-fade (on by default): adjacent levels then swap hard instead of blending across the coverage boundary. |
+| `noLodEnergy` | flag | Disable streaming brightness compensation for additive ladders (on by default): a partial prefix then brightens up as chunks arrive instead of rendering at full-level brightness. |
+| `lodFinest` | flag | Force the finest replacement LOD regardless of projected screen coverage (capture quality; the gallery harness appends it). |
+| `lodBias` | positive number | Session-wide replacement-LOD threshold bias in screen-area units: `2` advances an occupancy-halved ladder by one level, `4` by two. |
+| `depthSort` | `0` \| `false` \| `off` | Disable gsplat depth sorting (on by default); `normal`-mode splats then keep storage order, which pins deterministic output for visual runs. |
+| `noDensityGuard` | flag | Disable the projected-density guard (per-node thinning + refinement rung cap on over-drawn nodes; on by default). |
+| `densityCap` | positive number | Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (configured default 4). |
+| `noBlendWarmup` | flag | Disable the WebGL blend-variant program warm-up (on by default): the first Layers-panel blend switch then pays the shader link cost on the click. |
+| `noLinks` | flag | Disable element-authored navigation and the link items of the right-click menu; `Copy` and the `element-click` / `element-contextmenu` events still work. The switch for embedding scenes you did not author. |
+| `bakeEnv` | flag | Capture the scene-derived environment cube map once the load settles and download it (driven by `luxar env bake`). |
+| `probe` | `auto` \| `node:<path>` \| `x,y,z` | Probe position for `bakeEnv`; defaults to the scene's configured probe or `auto`. |
+| `envResolution` | integer 16-1024 | Cube face size for `bakeEnv`; defaults to the scene's configured resolution or 128. |
 | `renderer` | `webgl` \| `webgpu` | Select the default GLSL WebGLRenderer path or opt into the WebGPURenderer + TSL path. |
-| `webgpu-force-webgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
-| `perf-timestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
+| `webgpuForceWebgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
+| `perfTimestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
 | `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it, capped at 2 GB. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
@@ -201,7 +242,7 @@ Flag parameters do not take a value; their presence activates the feature.
 Example:
 
 ```
-http://localhost:5173/?src=http://127.0.0.1:8000&theme=dark&no-cache
+http://localhost:5173/?src=http://127.0.0.1:8000&theme=dark&noCache
 ```
 
 ---
@@ -828,8 +869,8 @@ valid ranges.
 - If fly mode momentum is disorienting, press **I** to toggle inertial mode off.
 
 **Caching issues**
-- Add `?clear-cache` to the URL to wipe all cached data on startup.
-- Add `?no-cache` to disable caching entirely for debugging.
+- Add `?clearCache` to the URL to wipe all cached data on startup.
+- Add `?noCache` to disable caching entirely for debugging.
 
 **Exported state does not restore correctly**
 - Ensure you use `ViewerConfig.from_file()` and not manual JSON parsing.

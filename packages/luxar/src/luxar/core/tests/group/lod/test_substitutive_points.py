@@ -1163,7 +1163,7 @@ class TestSubstitutiveLodGuards:
         out = tmp_path / "t.luxar.zarr"
         rng = np.random.default_rng(0)
         pos = rng.uniform(0, 40, (600, 3)).astype(np.float32)
-        with pytest.warns(UserWarning, match="reveal_centre is not applied"):
+        with pytest.warns(UserWarning, match="reveal_center is not applied"):
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points(

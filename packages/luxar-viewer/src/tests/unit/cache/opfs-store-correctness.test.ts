@@ -28,6 +28,7 @@
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 
 /**
  * File System Access mock that tracks how many writers are concurrently
@@ -105,24 +106,15 @@ function mockOPFS(opts?: { onRemoveEntry?: (name: string) => Promise<void> | voi
     async *keys() {},
   };
 
-  vi.stubGlobal('navigator', {
-    storage: {
-      async getDirectory() {
-        return {
-          async getDirectoryHandle() {
-            return dirHandle;
-          },
-          async removeEntry() {
-            files.clear();
-            metaFiles.clear();
-          },
-        };
-      },
-      async estimate() {
-        return { quota: 10e9, usage: 0 };
-      },
+  // Origin root → `luxar/` → this instrumented dataset dir (see opfs.mock.ts).
+  createFakeOpfsRoot({
+    datasetDir: dirHandle,
+    onRemoveDataset: () => {
+      files.clear();
+      metaFiles.clear();
     },
-  });
+    estimate: async () => ({ quota: 10e9, usage: 0 }),
+  }).install();
 
   return {
     files,

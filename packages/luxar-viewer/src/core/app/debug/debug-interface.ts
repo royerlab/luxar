@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
-import { buildInfo } from '../../../config/build-info';
+import { VIEWER_VERSION } from '../../../version';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { getWorkerPool } from '../../../workers/worker-pool';
@@ -102,7 +102,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   const existing = window.__luxarDebug ?? {
     app: ports.app,
     consoleInterceptor: consoleInterceptor,
-    version: buildInfo().version,
+    version: VIEWER_VERSION,
   };
 
   window.__luxarDebug = {
@@ -122,7 +122,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     renderer: ports.sceneManager.renderer,
     controls: ports.sceneManager.controls,
     postProcessing: ports.sceneManager.postProcessing,
-    // The scene environment's state, and the `?bake-env` hand-off slot the
+    // The scene environment's state, and the `?bakeEnv` hand-off slot the
     // `luxar env bake` driver polls (`lastBake` is filled by `environment-wiring.ts`).
     environment: {
       ...(existing.environment ?? {}),

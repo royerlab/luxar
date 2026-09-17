@@ -60,13 +60,13 @@ test('?renderer=webgl reports framebufferYDown=false (bottom-up FBO)', async ({ 
   expect(framebufferYDown).toBe(false);
 });
 
-test('?renderer=webgpu&webgpu-force-webgl reports framebufferYDown=true', async ({ page }) => {
+test('?renderer=webgpu&webgpuForceWebgl reports framebufferYDown=true', async ({ page }) => {
   // The forceWebGL diagnostic path routes draws through Three.js's
   // WebGL2 backend underneath, but WebGPURenderer normalises Y so its
   // user-visible output matches real WebGPU — i.e. the effective
   // framebuffer is top-down. Don't confuse the backing API
   // (`backend.isWebGLBackend === true`) with the effective Y layout.
-  await page.goto('/?renderer=webgpu&webgpu-force-webgl&debug');
+  await page.goto('/?renderer=webgpu&webgpuForceWebgl&debug');
   await page.waitForFunction(
     () =>
       typeof (window as any).__luxarDebug?.app?.sceneManager?.capabilities?.apiSurface === 'string',

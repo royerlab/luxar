@@ -8,6 +8,8 @@ Usage:
     python scripts/generate_builtin_colormaps.py
 """
 
+from pathlib import Path
+
 import numpy as np
 
 # ============================================================================
@@ -327,9 +329,33 @@ def write_typescript_data(colormaps: dict[str, np.ndarray], path: str) -> None:
     print(f"Wrote {path}")
 
 
+def _assert_names_match_contract(colormaps: dict[str, np.ndarray]) -> None:
+    """Refuse to write a name set that differs from the format contract.
+
+    ``format-contract/contract.yaml::builtin_colormaps`` is what the Python
+    writer validates a ``colormap`` attr against and what the viewer's union
+    type is generated from. Both generated LUT files are projections of the SAME
+    name list, so a colormap added here but not there (or vice versa) would ship
+    a name one side cannot resolve.
+    """
+    import yaml
+
+    contract = Path(__file__).resolve().parent.parent / "format-contract/contract.yaml"
+    declared = list(yaml.safe_load(contract.read_text())["builtin_colormaps"])
+    generated = list(colormaps)
+    if generated != declared:
+        raise SystemExit(
+            "generate_builtin_colormaps: generated names differ from "
+            f"format-contract/contract.yaml::builtin_colormaps.\n  generated: "
+            f"{generated}\n  contract:  {declared}\nEdit the contract first "
+            "(then `make gen-contract`), so both languages learn the name."
+        )
+
+
 if __name__ == "__main__":
     print("Generating built-in colormaps...")
     colormaps = generate_all()
+    _assert_names_match_contract(colormaps)
 
     # Verify all are (256, 3) uint8
     for name, lut in colormaps.items():
