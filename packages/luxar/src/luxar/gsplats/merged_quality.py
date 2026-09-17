@@ -15,6 +15,18 @@ from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS
 from luxar.typing_utils.json_safe import json_safe_value
 
 _FIT_REFERENCE_KINDS = frozenset(("acquisition", "preprocessed", "synthetic"))
+_SUMMABLE_SUMMARY_FIELDS = (
+    "source_bytes",
+    "source_stored_bytes",
+    "source_voxels",
+    "time_seconds",
+)
+PART_PROVENANCE_SUMMARY_FIELDS = (
+    *_SUMMABLE_SUMMARY_FIELDS,
+    "source_shape",
+    "source_dtype",
+    "source_declared",
+)
 
 #: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
 #: Above it the score is SKIPPED — and says so out loud, because an archive that
@@ -277,6 +289,126 @@ def collect_part_provenance(
     return records
 
 
+def _summary_fitting(record: Any) -> dict[str, Any]:
+    """Resolve source/timing fields from a possibly nested component record."""
+    if not isinstance(record, dict):
+        return {}
+    fitting = record.get("fitting")
+    if not isinstance(fitting, dict):
+        return {}
+
+    nested = summarize_part_provenance(fitting.get("part_provenance"))
+    nested_fitting = nested[0]["fitting"] if nested is not None else {}
+    resolved: dict[str, Any] = {}
+    for key in PART_PROVENANCE_SUMMARY_FIELDS:
+        if key in fitting:
+            resolved[key] = fitting[key]
+        elif key in nested_fitting:
+            resolved[key] = nested_fitting[key]
+    return resolved
+
+
+def _summary_part_count(record: Any) -> int:
+    """Count source parts represented by one possibly nested record."""
+    if not isinstance(record, dict):
+        return 1
+    part_count = record.get("part_count")
+    if isinstance(part_count, int) and not isinstance(part_count, bool):
+        return max(1, part_count)
+    fitting = record.get("fitting")
+    if not isinstance(fitting, dict):
+        return 1
+    nested = summarize_part_provenance(fitting.get("part_provenance"))
+    if nested is None:
+        return 1
+    return int(nested[0]["part_count"])
+
+
+def _summed_summary_fields(
+    fittings: Sequence[dict[str, Any]], *, shared_source: bool
+) -> dict[str, Any]:
+    """Complete finite totals that can survive provenance collapse."""
+    summary: dict[str, Any] = {}
+    for key in _SUMMABLE_SUMMARY_FIELDS:
+        values = [fitting.get(key) for fitting in fittings]
+        if not all(
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and math.isfinite(item)
+            for item in values
+        ):
+            continue
+        if (
+            shared_source
+            and key != "time_seconds"
+            and all(item == values[0] for item in values[1:])
+        ):
+            summary[key] = values[0]
+        else:
+            summary[key] = sum(values)
+    return summary
+
+
+def _common_summary_source_fields(
+    fittings: Sequence[dict[str, Any]],
+    summary: dict[str, Any],
+    *,
+    shared_source: bool,
+) -> None:
+    """Add source identity fields only when the aggregate remains coherent."""
+    dtypes = [fitting.get("source_dtype") for fitting in fittings]
+    if isinstance(dtypes[0], str) and all(item == dtypes[0] for item in dtypes[1:]):
+        summary["source_dtype"] = dtypes[0]
+
+    shapes = [fitting.get("source_shape") for fitting in fittings]
+    if (
+        (not shared_source and "source_voxels" not in summary)
+        or not isinstance(shapes[0], list)
+        or any(item != shapes[0] for item in shapes[1:])
+    ):
+        return
+    summary["source_shape"] = (
+        shapes[0] if shared_source else [len(fittings), *shapes[0]]
+    )
+
+    declared = [fitting.get("source_declared") for fitting in fittings]
+    if isinstance(declared[0], bool) and all(
+        item == declared[0] for item in declared[1:]
+    ):
+        summary["source_declared"] = declared[0]
+
+
+def summarize_part_provenance(
+    value: Any, *, shared_source: bool = False
+) -> Optional[list[dict[str, Any]]]:
+    """Collapse component records into one coordinate-free source summary.
+
+    ``shared_source`` is for spatial partition records whose repeated source
+    sizes describe the same parent volume. Independent merge inputs use the
+    default additive policy.
+    """
+    if not isinstance(value, list) or not value:
+        return None
+    fittings = [_summary_fitting(record) for record in value]
+    summary = _summed_summary_fields(fittings, shared_source=shared_source)
+    _common_summary_source_fields(fittings, summary, shared_source=shared_source)
+
+    part_count = len(value)
+    if not shared_source:
+        part_count = sum(_summary_part_count(record) for record in value)
+    result: dict[str, Any] = {"part_count": part_count, "fitting": summary}
+    if shared_source:
+        references = [
+            record.get("fit_reference") if isinstance(record, dict) else None
+            for record in value
+        ]
+        if references[0] is not None and all(
+            reference == references[0] for reference in references[1:]
+        ):
+            result["fit_reference"] = references[0]
+    return [result]
+
+
 def announce_unscored_merge(reason: str) -> None:
     """Explain why a merged result carries no whole-volume quality metrics.
 
@@ -455,8 +587,10 @@ def stamp_merged_quality(
 
 
 __all__ = [
+    "PART_PROVENANCE_SUMMARY_FIELDS",
     "announce_unscored_merge",
     "collect_part_provenance",
     "resolve_merged_reference",
     "stamp_merged_quality",
+    "summarize_part_provenance",
 ]
