@@ -42,6 +42,12 @@ def _merge(tmp_path: Path, stats: list[dict[str, Any]], *extra: str) -> dict[str
     return GSplatData.load(output, include_stats=True).stats
 
 
+def _info(path: Path) -> str:
+    result = CliRunner().invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+    assert result.exit_code == 0, result.output
+    return result.output
+
+
 def _nested_provenance(
     *, source_shape: list[int], source_dtype: str, source_bytes: int
 ) -> list[dict[str, Any]]:
@@ -129,3 +135,19 @@ def test_merge_summary_omits_partial_and_disputed_fields(tmp_path: Path) -> None
             },
         }
     ]
+
+
+def test_info_reports_the_collapsed_input_count(tmp_path: Path) -> None:
+    inputs = []
+    for index in range(2):
+        path = tmp_path / f"info-input-{index}.gsplats.zarr"
+        _write_fit(path, seed=index, stats={})
+        inputs.append(path)
+    output = tmp_path / "info-merged.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "merge", *map(str, inputs), "-o", str(output)],
+    )
+    assert result.exit_code == 0, result.output
+
+    assert "part_provenance: 2 parts" in _info(output)

@@ -69,6 +69,18 @@ def _part_provenance_depth(records: list[Any]) -> int:
     return depth
 
 
+def _part_provenance_count(records: list[Any]) -> int:
+    """Count collapsed summary parts, falling back to one per record."""
+    count = 0
+    for record in records:
+        part_count = record.get("part_count") if isinstance(record, dict) else None
+        if isinstance(part_count, int) and not isinstance(part_count, bool):
+            count += max(1, part_count)
+        else:
+            count += 1
+    return count
+
+
 def _print_fitting_value(
     key: str, value: Any, *, show_full_provenance: bool = False
 ) -> None:
@@ -84,8 +96,9 @@ def _print_fitting_value(
             suffix = f", nested component records ({depth} levels)"
         else:
             suffix = ""
-        part_word = "part" if len(value) == 1 else "parts"
-        aprint(f"  {key}: {len(value)} {part_word}{suffix}")
+        part_count = _part_provenance_count(value)
+        part_word = "part" if part_count == 1 else "parts"
+        aprint(f"  {key}: {part_count} {part_word}{suffix}")
         return
     if isinstance(value, float):
         aprint(f"  {key}: {value:.6f}")
