@@ -774,72 +774,6 @@ def add_points_multi_lod_wrapper_impl(
     )
 
 
-def _float_point_colors(
-    colors: Any, n_points: int, indices: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """Materialize selected point colors as float32 display values."""
-    if colors is None:
-        count = n_points if indices is None else int(indices.size)
-        return np.ones((count, 3), dtype=np.float32)
-    if is_broadcast_color(colors):
-        array = np.asarray(colors)
-        count = n_points if indices is None else int(indices.size)
-        array = np.broadcast_to(array, (count, len(colors)))
-    else:
-        array = np.asarray(colors)
-        if array.ndim == 2 and array.shape[0] == 1:
-            count = n_points if indices is None else int(indices.size)
-            array = np.broadcast_to(array, (count, array.shape[1]))
-        elif indices is not None:
-            array = array[indices]
-    source_dtype = array.dtype
-    result = np.asarray(array, dtype=np.float32).copy()
-    if np.issubdtype(source_dtype, np.integer):
-        result /= float(np.iinfo(source_dtype).max)
-    return result
-
-
-def _point_colors_for_energy(colors: Any, n_points: int) -> Any:
-    """Broadcast a uniform color without materializing an N×RGB copy."""
-    if colors is None:
-        return None
-    if is_broadcast_color(colors):
-        return np.broadcast_to(np.asarray(colors), (n_points, len(colors)))
-    array = np.asarray(colors)
-    if array.ndim == 2 and array.shape[0] == 1:
-        return np.broadcast_to(array, (n_points, array.shape[1]))
-    return array
-
-
-def _coarse_point_axes(
-    scene: Any, positions: np.ndarray, extend_to_all: Optional[Union[List[str], str]]
-) -> tuple[List[int], List[int], List[int]]:
-    """Displayed, discrete-hidden, and continuous-hidden position columns."""
-    dims = getattr(scene, "dimensions", None) if scene is not None else None
-    aligned = dims is not None and int(getattr(dims, "ndim", -1)) == positions.shape[1]
-    if not aligned or dims is None:
-        return list(range(min(3, positions.shape[1]))), [], []
-    extended = (
-        set(scene._resolve_extend_to_all(extend_to_all, positions, "points"))
-        if extend_to_all is not None
-        else set()
-    )
-    displayed = list(dims.displayed)
-    discrete_hidden = [
-        column
-        for column in dims.non_displayed
-        if bool(dims.dimensions[column].discrete)
-        and dims.dimensions[column].name not in extended
-    ]
-    continuous_hidden = [
-        column
-        for column in dims.non_displayed
-        if not bool(dims.dimensions[column].discrete)
-        and dims.dimensions[column].name not in extended
-    ]
-    return displayed, discrete_hidden, continuous_hidden
-
-
 def _stratified_point_order(
     scene: Any,
     positions: np.ndarray,
@@ -848,9 +782,12 @@ def _stratified_point_order(
     extend_to_all: Optional[Union[List[str], str]],
 ) -> np.ndarray:
     """Order displayed-space points evenly, round-robin across hidden slices."""
+    from ..lod.group import resolve_same_type_axes
     from ..lod.spatial_uniform import stratified_grid_order
 
-    displayed, hidden, _ = _coarse_point_axes(scene, positions, extend_to_all)
+    displayed, hidden, _ = resolve_same_type_axes(
+        scene, positions, extend_to_all, "points"
+    )
     rng = np.random.default_rng(seed)
 
     def local_order(rows: np.ndarray) -> np.ndarray:
@@ -878,36 +815,6 @@ def _stratified_point_order(
         ordered = local_order(rows)
         within_slice_rank[ordered] = np.arange(ordered.size, dtype=np.intp)
     return np.lexsort((slice_ids, within_slice_rank)).astype(np.intp, copy=False)
-
-
-def _subsampled_point_level_channels(
-    *,
-    colors: Any,
-    colors_for_energy: Any,
-    scalars: Any,
-    indices: np.ndarray,
-    n_points: int,
-    gain: float,
-    child_attrs: Dict[str, Any],
-) -> tuple[Any, Any, Dict[str, Any]]:
-    """Prepare one same-type coarse level's color/scalar representation."""
-    level_attrs = dict(child_attrs)
-    if scalars is not None and colors is None and gain == 1.0:
-        return None, slice_optional_array(scalars, indices, n_points), level_attrs
-    if gain == 1.0 and colors_for_energy is None:
-        return None, None, level_attrs
-    if gain == 1.0 and colors is not None:
-        level_colors = (
-            colors
-            if is_broadcast_color(colors)
-            else slice_optional_array(colors, indices, n_points)
-        )
-        return level_colors, None, level_attrs
-
-    level_colors = _float_point_colors(colors_for_energy, n_points, indices)
-    level_colors[:, :3] *= np.float32(gain)
-    level_attrs.pop("colormap", None)
-    return level_colors, None, level_attrs
 
 
 def _add_points_subsampled_lod_wrapper_impl(
@@ -939,6 +846,9 @@ def _add_points_subsampled_lod_wrapper_impl(
         effective_blending_mode,
         level_additive_lod,
         resolve_lod_ladder,
+        resolve_same_type_axes,
+        same_type_colors_for_energy,
+        subsampled_same_type_level_channels,
     )
     from ..lod.points import compute_points_energy, resolve_additive_axis_points
 
@@ -960,8 +870,8 @@ def _add_points_subsampled_lod_wrapper_impl(
 
     scene = group._find_scene()
     compression_factor = int(spec["compression_factor"])
-    _, discrete_hidden, continuous_hidden = _coarse_point_axes(
-        scene, pos_arr, extend_to_all
+    _, discrete_hidden, continuous_hidden = resolve_same_type_axes(
+        scene, pos_arr, extend_to_all, "points"
     )
     resident_slices = hidden_coordinate_count(pos_arr, discrete_hidden)
     if continuous_hidden:
@@ -998,7 +908,7 @@ def _add_points_subsampled_lod_wrapper_impl(
     energy = compute_points_energy(
         n_points,
         radii_for_energy,
-        _point_colors_for_energy(colors_for_energy, n_points),
+        same_type_colors_for_energy(colors_for_energy, n_points),
         None,
     )
     coarse = coarse_point_levels(
@@ -1079,12 +989,12 @@ def _add_points_subsampled_lod_wrapper_impl(
             if compensation == "auto"
             else float(compensation) ** reduction_level
         )
-        level_colors, level_scalars, level_attrs = _subsampled_point_level_channels(
+        level_colors, level_scalars, level_attrs = subsampled_same_type_level_channels(
             colors=colors,
             colors_for_energy=colors_for_energy,
             scalars=scalars,
             indices=indices,
-            n_points=n_points,
+            n_elements=n_points,
             gain=gain,
             child_attrs=child_attrs,
         )

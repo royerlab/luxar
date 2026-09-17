@@ -250,16 +250,18 @@ With `coarse="points"`, it instead takes exact `N/K^level` prefixes of a
 spatially stratified ordering and writes those rows as Points children. On a
 stacked node, each discrete hidden coordinate is spatially ordered independently
 and the orders are round-robin interleaved so a coarse level does not starve
-individual slices. The coarsest level must have room for every discrete hidden
-coordinate or authoring raises; continuous hidden axes are not treated as slices
-and emit a warning. Radii and all selected point channels stay attached to the
-original rows. Under the effective nearest-setter-wins `additive` or `luminous` mode,
+individual slices. Dimensions named by `extend_to_all` are excluded because the
+node is not sliced there. The coarsest level must have room for every remaining
+discrete hidden coordinate or authoring raises; continuous hidden axes are not
+treated as slices and emit a warning. Radii and all selected point channels stay
+attached to the original rows. Under the effective nearest-setter-wins `additive`
+or `luminous` mode,
 `brightness_compensation="auto"` scales RGB by the finest/subsampled
 `compute_points_energy` ratio, preserving summed light at the finest radius
 rather than inflating screen coverage; a non-identity gain widens colours to
 float32 HDR. Other blending modes default to a gain of 1 without widening the
-input colour dtype; a numeric
-compensation overrides the per-level gain. The expected HDR warning is suppressed
+input colour dtype; a numeric compensation overrides the per-level gain through
+the same RGB path. The expected HDR warning is suppressed
 for these synthesized compensated children. The gain conserves the summed light
 over the whole node, not within each neighbourhood, so sparse and dense regions
 can shift relative brightness. `truncation_radius`, `max_aspect`, `method`,
@@ -278,7 +280,8 @@ one. Under the effective `additive` or `luminous` mode,
 conserves it at each level. Width growth is capped near the shader's pixel floor
 at the level transition and the residual gain is carried by float32 HDR color,
 keeping coarse fibers fiber-shaped; other modes keep unit gain, and a numeric
-override applies per reduction level. The Gaussian lift controls
+override applies per reduction level through the same capped width/HDR-color
+split. The Gaussian lift controls
 (`truncation_radius`, `max_aspect`, `method`, `device`, and `coarsen_dims`) are
 refused on this same-type arm.
 

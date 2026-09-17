@@ -1586,7 +1586,7 @@ class TestSameTypeSubstitutiveLines:
         assert selected[0] < selected[1] < selected[2]
 
     @staticmethod
-    def _integrated_light(child) -> float:
+    def _integrated_light(child, displayed_columns=(0, 1, 2)) -> float:
         decoder = ArrayDecoder()
         vertices = decoder.decode(child["vertices"], child)
         widths = decoder.decode(child["widths"], child)
@@ -1599,7 +1599,9 @@ class TestSameTypeSubstitutiveLines:
         luminance = colors[:, :3] @ np.array([0.2126, 0.7152, 0.0722])
         segments = np.asarray(child["segments"], dtype=np.intp)
         lengths = np.linalg.norm(
-            vertices[segments[:, 1], :3] - vertices[segments[:, 0], :3], axis=1
+            vertices[segments[:, 1]][:, displayed_columns]
+            - vertices[segments[:, 0]][:, displayed_columns],
+            axis=1,
         )
         return float(
             np.sum(
@@ -1656,6 +1658,84 @@ class TestSameTypeSubstitutiveLines:
             - coarse_vertices[coarse_segments[:, 0], 0]
         )
         np.testing.assert_allclose(np.sort(selected_lengths), [4.7, 7.6], atol=0.05)
+
+    @pytest.mark.parametrize("compensation", ["auto", 2.0])
+    def test_compensation_splits_partially_binding_width_cap(
+        self, tmp_path, compensation
+    ) -> None:
+        out = tmp_path / f"partial-width-cap-{compensation}.luxar.zarr"
+        vertices = np.zeros((16, 3), dtype=np.float32)
+        vertices[0::2, 0] = np.linspace(0.0, 200.0, 8)
+        vertices[1::2, 0] = vertices[0::2, 0]
+        vertices[1::2, 1] = 1.0
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                vertices,
+                0.3,
+                colors=(1, 0, 0),
+                line_type="segments",
+                blending_mode="additive",
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines",
+                    compression_factor=2,
+                    levels=2,
+                    seed=4,
+                    brightness_compensation=compensation,
+                ),
+            )
+        group = zarr.open(str(out), mode="r")["curves"]
+        decoder = ArrayDecoder()
+        coarse = group["child_0"]
+        coarse_widths = decoder.decode(coarse["widths"], coarse)
+        coarse_colors = decoder.decode(coarse["colors"], coarse)
+        width_gain = float(np.max(coarse_widths)) / 0.3
+        color_gain = float(np.max(coarse_colors[:, 0]))
+        assert 1.0 < width_gain < 4.0
+        assert color_gain > 1.0
+        assert width_gain * color_gain == pytest.approx(4.0, rel=0.025)
+        lights = [self._integrated_light(group[f"child_{index}"]) for index in range(3)]
+        np.testing.assert_allclose(lights, lights[-1], rtol=0.025)
+
+    def test_compensation_uses_displayed_spatial_columns(self, tmp_path) -> None:
+        out = tmp_path / "displayed-axis-lines.luxar.zarr"
+        lengths = np.array([1, 2, 3, 5, 8, 13, 21, 34], dtype=np.float32)
+        vertices = np.zeros((16, 4), dtype=np.float32)
+        vertices[:, 0] = np.repeat(np.arange(8, dtype=np.float32), 2)
+        vertices[0::2, 1] = np.arange(8, dtype=np.float32) * 10.0
+        vertices[1::2, 1] = vertices[0::2, 1]
+        vertices[1::2, 3] = lengths
+        dims = Dimensions(
+            [
+                Dimension("time", display=False, discrete=True),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_lines(
+                "curves",
+                vertices,
+                0.3,
+                colors=np.ones((16, 3), dtype=np.float32),
+                line_type="segments",
+                extend_to_all=["time"],
+                blending_mode="additive",
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=2, seed=4
+                ),
+            )
+        group = zarr.open(str(out), mode="r")["curves"]
+        lights = [
+            self._integrated_light(group[f"child_{index}"], (1, 2, 3))
+            for index in range(3)
+        ]
+        np.testing.assert_allclose(lights, lights[-1], rtol=0.025)
 
     def test_normal_blending_keeps_original_widths(self, tmp_path) -> None:
         group, _, widths = self._build_segments(tmp_path, blending_mode="normal")

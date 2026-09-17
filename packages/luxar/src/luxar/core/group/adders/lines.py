@@ -1048,36 +1048,6 @@ def add_lines_multi_lod_wrapper_impl(
     )
 
 
-def _coarse_line_axes(
-    scene: Any,
-    vertices: np.ndarray,
-    extend_to_all: Optional[Union[List[str], str]],
-) -> tuple[List[int], List[int], List[int]]:
-    """Discrete and continuous hidden position columns for Lines subsampling."""
-    dims = getattr(scene, "dimensions", None) if scene is not None else None
-    aligned = dims is not None and int(getattr(dims, "ndim", -1)) == vertices.shape[1]
-    if not aligned or dims is None:
-        return list(range(min(3, vertices.shape[1]))), [], []
-    extended = (
-        set(scene._resolve_extend_to_all(extend_to_all, vertices, "lines"))
-        if extend_to_all is not None
-        else set()
-    )
-    discrete = [
-        column
-        for column in dims.non_displayed
-        if bool(dims.dimensions[column].discrete)
-        and dims.dimensions[column].name not in extended
-    ]
-    continuous = [
-        column
-        for column in dims.non_displayed
-        if not bool(dims.dimensions[column].discrete)
-        and dims.dimensions[column].name not in extended
-    ]
-    return list(dims.displayed), discrete, continuous
-
-
 def _polyline_slice_ids(
     vertices: np.ndarray,
     polylines: List[np.ndarray],
@@ -1180,65 +1150,12 @@ def _scaled_line_widths(
     return np.asarray(selected, dtype=np.float32) * np.float32(gain)
 
 
-def _line_colors_for_energy(colors: Any, n_vertices: int) -> Any:
-    """Broadcast a uniform line color without changing its numeric range."""
-    if colors is None:
-        return None
-    if is_broadcast_color(colors):
-        return np.broadcast_to(np.asarray(colors), (n_vertices, len(colors)))
-    array = np.asarray(colors)
-    if array.ndim == 2 and array.shape[0] == 1:
-        return np.broadcast_to(array, (n_vertices, array.shape[1]))
-    return array
-
-
-def _float_line_colors(colors: Any, n_vertices: int, indices: np.ndarray) -> np.ndarray:
-    """Materialize selected RGB(A) colors as normalized float32."""
-    if colors is None:
-        return np.ones((indices.size, 3), dtype=np.float32)
-    array = np.asarray(colors)
-    if is_broadcast_color(colors) or (array.ndim == 2 and array.shape[0] == 1):
-        array = np.broadcast_to(array.reshape(1, -1), (indices.size, array.size))
-    else:
-        array = array[indices]
-    source_dtype = array.dtype
-    result = np.asarray(array, dtype=np.float32).copy()
-    if np.issubdtype(source_dtype, np.integer):
-        result /= float(np.iinfo(source_dtype).max)
-    return result
-
-
-def _subsampled_line_level_channels(
-    *,
-    colors: Any,
-    colors_for_energy: Any,
-    scalars: Any,
-    vertex_indices: np.ndarray,
-    n_vertices: int,
-    color_gain: float,
-    child_attrs: Dict[str, Any],
-) -> tuple[Any, Any, Dict[str, Any]]:
-    """Prepare one same-type coarse level's color/scalar representation."""
-    level_attrs = dict(child_attrs)
-    if color_gain == 1.0 and scalars is not None and colors is None:
-        return (
-            None,
-            slice_optional_array(scalars, vertex_indices, n_vertices),
-            level_attrs,
-        )
-    if color_gain == 1.0 and colors_for_energy is None:
-        return None, None, level_attrs
-    if color_gain == 1.0 and colors is not None:
-        level_colors = (
-            colors
-            if is_broadcast_color(colors)
-            else slice_optional_array(colors, vertex_indices, n_vertices)
-        )
-        return level_colors, None, level_attrs
-    level_colors = _float_line_colors(colors_for_energy, n_vertices, vertex_indices)
-    level_colors[:, :3] *= np.float32(color_gain)
-    level_attrs.pop("colormap", None)
-    return level_colors, None, level_attrs
+# Stable reference axis for converting selector thresholds to projected pixels.
+_LINE_WIDTH_REFERENCE_VIEWPORT_AXIS_PX = 1024.0
+# Matches the line shader's minimum visible pixel width.
+_LINE_SHADER_PIXEL_FLOOR_PX = 1.5
+# Legacy coverage is normalized by half the fitted viewport axis.
+_LEGACY_LOD_FITTED_AXIS_FACTOR = 0.5
 
 
 def _line_width_gain_cap(
@@ -1256,13 +1173,15 @@ def _line_width_gain_cap(
     if extent <= 0.0 or max_width <= 0.0:
         return 1.0
     projected_axis = (
-        np.sqrt(threshold) * 1024.0
+        np.sqrt(threshold) * _LINE_WIDTH_REFERENCE_VIEWPORT_AXIS_PX
         if selector == DERIVED_LOD_SELECTOR
-        else threshold * 0.5 * 1024.0
+        else threshold
+        * _LEGACY_LOD_FITTED_AXIS_FACTOR
+        * _LINE_WIDTH_REFERENCE_VIEWPORT_AXIS_PX
     )
     if projected_axis <= 0.0:
         return 1.0
-    floor_world_width = 1.5 * extent / projected_axis
+    floor_world_width = _LINE_SHADER_PIXEL_FLOOR_PX * extent / projected_axis
     return max(1.0, floor_world_width / max_width)
 
 
@@ -1316,6 +1235,9 @@ def _add_lines_subsampled_lod_wrapper_impl(
         effective_blending_mode,
         level_additive_lod,
         resolve_lod_ladder,
+        resolve_same_type_axes,
+        same_type_colors_for_energy,
+        subsampled_same_type_level_channels,
     )
     from ..lod.lines import (
         compute_lines_light_integral,
@@ -1351,8 +1273,8 @@ def _add_lines_subsampled_lod_wrapper_impl(
     )
     n_polylines = len(polylines)
     compression_factor = int(spec["compression_factor"])
-    displayed, hidden, continuous_hidden = _coarse_line_axes(
-        group._find_scene(), vert_arr, extend_to_all
+    displayed, hidden, continuous_hidden = resolve_same_type_axes(
+        group._find_scene(), vert_arr, extend_to_all, "lines"
     )
     slice_ids, resident_slices = _polyline_slice_ids(vert_arr, polylines, hidden)
     if continuous_hidden:
@@ -1373,8 +1295,9 @@ def _add_lines_subsampled_lod_wrapper_impl(
         compression_factor=compression_factor,
         levels=int(spec["levels"]),
     )
+    displayed_vertices = vert_arr[:, displayed[:3]]
     order = _subsampled_polyline_order(
-        vert_arr,
+        displayed_vertices,
         polylines,
         widths_for_energy,
         slice_ids,
@@ -1471,10 +1394,10 @@ def _add_lines_subsampled_lod_wrapper_impl(
     lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
     light_integrals = compute_lines_light_integral(
-        vert_arr,
+        displayed_vertices,
         polylines,
         widths_for_energy,
-        _line_colors_for_energy(colors_for_energy, n_vertices),
+        same_type_colors_for_energy(colors_for_energy, n_vertices),
     )
     total_light = float(np.sum(light_integrals))
     blending_mode = effective_blending_mode(parent_node, attrs, "lines")
@@ -1497,7 +1420,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
         )
         width_gain = requested_gain
         color_gain = 1.0
-        if compensation == "auto" and auto_compensates and requested_gain > 1.0:
+        if requested_gain > 1.0:
             activation_threshold = coverage_vals[
                 min(child_index + 1, len(coverage_vals) - 1)
             ]
@@ -1524,13 +1447,13 @@ def _add_lines_subsampled_lod_wrapper_impl(
             line_type=line_type,
             n_vertices=n_vertices,
         )
-        level_colors, level_scalars, level_attrs = _subsampled_line_level_channels(
+        level_colors, level_scalars, level_attrs = subsampled_same_type_level_channels(
             colors=colors,
             colors_for_energy=colors_for_energy,
             scalars=scalars,
-            vertex_indices=vertex_indices,
-            n_vertices=n_vertices,
-            color_gain=color_gain,
+            indices=vertex_indices,
+            n_elements=n_vertices,
+            gain=color_gain,
             child_attrs=child_attrs,
         )
         with warnings.catch_warnings():
@@ -1615,23 +1538,17 @@ def add_lines_substitutive_lod_wrapper_impl(
     additive_lod: Any = None,
     **attrs: Any,
 ) -> Union["Group", Lines]:
-    """Write a Lines node whose coarse LOD levels are synthesised gsplats.
+    """Write a Lines node with same-type or synthesised-GSplat coarse levels.
 
-    Each segment is lifted to a string of isotropic "bead" Gaussians (see
-    :func:`luxar.gsplats.lift.lift_lines_to_gsplats` — beads are view-independent
-    and sum to a smooth tube, unlike one elongated anisotropic Gaussian), the
-    gsplat substitutive pipeline synthesises fewer-but-larger representative
-    levels (per-bin mass-preserving amplitudes + a ``max_aspect`` anisotropy cap
-    keep every level's brightness and hue view-coherent — see
-    :func:`luxar.gsplats.lift.coarse_substitutive_levels`), and those become the
-    coarse children of a ``kind=lod`` Group whose **finest** child is the
-    original Lines node. Mirrors
+    ``coarse="lines"`` writes whole-polyline subsamples. Otherwise each segment
+    is lifted to isotropic "bead" Gaussians and reduced by the GSplat
+    substitutive pipeline. Both paths place their coarse children below the
+    original Lines node in a ``kind="lod"`` Group. Mirrors
     :func:`add_points_substitutive_lod_wrapper_impl`.
     """
-    # Before the lift: the coarse levels cost a full gsplat reduce, and the
-    # finest child (written LAST, after every coarse level is already on disk) is
-    # where a wrong-length channel would otherwise be caught — stranding a
-    # partial kind=lod group. Fail here instead, before anything is written.
+    # The finest child is written LAST, after every coarse level is already on
+    # disk, and is where a wrong-length channel would otherwise be caught —
+    # stranding a partial kind=lod group. Fail here before either path writes.
     # The node-attrs gate (#1529, add_lines_impl above) already ran at the
     # adder entry, before this wrapper was even chosen, so it outranks this
     # channel gate too — a call that trips both reports the attrs fault.

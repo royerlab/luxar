@@ -92,6 +92,7 @@ from typing import (
     Union,
 )
 
+import numpy as np
 from arbol import aprint
 
 from ....typing_utils.constants import (
@@ -102,11 +103,10 @@ from ....typing_utils.constants import (
 )
 from ....typing_utils.geometry_capabilities import require_lod_display_type
 from ....validation.types import validate_truncation_radius
+from ..compositing import is_broadcast_color, slice_optional_array
 from .reveal import is_reveal_additive_method, pop_reveal_knobs
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from ...node import Node
 
 
@@ -1349,6 +1349,109 @@ def assert_same_type_slice_capacity(
             f"{element_name} for {resident_slices} hidden slices. Reduce "
             f"levels/compression_factor or use coarse='gsplats'."
         )
+
+
+def resolve_same_type_axes(
+    scene: Any,
+    coordinates: np.ndarray,
+    extend_to_all: Optional[Union[List[str], str]],
+    geometry: str,
+) -> tuple[List[int], List[int], List[int]]:
+    """Resolve displayed and resident hidden columns for same-type LOD."""
+    dims = getattr(scene, "dimensions", None) if scene is not None else None
+    aligned = (
+        dims is not None and int(getattr(dims, "ndim", -1)) == coordinates.shape[1]
+    )
+    if not aligned or dims is None:
+        return list(range(min(3, coordinates.shape[1]))), [], []
+    extended = (
+        set(scene._resolve_extend_to_all(extend_to_all, coordinates, geometry))
+        if extend_to_all is not None
+        else set()
+    )
+    displayed = list(dims.displayed)
+    discrete_hidden = [
+        column
+        for column in dims.non_displayed
+        if bool(dims.dimensions[column].discrete)
+        and dims.dimensions[column].name not in extended
+    ]
+    continuous_hidden = [
+        column
+        for column in dims.non_displayed
+        if not bool(dims.dimensions[column].discrete)
+        and dims.dimensions[column].name not in extended
+    ]
+    return displayed, discrete_hidden, continuous_hidden
+
+
+def same_type_colors_for_energy(colors: Any, n_elements: int) -> Any:
+    """Broadcast a uniform color without materializing a writable copy."""
+    if colors is None:
+        return None
+    if is_broadcast_color(colors):
+        return np.broadcast_to(np.asarray(colors), (n_elements, len(colors)))
+    array = np.asarray(colors)
+    if array.ndim == 2 and array.shape[0] == 1:
+        return np.broadcast_to(array, (n_elements, array.shape[1]))
+    return array
+
+
+def materialize_same_type_colors(
+    colors: Any,
+    n_elements: int,
+    indices: np.ndarray,
+    *,
+    normalize_integer_storage: bool,
+) -> np.ndarray:
+    """Materialize selected RGB(A) colors as float32 display values."""
+    if colors is None:
+        return np.ones((indices.size, 3), dtype=np.float32)
+    array = np.asarray(colors)
+    if is_broadcast_color(colors):
+        array = np.broadcast_to(array, (indices.size, len(colors)))
+    elif array.ndim == 2 and array.shape[0] == 1:
+        array = np.broadcast_to(array, (indices.size, array.shape[1]))
+    elif array.shape[0] == n_elements:
+        array = array[indices]
+    result = np.asarray(array, dtype=np.float32).copy()
+    if normalize_integer_storage and np.issubdtype(array.dtype, np.integer):
+        result /= float(np.iinfo(array.dtype).max)
+    return result
+
+
+def subsampled_same_type_level_channels(
+    *,
+    colors: Any,
+    colors_for_energy: Any,
+    scalars: Any,
+    indices: np.ndarray,
+    n_elements: int,
+    gain: float,
+    child_attrs: Dict[str, Any],
+) -> tuple[Any, Any, Dict[str, Any]]:
+    """Prepare one same-type coarse level's color/scalar representation."""
+    level_attrs = dict(child_attrs)
+    if gain == 1.0 and scalars is not None and colors is None:
+        return None, slice_optional_array(scalars, indices, n_elements), level_attrs
+    if gain == 1.0 and colors_for_energy is None:
+        return None, None, level_attrs
+    if gain == 1.0 and colors is not None:
+        level_colors = (
+            colors
+            if is_broadcast_color(colors)
+            else slice_optional_array(colors, indices, n_elements)
+        )
+        return level_colors, None, level_attrs
+    level_colors = materialize_same_type_colors(
+        colors_for_energy,
+        n_elements,
+        indices,
+        normalize_integer_storage=not is_broadcast_color(colors),
+    )
+    level_colors[:, :3] *= np.float32(gain)
+    level_attrs.pop("colormap", None)
+    return level_colors, None, level_attrs
 
 
 # ─────────────────────────────────────────────────────────────────────

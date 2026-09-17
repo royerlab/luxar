@@ -308,7 +308,7 @@ class TestAddPointsSubstitutiveLod:
             scene.add_points(
                 "cloud",
                 positions,
-                colors=(1.0, 0.0, 0.0),
+                colors=(1, 0, 0),
                 substitutive_lod=dict(coarse="points", levels=1),
             )
         group = zarr.open(str(out), mode="r")["cloud"]

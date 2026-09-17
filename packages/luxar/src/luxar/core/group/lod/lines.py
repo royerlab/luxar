@@ -562,21 +562,27 @@ def compute_lines_light_integral(
         else np.asarray(colors, dtype=np.float64)[:, :3]
         @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
     )
-    out = np.zeros(len(polylines), dtype=np.float64)
-    for polyline_index, members in enumerate(polylines):
-        if members.size < 2:
-            continue
-        segment_lengths = np.linalg.norm(pts3[members[1:]] - pts3[members[:-1]], axis=1)
-        segment_widths = 0.5 * (
-            vertex_widths[members[1:]] + vertex_widths[members[:-1]]
-        )
-        segment_luminance = 0.5 * (
-            vertex_luminance[members[1:]] + vertex_luminance[members[:-1]]
-        )
-        out[polyline_index] = float(
-            np.sum(segment_lengths * segment_widths * segment_luminance)
-        )
-    return out
+    lengths = np.fromiter((members.size for members in polylines), dtype=np.intp)
+    flat_members = np.concatenate(polylines).astype(np.intp, copy=False)
+    if flat_members.size < 2:
+        return np.zeros(len(polylines), dtype=np.float64)
+    adjacent = np.ones(flat_members.size - 1, dtype=bool)
+    boundaries = np.cumsum(lengths, dtype=np.intp)[:-1] - 1
+    boundaries = boundaries[(boundaries >= 0) & (boundaries < adjacent.size)]
+    adjacent[boundaries] = False
+    starts = flat_members[:-1][adjacent]
+    ends = flat_members[1:][adjacent]
+    owners = np.repeat(
+        np.arange(len(polylines), dtype=np.intp), np.maximum(lengths - 1, 0)
+    )
+    segment_lengths = np.linalg.norm(pts3[ends] - pts3[starts], axis=1)
+    segment_widths = 0.5 * (vertex_widths[ends] + vertex_widths[starts])
+    segment_luminance = 0.5 * (vertex_luminance[ends] + vertex_luminance[starts])
+    return np.bincount(
+        owners,
+        weights=segment_lengths * segment_widths * segment_luminance,
+        minlength=len(polylines),
+    ).astype(np.float64, copy=False)
 
 
 def _energy_string_polyline_cuts(
