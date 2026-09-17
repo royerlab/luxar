@@ -18,7 +18,7 @@ import {
  * Used to LOCK hand-written attr interfaces to the generated format contract —
  * a key added on one side without the other fails `pnpm typecheck`.
  */
-type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+export type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 /**
  * Per-dimension affine transform for continuous/discrete dimensions.
@@ -396,7 +396,7 @@ export interface ZarrSceneAttrs {
  * must be a declared key of `ZarrSceneAttrs`, so a header key added to the
  * contract cannot be silently untyped on the viewer side.
  */
-type RootAttrKey = Extract<
+export type RootAttrKey = Extract<
   AttrKey,
   | 'format_version'
   | 'format_type'
