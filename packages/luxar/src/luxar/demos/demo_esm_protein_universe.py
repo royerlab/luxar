@@ -1285,6 +1285,14 @@ STORIES: tuple[UniverseStory, ...] = (
         # domain of known function, so the clusters count as characterised);
         # what they lack is a product name, which is a different thing and the
         # panel says so.
+        #
+        # TWO COUNTS, and the panel must not mix them: 2,587 clusters have one
+        # of these as their DOMINANT domain (which is what `pfam_mask` selects,
+        # so it is what the knot is drawn from), while 3,927 CARRY one anywhere
+        # in `cluster_top_pfam_domains`. An earlier draft said "2,587 clusters
+        # carrying an ice-binding domain", which reported the dominant count
+        # under the carrying word. The panel now states the carrying number,
+        # rounded down, because "carry" is the honest verb for a visitor.
         pfam=("PF07589", "PF11999", "PF20597", "PF21300"),
         color=(0.65, 0.92, 1.0),
         radius=FAMILY_RADIUS,
@@ -1303,8 +1311,8 @@ STORIES: tuple[UniverseStory, ...] = (
             "by the gene being passed sideways between species rather than "
             "inherited.",
             # Audit numbers (2026-09-16).
-            "This map holds 2,587 clusters carrying an ice-binding domain. "
-            "The 94 lit here are mostly environmental bacteria, and 90 of them "
+            "Nearly four thousand clusters in this map carry an ice-binding "
+            "domain. The 94 lit here are mostly environmental bacteria, and 90 of them "
             "carry no name beyond “hypothetical protein”: the domain is "
             "recognised, the protein itself is not.",
         ),
