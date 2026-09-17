@@ -1785,6 +1785,20 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         ),
         tags=("senses", "receptors", "genomics"),
         pdb_id="8F76",  # Human OR51E2 with propionate (Billesbolle et al. 2023)
+        # The one turntable the completeness pass could not fix by rendering
+        # the biological assembly, because the assembly IS five chains and
+        # only one of them is the receptor this story is about: 330 of 1,177
+        # residues, 28%. The other four are the machinery used to catch it in
+        # its active state — the Gs heterotrimer (Gas-mini 261, Gb1 370,
+        # Gg2 71) plus Nanobody 35, which is a structural-biology tool and not
+        # anything in a nose. The deposited title names only miniGs399 of the
+        # four, so the caption says the ratio instead. It deliberately claims
+        # no position ("the receptor on top"): `principal_frame` picks the
+        # orientation from the assembly's own inertia, not from biology.
+        pdb_caption=(
+            "Human olfactory receptor OR51E2 with propionate — one of five "
+            "chains; the rest is the Gs protein and a nanobody that trap it"
+        ),
         narration=(
             "Olfactory receptors, the largest family of receptor genes we have. "
             "About four hundred working copies in the human genome, and slightly "
@@ -2786,7 +2800,7 @@ def _add_overlays(
             transition_duration=0.35,
         )
         scene.add_text(
-            f"PDB {a.pdb_id} · {a.title}",
+            f"PDB {a.pdb_id} · {s.pdb_caption or a.title}",
             position=TURNTABLE_CAPTION_POSITION,
             anchor="top-center",
             text_align="center",

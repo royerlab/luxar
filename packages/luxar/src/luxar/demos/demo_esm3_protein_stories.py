@@ -170,6 +170,16 @@ class Story:
     tags: tuple[str, ...] = field(default_factory=tuple)
     #: Representative PDB entry rendered as the left-hand turntable ("" = none).
     pdb_id: str = ""
+    #: Override the turntable caption. Empty = the entry's deposited RCSB
+    #: title, which is right for almost every entry now that the renderer
+    #: draws the BIOLOGICAL ASSEMBLY with its ligands (see
+    #: :data:`~luxar.demos._pdb_turntable.RCSB_ASSEMBLY_URL`) — before that,
+    #: titles were accurate about the deposit and wrong about the picture.
+    #: What completeness cannot fix is an entry containing more than the
+    #: molecule: a receptor solved on a signalling scaffold with a nanobody
+    #: added to trap it is five chains, and its title names one of them. Then
+    #: the caption has to say what the viewer is looking at.
+    pdb_caption: str = ""
     #: What the narrator SAYS on arrival: a short spoken script, not the panel
     #: read aloud — the good facts, punchier, no "Story N of 10", ending on the
     #: open question. Consumed by the sound layer's narration builder.
@@ -1592,7 +1602,9 @@ def build_stories_scene(
                     continue
                 # Older RCSB entries shout their title in capitals; it stays as
                 # deposited — sentence-casing mangles the acronyms (NMR, MVIIA).
-                title = a.title
+                # A story may override it when the entry holds more than the
+                # molecule (see `Story.pdb_caption`).
+                title = s.pdb_caption or a.title
                 scene.add_video(
                     a.webm,
                     position=TURNTABLE_POSITION,

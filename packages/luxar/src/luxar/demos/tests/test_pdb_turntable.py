@@ -9,6 +9,7 @@ is absent, and the per-structure skip.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -53,9 +54,11 @@ def test_pymol_surface_script_exports_one_obj_per_chain() -> None:
     assert "cmd.load('/x/1OMG.pdb', 'mol')" in script
     assert "cmd.remove('solvent')" in script and "cmd.remove('hydro')" in script
     assert "cmd.set('surface_quality', 1)" in script
-    assert "cmd.get_chains('mol and polymer')" in script
+    # `not solvent`, not `polymer`: see
+    # test_surface_script_draws_the_whole_molecule_not_just_the_polymer.
+    assert "cmd.get_chains('mol and not solvent')" in script
     # Per-chain surfaces: hide everything, show this chain, save its OBJ.
-    assert "cmd.show('surface', \"polymer and chain '%s'\" % chain)" in script
+    assert "cmd.show('surface', \"not solvent and chain '%s'\" % chain)" in script
     assert "cmd.save('/y/mesh' + '/chain_%d.obj' % i)" in script
     assert "'/y/mesh' + '/chains.json'" in script
     # Nothing else is drawn — the surface is what gets exported.
@@ -339,3 +342,134 @@ def test_load_environment_faces_reads_a_baked_store_and_is_none_otherwise(
     create_array(env, "malformed", data=malformed, overwrite=True)
     env.attrs["faces"] = "malformed"
     assert tt.load_environment_faces(store) is None
+
+
+# ---------------------------------------------------------------------------
+# Completeness (2026-09-17: render the biological assembly, ligands included)
+# ---------------------------------------------------------------------------
+
+
+def test_surface_script_draws_the_whole_molecule_not_just_the_polymer(
+    tmp_path: Path,
+) -> None:
+    """Cofactors and ligands are part of the molecule and must be drawn.
+
+    The first version enumerated `mol and polymer` and drew `polymer and
+    chain X`, which dropped hemoglobin's four hemes, photosystem II's Mn4CaO5
+    cluster and chlorophylls, the PLP that does the decarboxylation, the
+    catalytic zinc of the nisin cyclase, the spike's glycan shield, and the
+    propionate one panel called the odorant the receptor was holding.
+    """
+    script = tt.pymol_surface_script(
+        tmp_path / "2HHB.cif", tmp_path / "mesh", quality=2
+    )
+    assert "not solvent and chain" in script
+    assert "polymer and chain" not in script, "polymer-only drops every ligand"
+    # Chains are enumerated over the same selection, so a ligand deposited on
+    # its own chain id still gets a mesh instead of vanishing.
+    assert "cmd.get_chains('mol and not solvent')" in script
+    # Crystallisation additives go first: completeness means the molecule, not
+    # the drop it was grown in.
+    assert "cmd.remove('resn " in script
+    for additive in ("GOL", "SO4", "PEG"):
+        assert additive in script, additive
+
+
+def test_the_additive_list_keeps_metals_and_cofactors() -> None:
+    """A longer denylist would start deleting chemistry."""
+    additives = set(tt.CRYSTALLISATION_ADDITIVES)
+    for keep in (
+        "HEM",
+        "CLA",
+        "OEX",
+        "PLP",
+        "ZN",
+        "MG",
+        "NA",
+        "CA",
+        "FE2",
+        "ATP",
+        "ADP",
+        "NAG",
+        "PPI",
+        "PO4",
+    ):
+        assert keep not in additives, f"{keep} is chemistry, not crystallisation"
+    for drop in ("GOL", "EDO", "MPD", "SO4", "DMS", "TRS"):
+        assert drop in additives, drop
+
+
+def test_the_assembly_is_preferred_over_the_asymmetric_unit() -> None:
+    """A deposit's asymmetric unit is bookkeeping, not a molecule.
+
+    Audited over the protein-universe tour's twenty entries (2026-09-16):
+    4OO8 packs TWO whole Cas9-RNA-DNA complexes, 8RUC is half a RuBisCO
+    (8 chains of the L8S8 hexadecamer) and 1U94 is one protomer of a
+    six-subunit RecA filament — each a case the story's own text described
+    correctly while the picture showed something else.
+    """
+    assert "assembly1" in tt.RCSB_ASSEMBLY_URL
+    # Tried FIRST, ahead of the legacy PDB and the entry mmCIF.
+    src = inspect.getsource(tt.fetch_pdb)
+    order = [
+        src.index("RCSB_ASSEMBLY_URL"),
+        src.index("RCSB_FILE_URL"),
+        src.index("RCSB_CIF_URL"),
+    ]
+    assert order == sorted(order), "the assembly must be tried first"
+
+
+def test_the_render_cache_key_covers_the_geometry() -> None:
+    """Bumping MESH_VERSION must invalidate the VIDEO, not just the surfaces.
+
+    It used not to: the key held STYLE_VERSION only, so a corrected structure
+    recomputed every surface and then served the WebM built from the old ones.
+    """
+    base = tt.cache_key("2HHB", 900, 512)
+    bumped = tt.cache_key("2HHB", 900, 512, style_version=tt.STYLE_VERSION + 1)
+    assert base != bumped
+    assert f"m{tt.MESH_VERSION}" in base
+    src = inspect.getsource(tt.cache_key)
+    assert "MESH_VERSION" in src
+
+
+def test_the_surface_script_clears_pymols_ignore_flag(tmp_path: Path) -> None:
+    """Selecting a ligand is not the same as surfacing it.
+
+    PyMOL sets an `ignore` flag on non-polymer atoms, and a flagged atom takes
+    no part in the SURFACE even when selected and shown. Without clearing it,
+    `not solvent and chain X` merely selects the ligands while the surface
+    still traces the protein alone — so an atom-count check passes and the
+    picture does not change. Verified by geometry instead: with the flag
+    cleared, hemoglobin's chain A loses 2,574 vertices, because the heme fills
+    the pocket whose concave lining used to be surfaced.
+    """
+    script = tt.pymol_surface_script(
+        tmp_path / "2HHB.cif", tmp_path / "mesh", quality=2
+    )
+    assert "cmd.flag('ignore', 'not solvent', 'clear')" in script
+    # Before the chains are enumerated and drawn, or it has no effect.
+    assert script.index("cmd.flag('ignore'") < script.index("cmd.get_chains")
+
+
+def test_a_surfaceless_chain_is_skipped_not_fatal(tmp_path: Path) -> None:
+    """One bad chain must not cost the other structures their turntables.
+
+    It did: a glycan chain of 6VXX raised out of the mesh export, and the
+    ELEVEN structures queued behind it got no turntable at all — while the
+    build still exited 0, because turntables are optional and the failure was
+    swallowed upstream.
+    """
+    good = tmp_path / "chain_0.obj"
+    good.write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1//1 2//2 3//3\n")
+    atoms_no_surface = tmp_path / "chain_1.obj"
+    atoms_no_surface.write_text("# a chain PyMOL declined to surface\n")
+    absent = tmp_path / "chain_2.obj"
+
+    assert tt.obj_has_geometry(good)
+    assert not tt.obj_has_geometry(atoms_no_surface)
+    assert not tt.obj_has_geometry(absent)
+    # Vertices without faces are not geometry either.
+    verts_only = tmp_path / "chain_3.obj"
+    verts_only.write_text("v 0 0 0\nv 1 0 0\n")
+    assert not tt.obj_has_geometry(verts_only)
