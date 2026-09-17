@@ -1099,6 +1099,7 @@ def _subsampled_polyline_order(
     widths: np.ndarray,
     slice_ids: np.ndarray,
     seed: int,
+    indices: Optional[np.ndarray],
 ) -> np.ndarray:
     """Seeded salience order, round-robin interleaved across hidden slices."""
     from ..lod.lines import compute_additive_order_lines
@@ -1116,6 +1117,7 @@ def _subsampled_polyline_order(
             [polylines[int(index)] for index in shuffled],
             widths,
             method="salience",
+            indices=indices,
         )
         ordered = shuffled[local_order]
         within_slice_rank[ordered] = np.arange(rows.size, dtype=np.intp)
@@ -1302,6 +1304,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
         widths_for_energy,
         slice_ids,
         int(spec.get("seed") or 0),
+        indices if line_type == "indexed" else None,
     )
     coarse = _coarse_polyline_levels(
         order,
@@ -1398,6 +1401,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
         polylines,
         widths_for_energy,
         same_type_colors_for_energy(colors_for_energy, n_vertices),
+        indices if line_type == "indexed" else None,
     )
     total_light = float(np.sum(light_integrals))
     blending_mode = effective_blending_mode(parent_node, attrs, "lines")

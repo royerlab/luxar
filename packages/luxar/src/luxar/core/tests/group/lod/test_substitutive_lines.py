@@ -1659,6 +1659,52 @@ class TestSameTypeSubstitutiveLines:
         )
         np.testing.assert_allclose(np.sort(selected_lengths), [4.7, 7.6], atol=0.05)
 
+    def test_indexed_non_chain_compensation_uses_authored_edges(self, tmp_path) -> None:
+        out = tmp_path / "indexed-non-chain-lines.luxar.zarr"
+        angles = np.linspace(0.0, 2.0 * np.pi, 12, endpoint=False)
+        star = np.concatenate(
+            (
+                np.zeros((1, 3), dtype=np.float32),
+                np.column_stack(
+                    (np.cos(angles), np.sin(angles), np.zeros(angles.size))
+                ).astype(np.float32),
+            )
+        )
+        chains = [
+            np.array([[10.0, 0.0, 0.0], [18.0, 0.0, 0.0]], dtype=np.float32),
+            np.array([[20.0, 0.0, 0.0], [24.0, 0.0, 0.0]], dtype=np.float32),
+            np.array([[30.0, 0.0, 0.0], [32.0, 0.0, 0.0]], dtype=np.float32),
+        ]
+        vertices = np.concatenate([star, *chains])
+        star_edges = np.column_stack(
+            (
+                np.zeros(12, dtype=np.uint32),
+                np.arange(1, 13, dtype=np.uint32),
+            )
+        )
+        chain_starts = np.array([13, 15, 17], dtype=np.uint32)
+        chain_edges = np.column_stack((chain_starts, chain_starts + 1))
+        indices = np.concatenate((star_edges, chain_edges)).reshape(-1)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                vertices,
+                0.2,
+                colors=np.ones((vertices.shape[0], 3), dtype=np.float32),
+                indices=indices,
+                line_type="indexed",
+                blending_mode="additive",
+                additive_lod=False,
+                substitutive_lod=dict(
+                    coarse="lines", compression_factor=2, levels=2, seed=0
+                ),
+            )
+        group = zarr.open(str(out), mode="r")["curves"]
+        assert int(group["child_0"].attrs["n_segments"]) == 12
+        lights = [self._integrated_light(group[f"child_{index}"]) for index in range(3)]
+        np.testing.assert_allclose(lights, lights[-1], rtol=0.025)
+
     @pytest.mark.parametrize("compensation", ["auto", 2.0])
     def test_compensation_splits_partially_binding_width_cap(
         self, tmp_path, compensation
