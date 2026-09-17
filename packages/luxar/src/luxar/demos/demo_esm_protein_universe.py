@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ESM Protein Universe — nineteen stories across 7.7 million protein clusters.
+"""ESM Protein Universe — twenty stories across 7.7 million protein clusters.
 
 The big-map sibling of ``demo_esm3_protein_stories``. Every point is one of
 7.7 million CLUSTERS of proteins from the ESM Atlas (Candido et al., bioRxiv
@@ -9,16 +9,18 @@ from any organism grown in a lab — grouped by the features a protein language
 model (ESM C) sees in them (Jaccard ≥ 0.6 to the cluster centre in
 sparse-autoencoder feature space) and laid out by 3D UMAP. A point is a cluster
 of at least fifty members; the 7.7 million together stand for 817 million
-proteins. A hidden ``story`` dimension walks through nineteen stops: seven
+proteins. A hidden ``story`` dimension walks through twenty stops: seven
 protein families carried over from the Swiss-Prot tour (hemoglobin,
 photosystem II, Hsp70, the viral spike, ATP synthase, RuBisCO, RecA), three
 stories only this map can tell (the ABC-transporter spur flung off the cloud,
 the dark proteome, the phage universe), two more families whose knots are sharp
-here (beta-lactamases, CRISPR-Cas), and seven added after the Atlas team's
+here (beta-lactamases, CRISPR-Cas), and eight added after the Atlas team's
 review: the lanthipeptide antibiotics, ice-binding proteins and the
 hyperthermophile's reverse gyrase, the three unrelated receptor families with
 which vertebrates, insects and nematodes each invented smell, and the gut
-tyrosine decarboxylase that destroys the Parkinson's drug levodopa. Each stop
+tyrosine decarboxylase that destroys the Parkinson's drug levodopa, and the
+jumping-gene nucleases TnpB and Fanzor that the CRISPR editors grew out of.
+Each stop
 flies the camera to the family's densest knot, lights its members, blows a soap
 bubble around them, shows a panel of sourced facts and a spinning
 representative structure, and is narrated on arrival.
@@ -87,17 +89,17 @@ from __future__ import annotations
 DEMO_META = {
     "key": "esm_protein_universe",
     "title": (
-        "ESM Protein Universe — nineteen stories across 7.7 million protein clusters"
+        "ESM Protein Universe — twenty stories across 7.7 million protein clusters"
     ),
     "description": (
         "The ESM Atlas cluster map (Candido et al. 2026): a 3D UMAP of 7.7 "
         "million protein clusters drawn from 6.8 billion sequences, most of them "
         "environmental, with a hidden story dimension: "
-        "nineteen stops — seven classic families, the ABC-transporter spur, the "
+        "twenty stops — seven classic families, the ABC-transporter spur, the "
         "dark proteome, the phage universe, beta-lactamases, CRISPR-Cas, the "
         "lanthipeptide antibiotics, life in ice and in boiling water, three "
-        "separate inventions of smell, and a gut enzyme that eats a Parkinson's "
-        "drug — each with "
+        "separate inventions of smell, a gut enzyme that eats a Parkinson's "
+        "drug, and the jumping-gene nucleases CRISPR grew out of — each with "
         "a fly-to waypoint, a highlight, a soap bubble, a turning structure and a "
         "narrated panel of researched facts."
     ),
@@ -1157,10 +1159,19 @@ STORIES: tuple[UniverseStory, ...] = (
             "phage there really are — nobody knows."
         ),
         tags=("virology", "ecology"),
-        # The whole tail machine of phage T7 — collar, nozzle and tube — a
-        # recognisable piece of a phage, not one fibre tip (2XGF). The full T4
-        # baseplate (5IV5) renders too, but face-on it reads as a hexagonal blob.
-        pdb_id="6R21",
+        # The tail TIP of phage lambda — tail tube, baseplate and needle, six
+        # protein entities over 42 chains at 2.95 A, and lambda is the
+        # canonical tailed phage for a story about Uroviricota.
+        #
+        # This replaced 6R21, the T7 "fiberless tail complex", after a
+        # structure audit (2026-09-17): that entry's FIRST and largest entity
+        # is the PORTAL — the head-to-tail connector, 12 of its 30 chains —
+        # and it is explicitly fiberless, so a comment here calling it "the
+        # whole tail machine, collar, nozzle and tube" was describing a
+        # head connector as a tail. The full T4 baseplate (5IV5) was the other
+        # candidate and was rejected: 145 chains and 6.5 MDa, which face-on
+        # reads as a hexagonal blob.
+        pdb_id="8IYK",
         narration=(
             "The phage universe. Bacteriophages, the viruses of bacteria, are "
             "the most abundant biological entities on Earth: ten million "
@@ -1403,7 +1414,7 @@ STORIES: tuple[UniverseStory, ...] = (
         # 2,587 clusters that story used to claim, so the whole knot was the
         # wrong protein family.
         #
-        # Every other Pfam accession the nineteen stories use was checked
+        # Every other Pfam accession the tour uses was checked
         # against InterPro after this: 44 accessions, and PF07589 is the only
         # one where the Atlas's name disagrees. Trust the accession, not the
         # Atlas's name for it.
@@ -1699,6 +1710,120 @@ STORIES: tuple[UniverseStory, ...] = (
         ),
     ),
     UniverseStory(
+        key="TnpB and Fanzor",
+        title="TnpB and Fanzor — the scissors CRISPR grew out of",
+        subtitle=(
+            "Six hundred clusters of the RNA-guided nucleases that jumping genes carry"
+        ),
+        pattern="",
+        # PF07282 is the domain TnpB shares with the compact Cas12f nucleases.
+        # NOTE WHAT IT IS: a zinc-ribbon target-nucleic-acid-binding (TNB)
+        # module — the DNA grip, NOT the scissors. The nuclease is the RuvC
+        # region, covered by PF01385. An earlier draft of this comment called
+        # PF07282 a nuclease domain, which a structural biologist would catch.
+        #
+        # RADIUS 0.2, not FAMILY_RADIUS: at 0.3 the ball reaches 821 clusters
+        # at 78% purity, at 0.2 it is 624 at 94%. Audit (2026-09-17): 1,575
+        # clusters map-wide; the knot centres at [-14.22, 0.68, 1.24] with
+        # Bacillota 228, Cyanobacteriota 103, Pseudomonadota 81,
+        # Actinomycetota 60 and 42 viral clusters. Only four of the 624 are
+        # eukaryotic — the Fanzors proper sit about 0.6 units away, which is
+        # why the panel places them nearby rather than inside.
+        #
+        # Verified against the preprint's own text: 435 of the map's 459
+        # Cas12-named clusters and 830 of its 1,243 TnpB-named clusters lie
+        # within one unit of this spot, so the neighbourhood is real in our
+        # data and not just in theirs.
+        pfam=("PF07282",),
+        color=(0.7, 0.25, 0.75),
+        radius=0.2,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            # ISDra2 TnpB is 408 aa (UniProt Q7DF80); SpCas9 is 1,368
+            # (Q99ZW2). Karvelis et al., Nature 599:692 (2021) and
+            # Altae-Tran et al., Science 374:57 (2021) established the
+            # RNA-guided activity; TnpB genes ride in IS200/IS605 AND IS607
+            # elements, so "jumping genes" rather than a named family.
+            "TnpB is a small bacterial enzyme, about four hundred amino acids "
+            "— roughly a third the size of the CRISPR protein Cas9 — that "
+            "jumping genes carry around with them. It is handed a short piece "
+            "of RNA as a search template and cuts DNA wherever that template "
+            "matches.",
+            # Altae-Tran, Shmakov, Makarova, Wolf, Kannan, Zhang & Koonin,
+            # PNAS 120:e2308224120 (2023): "TnpB appears to be the
+            # evolutionary ancestor of Cas12", and type V effectors evolved
+            # from it "on about 50 independent occasions". Cas12 is therefore
+            # polyphyletic, which is why this says stock-and-recruitment
+            # rather than "TnpB evolved into Cas12".
+            "Enzymes like it are the ancestral stock the CRISPR Cas12 editors "
+            "arose from — and not once: the same jumping-gene protein was "
+            "recruited into CRISPR systems on something like fifty separate "
+            "occasions.",
+            # Saito et al., Nature 620:660 (2023); Jiang et al., Science
+            # Advances 9:eadk0171 (2023), which found Fanzor2 enriched in
+            # Mimiviridae, Phycodnaviridae and Ascoviridae — all
+            # Nucleocytoviricota. Viruses are not a domain of life, hence the
+            # phrasing.
+            "Their relatives in cells with nuclei, called Fanzors, turn up in "
+            "chytrid fungi, in algae, in amoebae and in clams — and in the "
+            "giant viruses that prey on single-celled hosts. One family, "
+            "across all three domains of life and the viruses that infect "
+            "them.",
+            # Audit numbers (2026-09-17).
+            "This knot is 624 clusters, nearly all bacterial, with forty-two "
+            "viral ones among them. Only four are eukaryotic: the Fanzors "
+            "proper sit a fraction of a unit away, in the same "
+            "neighbourhood.",
+            # The preprint, Appendix A.5.5, verified verbatim against the PDF:
+            # "The cluster centroid has 0.87 Jaccard similarity in SAE feature
+            # space and a TM-score of 0.59 to the canonical ISDra2 TnpB,
+            # despite a sequence identity of only 13.9%." The Jaccard figure
+            # is deliberately NOT quoted: it is an internal metric of this
+            # model with no community threshold, and printing it beside a
+            # TM-score would imply the two are equally calibrated. TM > 0.5 =
+            # same fold (Xu & Zhang, Bioinformatics 26:889, 2010); 13.9%
+            # identity is below Rost's 20-35% twilight zone and close to the
+            # 8-9% expected of unrelated sequences (Rost 1997, 1999).
+            "Sequence alone cannot see the kinship. The work behind this map "
+            "reports a cluster whose centre folds like the best-studied TnpB "
+            "— a structural match of 0.59, where anything above 0.5 means the "
+            "same fold — while sharing under fourteen per cent of its "
+            "letters, no more than two unrelated proteins would by chance.",
+        ),
+        # Preprint, Appendix A.5.5: the search against 1,927 Cas12/TnpB
+        # cluster representatives "yielded 315 'dark' clusters with >= 0.6
+        # similarity to any Cas12/TnpB". Verified verbatim.
+        mystery=(
+            "Three hundred and fifteen clusters with no annotation at all sit "
+            "close enough in the model's feature space to belong to this "
+            "neighbourhood. How many more RNA-guided systems are waiting in "
+            "them, nobody knows."
+        ),
+        tags=("genome editing", "mobile elements", "evolution"),
+        # ISDra2 TnpB with its reRNA — Sasnauskas et al., Nature 616:384
+        # (2023), whose title is the argument for this choice: "TnpB structure
+        # reveals minimal functional core of Cas12 nuclease family". Two
+        # polymer entities (protein + guide RNA), 2.80 A, and the
+        # most-studied TnpB, so it represents the shared core of a knot made
+        # of TnpB and Cas12f-like proteins. It is the DNA-FREE state, which is
+        # why the narration says "before it has found a target". The
+        # Spizellomyces Fanzor structure (9CEU) was the alternative and was
+        # rejected: the eukaryotic Fanzors are 4 of the 624 clusters lit, so
+        # it would misrepresent the knot, and that entry is an MBP fusion.
+        pdb_id="8BF8",
+        narration=(
+            "The scissors CRISPR grew out of. TnpB is a small bacterial "
+            "enzyme, a third the size of Cas9, that jumping genes carry "
+            "around with them: hand it a short piece of RNA and it cuts DNA "
+            "wherever that template matches. Enzymes like it are the stock the "
+            "CRISPR editors arose from, recruited some fifty separate times. "
+            "Their relatives in cells with nuclei turn up in fungi, algae, "
+            "amoebae, clams, and in giant viruses. The structure here is the "
+            "best-studied one, caught holding its RNA guide before it has "
+            "found a target."
+        ),
+    ),
+    UniverseStory(
         key="Levodopa and the gut",
         title="Tyrosine decarboxylase — the gut enzyme that eats a Parkinson's drug",
         subtitle="Fifty-two clusters scattered across the whole map, not a knot at all",
@@ -1764,7 +1889,7 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
 )
 
-OVERVIEW_TITLE = "Nineteen stories in the protein universe"
+OVERVIEW_TITLE = "Twenty stories in the protein universe"
 ATTRIBUTION = f"{DEMO_META['citation']['ref']} · {DEMO_META['citation']['license']}"
 OVERVIEW_HTML = (
     "Every point is one of {n:,} clusters of proteins from the ESM Atlas: 6.8 "
@@ -1773,14 +1898,14 @@ OVERVIEW_HTML = (
     "a protein language model sees in them and laid out in 3D with UMAP so that "
     "similar clusters sit close together. Colours are the main branches of "
     "life; the dim points are clusters nobody has characterised."
-    "<br><br>Step the <b>story</b> dimension to fly to nineteen places that "
+    "<br><br>Step the <b>story</b> dimension to fly to twenty places that "
     "each tell a piece of biology: blood, sunlight, the oldest chaperone, the "
     "coronavirus spike, the cell's turbine, the slowest important enzyme, the "
     "machine that mends DNA, a spur flung off the map, the dark proteome, the "
     "phage universe, the enzyme that beats penicillin, CRISPR, the antibiotics "
     "bacteria stitch into rings, life in ice and life in boiling water, three "
-    "separate inventions of the sense of smell, and a gut enzyme that eats a "
-    "Parkinson's drug."
+    "separate inventions of the sense of smell, a gut enzyme that eats a "
+    "Parkinson's drug, and the jumping-gene scissors CRISPR grew out of."
 )
 #: Spoken introduction at the Overview slot.
 OVERVIEW_NARRATION = (
@@ -1788,7 +1913,7 @@ OVERVIEW_NARRATION = (
     "them, drawn from nearly seven billion sequences, most read straight out "
     "of the environment, and grouped by a language model so that similar "
     "proteins sit close together. The dim points are families nobody has "
-    "characterised. Nineteen places on this map hide a story. Step through "
+    "characterised. Twenty places on this map hide a story. Step through "
     "them."
 )
 UNIREF_LINK = "https://www.uniprot.org/uniref?query={hover_key}"
@@ -2682,7 +2807,7 @@ def build_universe_scene(
 
 def main() -> None:
     aprint("=" * 70)
-    aprint("ESM PROTEIN UNIVERSE — nineteen stories across 7.7 million clusters")
+    aprint("ESM PROTEIN UNIVERSE — twenty stories across 7.7 million clusters")
     aprint("=" * 70)
 
     auto_rotate = "--no-auto-rotate" not in sys.argv

@@ -3,7 +3,7 @@
 The demo itself needs the two hand-delivered parquet files (~900 MB), so the
 scene build is exercised manually; these tests pin the parts that decide WHAT a
 story highlights and WHERE the camera goes, on synthetic data, plus the
-well-formedness of the nineteen shipped stories.
+well-formedness of the twenty shipped stories.
 """
 
 from __future__ import annotations
@@ -371,7 +371,7 @@ def test_overview_panel_carries_the_count_and_the_credit() -> None:
     panel = overview_panel_html(7_714_508)
     assert "7,714,508" in panel
     assert demo.ATTRIBUTION in panel
-    assert "Nineteen stories" in panel
+    assert "Twenty stories" in panel
 
 
 # --------------------------------------------------------------------------- #
@@ -381,7 +381,7 @@ def test_overview_panel_carries_the_count_and_the_credit() -> None:
 
 def test_shipped_stories_are_well_formed() -> None:
     keys = [s.key for s in STORIES]
-    assert len(keys) == len(set(keys)) == 19
+    assert len(keys) == len(set(keys)) == 20
     for s in STORIES:
         assert isinstance(s, UniverseStory) and isinstance(s, Story)
         assert "/" not in s.key, f"{s.key!r} doubles as a node name; '/' is refused"
@@ -449,7 +449,7 @@ def test_shipped_stories_author_valid_waypoints() -> None:
         for k, s in enumerate(STORIES, start=1)
     ]
     config = ViewerConfig(waypoints=waypoints)
-    assert len(config.to_dict()["waypoints"]) == 19
+    assert len(config.to_dict()["waypoints"]) == 20
     # A knot smaller than the bubble floor is framed at the story's own
     # distance floor, never closer than the bubble.
     pose = waypoints[0].camera
@@ -635,7 +635,7 @@ def test_the_worm_knot_keeps_its_deliberately_smaller_radius() -> None:
 
 
 def test_every_new_story_selects_by_pfam_or_name_and_names_its_structure() -> None:
-    """The seven stories added in the 2026-09-16 review."""
+    """The stories added after the 2026-09-16 review and the 09-17 follow-up."""
     added = [
         "Lanthipeptides",
         "Ice-binding proteins",
@@ -643,13 +643,14 @@ def test_every_new_story_selects_by_pfam_or_name_and_names_its_structure() -> No
         "Olfactory receptors",
         "Insect odorant receptors",
         "Worm chemoreceptors",
+        "TnpB and Fanzor",
         "Levodopa and the gut",
     ]
     by_key = {s.key: s for s in STORIES}
     assert [k for k in added if k in by_key] == added
     # They come after the twelve the tour shipped with, so the kiosk chapter
     # indices of the original stops do not move.
-    assert [s.key for s in STORIES][-7:] == added
+    assert [s.key for s in STORIES][-8:] == added
     for key in added:
         s = by_key[key]
         assert s.key not in {c.key for c in SWISSPROT_STORIES}  # not carried
