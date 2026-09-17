@@ -608,17 +608,23 @@ def test_the_scatter_story_is_the_one_family_that_is_not_a_family() -> None:
     """Tyrosine decarboxylase is authored as a scatter on purpose.
 
     Measured on this Atlas release (2026-09-16): 52 clusters name it, their
-    densest ball holds 21 at 4% purity inside the 4,170-cluster group II PLP
-    decarboxylase fold, and their phyla are scattered. A knot story here would
-    claim a family the map does not show, so the panel's last two facts are
-    about the scatter itself.
+    densest ball holds 21 at 4% PURITY inside the group II PLP decarboxylase
+    fold (1,909 clusters in clan CL0061; an earlier draft said 4,170, which
+    counted three clans and two unrelated folds), and their phyla are
+    scattered. A knot story here would claim a family the map does not show,
+    so the panel's last two facts are about the scatter itself.
+
+    It is not a constellation either, though two of its components clear the
+    10-member floor: a line joining them would assert exactly the family
+    relation the story is about NOT finding.
     """
     (story,) = [s for s in STORIES if s.scatter]
     assert story.key == "Levodopa and the gut"
     assert story.pattern and story.pfam  # name match UNION the dedicated Pfam
     assert story.region is None  # not a map-wide predicate: a family selector
     assert story.frame_fraction >= 1.0  # pulled back to hold the whole scatter
-    assert any("no knot at all" in f for f in story.facts)
+    assert any("never make a family of their own" in f for f in story.facts)
+    assert not story.constellation
 
 
 def test_the_worm_knot_keeps_its_deliberately_smaller_radius() -> None:
@@ -1029,3 +1035,65 @@ def test_tour_order_keeps_the_three_sequences_that_depend_on_it() -> None:
     assert order[first : first + 3] == smell
     # The map's own geography, in the order the dark story sets up.
     assert [s.region for s in STORIES if s.region] == ["spur", "dark", "phage"]
+
+
+# ---------------------------------------------------------------------------
+# Text/picture agreement (2026-09-16: the panels must describe what is drawn)
+# ---------------------------------------------------------------------------
+
+
+def _story_text(story: UniverseStory) -> str:
+    return " ".join([story.subtitle, *story.facts, story.narration]).lower()
+
+
+def test_no_story_describes_a_framing_it_does_not_use() -> None:
+    """The panel vocabulary has to match the mode the story is drawn in.
+
+    Every mode has its own words: a knot story is "this knot" inside a bubble,
+    a constellation says "the lines join N places", a whole-map story lights a
+    region. Using another mode's words is the drift that is hardest to see,
+    because the sentence still reads perfectly well.
+    """
+    for s in STORIES:
+        text = _story_text(s)
+        assert "bubble" not in text, f"{s.key}: panels never name the bubble"
+        if s.constellation:
+            assert "lines join" in text, f"{s.key}: a constellation must say so"
+            assert "this knot" not in text, f"{s.key}: no knot is cut here"
+        else:
+            assert "lines join" not in text, (
+                f"{s.key}: only a constellation draws lines"
+            )
+        if s.whole and not s.scatter:
+            assert "this knot" not in text, f"{s.key}: no knot is cut here"
+
+
+def test_the_scatter_story_does_not_claim_the_whole_map() -> None:
+    """Its members span 17% of the map diagonal, not the map.
+
+    Measured 2026-09-16: bounding box 15.3 units against the map's 89.4, and
+    the 52 clusters draw as ~13 blobs because their median nearest-neighbour
+    distance (0.022) is a fifth of `SCATTER_HIGHLIGHT_RADIUS`. The panel used
+    to say "scattered across the whole map" and "right across the cloud", and
+    then showed a dozen beads inside a fifth of the cloud.
+    """
+    scatter = [s for s in STORIES if s.scatter]
+    assert scatter, "the tour has a scatter story"
+    for s in scatter:
+        text = _story_text(s)
+        for claim in ("whole map", "across the cloud", "across the whole"):
+            assert claim not in text, f"{s.key}: overclaims the extent ({claim!r})"
+        # It must explain the gap between its count and its dots instead.
+        assert "specks" in text, f"{s.key}: say what the picture actually shows"
+
+
+def test_the_cross_story_reference_still_points_at_story_one() -> None:
+    """The CRISPR panel calls sickle-cell "the illness of the first story".
+
+    A reference by POSITION is the one thing `TOUR_ORDER` can silently break,
+    so it is pinned here rather than left to a reading.
+    """
+    referrers = [s for s in STORIES if "first story on this tour" in _story_text(s)]
+    assert referrers, "if the phrase is gone, delete this test with it"
+    assert STORIES[0].key == "Hemoglobin"
+    assert "sickle-cell" in _story_text(STORIES[0])

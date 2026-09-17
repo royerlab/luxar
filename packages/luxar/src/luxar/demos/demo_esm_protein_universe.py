@@ -679,13 +679,23 @@ WHOLE_HIGHLIGHT_INTENSITY = 0.35
 #: sub-pixel anyway, so one in seven draws the same shadow as all of them.
 WHOLE_HIGHLIGHT_MAX_POINTS = 300_000
 #: A SCATTER story (see :attr:`UniverseStory.scatter`) lights a few dozen
-#: clusters spread over the map, and its whole point is that you can count
-#: them — so each marker is sized to be a visible dot rather than the region
-#: stories' one pixel. Sized from the framing, not by eye: the tyrosine
-#: decarboxylase scatter (r95 6.8, r_max 7.6) frames at ~15 units, where the
-#: 63° cinematic lens spans 2·15·tan(31.5°) ≈ 18.4 world units of frame
-#: height, so a marker of this radius spans 2·0.11/18.4 ≈ 1.2% of the frame —
-#: about 13 px on a 1080p display, against the backdrop's sub-pixel 0.004.
+#: clusters spread over the map, and its point is that the specks are visible
+#: at all — so each marker is sized well above the region stories' one pixel.
+#: Sized from the framing, not by eye: a scatter has ``frame_fraction >= 1``
+#: and so frames the whole cloud, 38.0 units out for the tyrosine
+#: decarboxylase stop, where the 63° cinematic lens spans 2·38·tan(31.5°) ≈
+#: 46.6 world units of frame height. A marker of this radius therefore spans
+#: 2·0.11/46.6 ≈ 0.5% of the frame — about 5 px on a 1080p display, against
+#: the backdrop's sub-pixel 0.004.
+#:
+#: DO NOT read "countable" into that. An earlier version of this comment
+#: computed the same number against a 15-unit framing and claimed 13 px, and
+#: also implied the visitor can count the members. Measured 2026-09-16 on the
+#: shipped selector: the 52 clusters have a median NEAREST-neighbour distance
+#: of 0.022 units, a fifth of this radius, so they draw as 13 blobs — two of
+#: them merged clumps of 21 and 13 markers. No radius fixes that (resolving a
+#: 0.022 gap needs a marker smaller than a knot's, invisible at 38 units), so
+#: the panel describes the blobs instead of promising a count.
 SCATTER_HIGHLIGHT_RADIUS = 0.11
 #: Below the knot intensity: a scatter marker covers ~700x the pixels of a
 #: backdrop point, and the cinematic bloom saturates fat bright highlights.
@@ -2025,18 +2035,39 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
     UniverseStory(
         key="Levodopa and the gut",
         title="Tyrosine decarboxylase — the gut enzyme that eats a Parkinson's drug",
-        subtitle="Fifty-two clusters scattered across the whole map, not a knot at all",
+        subtitle="Fifty-two clusters in about a dozen specks, never a family of its own",
         # Name match plus PF21391, the tyrosine decarboxylase C-terminal
         # domain (19 clusters). Audit: 52 clusters, and they are NOT a family
-        # in this map — the densest ball of them holds 21 at 4% purity inside
-        # the group II PLP decarboxylase fold (4,170 clusters), the members
-        # sit a median 2.3 units apart, and the phyla are scattered
-        # (Pseudomonadota 11, Bacillota 11, Methanobacteriota 5,
-        # Actinomycetota 4, Ascomycota 4, Streptophyta 4). Eight are named
-        # MfnA, the archaeal methanofuran-pathway enzyme, which decarboxylates
-        # tyrosine for an unrelated purpose. So this is a SCATTER story: light
-        # every one of the 52 and let the absence of a knot be the point.
-        # A knot story here would claim a family the map does not show.
+        # in this map — the densest ball of them holds 21 at 4% PURITY inside
+        # the group II PLP decarboxylase fold, which holds 1,909 clusters
+        # (clan CL0061 only; an earlier draft said 4,170, which counted three
+        # clans and two unrelated folds). Members sit a median 2.43 units
+        # apart pairwise and the phyla are scattered (Pseudomonadota 11,
+        # Bacillota 11, Methanobacteriota 5, Actinomycetota 4, Ascomycota 4,
+        # Streptophyta 4; 8 archaeal in total). Eight are named MfnA, the
+        # archaeal methanofuran-pathway enzyme, which decarboxylates tyrosine
+        # for an unrelated purpose. So this is a SCATTER story: light every
+        # one of the 52 and let the absence of a family be the point. A knot
+        # story here would claim a family the map does not show.
+        #
+        # WHAT THE PICTURE ACTUALLY SHOWS, and why the panel says "about a
+        # dozen specks" rather than fifty-two countable dots (measured
+        # 2026-09-16, after the owner asked why this stop has neither a bubble
+        # nor a constellation). The members' median NEAREST-neighbour distance
+        # is 0.022 units — a fifth of SCATTER_HIGHLIGHT_RADIUS — so merging
+        # anything closer than one marker diameter leaves 13 VISIBLE BLOBS of
+        # sizes [21, 13, 4, 3, 3, 1x8]. No marker radius fixes that: resolving
+        # a 0.022 gap needs a radius smaller than a knot's, which is invisible
+        # at this story's 38-unit framing. Their bounding box is also 15.3
+        # units against the map's 89.4-unit diagonal — 17% of it — so the
+        # earlier "scattered across the whole map" was wrong twice over. The
+        # text now describes the dozen specks and the fifth of the cloud.
+        #
+        # NOT a constellation, though two of its components clear the
+        # 10-member floor (21 and 13): a single line joining them would assert
+        # exactly the family relation the whole story is about NOT finding.
+        # No bubble either, for the same reason — a bubble says "the story is
+        # this blob", and there is no blob.
         pattern=r"(?i)tyrosine decarboxylase",
         pfam=("PF21391",),
         whole=True,
@@ -2055,10 +2086,13 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "that reaches the gut — so the bacteria go on eating theirs.",
             # Audit numbers (2026-09-16): the scatter is the finding.
             "Now look at what this map does with the enzyme. Fifty-two "
-            "clusters out of 7.7 million are named for it, and they form no "
-            "knot at all: they lie scattered right across the cloud, eleven in "
-            "one bacterial phylum, eleven in another, and eight of them an "
-            "archaeal enzyme doing an entirely different job.",
+            "clusters out of 7.7 million are named for it, and they never "
+            "make a family of their own. They sit in about a dozen specks "
+            "strung across a fifth of the cloud, and the two largest hold "
+            "twenty-one and thirteen clusters packed so tightly that each "
+            "draws as a single point. Eleven are in one bacterial phylum, "
+            "eleven in another, and eight are an archaeal enzyme doing an "
+            "entirely different job.",
             "That scatter is the clinical problem in miniature. The enzyme sits "
             "in a fold shared by nearly two thousand other clusters of "
             "decarboxylases that work on other molecules — glutamate, "
@@ -2080,10 +2114,10 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "in the gut, where it is wasted. Patients take a second drug to "
             "block the human version of that reaction, but it barely touches "
             "the bacterial one. And look what the map does with it: fifty-two "
-            "clusters out of seven point seven million, no knot at all, "
-            "scattered right across the cloud inside a fold shared by nearly "
-            "two thousand other decarboxylases. That scatter is the clinical "
-            "problem in miniature."
+            "clusters out of seven point seven million, never a family of "
+            "their own, sitting in about a dozen specks inside a fold shared "
+            "by nearly two thousand other decarboxylases. That scatter is the "
+            "clinical problem in miniature."
         ),
     ),
 )
