@@ -78,6 +78,19 @@ def _summarized_input_provenance(
     return summary
 
 
+def _resolve_dimension_values(
+    *, as_dimension: bool, values: Optional[str], dataset_count: int
+) -> list[float]:
+    """Resolve authored stack coordinates, or positional merge placeholders."""
+    if not as_dimension or values is None:
+        return [float(index) for index in range(dataset_count)]
+    dim_values = [float(value.strip()) for value in values.split(",")]
+    if len(dim_values) != dataset_count:
+        aprint(f"Error: {len(dim_values)} values but {dataset_count} datasets")
+        raise typer.Exit(1)
+    return dim_values
+
+
 def _mode_invalidated_appearance(
     *, channel_colors: bool, colors_manufactured: bool
 ) -> dict[str, str]:
@@ -172,15 +185,11 @@ def run_merge_datasets(
                     total_splats += ds.n_splats
             aprint(f"Total input splats: {total_splats:,}")
 
-            if as_dimension and values is not None:
-                dim_values = [float(v.strip()) for v in values.split(",")]
-                if len(dim_values) != len(datasets):
-                    aprint(
-                        f"Error: {len(dim_values)} values but {len(datasets)} datasets"
-                    )
-                    raise typer.Exit(1)
-            else:
-                dim_values = [float(i) for i in range(len(datasets))]
+            dim_values = _resolve_dimension_values(
+                as_dimension=as_dimension,
+                values=values,
+                dataset_count=len(datasets),
+            )
             input_provenance = _input_provenance(datasets, dim_values)
 
             if channel_colors:

@@ -320,6 +320,65 @@ def _summary_part_count(record: Any) -> int:
     return int(nested[0]["part_count"])
 
 
+def _summed_summary_fields(
+    fittings: Sequence[dict[str, Any]], *, shared_source: bool
+) -> dict[str, Any]:
+    """Complete finite totals that can survive provenance collapse."""
+    summary: dict[str, Any] = {}
+    for key in (
+        "source_bytes",
+        "source_stored_bytes",
+        "source_voxels",
+        "time_seconds",
+    ):
+        values = [fitting.get(key) for fitting in fittings]
+        if not all(
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and math.isfinite(item)
+            for item in values
+        ):
+            continue
+        if (
+            shared_source
+            and key != "time_seconds"
+            and all(item == values[0] for item in values[1:])
+        ):
+            summary[key] = values[0]
+        else:
+            summary[key] = sum(values)
+    return summary
+
+
+def _common_summary_source_fields(
+    fittings: Sequence[dict[str, Any]],
+    summary: dict[str, Any],
+    *,
+    shared_source: bool,
+) -> None:
+    """Add source identity fields only when the aggregate remains coherent."""
+    shapes = [fitting.get("source_shape") for fitting in fittings]
+    if (
+        "source_voxels" not in summary
+        or not isinstance(shapes[0], list)
+        or any(item != shapes[0] for item in shapes[1:])
+    ):
+        return
+    summary["source_shape"] = (
+        shapes[0] if shared_source else [len(fittings), *shapes[0]]
+    )
+
+    dtypes = [fitting.get("source_dtype") for fitting in fittings]
+    if isinstance(dtypes[0], str) and all(item == dtypes[0] for item in dtypes[1:]):
+        summary["source_dtype"] = dtypes[0]
+
+    declared = [fitting.get("source_declared") for fitting in fittings]
+    if isinstance(declared[0], bool) and all(
+        item == declared[0] for item in declared[1:]
+    ):
+        summary["source_declared"] = declared[0]
+
+
 def summarize_part_provenance(
     value: Any, *, shared_source: bool = False
 ) -> Optional[list[dict[str, Any]]]:
@@ -332,55 +391,8 @@ def summarize_part_provenance(
     if not isinstance(value, list) or not value:
         return None
     fittings = [_summary_fitting(record) for record in value]
-
-    summary: dict[str, Any] = {}
-    for key in (
-        "source_bytes",
-        "source_stored_bytes",
-        "source_voxels",
-        "time_seconds",
-    ):
-        values = [fitting.get(key) for fitting in fittings]
-        if all(
-            isinstance(item, (int, float))
-            and not isinstance(item, bool)
-            and math.isfinite(item)
-            for item in values
-        ):
-            if (
-                shared_source
-                and key != "time_seconds"
-                and all(item == values[0] for item in values[1:])
-            ):
-                summary[key] = values[0]
-            else:
-                summary[key] = sum(values)
-
-    shapes = [fitting.get("source_shape") for fitting in fittings]
-    if (
-        "source_voxels" in summary
-        and isinstance(shapes[0], list)
-        and all(item == shapes[0] for item in shapes[1:])
-    ):
-        summary["source_shape"] = (
-            shapes[0] if shared_source else [len(value), *shapes[0]]
-        )
-
-    dtypes = [fitting.get("source_dtype") for fitting in fittings]
-    if (
-        "source_shape" in summary
-        and isinstance(dtypes[0], str)
-        and all(item == dtypes[0] for item in dtypes[1:])
-    ):
-        summary["source_dtype"] = dtypes[0]
-
-    declared = [fitting.get("source_declared") for fitting in fittings]
-    if (
-        "source_shape" in summary
-        and isinstance(declared[0], bool)
-        and all(item == declared[0] for item in declared[1:])
-    ):
-        summary["source_declared"] = declared[0]
+    summary = _summed_summary_fields(fittings, shared_source=shared_source)
+    _common_summary_source_fields(fittings, summary, shared_source=shared_source)
 
     part_count = len(value)
     if not shared_source:
