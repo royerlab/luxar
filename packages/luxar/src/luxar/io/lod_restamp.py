@@ -18,7 +18,7 @@ total store size: a 100 GB scene reads 100 GB to change two attrs). A standalone
 cheap. A ``--dry-run``, and a run that finds nothing to change, hash nothing and
 so read nothing.
 
-**Why this is not part of ``luxar optimise``.** That pass documents "every
+**Why this is not part of ``luxar optimize``.** That pass documents "every
 attribute is preserved" and refuses same-path work outright; this one changes
 attributes and nothing else, in place. They are siblings, not one command with a
 flag.
@@ -124,7 +124,7 @@ from ..typing_utils.constants import (
 # named `pipeline` would go uncounted. Negligible, and not worth forking the
 # helper; a dropped child that carries a `coverage_fraction` is refused below.)
 from ._compiler.finalize.amplitude_window import _child_nodes, _lod_children
-from .optimise import _is_luxar_store, _restamp_content_hash
+from .optimize import _is_luxar_store, _restamp_content_hash
 
 __all__ = [
     "HASH_RESTAMPED",
@@ -151,7 +151,7 @@ _ELEMENT_COUNT_ATTR: Dict[str, str] = {
 #: ``RestampReport.content_hash_status`` — what became of the store's
 #: ``content_hash``. ``None`` alone cannot say: a store that carries neither the
 #: scene ``type`` nor a ``.gsplats.zarr`` ``content_hash`` marker has no digest
-#: to move (``optimise._restamp_content_hash`` returns ``None`` for it), and that
+#: to move (``optimize._restamp_content_hash`` returns ``None`` for it), and that
 #: is a very different report from "nothing changed, so nothing was restamped" —
 #: the first means a warm viewer cache will NOT invalidate.
 HASH_UNCHANGED = "unchanged"
@@ -160,7 +160,7 @@ HASH_UNSTAMPABLE = "unstampable"
 
 
 def _carries_restampable_digest(root: zarr.Group) -> bool:
-    """Mirror :func:`~luxar.io.optimise._restamp_content_hash`'s marker gate."""
+    """Mirror :func:`~luxar.io.optimize._restamp_content_hash`'s marker gate."""
     attrs = dict(root.attrs)
     return attrs.get("type") == "scene" or "content_hash" in attrs
 
@@ -816,7 +816,7 @@ def _snapshot_content_hashes(
     Restoring is also the cheap direction: one attr read per group here, against a
     full value walk over every array in the store on the failure path.
 
-    ``deep`` mirrors :func:`~luxar.io.optimise._restamp_content_hash`: a scene's
+    ``deep`` mirrors :func:`~luxar.io.optimize._restamp_content_hash`: a scene's
     value walk stamps every group, a ``.gsplats.zarr`` root stamp only the root.
     A store with neither marker is stamped nowhere, and the single recorded root
     entry then undoes to nothing.
@@ -880,7 +880,7 @@ def _roll_back(
     leaves one ladder restamped, the failing one TORN (a screen-area threshold
     under ``selector="coverage"`` — thresholds and selector disagreeing about
     their units, which nothing downstream can detect), and the consolidated index
-    describing neither. ``optimise`` is all-or-nothing for exactly this reason;
+    describing neither. ``optimize`` is all-or-nothing for exactly this reason;
     this sibling writes in place and so has to unwind rather than stage.
 
     The ``content_hash`` is RESTORED, not recomputed: the pre-run digests are in
@@ -1235,7 +1235,7 @@ def restamp_lod_store(
     _validate_finest_anchor(finest_anchor)
 
     root = open_group(store_path, mode="r" if dry_run else "r+")
-    # `optimise.ensure_luxar_store` is the same gate but its message names
+    # `optimize.ensure_luxar_store` is the same gate but its message names
     # `--generic`, an escape hatch this command does not offer (there is no
     # kind=lod group in a foreign store to restamp), so the CLASSIFICATION is
     # reused and the wording is this command's own.

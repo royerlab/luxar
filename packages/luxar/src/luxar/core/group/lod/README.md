@@ -441,7 +441,7 @@ tried after reading the Points docs.
   (sharing one QEM collapse sequence for a multi-level ladder) and
   assembles a `kind=lod` group whose finest child is the original surface.
 - `resolve_additive_axis_mesh(spec)` — the `additive_lod=` axis. Keys: `method`,
-  `n_lods`, `counts` (alias `breakpoints`), `reveal_centre`, `spatial_dims`.
+  `n_lods`, `counts` (alias `breakpoints`), `reveal_center`, `spatial_dims`.
   `MESH_ADDITIVE_METHODS` is `{"radial"}` and that is the whole design: a prefix of
   an arbitrarily ordered index buffer is a surface with **holes**, not a coarser
   one, so `random` / `salience` and the two samplers are refused with that

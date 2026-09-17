@@ -8,7 +8,7 @@
  *
  * Two shapes are produced in the wild and only the first works unaided:
  *
- * - **flat** — what `zarr.storage.ZipStore` and `luxar optimise`'s packaging
+ * - **flat** — what `zarr.storage.ZipStore` and `luxar optimize`'s packaging
  *   step write: members keyed store-relative.
  * - **nested** — what `zip -r scene.zip scene.luxar.zarr` or
  *   `shutil.make_archive` produce: every member prefixed `scene.luxar.zarr/`.

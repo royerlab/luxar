@@ -770,7 +770,7 @@ class Scene(Group):
                 For an archive-backed scene, the only supported destination is
                 the selected archive path, which is replaced if it exists.
                 To create an archive from a directory-backed scene, use
-                ``LuxarZarrCompiler`` or ``luxar optimise`` instead.
+                ``LuxarZarrCompiler`` or ``luxar optimize`` instead.
 
         Raises:
             FileExistsError: If a directory destination already exists and is
@@ -807,7 +807,7 @@ class Scene(Group):
             raise ValueError(
                 "Scene.to_zarr() cannot copy a directory store to an archive path: "
                 f"{destination}. Create the scene with LuxarZarrCompiler({path!r}) "
-                "or run luxar optimise."
+                "or run luxar optimize."
             )
 
         if destination.exists():

@@ -1,8 +1,8 @@
-"""The ``luxar optimise`` command — re-chunk an existing store for streaming.
+"""The ``luxar optimize`` command — re-chunk an existing store for streaming.
 
-A thin Typer layer over :mod:`luxar.io.optimise`; every decision about what may
+A thin Typer layer over :mod:`luxar.io.optimize`; every decision about what may
 change and what must not lives there. Registered onto the root app by
-:func:`register_optimise_command`, mirroring ``info_command.py``.
+:func:`register_optimize_command`, mirroring ``info_command.py``.
 """
 
 from __future__ import annotations
@@ -14,18 +14,18 @@ import typer
 from arbol import aprint
 
 from .._zarr_compat import close, open_group
-from ..io.optimise import (
+from ..io.optimize import (
     CHUNK_PROFILES,
-    OptimisePlan,
+    OptimizePlan,
     ensure_luxar_store,
-    optimise_store,
-    plan_optimisation,
+    optimize_store,
+    plan_optimization,
     resolve_target_bytes,
 )
 from ._traceback import exit_with_error
 
 
-def _report_dry_run(plan: OptimisePlan, path: Path) -> None:
+def _report_dry_run(plan: OptimizePlan, path: Path) -> None:
     """Print what would change, most-improved array first."""
     aprint(f"\n🔎 Dry run: {path}")
     aprint(f"  Target chunk: {plan.target_bytes / 1024:.0f} KB")
@@ -67,7 +67,7 @@ def _plan_and_report(
 ) -> None:
     """The whole ``--dry-run`` path: same validation as a real run, no writing.
 
-    Takes the ``--generic`` gate too. Without it ``luxar optimise foreign.zarr
+    Takes the ``--generic`` gate too. Without it ``luxar optimize foreign.zarr
     --dry-run`` printed a full plan for a store the identical non-dry-run
     command refuses — a plan the user cannot act on. And the group is CLOSED:
     a ``.zarr.zip`` source otherwise keeps its ``ZipStore`` handle open, which
@@ -79,7 +79,7 @@ def _plan_and_report(
         exit_with_error(f"❌ Error reading {source}: {e}", e)
     try:
         ensure_luxar_store(source, root, generic=generic)
-        plan = plan_optimisation(root, target_bytes=budget, profile=profile)
+        plan = plan_optimization(root, target_bytes=budget, profile=profile)
     except ValueError as e:
         aprint(f"❌ {e}")
         raise typer.Exit(1) from e
@@ -90,11 +90,11 @@ def _plan_and_report(
     _report_dry_run(plan, source)
 
 
-def register_optimise_command(app: typer.Typer) -> None:
-    """Attach the ``optimise`` command to ``app``."""
+def register_optimize_command(app: typer.Typer) -> None:
+    """Attach the ``optimize`` command to ``app``."""
 
     @app.command()
-    def optimise(
+    def optimize(
         source: Path = typer.Argument(..., help="Existing .zarr store to re-chunk"),
         output: Optional[Path] = typer.Argument(
             None, help="Destination store (omit only with --dry-run)"
@@ -164,7 +164,7 @@ def register_optimise_command(app: typer.Typer) -> None:
             raise typer.Exit(1)
 
         try:
-            optimise_store(
+            optimize_store(
                 source,
                 output,
                 target_bytes=budget,
@@ -176,4 +176,4 @@ def register_optimise_command(app: typer.Typer) -> None:
         except typer.Exit:
             raise
         except Exception as e:
-            exit_with_error(f"❌ Error optimising {source}: {e}", e)
+            exit_with_error(f"❌ Error optimizing {source}: {e}", e)

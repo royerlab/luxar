@@ -465,12 +465,12 @@ write a `GSplatPartition` with `barrier_dims=[time_col]`, graft it with
 
 **One catch that comes with `stream`:** a flat store needs re-chunking or
 scrubbing gets WORSE. Measured per timepoint step on a 4D leaf: **173 requests
-as-built, 2 after `luxar optimise --profile archive`** — the as-built figure is
+as-built, 2 after `luxar optimize --profile archive`** — the as-built figure is
 worse than a partitioned store's re-chunked 12. Additive-only and re-chunking
 are a package, not alternatives.
 
 **But judge a chunk profile on the node's ACCESS PATTERN, not on the store.**
-`optimise` sizes each array from a byte budget, then uses scene animation and
+`optimize` sizes each array from a byte budget, then uses scene animation and
 index metadata for a warn-only playback check. Three regimes (2026-08-30 and
 2026-09-10 measurements):
 
@@ -486,7 +486,7 @@ index metadata for a warn-only playback check. Three regimes (2026-08-30 and
   planned zarr chunks will group them, then measure each group's inclusive
   hidden-axis span. `hosting` (~1.5 frames per chunk) is the
   middle of the request/byte trade; the request cap of the hosted site
-  (Cloudflare Functions) rules out `local`'s 3,500 chunks. `optimise` now warns
+  (Cloudflare Functions) rules out `local`'s 3,500 chunks. `optimize` now warns
   when an actively played, un-laddered node would exceed two frames per chunk
   across multiple chunks.
 - *Not animated* (keypress-navigated, refine pass): smaller is a pure win.

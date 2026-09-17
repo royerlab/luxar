@@ -338,11 +338,11 @@ luxar profiles                   # Network simulation profiles
 # a LADDERED played splat node wants 1 MB so its coarse rung stays resident
 # (#2377). The pass warns when enabled playback on an un-laddered node would
 # exceed two frames per chunk across multiple chunks; decide the final trade per node.
-luxar optimise scene.luxar.zarr out.luxar.zarr             # 64 KB default
-luxar optimise scene.luxar.zarr --dry-run                  # report the plan, write nothing
-luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB
-luxar optimise scene.luxar.zarr out.luxar.zarr --verify    # re-read the output, compare every array
-luxar optimise arbitrary.zarr out.zarr --generic           # a plain (non-Luxar) zarr store
+luxar optimize scene.luxar.zarr out.luxar.zarr             # 64 KB default
+luxar optimize scene.luxar.zarr --dry-run                  # report the plan, write nothing
+luxar optimize scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB
+luxar optimize scene.luxar.zarr out.luxar.zarr --verify    # re-read the output, compare every array
+luxar optimize arbitrary.zarr out.zarr --generic           # a plain (non-Luxar) zarr store
 # Re-derive a store's LOD switch thresholds IN PLACE — attrs only, no chunk data
 # moves. Every `kind=lod` group still on the legacy `coverage` diagonal metric
 # (or carrying no `selector`) gets screen-occupancy-halved thresholds and a
@@ -708,7 +708,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --add-method s
 # every prefix keeps valid segment topology). A radial ladder deliberately carries
 # NO energy stamps: the viewer brightens an incomplete ladder by 1/e(k), which is
 # backwards for a reveal (a partial object at FULL brightness, not a dim whole).
-# Knobs: reveal_centre / spatial_dims (Python), --reveal-centre / --spatial-dims.
+# Knobs: reveal_center / spatial_dims (Python), --reveal-center / --spatial-dims.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -m radial --n-lods 6
 # STREAMING breakpoints: `-b stream:C` = geometric ladder (first chunk C splats,
 # then doubling), sized per part/level. Or derive C from a download budget with

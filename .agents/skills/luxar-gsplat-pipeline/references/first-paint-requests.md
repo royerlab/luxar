@@ -148,7 +148,7 @@ One 1.58 GiB 4D timelapse built with `adaptive` had 44 parts × 4 levels × 4 ru
 converged. Both compared stores carried five arrays per rung (`chunk_bounds`,
 `centers`, `amplitudes`, two Cholesky arrays, no `colors`), placing the nominal
 structure term at 660 first-pass and 880 converged requests. Measured first paint was
-689 after `luxar optimise --profile archive` and 922 as built.
+689 after `luxar optimize --profile archive` and 922 as built.
 
 The control held the same data in a single stacked 4D leaf with an eight-rung
 `stream` ladder. Its nominal structure term was 15 first-pass and 40 converged;

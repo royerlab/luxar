@@ -131,7 +131,7 @@ class RecipeParams:
     additive_method: AutoOrMethod = "auto"
     # `additive_method="radial"` only — the concentric-shell reveal. Defaults:
     # the bbox centre, over the non-degenerate axes.
-    reveal_centre: Optional[Sequence[float]] = None
+    reveal_center: Optional[Sequence[float]] = None
     spatial_dims: Optional[Sequence[int]] = None
     breakpoints: BreakpointSpec = "equal-count"
     # None = the dataset's own `truncation_radius` (the support it was fitted and
@@ -219,7 +219,7 @@ def build_stream(data: GSplatData, params: RecipeParams) -> GSplatData:
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,
-        reveal_centre=params.reveal_centre,
+        reveal_center=params.reveal_center,
         spatial_dims=params.spatial_dims,
     )
 
@@ -274,7 +274,7 @@ def build_levels_matrix(data: GSplatData, params: RecipeParams) -> GSplatData:
         coarsen_dims=params.coarsen_dims,
         n_additive_lods=params.n_lods,
         additive_method=params.additive_method,
-        additive_reveal_centre=params.reveal_centre,
+        additive_reveal_center=params.reveal_center,
         additive_spatial_dims=params.spatial_dims,
         breakpoints=params.breakpoints,
         truncation_sigmas=params.truncation_sigmas,
@@ -469,7 +469,7 @@ def _substitutive_for_part(
                 max_n_dense=params.max_n_dense,
                 seed=None if params.seed is None else params.seed + s,
                 substitutive_level=s,
-                reveal_centre=params.reveal_centre,
+                reveal_center=params.reveal_center,
                 spatial_dims=params.spatial_dims,
             )
     # Build each part's lod group with screen-area coverage_fraction
@@ -697,7 +697,7 @@ def _ladder_for_part(
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,
-        reveal_centre=params.reveal_centre,
+        reveal_center=params.reveal_center,
         spatial_dims=params.spatial_dims,
     )
     return laddered.tree

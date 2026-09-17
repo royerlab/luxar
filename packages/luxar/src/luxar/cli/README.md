@@ -50,7 +50,7 @@ print(result.stdout)
 - `_traceback.py` - Shared quiet-error reporting with the `LUXAR_TRACEBACK` opt-in escape hatch
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
-- `optimise_command.py` - The `luxar optimise` command (a thin Typer layer over `luxar.io.optimise`)
+- `optimize_command.py` - The `luxar optimize` command (a thin Typer layer over `luxar.io.optimize`)
 - `restamp_lod_command.py` - The `luxar restamp-lod` command (a thin Typer layer over `luxar.io.lod_restamp`)
 - `gsplat_commands.py` - Thin registration hub (~56 lines) that assembles the `gsplat` sub-app: fit, cal, render, denoise, lod, convert, migrate-format, reencode, info, napari, view, compare, annotate-quality, transform, merge, cull, filter, slice, partition, flatten, additive, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess
 - `gsplat_ops/` - The gsplat subcommand implementations: 8 root modules (scene/inspect/interchange registration, `benchmark`, `recipe_shared`, `planner`, `encoding`, `loading`) plus three subpackages — `fitting/` (fit/cal/render/denoise), `batch/` (`batch-fit`), `transforms/` (edit-style commands) — 31 modules across them. Each subpackage's registration surface is its `commands.py`; the `__init__.py` files are docstring-only. See `gsplat_ops/README.md`.
@@ -160,26 +160,26 @@ luxar info data.luxar.zarr --format json # JSON output
 
 `--stats` also reports the store's **chunk layout** — average chunk KB, the
 share of arrays under the 16 KB floor, and the projected request count for a
-full load — computed off the same helper `luxar optimise` plans from, so a
+full load — computed off the same helper `luxar optimize` plans from, so a
 store that is badly chunked for streaming is visible without hosting it first.
 When the mean chunk is under 32 KB it also warns that the load will be
 round-trip bound on an HTTP/1.1 host (which `luxar serve` is): measured 10.6 s vs
 4.0 s over HTTP/2 for the same 1.5 M-point example at 25 Mbps / 30 ms RTT.
 
-### `luxar optimise`
+### `luxar optimize`
 Re-chunk an existing store for streaming. One structure-preserving pass: only
 zarr chunk shapes change, values stay bit-identical, and no refit / source
 volume / GPU is involved.
 ```bash
-luxar optimise scene.luxar.zarr optimised.luxar.zarr
-luxar optimise scene.luxar.zarr --dry-run                    # report only
-luxar optimise scene.luxar.zarr out.luxar.zarr --target-kb 128
-luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # 256 KB
-luxar optimise scene.luxar.zarr out.luxar.zarr --profile local    # 64 KB
-luxar optimise scene.luxar.zarr out.luxar.zarr --profile archive  # 1 MB
-luxar optimise scene.luxar.zarr out.luxar.zarr --verify      # re-read + compare every array
-luxar optimise fit.gsplats.zarr fit_opt.gsplats.zarr         # standalone gsplat trees
-luxar optimise arbitrary.zarr out.zarr --generic             # plain zarr
+luxar optimize scene.luxar.zarr optimized.luxar.zarr
+luxar optimize scene.luxar.zarr --dry-run                    # report only
+luxar optimize scene.luxar.zarr out.luxar.zarr --target-kb 128
+luxar optimize scene.luxar.zarr out.luxar.zarr --profile hosting  # 256 KB
+luxar optimize scene.luxar.zarr out.luxar.zarr --profile local    # 64 KB
+luxar optimize scene.luxar.zarr out.luxar.zarr --profile archive  # 1 MB
+luxar optimize scene.luxar.zarr out.luxar.zarr --verify      # re-read + compare every array
+luxar optimize fit.gsplats.zarr fit_opt.gsplats.zarr         # standalone gsplat trees
+luxar optimize arbitrary.zarr out.zarr --generic             # plain zarr
 ```
 
 dtype, codecs, filters, `fill_value`, memory order, the chunk key layout, the
@@ -200,7 +200,7 @@ deleted first, so a failure leaves nothing partial behind and never costs both
 copies. Larger profiles trade partial-query bytes for
 full-load requests — see the CLI reference before reaching for `--profile
 hosting` on a store the viewer will slice into. The logic lives in
-`luxar.io.optimise`.
+`luxar.io.optimize`.
 
 ### `luxar restamp-lod`
 Re-derive a store's LOD switch thresholds in place. An attributes-only pass: the
@@ -232,7 +232,7 @@ It is never automatic: an authored `coverage_fractions=[...]` list and a derived
 one are indistinguishable on disk, including a hand-authored ladder already
 stamped `screen-area`, so running the command IS the opt-in and the per-group
 old→new ladder is printed as the audit trail. Sibling of
-`luxar optimise` rather than a flag on it — that pass preserves every attribute
+`luxar optimize` rather than a flag on it — that pass preserves every attribute
 and refuses same-path work; this one changes only attributes and works in place.
 A `.zarr.zip` is refused (nothing to write back to). When anything changes the
 `content_hash` is restamped and the metadata re-consolidated, then read back and
@@ -408,7 +408,7 @@ luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-jso
 ```
 
 #### `luxar gsplat cal`
-Calibrate the splat count `K` via blind-spot cross-validation. Sweeps `K`, identifies the held-out PSNR peak (`K*`) using the manuscript's Noise2Self protocol (5% donut-median masking), and reports the noise floor. Defaults to the `n2s` fit preset so the held-out curve has enough optimiser budget to reach the overfit regime.
+Calibrate the splat count `K` via blind-spot cross-validation. Sweeps `K`, identifies the held-out PSNR peak (`K*`) using the manuscript's Noise2Self protocol (5% donut-median masking), and reports the noise floor. Defaults to the `n2s` fit preset so the held-out curve has enough optimizer budget to reach the overfit regime.
 ```bash
 luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster sweep

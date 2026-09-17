@@ -157,11 +157,11 @@ with LuxarZarrCompiler("scene.luxar.zarr.zip") as compiler:
     ...
 ```
 
-You can also package an existing store by giving `luxar optimise` a `.zip`
+You can also package an existing store by giving `luxar optimize` a `.zip`
 destination:
 
 ```bash
-luxar optimise scene.luxar.zarr scene.luxar.zarr.zip
+luxar optimize scene.luxar.zarr scene.luxar.zarr.zip
 ```
 
 Serve the directory containing the archive, then select it in the dataset browser:

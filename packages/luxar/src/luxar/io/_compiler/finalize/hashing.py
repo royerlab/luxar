@@ -274,7 +274,7 @@ def compute_content_hashes(store: zarr.Group) -> str:
         # 3. Hash plain payload files named by attrs (overlay images): neither
         #    arrays nor groups, so steps 1-2 fold in the FILENAME but never the
         #    bytes. Attrs-driven, not by directory listing. Two walks hash a
-        #    store this way — this compile-time one, and `luxar optimise`'s
+        #    store this way — this compile-time one, and `luxar optimize`'s
         #    slab-wise re-chunk walk, which reuses these very helpers over a
         #    FINISHED store. Why: `finalize/README.md`.
         for term in _payload_terms(group, attrs):
@@ -293,7 +293,7 @@ def compute_content_hashes(store: zarr.Group) -> str:
         #    only meaningful if attaching the map leaves that digest alone. The
         #    group still gets its OWN `content_hash` stamped (it is visited), so
         #    tooling can tell two bakes apart; it just does not fold into the
-        #    parent. `luxar optimise`'s streaming twin mirrors this rule.
+        #    parent. `luxar optimize`'s streaming twin mirrors this rule.
         for child_name in sorted(group_keys(group)):
             child_path = f"{group_path}/{child_name}" if group_path else child_name
             child_hash = compute_hash_recursive(child_path)

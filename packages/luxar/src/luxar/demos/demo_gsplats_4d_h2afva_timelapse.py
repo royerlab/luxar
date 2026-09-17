@@ -102,7 +102,7 @@ PIPELINE — reproducible with ``--recompute``:
        Four rungs satisfy that floor, but the current gate still rejects the
        ladder under its slice-unaware 1,000,000-element commit cap; #2699 tracks
        that auditor defect.
-    5. ``luxar optimise --profile archive`` — re-chunk. LAST, because step 4
+    5. ``luxar optimize --profile archive`` — re-chunk. LAST, because step 4
        adds arrays that also want the 1 MB layout.
 
     Steps 2 and 3 are in that order for a memory reason, not a stylistic one:
@@ -412,7 +412,7 @@ def recompute_archive(work_dir: Path) -> Path:
         # Re-chunk LAST: the ladder above adds arrays that also want the archive
         # layout, and leaving them as-built is the 173-requests-per-step case.
         run_luxar_cli(
-            "optimise",
+            "optimize",
             str(laddered),
             str(final),
             "--profile",

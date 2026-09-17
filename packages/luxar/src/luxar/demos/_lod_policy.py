@@ -125,7 +125,7 @@ per-timepoint chunk locality with no partition at all.
 
 ONE CAVEAT that comes with ``stream``: a flat store needs re-chunking or
 scrubbing gets WORSE, not better. Measured on a 4D leaf, per timepoint step:
-**173 requests as-built, 2 after ``luxar optimise --profile archive``** — the
+**173 requests as-built, 2 after ``luxar optimize --profile archive``** — the
 as-built figure is worse than a partitioned store's re-chunked 12. Additive-only
 and re-chunking are a package.
 """
@@ -208,7 +208,7 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
     # gsplats_2d_codex_pancreas store: 12 channels x 172 tiles x 3 levels x 4
     # rungs = 12 + 172 + 516 + 2,064 = **2,764 groups**, three times the next
     # largest store and 24% of the whole 91-store corpus's 6,924. On the
-    # published, post-`optimise --profile archive` store, hosted first paint
+    # published, post-`optimize --profile archive` store, hosted first paint
     # costs roughly one request per node, and node count is what Loic named as
     # the thing that slows loading.
     #
@@ -345,7 +345,7 @@ def stream_ladder(
     13/13/17/18/17/18 today, so there is no reduction at all. At the budget
     chunk they are **7/7/11/9/13/13** unsliced and **5/5/7/6/9/9** with the
     sliced share floor, because every rung saved is a node saved, and on the
-    published, post-``optimise --profile archive`` store, hosted first paint
+    published, post-``optimize --profile archive`` store, hosted first paint
     costs roughly one request per node.
 
     **Capped increments**, via :func:`~luxar.utils.lod_breakpoints.

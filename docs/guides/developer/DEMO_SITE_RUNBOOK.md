@@ -83,7 +83,7 @@ A "wave" is: some demos changed on `dev`, rebuild them, and update the site.
 ```
 build the changed demos
   -> capture gallery media (stills + orbit videos)
-  -> luxar optimise --profile archive        # 1 MB chunk target
+  -> luxar optimize --profile archive        # 1 MB chunk target
   -> hash-compare against the LAST LOCAL BUILD
   -> audit the complete local scene inventory
   -> upload only what changed, to a NEW dated prefix
@@ -99,7 +99,7 @@ the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
 exchange for far fewer stored objects. Re-measure browser traffic and request
 cost before changing that tradeoff.
 
-Read any playback warning after the `optimise` step. For an un-laddered played
+Read any playback warning after the `optimize` step. For an un-laddered played
 store, re-run at `hosting` and re-measure requests and per-step bytes before
 publishing; §3.21 records the current exception and measurement procedure.
 
@@ -118,7 +118,7 @@ hatch run check-scene-credits --require-scenes
 ```
 
 Keep this immediately before upload, after the final local build and
-optimisation. `--require-scenes` is load-bearing: an empty or wrongly located
+optimization. `--require-scenes` is load-bearing: an empty or wrongly located
 inventory must fail rather than produce a green "inspected nothing" result.
 Both direct full-inventory commands are the backstop and must exit zero before
 upload.
@@ -144,7 +144,7 @@ are absolute for exactly this reason.
 ### 2.1 Always publish to a new dated prefix
 
 Prefixes are dated (`data/2026-08-26a/`). Never overwrite a live prefix in
-place. `luxar optimise` assigns a **fresh `content_hash` by design**, and a
+place. `luxar optimize` assigns a **fresh `content_hash` by design**, and a
 warm viewer cache validating on an unchanged hash would serve stale chunks. A
 new prefix sidesteps the whole class of problem: new URL, no stale cache, and
 the old prefix stays intact as a rollback until the audit passes.
@@ -156,7 +156,7 @@ same bytes, no egress, and it keeps the wave cheap.
 
 To decide which stores actually changed, compare **this local build against the
 previous local build**. Do *not* compare a local build against the published
-store: `optimise` gives every output a new `content_hash`, so that pairing
+store: `optimize` gives every output a new `content_hash`, so that pairing
 reports "changed" for everything and is meaningless. This has already cost one
 near-miss 1.7 GB needless republish.
 
@@ -494,7 +494,7 @@ wrong number is most tempting: it collapses a tree into one node, and that node'
 **total** is what the compiler prints.
 
 Worked case. The pinned `h2afva_51tp` generation is the result of the 3.17
-rebuild (`flatten` → `lod --recipe stream` → `optimise`): one 4D leaf with a
+rebuild (`flatten` → `lod --recipe stream` → `optimize`): one 4D leaf with a
 twelve-step progressive ladder and 121,163,285 splats:
 
     node total, 51 timepoints   121,163,285   <- what ElementCapacityWarning prints
@@ -660,7 +660,7 @@ literal truth.
   **measured false**: the published store has **508 chunks** with a nominal
   **~1024 KB uncompressed chunk shape** (the `archive` profile's 1 MB target),
   against **50,316 chunks at 1.0–2.7 KB** in the upstream `.gsplats.zarr`
-  archives. `optimise --profile archive` does re-chunk
+  archives. `optimize --profile archive` does re-chunk
   grafted subtrees, so the archives' fragmentation never reaches a published tile.
   It does still hit whoever downloads those archives directly — a demo build pays
   38 MB in 16,852 pieces — which is an authoring-side fix worth making upstream.
@@ -690,18 +690,18 @@ literal truth.
 Removing substitutive levels is the right call for most single-object scenes, but
 it is **half an operation**. The recipe is three steps, in this order:
 
-    flatten  ->  lod --recipe stream  ->  optimise --profile archive
+    flatten  ->  lod --recipe stream  ->  optimize --profile archive
 
 The ordering cost is independently measured on the Drosophila 500-timepoint
 archive: requests per timepoint step fell from **173 to 2** after
-`optimise --profile archive`
+`optimize --profile archive`
 (`demo_gsplats_4d_drosophila_embryogenesis.py:163-165`).
 
 The reason is not inherited source chunking: `flatten` and `lod` rewrite every
 array at the 64 KB authoring target, discarding even an existing 1 MB layout.
-Running `optimise` before either command is therefore undone, and a timepoint
+Running `optimize` before either command is therefore undone, and a timepoint
 slice again spans many small chunks. **Additive-only and re-chunking are a
-package**, and `optimise` must run *last* so every rewritten array gets the 1 MB
+package**, and `optimize` must run *last* so every rewritten array gets the 1 MB
 layout.
 
 The `h2afva_51tp` rebuild exposed two further traps:
@@ -816,7 +816,7 @@ diagnostic is.
 
 Section 2's rule — hosted cost is **requests**, not bytes — is right, but "one
 request per node" is an *upper bound*, not a measurement. After
-`optimise --profile archive` (1 MB target) a big array spans many chunks while a
+`optimize --profile archive` (1 MB target) a big array spans many chunks while a
 small one spans exactly one, so cutting node count only cuts fetches in one of two
 regimes. The following counts come from the consolidated metadata at published
 prefix `2026-08-27b`; `arrays` excludes zero-shaped `array_ref` placeholders,
@@ -854,7 +854,7 @@ Two regimes, and the ratio tells you which one you are in:
   fetches 508 chunks from 60 arrays, while its first rung fetches 127 from 15;
   both have ratio 8.47, so halving its node count would barely move either.
 
-**The ratio is a property of a pipeline STAGE, not of a store.** `optimise` is
+**The ratio is a property of a pipeline STAGE, not of a store.** `optimize` is
 what moves these stores toward the node-bound regime. The same published roots
 record both pipeline stages in `chunk_layout`, so this comparison is reproducible
 from their `zarr.json` files without a separate local build:
@@ -867,20 +867,20 @@ from their `zarr.json` files without a separate local build:
 | `cosmicflows_laniakea_full` | 79 | 5004 | 63.34 | 224 | 2.84 |
 | `gsplats_2d_cmu1_pathology` | 60 | 7580 | 126.33 | 508 | 8.47 |
 
-`biodiversity_planetary_scale` therefore reads **19.27 before optimise against
+`biodiversity_planetary_scale` therefore reads **19.27 before optimize against
 1.73 after it** — same generation and structure, but a factor of 11 fewer chunks
-per physical array because optimise re-chunks to a 1 MB target. This is consistent
+per physical array because optimize re-chunks to a 1 MB target. This is consistent
 with 3.17's measurement in the other direction (173 requests as-built, 2 after
-optimise).
+optimize).
 
-So a node reduction's payoff is **contingent on the publish step**: optimisation
+So a node reduction's payoff is **contingent on the publish step**: optimization
 can move a small-array store into the node-bound regime, but it does not guarantee
 that outcome. Halving eager arrays is a direct total-load request win on a
 node-bound published artefact and close to meaningless on a byte-bound as-built
 one. The win belongs to the combination, not to the authoring change alone.
 
 Practical consequence: **before claiming a node reduction buys a faster load, check
-the chunks:arrays ratio of the artefact you will actually serve** — post-optimise,
+the chunks:arrays ratio of the artefact you will actually serve** — post-optimize,
 and of the generation you are publishing, not whichever one happens to be live. A
 store with many small nodes gains directly; a store with few large ones gains
 almost nothing and its lever is total bytes instead (3.17).
@@ -896,13 +896,13 @@ This was an ad hoc local full-data experiment on 2026-08-28, based on
 `demo_nuclear_pore_complex.py`; neither the probe nor its output was checked in.
 It is not the published `2026-08-27b` preview, which has 41,288 points in one
 unpartitioned node. The local experiment used 9,874,128 elements and a 32-part
-BSP, with both variants taken through `optimise --profile archive`:
+BSP, with both variants taken through `optimize --profile archive`:
 
     version        groups  arrays  chunks   first commit
     un-laddered        36     160     224    9,874,128 elements
     4 rungs/part      161     640     672    ~1,250,000 elements
 
-Post-optimise chunks:arrays is **1.40** un-laddered and **1.05** laddered, so both
+Post-optimize chunks:arrays is **1.40** un-laddered and **1.05** laddered, so both
 variants are node-bound and the 128 rung groups cost real fetches: **+448
 requests** to reach full detail, 3x the un-laddered total.
 
@@ -1007,7 +1007,7 @@ consults the pin (3.10).
 
 ### 3.21 Animated, un-laddered nodes need chunk-boundary-aware prefetch
 
-The 2026-09-02 wave re-chunked every store with `optimise --profile archive`.
+The 2026-09-02 wave re-chunked every store with `optimize --profile archive`.
 On `collision_animated` (a 4.66 M-vertex Lines node over 250 frames, no ladder)
 that made a 1 MB vertex chunk hold ~6 frames; every ~6 frames the playhead
 crossed into the next chunk of each of the four arrays and waited for a
@@ -1032,7 +1032,7 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   chunk. Un-laddered + played (animated lines/points): `hosting` (~1.5 frames per
   chunk) is the middle of the request/byte trade; `local` is 3,500 chunks
   against the Functions request cap. Not animated: smaller is a pure win.
-- `optimise` keeps each array's byte-based chunk planner, then adds a warn-only
+- `optimize` keeps each array's byte-based chunk planner, then adds a warn-only
   per-node check for the playback/cache policy it can verify. The check is gated
   on `viewer_config.animation` (`playing: true`), not on "has a hidden axis" — a
   keypress-navigated axis is the refine case. It warns when an un-laddered
@@ -1058,7 +1058,7 @@ Rules that fall out, alongside 3.17 and the #2377 residency finding:
   the writer default, not `archive`.)
 - Read `chunk_layout` BEFORE measuring chunk cost, and check it on EVERY store
   in a wave, not a sample: its absence is the only reliable sign that a scene
-  was never optimised, and stores built on another machine by another operator
+  was never optimized, and stores built on another machine by another operator
   are exactly the ones that slip through. A chunk-cost number without the
   layout it was measured on is not a number.
 - Resolve demo ids versus store names through §8.1 before using any operator

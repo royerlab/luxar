@@ -340,7 +340,7 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
             "1.93,0.40625,0.40625,1",
         ),
         (
-            "optimise",
+            "optimize",
             str(scaled),
             str(final),
             "--profile",

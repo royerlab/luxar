@@ -1172,7 +1172,7 @@ def test_a_rewrite_no_warm_cache_can_see_is_not_a_clean_run(
 ) -> None:
     """An unstampable digest is a result the caller must act on, not a warning.
 
-    A ``kind=partition`` ROOT is a Luxar node — ``optimise._is_luxar_store``
+    A ``kind=partition`` ROOT is a Luxar node — ``optimize._is_luxar_store``
     admits it via ``_LUXAR_NODE_KINDS`` — but carries neither the scene ``type``
     that selects the value-hashing branch nor a ``.gsplats.zarr``
     ``content_hash`` to re-stamp. So both ladders are rewritten and NOTHING moves
@@ -1519,7 +1519,7 @@ def test_a_failed_write_rolls_the_whole_store_back(
     failing one TORN — a screen-area threshold under ``selector="coverage"``, the
     thresholds and the selector disagreeing about their units, which nothing
     downstream can detect — and (c) a consolidated index describing neither.
-    ``optimise`` is all-or-nothing for exactly this reason; this pass writes in
+    ``optimize`` is all-or-nothing for exactly this reason; this pass writes in
     place and so has to unwind instead of staging.
     """
     before = _snapshot_tree(legacy_scene)

@@ -406,7 +406,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Package the finalized directory store and atomically publish it."""
         if self._archive_path is None or self._archive_artifact_path is None:
             return
-        from .optimise import _package
+        from .optimize import _package
 
         try:
             aprint(f"📦 Packaging scene archive at {self._archive_path}")

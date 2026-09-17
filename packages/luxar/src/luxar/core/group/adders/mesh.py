@@ -487,7 +487,7 @@ def _reject_additive_lod_compositions(
     and a per-tile ladder inside each BSP part, are both coherent things to want.
 
     Two messages, not one, because the two obstacles are different — the substitutive
-    one needs a ladder built per decimated level (whose face count and reveal centre
+    one needs a ladder built per decimated level (whose face count and reveal center
     differ from the source's), the partition one needs a ladder built per part (whose
     faces are already re-indexed once).
     """
@@ -870,7 +870,7 @@ def _maybe_add_mesh_additive_lod(
         method=additive_spec["method"],
         n_lods=additive_spec["n_lods"],
         counts=additive_spec["counts"],
-        reveal_centre=additive_spec.get("reveal_centre"),
+        reveal_center=additive_spec.get("reveal_center"),
         # Shells must not grow along a stacked time/channel column, which has
         # positional extent exactly like a spatial axis and so cannot be told apart
         # by the scorer's own extent rule. The scene can: a stacked axis is a

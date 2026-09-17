@@ -494,7 +494,7 @@ def add_lines_impl(
                     colors=colors_for_energy,
                     scalars=scalars_for_energy,
                     salience_kind=additive_spec.get("salience_kind", "size"),
-                    reveal_centre=additive_spec.get("reveal_centre"),
+                    reveal_center=additive_spec.get("reveal_center"),
                     spatial_dims=resolve_reveal_spatial_dims(
                         additive_spec, scene, vert_arr.shape[1]
                     ),
@@ -1161,7 +1161,7 @@ def add_lines_substitutive_lod_wrapper_impl(
     from ..lod.reveal import is_reveal_additive_method
 
     reveal_note = (
-        " Coarse levels use self_energy ordering, so reveal_centre is not applied."
+        " Coarse levels use self_energy ordering, so reveal_center is not applied."
         if coarse_additive is not None
         and is_reveal_additive_method(str(coarse_additive.get("method")))
         else ""
@@ -1180,26 +1180,26 @@ def add_lines_substitutive_lod_wrapper_impl(
         ),
     )
     # Same reason as the channel check above: the finest child is written LAST, so
-    # a reveal_centre that does not match the DERIVED shell axes would otherwise
+    # a reveal_center that does not match the DERIVED shell axes would otherwise
     # raise once every coarse level is already on disk. The scorer ranks whole
     # polylines, so the array whose extent decides the shell axes is the per-
     # polyline bbox CENTRES, not the vertices.
     #
-    # Guarded on `wants_reveal_centre_preflight` rather than on
+    # Guarded on `wants_reveal_center_preflight` rather than on
     # `finest_additive is not None`, because deriving those representatives is
-    # NOT free: identify_polylines + polyline_bbox_centres loop in Python over
+    # NOT free: identify_polylines + polyline_bbox_centers loop in Python over
     # every polyline (~2.5 s for a 400k-vertex `segments` node), and the composed
     # ladder defaults to ON — so the unguarded form paid that on every
     # `add_lines(substitutive_lod=…)` call, reveal or not.
-    from ..lod.reveal import preflight_reveal_centre, wants_reveal_centre_preflight
+    from ..lod.reveal import preflight_reveal_center, wants_reveal_center_preflight
 
-    if wants_reveal_centre_preflight(finest_additive):
-        from ..lod.lines import identify_polylines, polyline_bbox_centres
+    if wants_reveal_center_preflight(finest_additive):
+        from ..lod.lines import identify_polylines, polyline_bbox_centers
 
-        preflight_reveal_centre(
+        preflight_reveal_center(
             finest_additive,
             group._find_scene(),
-            polyline_bbox_centres(
+            polyline_bbox_centers(
                 vert_arr,
                 identify_polylines(int(vert_arr.shape[0]), line_type, indices),
             ),

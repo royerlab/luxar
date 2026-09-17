@@ -46,7 +46,7 @@ from .group import (
     resolve_additive_axis,
 )
 from .poisson_disk import poisson_disk_order
-from .reveal import radial_element_score, resolve_reveal_centre
+from .reveal import radial_element_score, resolve_reveal_center
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
@@ -303,7 +303,7 @@ def _validate_indexed_ladder_edges(
 # ─────────────────────────────────────────────────────────────────────
 
 
-def polyline_bbox_centres(
+def polyline_bbox_centers(
     vertices: NDArray,
     polylines: List[NDArray[np.intp]],
     ncols: Optional[int] = None,
@@ -332,7 +332,7 @@ def compute_additive_order_lines(
     method: LinesMethodName = DEFAULT_METHOD,
     n_lods: int = DEFAULT_N_LODS,
     seed: Optional[int] = None,
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> Tuple[NDArray[np.intp], List[int]]:
     """Compute an additive ordering permutation over **polylines** (not vertices).
@@ -346,7 +346,7 @@ def compute_additive_order_lines(
             ``poisson-disk`` / ``radial``.
         n_lods: Consulted only by ``spatial-uniform`` / ``poisson-disk``.
         seed: For ``random``.
-        reveal_centre: ``radial`` only — centre of the shells, defaulting to the
+        reveal_center: ``radial`` only — centre of the shells, defaulting to the
             spatial bounding-box centre of ``vertices`` (the node's own middle —
             NOT of the polyline representatives, whose bounding box weighs a
             long polyline and a short one equally).
@@ -395,7 +395,7 @@ def compute_additive_order_lines(
                 f"{method} ordering needs vertices with d >= 3; "
                 f"got shape {vertices.shape}"
             )
-        reps = polyline_bbox_centres(vertices, polylines, ncols=3)
+        reps = polyline_bbox_centers(vertices, polylines, ncols=3)
         if method == "poisson-disk":
             return poisson_disk_order(reps, n_lods, seed=seed or 0)
         return stratified_grid_order(reps, n_lods)
@@ -416,12 +416,12 @@ def compute_additive_order_lines(
         # The default centre comes from `vertices`, the NODE's own bbox — not
         # from the bbox of `reps`, in which a long polyline and a short one weigh
         # the same and pull the origin off the geometry's middle.
-        reps = polyline_bbox_centres(vertices, polylines)
+        reps = polyline_bbox_centers(vertices, polylines)
         return (
             np.argsort(
                 radial_element_score(
                     reps,
-                    resolve_reveal_centre(reveal_centre, vertices, reps, spatial_dims),
+                    resolve_reveal_center(reveal_center, vertices, reps, spatial_dims),
                     spatial_dims,
                 ),
                 kind="stable",
@@ -560,7 +560,7 @@ def make_additive_lod_lines(
     colors: Optional[NDArray] = None,
     scalars: Optional[NDArray] = None,
     salience_kind: Literal["size", "energy"] = "size",
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> List[List[NDArray[np.intp]]]:
     """Compute per-LOD-level polyline groupings for Lines.
@@ -585,7 +585,7 @@ def make_additive_lod_lines(
           count (along the additive order) reaches it, so cuts stay on
           whole-polyline boundaries while honouring the vertex budget even when
           polyline lengths are highly skewed.
-        reveal_centre: For ``method='radial'`` — centre of the concentric
+        reveal_center: For ``method='radial'`` — centre of the concentric
             shells, defaulting to the node's own vertex bounding-box centre.
         spatial_dims: For ``method='radial'`` — the vertex columns the shell
             distance is measured over, defaulting to the columns with non-zero
@@ -637,7 +637,7 @@ def make_additive_lod_lines(
             method=method,
             n_lods=n_lods,
             seed=seed,
-            reveal_centre=reveal_centre,
+            reveal_center=reveal_center,
             spatial_dims=spatial_dims,
         )
 

@@ -28,7 +28,7 @@ from luxar.environment import (
     unpack,
 )
 from luxar.io._compiler.finalize.hashing import compute_content_hashes
-from luxar.io.optimise import _restamp_content_hash, optimise_store
+from luxar.io.optimize import _restamp_content_hash, optimize_store
 from luxar.typing_utils.constants import ENVIRONMENT_GROUP, RESERVED_ROOT_GROUPS
 
 RES = 16
@@ -224,12 +224,12 @@ def test_compiler_refuses_a_user_node_named_environment(tmp_path) -> None:
             scene.add_group(ENVIRONMENT_GROUP)
 
 
-def test_optimise_copies_the_environment_verbatim(tmp_path) -> None:
+def test_optimize_copies_the_environment_verbatim(tmp_path) -> None:
     store = tmp_path / "scene.luxar.zarr"
     scene_hash = _scene(store)
     report = attach_environment(store, pack(_header(scene_hash), _faces()))
     out = tmp_path / "out.luxar.zarr"
-    plan = optimise_store(store, out)
+    plan = optimize_store(store, out)
     env_plans = [p for p in plan.arrays if p.path.startswith(f"{ENVIRONMENT_GROUP}/")]
     assert len(env_plans) == 1
     assert env_plans[0].skip_reason == "baked environment map"

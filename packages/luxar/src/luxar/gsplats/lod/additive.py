@@ -577,7 +577,7 @@ def _radial_score(
         origin = np.asarray(centre, dtype=np.float64)
         if origin.shape != (len(dims),):
             raise ValueError(
-                f"reveal_centre must have one coordinate per spatial axis "
+                f"reveal_center must have one coordinate per spatial axis "
                 f"{tuple(int(d) for d in dims)}; got shape {origin.shape}"
             )
         if not bool(np.all(np.isfinite(origin))):
@@ -585,7 +585,7 @@ def _radial_score(
             # non-finite, they all compare equal under a stable argsort, and the
             # ladder silently degrades to input order instead of revealing.
             raise ValueError(
-                "reveal_centre must be finite (a NaN/inf coordinate makes every "
+                "reveal_center must be finite (a NaN/inf coordinate makes every "
                 "distance non-finite, degrading the ladder to input order); got "
                 f"{[float(c) for c in origin]}"
             )
@@ -869,7 +869,7 @@ def compute_additive_order(
     truncation_sigmas: float | None = None,
     max_n_dense: int = 2_000,
     seed: int | None = None,
-    reveal_centre: Sequence[float] | None = None,
+    reveal_center: Sequence[float] | None = None,
     spatial_dims: Sequence[int] | None = None,
     slice_dims: Sequence[int] | None = None,
 ) -> np.ndarray:
@@ -897,7 +897,7 @@ def compute_additive_order(
         use lazy-greedy.  Default 2000 (per supp doc §4.3).
     seed : int, optional
         Random seed for ``method='random'``.
-    reveal_centre : sequence of float, optional
+    reveal_center : sequence of float, optional
         Centre of the shells for ``method='radial'``. Defaults to the spatial
         bounding-box centre — NOT the scene origin, so a dataset far from the
         origin still grows from its own middle. One coordinate per spatial axis.
@@ -959,7 +959,7 @@ def compute_additive_order(
         # concentric shells. Every other branch sorts `-score` because its score
         # is a contribution to maximize.
         order = np.argsort(
-            _radial_score(data, centre=reveal_centre, spatial_dims=spatial_dims),
+            _radial_score(data, centre=reveal_center, spatial_dims=spatial_dims),
             kind="stable",
         ).astype(np.int64)
     elif method == "random":
@@ -1343,7 +1343,7 @@ def _ladder_order(
     sigmas: float,
     max_n_dense: int,
     seed: int | None,
-    reveal_centre: Sequence[float] | None,
+    reveal_center: Sequence[float] | None,
     spatial_dims: Sequence[int] | None,
     slice_dims: Sequence[int] | None,
 ) -> np.ndarray:
@@ -1370,7 +1370,7 @@ def _ladder_order(
         truncation_sigmas=sigmas,
         max_n_dense=max_n_dense,
         seed=seed,
-        reveal_centre=reveal_centre,
+        reveal_center=reveal_center,
         spatial_dims=spatial_dims,
         slice_dims=slice_dims,
     )
@@ -1386,7 +1386,7 @@ def make_additive_lod(
     max_n_dense: int = 2_000,
     seed: int | None = None,
     substitutive_level: int | None = None,
-    reveal_centre: Sequence[float] | None = None,
+    reveal_center: Sequence[float] | None = None,
     spatial_dims: Sequence[int] | None = None,
     slice_dims: Sequence[int] | None = None,
 ) -> GSplatData:
@@ -1447,7 +1447,7 @@ def make_additive_lod(
     substitutive_level : int, optional
         Index of the substitutive level to build the ladder for. Defaults
         to ``data.default_substitutive``.
-    reveal_centre : sequence of float, optional
+    reveal_center : sequence of float, optional
         ``method='radial'`` only — centre of the concentric shells. Defaults to
         the spatial bounding-box centre (NOT the scene origin, so a dataset far
         from the origin still reveals from its own middle).
@@ -1575,7 +1575,7 @@ def make_additive_lod(
             sigmas=sigmas,
             max_n_dense=max_n_dense,
             seed=seed,
-            reveal_centre=reveal_centre,
+            reveal_center=reveal_center,
             spatial_dims=spatial_dims,
             slice_dims=slice_dims,
         )

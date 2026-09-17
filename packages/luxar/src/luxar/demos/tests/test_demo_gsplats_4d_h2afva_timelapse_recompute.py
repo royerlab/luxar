@@ -136,7 +136,7 @@ class TestTheRecipeConstantsAgreeWithEachOther:
 
 
 class TestTheRecomputeCommandsAreRealCliPaths:
-    def test_the_recipe_invokes_top_level_optimise(self, monkeypatch, tmp_path):
+    def test_the_recipe_invokes_top_level_optimize(self, monkeypatch, tmp_path):
         parent = tmp_path / "parent.gsplats.zarr"
         parent.mkdir()
         calls = []
@@ -167,7 +167,7 @@ class TestTheRecomputeCommandsAreRealCliPaths:
             ("gsplat", "flatten"),
             ("gsplat", "lod"),
         ]
-        assert calls[2][0] == "optimise"
+        assert calls[2][0] == "optimize"
 
 
 class TestTheRebuiltArchiveShapeIsPinned:

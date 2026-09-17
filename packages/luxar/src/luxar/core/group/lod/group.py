@@ -1296,14 +1296,14 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
         return None
     if spec is True:
         # Same KEY SET as the dict branch below — a consumer reading
-        # spec["reveal_centre"] must not depend on which branch produced it.
+        # spec["reveal_center"] must not depend on which branch produced it.
         return {
             "method": DEFAULT_ADDITIVE_METHOD,
             "n_lods": DEFAULT_ADDITIVE_N_LODS,
             "counts": None,
             "seed": None,
             "salience_kind": "size",
-            "reveal_centre": None,
+            "reveal_center": None,
             "spatial_dims": None,
         }
     if not isinstance(spec, dict):
@@ -1356,13 +1356,13 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
             f"salience_kind must be 'size' or 'energy'; got {salience_kind!r}"
         )
 
-    reveal_centre, spatial_dims = pop_reveal_knobs(kwargs, method)
+    reveal_center, spatial_dims = pop_reveal_knobs(kwargs, method)
 
     if kwargs:
         raise ValueError(
             f"additive_lod for {geometry}: unrecognized keys "
             f"{sorted(kwargs)}. Valid keys: method, n_lods, counts, "
-            f"breakpoints, seed, salience_kind, reveal_centre, spatial_dims, "
+            f"breakpoints, seed, salience_kind, reveal_center, spatial_dims, "
             f"recompute."
         )
 
@@ -1372,7 +1372,7 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
         "counts": counts,
         "seed": seed,
         "salience_kind": salience_kind,
-        "reveal_centre": reveal_centre,
+        "reveal_center": reveal_center,
         "spatial_dims": spatial_dims,
     }
 

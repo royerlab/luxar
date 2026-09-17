@@ -154,29 +154,29 @@ def register_info_command(app: typer.Typer) -> None:
 
 #: Mean chunk payload below which a full load is dominated by per-request
 #: round trips on an HTTP/1.1 host (six connections, no multiplexing). Distinct
-#: from ``MIN_CHUNK_BYTES`` (the optimiser's re-chunk floor): a 20 KB chunk is
+#: from ``MIN_CHUNK_BYTES`` (the optimizer's re-chunk floor): a 20 KB chunk is
 #: above the floor and still costs a 30 ms RTT per 20 KB on such a host.
 HTTP1_RTT_BOUND_CHUNK_BYTES = 32 * 1024
 
 
 def _print_chunk_layout(root: zarr.Group) -> None:
-    """Report the store's STREAMING shape — the ``luxar optimise`` diagnostic.
+    """Report the store's STREAMING shape — the ``luxar optimize`` diagnostic.
 
-    Computed off the same helper the optimiser plans from, so a badly chunked
+    Computed off the same helper the optimizer plans from, so a badly chunked
     store is visible from ``luxar info --stats`` rather than only after hosting
     it and counting round trips. The projected request count is the number of
     chunk files a full load fetches, which is what dominates a cold load over
     object storage (measured: 245 s / 9,390 requests for 38.6 MB).
     """
-    from ..io.optimise import plan_optimisation, summarise_plan
+    from ..io.optimize import plan_optimization, summarize_plan
     from ..typing_utils.constants import MIN_CHUNK_BYTES, TARGET_CHUNK_BYTES
 
-    # ONE walk. The summary and the "try `luxar optimise`" hint both need the
+    # ONE walk. The summary and the "try `luxar optimize`" hint both need the
     # same per-array metadata, and opening every array twice on top of the walk
     # `get_zarr_info(detailed=True)` already did is three passes over a store
     # that, in the corpus this diagnostic exists for, holds 606,349 files.
-    plan = plan_optimisation(root)
-    summary = summarise_plan(plan)
+    plan = plan_optimization(root)
+    summary = summarize_plan(plan)
     if summary.n_arrays == 0:
         return
     aprint("\n🧩 Chunk Layout:")
@@ -200,7 +200,7 @@ def _print_chunk_layout(root: zarr.Group) -> None:
             f"  ⚠️  Chunks under {HTTP1_RTT_BOUND_CHUNK_BYTES // 1024} KB are round-trip "
             "bound on HTTP/1.1 hosts (`luxar serve` and plain static servers): "
             "measured 10.6 s vs 4.0 s over HTTP/2 for the same 1.5 M points at "
-            "25 Mbps / 30 ms. Re-chunk with `luxar optimise --profile hosting`, "
+            "25 Mbps / 30 ms. Re-chunk with `luxar optimize --profile hosting`, "
             "or serve behind an HTTP/2 front (CDN, nginx, Caddy)."
         )
     if summary.mean_chunk_bytes >= MIN_CHUNK_BYTES:
@@ -210,7 +210,7 @@ def _print_chunk_layout(root: zarr.Group) -> None:
     # recommending the tool there is advice that does nothing.
     if plan.n_rechunked:
         aprint(
-            f"  → `luxar optimise` would cut this to "
+            f"  → `luxar optimize` would cut this to "
             f"{plan.target_n_chunks:,} chunks; try --dry-run."
         )
 
