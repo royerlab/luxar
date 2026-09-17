@@ -20,6 +20,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import type { VideoMatteCompositor } from '../../../ui/video-matte';
 import { OverlayManager, FONT_PRESETS } from '../../../ui/overlay-manager';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../../../data/loaders';
 import { log, Modules } from '../../../utils/log';
@@ -346,16 +348,19 @@ describe('OverlayManager.loadOverlays', () => {
     // the compositor exists only while the clip is visible. Each one owns a
     // WebGL context, browsers cap live contexts and evict the OLDEST (the
     // scene's own renderer), so a nineteen-stop tour cannot hold one per stop.
-    const makeMatte = (): {
-      canvas: HTMLCanvasElement;
-      start: ReturnType<typeof vi.fn>;
-      stop: ReturnType<typeof vi.fn>;
-      dispose: ReturnType<typeof vi.fn>;
-    } => ({
+    // Typed as the real interface with Mock-typed members: `vi.fn()` alone
+    // widens to a callable-or-constructable mock, which does not satisfy
+    // `() => void` and fails `tsc` even though it runs fine.
+    type MockedMatte = VideoMatteCompositor & {
+      start: Mock<() => void>;
+      stop: Mock<() => void>;
+      dispose: Mock<() => void>;
+    };
+    const makeMatte = (): MockedMatte => ({
       canvas: document.createElement('canvas'),
-      start: vi.fn(),
-      stop: vi.fn(),
-      dispose: vi.fn(),
+      start: vi.fn<() => void>(),
+      stop: vi.fn<() => void>(),
+      dispose: vi.fn<() => void>(),
     });
     const built: ReturnType<typeof makeMatte>[] = [];
     let firstFrame: (() => void) | undefined;

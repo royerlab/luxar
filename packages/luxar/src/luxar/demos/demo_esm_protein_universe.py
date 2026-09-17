@@ -1557,11 +1557,11 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "bridges, and in many bacteria one enzyme does both jobs.",
             # Only six clusters in the whole map carry "nisin" in their name.
             "The lines join eight places, and they are that assembly line "
-            "taken apart. The biggest holds the cyclase that closes the rings. "
-            "Three more hold the dehydratase that prepares them, its two "
-            "halves filed separately. Two hold the immunity proteins a "
-            "producer needs so its own antibiotic does not kill it. The last "
-            "holds a peptide itself — and barely: the mature peptides are too "
+            "taken apart. Two hold the cyclase that closes the rings, one of "
+            "them the largest place of all. Three more hold the dehydratase "
+            "that prepares them, its two halves filed separately. Two hold "
+            "the immunity proteins a producer needs so its own antibiotic "
+            "does not kill it. The last holds a peptide itself — and barely: the mature peptides are too "
             "short and too variable to cluster, and the whole map holds just "
             "six clusters carrying nisin's own name. These genes sit side by "
             "side on one stretch of chromosome and switch on together. The "
