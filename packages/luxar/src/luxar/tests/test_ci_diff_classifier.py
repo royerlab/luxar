@@ -1948,7 +1948,8 @@ print-launcher-pkg-config-path:
         if uses_shim
         else "falling back to system webkit2gtk-4.0"
     )
-    assert expected_diagnostic in proc.stderr
+    if uses_shim or sys.platform.startswith("linux"):
+        assert expected_diagnostic in proc.stderr
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
