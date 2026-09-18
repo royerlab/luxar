@@ -100,6 +100,12 @@ MIN_NODE_MINOR := 22
 # ("packages field missing or empty").
 MIN_PNPM_MAJOR := 10
 MIN_PNPM_MINOR := 6
+# Exact Go pin used by the Linux bootstrap and enforced before launcher builds.
+# Keep its major.minor in sync with the go-launcher setup-go version in
+# .github/workflows/ci.yml and the version table in
+# docs/guides/developer/BUILD_SYSTEM_SPEC.md;
+# test_go_version_declarations.py guards the relation.
+GO_VERSION ?= 1.27.1
 # Exact wasm-pack pin — `install-rust` installs this version and replaces any
 # other one it finds, so a local toolchain matches CI. Keep in sync with the
 # `jetli/wasm-pack-action` `version:` inputs in .github/workflows/ci.yml,
@@ -136,6 +142,32 @@ define check_node_version
 		fi; \
 	else \
 		echo "❌ Node.js not found"; \
+		exit 1; \
+	fi
+endef
+
+# Helper function to require the pinned Go version or newer
+define check_go_version
+	GO_INSTALLED_BIN=$$(command -v $(1) 2>/dev/null || printf '%s' "$(1)"); \
+	GO_INSTALLED_VERSION=$$($(1) version | awk '{print $$3}' | sed 's/^go//'); \
+	GO_INSTALLED_MAJOR=$$(echo "$$GO_INSTALLED_VERSION" | cut -d. -f1); \
+	GO_INSTALLED_MINOR=$$(echo "$$GO_INSTALLED_VERSION" | cut -d. -f2); \
+	GO_INSTALLED_PATCH=$$(echo "$$GO_INSTALLED_VERSION" | cut -d. -f3); \
+	GO_REQUIRED_MAJOR=$$(echo "$(GO_VERSION)" | cut -d. -f1); \
+	GO_REQUIRED_MINOR=$$(echo "$(GO_VERSION)" | cut -d. -f2); \
+	GO_REQUIRED_PATCH=$$(echo "$(GO_VERSION)" | cut -d. -f3); \
+	if [ "$$GO_INSTALLED_MAJOR" -lt "$$GO_REQUIRED_MAJOR" ] || \
+	   { [ "$$GO_INSTALLED_MAJOR" -eq "$$GO_REQUIRED_MAJOR" ] && [ "$$GO_INSTALLED_MINOR" -lt "$$GO_REQUIRED_MINOR" ]; } || \
+	   { [ "$$GO_INSTALLED_MAJOR" -eq "$$GO_REQUIRED_MAJOR" ] && [ "$$GO_INSTALLED_MINOR" -eq "$$GO_REQUIRED_MINOR" ] && [ "$$GO_INSTALLED_PATCH" -lt "$$GO_REQUIRED_PATCH" ]; }; then \
+		echo "❌ Installed Go $$GO_INSTALLED_VERSION is older than the pinned $(GO_VERSION)."; \
+		echo "   Go binary: $$GO_INSTALLED_BIN"; \
+		if [ "$(OS)" = "macos" ]; then \
+			echo "   Upgrade Homebrew Go: brew upgrade go"; \
+		elif [ "$$GO_INSTALLED_BIN" = "$$HOME/.local/go/bin/go" ]; then \
+			echo "   Reinstall the local toolchain: rm -rf ~/.local/go && make install-go"; \
+		else \
+			echo "   Upgrade or remove that Go binary from PATH, then run 'make install-go'."; \
+		fi; \
 		exit 1; \
 	fi
 endef
@@ -1990,11 +2022,15 @@ install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball o
 	@echo "🐹 Setting up Go toolchain..."; \
 	echo ""; \
 	if command -v go >/dev/null 2>&1; then \
-		echo "✅ Go is already installed: $$(go version)"; \
+		GO_BIN=go; \
+		$(call check_go_version,$$GO_BIN); \
+		echo "✅ Go is already installed: $$($$GO_BIN version)"; \
 		exit 0; \
 	fi; \
 	if [ -x "$$HOME/.local/go/bin/go" ]; then \
-		echo "✅ Go is already installed: $$($$HOME/.local/go/bin/go version) (in ~/.local/go)"; \
+		GO_BIN="$$HOME/.local/go/bin/go"; \
+		$(call check_go_version,$$GO_BIN); \
+		echo "✅ Go is already installed: $$($$GO_BIN version) (in ~/.local/go)"; \
 		echo "⚠️  Add ~/.local/go/bin to PATH: export PATH=\"$$HOME/.local/go/bin:$$PATH\""; \
 		exit 0; \
 	fi; \
@@ -2007,15 +2043,14 @@ install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball o
 		brew install go; \
 		echo "✅ Go installed: $$(go version)"; \
 	elif [ "$(OS)" = "linux" ]; then \
-		GO_VERSION=$${GO_VERSION:-1.22.10}; \
 		ARCH=$$(uname -m); \
 		case "$$ARCH" in \
 			x86_64|amd64) GOARCH=amd64 ;; \
 			aarch64|arm64) GOARCH=arm64 ;; \
 			*) echo "❌ Unsupported Linux architecture: $$ARCH"; exit 1 ;; \
 		esac; \
-		TARBALL="go$${GO_VERSION}.linux-$${GOARCH}.tar.gz"; \
-		echo "📥 Installing Go $$GO_VERSION for linux-$$GOARCH (no sudo, into ~/.local/go)..."; \
+		TARBALL="go$(GO_VERSION).linux-$${GOARCH}.tar.gz"; \
+		echo "📥 Installing Go $(GO_VERSION) for linux-$$GOARCH (no sudo, into ~/.local/go)..."; \
 		mkdir -p "$$HOME/.local"; \
 		rm -rf "$$HOME/.local/go"; \
 		TMPDIR_GO=$$(mktemp -d); \
@@ -2055,6 +2090,7 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 		echo "❌ Go not found. Run 'make install-go' first."; \
 		exit 1; \
 	fi; \
+	$(call check_go_version,$$GO_BIN); \
 	echo "🐹 Building native launcher with $$GO_BIN ($$($$GO_BIN version | sed 's/^go version //'))"; \
 	mkdir -p $(LAUNCHER_OUT_DIR); \
 	OUT_ABS="$(CURDIR)/$(LAUNCHER_OUT_DIR)"; \
