@@ -1891,8 +1891,15 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "Each one works inside a four-subunit channel built around Orco, a "
             "partner so conserved that it is recognisably the same protein in "
             "flies, moths, beetles and aphids, while the receptors beside it "
-            "vary enormously. In the one complex anyone has solved, three Orco "
-            "subunits surround a single receptor.",
+            # Re-checked 2026-09-17: the 1 OR : 3 Orco asymmetric tetramer is
+            # now shown in SEVERAL complexes -- Aedes and Anopheles ORs on a
+            # fig-wasp Orco scaffold (Zhao et al., Science 385, adn6384, 2024)
+            # and the pea-aphid ApOR5-Orco of this story's own turntable
+            # (8Z9Z). An earlier draft said "the one complex anyone has
+            # solved", which was true when written and is not now.
+            "vary enormously. In every complex solved so far — mosquito, aphid "
+            "and more — three Orco subunits surround a single receptor, and "
+            "only that one receptor binds the odour.",
             "A fruit fly manages with about sixty odorant receptors where we "
             "have four hundred. Mosquitoes use theirs to find people: knock out "
             "Orco and a malaria mosquito largely stops being drawn to human "
@@ -2051,13 +2058,20 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "matches.",
             # Altae-Tran, Shmakov, Makarova, Wolf, Kannan, Zhang & Koonin,
             # PNAS 120:e2308224120 (2023): "TnpB appears to be the
-            # evolutionary ancestor of Cas12", and type V effectors evolved
-            # from it "on about 50 independent occasions". Cas12 is therefore
-            # polyphyletic, which is why this says stock-and-recruitment
-            # rather than "TnpB evolved into Cas12".
+            # evolutionary ancestor of Cas12". Cas12 is polyphyletic, which is
+            # why this says stock-and-recruitment rather than "TnpB evolved
+            # into Cas12".
+            #
+            # NO NUMBER HERE ON PURPOSE. An earlier draft said "about 50
+            # independent occasions", attributed to this paper's body.
+            # Re-checked 2026-09-17 against what is reachable without a
+            # subscription: the abstract says Cas12 "evolved from TnpB on
+            # numerous, independent occasions" and gives no count, and the
+            # count could not be confirmed. The panel now uses the abstract's
+            # own word. Do not restore a figure without reading the body.
             "Enzymes like it are the ancestral stock the CRISPR Cas12 editors "
             "arose from — and not once: the same jumping-gene protein was "
-            "recruited into CRISPR systems on something like fifty separate "
+            "recruited into CRISPR systems on numerous separate "
             "occasions.",
             # Saito et al., Nature 620:660 (2023); Jiang et al., Science
             # Advances 9:eadk0171 (2023), which found Fanzor2 enriched in
@@ -2116,7 +2130,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "enzyme, a third the size of Cas9, that jumping genes carry "
             "around with them: hand it a short piece of RNA and it cuts DNA "
             "wherever that template matches. Enzymes like it are the stock the "
-            "CRISPR editors arose from, recruited some fifty separate times. "
+            "CRISPR editors arose from, recruited many separate times. "
             "Their relatives in cells with nuclei turn up in fungi, algae, "
             "amoebae, clams, and in giant viruses. Six hundred clusters are "
             "lit here, nearly all bacterial, the eukaryotic Fanzors just "
@@ -2173,10 +2187,19 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "works if it reaches the brain. Gut bacteria carrying tyrosine "
             "decarboxylase convert it to dopamine on the way — in the gut, "
             "where it is no longer any use.",
+            # Re-checked 2026-09-17. What the literature SHOWS is qualitative:
+            # carbidopa "did not affect gut bacterial l-dopa decarboxylation"
+            # in complex human gut communities (Maini Rekdal et al., Science
+            # 364:eaau6323, 2019), because the human-AADC inhibitors are
+            # substrate analogues that do not inhibit bacterial TyrDC (van
+            # Kessel et al., Nat. Commun. 10:310, 2019). An earlier draft
+            # added "hundreds to thousands of times weaker", a potency ratio
+            # with no citation here and none found; removed rather than left
+            # standing on a card.
             "Patients are given a second drug, carbidopa, to block the human "
-            "version of that reaction. It barely touches the bacterial one — "
-            "hundreds to thousands of times weaker, and useless at any dose "
-            "that reaches the gut — so the bacteria go on eating theirs.",
+            "version of that reaction. It does not block the bacterial one — "
+            "in human gut communities it leaves the bacterial conversion "
+            "untouched — so the bacteria go on eating theirs.",
             # Audit numbers (2026-09-16): the scatter is the finding.
             "Now look at what this map does with the enzyme. Fifty-two "
             "clusters out of 7.7 million are named for it, and they never "
@@ -2205,7 +2228,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "drug. Levodopa only works if it reaches the brain, and gut "
             "bacteria carrying this enzyme convert it to dopamine on the way, "
             "in the gut, where it is wasted. Patients take a second drug to "
-            "block the human version of that reaction, but it barely touches "
+            "block the human version of that reaction, but it does not block "
             "the bacterial one. And look what the map does with it: fifty-two "
             "clusters out of seven point seven million, never a family of "
             "their own, sitting in about a dozen specks inside a fold shared "
