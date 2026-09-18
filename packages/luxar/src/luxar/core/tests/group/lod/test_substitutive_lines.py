@@ -14,7 +14,10 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
-from luxar.core.group.adders.lines import _selected_line_topology
+from luxar.core.group.adders.lines import (
+    _selected_line_topology,
+    _subsampled_polyline_order,
+)
 from luxar.core.group.lod.group import PARTITION_FINEST_AREA, WHOLE_OBJECT_FINEST_ANCHOR
 from luxar.core.group.lod.lines import (
     identify_polylines,
@@ -1534,6 +1537,52 @@ class TestCoarsenDimsLines:
 
 
 class TestSameTypeSubstitutiveLines:
+    def test_indexed_order_materializes_edges_once_across_slices(self) -> None:
+        class CountingArray:
+            def __init__(self, value: np.ndarray) -> None:
+                self.value = value
+                self.calls = 0
+
+            def __array__(self, dtype=None, copy=None):
+                self.calls += 1
+                return np.asarray(self.value, dtype=dtype)
+
+        vertices = np.array(
+            [
+                [0, 0, 0],
+                [4, 0, 0],
+                [0, 1, 0],
+                [3, 1, 0],
+                [0, 2, 0],
+                [2, 2, 0],
+                [0, 3, 0],
+                [1, 3, 0],
+                [0, 4, 0],
+                [5, 4, 0],
+                [0, 5, 0],
+                [6, 5, 0],
+            ],
+            dtype=np.float32,
+        )
+        polylines = [
+            np.array([start, start + 1], dtype=np.intp)
+            for start in range(0, vertices.shape[0], 2)
+        ]
+        indices = CountingArray(
+            np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], dtype=np.uint32)
+        )
+        order = _subsampled_polyline_order(
+            vertices,
+            polylines,
+            np.ones(vertices.shape[0], dtype=np.float32),
+            np.array([0, 0, 1, 1, 2, 2], dtype=np.intp),
+            0,
+            indices,
+        )
+
+        assert indices.calls == 1
+        np.testing.assert_array_equal(np.sort(order), np.arange(len(polylines)))
+
     @staticmethod
     def _build_segments(tmp_path, *, blending_mode="additive", dimensions=None):
         out = tmp_path / "same-type-lines.luxar.zarr"

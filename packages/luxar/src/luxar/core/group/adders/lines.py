@@ -1110,16 +1110,21 @@ def _subsampled_polyline_order(
     within_slice_rank = np.empty(slice_ids.size, dtype=np.intp)
     grouped = np.argsort(slice_ids, kind="stable").astype(np.intp, copy=False)
     boundaries = np.flatnonzero(np.diff(slice_ids[grouped])) + 1
-    for rows in np.split(grouped, boundaries):
-        shuffled = rows[rng.permutation(rows.size)]
-        local_order, _ = compute_additive_order_lines(
-            vertices,
-            [polylines[int(index)] for index in shuffled],
-            widths,
-            method="salience",
-            indices=indices,
-        )
-        ordered = shuffled[local_order]
+    slice_groups = np.split(grouped, boundaries)
+    shuffled = np.concatenate(
+        [rows[rng.permutation(rows.size)] for rows in slice_groups]
+    ).astype(np.intp, copy=False)
+    salience_order, _ = compute_additive_order_lines(
+        vertices,
+        [polylines[int(index)] for index in shuffled],
+        widths,
+        method="salience",
+        indices=indices,
+    )
+    salience_rank = np.empty(slice_ids.size, dtype=np.intp)
+    salience_rank[shuffled[salience_order]] = np.arange(slice_ids.size, dtype=np.intp)
+    for rows in slice_groups:
+        ordered = rows[np.argsort(salience_rank[rows], kind="stable")]
         within_slice_rank[ordered] = np.arange(rows.size, dtype=np.intp)
     return np.lexsort((slice_ids, within_slice_rank)).astype(np.intp, copy=False)
 
