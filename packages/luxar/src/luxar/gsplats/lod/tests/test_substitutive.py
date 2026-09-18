@@ -27,7 +27,7 @@ from luxar.gsplats.lod import make_substitutive_lod
 from luxar.gsplats.lod._kernels import bin_squared_norm_torch
 from luxar.gsplats.lod._substitutive.greedy import _merge_two_clusters
 from luxar.gsplats.lod._substitutive.warm_start import _morton_partition
-from luxar.gsplats.lod.substitutive import resolved_merge_coarsen_dims
+from luxar.gsplats.lod.substitutive import merge_to_count, resolved_merge_coarsen_dims
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
 # ─────────────────────────────────────────────────────────────────────
@@ -2337,15 +2337,171 @@ class TestTileContainmentTolerance:
         assert _within_box(self._at(1e9, sigma=1.0), (0, 1, 2), box)
 
 
-def test_categorical_channel_refuses_substitutive_coarsening() -> None:
+def _mass_by_label(data: GSplatData) -> dict[int, float]:
+    labels = np.asarray(data.label_ids)
+    factors = unpack_tril(np.asarray(data.cholesky_factors), data.ndim)
+    masses = np.asarray(data.amplitudes) * np.abs(
+        np.prod(np.diagonal(factors, axis1=1, axis2=2), axis=1)
+    )
+    return {
+        int(label): float(masses[labels == label].sum()) for label in np.unique(labels)
+    }
+
+
+def _two_label_data() -> GSplatData:
     data = _make_isotropic_3d(8)
-    labeled = GSplatData(
+    return GSplatData(
         centers=data.centers,
         amplitudes=data.amplitudes,
         cholesky_factors=data.cholesky_factors,
-        label_ids=np.arange(8, dtype=np.uint8),
-        label_vocabulary={i: str(i) for i in range(8)},
+        label_ids=np.tile(np.array([0, 1], dtype=np.uint8), 4),
+        label_vocabulary={0: "zero", 1: "one", 9: "unused"},
     )
 
-    with pytest.raises(ValueError, match="without_label_ids"):
-        make_substitutive_lod(labeled, levels=1, device="cpu")
+
+def test_label_barrier_merge_to_count_preserves_groups_and_mass() -> None:
+    labeled = _two_label_data()
+
+    merged = merge_to_count(
+        labeled,
+        n_target=1,
+        method="kmeans",
+        device="cpu",
+    )
+
+    assert merged.n_splats == 2
+    np.testing.assert_array_equal(np.sort(merged.label_ids), np.array([0, 1]))
+    assert merged.label_vocabulary == {0: "zero", 1: "one"}
+    input_mass = _mass_by_label(labeled)
+    output_mass = _mass_by_label(merged)
+    assert output_mass.keys() == input_mass.keys()
+    for label, expected in input_mass.items():
+        assert output_mass[label] == pytest.approx(expected, rel=1e-6)
+
+
+def test_single_label_is_preserved_without_changing_the_target_count() -> None:
+    data = _make_isotropic_3d(8).with_label_ids(
+        np.full(8, 7, dtype=np.uint16), {7: "seven", 9: "unused"}
+    )
+
+    merged = merge_to_count(
+        data,
+        n_target=2,
+        method="kmeans",
+        device="cpu",
+    )
+
+    assert merged.n_splats == 2
+    np.testing.assert_array_equal(merged.label_ids, np.array([7, 7], np.uint16))
+    assert merged.label_vocabulary == {7: "seven"}
+
+
+def test_low_level_merge_still_refuses_mixed_label_ids() -> None:
+    from luxar.gsplats.lod.substitutive import _reduce_one_level
+
+    with pytest.raises(ValueError, match="mixed categorical channel"):
+        _reduce_one_level(
+            _two_label_data(),
+            M_target=2,
+            method="kmeans",
+            lloyd_iterations=0,
+            candidate_bins_k=1,
+            coverage_inflation=1.0,
+            device=torch.device("cpu"),
+        )
+
+
+def test_label_barrier_is_carried_through_every_substitutive_level() -> None:
+    out = make_substitutive_lod(
+        _two_label_data(),
+        compression_factor=8,
+        levels=2,
+        method="kmeans",
+        device="cpu",
+    )
+
+    for level_index in range(out.n_substitutive):
+        level = out.at_substitutive(level_index).flattened()
+        np.testing.assert_array_equal(np.unique(level.label_ids), np.array([0, 1]))
+        assert level.label_vocabulary == {0: "zero", 1: "one"}
+
+
+def test_label_and_coordinate_barriers_compose() -> None:
+    rng = np.random.default_rng(5)
+    labels = np.repeat(np.array([0, 1], dtype=np.uint8), 8)
+    timepoints = np.tile(np.repeat(np.array([0.0, 1.0], dtype=np.float32), 4), 2)
+    centers = np.column_stack([rng.normal(size=(16, 3)).astype(np.float32), timepoints])
+    factors = np.zeros((16, 10), dtype=np.float32)
+    factors[:, [0, 2, 5, 9]] = 1.0
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(16, dtype=np.float32),
+        cholesky_factors=factors,
+        label_ids=labels,
+        label_vocabulary={0: "zero", 1: "one"},
+    )
+
+    merged = merge_to_count(
+        data,
+        n_target=1,
+        method="kmeans",
+        device="cpu",
+        coarsen_dims=(0, 1, 2),
+    )
+
+    assert merged.n_splats == 4
+    groups = set(
+        zip(
+            np.asarray(merged.label_ids).tolist(),
+            np.round(np.asarray(merged.centers)[:, 3]).astype(int).tolist(),
+            strict=True,
+        )
+    )
+    assert groups == {(0, 0), (0, 1), (1, 0), (1, 1)}
+
+
+def test_unlabeled_merge_to_count_default_path_is_byte_stable() -> None:
+    data = GSplatData(
+        centers=np.array(
+            [[0, 0, 0], [0.2, 0, 0], [5, 0, 0], [5.2, 0, 0]],
+            dtype=np.float32,
+        ),
+        amplitudes=np.array([1, 2, 3, 4], dtype=np.float32),
+        cholesky_factors=np.tile(
+            np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (4, 1)
+        ),
+        colors=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]], dtype=np.float32),
+    )
+
+    merged = merge_to_count(
+        data,
+        n_target=2,
+        method="kmeans",
+        coverage_inflation=1.0,
+        device="cpu",
+    )
+
+    assert np.array_equal(
+        merged.centers,
+        np.array([[0.13333334, 0, 0], [5.1142855, 0, 0]], dtype=np.float32),
+    )
+    assert np.array_equal(
+        merged.amplitudes, np.array([2.9867592, 6.96596], dtype=np.float32)
+    )
+    assert np.array_equal(
+        merged.cholesky_factors,
+        np.array(
+            [
+                [1.0044346, 0, 1, 0, 0, 1],
+                [1.004886, 0, 1, 0, 0, 1],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    assert np.array_equal(
+        merged.colors,
+        np.array(
+            [[0.33333334, 0.6666667, 0], [0.5714286, 0.5714286, 1]],
+            dtype=np.float32,
+        ),
+    )
