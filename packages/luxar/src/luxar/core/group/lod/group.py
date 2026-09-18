@@ -125,6 +125,16 @@ def level_attrs_with_quality(attrs: Dict[str, Any], quality: float) -> Dict[str,
     return result
 
 
+def _resolve_quality_stamps(kwargs: Dict[str, Any]) -> bool:
+    quality_stamps = kwargs.pop("quality_stamps", True)
+    if not isinstance(quality_stamps, bool):
+        raise TypeError(
+            "substitutive_lod quality_stamps must be bool; "
+            f"got {type(quality_stamps).__name__}"
+        )
+    return quality_stamps
+
+
 #: Upper bound on any ``coverage_fraction`` — the LEGACY ``selector="coverage"``
 #: ceiling, and (being the larger of the two selectors' ceilings) the loosest
 #: bound the explicit-list validators enforce.
@@ -1256,12 +1266,7 @@ def resolve_substitutive_axis(
                 f"max_aspect must be >= 1 (or None to disable), got {max_aspect}"
             )
 
-    quality_stamps = kwargs.pop("quality_stamps", True)
-    if not isinstance(quality_stamps, bool):
-        raise TypeError(
-            "substitutive_lod quality_stamps must be bool; "
-            f"got {type(quality_stamps).__name__}"
-        )
+    quality_stamps = _resolve_quality_stamps(kwargs)
 
     if kwargs:
         valid_keys = [
