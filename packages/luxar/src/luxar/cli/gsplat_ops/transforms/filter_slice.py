@@ -220,6 +220,7 @@ def run_filter_dataset(
                 else:
                     filtered_data.save(
                         output_path,
+                        amplitude_bits="auto",
                         encoding_mode=encoding_mode_obj,
                         include_fitting_info=True,
                         compress=compress,
@@ -292,6 +293,7 @@ def run_slice_dataset(
                 else:
                     sliced_data.save(
                         output_path,
+                        amplitude_bits="auto",
                         encoding_mode=encoding_mode_obj,
                         include_fitting_info=True,
                         compress=compress,

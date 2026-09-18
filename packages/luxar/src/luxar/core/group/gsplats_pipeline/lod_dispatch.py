@@ -59,6 +59,7 @@ def add_gsplats_as_lod_group_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> "Group":
     """Build a kind=lod ``Group`` with one gsplats child per substitutive level.
@@ -179,6 +180,7 @@ def add_gsplats_as_lod_group_impl(
             # one node, i.e. the levels rescaled against each other and the
             # brightness pops at every LOD switch.
             normalize_amplitudes=False,
+            _source_dtype=_source_dtype,
             **level_attrs,
         )
 
@@ -195,6 +197,7 @@ def add_gsplats_multi_lod_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> GSplats:
     """Write multi-additive-LOD GSplatData as a single leaf via the shared walker.
@@ -304,6 +307,7 @@ def add_gsplats_multi_lod_impl(
         metadata = writer.write_gsplat_leaf_subtree(  # type: ignore[attr-defined]
             path,
             leaf,
+            _source_dtype=_source_dtype,
             **attrs,
         )
 

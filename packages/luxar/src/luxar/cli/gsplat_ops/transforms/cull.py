@@ -168,6 +168,7 @@ def run_cull_dataset(
             with asection("Saving"):
                 culled_data.save(
                     output_path,
+                    amplitude_bits="auto",
                     encoding_mode=encoding_mode_obj,
                     compress=compress,
                     root_attrs=read_rebuild_root_attrs(input_path),

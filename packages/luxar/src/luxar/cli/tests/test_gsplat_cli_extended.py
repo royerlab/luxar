@@ -121,10 +121,7 @@ def _assert_source_matched_amplitudes(path: Path) -> None:
             assert np.dtype(target.dtype) == np.dtype(np.uint8)
             continue
         assert np.dtype(array.dtype) == np.dtype(np.uint8)
-        assert encoding["name"] in {
-            "bounded_scalar_uint8",
-            "geolog_scalar_uint8",
-        }
+        assert encoding["name"] == "geolog_scalar_uint8"
 
 
 @pytest.fixture
@@ -943,9 +940,7 @@ class TestConvertCommand:
                 for sublod in leaf.additive_sublods
             ]
         )
-        np.testing.assert_allclose(
-            np.sort(actual), np.sort(expected), rtol=0.04, atol=1e-7
-        )
+        np.testing.assert_array_equal(np.sort(actual), np.sort(expected))
 
     def test_convert_applies_stored_dimension_metadata(
         self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
@@ -9482,6 +9477,17 @@ class TestReencode:
             ["decimate", "-f", "0.5"],
             ["transform", "--scale", "2,2,2"],
             ["reencode", "-e", "auto"],
+            ["filter", "--amplitude-min", "0"],
+            ["slice", ":, :, :"],
+            [
+                "cull",
+                "--method",
+                "redundancy",
+                "--shape",
+                "16,16,16",
+                "--device",
+                "cpu",
+            ],
         ],
         ids=lambda command: command[0],
     )
@@ -9496,6 +9502,46 @@ class TestReencode:
         result = runner.invoke(
             app,
             ["gsplat", command[0], str(source_matched_gsplats), str(out), *command[1:]],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        _assert_source_matched_amplitudes(out)
+
+    def test_reencode_float_source_keeps_uint16_amplitudes(
+        self, runner: CliRunner, source_matched_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        data = GSplatData.load(source_matched_gsplats, include_stats=True)
+        data.stats["source_dtype"] = "float32"
+        source = tmp_path / "float-source.gsplats.zarr"
+        data.save(source, amplitude_bits="auto")
+        out = tmp_path / "float-reencoded.gsplats.zarr"
+
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(source), str(out), "-e", "auto"]
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        arrays = _amplitude_arrays(out)
+        assert arrays
+        assert all(np.dtype(array.dtype) == np.dtype(np.uint16) for array in arrays)
+
+    def test_merge_preserves_source_matched_amplitudes(
+        self, runner: CliRunner, source_matched_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "merged.gsplats.zarr"
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "merge",
+                str(source_matched_gsplats),
+                str(source_matched_gsplats),
+                "-o",
+                str(out),
+            ],
         )
 
         assert result.exit_code == 0, normalized_cli_output(result)

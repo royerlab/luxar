@@ -287,6 +287,7 @@ class ZarrWriterProtocol(Protocol):
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
         keys: Optional[Sequence[str]] = None,
+        _source_dtype: Optional[str] = None,
         **attrs: Any,
     ) -> GSplatsMetadata:
         """Write Gaussian splats data immediately to Zarr.

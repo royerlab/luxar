@@ -393,6 +393,53 @@ def test_content_plan_box_rejects_a_volume_from_another_grid(
     assert called is False
 
 
+def test_content_plan_box_uses_source_matched_amplitudes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import importlib
+
+    import zarr
+
+    from luxar.cli.gsplat_ops import planner
+    from luxar.gsplats.planner import FitPlan, PlanBox
+
+    volume = np.zeros((8, 8, 8), np.uint8)
+    plan = FitPlan(
+        volume_shape=list(volume.shape),
+        boxes=[PlanBox(box=[0, 8, 0, 8, 0, 8], n_features=10, budget=32)],
+        overlap=1,
+        feature_method="peaks",
+        min_leaf=8,
+        max_leaf=8,
+        density={"saturation_cap": 100},
+    )
+    plan_path = tmp_path / "plan.json"
+    plan.to_json(plan_path)
+    result = _stub_leaf(n=32)
+    result.amplitudes[:] = np.geomspace(1e-3, 1.0, 32, dtype=np.float32)
+    result.stats["source_dtype"] = "uint8"
+    fit_planned_module = importlib.import_module("luxar.gsplats.planner.fit_planned")
+    monkeypatch.setattr(
+        fit_planned_module, "_fit_one_box", lambda *args, **kwargs: result
+    )
+
+    output = tmp_path / "box.gsplats.zarr"
+    planner.run_content_fit(
+        tmp_path / "unused.npy",
+        output,
+        volume=volume,
+        plan=plan_path,
+        plan_box=0,
+        k_star_ref=100,
+        n_features_ref=10,
+        floor="none",
+        verbose=False,
+    )
+
+    amplitudes = zarr.open_group(str(output), mode="r")["amplitudes"]
+    assert amplitudes.attrs["encoding"]["name"] == "geolog_scalar_uint8"
+
+
 def test_the_content_stamp_never_contradicts_the_boxes(tmp_path: Path) -> None:
     """A level the boxes already recorded wins over the planned one:
     ``_stamp_content_floor`` must not overwrite a box-recorded ``floor`` with a

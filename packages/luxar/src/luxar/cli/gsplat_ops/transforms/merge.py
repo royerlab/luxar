@@ -239,6 +239,7 @@ def run_merge_datasets(
                 # Color SDR/HDR is auto-detected by the writer.
                 merged.save(
                     output_path,
+                    amplitude_bits="auto",
                     encoding_mode=_resolve_encoding_mode(encoding),
                     compress=compress,
                     root_attrs=root_attrs,

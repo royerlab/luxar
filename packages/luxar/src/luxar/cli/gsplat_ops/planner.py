@@ -431,7 +431,7 @@ def run_content_fit(
                     else None
                 ),
             )
-            box_result.save(output)
+            box_result.save(output, amplitude_bits="auto")
         return
 
     # ── resolve density ──

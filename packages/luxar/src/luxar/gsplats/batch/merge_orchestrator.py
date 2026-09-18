@@ -193,10 +193,9 @@ def _source_dtype_for_tiles(
     n_tiles: int,
     label: str,
 ) -> Optional[str]:
-    """Return the unanimous recorded source dtype, else ``None``."""
+    """Return the first non-empty tile's recorded source dtype, if present."""
     from luxar._zarr_compat import open_group
 
-    source_dtypes: set[str] = set()
     for t_real in t_indices:
         for c_real in c_indices:
             for tile_index in range(n_tiles):
@@ -212,18 +211,17 @@ def _source_dtype_for_tiles(
                 )
                 if tile_path is None:
                     continue
+                # Every batch task fits the same selected input array, so source
+                # dtype is invariant across slots. This also deliberately keeps
+                # an unfinished first slot failing before any merge output exists.
                 root = open_group(tile_path, mode="r")
                 source_dtype = (
                     root["fitting"].attrs.get("source_dtype")
                     if "fitting" in root
                     else None
                 )
-                if not isinstance(source_dtype, str):
-                    return None
-                source_dtypes.add(source_dtype)
-                if len(source_dtypes) > 1:
-                    return None
-    return next(iter(source_dtypes), None)
+                return source_dtype if isinstance(source_dtype, str) else None
+    return None
 
 
 def _copy_or_resave_tile(
@@ -1071,8 +1069,6 @@ def _merge_partition(
     t_indices, c_indices = _tile_indices(manifest)
     # Slot label MUST match what the fit array wrote (uniform=tile, content=box).
     label = "box" if manifest.mode == "content" else "tile"
-    source_dtype = _source_dtype_for_tiles(tiles_dir, t_indices, c_indices, n_k, label)
-    amplitude_bits = resolve_amplitude_bits("auto", source_dtype=source_dtype)
     # Reduction provenance for the pipeline/ group (None without a recipe),
     # plus the one background level every task subtracted (#1175) — the merge's
     # only chance to record it, since neither branch below has a root node whose
@@ -1106,6 +1102,8 @@ def _merge_partition(
             )
             if part is None:
                 raise ValueError("Single tile-region is empty — nothing to merge")
+            source_dtype = part.stats.get("source_dtype")
+            amplitude_bits = resolve_amplitude_bits("auto", source_dtype=source_dtype)
             root_attrs = _dimension_root_attrs(manifest.dimension_metadata, part.ndim)
             single_part_provenance = _single_part_provenance(part)
             if recipe is None:
@@ -1119,7 +1117,7 @@ def _merge_partition(
                 part.stats.update(floor_stats)
                 part.save(
                     final_path,
-                    amplitude_bits="auto",
+                    amplitude_bits=amplitude_bits,
                     barrier_dims=barrier_dims,
                     root_attrs=root_attrs,
                 )
@@ -1155,6 +1153,8 @@ def _merge_partition(
         return final_path
 
     # K > 1 → streaming partition, one part per spatial tile.
+    source_dtype = _source_dtype_for_tiles(tiles_dir, t_indices, c_indices, n_k, label)
+    amplitude_bits = resolve_amplitude_bits("auto", source_dtype=source_dtype)
     #
     # Split planes for the viewer's exact back-to-front part order (#1555). The
     # plan is not stored on the manifest itself: `content` mode points at the
@@ -1266,6 +1266,10 @@ def _merge_flat(
     label = "box" if manifest.mode == "content" else "tile"
 
     t_indices, c_indices = _tile_indices(manifest)
+    from luxar.gsplats.io.save_gsplats import resolve_amplitude_bits
+
+    source_dtype = _source_dtype_for_tiles(tiles_dir, t_indices, c_indices, n_k, label)
+    amplitude_bits = resolve_amplitude_bits("auto", source_dtype=source_dtype)
     # ================================================================
     # Level 1: Merge tiles per (T, C)
     # ================================================================
@@ -1321,7 +1325,7 @@ def _merge_flat(
                     merged = GSplatData.concatenate(datasets)
                     merged.save(
                         out_path,
-                        amplitude_bits="auto",
+                        amplitude_bits=amplitude_bits,
                         root_attrs=_dimension_root_attrs(
                             manifest.dimension_metadata, merged.ndim
                         )
@@ -1359,7 +1363,7 @@ def _merge_flat(
                 )
                 stacked.save(
                     out_path,
-                    amplitude_bits="auto",
+                    amplitude_bits=amplitude_bits,
                     root_attrs=_dimension_root_attrs(
                         manifest.dimension_metadata, stacked.ndim
                     ),
@@ -1392,7 +1396,7 @@ def _merge_flat(
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
             final.save(
                 final_path,
-                amplitude_bits="auto",
+                amplitude_bits=amplitude_bits,
                 root_attrs=_dimension_root_attrs(
                     manifest.dimension_metadata, final.ndim
                 ),
@@ -1416,7 +1420,7 @@ def _merge_flat(
                 final = GSplatData.concatenate(datasets)
                 final.save(
                     final_path,
-                    amplitude_bits="auto",
+                    amplitude_bits=amplitude_bits,
                     root_attrs=_dimension_root_attrs(
                         manifest.dimension_metadata, final.ndim
                     ),

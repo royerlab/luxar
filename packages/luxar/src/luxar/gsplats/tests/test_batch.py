@@ -1738,35 +1738,61 @@ class TestMergeOrchestrator:
         # Total splat count conserved vs the flat-concat path.
         assert total_splats(node) == total
 
-    @pytest.mark.parametrize("n_tiles", [1, 3])
+    @pytest.mark.parametrize(
+        ("n_tiles", "n_t", "n_c", "flat", "channel_colors"),
+        [
+            (1, 1, 1, False, None),
+            (3, 1, 1, False, None),
+            (1, 1, 2, False, None),
+            (1, 1, 2, False, [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]),
+            (2, 1, 1, True, None),
+            (2, 2, 1, True, None),
+            (2, 1, 2, True, None),
+            (2, 1, 2, True, [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]),
+        ],
+    )
     def test_merge_preserves_source_matched_amplitudes(
-        self, tmp_path: Path, n_tiles: int
+        self,
+        tmp_path: Path,
+        n_tiles: int,
+        n_t: int,
+        n_c: int,
+        flat: bool,
+        channel_colors,
     ) -> None:
         import zarr
 
         from luxar.gsplats.batch.manifest import BatchManifest, output_filename
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
-        from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.tree import iter_leaves
 
         out_dir = tmp_path / "batch"
         tiles_dir = out_dir / "tiles"
-        self._write_tiles(tiles_dir, n_t=1, n_c=1, n_k=n_tiles)
+        tiles_dir.mkdir(parents=True, exist_ok=True)
         expected_parts = []
-        for tile_index in range(n_tiles):
-            path = tiles_dir / output_filename(0, 0, tile_index, 1, 1, n_tiles)
-            tile = GSplatData.load(path)
-            tile.amplitudes[:] = np.geomspace(
-                1e-3, 1.0, tile.n_splats, dtype=np.float32
-            )
-            tile.stats["source_dtype"] = "uint8"
-            tile.save(path, amplitude_bits="auto")
-            expected_parts.append(tile.amplitudes)
+        source_values = np.geomspace(
+            1e-3, 1.0, n_t * n_c * n_tiles * 32, dtype=np.float32
+        )
+        offset = 0
+        for timepoint in range(n_t):
+            for channel in range(n_c):
+                for tile_index in range(n_tiles):
+                    path = tiles_dir / output_filename(
+                        timepoint, channel, tile_index, n_t, n_c, n_tiles
+                    )
+                    tile = self._tile(32, offset)
+                    tile.amplitudes[:] = source_values[offset : offset + tile.n_splats]
+                    offset += tile.n_splats
+                    tile.stats["source_dtype"] = "uint8"
+                    tile.save(path, amplitude_bits="auto")
+                    expected_parts.append(tile.amplitudes)
 
         final = merge_batch_results(
-            BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_tiles),
+            BatchManifest(n_timepoints=n_t, n_channels=n_c, n_tiles=n_tiles),
             out_dir,
+            channel_colors=channel_colors,
             verbose=False,
+            flat=flat,
         )
 
         root = zarr.open_group(str(final), mode="r")
