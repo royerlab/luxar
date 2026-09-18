@@ -16,6 +16,17 @@ def _version_tuple(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
 
+def _ci_toolchain_satisfies_floor(ci: str, floor: str) -> bool:
+    return _version_tuple(ci) >= _version_tuple(floor)[:2]
+
+
+def _bootstrap_pin_satisfies_floor(bootstrap: str, floor: str) -> bool:
+    floor_version = _version_tuple(floor)
+    if len(floor_version) == 2:
+        floor_version += (0,)
+    return _version_tuple(bootstrap) >= floor_version
+
+
 def _parse_declarations(
     workflow: str, makefile: str, go_mod: str
 ) -> tuple[str, str, str]:
@@ -51,7 +62,7 @@ def test_declaration_parser_accepts_three_part_module_floor() -> None:
     workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     go_mod = (REPO / "packages/luxar-launcher/go.mod").read_text(encoding="utf-8")
-    ci, _, _ = _parse_declarations(workflow, makefile, go_mod)
+    ci, bootstrap, _ = _parse_declarations(workflow, makefile, go_mod)
     patched_go_mod = re.sub(
         r"^go \d+\.\d+(?:\.\d+)?$",
         f"go {ci}.0",
@@ -61,13 +72,19 @@ def test_declaration_parser_accepts_three_part_module_floor() -> None:
     )
     _, _, floor = _parse_declarations(workflow, makefile, patched_go_mod)
     assert floor == f"{ci}.0"
+    assert _ci_toolchain_satisfies_floor(ci, floor)
+    assert _bootstrap_pin_satisfies_floor(bootstrap, floor)
+
+
+def test_bootstrap_floor_comparison_includes_patch() -> None:
+    assert not _bootstrap_pin_satisfies_floor("1.27.1", "1.27.5")
 
 
 def test_ci_toolchain_satisfies_module_floor(
     declarations: tuple[str, str, str],
 ) -> None:
     ci, _, floor = declarations
-    assert _version_tuple(ci) >= _version_tuple(floor)[:2]
+    assert _ci_toolchain_satisfies_floor(ci, floor)
 
 
 def test_bootstrap_pin_matches_ci_minor(
@@ -81,10 +98,7 @@ def test_bootstrap_pin_satisfies_module_floor(
     declarations: tuple[str, str, str],
 ) -> None:
     _, bootstrap, floor = declarations
-    floor_version = _version_tuple(floor)
-    if len(floor_version) == 2:
-        floor_version += (0,)
-    assert _version_tuple(bootstrap) >= floor_version
+    assert _bootstrap_pin_satisfies_floor(bootstrap, floor)
 
 
 def test_go_launcher_disables_automatic_toolchain_downloads() -> None:
