@@ -448,16 +448,17 @@ def _concat_gsplatdata(parts: list[GSplatData]) -> GSplatData:
         label_ids = np.concatenate(
             [np.asarray(p.label_ids) for p in parts if p.label_ids is not None]
         )
-        label_vocabulary = {}
+        combined_label_vocabulary: dict[int, str] = {}
         for part in parts:
             assert part.label_vocabulary is not None
             for label_id, name in part.label_vocabulary.items():
-                previous = label_vocabulary.setdefault(label_id, name)
+                previous = combined_label_vocabulary.setdefault(label_id, name)
                 if previous != name:
                     raise ValueError(
                         f"conflicting names for label id {label_id}: "
                         f"{previous!r} and {name!r}"
                     )
+        label_vocabulary = combined_label_vocabulary
     return GSplatData(
         centers=np.concatenate([np.asarray(p.centers) for p in parts], axis=0),
         amplitudes=np.concatenate([np.asarray(p.amplitudes) for p in parts], axis=0),
@@ -796,7 +797,11 @@ def _volume_refine_level(
         piece = _subset_gsplatdata(level, order[starts[g] : ends[g]])
         if piece.n_splats == 0:
             continue
-        coords = np.asarray(piece.centers)[0, list(barrier)] if barrier else ()
+        coords = (
+            tuple(float(value) for value in np.asarray(piece.centers)[0, list(barrier)])
+            if barrier
+            else ()
+        )
         refined, st, n_voxels = _one(piece, coords)
         pieces.append(refined)
         merge_volume_refit_stats(sink, st, weight=n_voxels)
