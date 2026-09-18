@@ -968,14 +968,12 @@ def test_the_server_is_quiet_about_client_disconnects_but_not_about_faults() -> 
 
     The viewer abandons in-flight requests on every camera move and every
     level-of-detail decision, and each abandonment aborts a response the
-    server is still writing. `socketserver` calls that a handler crash: one
-    scene load printed dozens of `BrokenPipeError` tracebacks and buried the
-    two URLs and the QR the operator needs, which read as the server falling
-    over. It was not; the scene worked throughout.
+    server is still writing. `socketserver` calls that a handler crash and
+    prints a traceback, which buries the two URLs and the QR the operator
+    needs.
 
-    The suppression is deliberately narrow, asserted here, because the
-    tempting fix -- a bare `except` around `do_GET` -- would have hidden real
-    handler faults too.
+    The suppression is narrow, which is what this asserts: a bare `except`
+    around `do_GET` would hide real handler faults too.
     """
     content = _get_serve_script_content("data")
     assert "def handle_error" in content
@@ -992,15 +990,10 @@ def test_every_surface_that_names_the_serve_command_says_python3() -> None:
     """The run command is printed in two places and they have to agree.
 
     Stock macOS ships no `python` on PATH, and neither do most Linux distros;
-    the bare name only resolves where a conda or pyenv shim happens to provide
-    one. The generated README was corrected to `python3` and the CLI's own
-    "To view:" line was not, so `luxar export` went on telling every operator
-    to run a command that fails on the machine they just exported from.
-
-    This pins the pair rather than either one alone: the failure was not a
-    wrong string, it was a correction that reached one surface out of two.
-    `python serve.py` is still allowed where it is explicitly the WINDOWS
-    spelling, which is the only place the bare name is right.
+    the bare name only resolves where a conda or pyenv shim provides one. Both
+    the generated README and the CLI's own "To view:" line name the command, so
+    both are pinned here rather than either alone. `python serve.py` remains
+    valid only where it is explicitly the WINDOWS spelling.
     """
     cli_main = Path(main_module.__file__).read_text(encoding="utf-8")
     hint = [ln for ln in cli_main.splitlines() if "To view: cd" in ln]
@@ -1023,15 +1016,11 @@ def test_every_surface_that_names_the_serve_command_says_python3() -> None:
 def test_panel_tile_count_comes_from_the_dimension_not_the_chapter_dict() -> None:
     """A coordinate with no authored Chapter still gets a tile.
 
-    A `Chapter` only supplies a slot's sublabel; the tile itself, and its main
-    label, come from the chapter dimension's `categories`. The protein-universe
-    scene authors 20 chapters on a 21-value `story` dimension because slot 0 is
-    the Overview, so quoting the chapter count told the operator to expect 20
-    tiles on the tablet and then count 21 -- in a TESTING.txt whose whole job is
-    to say what a correct run looks like.
-
-    Both numbers are kept because they answer different questions, and this
-    pins which one the operator-facing text uses.
+    A `Chapter` supplies a slot's sublabel; the tile and its main label come
+    from the chapter dimension's `categories`. A scene can therefore author
+    fewer chapters than the dimension has coordinates — an unauthored slot 0
+    overview still draws a tile — so the two counts differ and the
+    operator-facing text must use the tile count.
     """
     attrs = {
         "viewer_config": {
@@ -1064,8 +1053,9 @@ def test_panel_tile_count_comes_from_the_dimension_not_the_chapter_dict() -> Non
 def test_panel_tile_count_falls_back_to_a_range_then_to_the_chapters() -> None:
     """A dimension naming no categories is counted from its inclusive range.
 
-    And when the dimension cannot be found at all, the authored chapter count
-    is still better than printing zero tiles.
+    When the dimension cannot be found at all the count is unknown, and the
+    operator-facing `stops` substitutes the authored chapter count rather than
+    printing zero.
     """
 
     def facts_for(dims: list[dict]) -> SceneFacts:
@@ -1179,16 +1169,14 @@ def test_the_exported_scripts_import_on_the_oldest_python_they_promise(
 ) -> None:
     """The exported folder must not use syntax newer than its own floor.
 
-    This shipped. A module-level `_Grid = list[list[int | None]]` added to the
-    QR encoder raised `TypeError` on import under Python 3.9, so `serve.py`
-    died on `import luxar_qr` before printing a URL -- on stock macOS, which
-    is the single most likely machine a recipient will use, and which README
-    and TESTING both name.
+    The exported README promises Python 3.9 or newer, which is what stock macOS
+    provides. A module-level type alias such as `list[list[int | None]]` is an
+    expression evaluated at import and raises `TypeError` before 3.10, so
+    `serve.py` fails on `import luxar_qr` before printing a URL.
 
-    It survived a "fresh unzip" smoke test because the tester's PATH had a
-    conda 3.12 in front of /usr/bin/python3 -- the same masking that hid the
-    earlier `python` vs `python3` bug. So the check is static and cannot be
-    fooled by whichever interpreter happens to be first on PATH.
+    The check is STATIC rather than a subprocess run: a test that invokes
+    whichever `python3` is first on PATH passes under a conda 3.12 while the
+    artefact is broken for a recipient using the system interpreter.
     """
     output = tmp_path / "export"
     with (

@@ -612,15 +612,13 @@ class ControlServer(http.server.ThreadingHTTPServer):
         move and every level-of-detail decision abandons requests it no longer
         wants -- and each cancellation aborts a response the server is still
         writing. `socketserver` treats that as a handler crash and prints a
-        full traceback, so one scene load buried the two URLs and the QR the
-        operator actually needs under dozens of `BrokenPipeError`s and looked
-        like the server falling over. It is not an error at all: the client
-        asked for less, not the server failing to give it.
+        full traceback, which on a single scene load buries the two URLs and
+        the QR under dozens of `BrokenPipeError`s. It is not an error: the
+        client asked for less, not the server failing to give it.
 
-        Deliberately narrow. Any other exception still goes to the base
-        implementation, because a real handler fault must stay loud -- the
-        tempting fix, wrapping `do_GET` in a bare `except`, would have hidden
-        those too.
+        Deliberately narrow. Any other exception still reaches the base
+        implementation, so a real handler fault stays loud; wrapping `do_GET`
+        in a bare `except` would hide those too.
         """
         if isinstance(sys.exc_info()[1], self.QUIET_ERRORS):
             return

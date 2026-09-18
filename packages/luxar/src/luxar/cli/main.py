@@ -628,10 +628,9 @@ def export(
                 overwrite=overwrite,
             )
             aprint(f"Exported to {result}")
-            # `python3`, not `python`: stock macOS and most Linux distros ship no
-            # `python` on PATH, so the bare name only works where a conda/pyenv
-            # shim happens to provide it. The README says python3 for the same
-            # reason; this line is the other surface that has to agree.
+            # `python3`, not `python`: stock macOS and most Linux distros ship
+            # no `python` on PATH. The generated README names the command too,
+            # and the two must agree.
             aprint(f"To view: cd {result} && python3 serve.py")
 
         if open_browser:

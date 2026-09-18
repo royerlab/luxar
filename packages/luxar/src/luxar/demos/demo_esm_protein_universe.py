@@ -1411,10 +1411,9 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "phage there really are — nobody knows."
         ),
         tags=("virology", "ecology"),
-        # THE WHOLE PHAGE, not a part of one (Loic, 2026-09-17: "I would
-        # really [like] a structure of the whole phage: from the
-        # capside/head, connector, tail, legs... the whole recognisable
-        # Phage"). Native bacteriophage P68 has the whole virion in one
+        # THE WHOLE PHAGE, not a part of one: the recognisable silhouette,
+        # capsid through connector and tail to the fibres. Native
+        # bacteriophage P68 has the whole virion in one
         # entry — 8 entities over 668 chains, 20 MDa, 3.8 A: major head
         # protein (235 chains) for the capsid, portal (12) and lower collar
         # (12) for the connector, minor structural (72) and tail fibre (72)

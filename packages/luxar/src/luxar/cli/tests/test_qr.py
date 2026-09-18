@@ -1,17 +1,10 @@
-"""The hand-rolled QR encoder is verified by DECODING, not by comparison.
+"""The hand-rolled QR encoder is verified by DECODING.
 
-Why that distinction earns its own paragraph. The first version of this
-encoder was checked against `segno`, another encoder, and disagreed on one
-codeword of padding. Reading segno's source suggested segno was the one
-deviating from the specification, which was a comfortable conclusion and the
-wrong one: a real decoder read segno's symbols and could not read ours at all.
-Two bugs were hiding behind a plausible-looking matrix — a Reed-Solomon
-generator built with its coefficients reversed, and alignment patterns dropped
-wherever a centre fell on the timing row. Both produce a symbol of the right
-size with the right finders that no camera will ever read.
-
-So the oracle here is `zxing-cpp`, a decoder. "Does it scan" is the only
-property the export actually needs.
+The oracle is `zxing-cpp`, a decoder: each matrix is rendered and read back.
+"Does it scan" is the only property the export needs, and it is not implied by
+agreement with another encoder — a symbol of the right size with the right
+finder patterns can still be unreadable by every camera, which is what a
+reversed Reed-Solomon generator or a dropped alignment pattern produces.
 """
 
 from __future__ import annotations
@@ -156,12 +149,10 @@ def test_inverting_swaps_dark_and_light_but_keeps_the_shape() -> None:
 def test_padding_codewords_are_the_specified_alternating_pair() -> None:
     """Pin the pad bytes, which the decoder oracle structurally cannot see.
 
-    "Does it scan" is the right oracle for almost everything here, but it has
-    one blind spot: padding lives PAST the terminator, so a symbol with wrong
-    pad bytes still decodes to the right payload. The error correction is
-    computed over those bytes, so a conforming reader is happy and only a
-    comparison against the specification catches it — and it was exactly one
-    codeword of padding that started the segno confusion described above.
+    Padding lives PAST the terminator and the error correction is computed over
+    it, so a symbol with wrong pad bytes still decodes to the right payload and
+    a conforming reader reports no problem. Only a comparison against the
+    specification catches it.
 
     The standard fills the remaining data capacity with 0b11101100 and
     0b00010001 alternating, beginning with 0b11101100.

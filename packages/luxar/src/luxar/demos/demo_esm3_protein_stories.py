@@ -256,11 +256,9 @@ STORIES: tuple[Story, ...] = (
             # Half-life ~90 min at a moderate 125 umol/m2/s; 30-60 min under
             # intense illumination (pulse-chase measurements). D1 is the
             # fastest-turning-over subunit of photosystem II in the light.
-            # Re-checked 2026-09-17 against an independent search: ~2 h at
-            # growth irradiance in higher plants, 30-60 min under strong
-            # illumination in cyanobacteria. That agrees with the figures
-            # already cited here, so the "ninety minutes / half that in full
-            # sun" pairing stands and the sentence was left as written.
+            # Also ~2 h at growth irradiance in higher plants vs 30-60 min
+            # under strong illumination in cyanobacteria, which is the same
+            # roughly-halving the sentence below states.
             "Splitting water has a price: D1 is damaged by its own chemistry "
             "and is replaced faster than any other protein of photosystem II "
             "— a half-life of about ninety minutes in ordinary light, half "

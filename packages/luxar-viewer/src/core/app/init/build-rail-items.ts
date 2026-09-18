@@ -57,6 +57,28 @@ export interface RailItemsDeps {
   audioEngine: AudioEngine;
 }
 
+/** How the Sound button reads in each of its three states. */
+const AUDIO_BUTTON_STATES: Record<
+  'blocked' | 'muted' | 'on',
+  { icon: string; label: string; tip: string }
+> = {
+  blocked: {
+    icon: RAIL_ICONS.audioBlocked,
+    label: 'Sound: blocked by the browser — click to enable',
+    tip: 'Sound · Click to enable',
+  },
+  muted: {
+    icon: RAIL_ICONS.audioMuted,
+    label: 'Sound: muted — click to unmute, right-click or hold for the mixer',
+    tip: 'Sound · Muted',
+  },
+  on: {
+    icon: RAIL_ICONS.audio,
+    label: 'Sound: on — click to mute, right-click or hold for the mixer',
+    tip: 'Sound · On',
+  },
+};
+
 /**
  * Build the ordered list of control-rail items. Pure assembly of object
  * literals — the closures only run later, on user interaction.
@@ -281,23 +303,29 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Sound',
       icon: RAIL_ICONS.audio,
       hidden: () => !audioEngine.hasSoundNodes(),
-      activate: () => audioEngine.setMuted(!audioEngine.isMuted()),
-      isActive: () => audioEngine.isMuted(),
+      // Three states, because two of them are silent for different reasons and
+      // the listener can only act on one of them. BLOCKED means the browser
+      // has not allowed the context to start: the click is the gesture that
+      // fixes it, so it must resume rather than toggle the mute the listener
+      // never set.
+      activate: () => {
+        if (audioEngine.isBlocked()) {
+          void audioEngine.enableSound();
+          return;
+        }
+        audioEngine.setMuted(!audioEngine.isMuted());
+      },
+      isActive: () => audioEngine.isMuted() || audioEngine.isBlocked(),
       render: (btn) => {
-        const muted = audioEngine.isMuted();
-        const key = muted ? 'muted' : 'on';
+        const key = audioEngine.isBlocked() ? 'blocked' : audioEngine.isMuted() ? 'muted' : 'on';
         if (btn.dataset.audioState === key) return;
         btn.dataset.audioState = key;
+        const look = AUDIO_BUTTON_STATES[key];
         const svg = btn.querySelector('svg');
-        if (svg) svg.outerHTML = muted ? RAIL_ICONS.audioMuted : RAIL_ICONS.audio;
-        btn.setAttribute(
-          'aria-label',
-          muted
-            ? 'Sound: muted — click to unmute, right-click or hold for the mixer'
-            : 'Sound: on — click to mute, right-click or hold for the mixer'
-        );
+        if (svg) svg.outerHTML = look.icon;
+        btn.setAttribute('aria-label', look.label);
         const tip = btn.querySelector('.luxar-control-rail__tip');
-        if (tip) tip.textContent = muted ? 'Sound · Muted' : 'Sound · On';
+        if (tip) tip.textContent = look.tip;
       },
       popover: {
         trigger: 'context',

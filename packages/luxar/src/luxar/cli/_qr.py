@@ -21,16 +21,11 @@ Scope is deliberately the narrow case this needs, not the QR standard:
 * **Mask pattern chosen by the standard's penalty rules**, because a bad mask
   is the usual reason a home-made QR scans on one phone and not another.
 
-Correctness is not argued, it is pinned by a DECODER: ``test_qr.py`` renders
-each matrix and asserts `zxing-cpp` reads the payload back, over a spread of
-sizes and versions. zxing-cpp is a TEST dependency for exactly that reason and
-is never imported at runtime.
-
-Comparing against another ENCODER was tried first and was actively misleading:
-this encoder and `segno` disagreed, reading segno's source made segno look like
-the deviant, and a decoder then showed segno's symbols scanned while ours did
-not scan at all. Two real bugs were hiding behind that reasoning. "Does it
-scan" is the only property that matters, so only a decoder can be the oracle.
+The oracle is a DECODER, not another encoder: ``test_qr.py`` renders each
+matrix and asserts `zxing-cpp` reads the payload back, over a spread of sizes
+and versions. Agreement with another encoder does not establish that a symbol
+scans, and a symbol of the right size with the right finders can still be
+unreadable. zxing-cpp is a TEST dependency and is never imported at runtime.
 """
 
 from __future__ import annotations
@@ -127,11 +122,10 @@ _VERSION_BITS: dict[int, int] = {
 # ``None`` (the format strips are claimed long before their bits are known).
 #
 # Behind TYPE_CHECKING because this module is COPIED VERBATIM into an exported
-# folder and has to import on whatever Python the recipient has -- stock macOS
-# is still 3.9. Annotations are deferred by the __future__ import above, but a
-# module-level alias is a real expression evaluated at import time, and
-# `int | None` is a TypeError before 3.10. That is not hypothetical: it shipped,
-# and `serve.py` died on `import luxar_qr` before printing a single URL.
+# folder and must import on whatever Python the recipient has; stock macOS is
+# still 3.9. The __future__ import above defers ANNOTATIONS, but a module-level
+# alias is an expression evaluated at import, and `int | None` raises TypeError
+# before 3.10.
 if TYPE_CHECKING:
     _Grid = list[list[int | None]]
     _Mask = list[list[bool]]

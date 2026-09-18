@@ -130,10 +130,10 @@ class SceneFacts:
     #: supplies a slot's sublabel, so a dimension coordinate with no authored
     #: chapter still gets a tile, labelled from the dimension's categories.
     chapter_count: int = 0
-    #: Tiles the panel actually draws -- one per coordinate of the chapter
-    #: dimension. The protein-universe scene authors 20 chapters on a 21-value
-    #: dimension (slot 0 is the Overview), so quoting `chapter_count` in the
-    #: testing notes told the operator to expect 20 tiles and count 21.
+    #: Tiles the panel draws -- one per coordinate of the chapter dimension.
+    #: Differs from `chapter_count` whenever a coordinate carries no authored
+    #: chapter (an unauthored overview slot, say), so this is the number any
+    #: operator-facing text must quote.
     panel_tiles: int = 0
     #: Dimension names in order, and which of them the viewer displays.
     dimensions: tuple[str, ...] = ()
@@ -145,9 +145,9 @@ class SceneFacts:
         """Tiles the panel draws, for operator-facing text.
 
         Falls back to the authored chapter count so a `SceneFacts` built by
-        hand -- a test, or any caller not going through `read_scene_facts` --
-        still reports a sensible number instead of silently printing zero and
-        dropping the scene summary from the README entirely.
+        hand, without going through `read_scene_facts`, still reports a
+        sensible number rather than zero (which would also drop the README's
+        scene summary, since that block only renders when there is a count).
         """
         return self.panel_tiles or self.chapter_count
 
@@ -435,10 +435,9 @@ IF THE TABLET SHOWS NO TILES AT ALL, and especially if you are testing both
 pages on ONE machine in two tabs of the same browser: that is the likely
 cause, not a bug. The panel asks the display for its list of stops and gives
 up after 30 seconds, and a browser throttles a background tab hard enough to
-miss the question. Measured here: two tabs in one browser -> no tiles; the
-same two pages in two separate browser windows against the same server ->
-21 tiles and taps landing correctly. On a real kiosk the display is a
-different machine, so this does not arise.
+miss the question. Two separate browser windows, or two machines, work
+normally. On a real kiosk the display is a different machine, so this does
+not arise.
 
 3. Worth trying
 ---------------
@@ -456,10 +455,9 @@ Known limits, so you do not report these as bugs
   panel URL can. Use --control-token on a network you do not control.
 - The token travels in the URL, so it is visible in the tablet's address bar
   and history. It is an exhibit lock, not a password.
-- Verified on macOS with Python 3.9.6 and on Linux with Python 3.12, both
-  serving a tablet-style client over the network. Windows is untested: the
-  scripts are stdlib-only and should work with `python serve.py`, but nobody
-  has run it.
+- Supported on macOS and Linux, Python 3.9 and newer, serving a tablet-style
+  client over the network. On Windows the command is `python serve.py`; the
+  scripts are stdlib-only, but Windows is not part of the tested set.
 - Narration and ambient sound need a user gesture before most browsers will
   play audio. Click the display once if it is silent.
 - The panel page is served even with --no-control. It will load and then fail

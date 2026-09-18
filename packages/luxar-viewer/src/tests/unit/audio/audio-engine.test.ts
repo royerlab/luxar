@@ -515,3 +515,92 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     expect(h.camera.children.some((c) => c instanceof THREE.AudioListener)).toBe(false);
   });
 });
+
+describe('AudioEngine — a context the browser has not released', () => {
+  it('holds ONE deferred narration across many stops, not one per stop', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    for (let i = 0; i < 4; i++) {
+      h.root.add(
+        soundPlaceholder(`/narr${i}`, { trigger: 'on_arrive', bus: 'voice' }, [[i, 0, 0, 0]])
+      );
+    }
+    h.engine.attachScene(h.root);
+    await flush();
+
+    // Walk the tour with sound still blocked. Every arrival defers.
+    for (let i = 0; i < 4; i++) {
+      h.setStep(i);
+      h.engine.notifyWaypoint('arrive', { story: i });
+    }
+    await flush();
+    expect(h.engine.getState().playing).toEqual([]);
+
+    // The browser lets the context through. Only the stop the listener is
+    // actually on may speak; the three walked past must stay silent.
+    h.ctx.unblock();
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['narr3']);
+  });
+
+  it('shows the gate when resume() never settles', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(document.querySelector('.luxar-audio-gate')).not.toBeNull();
+    expect(h.engine.isBlocked()).toBe(true);
+    expect(h.engine.getState().playing).toEqual([]);
+  });
+
+  it('a gesture anywhere recovers, without the listener finding the mute toggle', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(h.engine.getState().playing).toEqual([]);
+
+    h.ctx.resumeNeverSettles = false;
+    document.dispatchEvent(new Event('keydown'));
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.isBlocked()).toBe(false);
+    expect(h.engine.getState().playing).toEqual(['bed']);
+  });
+
+  it('a context that reaches running on its own opens the gate', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(h.engine.getState().playing).toEqual([]);
+
+    // No call of ours: the browser simply released it, which is reported
+    // through onstatechange and nothing else.
+    h.ctx.unblock();
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed']);
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+  });
+
+  it('blocked is not muted: the listener never chose it, and unmuting is not the cure', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(h.engine.isBlocked()).toBe(true);
+    expect(h.engine.isMuted()).toBe(false);
+
+    h.ctx.resumeNeverSettles = false;
+    expect(await h.engine.enableSound()).toBe(true);
+    expect(h.engine.isBlocked()).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed']);
+  });
+});

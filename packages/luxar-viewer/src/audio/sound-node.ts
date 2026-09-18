@@ -345,9 +345,16 @@ export class SoundNode {
   }
 
   /**
-   * `on_depart` / `on_arrive`: the waypoint driver owns the start (a pending
+   * `on_depart` / `on_arrive`: the waypoint driver owns the start (a deferred
    * trigger replays here); the slab only ends an `on_arrive` clip once its
    * story is left (see the module docs).
+   *
+   * Staleness is NOT decided here. Audibility is unknown until a view state
+   * arrives, and a waypoint may address one row of a spatial node explicitly
+   * while the slab reports that row silent, so both look identical to a clip
+   * whose story has been left. The engine expires deferred triggers instead,
+   * on the next waypoint event, where the tour having moved on is a fact
+   * rather than an inference.
    */
   private applyWaypointEdge(v: Voice, audible: boolean, was: boolean, replayRising: boolean): void {
     if (replayRising && v.pending) {
@@ -356,6 +363,19 @@ export class SoundNode {
     }
     const leftStory = this.attrs.trigger === 'on_arrive' && !audible && was && !v.pending;
     if (leftStory) this.stopVoice(v, this.attrs.fade_out_ms);
+  }
+
+  /**
+   * Forget any deferred waypoint trigger, without touching what is playing.
+   *
+   * The engine calls this on every new waypoint event so at most ONE deferred
+   * trigger — the most recent — is ever waiting. Navigating N stops while the
+   * autoplay gate is shut otherwise leaves N clips armed, and opening the gate
+   * starts all N together.
+   */
+  clearDeferredTrigger(): void {
+    for (const v of this.voices) v.pending = false;
+    this.pendingBeforeVoices = undefined;
   }
 
   /**

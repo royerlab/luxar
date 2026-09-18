@@ -118,6 +118,9 @@ export class AudioEngine {
   private duck: GainNode | null = null;
   private readonly nodes = new Map<string, SoundNode>();
   private readonly gate: AutoplayGate;
+  /** True while a one-shot gesture listener is waiting to retry the resume. */
+  private gestureRetryArmed = false;
+  private disarmGestureRetry: (() => void) | null = null;
   private unsubscribeDims: Unsubscribe | null = null;
   private unsubscribeCamera: Unsubscribe | null = null;
 
@@ -178,7 +181,16 @@ export class AudioEngine {
     this.listener = listener;
     this.busNodes = buses;
     this.duck = duck;
-    ctx.onstatechange = () => this.deps.notifyUiChanged();
+    ctx.onstatechange = () => {
+      // The context can reach `running` without either of our own callbacks
+      // firing — a browser resumes it on the first gesture once its autoplay
+      // policy is satisfied. Opening the per-node gate here is what stops the
+      // engine sitting deferred while the context is already live.
+      if (ctx.state === 'running' && !this.muted && this.sceneEnabled && this.nodes.size > 0) {
+        this.openGate();
+      }
+      this.deps.notifyUiChanged();
+    };
     this.attachListener();
     this.unsubscribeCamera?.();
     this.unsubscribeCamera = this.deps.onCameraReplaced(() => this.attachListener());
@@ -312,6 +324,10 @@ export class AudioEngine {
     if (this.disposed || this.nodes.size === 0) return;
     const dims = this.deps.getDims();
     const sceneGraph = this.deps.getSceneGraph();
+    // A new waypoint event supersedes every trigger still deferred behind a
+    // shut gate: when sound does start, the listener should hear where they
+    // ARE, not every stop they walked past on the way.
+    for (const node of this.nodes.values()) node.clearDeferredTrigger();
     let fired = 0;
     for (const node of this.nodes.values()) {
       if (node.attrs.trigger !== `on_${kind}`) continue;
@@ -389,17 +405,59 @@ export class AudioEngine {
       this.openGate();
       return;
     }
-    if (ctx.state === 'suspended') {
-      // A kiosk with the autoplay flag resumes here; a browser without a
-      // gesture rejects or stays suspended, and the gate takes over.
-      void ctx
-        .resume()
-        .then(() => {
+    // Show the overlay from the state we can SEE, not from the outcome of
+    // resume(). A context blocked by the autoplay policy may leave that
+    // promise unsettled, in which case neither callback ever runs and the
+    // listener is given no affordance at all.
+    this.gate.show();
+    this.armGestureRetry();
+    void ctx
+      .resume()
+      .then(() => {
+        if (ctx.state === 'running') this.openGate();
+      })
+      .catch(() => {
+        /* the overlay and the gesture retry are already in place */
+      });
+  }
+
+  /**
+   * Retry the resume on the next pointer or key event anywhere on the page.
+   *
+   * The overlay arms its own dismissal, but it is not the only way a listener
+   * interacts first — they may click the canvas, press a navigation key, or
+   * tap the rail. Without this the context stays suspended for the whole
+   * session and the only route to sound is a mute toggle, because that is the
+   * one other call site that re-enters `checkGate`.
+   */
+  private armGestureRetry(): void {
+    if (this.gestureRetryArmed || typeof document === 'undefined') return;
+    this.gestureRetryArmed = true;
+    const retry = (): void => {
+      document.removeEventListener('pointerdown', retry, true);
+      document.removeEventListener('keydown', retry, true);
+      this.gestureRetryArmed = false;
+      const ctx = this.context;
+      if (!ctx || this.muted || !this.sceneEnabled) return;
+      if (ctx.state === 'running') {
+        this.openGate();
+        return;
+      }
+      void ctx.resume().then(
+        () => {
           if (ctx.state === 'running') this.openGate();
-          else this.gate.show();
-        })
-        .catch(() => this.gate.show());
-    }
+          else this.armGestureRetry();
+        },
+        () => this.armGestureRetry()
+      );
+    };
+    this.disarmGestureRetry = () => {
+      document.removeEventListener('pointerdown', retry, true);
+      document.removeEventListener('keydown', retry, true);
+      this.gestureRetryArmed = false;
+    };
+    document.addEventListener('pointerdown', retry, true);
+    document.addEventListener('keydown', retry, true);
   }
 
   private onGateTapped(): void {
@@ -413,6 +471,8 @@ export class AudioEngine {
 
   private openGate(): void {
     this.gate.hide();
+    this.disarmGestureRetry?.();
+    this.disarmGestureRetry = null;
     for (const node of this.nodes.values()) node.setGateOpen(true);
     this.deps.notifyUiChanged();
   }
@@ -615,6 +675,44 @@ export class AudioEngine {
     return this.muted || !this.sceneEnabled;
   }
 
+  /**
+   * Sound is wanted but the browser has not let the context start.
+   *
+   * Distinct from {@link isMuted}: nothing is audible in either case, but this
+   * one is not the listener's choice and is cleared by a gesture rather than
+   * by unmuting. The rail renders it as its own state so the control does not
+   * read "on" over silence.
+   */
+  isBlocked(): boolean {
+    const ctx = this.context;
+    return (
+      !!ctx && ctx.state !== 'running' && !this.muted && this.sceneEnabled && this.nodes.size > 0
+    );
+  }
+
+  /**
+   * Resume the context from a user gesture and open the gate. Safe to call
+   * when already running. Returns whether sound is live afterwards.
+   */
+  async enableSound(): Promise<boolean> {
+    const ctx = this.context;
+    if (!ctx) return false;
+    if (this.muted || !this.sceneEnabled) this.setMuted(false);
+    if (ctx.state !== 'running') {
+      try {
+        await ctx.resume();
+      } catch {
+        /* the overlay and the gesture retry stay in place */
+      }
+    }
+    if (ctx.state === 'running') {
+      this.openGate();
+      return true;
+    }
+    this.armGestureRetry();
+    return false;
+  }
+
   getMasterGain(): number {
     return this.masterGain;
   }
@@ -651,6 +749,8 @@ export class AudioEngine {
     this.disposed = true;
     this.unsubscribeCamera?.();
     this.unsubscribeCamera = null;
+    this.disarmGestureRetry?.();
+    this.disarmGestureRetry = null;
     this.gate.dispose();
     const ctx = this.context;
     this.listener?.removeFromParent();
