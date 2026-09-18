@@ -1867,7 +1867,15 @@ def test_linux_launcher_build_is_configured_for_webkitgtk_4_1(
         "LAUNCHER_PKG_CONFIG_DIR := $(CURDIR)/$(LAUNCHER_SRC_DIR)/pkgconfig" in makefile
     )
     assert "pkg-config --exists webkit2gtk-4.1" in makefile
-    assert makefile.count("$(LAUNCHER_WEBKIT_ENV)") == 3
+    for launcher_command in (
+        '"$$GO_BIN" test ./...',
+        '"$$GO_BIN" vet ./...',
+        "GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=1 $$GO_BIN build",
+    ):
+        before_command, separator, _ = makefile.partition(launcher_command)
+        assert separator, launcher_command
+        nearby_lines = "\n".join(before_command.splitlines()[-2:])
+        assert "$(LAUNCHER_WEBKIT_ENV)" in nearby_lines, launcher_command
 
     compatibility_module = (
         REPO / "packages/luxar-launcher/pkgconfig/webkit2gtk-4.0.pc"
@@ -1875,17 +1883,22 @@ def test_linux_launcher_build_is_configured_for_webkitgtk_4_1(
     assert "Requires: webkit2gtk-4.1" in compatibility_module
 
 
+@pytest.mark.parametrize(
+    ("module_name", "uses_shim"),
+    (("webkit2gtk-4.1.pc", True), ("webkit2gtk-4.0.pc", False)),
+)
 def test_linux_launcher_makefile_selects_compatibility_module_conditionally(
     tmp_path: Path,
+    module_name: str,
+    uses_shim: bool,
 ) -> None:
     """The local launcher commands must preserve 4.0-only hosts and bridge 4.1."""
     pkgconfig_dir = tmp_path / "pkgconfig"
     pkgconfig_dir.mkdir()
-    module = pkgconfig_dir / "webkit2gtk-4.1.pc"
-    module.write_text(
+    (pkgconfig_dir / module_name).write_text(
         "\n".join(
             (
-                "Name: WebKitGTK 4.1 test module",
+                "Name: WebKitGTK test module",
                 "Description: test module",
                 "Version: 4.1",
                 "",
@@ -1922,27 +1935,10 @@ print-launcher-pkg-config-path:
         env=base_env,
     )
     expected_shim = REPO / "packages/luxar-launcher/pkgconfig"
-    assert proc.stdout == f"{expected_shim}:/existing/pkgconfig"
-
-    module.rename(pkgconfig_dir / "webkit2gtk-4.0.pc")
-    proc = subprocess.run(
-        [
-            "make",
-            "--no-print-directory",
-            "-f",
-            str(REPO / "Makefile"),
-            "-f",
-            "-",
-            "print-launcher-pkg-config-path",
-        ],
-        input=probe,
-        text=True,
-        capture_output=True,
-        check=True,
-        cwd=REPO,
-        env=base_env,
+    expected_path = (
+        f"{expected_shim}:/existing/pkgconfig" if uses_shim else "/existing/pkgconfig"
     )
-    assert proc.stdout == "/existing/pkgconfig"
+    assert proc.stdout == expected_path
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
