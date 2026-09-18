@@ -26,6 +26,7 @@ from luxar.core.group.lod.group import (
     partitioned_coverage_fractions,
 )
 from luxar.core.group.lod.points import resolve_substitutive_axis_points
+from luxar.encoding import ArrayDecoder
 from luxar.gsplats.lift import (
     LIFT_TRUNCATION_RADIUS,
     coarse_point_levels,
@@ -290,7 +291,12 @@ class TestAddPointsSubstitutiveLod:
     @pytest.mark.parametrize(
         "colors",
         [
-            np.tile(np.array([[0.2, 0.4, 0.6, 0.8]], dtype=np.float32), (64, 1)),
+            np.column_stack(
+                (
+                    np.tile(np.array([[0.2, 0.4, 0.6]], dtype=np.float32), (64, 1)),
+                    np.linspace(0.2, 0.8, 64, dtype=np.float32),
+                )
+            ),
             (0.2, 0.4, 0.6, 0.8),
         ],
     )
@@ -306,7 +312,11 @@ class TestAddPointsSubstitutiveLod:
                 positions.astype(np.float32),
                 colors=colors,
                 substitutive_lod=dict(
-                    coarse="points", compression_factor=4, levels=1, seed=7
+                    coarse="points",
+                    compression_factor=4,
+                    levels=1,
+                    seed=7,
+                    brightness_compensation=4.0,
                 ),
             )
 
@@ -315,6 +325,25 @@ class TestAddPointsSubstitutiveLod:
             "points",
             "points",
         ]
+        source_colors = np.asarray(colors, dtype=np.float32)
+        source_colors = np.broadcast_to(source_colors, (64, 4))
+        position_to_index = {
+            tuple(position): index for index, position in enumerate(positions)
+        }
+        decoder = ArrayDecoder()
+        for child_index, gain in ((0, 4.0), (1, 1.0)):
+            child = group[f"child_{child_index}"]
+            child_positions = decoder.decode(child["positions"], child)
+            selected = np.array(
+                [position_to_index[tuple(position)] for position in child_positions]
+            )
+            decoded = decoder.decode(child["colors"], child)
+            decoded = np.broadcast_to(decoded, (selected.size, decoded.shape[-1]))
+            assert decoded.shape[1] == 4
+            np.testing.assert_allclose(
+                decoded[:, :3], source_colors[selected, :3] * gain, rtol=1e-5
+            )
+            np.testing.assert_allclose(decoded[:, 3], source_colors[selected, 3])
 
     def test_points_coarse_quality_stamps_can_be_disabled(self, tmp_path) -> None:
         out = tmp_path / "points-no-quality.luxar.zarr"

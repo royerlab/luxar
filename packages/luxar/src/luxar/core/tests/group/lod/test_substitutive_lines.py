@@ -161,6 +161,14 @@ class TestResolveSubstitutiveAxisLines:
 
 
 class TestAddLinesSubstitutiveLod:
+    def test_lifted_quality_stamps_can_be_disabled(self, tmp_path) -> None:
+        group, _ = _build(tmp_path, n_seg=96, levels=1, quality_stamps=False)
+        children = [group[f"child_{i}"] for i in range(2)]
+        assert [child.attrs["type"] for child in children] == ["gsplats", "lines"]
+        assert all(
+            "quality" not in child.attrs.get("level_stats", {}) for child in children
+        )
+
     def test_group_is_kind_lod_lines(self, tmp_path) -> None:
         grp, _ = _build(tmp_path)
         assert grp.attrs["kind"] == "lod"
@@ -1604,6 +1612,7 @@ class TestSameTypeSubstitutiveLines:
         dimensions=None,
         colors=None,
         quality_stamps=True,
+        brightness_compensation="auto",
     ):
         out = tmp_path / "same-type-lines.luxar.zarr"
         starts = np.arange(8, dtype=np.float32)[:, None]
@@ -1633,6 +1642,7 @@ class TestSameTypeSubstitutiveLines:
                     levels=2,
                     seed=7,
                     quality_stamps=quality_stamps,
+                    brightness_compensation=brightness_compensation,
                 ),
             )
         return zarr.open(str(out), mode="r")["curves"], vertices, widths
@@ -1666,13 +1676,49 @@ class TestSameTypeSubstitutiveLines:
     @pytest.mark.parametrize(
         "colors",
         [
-            np.tile(np.array([[0.2, 0.4, 0.6, 0.8]], dtype=np.float32), (16, 1)),
+            np.column_stack(
+                (
+                    np.tile(np.array([[0.2, 0.4, 0.6]], dtype=np.float32), (16, 1)),
+                    np.linspace(0.2, 0.8, 16, dtype=np.float32),
+                )
+            ),
             (0.2, 0.4, 0.6, 0.8),
         ],
     )
     def test_coarse_levels_accept_rgba(self, tmp_path, colors) -> None:
-        group, _, _ = self._build_segments(tmp_path, colors=colors)
+        group, vertices, widths = self._build_segments(
+            tmp_path, colors=colors, brightness_compensation=2.0
+        )
         assert [group[f"child_{i}"].attrs["type"] for i in range(3)] == ["lines"] * 3
+        source_colors = np.asarray(colors, dtype=np.float32)
+        source_colors = np.broadcast_to(source_colors, (16, 4))
+        vertex_to_index = {
+            tuple(vertex): index for index, vertex in enumerate(vertices)
+        }
+        decoder = ArrayDecoder()
+        for child_index in range(3):
+            child = group[f"child_{child_index}"]
+            child_vertices = decoder.decode(child["vertices"], child)
+            selected = np.array(
+                [vertex_to_index[tuple(vertex)] for vertex in child_vertices]
+            )
+            decoded_colors = decoder.decode(child["colors"], child)
+            decoded_colors = np.broadcast_to(
+                decoded_colors, (selected.size, decoded_colors.shape[-1])
+            )
+            decoded_widths = decoder.decode(child["widths"], child)
+            width_gain = float(decoded_widths[0] / widths[selected[0]])
+            requested_gain = 2.0 ** (2 - child_index)
+            color_gain = requested_gain / width_gain
+            assert decoded_colors.shape[1] == 4
+            np.testing.assert_allclose(
+                decoded_colors[:, :3],
+                source_colors[selected, :3] * color_gain,
+                rtol=2e-4,
+            )
+            np.testing.assert_allclose(
+                decoded_colors[:, 3], source_colors[selected, 3], rtol=1e-5
+            )
 
     def test_quality_stamps_can_be_disabled(self, tmp_path) -> None:
         group, _, _ = self._build_segments(tmp_path, quality_stamps=False)
