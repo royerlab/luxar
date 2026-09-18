@@ -1485,6 +1485,7 @@ def save_fit_output(
             result,
             compress=compress,
             amplitude_bits="auto",
+            source_dtype=result.meta.get("fit_stats", {}).get("source_dtype"),
             fitting_info=fitting,
             fitting_config=config,
             provenance_info=provenance,

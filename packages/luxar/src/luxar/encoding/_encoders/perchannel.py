@@ -365,6 +365,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         mode: EncodingMode,
         *,
         positive_scalar_encoding: Literal["linear", "log"] = "linear",
+        positive_scalar_bits: Optional[Literal[8, 16]] = None,
         allow_lut: bool = True,
     ) -> Optional[float]:
         """How far can encoding ``data`` as POSITIVE_SCALAR enlarge a value?
@@ -402,6 +403,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             data: The positive-scalar array exactly as it will be encoded.
             mode: The encoding mode it will be encoded under.
             positive_scalar_encoding: The matching write's linear/log choice.
+            positive_scalar_bits: The matching write's AUTO quantization tier.
+                An 8-bit tier selects geometric-log uint8 regardless of the
+                linear/log choice.
             allow_lut: Whether the matching write permits exact LUT storage.
 
         Returns:
@@ -445,7 +449,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             return _float32_cast_slack(np.unique(arr), check_values=True)
 
         return self._positive_scalar_quantization_slack(
-            arr, mode, positive_scalar_encoding
+            arr, mode, positive_scalar_encoding, positive_scalar_bits
         )
 
     def _positive_scalar_quantization_slack(
@@ -453,6 +457,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         arr: np.ndarray,
         mode: EncodingMode,
         positive_scalar_encoding: Literal["linear", "log"],
+        positive_scalar_bits: Optional[Literal[8, 16]],
     ) -> Optional[float]:
         """Return a pad for quantization and the Python/viewer decode paths."""
 
@@ -461,13 +466,19 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             return None
 
         bits = self._compute_quantization_bits(arr)
-        use_geolog = positive_scalar_encoding == "log" or bits == 0
+        use_geolog = (
+            positive_scalar_encoding == "log"
+            or bits == 0
+            or (mode == EncodingMode.AUTO and positive_scalar_bits == 8)
+        )
         viewer_rounding_slack = 0.0
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
             min_log = float(np.log(nonzero.min()))
             max_log = float(np.log(nonzero.max()))
-            quant_bits = 16 if mode == EncodingMode.AUTO else 8
+            quant_bits = (
+                8 if mode == EncodingMode.MEMORY or positive_scalar_bits == 8 else 16
+            )
             intervals = (1 << quant_bits) - 2
             # The grid is anchored at max_log, so no code decodes above max_val.
             half_step = min(
@@ -878,7 +889,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             data: Array data
             mode: Encoding mode
             encoding_type: "linear" or "log" encoding
-            bits: Optional AUTO quantization tier (8 or 16)
+            bits: Optional AUTO quantization tier. An 8-bit tier selects
+                geometric-log uint8 regardless of ``encoding_type``.
             chunks: Optional chunk shape
             compressor: Optional compressor
         """

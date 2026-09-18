@@ -206,7 +206,7 @@ encoder.encode(
 ```
 
 **Methods:**
-- `encode(data, zarr_group, name, semantic_type, mode=AUTO, n_elements=None, bounds=None, positive_scalar_encoding="linear", custom_encoder=None, color_mode=None, chunks=None, compressor=None, deduplicate=True)` - Encode and write array or scalar
+- `encode(data, zarr_group, name, semantic_type, mode=AUTO, n_elements=None, bounds=None, positive_scalar_encoding="linear", custom_encoder=None, color_mode=None, chunks=None, compressor=None, deduplicate=True, positive_scalar_bits=None)` - Encode and write array or scalar
 - `reset()` - Clear internal registry (call between scenes)
 - `snapshot()` - Capture deduplication state for a transactional writer operation
 - `restore(state)` - Restore deduplication state after a transactional writer rollback
@@ -218,6 +218,9 @@ encoder.encode(
   `"log"` selects the geometric-log encoding (`geolog_scalar_uint16` at AUTO,
   `geolog_scalar_uint8` at MEMORY); AUTO also falls back to it automatically
   when the linear dynamic range exceeds 65536 (instead of the former float32).
+- `positive_scalar_bits` - Optional AUTO tier for POSITIVE_SCALAR arrays. `8`
+  selects geometric-log uint8 regardless of the linear/log choice; `None`
+  preserves the existing AUTO selection.
 - `custom_encoder` - Explicit encoder name, required when `mode=CUSTOM`.
 - `color_mode` - `"sdr"` or `"hdr"`, required for float COLOR arrays.
 - `chunks` / `compressor` - Optional zarr dataset chunk shape and compressor.

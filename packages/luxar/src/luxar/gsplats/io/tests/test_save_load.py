@@ -113,12 +113,13 @@ class TestSaveGsplats:
             ("uint16", np.uint16, "bounded_scalar_uint16"),
             ("float32", np.uint16, "bounded_scalar_uint16"),
             ("not-a-dtype", np.uint16, "bounded_scalar_uint16"),
+            (None, np.uint16, "bounded_scalar_uint16"),
         ],
     )
     def test_amplitude_bits_auto_follows_source_dtype(
         self,
         tmp_path: Path,
-        source_dtype: str,
+        source_dtype: str | None,
         expected_dtype: np.dtype,
         expected_encoding: str,
     ) -> None:
@@ -135,6 +136,19 @@ class TestSaveGsplats:
             root["amplitudes"].nbytes
             == len(data.amplitudes) * np.dtype(expected_dtype).itemsize
         )
+
+    def test_amplitude_bits_auto_round_trips_within_uint8_error_bound(
+        self, tmp_path: Path
+    ) -> None:
+        data = GSplatData(**_wide_amplitude_splats())
+        data.stats["source_dtype"] = "uint8"
+        path = tmp_path / "round-trip.gsplats.zarr"
+
+        data.save(path, ordering="none", amplitude_bits="auto")
+        decoded = GSplatData.load(path)
+
+        relative_error = np.abs(decoded.amplitudes - data.amplitudes) / data.amplitudes
+        assert float(relative_error.max()) < 4e-2
 
     def test_amplitude_bits_default_stays_uint16_for_uint8_source(
         self, tmp_path: Path
@@ -174,6 +188,86 @@ class TestSaveGsplats:
         root = zarr.open_group(str(path), mode="r")
         assert root["amplitudes"].dtype == np.uint8
         assert root["amplitudes"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
+
+    def test_cli_fit_save_tree_uses_source_matched_amplitude_bits(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
+        from luxar.gsplats.tree import GSplatPartition
+
+        data = GSplatData(**_wide_amplitude_splats())
+        tree = GSplatPartition(
+            children=[data.tree],
+            meta={"fit_stats": {"source_dtype": "uint8"}},
+        )
+        path = tmp_path / "fit-tree-output.gsplats.zarr"
+
+        save_fit_output(tree, path, compress=None, verbose=False)
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["part_0/amplitudes"].dtype == np.uint8
+        assert (
+            root["part_0/amplitudes"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
+        )
+
+    def test_tree_auto_does_not_require_persisting_fit_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatPartition
+
+        data = GSplatData(**_wide_amplitude_splats())
+        tree = GSplatPartition(children=[data.tree])
+        path = tmp_path / "tree-without-fitting-info.gsplats.zarr"
+
+        write_gsplats_tree(
+            path,
+            tree,
+            ordering="none",
+            amplitude_bits="auto",
+            source_dtype="uint8",
+        )
+
+        root = zarr.open_group(str(path), mode="r")
+        assert "fitting" not in root
+        assert root["part_0/amplitudes"].dtype == np.uint8
+
+    def test_streaming_partition_auto_requires_dtype_for_callable_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.io.save_gsplats import write_partition_streaming
+
+        data = GSplatData(**_wide_amplitude_splats())
+        path = tmp_path / "streaming-missing-dtype.gsplats.zarr"
+
+        with pytest.raises(ValueError, match="source_dtype is required"):
+            write_partition_streaming(
+                path,
+                lambda: iter([data.tree]),
+                amplitude_bits="auto",
+                fitting_info=lambda: {"source_dtype": "uint8"},
+            )
+
+        assert not path.exists()
+
+    def test_streaming_partition_auto_uses_explicit_source_dtype(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.io.save_gsplats import write_partition_streaming
+
+        data = GSplatData(**_wide_amplitude_splats())
+        path = tmp_path / "streaming-source-dtype.gsplats.zarr"
+
+        write_partition_streaming(
+            path,
+            lambda: iter([data.tree]),
+            amplitude_bits="auto",
+            source_dtype="uint8",
+            fitting_info=lambda: {"part_provenance": []},
+        )
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["part_0/amplitudes"].dtype == np.uint8
 
     def test_amplitude_auto_does_not_require_persisting_fit_metadata(
         self, tmp_path: Path

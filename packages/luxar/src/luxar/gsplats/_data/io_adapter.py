@@ -80,7 +80,7 @@ class IOAdapterMixin(_GSplatDataOps):
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.io.save_gsplats import (
-            _resolve_amplitude_bits,
+            resolve_amplitude_bits,
             split_fitting_info,
             write_gsplats_tree,
         )
@@ -104,9 +104,9 @@ class IOAdapterMixin(_GSplatDataOps):
                 include_provenance=include_provenance,
             )
         )
-        resolved_amplitude_bits = _resolve_amplitude_bits(
+        resolved_amplitude_bits = resolve_amplitude_bits(
             amplitude_bits,
-            {"source_dtype": self.stats.get("source_dtype")},
+            source_dtype=self.stats.get("source_dtype"),
         )
 
         # One authoring path: serialize this dataset's node tree to the current

@@ -69,17 +69,20 @@ from luxar.utils.paths import normalize_zarr_path
 _MAX_STREAMING_BARRIER_RUNS = 1_000_000
 
 
-def _resolve_amplitude_bits(
+def resolve_amplitude_bits(
     amplitude_bits: Literal["auto", 8, 16],
-    fitting_info: Optional[Dict[str, Any]],
+    fitting_info: Optional[Dict[str, Any]] = None,
+    *,
+    source_dtype: Optional[str] = None,
 ) -> Literal[8, 16]:
-    """Resolve the AUTO amplitude tier from persisted source dtype metadata."""
+    """Resolve the AUTO amplitude tier from source dtype metadata."""
     if amplitude_bits in (8, 16):
         return amplitude_bits
     if amplitude_bits != "auto":
         raise ValueError("amplitude_bits must be 'auto', 8, or 16")
 
-    source_dtype = fitting_info.get("source_dtype") if fitting_info else None
+    if source_dtype is None and fitting_info:
+        source_dtype = fitting_info.get("source_dtype")
     try:
         dtype = np.dtype(source_dtype)
     except (TypeError, ValueError):
@@ -647,6 +650,7 @@ def write_gsplats_tree(
     ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     amplitude_bits: Literal["auto", 8, 16] = 16,
+    source_dtype: Optional[str] = None,
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
@@ -684,6 +688,10 @@ def write_gsplats_tree(
     the :data:`NORMALIZATION_STATS_KEYS` block rides on the ROOT node's ``meta``
     and is promoted here into ``pipeline/`` — the one location the format spec
     names for it (#1175). An explicit ``pipeline_info`` entry wins.
+
+    ``amplitude_bits="auto"`` resolves from the explicit ``source_dtype`` when
+    provided, otherwise from ``fitting_info["source_dtype"]``. The explicit
+    argument keeps encoding independent of whether fitting metadata is persisted.
     """
     path = Path(path)
     pipeline_info = _with_root_normalization(pipeline_info, node)
@@ -709,7 +717,9 @@ def write_gsplats_tree(
         dataset_ctx = make_dataset_ctx(
             encoding_mode,
             compressor=compressor,
-            positive_scalar_bits=_resolve_amplitude_bits(amplitude_bits, fitting_info),
+            positive_scalar_bits=resolve_amplitude_bits(
+                amplitude_bits, fitting_info, source_dtype=source_dtype
+            ),
         )
         ordering_ctx = make_ordering_ctx(ordering)
         write_gsplat_node(
@@ -1109,6 +1119,7 @@ def write_partition_streaming(
     ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     amplitude_bits: Literal["auto", 8, 16] = 16,
+    source_dtype: Optional[str] = None,
     fitting_info: Optional[
         Dict[str, Any] | Callable[[], Optional[Dict[str, Any]]]
     ] = None,
@@ -1139,6 +1150,9 @@ def write_partition_streaming(
     :func:`~luxar.io._compiler.gsplat_tree.write_gsplat_node`'s partition branch.
     ``fitting_info`` may be a value or a provider; a provider is called once after
     the part loop, allowing metadata to describe the parts that actually survived.
+    ``amplitude_bits="auto"`` resolves from ``source_dtype`` before writing; when
+    fitting metadata is a provider, the explicit dtype is required because the
+    provider is intentionally not called until all parts have been written.
     ``bsp_tree`` is likewise a provider, and whatever it returns is written as the
     root's optional split-plane attr (the same one the standalone branch writes).
     A callable is needed because the
@@ -1166,6 +1180,15 @@ def write_partition_streaming(
     )
 
     path = Path(path)
+    if amplitude_bits == "auto" and callable(fitting_info) and source_dtype is None:
+        raise ValueError(
+            "source_dtype is required when amplitude_bits='auto' and "
+            "fitting_info is callable"
+        )
+    static_fitting_info = fitting_info if isinstance(fitting_info, dict) else None
+    resolved_amplitude_bits = resolve_amplitude_bits(
+        amplitude_bits, static_fitting_info, source_dtype=source_dtype
+    )
     # Crash-safety: stream into a hidden temp sibling and atomically swap into
     # place after the final consolidate. This writer can run for a long time
     # (one part per tile of a whole timelapse); the old in-place
@@ -1176,13 +1199,10 @@ def write_partition_streaming(
     store = open_store(tmp, mode="w")
     root = create_root_group(store, overwrite=True)
     try:
-        static_fitting_info = fitting_info if isinstance(fitting_info, dict) else None
         dataset_ctx = make_dataset_ctx(
             encoding_mode,
             compressor=compressor,
-            positive_scalar_bits=_resolve_amplitude_bits(
-                amplitude_bits, static_fitting_info
-            ),
+            positive_scalar_bits=resolved_amplitude_bits,
         )
         ordering_ctx = make_ordering_ctx(ordering)
 

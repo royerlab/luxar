@@ -23,6 +23,15 @@ from .semantic_types import SemanticType
 __all__ = ["ArrayEncoder"]
 
 
+def _validate_positive_scalar_bits(
+    bits: Optional[Literal[8, 16]], semantic_type: SemanticType
+) -> None:
+    if bits not in (None, 8, 16):
+        raise ValueError("positive_scalar_bits must be 8 or 16")
+    if bits is not None and semantic_type != SemanticType.POSITIVE_SCALAR:
+        raise ValueError("positive_scalar_bits is only valid for POSITIVE_SCALAR")
+
+
 class ArrayEncoder(
     StructuralEncoderMixin, PerChannelEncoderMixin, CholeskyEncoderMixin
 ):
@@ -131,9 +140,10 @@ class ArrayEncoder(
                          ``deduplicate``); grid-snapped coordinates would
                          otherwise LUT-encode and decode as indices.
             positive_scalar_bits: Optional AUTO quantization tier for
-                POSITIVE_SCALAR log encoding. ``None`` preserves AUTO's
-                existing selection; 8 forces the geometric-log uint8 tier.
-                MEMORY remains 8-bit and PRECISION remains float32.
+                POSITIVE_SCALAR encoding. ``None`` preserves AUTO's existing
+                selection; 8 selects geometric-log uint8 regardless of the
+                ``positive_scalar_encoding`` linear/log choice. MEMORY remains
+                8-bit and PRECISION remains float32.
             _perchannel_bits: Internal-only. Forces the quantization tier (8 or
                          16) of the per-channel log encoders for the
                          CHOLESKY_DIAG / CHOLESKY_OFFDIAG semantic types. Set
@@ -153,13 +163,7 @@ class ArrayEncoder(
         if not isinstance(semantic_type, SemanticType):
             raise ValueError("semantic_type must be explicitly specified")
 
-        if positive_scalar_bits not in (None, 8, 16):
-            raise ValueError("positive_scalar_bits must be 8 or 16")
-        if (
-            positive_scalar_bits is not None
-            and semantic_type != SemanticType.POSITIVE_SCALAR
-        ):
-            raise ValueError("positive_scalar_bits is only valid for POSITIVE_SCALAR")
+        _validate_positive_scalar_bits(positive_scalar_bits, semantic_type)
 
         # Validate CUSTOM mode
         if mode == EncodingMode.CUSTOM and custom_encoder is None:

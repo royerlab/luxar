@@ -154,6 +154,7 @@ def build_lines_ordering(
             dataset_ctx.encoding_mode,
             # Must match write_positive_scalar's default used below.
             positive_scalar_encoding="linear",
+            positive_scalar_bits=dataset_ctx.positive_scalar_bits,
         )
         if dataset_ctx is not None
         else None

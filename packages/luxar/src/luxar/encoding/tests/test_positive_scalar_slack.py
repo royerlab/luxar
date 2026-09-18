@@ -133,6 +133,35 @@ def test_positive_scalar_slack_bounds_real_upward_displacement(
     assert slack <= 2 * float(upward.max()), name
 
 
+def test_positive_scalar_slack_matches_explicit_uint8_tier() -> None:
+    data = np.geomspace(1.0, 1000.0, 5000).astype(np.float32)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data,
+        EncodingMode.AUTO,
+        positive_scalar_bits=8,
+        allow_lut=False,
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        positive_scalar_bits=8,
+        allow_lut=False,
+        deduplicate=False,
+    )
+    assert group["s"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
+    decoded = ArrayDecoder().decode(group["s"], group)
+    upward = decoded.astype(np.float64) - data.astype(np.float64)
+    assert float(upward.max()) > 1e-3
+    assert float(upward.max()) <= slack
+
+
 def test_positive_scalar_slack_bounds_viewer_float32_decode() -> None:
     data = np.linspace(9.75, 713.0, 20_000).astype(np.float16)
     encoder = ArrayEncoder()

@@ -24,6 +24,8 @@ class DatasetCtx:
 
     Read-set of every ``datasets/`` serializer and the gsplat array writer:
     the encoder, the active encoding mode, and the scene compressor.
+    ``positive_scalar_bits`` applies to every POSITIVE_SCALAR write in the
+    context; the scene compiler deliberately leaves it unset.
     """
 
     encoder: ArrayEncoder
