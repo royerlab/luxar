@@ -29,10 +29,8 @@ _LABEL_COUNT = 3
 _LABEL_VOCABULARY = {i: f"class-{i}" for i in range(_LABEL_COUNT)}
 
 
-def _label_operation(
-    operation, *, id: str, refuses: bool = False, labels_follow_centers: bool = True
-):
-    return pytest.param(operation, refuses, labels_follow_centers, id=id)
+def _label_operation(operation, *, id: str, labels_follow_centers: bool = True):
+    return pytest.param(operation, labels_follow_centers, id=id)
 
 
 _LABEL_CHANNEL_OPERATIONS = (
@@ -378,14 +376,13 @@ class TestGSplatDataLOD:
                 assert sublod.label_vocabulary == vocabulary
 
     @pytest.mark.parametrize(
-        "operation,refuses,labels_follow_centers", _LABEL_CHANNEL_OPERATIONS
+        "operation,labels_follow_centers", _LABEL_CHANNEL_OPERATIONS
     )
     @pytest.mark.parametrize("laddered", [False, True], ids=["flat", "laddered"])
     @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
     def test_operations_carry_or_refuse_categorical_channel(
         self,
         operation,
-        refuses: bool,
         labels_follow_centers: bool,
         laddered: bool,
         labeled: bool,
@@ -409,14 +406,6 @@ class TestGSplatDataLOD:
             )
         if laddered:
             data = make_additive_lod(data, n_lods=3, method="radial")
-
-        if labeled and refuses:
-            with pytest.raises(
-                ValueError,
-                match="cannot coarsen: input carries categorical channel 'label_ids'",
-            ):
-                operation(data)
-            return
 
         result = operation(data)
 
