@@ -200,8 +200,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             gsplat_amplitude_bits: Optional AUTO amplitude tier for GSplats only.
                 ``8`` selects uint8 geometric-log amplitudes when the adaptive
                 encoder would otherwise use more than 8 bits; ``16`` retains
-                the historical default. Points radii and Lines widths are
-                unaffected.
+                the historical default. ``"auto"`` resolves each GSplat node
+                from its recorded ``fitting/source_dtype``. Points radii and
+                Lines widths are unaffected.
 
         Note:
             Physical units should be specified per-dimension using the Dimensions
@@ -1955,7 +1956,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             store=self.store,
             dataset_ctx=self._make_dataset_ctx(
                 positive_scalar_bits=amplitude_bits,
-                deduplicate_positive_scalar=self._gsplat_amplitude_bits is None,
+                deduplicate_positive_scalar=self._gsplat_amplitude_bits != "auto",
             ),
             ordering_ctx=self._make_ordering_ctx(),
             compressor=self.compressor,

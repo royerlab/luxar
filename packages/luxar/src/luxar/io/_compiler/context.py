@@ -27,6 +27,8 @@ class DatasetCtx:
     ``positive_scalar_bits`` applies to every POSITIVE_SCALAR write in the
     context. The scene compiler sets it only on its GSplats context, so Points
     radii and Lines widths retain their independent adaptive policy.
+    ``deduplicate_positive_scalar`` is disabled when a per-node tier could make
+    byte-identical source arrays encode differently; the registry keys on bytes.
     """
 
     encoder: ArrayEncoder

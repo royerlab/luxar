@@ -1806,6 +1806,7 @@ class TestMergeOrchestrator:
 
         collect(root)
         assert amplitude_arrays
+        assert root["fitting"].attrs["source_dtype"] == "uint8"
         for array in amplitude_arrays:
             encoding = array.attrs["encoding"]
             if encoding["name"] == "array_ref":
@@ -1825,6 +1826,57 @@ class TestMergeOrchestrator:
         np.testing.assert_allclose(
             np.sort(actual), np.sort(expected), rtol=0.04, atol=1e-7
         )
+
+    @pytest.mark.parametrize("rebuild_final", [False, True])
+    def test_flat_merge_resume_does_not_require_deleted_tiles(
+        self, tmp_path: Path, rebuild_final: bool
+    ) -> None:
+        import shutil
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        n_timepoints = 2 if rebuild_final else 1
+        self._write_tiles(out_dir / "tiles", n_t=n_timepoints, n_c=1, n_k=2)
+        manifest = BatchManifest(n_timepoints=n_timepoints, n_channels=1, n_tiles=2)
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
+
+        shutil.rmtree(out_dir / "tiles")
+        if rebuild_final:
+            shutil.rmtree(final)
+
+        assert merge_batch_results(manifest, out_dir, verbose=False, flat=True) == final
+
+    @pytest.mark.parametrize("n_tiles", [1, 2])
+    def test_merge_recipe_records_source_dtype(
+        self, tmp_path: Path, n_tiles: int
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for tile_index in range(n_tiles):
+            tile = self._tile(8, tile_index)
+            tile.stats["source_dtype"] = "uint8"
+            tile.save(
+                tiles_dir / output_filename(0, 0, tile_index, 1, 1, n_tiles),
+                amplitude_bits="auto",
+            )
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_tiles),
+            out_dir,
+            verbose=False,
+            recipe="stream",
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert root["fitting"].attrs["source_dtype"] == "uint8"
 
     def test_partition_matches_flat_total_and_has_tight_bounds(
         self, tmp_path: Path

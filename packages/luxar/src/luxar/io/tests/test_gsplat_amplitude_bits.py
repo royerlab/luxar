@@ -1,7 +1,7 @@
 """GSplat amplitude tiers stay scoped to gsplat writes."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pytest
@@ -76,6 +76,33 @@ def test_auto_resolves_each_gsplat_data_node_from_its_source_dtype(
     root = zarr.open_group(str(path), mode="r")
     assert _encoding_name(root["u8/amplitudes"]) == "geolog_scalar_uint8"
     assert np.dtype(root["f32/amplitudes"].dtype) == np.dtype(np.uint16)
+
+
+@pytest.mark.parametrize("amplitude_bits", [8, 16])
+def test_explicit_amplitude_bits_preserve_deduplication(
+    tmp_path: Path, amplitude_bits: Literal[8, 16]
+) -> None:
+    positions = np.column_stack(
+        [np.linspace(0.0, 1.0, 32), np.zeros(32), np.zeros(32)]
+    ).astype(np.float32)
+    amplitudes = np.geomspace(1e-3, 1.0, 32).astype(np.float32)
+    cholesky = np.tile(np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (32, 1))
+
+    path = tmp_path / "scene.luxar.zarr"
+    with LuxarZarrCompiler(path, gsplat_amplitude_bits=amplitude_bits) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        for name in ("first", "second"):
+            scene.add_gsplats(
+                name,
+                centers=positions,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+            )
+
+    root = zarr.open_group(str(path), mode="r")
+    encoding = root["second/amplitudes"].attrs["encoding"]
+    assert encoding["name"] == "array_ref"
+    assert encoding["target"] == "first/amplitudes"
 
 
 def test_auto_resolves_gsplat_file_from_recorded_source_dtype(tmp_path: Path) -> None:

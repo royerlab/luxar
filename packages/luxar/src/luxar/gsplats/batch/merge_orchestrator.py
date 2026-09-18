@@ -212,8 +212,9 @@ def _source_dtype_for_tiles(
                 if tile_path is None:
                     continue
                 # Every batch task fits the same selected input array, so source
-                # dtype is invariant across slots. This also deliberately keeps
-                # an unfinished first slot failing before any merge output exists.
+                # dtype is invariant across slots. On the streaming partition
+                # path this also keeps an unfinished first slot failing before
+                # any merge output exists.
                 root = open_group(tile_path, mode="r")
                 source_dtype = (
                     root["fitting"].attrs.get("source_dtype")
@@ -222,6 +223,16 @@ def _source_dtype_for_tiles(
                 )
                 return source_dtype if isinstance(source_dtype, str) else None
     return None
+
+
+def _merge_fitting_info(
+    part_provenance: List[Dict[str, Any]], source_dtype: Optional[str]
+) -> Dict[str, Any]:
+    """Build root fitting metadata shared by batch merge writers."""
+    fitting_info: Dict[str, Any] = {"part_provenance": part_provenance}
+    if source_dtype is not None:
+        fitting_info["source_dtype"] = source_dtype
+    return fitting_info
 
 
 def _copy_or_resave_tile(
@@ -1138,7 +1149,9 @@ def _merge_partition(
                 write_gsplats_tree(
                     final_path,
                     node,
-                    fitting_info={"part_provenance": single_part_provenance},
+                    fitting_info=_merge_fitting_info(
+                        single_part_provenance, source_dtype
+                    ),
                     amplitude_bits=amplitude_bits,
                     source_dtype=source_dtype,
                     pipeline_info=pipeline_info,
@@ -1228,7 +1241,9 @@ def _merge_partition(
             max_elements=0,
             amplitude_bits=amplitude_bits,
             source_dtype=source_dtype,
-            fitting_info=lambda: {"part_provenance": list(part_provenance)},
+            fitting_info=lambda: _merge_fitting_info(
+                list(part_provenance), source_dtype
+            ),
             pipeline_info=pipeline_info,
             barrier_dims=barrier_dims,
             # Resolved after the stream, when `kept_slots` is complete.
@@ -1266,10 +1281,7 @@ def _merge_flat(
     label = "box" if manifest.mode == "content" else "tile"
 
     t_indices, c_indices = _tile_indices(manifest)
-    from luxar.gsplats.io.save_gsplats import resolve_amplitude_bits
 
-    source_dtype = _source_dtype_for_tiles(tiles_dir, t_indices, c_indices, n_k, label)
-    amplitude_bits = resolve_amplitude_bits("auto", source_dtype=source_dtype)
     # ================================================================
     # Level 1: Merge tiles per (T, C)
     # ================================================================
@@ -1321,11 +1333,13 @@ def _merge_flat(
                         manifest.dimension_metadata if n_t == 1 else None,
                     )
                 else:
-                    datasets = [GSplatData.load(p) for p in tile_files]
+                    datasets = [
+                        GSplatData.load(p, include_stats=True) for p in tile_files
+                    ]
                     merged = GSplatData.concatenate(datasets)
                     merged.save(
                         out_path,
-                        amplitude_bits=amplitude_bits,
+                        amplitude_bits="auto",
                         root_attrs=_dimension_root_attrs(
                             manifest.dimension_metadata, merged.ndim
                         )
@@ -1355,7 +1369,7 @@ def _merge_flat(
                     continue
 
                 tc_files = [tc_paths[(t_seq, c_seq)] for t_seq in range(n_t)]
-                datasets = [GSplatData.load(p) for p in tc_files]
+                datasets = [GSplatData.load(p, include_stats=True) for p in tc_files]
                 stacked = GSplatData.combine_as_new_dimension(
                     datasets,
                     values=[float(t) for t in t_indices],
@@ -1363,7 +1377,7 @@ def _merge_flat(
                 )
                 stacked.save(
                     out_path,
-                    amplitude_bits=amplitude_bits,
+                    amplitude_bits="auto",
                     root_attrs=_dimension_root_attrs(
                         manifest.dimension_metadata, stacked.ndim
                     ),
@@ -1392,11 +1406,11 @@ def _merge_flat(
                 return final_path
 
             ch_files = [channel_paths[c] for c in range(n_c)]
-            datasets = [GSplatData.load(p) for p in ch_files]
+            datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
             final.save(
                 final_path,
-                amplitude_bits=amplitude_bits,
+                amplitude_bits="auto",
                 root_attrs=_dimension_root_attrs(
                     manifest.dimension_metadata, final.ndim
                 ),
@@ -1416,11 +1430,11 @@ def _merge_flat(
             final_path = merged_dir / "final.gsplats.zarr"
             if not final_path.exists() or force:
                 ch_files = [channel_paths[c] for c in range(n_c)]
-                datasets = [GSplatData.load(p) for p in ch_files]
+                datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
                 final = GSplatData.concatenate(datasets)
                 final.save(
                     final_path,
-                    amplitude_bits=amplitude_bits,
+                    amplitude_bits="auto",
                     root_attrs=_dimension_root_attrs(
                         manifest.dimension_metadata, final.ndim
                     ),
