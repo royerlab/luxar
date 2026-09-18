@@ -2620,7 +2620,7 @@ describe('SceneLoader', () => {
       );
       expect(getLoadTimeline().refinement.complete).toBe(true);
       expect(getLoadTimeline().milestones.refinementComplete).toBeUndefined();
-    }, 15000);
+    });
 
     it('should handle enumeration failures gracefully', async () => {
       // [data.md/W6][P2] Strengthen: pin the fallback contract explicitly.
