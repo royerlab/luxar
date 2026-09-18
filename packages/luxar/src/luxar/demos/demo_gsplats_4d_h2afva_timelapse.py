@@ -131,7 +131,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 1064,
+        "download_mb": 1061,
         "compute": "light",
         "gpu": "none",
         "local_data": None,

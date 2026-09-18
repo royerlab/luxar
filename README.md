@@ -1116,7 +1116,7 @@ is credited on the recording itself:
 | Permissively licensed (CC-BY, CC0, public domain) | 46 files, 1.2 GiB | [10.5281/zenodo.21912279](https://doi.org/10.5281/zenodo.21912279) |
 | ShareAlike (CC BY-SA 4.0) | 3 files, 20 MiB | [10.5281/zenodo.21912281](https://doi.org/10.5281/zenodo.21912281) |
 | Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
-| *Drosophila* embryogenesis (500 timepoints) | 1 file, 824 MiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
+| *Drosophila* embryogenesis (500 timepoints) | 1 file, 1.1 GiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
 
 These records cover 25 of the 31 demo datasets. The other six are built locally
 because redistribution is not permitted or not yet available, or because

@@ -19,8 +19,8 @@ _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_4d_drosophila_embryogenesis.py"
 )
 _MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
-_ARCHIVE_SHA256 = "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b"
-_ARCHIVE_BYTES = 863_811_020
+_ARCHIVE_SHA256 = "ee3193babb074e16958665bb96e880dea7d9af695b4521c1c2fbb81991f5b393"
+_ARCHIVE_BYTES = 1_158_979_910
 
 
 def _load_demo_module(name: str = "_luxar_demo_drosophila_embryogenesis_for_tests"):

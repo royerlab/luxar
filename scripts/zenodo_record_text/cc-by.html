@@ -315,17 +315,11 @@ luxar demo # browse every demo that uses these files</pre>
 </tr>
 <tr>
 <td><code>neuromast_membranes.gsplats.zarr.zip</code></td>
-<td>71.1 MB</td>
-<td>5,864,440</td>
-<td>8 ladder rungs</td>
-<td>45.9&ndash;50.9 / 45.9&ndash;50.7 (per frame)</td>
+<td>72.4 MB</td> <td>6,400,000</td> <td>8 ladder rungs</td> <td>not scored</td>
 </tr>
 <tr>
 <td><code>neuromast_nuclei.gsplats.zarr.zip</code></td>
-<td>65.3 MB</td>
-<td>5,530,300</td>
-<td>8 ladder rungs</td>
-<td>53.6&ndash;58.0 / 50.9&ndash;55.8 (per frame)</td>
+<td>70.4 MB</td> <td>6,400,000</td> <td>8 ladder rungs</td> <td>not scored</td>
 </tr>
 <tr>
 <td><code>nexrad_supercell.gsplats.zarr.zip</code></td>
@@ -373,7 +367,7 @@ luxar demo # browse every demo that uses these files</pre>
 <li><code>gsplats_3d_drosophila_gastrulation</code> (2.2 MB, cc-by-4.0). Source: Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Keller lab, HHMI Janelia Research Campus). Attribution: Acquired in the laboratory of Philipp J. Keller at HHMI Janelia Research Campus, where L. A. Royer was then a postdoctoral fellow; the Gaussian-splat fit was computed later at Chan Zuckerberg Biohub San Francisco. Imaging method: Royer, L. A., Lemon, W. C., Chhetri, R. K., Wan, Y., Coleman, M., Myers, E. W., Keller, P. J. Adaptive light-sheet microscopy for long-term, high-resolution imaging in living organisms. Nature Biotechnology 34, 1267-1278 (2016). This is a single frame (150) of a longer recording, fitted independently; the full 500-timepoint timelapse has its own record, doi:10.5281/zenodo.22118695, released on its own timeline.</li>
 <li><code>gsplats_3d_h2afva_decimation</code> (25.4 MB, cc-by-4.0). Source: h2afva single stack at four decimation levels (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco. Acquired for Zebrahub: Lange, M. et al. A multimodal zebrafish developmental atlas reveals the state-transition dynamics of late-vertebrate pluripotent axial progenitors. Cell 187, 6742-6759.e17 (2024). CC BY 4.0.</li>
 <li><code>gsplats_3d_h2afva_stack</code> (20.8 MB, cc-by-4.0). Source: h2afva zebrafish histone light-sheet, single stack (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco. Acquired for Zebrahub: Lange, M. et al. A multimodal zebrafish developmental atlas reveals the state-transition dynamics of late-vertebrate pluripotent axial progenitors. Cell 187, 6742-6759.e17 (2024). CC BY 4.0.</li>
-<li><code>gsplats_4d_neuromast_2ch</code> (136.4 MB, cc-by-4.0). Source: Neuromast 2-channel light-sheet timelapse (iSIM). Attribution: Adrian Jacobo (Chan Zuckerberg Biohub San Francisco); used with permission (CC BY 4.0). This imaging is unpublished; for the biology of the organ it shows, see the data author's work on lateral-line sensory organs: Erzberger, A., Jacobo, A., Dasgupta, A. &amp; Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949&ndash;957 (2020). doi:10.1038/s41567-020-0894-9.</li>
+<li><code>gsplats_4d_neuromast_2ch</code> (142.8 MB, cc-by-4.0). Source: Neuromast 2-channel light-sheet timelapse (iSIM). This version 2 pair is refitted with the axial voxel scale corrected to 0.25/0.1083 = 2.308 (version 1 used 2.5, stretching z by 8.3&nbsp;%), on the raw intensity basis with no post-fit cull, giving 64,000 splats per frame across 100 frames. The per-timepoint PSNR ranges published in version 1 were measured on the superseded redundancy-culled build and are deliberately not carried over to these files. The table above therefore reads &ldquo;not scored&rdquo; for this pair, meaning no quality figure is stamped in the archives themselves; per-timepoint PSNR measured against the Z-corrected sources by an external scoring run is reported in Supplementary Document 14 of the accompanying manuscript. Attribution: Adrian Jacobo (Chan Zuckerberg Biohub San Francisco); used with permission (CC BY 4.0). This imaging is unpublished; for the biology of the organ it shows, see the data author's work on lateral-line sensory organs: Erzberger, A., Jacobo, A., Dasgupta, A. &amp; Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949&ndash;957 (2020). doi:10.1038/s41567-020-0894-9.</li>
 <li><code>gsplats_celegans</code> (80.8 MB, cc-by-4.0). Source: Zenodo 6460303 (mskcc_confocal C. elegans). Attribution: Santella, A., Kovacevic, I., Bao, Z., Hirsch, P. 3D+time nuclei tracking dataset of confocal fluorescence microscopy time series of C. elegans embryo. Zenodo (2022). CC BY 4.0.</li>
 <li><code>gsplats_cell_tracking</code> (632.4 MB, cc0-1.0). Source: Kaggle competition &ldquo;Biohub - Cell Tracking During Development&rdquo; (zebrafish light-sheet crops + GEFF ground-truth lineages). Attribution: Biohub cell-tracking challenge data (CC0); imaging by the Royer group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat fits with substitutive LOD, seven of the nine annotated crops.</li>
 <li><code>gsplats_cells3d</code> (1.3 MB, cc0-1.0). Source: scikit-image (data.cells3d) - Allen Institute for Cell Science. Attribution: scikit-image sample data.</li>

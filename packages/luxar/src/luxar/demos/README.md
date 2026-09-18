@@ -1071,7 +1071,7 @@ Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints t
 
 **Run**: `luxar demo run gsplats_4d_neuromast_2ch`
 
-**Requires**: The two pre-fit channels are not bundled with the repo. The resolver fetches the corrected 136 MB `.gsplats.zarr.zip` pair from an R2 mirror attached to the `cc-by` dataset entry through `ensure_dataset` (SHA-256 verified, cached under `~/.cache/luxar/gsplats_4d_neuromast_2ch/`, expanded to a temporary directory on read), and falls back to an unzipped local pair under `$LUXAR_NEUROMAST_DATA_DIR` (default `~/luxar_demo_data/gsplats_neuromast_2ch/`) only when the manifest can build no download URL. No GPU is needed.
+**Requires**: The two pre-fit channels are not bundled with the repo. The resolver fetches the corrected 136 MB `.gsplats.zarr.zip` pair from the published `cc-by` Zenodo record through `ensure_dataset` (SHA-256 verified, cached under `~/.cache/luxar/gsplats_4d_neuromast_2ch/`, expanded to a temporary directory on read), and falls back to an unzipped local pair under `$LUXAR_NEUROMAST_DATA_DIR` (default `~/luxar_demo_data/gsplats_neuromast_2ch/`) only when the manifest can build no download URL. No GPU is needed.
 
 **Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, corrected acquisition anisotropy, and `additive` compositing with an authored membrane-before-nuclei `layer_order` — stated rather than inferred from bounding-sphere radii — plus per-channel display windows and gamma. Options: `--no-serve`, `--serve-only`.
 

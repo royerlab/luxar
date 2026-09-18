@@ -1936,26 +1936,19 @@ def test_every_shipped_record_agrees_with_its_published_flag():
             assert url is None, f"{name}: unpublished draft, but the leg is live"
 
 
-def test_neuromast_resolves_to_the_r2_mirror_not_zenodo():
-    """The Z-corrected neuromast pair (#2713) must fetch from the R2 mirror.
-
-    Goes through the PRODUCTION resolution path — ``resolved_record`` overlays
-    the dataset-level ``base_url`` onto the record (its "the dataset mirror
-    deliberately outranks the provenance record URL" contract), which a
-    raw-record ``zenodo_file_url`` probe skips. A wiring that resolved to the
-    un-updated Zenodo record would serve the OLD Z-stretched bytes (now in
-    ``superseded_sha256``) and pass every other test in this file — a
-    digest-only re-pin does not touch the resolved host.
-    """
+def test_neuromast_resolves_to_published_cc_by_record_not_r2():
+    """The Z-corrected neuromast pair resolves to cc-by v2.0.0, not R2."""
     m = load_manifest()
     spec = m["datasets"]["gsplats_4d_neuromast_2ch"]
     assert spec.get("files"), "neuromast dataset lost its file pins"
     record = data_fetch.resolved_record(m, spec)
+    assert record["zenodo_record"] == "22804363"
     for f in spec["files"]:
         url = data_fetch.zenodo_file_url(record, f["name"])
-        assert url and "data.luxarviewer.dev/inputs/neuromast-z-2713" in url, (
-            f"{f['name']} resolves to {url!r}, not the R2 mirror"
+        assert url == (
+            f"https://zenodo.org/records/22804363/files/{f['name']}?download=1"
         )
+        assert "data.luxarviewer.dev/inputs/neuromast-z-2713" not in url
 
 
 # ---------------------------------------------------------------------------

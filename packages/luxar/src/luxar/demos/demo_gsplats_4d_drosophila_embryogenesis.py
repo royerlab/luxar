@@ -47,13 +47,15 @@ Hilbert curve is computed over the three spatial columns only, so a chunk never
 straddles two timepoints. The viewer's spatial index then fetches only the
 chunks whose bounds intersect the current slice.
 
-Measured in a real browser on the shipped 500-frame store on 2026-08-30,
-advancing one timepoint costs **0-2.3 MB in 0-4 requests**. First paint does not
-share that locality: it costs **47 MB in 115 requests** for a timepoint that
-needs 3.16 MB, a 15x read amplification from the 1 MB archive chunks. At this
-length every coarse LOD level holds all 500 timepoints in one chunk, so drawing
-one frame downloads the whole level. An earlier 20-frame pilot measured about
-2 MB to first paint; that result does not survive the 25x scale-up. See #2374.
+Measured in a real browser on the prior 2026-08 14-rung, 83M-splat store,
+advancing one timepoint cost **0-2.3 MB in 0-4 requests**. First paint did not
+share that locality: it cost **47 MB in 115 requests** for a timepoint that
+needed 3.16 MB, a 15x read amplification from the 1 MB archive chunks. At this
+length every coarse LOD level held all 500 timepoints in one chunk, so drawing
+one frame downloaded the whole level. These figures have not been re-measured
+on the current four-rung, 128M-splat archive. An earlier 20-frame pilot measured
+about 2 MB to first paint; that result does not survive the 25x scale-up. See
+#2374.
 
 A consequence worth knowing: the writer warns that this node holds more splats
 than a single gsplats node can render on a 4096-class GPU. That warning is
@@ -101,8 +103,8 @@ This demo downloads **one fitted archive** and builds a scene from it. That
 archive is the only input, and nothing else is needed to run the demo:
 
     gsplats_4d_drosophila_embryogenesis  ->  drosophila_embryogenesis_500tp.gsplats.zarr.zip
-    824 MB, 83,221,420 splats, 500 timepoints
-    Zenodo record 10.5281/zenodo.22118695
+    1,105 MB, 128,000,000 splats, 500 timepoints
+    Zenodo record 10.5281/zenodo.22118694
 
 THE RAW IMAGERY IS NOT PUBLICLY DEPOSITED, and that is worth stating plainly
 rather than leaving as a gap. The source is a 500-timepoint SiMView light-sheet
@@ -132,7 +134,7 @@ DATA SOURCE & CITATIONS:
 
     The single-frame ``gsplats_3d_drosophila_gastrulation`` demo is frame 150 of
     this same recording, fitted independently and published on a different record
-    (10.5281/zenodo.21912280). Same specimen, same instrument, same acquisition.
+    (10.5281/zenodo.21912279). Same specimen, same instrument, same acquisition.
 
 VOXEL CALIBRATION:
     Identical to the single-frame demo, and derived the same way. Lateral pixel
@@ -166,10 +168,11 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
     luxar gsplat transform out/merged/final.gsplats.zarr um.gsplats.zarr \
         --scale 1.93,0.40625,0.40625,1
 
-    # 3. Re-chunk for streaming. Measured on this store: 173 -> about 3 requests
-    #    per timepoint step, and a 7.7% smaller zip. The tradeoff at 500 frames
-    #    is 47 MB / 115 requests for first paint; `--profile hosting` measures
-    #    18 MB / 68 requests instead, but about 12 requests per timepoint step.
+    # 3. Re-chunk for streaming. On the prior 14-rung archive this measured
+    #    173 -> about 3 requests per timepoint step and a 7.7% smaller zip. Its
+    #    500-frame tradeoff was 47 MB / 115 requests for first paint;
+    #    `--profile hosting` measured 18 MB / 68 requests instead, but about 12
+    #    requests per timepoint step. Re-measure the current four-rung archive.
     luxar optimize um.gsplats.zarr \
         drosophila_embryogenesis_500tp.gsplats.zarr.zip --profile archive
 
@@ -222,14 +225,13 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        # The largest payload in the corpus by some margin: 863,811,020 bytes
+        # The largest payload in the corpus by some margin: 1,158,979,910 bytes
         # MEASURED on the shipped artifact, not projected. A one-time download,
-        # after which advancing one timepoint costs 0-2.3 MB in 0-4 requests
-        # (the store is re-chunked with `optimize --profile archive`, without
-        # which it would be 173 requests per step).
-        "download_mb": 824,
-        # Not a fit — but the scene build loads ~82M splats into memory
-        # (~3.6 GB) to stack and write them, which is not a laptop-idle task.
+        # with the prior generation measured at 0-2.3 MB in 0-4 requests per
+        # timepoint after `optimize --profile archive` (173 requests before).
+        "download_mb": 1105,
+        # Not a fit — but the scene build loads ~128M splats into memory
+        # (~5.5 GB by the same per-splat ratio) to stack and write them.
         "compute": "heavy",
         "gpu": "none",
         "local_data": None,
@@ -338,7 +340,7 @@ MERGE_RECIPE = "stream"
 MERGE_N_LODS = 4
 #: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
-#: One-megabyte chunks measured at 0-2.3 MB in 0-4 requests per timepoint step.
+#: The prior archive's one-megabyte chunks measured at 0-2.3 MB in 0-4 requests.
 CHUNK_PROFILE = "archive"
 #: Nominal whole-recording seed budget; a refit may drift as dynamic ops run.
 NOMINAL_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
