@@ -1939,6 +1939,12 @@ print-launcher-pkg-config-path:
         f"{expected_shim}:/existing/pkgconfig" if uses_shim else "/existing/pkgconfig"
     )
     assert proc.stdout == expected_path
+    expected_diagnostic = (
+        "using the bundled webkit2gtk-4.0 → 4.1 compatibility module"
+        if uses_shim
+        else "falling back to system webkit2gtk-4.0"
+    )
+    assert expected_diagnostic in proc.stderr
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:

@@ -1989,7 +1989,10 @@ LAUNCHER_OUT_DIR := packages/luxar/src/luxar/cli/_launchers
 LAUNCHER_PKG_CONFIG_DIR := $(CURDIR)/$(LAUNCHER_SRC_DIR)/pkgconfig
 LAUNCHER_WEBKIT_ENV = \
 	if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists webkit2gtk-4.1 2>/dev/null; then \
+		echo "  • WebKitGTK 4.1 found; using the bundled webkit2gtk-4.0 → 4.1 compatibility module." >&2; \
 		export PKG_CONFIG_PATH="$(LAUNCHER_PKG_CONFIG_DIR)$${PKG_CONFIG_PATH:+:$$PKG_CONFIG_PATH}"; \
+	elif [ "$(OS)" = "linux" ]; then \
+		echo "⚠️  WebKitGTK 4.1 not found; falling back to system webkit2gtk-4.0. A resulting 4.0-linked binary will not start on 4.1-only distributions." >&2; \
 	fi;
 
 install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball on Linux)
