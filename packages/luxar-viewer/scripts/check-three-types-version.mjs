@@ -46,7 +46,7 @@ export function checkThreeTypesVersion(viewerRoot = VIEWER_ROOT) {
   const typesMinor = threeMinor(types);
   if (runtimeMinor === null || typesMinor === null) {
     return [
-      `Expected plain ~0.MINOR.PATCH ranges for Three's pre-1.0 revision scheme, ` +
+      'Expected plain ~0.MINOR.PATCH ranges under the pre-1.0 Three revision scheme, ' +
         `found three=${JSON.stringify(runtime)} ` +
         `and @types/three=${JSON.stringify(types)}`,
     ];
