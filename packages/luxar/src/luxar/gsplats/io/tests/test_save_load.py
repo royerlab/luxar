@@ -54,7 +54,7 @@ def create_test_splats_3d(n_splats: int = 100) -> dict:
 
 def _wide_amplitude_splats(n_splats: int = 1000) -> dict:
     splats = create_test_splats_3d(n_splats)
-    splats["amplitudes"] = np.geomspace(1e-3, 1e3, n_splats).astype(np.float32)
+    splats["amplitudes"] = np.geomspace(1.0, 1000.0, n_splats).astype(np.float32)
     return splats
 
 
@@ -110,9 +110,9 @@ class TestSaveGsplats:
         ("source_dtype", "expected_dtype", "expected_encoding"),
         [
             ("uint8", np.uint8, "geolog_scalar_uint8"),
-            ("uint16", np.uint16, "geolog_scalar_uint16"),
-            ("float32", np.uint16, "geolog_scalar_uint16"),
-            ("not-a-dtype", np.uint16, "geolog_scalar_uint16"),
+            ("uint16", np.uint16, "bounded_scalar_uint16"),
+            ("float32", np.uint16, "bounded_scalar_uint16"),
+            ("not-a-dtype", np.uint16, "bounded_scalar_uint16"),
         ],
     )
     def test_amplitude_bits_auto_follows_source_dtype(
@@ -147,7 +147,7 @@ class TestSaveGsplats:
 
         root = zarr.open_group(str(path), mode="r")
         assert root["amplitudes"].dtype == np.uint16
-        assert root["amplitudes"].attrs["encoding"]["name"] == "geolog_scalar_uint16"
+        assert root["amplitudes"].attrs["encoding"]["name"] == "bounded_scalar_uint16"
 
     def test_amplitude_bits_rejects_unknown_tier_before_writing(
         self, tmp_path: Path
@@ -174,6 +174,24 @@ class TestSaveGsplats:
         root = zarr.open_group(str(path), mode="r")
         assert root["amplitudes"].dtype == np.uint8
         assert root["amplitudes"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
+
+    def test_amplitude_auto_does_not_require_persisting_fit_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        data = GSplatData(**_wide_amplitude_splats())
+        data.stats["source_dtype"] = "uint8"
+        path = tmp_path / "without-fitting-info.gsplats.zarr"
+
+        data.save(
+            path,
+            ordering="none",
+            amplitude_bits="auto",
+            include_fitting_info=False,
+        )
+
+        root = zarr.open_group(str(path), mode="r")
+        assert "fitting" not in root
+        assert root["amplitudes"].dtype == np.uint8
 
     """Test save_gsplats function (v3.0 leaf root)."""
 

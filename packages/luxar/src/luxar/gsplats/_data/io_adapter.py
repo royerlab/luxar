@@ -79,7 +79,11 @@ class IOAdapterMixin(_GSplatDataOps):
             >>> result.save("fitted.gsplats.zarr.zip", compress="zip")
         """
         from luxar.encoding import EncodingMode
-        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import (
+            _resolve_amplitude_bits,
+            split_fitting_info,
+            write_gsplats_tree,
+        )
         from luxar.io.reader import DEFAULT_COMP
 
         # Use AUTO as default
@@ -100,6 +104,10 @@ class IOAdapterMixin(_GSplatDataOps):
                 include_provenance=include_provenance,
             )
         )
+        resolved_amplitude_bits = _resolve_amplitude_bits(
+            amplitude_bits,
+            {"source_dtype": self.stats.get("source_dtype")},
+        )
 
         # One authoring path: serialize this dataset's node tree to the current
         # format (v3.4) via the shared walker (the same machinery the scene
@@ -115,7 +123,7 @@ class IOAdapterMixin(_GSplatDataOps):
             tree,
             ordering=ordering,
             encoding_mode=encoding_mode,
-            amplitude_bits=amplitude_bits,
+            amplitude_bits=resolved_amplitude_bits,
             fitting_info=fitting_info,
             fitting_config=fitting_config,
             provenance_info=provenance_info,

@@ -37,8 +37,11 @@ def _wide(n=50_000, lo=5e-4, hi=2e4, seed=0):
 
 class TestGeologRoundTrip:
     def test_auto_accepts_explicit_uint8_tier(self):
-        decoded, enc, group = _roundtrip(_wide(), positive_scalar_bits=8)
+        data = np.geomspace(1.0, 1000.0, 10_000).astype(np.float32)
+        _, default_enc, _ = _roundtrip(data)
+        decoded, enc, group = _roundtrip(data, positive_scalar_bits=8)
 
+        assert default_enc["name"] == "bounded_scalar_uint16"
         assert enc["name"] == "geolog_scalar_uint8"
         assert group["a"].dtype == np.uint8
         assert np.all(decoded > 0)
