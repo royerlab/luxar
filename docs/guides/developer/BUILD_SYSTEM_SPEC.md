@@ -174,7 +174,7 @@ The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`,
 1. Locates `go` (PATH or `~/.local/go/bin/go`)
 2. Builds the launcher with **`CGO_ENABLED=1`** because the WebView library links against system WebKit
 3. On macOS: builds `darwin-arm64` + `darwin-amd64` then `lipo`-merges into `darwin-universal`. Fails loudly if amd64 build fails (no silent rename — universal binary must actually be universal)
-4. On Linux: builds `linux-<host-arch>` against `libwebkit2gtk-4.1-dev` + `pkg-config`. The pinned `webview_go` still asks for `webkit2gtk-4.0`, so the build prepends the checked-in `packages/luxar-launcher/pkgconfig` compatibility module, which resolves that request to 4.1 without vendoring the binding.
+4. On Linux: builds `linux-<host-arch>` against `libwebkit2gtk-4.1-dev` + `pkg-config`. The pinned `webview_go` still asks for `webkit2gtk-4.0`, so when 4.1 is available the build prepends the checked-in `packages/luxar-launcher/pkgconfig` compatibility module, which resolves that request to 4.1 without vendoring the binding. On older development hosts with only 4.0, the native module remains available instead of being shadowed by the shim.
 5. Drops binaries into `packages/luxar/src/luxar/cli/_launchers/`
 
 **Critical constraint: CGO blocks pure cross-compilation.** Unlike Rust/WASM (where pure-Go cross-compile from any host worked previously), the launcher cannot be built for Linux from a macOS host or vice-versa without a CGO cross-toolchain (Zig, etc.). For full cross-platform release artifacts, build each OS on its own CI matrix runner.

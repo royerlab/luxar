@@ -123,6 +123,10 @@ Luxar supplies a compatibility module that resolves that request to
 sudo apt-get install -y libwebkit2gtk-4.1-dev pkg-config
 ```
 
+The Makefile enables the compatibility module only when pkg-config can resolve
+4.1; on an older development host with only 4.0, the native 4.0 module remains
+available instead of being shadowed by the shim.
+
 End users who run the prebuilt binary need only the runtime library, not the
 `-dev` package: the SONAME `libwebkit2gtk-4.1.so.0`, shipped on Debian/Ubuntu
 as **`libwebkit2gtk-4.1-0`**.

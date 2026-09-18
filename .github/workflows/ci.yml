@@ -1376,6 +1376,8 @@ jobs:
     env:
       # webview_go still asks pkg-config for webkit2gtk-4.0. The checked-in
       # compatibility module resolves that request to the 4.1 API/SONAME.
+      # This job therefore needs an image carrying libwebkit2gtk-4.1-dev.
+      # webkitgtk-6.0 uses GTK4 and requires a new binding, not this shim.
       PKG_CONFIG_PATH: ${{ github.workspace }}/packages/luxar-launcher/pkgconfig
     defaults:
       run:
