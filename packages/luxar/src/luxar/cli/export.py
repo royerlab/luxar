@@ -95,9 +95,10 @@ def export_scene(
         _generate_serve_script(output, data_dir_name, dataset_title(source), facts)
         _copy_qr_module(output)
 
-        # Step 4: Generate README.txt
+        # Step 4: Generate README.txt, plus a test note for a kiosk package
         _generate_readme(output, data_dir_name, facts)
         if facts.has_control_panel:
+            _generate_testing_notes(output, facts)
             aprint(
                 "This scene declares a control panel, so serve.py defaults to "
                 "--control --host 0.0.0.0 and prints a QR for the tablet."
@@ -344,6 +345,93 @@ def _substitute(script: str, name: str, value: object) -> str:
     return script
 
 
+def _generate_testing_notes(output: Path, facts: "SceneFacts") -> None:
+    """Write TESTING.txt: what to try, and what has NOT been checked.
+
+    Only for a scene with a control panel. A plain export has nothing
+    non-obvious to test -- you open it and it either draws or it does not --
+    whereas pairing a tablet has an order to it, a failure mode that looks
+    like the panel being broken when it is the network, and limits worth
+    stating before someone finds them and assumes they are bugs.
+    """
+    stops = facts.chapter_count or 0
+    notes = f"""Testing this package
+====================
+
+Read README.txt first for how to run it. This file is what to check, and what
+has not been checked.
+
+1. The display on its own
+-------------------------
+    python3 serve.py --no-control
+
+Open the Display URL. The scene should draw within a few seconds on a laptop
+GPU, and the on-screen panel should name the stop. Step the story dimension
+with `]` and `[`, or press 1 then `]`. Nothing here needs the network.
+
+2. The display plus a tablet
+----------------------------
+    python3 serve.py
+
+This is the kiosk default for this scene. The script prints two URLs and a QR.
+
+    a. Open the Display URL on the big screen. Wait for it to finish loading.
+    b. Scan the QR with the tablet, or type the Control panel URL.
+       The tablet and this machine must be on the SAME network.
+    c. The tablet should show {stops} tiles, each naming a stop.
+    d. Tap a tile. The display should fly to that stop within a second or two.
+
+If the tablet shows tiles but tapping does nothing, the page loaded over HTTP
+and the WebSocket did not connect -- almost always a firewall or a guest
+network that blocks client-to-client traffic, not the software. If the tablet
+cannot load the page at all, check that serve.py printed a 192.168.x or 10.x
+address rather than 127.0.0.1.
+
+IF THE TABLET SHOWS NO TILES AT ALL, and especially if you are testing both
+pages on ONE machine in two tabs of the same browser: that is the likely
+cause, not a bug. The panel asks the display for its list of stops and gives
+up after 30 seconds, and a browser throttles a background tab hard enough to
+miss the question. Measured here: two tabs in one browser -> no tiles; the
+same two pages in two separate browser windows against the same server ->
+21 tiles and taps landing correctly. On a real kiosk the display is a
+different machine, so this does not arise.
+
+3. Worth trying
+---------------
+- Close and reopen the tablet page while the display keeps running.
+- Two tablets at once: both should work, last tap wins.
+- Restart serve.py: the tablet page needs reloading, the URL is the same
+  unless the port changed.
+- `--control-token WORD`, then scan the new QR. An old QR should stop working.
+
+Known limits, so you do not report these as bugs
+------------------------------------------------
+- NO TOKEN BY DEFAULT. Anyone who can reach this machine on the network can
+  drive the display. A foreign web page cannot -- the relay checks the origin
+  on the WebSocket handshake -- but a person on the same network who opens the
+  panel URL can. Use --control-token on a network you do not control.
+- The token travels in the URL, so it is visible in the tablet's address bar
+  and history. It is an exhibit lock, not a password.
+- Verified on macOS with Python 3.9.6 and on Linux with Python 3.12, both
+  serving a tablet-style client over the network. Windows is untested: the
+  scripts are stdlib-only and should work with `python serve.py`, but nobody
+  has run it.
+- Narration and ambient sound need a user gesture before most browsers will
+  play audio. Click the display once if it is silent.
+- The panel page is served even with --no-control. It will load and then fail
+  to connect, because the relay is not running. That is expected.
+- Opening the HTML files directly with file:// cannot work; the dataset is
+  fetched over HTTP.
+
+Reporting something
+-------------------
+Useful to include: what you ran, the two URLs it printed, your OS and
+`python3 --version`, and the browser console on whichever page misbehaved.
+"""
+    (output / "TESTING.txt").write_text(notes)
+    aprint("Generated TESTING.txt")
+
+
 #: The QR encoder, copied beside serve.py under this name. serve.py imports it
 #: by this exact name, so the two move together.
 QR_MODULE_SOURCE = Path(__file__).with_name("_qr.py")
@@ -437,6 +525,8 @@ def _generate_readme(
         ("luxar_qr.py", "QR encoder, imported by serve.py for the panel URL"),
         ("README.txt", "This file"),
     ]
+    if facts.has_control_panel:
+        entries.append(("TESTING.txt", "What to check, and what is unverified"))
     width = max(len(name) for name, _ in entries)
     structure = "\n".join(f"    {name:<{width}}  {what}" for name, what in entries)
 

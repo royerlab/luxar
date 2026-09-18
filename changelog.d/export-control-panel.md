@@ -60,3 +60,30 @@ deleting it costs you the QR and nothing else.
 The floor is tested, not asserted: the exported folder was run end to end
 under `/usr/bin/python3`, which on this machine is Python 3.9.6, the same
 version the README claims.
+
+A kiosk export also gets a `TESTING.txt`, written only when the scene declares
+a panel: a plain export has nothing non-obvious to check, whereas pairing a
+tablet has an order to it and failure modes that look like software faults and
+are not. It states what has NOT been verified as plainly as what has.
+
+Cross-device reachability was then tested rather than assumed, by running the
+exported folder on the Linux box and driving it from this Mac over the
+network: both pages and the zarr data served, the relay completed its
+handshake, the panel built its 21 tiles, and a tap landed the display on the
+right stop. Two things came out of that which the code reading had got wrong.
+
+The origin check does NOT reject a foreign origin during the handshake -- it
+completes the handshake and then closes with 1008, which is the conforming
+way to do it. A first probe read only the HTTP status line, saw `101` for
+`https://evil.example.com` and looked like a security hole. Reading the frame
+after the handshake shows `cross-origin handshake`, and an origin matching the
+loaded URL is accepted, so the claim in the README holds -- but it held for a
+reason the first test could not see.
+
+And the panel showed ZERO tiles over the network while showing 21 on
+loopback, which looked like a latency bug in the relay. It is not: the panel
+asks the display for its stops and gives up after 30 seconds, and the harness
+had both pages in one browser, where the display becomes a throttled
+background tab. The same two pages in two separate browser processes work over
+the same network. That is now in TESTING.txt, because anyone testing a kiosk
+on one laptop with two tabs will hit it and report it as broken.
