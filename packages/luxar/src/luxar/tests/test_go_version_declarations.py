@@ -77,6 +77,16 @@ def test_bootstrap_pin_matches_ci_minor(
     assert _version_tuple(bootstrap)[:2] == _version_tuple(ci)
 
 
+def test_bootstrap_pin_satisfies_module_floor(
+    declarations: tuple[str, str, str],
+) -> None:
+    _, bootstrap, floor = declarations
+    floor_version = _version_tuple(floor)
+    if len(floor_version) == 2:
+        floor_version += (0,)
+    assert _version_tuple(bootstrap) >= floor_version
+
+
 def test_go_launcher_disables_automatic_toolchain_downloads() -> None:
     workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     job = re.search(r"(?ms)^  go-launcher:\n(.*?)(?=^  \S|\Z)", workflow)
