@@ -94,11 +94,22 @@ class TestResolveSubstitutiveAxisPoints:
         assert r["brightness_compensation"] == 2.5
 
     @pytest.mark.parametrize(
-        "key", ["truncation_radius", "max_aspect", "method", "device", "coarsen_dims"]
+        "key", ["truncation_radius", "max_aspect", "device", "coarsen_dims"]
     )
     def test_points_coarse_refuses_lift_only_keys(self, key: str) -> None:
         with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
             resolve_substitutive_axis_points(dict(coarse="points", **{key: 2.0}))
+
+    @pytest.mark.parametrize("method", ["subsample", "merge"])
+    def test_points_coarse_methods(self, method: str) -> None:
+        resolved = resolve_substitutive_axis_points(
+            dict(coarse="points", method=method)
+        )
+        assert resolved["method"] == method
+
+    def test_points_coarse_rejects_unknown_method(self) -> None:
+        with pytest.raises(ValueError, match="'subsample' or 'merge'"):
+            resolve_substitutive_axis_points(dict(coarse="points", method="kmeans"))
 
     @pytest.mark.parametrize("value", [None, "nonsense"])
     def test_bad_brightness_compensation_has_stable_error(self, value) -> None:
@@ -1974,3 +1985,51 @@ class TestResolveCoarsenDims:
             resolve_substitutive_axis_points(dict(coarsen_dims=[]))
         with pytest.raises(ValueError):
             resolve_substitutive_axis_points(dict(coarsen_dims="nope"))
+
+
+@pytest.mark.parametrize("method", ["subsample", "merge"])
+def test_same_type_points_store_contains_only_points(tmp_path, method: str) -> None:
+    out = tmp_path / f"points-{method}.luxar.zarr"
+    positions = np.column_stack(
+        (np.arange(32, dtype=np.float32), np.zeros(32), np.zeros(32))
+    )
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            radii=np.linspace(0.2, 1.0, 32, dtype=np.float32),
+            substitutive_lod=dict(
+                coarse="points", method=method, compression_factor=2, levels=2
+            ),
+        )
+    root = zarr.open(str(out), mode="r")
+    group = root["cloud"]
+    assert group.attrs["kind"] == "lod"
+    assert {group[name].attrs["type"] for name in group.group_keys()} == {"points"}
+    tree = str(root.tree()).lower()
+    assert "cholesky" not in tree and "gsplat" not in tree
+
+
+def test_points_merge_writes_new_moment_representatives(tmp_path) -> None:
+    out = tmp_path / "points-merge.luxar.zarr"
+    positions = np.column_stack(
+        (np.arange(8, dtype=np.float32), np.zeros(8), np.zeros(8))
+    )
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            radii=np.ones(8, dtype=np.float32),
+            substitutive_lod=dict(
+                coarse="points", method="merge", compression_factor=2, levels=1
+            ),
+        )
+    group = zarr.open(str(out), mode="r")["cloud"]
+    decoder = ArrayDecoder()
+    coarse = group["child_0"]
+    merged_positions = decoder.decode(coarse["positions"], coarse)
+    merged_radii = decoder.decode(coarse["radii"], coarse)
+    assert not set(map(tuple, merged_positions)).issubset(set(map(tuple, positions)))
+    assert np.all(merged_radii > 1.0)

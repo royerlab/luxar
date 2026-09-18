@@ -817,7 +817,7 @@ def _stratified_point_order(
     return np.lexsort((slice_ids, within_slice_rank)).astype(np.intp, copy=False)
 
 
-def _add_points_subsampled_lod_wrapper_impl(
+def _add_points_subsampled_lod_wrapper_impl(  # noqa: C901
     group: "Group",
     *,
     name: str,
@@ -838,7 +838,11 @@ def _add_points_subsampled_lod_wrapper_impl(
     attrs: Dict[str, Any],
 ) -> Union["Group", Points]:
     """Write spatially stratified Points levels above the original Points node."""
-    from ....gsplats.lift import coarse_point_levels, lift_points_to_gsplats
+    from ....gsplats.lift import (
+        coarse_point_levels,
+        lift_points_to_gsplats,
+        same_type_merge_level,
+    )
     from ....gsplats.lod.quality import mixture_quality
     from ....utils.lod_breakpoints import hidden_coordinate_count
     from ..lod.group import (
@@ -872,7 +876,7 @@ def _add_points_subsampled_lod_wrapper_impl(
 
     scene = group._find_scene()
     compression_factor = int(spec["compression_factor"])
-    _, discrete_hidden, continuous_hidden = resolve_same_type_axes(
+    displayed, discrete_hidden, continuous_hidden = resolve_same_type_axes(
         scene, pos_arr, extend_to_all, "points"
     )
     resident_slices = hidden_coordinate_count(pos_arr, discrete_hidden)
@@ -913,12 +917,39 @@ def _add_points_subsampled_lod_wrapper_impl(
         same_type_colors_for_energy(colors_for_energy, n_points),
         None,
     )
-    coarse = coarse_point_levels(
-        order,
-        energy,
-        compression_factor=compression_factor,
-        levels=int(spec["levels"]),
-    )
+    method = spec.get("method", "subsample")
+    coarse: List[Any]
+    if method == "merge":
+        radius_values = np.broadcast_to(
+            np.asarray(
+                DEFAULT_POINT_RADIUS if radii is None else radii, dtype=np.float64
+            ),
+            (n_points,),
+        )
+        barriers = pos_arr[:, discrete_hidden] if discrete_hidden else None
+        coarse = []
+        previous_count = n_points
+        for level in range(1, int(spec["levels"]) + 1):
+            count = max(1, n_points // (compression_factor**level))
+            if count >= previous_count:
+                continue
+            centres, merged_radii, assignments = same_type_merge_level(
+                pos_arr,
+                radius_values,
+                energy,
+                n_target=count,
+                spatial_dims=displayed[:3],
+                barrier_keys=barriers,
+            )
+            coarse.append((centres, merged_radii, assignments))
+            previous_count = count
+    else:
+        coarse = coarse_point_levels(
+            order,
+            energy,
+            compression_factor=compression_factor,
+            levels=int(spec["levels"]),
+        )
     if not coarse:
         aprint(
             f"  ⚠ substitutive_lod '{name}': input too small to synthesize coarse "
@@ -955,7 +986,7 @@ def _add_points_subsampled_lod_wrapper_impl(
     )
     parent_node = parent or group
     coarse_first = list(reversed(coarse))
-    counts = [int(indices.size) for indices, _ in coarse_first] + [n_points]
+    counts = [int(level[0].shape[0]) for level in coarse_first] + [n_points]
     coverage_vals, lod_selector = resolve_lod_ladder(
         spec.get("coverage_fractions"),
         counts,
@@ -992,7 +1023,37 @@ def _add_points_subsampled_lod_wrapper_impl(
         if quality_stamps
         else None
     )
-    for child_index, (indices, measured_gain) in enumerate(coarse_first):
+    indices: Any
+    for child_index, level in enumerate(coarse_first):
+        if method == "merge":
+            level_positions, level_radii, assignments = level
+            bin_weights = np.bincount(
+                assignments, weights=energy, minlength=level_positions.shape[0]
+            )
+            source_colors = same_type_colors_for_energy(colors_for_energy, n_points)
+            level_colors = (
+                None
+                if source_colors is None
+                else np.column_stack(
+                    [
+                        np.bincount(
+                            assignments,
+                            weights=energy * source_colors[:, channel],
+                            minlength=level_positions.shape[0],
+                        )
+                        / np.maximum(bin_weights, 1e-30)
+                        for channel in range(source_colors.shape[1])
+                    ]
+                ).astype(np.float32)
+            )
+            level_scalars = None
+            level_attrs = dict(child_attrs)
+            indices = None
+            measured_gain = 1.0
+        else:
+            indices, measured_gain = level
+            level_positions = pos_arr[indices]
+            level_radii = slice_optional_array(radii, indices, n_points)
         reduction_level = len(coarse_first) - child_index
         gain = (
             measured_gain
@@ -1001,19 +1062,21 @@ def _add_points_subsampled_lod_wrapper_impl(
             if compensation == "auto"
             else float(compensation) ** reduction_level
         )
-        level_colors, level_scalars, level_attrs = subsampled_same_type_level_channels(
-            colors=colors,
-            colors_for_energy=colors_for_energy,
-            scalars=scalars,
-            indices=indices,
-            n_elements=n_points,
-            gain=gain,
-            child_attrs=child_attrs,
-        )
-        level_radii = slice_optional_array(radii, indices, n_points)
+        if method != "merge":
+            level_colors, level_scalars, level_attrs = (
+                subsampled_same_type_level_channels(
+                    colors=colors,
+                    colors_for_energy=colors_for_energy,
+                    scalars=scalars,
+                    indices=indices,
+                    n_elements=n_points,
+                    gain=gain,
+                    child_attrs=child_attrs,
+                )
+            )
         if quality_reference is not None:
             quality_level = lift_points_to_gsplats(
-                pos_arr[indices],
+                level_positions,
                 DEFAULT_POINT_RADIUS if level_radii is None else level_radii,
                 colors=None,
             )
@@ -1030,19 +1093,25 @@ def _add_points_subsampled_lod_wrapper_impl(
                 )
             lod_group_node.add_points(
                 f"child_{child_index}",
-                pos_arr[indices],
+                level_positions,
                 colors=level_colors,
                 radii=level_radii,
-                sharpness=slice_optional_array(sharpness, indices, n_points),
+                sharpness=None
+                if method == "merge"
+                else slice_optional_array(sharpness, indices, n_points),
                 scalars=level_scalars,
-                labels=slice_optional_array(labels, indices, n_points),
-                keys=slice_optional_array(keys, indices, n_points),
+                labels=None
+                if method == "merge"
+                else slice_optional_array(labels, indices, n_points),
+                keys=None
+                if method == "merge"
+                else slice_optional_array(keys, indices, n_points),
                 image_labels=None,
                 extend_to_all=extend_to_all,
                 partition=False,
                 additive_lod=level_additive_lod(
                     resolved_additive,
-                    level_n=int(indices.size),
+                    level_n=int(level_positions.shape[0]),
                     compression_factor=compression_factor,
                     is_coarsest=(child_index == 0),
                     slices=slices,

@@ -60,7 +60,7 @@ DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
 DEFAULT_METHOD: LinesMethodName = DEFAULT_ADDITIVE_METHOD
 
 
-def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float]]:
+def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float], str]:
     """Pop and validate the Lines-only substitutive representation keys."""
     from .group import resolve_same_type_representation
 
@@ -76,10 +76,6 @@ def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float]]
             "max_aspect": (
                 "it caps anisotropy on merged Gaussian levels, and same-type "
                 "line levels contain no Gaussians"
-            ),
-            "method": (
-                "it selects the Gaussian clustering algorithm, and same-type "
-                "line levels use seeded whole-polyline subsampling"
             ),
             "device": (
                 "it selects where Gaussian clustering runs; same-type line "
@@ -899,7 +895,7 @@ def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
         return resolve_substitutive_axis(spec, "Lines")
 
     kwargs = dict(spec)
-    coarse, brightness = _resolve_lines_representation(kwargs)
+    coarse, brightness, representation_method = _resolve_lines_representation(kwargs)
     resolved = resolve_substitutive_axis(
         kwargs,
         "Lines",
@@ -908,4 +904,6 @@ def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
     assert resolved is not None
     resolved["coarse"] = coarse
     resolved["brightness_compensation"] = brightness
+    if coarse == "lines":
+        resolved["method"] = representation_method
     return resolved

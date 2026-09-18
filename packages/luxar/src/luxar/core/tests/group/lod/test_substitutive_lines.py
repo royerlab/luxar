@@ -129,11 +129,20 @@ class TestResolveSubstitutiveAxisLines:
         assert resolved["brightness_compensation"] == 2.5
 
     @pytest.mark.parametrize(
-        "key", ["truncation_radius", "max_aspect", "method", "device", "coarsen_dims"]
+        "key", ["truncation_radius", "max_aspect", "device", "coarsen_dims"]
     )
     def test_lines_coarse_refuses_lift_only_keys(self, key: str) -> None:
         with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
             resolve_substitutive_axis_lines(dict(coarse="lines", **{key: 2.0}))
+
+    @pytest.mark.parametrize("method", ["subsample", "merge"])
+    def test_lines_coarse_methods(self, method: str) -> None:
+        resolved = resolve_substitutive_axis_lines(dict(coarse="lines", method=method))
+        assert resolved["method"] == method
+
+    def test_lines_coarse_rejects_unknown_method(self) -> None:
+        with pytest.raises(ValueError, match="'subsample' or 'merge'"):
+            resolve_substitutive_axis_lines(dict(coarse="lines", method="kmeans"))
 
     def test_brightness_compensation_only_applies_to_lines_coarse(self) -> None:
         with pytest.raises(ValueError, match="applies only when coarse='lines'"):
@@ -2176,3 +2185,27 @@ class TestSameTypeSubstitutiveLines:
         assert not [
             warning for warning in caught if "cannot be honoured" in str(warning)
         ]
+
+
+@pytest.mark.parametrize("method", ["subsample", "merge"])
+def test_same_type_lines_store_contains_only_lines(tmp_path, method: str) -> None:
+    out = tmp_path / f"lines-{method}.luxar.zarr"
+    x = np.arange(16, dtype=np.float32)
+    vertices = np.column_stack((np.repeat(x, 2), np.tile([0.0, 1.0], 16), np.zeros(32)))
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "curves",
+            vertices,
+            np.full(32, 0.2, dtype=np.float32),
+            line_type="segments",
+            substitutive_lod=dict(
+                coarse="lines", method=method, compression_factor=2, levels=2
+            ),
+        )
+    root = zarr.open(str(out), mode="r")
+    group = root["curves"]
+    assert group.attrs["kind"] == "lod"
+    assert {group[name].attrs["type"] for name in group.group_keys()} == {"lines"}
+    tree = str(root.tree()).lower()
+    assert "cholesky" not in tree and "gsplat" not in tree

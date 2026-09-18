@@ -1301,13 +1301,13 @@ def resolve_substitutive_axis(
     }
 
 
-def resolve_same_type_representation(
+def resolve_same_type_representation(  # noqa: C901
     kwargs: Dict[str, Any],
     *,
     geometry: str,
     same_type: str,
     inapplicable_reasons: Dict[str, str],
-) -> tuple[str, Union[str, float]]:
+) -> tuple[str, Union[str, float], str]:
     """Resolve the shared ``coarse=`` and compensation vocabulary."""
     coarse = str(kwargs.pop("coarse", "gsplats")).replace("-", "_")
     allowed = ["gsplats", same_type]
@@ -1318,6 +1318,14 @@ def resolve_same_type_representation(
         )
 
     brightness = kwargs.pop("brightness_compensation", "auto")
+    representation_method = "subsample"
+    if coarse == same_type:
+        representation_method = str(kwargs.pop("method", "subsample")).replace("-", "_")
+        if representation_method not in {"subsample", "merge"}:
+            raise ValueError(
+                f"substitutive_lod for {geometry}: method must be 'subsample' or "
+                f"'merge' when coarse={same_type!r}; got {representation_method!r}"
+            )
     if brightness != "auto":
         try:
             brightness = float(brightness)
@@ -1344,7 +1352,7 @@ def resolve_same_type_representation(
             f"substitutive_lod for {geometry}: 'brightness_compensation' applies "
             f"only when coarse={same_type!r}"
         )
-    return coarse, brightness
+    return coarse, brightness, representation_method
 
 
 def effective_blending_mode(

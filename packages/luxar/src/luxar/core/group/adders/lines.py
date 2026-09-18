@@ -1215,7 +1215,7 @@ def _selected_line_topology(
     raise AssertionError(f"unsupported coarse Lines topology {line_type!r}")
 
 
-def _add_lines_subsampled_lod_wrapper_impl(
+def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
     group: "Group",
     *,
     name: str,
@@ -1236,7 +1236,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
     attrs: Dict[str, Any],
 ) -> Union["Group", Lines]:
     """Write seeded whole-polyline Lines levels above the original Lines node."""
-    from ....gsplats.lift import lift_lines_to_gsplats
+    from ....gsplats.lift import lift_lines_to_gsplats, same_type_merge_level
     from ....gsplats.lod.quality import mixture_quality
     from ..lod.group import (
         assert_same_type_slice_capacity,
@@ -1314,11 +1314,110 @@ def _add_lines_subsampled_lod_wrapper_impl(
         int(spec.get("seed") or 0),
         indices if line_type == "indexed" else None,
     )
-    coarse = _coarse_polyline_levels(
-        order,
-        compression_factor=compression_factor,
-        levels=int(spec["levels"]),
+    method = spec.get("method", "subsample")
+    light_integrals = compute_lines_light_integral(
+        displayed_vertices,
+        polylines,
+        widths_for_energy,
+        same_type_colors_for_energy(colors_for_energy, n_vertices),
+        indices if line_type == "indexed" else None,
     )
+    coarse: List[Any]
+    if method == "merge":
+        if (
+            line_type == "indexed"
+            and indices is not None
+            and not indexed_components_are_chains(
+                n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+            )
+        ):
+            raise ValueError(
+                "substitutive_lod method='merge' requires indexed Lines components "
+                "to be chains"
+            )
+        centres = np.vstack([np.mean(vert_arr[p], axis=0) for p in polylines])
+        mean_widths = np.asarray(
+            [float(np.mean(widths_for_energy[p])) for p in polylines], dtype=np.float64
+        )
+        lengths = np.asarray([p.size for p in polylines], dtype=np.int64)
+        directions = np.vstack(
+            [
+                vert_arr[p[-1], displayed[:3]] - vert_arr[p[0], displayed[:3]]
+                if p.size > 1
+                else np.zeros(min(3, len(displayed)), dtype=np.float32)
+                for p in polylines
+            ]
+        )
+        orientation = np.argmax(np.abs(directions), axis=1)
+        orientation *= 2
+        orientation += (
+            directions[np.arange(n_polylines), orientation // 2] >= 0
+        ).astype(np.int64)
+        barriers = np.column_stack((slice_ids, lengths, orientation))
+        coarse = []
+        previous_count = n_polylines
+        source_colors = same_type_colors_for_energy(colors_for_energy, n_vertices)
+        if source_colors is None:
+            source_colors = np.ones((n_vertices, 3), dtype=np.float32)
+        for level in range(1, int(spec["levels"]) + 1):
+            count = max(1, n_polylines // (compression_factor**level))
+            if count >= previous_count:
+                continue
+            _, merged_widths, assignments = same_type_merge_level(
+                centres,
+                mean_widths,
+                light_integrals,
+                n_target=count,
+                spatial_dims=range(min(3, centres.shape[1])),
+                barrier_keys=barriers,
+            )
+            merged_vertex_parts = []
+            merged_width_parts = []
+            merged_color_parts = []
+            level_edges = []
+            offset = 0
+            for bin_id in range(count):
+                members = np.flatnonzero(assignments == bin_id)
+                template = polylines[int(members[0])]
+                member_weight = light_integrals[members]
+                if not np.any(member_weight > 0):
+                    member_weight = np.ones(members.size, dtype=np.float64)
+                member_weight = member_weight / np.sum(member_weight)
+                vertices = np.tensordot(
+                    member_weight,
+                    np.stack([vert_arr[polylines[int(i)]] for i in members]),
+                    axes=(0, 0),
+                ).astype(np.float32)
+                colors_out = np.tensordot(
+                    member_weight,
+                    np.stack([source_colors[polylines[int(i)]] for i in members]),
+                    axes=(0, 0),
+                ).astype(np.float32)
+                merged_vertex_parts.append(vertices)
+                merged_width_parts.append(
+                    np.full(template.size, merged_widths[bin_id], dtype=np.float32)
+                )
+                merged_color_parts.append(colors_out)
+                if template.size > 1:
+                    local = np.arange(offset, offset + template.size, dtype=np.intp)
+                    level_edges.append(np.column_stack((local[:-1], local[1:])))
+                offset += template.size
+            coarse.append(
+                (
+                    np.concatenate(merged_vertex_parts),
+                    np.concatenate(merged_width_parts),
+                    np.concatenate(merged_color_parts),
+                    np.concatenate(level_edges).reshape(-1) if level_edges else None,
+                    count,
+                )
+            )
+            previous_count = count
+    else:
+        coarse = _coarse_polyline_levels(
+            order,
+            compression_factor=compression_factor,
+            levels=int(spec["levels"]),
+        )
     if not coarse:
         aprint(
             f"  ⚠ substitutive_lod '{name}': input too small to synthesize coarse "
@@ -1381,7 +1480,9 @@ def _add_lines_subsampled_lod_wrapper_impl(
     )
     parent_node = parent or group
     coarse_first = list(reversed(coarse))
-    counts = [int(ids.size) for ids in coarse_first] + [n_polylines]
+    counts = [
+        int(level[4] if method == "merge" else level.size) for level in coarse_first
+    ] + [n_polylines]
     coverage_vals, lod_selector = resolve_lod_ladder(
         spec.get("coverage_fractions"),
         counts,
@@ -1404,13 +1505,6 @@ def _add_lines_subsampled_lod_wrapper_impl(
     )
     lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
-    light_integrals = compute_lines_light_integral(
-        displayed_vertices,
-        polylines,
-        widths_for_energy,
-        same_type_colors_for_energy(colors_for_energy, n_vertices),
-        indices if line_type == "indexed" else None,
-    )
     total_light = float(np.sum(light_integrals))
     blending_mode = effective_blending_mode(parent_node, attrs, "lines")
     auto_compensates = blending_mode in {"additive", "luminous"}
@@ -1427,20 +1521,44 @@ def _add_lines_subsampled_lod_wrapper_impl(
         if quality_stamps
         else None
     )
+    level_vertices: Any
+    level_widths: Any
+    level_colors: Any
+    vertex_indices: Any
     for child_index, selected_ids in enumerate(coarse_first):
+        if method == "merge":
+            level_vertices, level_widths, level_colors, child_indices, level_count = (
+                selected_ids
+            )
+            child_line_type = "indexed"
+            vertex_indices = None
+            level_scalars = None
+            level_attrs = dict(child_attrs)
+            requested_gain = 1.0
+            color_gain = 1.0
+        else:
+            level_vertices = None
         reduction_level = len(coarse_first) - child_index
-        selected_light = float(np.sum(light_integrals[selected_ids]))
+        selected_light = (
+            total_light
+            if method == "merge"
+            else float(np.sum(light_integrals[selected_ids]))
+        )
         measured_gain = (
             total_light / selected_light
             if total_light > 0.0 and selected_light > 0.0
             else 1.0
         )
         requested_gain = (
-            measured_gain
-            if compensation == "auto" and auto_compensates
-            else 1.0
-            if compensation == "auto"
-            else float(compensation) ** reduction_level
+            requested_gain
+            if method == "merge"
+            else (
+                measured_gain
+                if compensation == "auto" and auto_compensates
+                else 1.0
+                if compensation == "auto"
+                else float(compensation) ** reduction_level
+            )
         )
         width_gain = requested_gain
         color_gain = 1.0
@@ -1464,28 +1582,32 @@ def _add_lines_subsampled_lod_wrapper_impl(
                     f"  ↳ child_{child_index}: capped width gain at "
                     f"{width_gain:.3g}×; carrying {color_gain:.3g}× in HDR color"
                 )
-        vertex_indices, child_indices, child_line_type = _selected_line_topology(
-            polylines=polylines,
-            selected_ids=selected_ids,
-            indices=indices,
-            line_type=line_type,
-            n_vertices=n_vertices,
-        )
-        level_colors, level_scalars, level_attrs = subsampled_same_type_level_channels(
-            colors=colors,
-            colors_for_energy=colors_for_energy,
-            scalars=scalars,
-            indices=vertex_indices,
-            n_elements=n_vertices,
-            gain=color_gain,
-            child_attrs=child_attrs,
-        )
-        level_widths = _scaled_line_widths(
-            widths, vertex_indices, n_vertices, width_gain
-        )
+        if method != "merge":
+            vertex_indices, child_indices, child_line_type = _selected_line_topology(
+                polylines=polylines,
+                selected_ids=selected_ids,
+                indices=indices,
+                line_type=line_type,
+                n_vertices=n_vertices,
+            )
+            level_vertices = vert_arr[vertex_indices]
+            level_colors, level_scalars, level_attrs = (
+                subsampled_same_type_level_channels(
+                    colors=colors,
+                    colors_for_energy=colors_for_energy,
+                    scalars=scalars,
+                    indices=vertex_indices,
+                    n_elements=n_vertices,
+                    gain=color_gain,
+                    child_attrs=child_attrs,
+                )
+            )
+            level_widths = _scaled_line_widths(
+                widths, vertex_indices, n_vertices, width_gain
+            )
         if quality_reference is not None:
             quality_level = lift_lines_to_gsplats(
-                vert_arr[vertex_indices],
+                level_vertices,
                 level_widths,
                 line_type=child_line_type,
                 indices=child_indices,
@@ -1504,13 +1626,19 @@ def _add_lines_subsampled_lod_wrapper_impl(
                 )
             lod_group_node.add_lines(
                 f"child_{child_index}",
-                vert_arr[vertex_indices],
+                level_vertices,
                 level_widths,
                 colors=level_colors,
-                sharpness=slice_optional_array(sharpness, vertex_indices, n_vertices),
+                sharpness=None
+                if method == "merge"
+                else slice_optional_array(sharpness, vertex_indices, n_vertices),
                 scalars=level_scalars,
-                labels=slice_optional_array(labels, vertex_indices, n_vertices),
-                keys=slice_optional_array(keys, vertex_indices, n_vertices),
+                labels=None
+                if method == "merge"
+                else slice_optional_array(labels, vertex_indices, n_vertices),
+                keys=None
+                if method == "merge"
+                else slice_optional_array(keys, vertex_indices, n_vertices),
                 image_labels=None,
                 indices=child_indices,
                 line_type=child_line_type,
@@ -1518,7 +1646,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
                 partition=False,
                 additive_lod=level_additive_lod(
                     coarse_additive,
-                    level_n=int(vertex_indices.size),
+                    level_n=int(level_vertices.shape[0]),
                     compression_factor=compression_factor,
                     is_coarsest=(child_index == 0),
                     slices=slices,
