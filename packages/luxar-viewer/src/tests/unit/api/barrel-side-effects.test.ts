@@ -66,7 +66,10 @@ describe('Public barrel side effects', () => {
     }
     (globalThis as BarrelTestGlobals).__preBarrelConsole = snapshot;
 
-    // Now import the barrel. Whatever is loaded here is what consumers see.
+    // This is the suite's only cold full-graph probe. A timeout here is reported
+    // as infrastructure failure and skips all 14 embeddability assertions; if it
+    // recurs, investigate a load-dependent barrel stall rather than raising the budget.
+    // Whatever is loaded here is what consumers see.
     await import('../../../index');
   });
 
