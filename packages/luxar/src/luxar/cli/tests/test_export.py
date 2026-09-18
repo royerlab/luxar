@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import socket
 import stat
 import subprocess
@@ -1094,3 +1095,114 @@ def test_panel_tile_count_falls_back_to_a_range_then_to_the_chapters() -> None:
     # reports something, which is what stopped the README dropping its whole
     # "About this scene" block when this field was introduced.
     assert SceneFacts(chapter_count=20).stops == 20
+
+
+#: Oldest Python the EXPORTED folder must import on. Not the repo's floor --
+#: luxar itself needs 3.12. This is whatever a recipient already has, and stock
+#: macOS still ships 3.9.6.
+EXPORT_PYTHON_FLOOR = (3, 9)
+
+
+def _has_future_annotations(tree: ast.Module) -> bool:
+    """Whether the module defers its annotations, which is what makes 3.9 safe."""
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(alias.name == "annotations" for alias in node.names)
+        for node in tree.body
+    )
+
+
+def _never_executed(tree: ast.Module) -> set[int]:
+    """ids of nodes that are not evaluated at import time.
+
+    Annotations (deferred to strings by the __future__ import) and the bodies
+    of `if TYPE_CHECKING:` blocks. Everything else in the module runs, and so
+    has to parse AND evaluate on the floor version.
+    """
+    ids: set[int] = set()
+
+    def defer(node: ast.AST | None) -> None:
+        if node is not None:
+            ids.update(map(id, ast.walk(node)))
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defer(node.returns)
+            args = node.args
+            for arg in args.args + args.kwonlyargs + args.posonlyargs:
+                defer(arg.annotation)
+        elif isinstance(node, ast.AnnAssign):
+            defer(node.annotation)
+        elif isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test):
+            for stmt in node.body:
+                defer(stmt)
+    return ids
+
+
+def _looks_like_a_type_union(text: str) -> bool:
+    """Tell a type union from an honest bitwise-or on integers."""
+    return "None" in text or any(
+        token in text for token in ("list[", "dict[", "tuple[", "str", "bool")
+    )
+
+
+def _runtime_only_since_310(source: str) -> list[str]:
+    """Constructs in `source` that are EXECUTED and need Python 3.10+.
+
+    Annotations are excluded: `from __future__ import annotations` makes them
+    strings, so `def f(x: int | None)` is fine on 3.9. A module-level type
+    ALIAS is not an annotation -- it is an expression evaluated at import --
+    and that distinction is the entire bug this guards.
+    """
+    tree = ast.parse(source)
+    found: list[str] = []
+    if not _has_future_annotations(tree):
+        found.append("missing `from __future__ import annotations`")
+
+    deferred = _never_executed(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Match):
+            found.append(f"line {node.lineno}: match statement")
+        elif (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.BitOr)
+            and id(node) not in deferred
+            and _looks_like_a_type_union(ast.unparse(node))
+        ):
+            found.append(f"line {node.lineno}: runtime union `{ast.unparse(node)}`")
+    return found
+
+
+def test_the_exported_scripts_import_on_the_oldest_python_they_promise(
+    tmp_path: Path, mock_viewer_dist: Path, sample_scene: Path
+) -> None:
+    """The exported folder must not use syntax newer than its own floor.
+
+    This shipped. A module-level `_Grid = list[list[int | None]]` added to the
+    QR encoder raised `TypeError` on import under Python 3.9, so `serve.py`
+    died on `import luxar_qr` before printing a URL -- on stock macOS, which
+    is the single most likely machine a recipient will use, and which README
+    and TESTING both name.
+
+    It survived a "fresh unzip" smoke test because the tester's PATH had a
+    conda 3.12 in front of /usr/bin/python3 -- the same masking that hid the
+    earlier `python` vs `python3` bug. So the check is static and cannot be
+    fooled by whichever interpreter happens to be first on PATH.
+    """
+    output = tmp_path / "export"
+    with (
+        patch("luxar.cli.export.check_viewer_built", return_value=True),
+        patch("luxar.cli.export.get_viewer_dist_path", return_value=mock_viewer_dist),
+    ):
+        export_scene(sample_scene, output)
+
+    shipped = ["serve.py", "luxar_qr.py"]
+    for name in shipped:
+        path = output / name
+        assert path.exists(), f"{name} was not exported"
+        problems = _runtime_only_since_310(path.read_text(encoding="utf-8"))
+        assert not problems, (
+            f"{name} needs Python > {'.'.join(map(str, EXPORT_PYTHON_FLOOR))}: "
+            + "; ".join(problems)
+        )

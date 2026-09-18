@@ -38,6 +38,7 @@ from __future__ import annotations
 import struct
 import zlib
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 __all__ = [
     "QrError",
@@ -124,8 +125,16 @@ _VERSION_BITS: dict[int, int] = {
 # ``None`` for one the data walk still has to fill; ``_Mask`` marks every module
 # the walk must skip, which is not the same set -- a reserved module can still be
 # ``None`` (the format strips are claimed long before their bits are known).
-_Grid = list[list[int | None]]
-_Mask = list[list[bool]]
+#
+# Behind TYPE_CHECKING because this module is COPIED VERBATIM into an exported
+# folder and has to import on whatever Python the recipient has -- stock macOS
+# is still 3.9. Annotations are deferred by the __future__ import above, but a
+# module-level alias is a real expression evaluated at import time, and
+# `int | None` is a TypeError before 3.10. That is not hypothetical: it shipped,
+# and `serve.py` died on `import luxar_qr` before printing a single URL.
+if TYPE_CHECKING:
+    _Grid = list[list[int | None]]
+    _Mask = list[list[bool]]
 
 
 # ---------------------------------------------------------------------------
