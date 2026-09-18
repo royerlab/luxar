@@ -265,8 +265,11 @@ the same RGB path. The expected HDR warning is suppressed
 for these synthesized compensated children. The gain conserves the summed light
 over the whole node, not within each neighbourhood, so sparse and dense regions
 can shift relative brightness. `truncation_radius`, `max_aspect`, `method`,
-`device`, and `coarsen_dims` are refused because this arm performs no Gaussian
-lift or merge.
+`device`, and `coarsen_dims` are refused because they do not affect the written
+same-type geometry. By default each child carries a `level_stats.quality` stamp
+measured from a fixed isotropic lift on CPU; for Points this scores the geometric
+subsample and radii, not RGB/alpha or the brightness-compensation gain. Set
+`quality_stamps=False` to skip that measurement.
 
 Lines keeps the lifted-GSplat default too. With `coarse="lines"`, it instead
 takes exact `P/K^level` prefixes of a seeded salience ordering and writes every
@@ -281,9 +284,12 @@ conserves it at each level. Width growth is capped near the shader's pixel floor
 at the level transition and the residual gain is carried by float32 HDR color,
 keeping coarse fibers fiber-shaped; other modes keep unit gain, and a numeric
 override applies per reduction level through the same capped width/HDR-color
-split. The Gaussian lift controls
-(`truncation_radius`, `max_aspect`, `method`, `device`, and `coarsen_dims`) are
-refused on this same-type arm.
+split. The Gaussian lift controls (`truncation_radius`, `max_aspect`, `method`,
+`device`, and `coarsen_dims`) are refused because they do not affect the written
+same-type geometry. By default each child carries a `level_stats.quality` stamp
+measured from a fixed bead lift on CPU; it captures the subsample and width
+compensation, but not RGB/alpha or any residual HDR color gain. Set
+`quality_stamps=False` to skip that measurement.
 
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given

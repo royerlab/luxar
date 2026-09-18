@@ -96,9 +96,8 @@ export interface SubtreeDisplayProgress {
    * Q is each leaf's measured `level_stats.quality` (its COMPLETE quality vs
    * its lod group's finest content). `null` when any contributing leaf has no
    * measured Q — never blend measured quality with a guessed perfect level.
-   * Purely informational (the
-   * layers-panel / data-monitor readouts); the gate's release rule uses
-   * {@link energy} alone.
+   * Purely informational for the layers-panel / data-monitor readouts; the
+   * gate's release rule uses {@link energy} alone.
    */
   quality: number | null;
 }

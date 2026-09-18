@@ -1415,12 +1415,17 @@ def _add_lines_subsampled_lod_wrapper_impl(
     blending_mode = effective_blending_mode(parent_node, attrs, "lines")
     auto_compensates = blending_mode in {"additive", "luminous"}
     compensation = spec.get("brightness_compensation", "auto")
-    quality_reference = lift_lines_to_gsplats(
-        vert_arr,
-        widths,
-        line_type=line_type,
-        indices=indices,
-        colors=colors_for_energy,
+    quality_stamps = bool(spec["quality_stamps"])
+    quality_reference = (
+        lift_lines_to_gsplats(
+            vert_arr,
+            widths,
+            line_type=line_type,
+            indices=indices,
+            colors=None,
+        )
+        if quality_stamps
+        else None
     )
     for child_index, selected_ids in enumerate(coarse_first):
         reduction_level = len(coarse_first) - child_index
@@ -1478,21 +1483,18 @@ def _add_lines_subsampled_lod_wrapper_impl(
         level_widths = _scaled_line_widths(
             widths, vertex_indices, n_vertices, width_gain
         )
-        quality_colors = (
-            level_colors
-            if level_colors is not None
-            else slice_optional_array(colors_for_energy, vertex_indices, n_vertices)
-        )
-        quality_level = lift_lines_to_gsplats(
-            vert_arr[vertex_indices],
-            level_widths,
-            line_type=child_line_type,
-            indices=child_indices,
-            colors=quality_colors,
-        )
-        level_attrs = level_attrs_with_quality(
-            level_attrs, mixture_quality(quality_level, quality_reference).quality
-        )
+        if quality_reference is not None:
+            quality_level = lift_lines_to_gsplats(
+                vert_arr[vertex_indices],
+                level_widths,
+                line_type=child_line_type,
+                indices=child_indices,
+                colors=None,
+            )
+            level_attrs = level_attrs_with_quality(
+                level_attrs,
+                mixture_quality(quality_level, quality_reference, device="cpu").quality,
+            )
         with warnings.catch_warnings():
             if color_gain > 1.0:
                 warnings.filterwarnings(
@@ -1550,7 +1552,11 @@ def _add_lines_subsampled_lod_wrapper_impl(
         ),
         substitutive_lod=None,
         coverage_fraction=coverage_vals[-1],
-        **level_attrs_with_quality(child_attrs, 1.0),
+        **(
+            level_attrs_with_quality(child_attrs, 1.0)
+            if quality_stamps
+            else child_attrs
+        ),
     )
     return lod_group_node
 
@@ -1777,6 +1783,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         seed=spec.get("seed"),
         coarsen_dims=coarsen_dims,
         max_aspect=spec.get("max_aspect", 3.0),
+        quality_stamps=bool(spec["quality_stamps"]),
     )
 
     # Degenerate -> flat Lines node. Covers BOTH no coarse levels AND an
@@ -1874,8 +1881,12 @@ def add_lines_substitutive_lod_wrapper_impl(
             lod_group=None,
             additive_lod=gsplat_additive_lod_from(lvl_spec, int(lvl_data.n_splats)),
             coverage_fraction=coverage_vals[idx],
-            **level_attrs_with_quality(
-                gsplat_child_attrs, float(lvl_data.stats["quality"])
+            **(
+                level_attrs_with_quality(
+                    gsplat_child_attrs, float(lvl_data.stats["quality"])
+                )
+                if spec["quality_stamps"]
+                else gsplat_child_attrs
             ),
         )
 
@@ -1905,7 +1916,11 @@ def add_lines_substitutive_lod_wrapper_impl(
         substitutive_lod=None,
         partition=False,
         coverage_fraction=coverage_vals[-1],
-        **level_attrs_with_quality(child_attrs, 1.0),
+        **(
+            level_attrs_with_quality(child_attrs, 1.0)
+            if spec["quality_stamps"]
+            else child_attrs
+        ),
     )
 
     return lod_group_node

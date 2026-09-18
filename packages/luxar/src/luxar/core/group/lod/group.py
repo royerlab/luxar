@@ -114,8 +114,14 @@ if TYPE_CHECKING:
 def level_attrs_with_quality(attrs: Dict[str, Any], quality: float) -> Dict[str, Any]:
     """Return child attrs with a finite measured substitutive quality stamp."""
     result = dict(attrs)
-    _, safe_stats = json_safe_value(result.get("level_stats") or {})
-    result["level_stats"] = {**(safe_stats or {}), "quality": float(quality)}
+    raw_stats = result.get("level_stats")
+    stats_ok, safe_stats = json_safe_value({} if raw_stats is None else raw_stats)
+    if not stats_ok or not isinstance(safe_stats, dict):
+        raise TypeError("level_stats must be a JSON-safe mapping")
+    quality_ok, safe_quality = json_safe_value(float(quality))
+    if not quality_ok or not isinstance(safe_quality, (int, float)):
+        raise ValueError("quality must be finite")
+    result["level_stats"] = {**safe_stats, "quality": float(safe_quality)}
     return result
 
 
@@ -1156,7 +1162,8 @@ def resolve_substitutive_axis(
       keeps that selector, so authored values keep meaning what they always
       did), ``coarsen_dims``,
       ``max_aspect`` (per-splat anisotropy cap on the coarse levels, default 3.0;
-      ``None`` disables — see :func:`luxar.gsplats.lift._cap_aspect`).
+      ``None`` disables — see :func:`luxar.gsplats.lift._cap_aspect`), and
+      ``quality_stamps`` (measure per-level mixture quality, default ``True``).
       Unrecognized keys raise. LOD switch thresholds are otherwise auto-derived by
       :func:`derive_coverage_fractions` (screen-occupancy halving, re-anchored at
       fills-screen when the insertion point is partition-bound) — no method
@@ -1249,6 +1256,13 @@ def resolve_substitutive_axis(
                 f"max_aspect must be >= 1 (or None to disable), got {max_aspect}"
             )
 
+    quality_stamps = kwargs.pop("quality_stamps", True)
+    if not isinstance(quality_stamps, bool):
+        raise TypeError(
+            "substitutive_lod quality_stamps must be bool; "
+            f"got {type(quality_stamps).__name__}"
+        )
+
     if kwargs:
         valid_keys = [
             "compression_factor (K)",
@@ -1260,6 +1274,7 @@ def resolve_substitutive_axis(
             "coverage_fractions",
             "coarsen_dims",
             "max_aspect",
+            "quality_stamps",
             *extra_valid_keys,
         ]
         raise ValueError(
@@ -1277,6 +1292,7 @@ def resolve_substitutive_axis(
         "coverage_fractions": explicit_coverage,
         "coarsen_dims": coarsen_dims,
         "max_aspect": max_aspect,
+        "quality_stamps": quality_stamps,
     }
 
 

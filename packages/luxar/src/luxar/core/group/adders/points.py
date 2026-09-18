@@ -982,10 +982,15 @@ def _add_points_subsampled_lod_wrapper_impl(
     blending_mode = effective_blending_mode(parent_node, attrs, "points")
     auto_compensates = blending_mode in {"additive", "luminous"}
     compensation = spec.get("brightness_compensation", "auto")
-    quality_reference = lift_points_to_gsplats(
-        pos_arr,
-        DEFAULT_POINT_RADIUS if radii is None else radii,
-        colors=colors_for_energy,
+    quality_stamps = bool(spec["quality_stamps"])
+    quality_reference = (
+        lift_points_to_gsplats(
+            pos_arr,
+            DEFAULT_POINT_RADIUS if radii is None else radii,
+            colors=None,
+        )
+        if quality_stamps
+        else None
     )
     for child_index, (indices, measured_gain) in enumerate(coarse_first):
         reduction_level = len(coarse_first) - child_index
@@ -1006,19 +1011,16 @@ def _add_points_subsampled_lod_wrapper_impl(
             child_attrs=child_attrs,
         )
         level_radii = slice_optional_array(radii, indices, n_points)
-        quality_colors = (
-            level_colors
-            if level_colors is not None
-            else slice_optional_array(colors_for_energy, indices, n_points)
-        )
-        quality_level = lift_points_to_gsplats(
-            pos_arr[indices],
-            DEFAULT_POINT_RADIUS if level_radii is None else level_radii,
-            colors=quality_colors,
-        )
-        level_attrs = level_attrs_with_quality(
-            level_attrs, mixture_quality(quality_level, quality_reference).quality
-        )
+        if quality_reference is not None:
+            quality_level = lift_points_to_gsplats(
+                pos_arr[indices],
+                DEFAULT_POINT_RADIUS if level_radii is None else level_radii,
+                colors=None,
+            )
+            level_attrs = level_attrs_with_quality(
+                level_attrs,
+                mixture_quality(quality_level, quality_reference, device="cpu").quality,
+            )
         with warnings.catch_warnings():
             if gain > 1.0:
                 warnings.filterwarnings(
@@ -1072,7 +1074,11 @@ def _add_points_subsampled_lod_wrapper_impl(
             additive_lod=resolved_additive,
             additive_lod_slices=slices,
             wrapper_coverage_fraction=coverage_vals[-1],
-            **level_attrs_with_quality(child_attrs, 1.0),
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if quality_stamps
+                else child_attrs
+            ),
         )
     else:
         lod_group_node.add_points(
@@ -1096,7 +1102,11 @@ def _add_points_subsampled_lod_wrapper_impl(
             ),
             substitutive_lod=None,
             coverage_fraction=coverage_vals[-1],
-            **level_attrs_with_quality(child_attrs, 1.0),
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if quality_stamps
+                else child_attrs
+            ),
         )
     return lod_group_node
 
@@ -1290,6 +1300,7 @@ def add_points_substitutive_lod_wrapper_impl(
         seed=spec.get("seed"),
         coarsen_dims=coarsen_dims,
         max_aspect=spec.get("max_aspect", 3.0),
+        quality_stamps=bool(spec["quality_stamps"]),
     )
 
     # Degenerate input -> finest Points shape rather than a one-child LOD group.
@@ -1420,8 +1431,12 @@ def add_points_substitutive_lod_wrapper_impl(
             lod_group=None,
             additive_lod=gsplat_additive_lod_from(lvl_spec, int(lvl_data.n_splats)),
             coverage_fraction=coverage_vals[idx],
-            **level_attrs_with_quality(
-                gsplat_child_attrs, float(lvl_data.stats["quality"])
+            **(
+                level_attrs_with_quality(
+                    gsplat_child_attrs, float(lvl_data.stats["quality"])
+                )
+                if spec["quality_stamps"]
+                else gsplat_child_attrs
             ),
         )
 
@@ -1448,7 +1463,11 @@ def add_points_substitutive_lod_wrapper_impl(
             additive_lod=finest_additive,
             additive_lod_slices=slices,
             wrapper_coverage_fraction=coverage_vals[-1],
-            **level_attrs_with_quality(child_attrs, 1.0),
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if spec["quality_stamps"]
+                else child_attrs
+            ),
         )
         return lod_group_node
 
@@ -1477,7 +1496,11 @@ def add_points_substitutive_lod_wrapper_impl(
         ),
         substitutive_lod=None,
         coverage_fraction=coverage_vals[-1],
-        **level_attrs_with_quality(child_attrs, 1.0),
+        **(
+            level_attrs_with_quality(child_attrs, 1.0)
+            if spec["quality_stamps"]
+            else child_attrs
+        ),
     )
 
     return lod_group_node

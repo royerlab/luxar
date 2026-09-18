@@ -79,6 +79,13 @@ class TestResolveSubstitutiveAxisLines:
         assert (
             r["compression_factor"] == 4 and r["levels"] == 3 and r["method"] == "auto"
         )
+        assert r["quality_stamps"] is True
+
+    def test_quality_stamps_can_be_disabled(self) -> None:
+        assert (
+            resolve_substitutive_axis_lines({"quality_stamps": False})["quality_stamps"]
+            is False
+        )
 
     def test_max_aspect_key_resolved(self) -> None:
         assert resolve_substitutive_axis_lines(True)["max_aspect"] == 3.0
@@ -426,8 +433,8 @@ class TestSubstitutiveLinesComposedWithAdditive:
             float(grp[name].attrs["level_stats"]["quality"]) for name in children
         ]
         assert qualities[-1] == pytest.approx(1.0)
-        assert all(0.0 <= quality <= 1.0 for quality in qualities)
-        assert min(qualities[:-1]) < 0.99
+        assert qualities == sorted(qualities)
+        assert qualities[-2] > qualities[0]
         coarse_checked = 0  # coarse (non-finest) laddered children actually asserted
         for name in children:
             child = grp[name]
@@ -1590,7 +1597,14 @@ class TestSameTypeSubstitutiveLines:
         np.testing.assert_array_equal(np.sort(order), np.arange(len(polylines)))
 
     @staticmethod
-    def _build_segments(tmp_path, *, blending_mode="additive", dimensions=None):
+    def _build_segments(
+        tmp_path,
+        *,
+        blending_mode="additive",
+        dimensions=None,
+        colors=None,
+        quality_stamps=True,
+    ):
         out = tmp_path / "same-type-lines.luxar.zarr"
         starts = np.arange(8, dtype=np.float32)[:, None]
         vertices = np.zeros((16, 3), dtype=np.float32)
@@ -1607,13 +1621,18 @@ class TestSameTypeSubstitutiveLines:
                 "curves",
                 vertices,
                 widths,
+                colors=colors,
                 labels=labels,
                 keys=keys,
                 line_type="segments",
                 blending_mode=blending_mode,
                 additive_lod=False,
                 substitutive_lod=dict(
-                    coarse="lines", compression_factor=2, levels=2, seed=7
+                    coarse="lines",
+                    compression_factor=2,
+                    levels=2,
+                    seed=7,
+                    quality_stamps=quality_stamps,
                 ),
             )
         return zarr.open(str(out), mode="r")["curves"], vertices, widths
@@ -1625,8 +1644,8 @@ class TestSameTypeSubstitutiveLines:
         assert [int(child.attrs["n_segments"]) for child in children] == [2, 4, 8]
         qualities = [float(child.attrs["level_stats"]["quality"]) for child in children]
         assert qualities[-1] == pytest.approx(1.0)
-        assert all(0.0 <= quality <= 1.0 for quality in qualities)
-        assert qualities[0] < 0.99
+        assert qualities == sorted(qualities)
+        assert qualities[-2] > qualities[0]
 
         decoder = ArrayDecoder()
         source_pairs = {
@@ -1643,6 +1662,24 @@ class TestSameTypeSubstitutiveLines:
             assert pairs <= normalized_source
             selected.append(pairs)
         assert selected[0] < selected[1] < selected[2]
+
+    @pytest.mark.parametrize(
+        "colors",
+        [
+            np.tile(np.array([[0.2, 0.4, 0.6, 0.8]], dtype=np.float32), (16, 1)),
+            (0.2, 0.4, 0.6, 0.8),
+        ],
+    )
+    def test_coarse_levels_accept_rgba(self, tmp_path, colors) -> None:
+        group, _, _ = self._build_segments(tmp_path, colors=colors)
+        assert [group[f"child_{i}"].attrs["type"] for i in range(3)] == ["lines"] * 3
+
+    def test_quality_stamps_can_be_disabled(self, tmp_path) -> None:
+        group, _, _ = self._build_segments(tmp_path, quality_stamps=False)
+        assert all(
+            "quality" not in group[f"child_{i}"].attrs.get("level_stats", {})
+            for i in range(3)
+        )
 
     @staticmethod
     def _integrated_light(child, displayed_columns=(0, 1, 2)) -> float:
