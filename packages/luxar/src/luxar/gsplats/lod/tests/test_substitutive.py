@@ -2371,7 +2371,7 @@ def test_label_barrier_merge_to_count_preserves_groups_and_mass() -> None:
 
     assert merged.n_splats == 2
     np.testing.assert_array_equal(np.sort(merged.label_ids), np.array([0, 1]))
-    assert merged.label_vocabulary == {0: "zero", 1: "one"}
+    assert merged.label_vocabulary == labeled.label_vocabulary
     input_light = _render_light_by_label(labeled)
     output_light = _render_light_by_label(merged)
     assert output_light.keys() == input_light.keys()
@@ -2393,11 +2393,11 @@ def test_single_label_is_preserved_without_changing_the_target_count() -> None:
 
     assert merged.n_splats == 2
     np.testing.assert_array_equal(merged.label_ids, np.array([7, 7], np.uint16))
-    assert merged.label_vocabulary == {7: "seven"}
+    assert merged.label_vocabulary == data.label_vocabulary
 
     unchanged = merge_to_count(data, n_target=data.n_splats, device="cpu")
     np.testing.assert_array_equal(unchanged.label_ids, data.label_ids)
-    assert unchanged.label_vocabulary == {7: "seven"}
+    assert unchanged.label_vocabulary == data.label_vocabulary
 
 
 def test_low_level_merge_still_refuses_mixed_label_ids() -> None:
@@ -2427,7 +2427,7 @@ def test_label_barrier_is_carried_through_every_substitutive_level() -> None:
     for level_index in range(out.n_substitutive):
         level = out.at_substitutive(level_index).flattened()
         np.testing.assert_array_equal(np.unique(level.label_ids), np.array([0, 1]))
-        assert level.label_vocabulary == {0: "zero", 1: "one"}
+        assert level.label_vocabulary == out.label_vocabulary
 
 
 def test_label_barrier_round_trips_through_the_written_ladder(tmp_path) -> None:
@@ -2447,7 +2447,7 @@ def test_label_barrier_round_trips_through_the_written_ladder(tmp_path) -> None:
     for level_index in range(loaded.n_substitutive):
         level = loaded.at_substitutive(level_index).flattened()
         np.testing.assert_array_equal(np.unique(level.label_ids), np.array([0, 1]))
-        assert level.label_vocabulary == {0: "zero", 1: "one"}
+        assert level.label_vocabulary == out.label_vocabulary
 
 
 def test_label_barrier_survives_volume_refinement() -> None:
@@ -2490,7 +2490,11 @@ def test_label_barrier_survives_volume_refinement() -> None:
     coarse = out.at_substitutive(1).flattened()
     np.testing.assert_array_equal(np.sort(coarse.label_ids), np.array([0, 1]))
     assert coarse.label_vocabulary == {0: "zero", 1: "one"}
-    assert out.substitutive_levels[1].stats["refine_stats"]["n_pieces"] == 2
+    stats = out.substitutive_levels[1].stats["refine_stats"]
+    assert stats["n_pieces"] == 2
+    assert stats["improved_frac"] == 1.0
+    assert stats["mse_stored"] == pytest.approx(stats["mse_refit"])
+    assert stats["mse_stored"] < stats["mse_seed"]
 
 
 def test_label_and_coordinate_barriers_compose() -> None:

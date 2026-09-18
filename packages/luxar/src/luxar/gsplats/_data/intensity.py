@@ -172,8 +172,8 @@ class IntensityMixin(_GSplatDataOps):
         if self.n_substitutive > 1:
             raise ValueError(
                 "with_label_ids is not supported on a multi-substitutive pyramid: "
-                "coarse splats merge multiple fine class ids. Attach labels before "
-                "building an additive ladder, not to substitutive levels."
+                "one finest-level label array cannot define labels for the existing "
+                "coarse rows. Attach labels before building the substitutive pyramid."
             )
         vocabulary = validate_label_channel(label_ids, label_vocabulary, self.n_splats)
         return self._map_additive(

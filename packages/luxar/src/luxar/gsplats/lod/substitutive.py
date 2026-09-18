@@ -193,6 +193,7 @@ def _finest_content(data: GSplatData) -> GSplatData:
 
 
 def _refuse_categorical_coarsening(data: GSplatData) -> None:
+    """Reject a mixed-label set that bypassed barrier-aware grouping."""
     if data.label_ids is not None and np.unique(data.label_ids).size > 1:
         raise ValueError(
             "cannot coarsen mixed categorical channel 'label_ids' in one merge "
@@ -201,37 +202,20 @@ def _refuse_categorical_coarsening(data: GSplatData) -> None:
         )
 
 
-def _active_label_vocabulary(data: GSplatData) -> Optional[dict[int, str]]:
-    if data.label_ids is None:
-        return None
-    assert data.label_vocabulary is not None
-    return {
-        int(label_id): data.label_vocabulary[int(label_id)]
-        for label_id in np.unique(data.label_ids)
-    }
-
-
-def _with_active_label_vocabulary(data: GSplatData) -> GSplatData:
-    if data.label_ids is None:
-        return data
-    active = _active_label_vocabulary(data)
-    if active == data.label_vocabulary:
-        return data
-    assert active is not None
-    return data.with_label_ids(np.asarray(data.label_ids), active)
-
-
 def _representative_label_channel(
     data: GSplatData, n_splats: int
 ) -> tuple[Optional[np.ndarray], Optional[dict[int, str]]]:
+    """Repeat one homogeneous group's label while retaining its vocabulary."""
     if data.label_ids is None:
         return None, None
     _refuse_categorical_coarsening(data)
     if n_splats == 0:
-        return np.empty(0, dtype=data.label_ids.dtype), {}
-    active = _active_label_vocabulary(data)
+        return np.empty(0, dtype=data.label_ids.dtype), data.label_vocabulary
     label_id = data.label_ids[0]
-    return np.full(n_splats, label_id, dtype=data.label_ids.dtype), active
+    return (
+        np.full(n_splats, label_id, dtype=data.label_ids.dtype),
+        data.label_vocabulary,
+    )
 
 
 def _resolve_reduction_device(
@@ -272,7 +256,6 @@ def _pack_level(
     used for the finest level, the normal reduced levels, and the
     ``input_too_small`` early-stop level.
     """
-    label_vocabulary = _active_label_vocabulary(data)
     return SubstitutiveLevel(
         additive_sublods=[
             AdditiveSubLOD(
@@ -286,7 +269,7 @@ def _pack_level(
                 label_ids=(
                     np.array(data.label_ids) if data.label_ids is not None else None
                 ),
-                label_vocabulary=label_vocabulary,
+                label_vocabulary=data.label_vocabulary,
                 stats={"lod_method": "none", "lod_level": 0},
                 truncation_radius=data.truncation_radius,
             )
@@ -408,20 +391,13 @@ def _subset_gsplatdata(data: GSplatData, mask: np.ndarray) -> GSplatData:
     """Boolean-index a flat ``GSplatData`` (preserves truncation_radius)."""
     colors = np.asarray(data.colors)[mask] if data.colors is not None else None
     label_ids = np.asarray(data.label_ids)[mask] if data.label_ids is not None else None
-    label_vocabulary = None
-    if label_ids is not None:
-        assert data.label_vocabulary is not None
-        label_vocabulary = {
-            int(label_id): data.label_vocabulary[int(label_id)]
-            for label_id in np.unique(label_ids)
-        }
     return GSplatData(
         centers=np.asarray(data.centers)[mask],
         amplitudes=np.asarray(data.amplitudes)[mask],
         cholesky_factors=np.asarray(data.cholesky_factors)[mask],
         colors=colors,
         label_ids=label_ids,
-        label_vocabulary=label_vocabulary,
+        label_vocabulary=data.label_vocabulary,
         truncation_radius=data.truncation_radius,
     )
 
@@ -479,15 +455,21 @@ def _concat_gsplatdata(parts: list[GSplatData]) -> GSplatData:
 def _barrier_group_inverse(
     data: GSplatData, barrier_dims: Sequence[int]
 ) -> tuple[np.ndarray, int]:
+    """Return dense group ids for exact coordinate and categorical barriers."""
     barrier = list(barrier_dims)
     if data.label_ids is None:
         keys = np.asarray(data.centers)[:, barrier]
         _group_ids, inverse = np.unique(keys, axis=0, return_inverse=True)
     elif barrier:
-        columns = [np.asarray(data.centers)[:, dim] for dim in barrier]
-        columns.append(np.asarray(data.label_ids))
-        keys = np.rec.fromarrays(columns)
-        _group_ids, inverse = np.unique(keys, return_inverse=True)
+        coordinate_keys = np.asarray(data.centers)[:, barrier]
+        _coordinate_groups, coordinate_inverse = np.unique(
+            coordinate_keys, axis=0, return_inverse=True
+        )
+        label_groups, label_inverse = np.unique(data.label_ids, return_inverse=True)
+        combined = np.asarray(coordinate_inverse, dtype=np.int64) * len(
+            label_groups
+        ) + np.asarray(label_inverse, dtype=np.int64)
+        _group_ids, inverse = np.unique(combined, return_inverse=True)
     else:
         _group_ids, inverse = np.unique(data.label_ids, return_inverse=True)
     inverse = np.asarray(inverse).reshape(-1)
@@ -725,7 +707,11 @@ def _volume_refine_level(
     group by :func:`~.volume_refit.volume_refine_splats`, matching the merge's
     per-group ``mass_dims`` and keeping per-timepoint brightness intact.
 
-    ``box`` restricts the coarsened dims to one spatial tile, for the per-part
+    The source volume has no categorical channel. Label groups that share the
+    same coordinate-barrier values therefore receive the same volume crop and
+    each run a separate full re-fit against it; on multi-class data this can be
+    expensive, and the never-worse guard may retain every merge seed. ``box``
+    restricts the coarsened dims to one spatial tile, for the per-part
     (adaptive) caller; ``None`` spans the whole volume.
     """
     from luxar.gsplats.lod.volume_refit import volume_refine_splats
@@ -761,9 +747,10 @@ def _volume_refine_level(
             refit = refit.translate(sub.origin.astype(np.float32))
         out = restore_dims(refit, piece, sub.dims)
         if piece.label_ids is not None:
-            vocabulary = _active_label_vocabulary(piece)
-            assert vocabulary is not None
-            out = out.with_label_ids(np.asarray(piece.label_ids), vocabulary)
+            assert piece.label_vocabulary is not None
+            out = out.with_label_ids(
+                np.asarray(piece.label_ids), piece.label_vocabulary
+            )
         if box is not None and not _within_box(out, sub.dims, box):
             # A partition part's splats must stay inside their tile: the viewer
             # frustum-culls by part bounds, so a splat that wandered out would
@@ -950,8 +937,11 @@ def make_substitutive_lod(
         coarsened dims only — see :mod:`.volume_regions` for why the barrier
         axis is sliced away rather than held still. Each level keeps
         whichever of {merge seed, re-fit} renders closer to the volume, so it
-        is never worse than the merge. ``"none"`` (default) keeps the merge
-        output.
+        is never worse than the merge. The volume has no label channel, so
+        categorical groups sharing the same coordinate barriers each run a
+        separate full re-fit against the same crop; this can multiply work by
+        the class count, and the guard may discard those re-fits. ``"none"``
+        (default) keeps the merge output.
     refine_iters
         Adam steps per refined level (``refine="l2"``) / fit iterations per
         re-fitted level (``refine="volume"``). ``None`` (default) resolves to
@@ -1381,7 +1371,7 @@ def merge_to_count(
         )
     src = _finest_content(data)
     if src.n_splats <= n_target:
-        return _with_active_label_vocabulary(src)
+        return src
     target_device = _resolve_reduction_device(device, caller="merge_to_count")
     norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
     level_method = _resolve_method(method, src.n_splats)

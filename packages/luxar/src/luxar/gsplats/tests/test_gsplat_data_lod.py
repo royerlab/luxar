@@ -134,7 +134,7 @@ _LABEL_CHANNEL_OPERATIONS = (
             verbose=False,
         ),
         id="decimate-merge",
-        refuses=True,
+        labels_follow_centers=False,
     ),
     _label_operation(
         lambda data: make_substitutive_lod(

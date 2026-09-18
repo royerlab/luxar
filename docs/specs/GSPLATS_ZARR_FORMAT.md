@@ -86,11 +86,17 @@ only when all contributing leaves have identical presence and vocabularies;
 mixed presence or different vocabularies is an error. Per-leaf rewrites such as
 re-encoding, migration, restriding, optimisation, and batch merge carry each
 leaf's vocabulary unchanged without comparing leaves, so vocabularies may differ
-between leaves in one store. Merge-based coarsening (`lod levels`, `overview`,
-`adaptive`, and merge decimation) is refused because there is no defined class id
-for a splat synthesized from differently labeled inputs. Prefix/additive LOD is
-safe because it only reorders or subsets existing splats. Exporters without a
-vocabulary-bearing categorical field must refuse the channel rather than drop it.
+between leaves in one store. Label-aware merge-based coarsening (`lod levels`,
+`overview`, `adaptive`, and explicit merge decimation) treats `label_ids` as an
+exact barrier: every representative is synthesized from one class, carries that
+class id, and each non-empty class group keeps at least one representative.
+The low-level single-group reducer still refuses mixed ids as a fail-closed
+backstop, and attaching one finest-level label array to an already-built
+multi-substitutive pyramid is refused because it cannot define the existing
+coarse rows. Prefix/additive LOD is safe because it only reorders or subsets
+existing splats. Points and Lines do not inherit this barrier when lifted to
+GSplats because their lift currently carries no label channel. Exporters without
+a vocabulary-bearing categorical field must refuse the channel rather than drop it.
 The vocabulary is duplicated on every leaf and additive rung and therefore lands
 in consolidated metadata; keep it to the small id set actually in use. If that
 cost becomes material, the format should add a shared subtree-level vocabulary.
