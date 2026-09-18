@@ -69,6 +69,24 @@ from luxar.utils.paths import normalize_zarr_path
 _MAX_STREAMING_BARRIER_RUNS = 1_000_000
 
 
+def _resolve_amplitude_bits(
+    amplitude_bits: Literal["auto", 8, 16],
+    fitting_info: Optional[Dict[str, Any]],
+) -> Literal[8, 16]:
+    """Resolve the AUTO amplitude tier from persisted source dtype metadata."""
+    if amplitude_bits in (8, 16):
+        return amplitude_bits
+    if amplitude_bits != "auto":
+        raise ValueError("amplitude_bits must be 'auto', 8, or 16")
+
+    source_dtype = fitting_info.get("source_dtype") if fitting_info else None
+    try:
+        dtype = np.dtype(source_dtype)
+    except (TypeError, ValueError):
+        return 16
+    return 8 if dtype.kind in "iu" and dtype.itemsize == 1 else 16
+
+
 @dataclass(frozen=True)
 class StreamingSplatSetMetadata:
     """Metadata needed to size a streamed flat-leaf write without decoding it."""
@@ -628,6 +646,7 @@ def write_gsplats_tree(
     *,
     ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
+    amplitude_bits: Literal["auto", 8, 16] = 16,
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
@@ -687,7 +706,11 @@ def write_gsplats_tree(
         if barrier_dims is None:
             barrier_dims = _barrier_from_coarsen_dims(pipeline_info, node)
 
-        dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+        dataset_ctx = make_dataset_ctx(
+            encoding_mode,
+            compressor=compressor,
+            positive_scalar_bits=_resolve_amplitude_bits(amplitude_bits, fitting_info),
+        )
         ordering_ctx = make_ordering_ctx(ordering)
         write_gsplat_node(
             root,
@@ -1085,6 +1108,7 @@ def write_partition_streaming(
     max_elements: int = 0,
     ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
+    amplitude_bits: Literal["auto", 8, 16] = 16,
     fitting_info: Optional[
         Dict[str, Any] | Callable[[], Optional[Dict[str, Any]]]
     ] = None,
@@ -1152,7 +1176,14 @@ def write_partition_streaming(
     store = open_store(tmp, mode="w")
     root = create_root_group(store, overwrite=True)
     try:
-        dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+        static_fitting_info = fitting_info if isinstance(fitting_info, dict) else None
+        dataset_ctx = make_dataset_ctx(
+            encoding_mode,
+            compressor=compressor,
+            positive_scalar_bits=_resolve_amplitude_bits(
+                amplitude_bits, static_fitting_info
+            ),
+        )
         ordering_ctx = make_ordering_ctx(ordering)
 
         child_bounds: List[Dict[str, List[float]]] = []
@@ -1456,6 +1487,7 @@ def save_gsplats(
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
     truncation_radius: float = DEFAULT_TRUNCATION_RADIUS,
+    amplitude_bits: Literal["auto", 8, 16] = 16,
 ) -> None:
     """Save a single Gaussian-splat set to ``.gsplats.zarr`` (a leaf node).
 
@@ -1488,6 +1520,7 @@ def save_gsplats(
         leaf,
         ordering=ordering,
         encoding_mode=encoding_mode,
+        amplitude_bits=amplitude_bits,
         fitting_info=fitting_info,
         fitting_config=fitting_config,
         provenance_info=provenance_info,

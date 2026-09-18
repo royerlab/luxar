@@ -95,6 +95,7 @@ def write_positive_scalar(
         name=name,
         semantic_type=SemanticType.POSITIVE_SCALAR,
         mode=ctx.encoding_mode,
+        positive_scalar_bits=ctx.positive_scalar_bits,
         n_elements=n_elems,
         chunks=chunks,
         compressor=ctx.compressor,

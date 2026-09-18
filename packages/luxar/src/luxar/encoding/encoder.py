@@ -83,6 +83,7 @@ class ArrayEncoder(
         compressor: Optional[Any] = None,
         deduplicate: bool = True,
         allow_lut: bool = True,
+        positive_scalar_bits: Optional[Literal[8, 16]] = None,
         _perchannel_bits: Optional[int] = None,
     ) -> None:
         """Encode array or scalar and write to zarr group.
@@ -129,6 +130,10 @@ class ArrayEncoder(
                          vertices — same raw-read rationale as
                          ``deduplicate``); grid-snapped coordinates would
                          otherwise LUT-encode and decode as indices.
+            positive_scalar_bits: Optional AUTO quantization tier for
+                POSITIVE_SCALAR log encoding. ``None`` preserves AUTO's
+                existing selection; 8 forces the geometric-log uint8 tier.
+                MEMORY remains 8-bit and PRECISION remains float32.
             _perchannel_bits: Internal-only. Forces the quantization tier (8 or
                          16) of the per-channel log encoders for the
                          CHOLESKY_DIAG / CHOLESKY_OFFDIAG semantic types. Set
@@ -147,6 +152,14 @@ class ArrayEncoder(
         # Validate semantic type is provided
         if not isinstance(semantic_type, SemanticType):
             raise ValueError("semantic_type must be explicitly specified")
+
+        if positive_scalar_bits not in (None, 8, 16):
+            raise ValueError("positive_scalar_bits must be 8 or 16")
+        if (
+            positive_scalar_bits is not None
+            and semantic_type != SemanticType.POSITIVE_SCALAR
+        ):
+            raise ValueError("positive_scalar_bits is only valid for POSITIVE_SCALAR")
 
         # Validate CUSTOM mode
         if mode == EncodingMode.CUSTOM and custom_encoder is None:
@@ -272,6 +285,7 @@ class ArrayEncoder(
             mode,
             bounds,
             positive_scalar_encoding,
+            positive_scalar_bits,
             custom_encoder,
             color_mode,
             chunks,
@@ -351,6 +365,7 @@ class ArrayEncoder(
         mode: EncodingMode,
         bounds: Optional[tuple[float, float]],
         positive_scalar_encoding: str,
+        positive_scalar_bits: Optional[int],
         custom_encoder: Optional[str],
         color_mode: Optional[str],
         chunks: Optional[tuple],
@@ -370,6 +385,8 @@ class ArrayEncoder(
             mode: Encoding mode
             bounds: Bounds for BOUNDED_SCALAR
             positive_scalar_encoding: "linear" or "log" for POSITIVE_SCALAR
+            positive_scalar_bits: Optional AUTO quantization tier for
+                POSITIVE_SCALAR log encoding.
             custom_encoder: Explicit encoder for CUSTOM mode
             color_mode: "sdr" or "hdr" for COLOR
             chunks: Optional chunk shape
@@ -405,6 +422,7 @@ class ArrayEncoder(
                 data,
                 mode,
                 positive_scalar_encoding,
+                positive_scalar_bits,
                 chunks,
                 compressor,
             ),

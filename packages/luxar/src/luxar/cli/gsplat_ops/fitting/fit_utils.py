@@ -1472,7 +1472,7 @@ def save_fit_output(
     from luxar.gsplats.gsplat_data import GSplatData
 
     if isinstance(result, GSplatData):
-        result.save(output_path, compress=compress)
+        result.save(output_path, compress=compress, amplitude_bits="auto")
         n = int(result.n_splats)
     else:  # a partition / tree node has no flat-matrix equivalent
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
@@ -1484,6 +1484,7 @@ def save_fit_output(
             output_path,
             result,
             compress=compress,
+            amplitude_bits="auto",
             fitting_info=fitting,
             fitting_config=config,
             provenance_info=provenance,

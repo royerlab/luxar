@@ -52,6 +52,12 @@ def create_test_splats_3d(n_splats: int = 100) -> dict:
     }
 
 
+def _wide_amplitude_splats(n_splats: int = 1000) -> dict:
+    splats = create_test_splats_3d(n_splats)
+    splats["amplitudes"] = np.geomspace(1e-3, 1e3, n_splats).astype(np.float32)
+    return splats
+
+
 def _zip_store_flat(store: Path, archive: Path) -> Path:
     """Zip a store's files with the store root AT THE ARCHIVE ROOT.
 
@@ -100,6 +106,75 @@ def _uncompressed_model_bytes(n_splats: int, ndim: int = 3) -> int:
 
 
 class TestSaveGsplats:
+    @pytest.mark.parametrize(
+        ("source_dtype", "expected_dtype", "expected_encoding"),
+        [
+            ("uint8", np.uint8, "geolog_scalar_uint8"),
+            ("uint16", np.uint16, "geolog_scalar_uint16"),
+            ("float32", np.uint16, "geolog_scalar_uint16"),
+            ("not-a-dtype", np.uint16, "geolog_scalar_uint16"),
+        ],
+    )
+    def test_amplitude_bits_auto_follows_source_dtype(
+        self,
+        tmp_path: Path,
+        source_dtype: str,
+        expected_dtype: np.dtype,
+        expected_encoding: str,
+    ) -> None:
+        data = GSplatData(**_wide_amplitude_splats())
+        data.stats["source_dtype"] = source_dtype
+
+        path = tmp_path / f"{source_dtype}.gsplats.zarr"
+        data.save(path, ordering="none", amplitude_bits="auto")
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["amplitudes"].dtype == expected_dtype
+        assert root["amplitudes"].attrs["encoding"]["name"] == expected_encoding
+        assert (
+            root["amplitudes"].nbytes
+            == len(data.amplitudes) * np.dtype(expected_dtype).itemsize
+        )
+
+    def test_amplitude_bits_default_stays_uint16_for_uint8_source(
+        self, tmp_path: Path
+    ) -> None:
+        data = GSplatData(**_wide_amplitude_splats())
+        data.stats["source_dtype"] = "uint8"
+
+        path = tmp_path / "default.gsplats.zarr"
+        data.save(path, ordering="none")
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["amplitudes"].dtype == np.uint16
+        assert root["amplitudes"].attrs["encoding"]["name"] == "geolog_scalar_uint16"
+
+    def test_amplitude_bits_rejects_unknown_tier_before_writing(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "invalid.gsplats.zarr"
+        data = GSplatData(**_wide_amplitude_splats())
+
+        with pytest.raises(ValueError, match="amplitude_bits must be"):
+            data.save(path, amplitude_bits=12)  # type: ignore[arg-type]
+
+        assert not path.exists()
+
+    def test_cli_fit_save_uses_source_matched_amplitude_bits(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
+
+        data = GSplatData(**_wide_amplitude_splats())
+        data.stats["source_dtype"] = "uint8"
+        path = tmp_path / "fit-output.gsplats.zarr"
+
+        save_fit_output(data, path, compress=None, verbose=False)
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["amplitudes"].dtype == np.uint8
+        assert root["amplitudes"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
+
     """Test save_gsplats function (v3.0 leaf root)."""
 
     def test_save_basic(self) -> None:

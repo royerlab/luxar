@@ -29,6 +29,7 @@ class DatasetCtx:
     encoder: ArrayEncoder
     encoding_mode: EncodingMode
     compressor: "CompressorLike"
+    positive_scalar_bits: Optional[Literal[8, 16]] = None
 
 
 @dataclass(frozen=True)
