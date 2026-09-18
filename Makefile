@@ -102,7 +102,9 @@ MIN_PNPM_MAJOR := 10
 MIN_PNPM_MINOR := 6
 # Exact Go pin used by the Linux bootstrap and enforced before launcher builds.
 # Keep its major.minor in sync with the go-launcher setup-go version in
-# .github/workflows/ci.yml; test_go_version_declarations.py guards the relation.
+# .github/workflows/ci.yml and the version table in
+# docs/guides/developer/BUILD_SYSTEM_SPEC.md;
+# test_go_version_declarations.py guards the relation.
 GO_VERSION ?= 1.27.1
 # Exact wasm-pack pin — `install-rust` installs this version and replaces any
 # other one it finds, so a local toolchain matches CI. Keep in sync with the
@@ -146,6 +148,7 @@ endef
 
 # Helper function to require the pinned Go version or newer
 define check_go_version
+	GO_INSTALLED_BIN=$$(command -v $(1) 2>/dev/null || printf '%s' "$(1)"); \
 	GO_INSTALLED_VERSION=$$($(1) version | awk '{print $$3}' | sed 's/^go//'); \
 	GO_INSTALLED_MAJOR=$$(echo "$$GO_INSTALLED_VERSION" | cut -d. -f1); \
 	GO_INSTALLED_MINOR=$$(echo "$$GO_INSTALLED_VERSION" | cut -d. -f2); \
@@ -157,8 +160,14 @@ define check_go_version
 	   { [ "$$GO_INSTALLED_MAJOR" -eq "$$GO_REQUIRED_MAJOR" ] && [ "$$GO_INSTALLED_MINOR" -lt "$$GO_REQUIRED_MINOR" ]; } || \
 	   { [ "$$GO_INSTALLED_MAJOR" -eq "$$GO_REQUIRED_MAJOR" ] && [ "$$GO_INSTALLED_MINOR" -eq "$$GO_REQUIRED_MINOR" ] && [ "$$GO_INSTALLED_PATCH" -lt "$$GO_REQUIRED_PATCH" ]; }; then \
 		echo "❌ Installed Go $$GO_INSTALLED_VERSION is older than the pinned $(GO_VERSION)."; \
-		echo "   Upgrade Go, then re-run this command."; \
-		echo "   For the local install: rm -rf ~/.local/go && make install-go"; \
+		echo "   Go binary: $$GO_INSTALLED_BIN"; \
+		if [ "$(OS)" = "macos" ]; then \
+			echo "   Upgrade Homebrew Go: brew upgrade go"; \
+		elif [ "$$GO_INSTALLED_BIN" = "$$HOME/.local/go/bin/go" ]; then \
+			echo "   Reinstall the local toolchain: rm -rf ~/.local/go && make install-go"; \
+		else \
+			echo "   Upgrade or remove that Go binary from PATH, then run 'make install-go'."; \
+		fi; \
 		exit 1; \
 	fi
 endef

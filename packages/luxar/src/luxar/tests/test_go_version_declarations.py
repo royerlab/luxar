@@ -72,3 +72,35 @@ def test_old_go_is_rejected_before_use(
     )
     assert result.returncode != 0
     assert f"Go 1.22.10 is older than the pinned {bootstrap}" in result.stdout
+    assert f"Go binary: {go}" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("os_name", "remedy"),
+    [
+        ("linux", "Upgrade or remove that Go binary from PATH"),
+        ("macos", "Upgrade Homebrew Go: brew upgrade go"),
+    ],
+)
+def test_old_go_remedy_matches_platform(
+    tmp_path: Path,
+    os_name: str,
+    remedy: str,
+) -> None:
+    go = tmp_path / "go"
+    go.write_text(
+        "#!/bin/sh\necho 'go version go1.22.10 linux/amd64'\n", encoding="utf-8"
+    )
+    go.chmod(0o755)
+    env = os.environ | {"PATH": f"{tmp_path}:{os.defpath}"}
+    result = subprocess.run(
+        ["make", "--silent", "install-go", f"OS={os_name}"],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert f"Go binary: {go}" in result.stdout
+    assert remedy in result.stdout
