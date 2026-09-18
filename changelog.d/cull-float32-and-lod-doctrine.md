@@ -61,5 +61,4 @@ normalises the stored time coordinate to the acquisition's 30-second interval,
 keeps one appearance scale across every frame and ladder rung, and documents the
 fit, cull, physical scaling, and streaming-optimisation pipeline.
 
-The 824 MB archive is pinned to Zenodo record `22118695`; the record remains
-unpublished until it is published by hand.
+The 1,105 MB archive is pinned to published Zenodo record `22804386`.

@@ -2511,11 +2511,17 @@ def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> N
         info["ndim"],
         info["format_version"],
         info["topology"],
-    ) == (121_163_285, 4, "3.4", "progressive ladder, 12 steps")
+    ) == (121_163_285, 4, "3.4", "progressive ladder, 4 steps")
     assert info["measured_sha256"] == (
-        "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae"
+        "bb2f5d00b8a63e525ab6cd182b896c21f9a8a8b9bb3a64507611d0ab54bdc761"
     )
+    assert info["source_shape"] == [407, 2048, 2048]
+    assert info["source_bytes"] == 174_122_336_256
+    assert info["source_voxels"] == 87_061_168_128
+    assert info["frames"] == 51
     assert "one 4D leaf" in info["quality_note"]
+    assert "re-laddered from the prior 03780663" in info["quality_note"]
+    assert "earlier c5e14be9 generation" in info["quality_note"]
     assert "does not retain source_archive" in info["quality_note"]
 
 
@@ -2534,7 +2540,7 @@ def test_h2afva_unscored_variants_publish_consistent_caveats(gen: Any) -> None:
         assert "every-fifth-frame slice" in info["quality_caveat"]
 
 
-def test_droso_500tp_keeps_archive_derived_quotability(gen: Any) -> None:
+def test_droso_500tp_tracks_the_published_unculled_rebuild(gen: Any) -> None:
     info = gen.load_characteristics()[
         "gsplats_4d_drosophila_embryogenesis/"
         "drosophila_embryogenesis_500tp.gsplats.zarr.zip"
@@ -2542,9 +2548,25 @@ def test_droso_500tp_keeps_archive_derived_quotability(gen: Any) -> None:
 
     assert info["psnr_db"] is None
     assert info["foreground_psnr_db"] is None
-    assert info["measured_from"] == "hosted"
-    assert info["quality_quotable"] is None
-    assert "published archive carries no stamps" in info["quality_caveat"]
+    assert info["n_splats"] == 128_000_000
+    assert info["topology"] == "progressive ladder, 4 steps"
+    assert info["source_shape"] == [500, 108, 1352, 532]
+    assert info["source_bytes"] == 77_680_512_000
+    assert info["source_voxels"] == 38_840_256_000
+    assert info["frames"] == 500
+    assert info["measured_from"] == "staged"
+    assert info["measured_sha256"] == (
+        "ee3193babb074e16958665bb96e880dea7d9af695b4521c1c2fbb81991f5b393"
+    )
+    assert info["quality_quotable"] is False
+    assert "published v2.0.0 bytes" in info["quality_note"]
+    assert "per-timepoint fit-time quality stamps" in info["quality_caveat"]
+    assert "reference is unclassified" in info["quality_caveat"]
+    assert (
+        "no archive-level reconstruction figure is published" in info["quality_caveat"]
+    )
+    assert "carries no stamps" not in info["quality_caveat"]
+    assert "refit" not in info["quality_caveat"]
 
 
 def test_droso_gastrulation_keeps_the_archive_measurement(gen: Any) -> None:

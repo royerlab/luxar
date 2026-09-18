@@ -68,6 +68,8 @@ def test_recorded_recipe_constants_match_the_source_and_published_run() -> None:
 
 def test_docstring_records_the_measured_streaming_tradeoffs() -> None:
     doc = demo.__doc__ or ""
+    assert "prior 2026-08 14-rung, 83M-splat store" in doc
+    assert "not been re-measured" in doc
     assert "47 MB in 115 requests" in doc
     assert "0-2.3 MB in 0-4 requests" in doc
     assert "18 MB / 68 requests" in doc

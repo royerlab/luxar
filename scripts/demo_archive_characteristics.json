@@ -123,26 +123,28 @@
       "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp SOURCE VERIFIED 2026-08-26: orig_tp234.npy is BYTE-EXACT timepoint 234 of fused.deconv.zarr.zip [h2afva/fused] (253, 407, 2048, 2048) -- confirmed by exact block match, with the [mezzo/fused] sibling (329 tp) ruled out. Note the file is fused.deconv.zarr.zip, NOT the fused.deconv.new.zarr.zip variant on the same box, whose dynamic range differs ~19x (max ~900 against 17,209); checking the wrong one raised a false alarm."
     },
     "gsplats_4d_drosophila_embryogenesis/drosophila_embryogenesis_500tp.gsplats.zarr.zip": {
-      "n_splats": 83221420,
+      "n_splats": 128000000,
       "ndim": 4,
       "format_version": "3.4",
-      "topology": "progressive ladder, 14 steps",
+      "topology": "progressive ladder, 4 steps",
       "psnr_db": null,
       "foreground_psnr_db": null,
       "foreground_fraction": null,
       "source_shape": [
+        500,
         108,
         1352,
         532
       ],
       "source_dtype": "uint16",
       "source_bytes": 77680512000,
+      "source_voxels": 38840256000,
       "frames": 500,
-      "quality_quotable": null,
-      "measured_from": "hosted",
-      "measured_sha256": "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b",
-      "quality_note": "Created 2026-09-01. Archive metadata READ from the HOSTED bytes with _read_archive after md5-verifying the download against the deposition (2f03fe31) and sha256-matching the manifest pin (11d3e2d9, 863,811,020 B): 83,221,420 splats, 4D, format 3.4, a 14-step progressive ladder. The read SETTLES the PSNR question rather than leaving it open -- the archive carries no fit-time stamps at all. A first download attempt was TRUNCATED at 146,800,640 B and was caught only by checking the size against the deposition, so the verify-then-parse order matters here. Source geometry is DERIVED from the manifest acquisition line (500 x 108 x 1352 x 532 uint16): 500 x 108 x 1352 x 532 x 2 B = 77,680,512,000, the RAW voxel total the compression column uses; the acquisition line's stored_bytes (19,333,771,628) is the source's COMPRESSED size, a different quantity. The single-timepoint sibling droso_gastrulation scores 41.65 / 37.07 on tp150 of the same recording, but that is a different archive from a different fit and is not quotable for this one.",
-      "quality_caveat": "No reconstruction quality was recorded at fit time for this timelapse, and the published archive carries no stamps to recover one from -- verified by reading the hosted bytes rather than inferred. An honest figure needs either a refit that stamps quality as it fits, or a scoring run against the full 500-timepoint source recording, which is 77 GB of raw voxels and is not redistributed here. The compression ratio is against that raw voxel total and is exact."
+      "quality_quotable": false,
+      "measured_from": "staged",
+      "measured_sha256": "ee3193babb074e16958665bb96e880dea7d9af695b4521c1c2fbb81991f5b393",
+      "quality_note": "Archive metadata read 2026-09-18 from the published v2.0.0 bytes after sha256-matching the manifest pin (ee3193ba, 1,158,979,910 B): 128,000,000 splats, 4D, format 3.4, and a four-step progressive ladder. The archive carries 500 per-timepoint fit-time quality records with PSNR, foreground PSNR, SSIM, MSE, and foreground fraction, but their fit_reference is unclassified, so they are not quotable as archive-level reconstruction quality. Its recorded source geometry is 500 x 108 x 1352 x 532 uint16 = 38,840,256,000 voxels and 77,680,512,000 raw bytes; the manifest acquisition line's stored_bytes (19,333,771,628) is the compressed source size, a different quantity. The single-timepoint sibling droso_gastrulation scores 41.65 / 37.07 on tp150 of the same recording, but that is a different archive from a different fit and is not quotable for this one.",
+      "quality_caveat": "The published archive carries per-timepoint fit-time quality stamps, but their reference is unclassified, so no archive-level reconstruction figure is published. The full 500-timepoint source recording is 77 GB of raw voxels and is not redistributed here. The compression ratio is against that raw voxel total and is exact."
     },
     "gsplats_4d_neuromast_2ch/neuromast_membranes.gsplats.zarr.zip": {
       "n_splats": 6400000,
@@ -808,7 +810,7 @@
       "n_splats": 121163285,
       "ndim": 4,
       "format_version": "3.4",
-      "topology": "progressive ladder, 12 steps",
+      "topology": "progressive ladder, 4 steps",
       "psnr_db": null,
       "foreground_psnr_db": null,
       "foreground_fraction": null,
@@ -819,11 +821,12 @@
       ],
       "source_dtype": "uint16",
       "source_bytes": 174122336256,
+      "source_voxels": 87061168128,
       "frames": 51,
       "quality_quotable": null,
       "measured_from": "staged",
-      "measured_sha256": "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae",
-      "quality_note": "PSNR ABSENT, and not obtainable from this archive. Verified 2026-08-28 by reading the pinned store: fitting/ exists but contains only a timestamp, while pipeline/ records recipe 'stream', lod_n_lods 12, and cutpoints ending at 121,163,285; neither group carries fit-time quality stamps or a recorded source_shape to score against. The archive is one 4D leaf with a twelve-step progressive ladder (121,163,285 splats; format 3.4), not a partition with per-tile detail levels. It does not retain source_archive, source_stride, source_timepoints, or stacked_axis_renumbered; its every-fifth-frame provenance comes from the generation history and demo contract rather than embedded lineage attributes. Obtaining a PSNR therefore means refitting the full 253-timepoint timelapse (a 9.25 GB batch-fit) so the figure is stamped at fit time, which is the only honest route for an archive whose fit reference is no longer identifiable. Scoring the shipped bytes post-hoc is not a substitute: the splats use an isotropic grid while the source volume's own grid is anisotropic, so a straight comparison measures the resampling rather than the fit. Source geometry DERIVED 2026-09-01, not read (same reason as the 253tp parent). Every FIFTH frame of the 253-timepoint recording, so ceil(253/5) = 51 frames of [407, 2048, 2048] uint16 = 174,122,336,256 B. Supplies the compression ratio ONLY -- PSNR stays absent and still needs a refit.",
+      "measured_sha256": "bb2f5d00b8a63e525ab6cd182b896c21f9a8a8b9bb3a64507611d0ab54bdc761",
+      "quality_note": "PSNR ABSENT, and not obtainable from this archive. Verified 2026-09-18 by reading the published v2.0.0 bytes: fitting/ contains only a timestamp, while pipeline/ records recipe 'stream', lod_n_lods 4, and cutpoints ending at 121,163,285; neither group carries fit-time quality stamps or a recorded source_shape to score against. The archive is one 4D leaf with a four-step progressive ladder (121,163,285 splats; format 3.4), re-laddered from the prior 03780663 12-step flat generation; the earlier c5e14be9 generation was a 44-part partition with four substitutive levels. It does not retain source_archive, source_stride, source_timepoints, or stacked_axis_renumbered; its every-fifth-frame provenance comes from the generation history and demo contract rather than embedded lineage attributes. Obtaining a PSNR therefore means refitting the full 253-timepoint timelapse so the figure is stamped at fit time. Scoring the shipped bytes post-hoc is not a substitute: the splats use an isotropic grid while the source volume's grid is anisotropic, so a straight comparison measures the resampling rather than the fit. Source geometry is derived, not read: every fifth frame of the 253-timepoint recording gives ceil(253/5) = 51 frames of [407, 2048, 2048] uint16 = 174,122,336,256 B. This supplies the compression ratio only.",
       "quality_caveat": "No reconstruction quality was recorded at fit time for this timelapse. Its splats use an isotropic grid while the source volume's grid is anisotropic, so scoring the shipped bytes would measure the resampling as well as the fit; an honest figure requires a refit. This published 51-frame variant is the demo's every-fifth-frame slice of the same 253-timepoint fit, although the pinned archive does not retain those lineage attributes."
     }
   }

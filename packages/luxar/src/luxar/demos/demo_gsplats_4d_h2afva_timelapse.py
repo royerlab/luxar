@@ -13,7 +13,7 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    The pinned archive is one leaf of 121,163,285 splats with a twelve-rung
+    The pinned archive is one leaf of 121,163,285 splats with a four-rung
     progressive ladder. The SCENE does not graft that leaf as-is: at build time
     it is re-authored (no refit — the splats are untouched) into a
     ``kind=partition`` of **one part per timepoint**, 51 parts, each carrying
@@ -131,7 +131,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 1064,
+        "download_mb": 1061,
         "compute": "light",
         "gpu": "none",
         "local_data": None,

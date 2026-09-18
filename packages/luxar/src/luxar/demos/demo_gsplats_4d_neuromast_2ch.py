@@ -78,9 +78,8 @@ PIPELINE — reproducible per channel with ``--recompute``:
 
 DATA STORAGE:
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
-    repo**. Both channels use the published ``cc-by`` record for provenance, but
-    the corrected 136 MB ``.gsplats.zarr.zip`` pair is mirrored on R2 through a
-    dataset-level ``base_url`` in ``demos/data_manifest.json``. Thus
+    repo**. Both channels use the published ``cc-by`` record, where the corrected
+    136 MB ``.gsplats.zarr.zip`` pair is now archival. Thus
     ``resolve_channel_paths`` fetches them on demand through
     ``ensure_dataset("gsplats_4d_neuromast_2ch")``: the pair is
     verified against those digests, cached under ``~/.cache/luxar/`` and
@@ -115,7 +114,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 136,  # the corrected zipped pair on the R2 mirror
+        "download_mb": 136,  # the corrected zipped pair on Zenodo
         "compute": "medium",
         "gpu": "none",
         "local_data": None,

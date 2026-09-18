@@ -1005,6 +1005,13 @@ failure rather than an ordinary `DatasetUnavailable` fallback. The live gallery
 tile is indifferent because it serves an already-derived scene and never
 consults the pin (3.10).
 
+The 2026-09-18 v2.0.0 wave published records `22804363`, `22807312`, and
+`22804386`: cc-by gained the corrected neuromast pair, the h2afva 51-timepoint
+archive moved to a four-step ladder, and the Drosophila timelapse moved to the
+unculled 128-million-splat build. The manifest repin retires the temporary
+neuromast R2 override and makes existing Drosophila caches fetch the new 1.1 GB
+archive.
+
 ### 3.21 Animated, un-laddered nodes need chunk-boundary-aware prefetch
 
 The 2026-09-02 wave re-chunked every store with `optimize --profile archive`.
