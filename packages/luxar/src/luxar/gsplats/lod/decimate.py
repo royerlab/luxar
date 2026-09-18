@@ -204,11 +204,11 @@ def decimate(
         Returns the input unchanged when ``target`` resolves to the full count.
         ``merge`` can land slightly under the request — the clustering drops
         degenerate (empty / non-positive-mass) clusters, so a 165,340 ask on the
-        1.65M-splat reference dataset yields 165,276. The one case that lands
-        OVER is a ``coarsen_dims`` target below the number of barrier groups:
-        every group keeps at least one representative rather than whole
-        timepoints/channels being deleted to hit a count (the reduction says so
-        on the console).
+        1.65M-splat reference dataset yields 165,276. A request below the number
+        of coordinate and/or label barrier groups lands OVER: every group keeps
+        at least one representative rather than whole timepoints, channels, or
+        classes being deleted to hit a count (the reduction says so on the
+        console).
 
     Raises:
         ValueError: on an out-of-range target, an unknown method, or a
@@ -286,8 +286,9 @@ def decimate(
             # out representatives that carry a whole cluster's mass, dimming the
             # object by up to a third and losing exactly the property merging
             # exists for. `merge_to_count` asks the same operator for M = target
-            # bins instead, so nothing is discarded and any target is reachable
-            # (a factor >= 2 could never honour a target above half the input).
+            # bins instead, so nothing is discarded and any target at or above
+            # the coordinate/label barrier-group count is reachable (a factor
+            # >= 2 could never honour a target above half the input).
             out = merge_to_count(
                 data,
                 n_target=n_target,
