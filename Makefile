@@ -2007,7 +2007,7 @@ install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball o
 		brew install go; \
 		echo "✅ Go installed: $$(go version)"; \
 	elif [ "$(OS)" = "linux" ]; then \
-		GO_VERSION=$${GO_VERSION:-1.22.10}; \
+		GO_VERSION=$${GO_VERSION:-1.27.1}; \
 		ARCH=$$(uname -m); \
 		case "$$ARCH" in \
 			x86_64|amd64) GOARCH=amd64 ;; \
