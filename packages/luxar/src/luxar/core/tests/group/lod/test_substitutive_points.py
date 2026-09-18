@@ -248,6 +248,12 @@ class TestAddPointsSubstitutiveLod:
             np.testing.assert_allclose(
                 decoded, np.broadcast_to(expected * gain, decoded.shape), rtol=1e-5
             )
+        qualities = [
+            float(group[f"child_{i}"].attrs["level_stats"]["quality"]) for i in range(3)
+        ]
+        assert qualities[-1] == pytest.approx(1.0)
+        assert all(0.0 <= quality <= 1.0 for quality in qualities)
+        assert qualities[0] < 0.99
 
     def test_points_coarse_auto_does_not_brighten_normal_blending(
         self, tmp_path
@@ -940,6 +946,12 @@ class TestSubstitutiveComposedWithAdditive:
         # they carry no fraction stamps and are skipped.
         children = self._children(grp)
         finest_name = children[-1]
+        qualities = [
+            float(grp[name].attrs["level_stats"]["quality"]) for name in children
+        ]
+        assert qualities[-1] == pytest.approx(1.0)
+        assert all(0.0 <= quality <= 1.0 for quality in qualities)
+        assert min(qualities[:-1]) < 0.99
         coarse_checked = 0  # coarse (non-finest) laddered children actually asserted
         for name in children:
             child = grp[name]

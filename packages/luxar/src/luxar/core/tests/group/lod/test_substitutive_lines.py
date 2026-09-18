@@ -422,6 +422,12 @@ class TestSubstitutiveLinesComposedWithAdditive:
         # they carry no fraction stamps and are skipped.
         children = self._children(grp)
         finest_name = children[-1]
+        qualities = [
+            float(grp[name].attrs["level_stats"]["quality"]) for name in children
+        ]
+        assert qualities[-1] == pytest.approx(1.0)
+        assert all(0.0 <= quality <= 1.0 for quality in qualities)
+        assert min(qualities[:-1]) < 0.99
         coarse_checked = 0  # coarse (non-finest) laddered children actually asserted
         for name in children:
             child = grp[name]
@@ -1617,6 +1623,10 @@ class TestSameTypeSubstitutiveLines:
         children = [group[f"child_{i}"] for i in range(3)]
         assert [child.attrs["type"] for child in children] == ["lines"] * 3
         assert [int(child.attrs["n_segments"]) for child in children] == [2, 4, 8]
+        qualities = [float(child.attrs["level_stats"]["quality"]) for child in children]
+        assert qualities[-1] == pytest.approx(1.0)
+        assert all(0.0 <= quality <= 1.0 for quality in qualities)
+        assert qualities[0] < 0.99
 
         decoder = ArrayDecoder()
         source_pairs = {

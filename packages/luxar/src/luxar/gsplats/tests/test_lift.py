@@ -818,3 +818,16 @@ def test_coarse_substitutive_levels_max_aspect_none_disables():
     )
     assert max_aspect_of(capped) <= 3.0 * (1 + 1e-4)
     assert max_aspect_of(uncapped) > 3.0
+
+
+def test_coarse_substitutive_levels_stamp_final_written_quality():
+    rng = np.random.RandomState(12)
+    points = rng.normal(0, 4, (96, 3)).astype(np.float32)
+    lifted = lift_points_to_gsplats(points, 0.8)
+
+    coarse = coarse_substitutive_levels(
+        lifted, compression_factor=4, levels=1, device="cpu", seed=0
+    )
+
+    assert len(coarse) == 1
+    assert 0.0 <= coarse[0].stats["quality"] < 0.99

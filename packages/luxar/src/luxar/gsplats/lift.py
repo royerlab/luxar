@@ -884,6 +884,7 @@ def coarse_substitutive_levels(
     the coarsest entry (``[-1]``) may itself have ``n_splats == 0`` (callers
     treat both as "no usable coarse levels" — see the adders' degenerate guards).
     """
+    from .lod.quality import mixture_quality
     from .lod.substitutive import make_substitutive_lod
 
     pyramid = make_substitutive_lod(
@@ -904,19 +905,20 @@ def coarse_substitutive_levels(
             lvl = _cap_aspect(lvl, coarsen_dims, float(max_aspect)).flattened()
         ls = render_light(lvl)
         scale = (light0 / ls) if ls > 0 else 1.0
-        out.append(
-            GSplatData(
-                centers=np.asarray(lvl.centers, dtype=np.float32),
-                amplitudes=(
-                    np.asarray(lvl.amplitudes, dtype=np.float64) * scale
-                ).astype(np.float32),
-                cholesky_factors=np.asarray(lvl.cholesky_factors, dtype=np.float32),
-                colors=(
-                    None if lvl.colors is None else np.asarray(lvl.colors, np.float32)
-                ),
-                truncation_radius=float(lifted.truncation_radius),
-            )
+        final_level = GSplatData(
+            centers=np.asarray(lvl.centers, dtype=np.float32),
+            amplitudes=(np.asarray(lvl.amplitudes, dtype=np.float64) * scale).astype(
+                np.float32
+            ),
+            cholesky_factors=np.asarray(lvl.cholesky_factors, dtype=np.float32),
+            colors=(None if lvl.colors is None else np.asarray(lvl.colors, np.float32)),
+            truncation_radius=float(lifted.truncation_radius),
         )
+        if lifted.n_splats > 0:
+            final_level.stats["quality"] = mixture_quality(
+                final_level, lifted, device=device
+            ).quality
+        out.append(final_level)
     return out
 
 

@@ -1236,11 +1236,14 @@ def _add_lines_subsampled_lod_wrapper_impl(
     attrs: Dict[str, Any],
 ) -> Union["Group", Lines]:
     """Write seeded whole-polyline Lines levels above the original Lines node."""
+    from ....gsplats.lift import lift_lines_to_gsplats
+    from ....gsplats.lod.quality import mixture_quality
     from ..lod.group import (
         assert_same_type_slice_capacity,
         compose_additive_under_substitutive,
         effective_blending_mode,
         level_additive_lod,
+        level_attrs_with_quality,
         resolve_lod_ladder,
         resolve_same_type_axes,
         same_type_colors_for_energy,
@@ -1412,6 +1415,13 @@ def _add_lines_subsampled_lod_wrapper_impl(
     blending_mode = effective_blending_mode(parent_node, attrs, "lines")
     auto_compensates = blending_mode in {"additive", "luminous"}
     compensation = spec.get("brightness_compensation", "auto")
+    quality_reference = lift_lines_to_gsplats(
+        vert_arr,
+        widths,
+        line_type=line_type,
+        indices=indices,
+        colors=colors_for_energy,
+    )
     for child_index, selected_ids in enumerate(coarse_first):
         reduction_level = len(coarse_first) - child_index
         selected_light = float(np.sum(light_integrals[selected_ids]))
@@ -1465,6 +1475,24 @@ def _add_lines_subsampled_lod_wrapper_impl(
             gain=color_gain,
             child_attrs=child_attrs,
         )
+        level_widths = _scaled_line_widths(
+            widths, vertex_indices, n_vertices, width_gain
+        )
+        quality_colors = (
+            level_colors
+            if level_colors is not None
+            else slice_optional_array(colors_for_energy, vertex_indices, n_vertices)
+        )
+        quality_level = lift_lines_to_gsplats(
+            vert_arr[vertex_indices],
+            level_widths,
+            line_type=child_line_type,
+            indices=child_indices,
+            colors=quality_colors,
+        )
+        level_attrs = level_attrs_with_quality(
+            level_attrs, mixture_quality(quality_level, quality_reference).quality
+        )
         with warnings.catch_warnings():
             if color_gain > 1.0:
                 warnings.filterwarnings(
@@ -1475,7 +1503,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
             lod_group_node.add_lines(
                 f"child_{child_index}",
                 vert_arr[vertex_indices],
-                _scaled_line_widths(widths, vertex_indices, n_vertices, width_gain),
+                level_widths,
                 colors=level_colors,
                 sharpness=slice_optional_array(sharpness, vertex_indices, n_vertices),
                 scalars=level_scalars,
@@ -1522,7 +1550,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
         ),
         substitutive_lod=None,
         coverage_fraction=coverage_vals[-1],
-        **child_attrs,
+        **level_attrs_with_quality(child_attrs, 1.0),
     )
     return lod_group_node
 
@@ -1598,6 +1626,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         compose_additive_under_substitutive,
         gsplat_additive_lod_from,
         level_additive_lod,
+        level_attrs_with_quality,
         resident_slice_count,
         resolve_lod_ladder,
     )
@@ -1845,7 +1874,9 @@ def add_lines_substitutive_lod_wrapper_impl(
             lod_group=None,
             additive_lod=gsplat_additive_lod_from(lvl_spec, int(lvl_data.n_splats)),
             coverage_fraction=coverage_vals[idx],
-            **gsplat_child_attrs,
+            **level_attrs_with_quality(
+                gsplat_child_attrs, float(lvl_data.stats["quality"])
+            ),
         )
 
     # Finest child: the original Lines node (carries all vertices + image_labels).
@@ -1874,7 +1905,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         substitutive_lod=None,
         partition=False,
         coverage_fraction=coverage_vals[-1],
-        **child_attrs,
+        **level_attrs_with_quality(child_attrs, 1.0),
     )
 
     return lod_group_node

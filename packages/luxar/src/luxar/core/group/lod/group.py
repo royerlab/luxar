@@ -102,12 +102,21 @@ from ....typing_utils.constants import (
     LOD_SELECTORS,
 )
 from ....typing_utils.geometry_capabilities import require_lod_display_type
+from ....typing_utils.json_safe import json_safe_value
 from ....validation.types import validate_truncation_radius
 from ..compositing import is_broadcast_color, slice_optional_array
 from .reveal import is_reveal_additive_method, pop_reveal_knobs
 
 if TYPE_CHECKING:
     from ...node import Node
+
+
+def level_attrs_with_quality(attrs: Dict[str, Any], quality: float) -> Dict[str, Any]:
+    """Return child attrs with a finite measured substitutive quality stamp."""
+    result = dict(attrs)
+    _, safe_stats = json_safe_value(result.get("level_stats") or {})
+    result["level_stats"] = {**(safe_stats or {}), "quality": float(quality)}
+    return result
 
 
 #: Upper bound on any ``coverage_fraction`` — the LEGACY ``selector="coverage"``
