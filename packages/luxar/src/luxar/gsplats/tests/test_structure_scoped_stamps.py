@@ -200,14 +200,15 @@ def test_a_no_op_decimate_returns_the_input_verbatim() -> None:
     assert data.stats == _laddered_stats()
 
 
-def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
+def test_decimate_carries_labels_through_prefix_and_merge() -> None:
     data = _flat_dataset()
+    label_count = 4
     labeled = GSplatData(
         centers=data.centers,
         amplitudes=data.amplitudes,
         cholesky_factors=data.cholesky_factors,
-        label_ids=np.arange(data.n_splats, dtype=np.uint16),
-        label_vocabulary={i: str(i) for i in range(data.n_splats)},
+        label_ids=np.arange(data.n_splats, dtype=np.uint16) % label_count,
+        label_vocabulary={i: str(i) for i in range(label_count)},
     )
 
     prefix = decimate(labeled, target=data.n_splats // 2, method="prefix")
@@ -215,20 +216,18 @@ def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
     for center, label_id in zip(prefix.centers, prefix.label_ids):
         matches = np.flatnonzero(np.all(labeled.centers == center, axis=1))
         assert matches.size == 1
-        assert int(label_id) == int(matches[0])
-
-    with pytest.raises(ValueError, match="without_label_ids"):
-        decimate(labeled, target=data.n_splats // 2, method="merge", device="cpu")
+        assert int(label_id) == int(matches[0]) % label_count
 
     merged = decimate(
-        labeled.without_label_ids(),
+        labeled,
         target=data.n_splats // 2,
         method="merge",
         device="cpu",
     )
     assert merged.n_splats == data.n_splats // 2
-    assert merged.label_ids is None
-    assert merged.label_vocabulary is None
+    assert merged.label_ids is not None
+    assert set(merged.label_ids.tolist()) == set(range(label_count))
+    assert merged.label_vocabulary == labeled.label_vocabulary
 
     with pytest.warns(UserWarning) as caught:
         automatic = decimate(
@@ -248,7 +247,7 @@ def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
     for center, label_id in zip(automatic.centers, automatic.label_ids):
         matches = np.flatnonzero(np.all(labeled.centers == center, axis=1))
         assert matches.size == 1
-        assert int(label_id) == int(matches[0])
+        assert int(label_id) == int(matches[0]) % label_count
 
 
 def _stacked_dataset(n: int = 200) -> GSplatData:
