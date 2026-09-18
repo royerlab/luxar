@@ -87,6 +87,8 @@ def test_manifest_and_download_size_pin_the_51tp_archive() -> None:
     pin = variant["files"][0]
 
     assert (pin["sha256"], pin["bytes"]) == (_ARCHIVE_SHA256, _ARCHIVE_BYTES)
+    assert "four-rung" in (_demo.__doc__ or "")
+    assert "twelve-rung" not in (_demo.__doc__ or "")
     assert _demo.DEMO_META["requirements"]["download_mb"] == round(
         _ARCHIVE_BYTES / 1024**2
     )
