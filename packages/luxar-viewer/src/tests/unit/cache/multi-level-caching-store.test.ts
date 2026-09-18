@@ -1838,117 +1838,109 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l2.count).toBe(0);
     });
 
-    it(
-      'VC-1: dispose aborts in-flight cache validation (entry self-evicts when the aborted validation settles)',
-      { timeout: 15_000 },
-      async () => {
-        // Mock fetch that hangs UNTIL the abort signal fires; abort path
-        // rejects with the standard AbortError so fetchWithRetry can unwind.
-        let observedSignal: AbortSignal | undefined;
-        global.fetch = vi.fn((_url: string, init?: RequestInit) => {
-          const signal = init?.signal as AbortSignal | undefined;
-          observedSignal = signal;
+    it('VC-1: dispose aborts in-flight cache validation (entry self-evicts when the aborted validation settles)', async () => {
+      // Mock fetch that hangs UNTIL the abort signal fires; abort path
+      // rejects with the standard AbortError so fetchWithRetry can unwind.
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        observedSignal = signal;
+        return new Promise<Response>((_resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as any;
+
+      const slowStore = new MultiLevelCachingStore('https://example.com/slow.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      // Kick off init (which calls validateCache → fetchWithRetry).
+      const initPromise = slowStore.init();
+      // Give the init enough time to enter fetchWithRetry.
+      await new Promise((r) => setTimeout(r, 50));
+
+      await slowStore.dispose();
+
+      // The fetch's signal must have aborted as a consequence of dispose().
+      expect(observedSignal?.aborted).toBe(true);
+
+      // init() must resolve now that the validation chain has unwound.
+      await initPromise;
+    });
+
+    it('two stores sharing a datasetId: disposing the first cancels its queue entry, the second can still validate', async () => {
+      // Two stores using the same URL share the same datasetId
+      // (SHA-256(url)). The first to start init populates the
+      // static validationQueues entry; the second waits on it.
+      // When the first is disposed mid-validation, its queue entry
+      // is aborted (self-evicting when the aborted validation settles)
+      // — so the second can install its own entry and complete cleanly.
+      const url = 'https://example.com/shared-dataset.zarr';
+
+      // First fetch hangs forever to keep store-1's validation
+      // in flight; second fetch resolves so store-2 can finish.
+      let firstAttempt = true;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        if (firstAttempt) {
+          firstAttempt = false;
           return new Promise<Response>((_resolve, reject) => {
-            if (signal?.aborted) {
-              reject(new DOMException('Aborted', 'AbortError'));
-              return;
-            }
-            signal?.addEventListener(
+            init?.signal?.addEventListener(
               'abort',
               () => reject(new DOMException('Aborted', 'AbortError')),
               { once: true }
             );
           });
-        }) as any;
+        }
+        // Subsequent fetches return a real response so store-2 can
+        // finish init (this includes both the .zattrs probe and
+        // chunk fetches).
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return new Uint8Array([1, 2, 3]).buffer;
+          },
+          async text() {
+            return '{}';
+          },
+          headers: new Headers(),
+        } as unknown as Response);
+      }) as unknown as typeof fetch;
 
-        const slowStore = new MultiLevelCachingStore('https://example.com/slow.zarr', {
-          l1MaxSize: 20 * 1024 * 1024,
-          l2MaxSize: 4096,
-        });
-        // Kick off init (which calls validateCache → fetchWithRetry).
-        const initPromise = slowStore.init();
-        // Give the init enough time to enter fetchWithRetry.
-        await new Promise((r) => setTimeout(r, 50));
+      const store1 = new MultiLevelCachingStore(url, {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      const init1 = store1.init();
+      // Let init1 enter validateCache → fetchWithRetry.
+      await new Promise((r) => setTimeout(r, 50));
 
-        await slowStore.dispose();
+      // Dispose store1 mid-validation — its queue entry should be
+      // aborted, allowing init2 (which would otherwise wait on
+      // store1's queue) to install its own entry.
+      await store1.dispose();
+      await init1;
 
-        // The fetch's signal must have aborted as a consequence of dispose().
-        expect(observedSignal?.aborted).toBe(true);
+      // Now create + init a second store on the same URL. The
+      // hanging fetch is gone (firstAttempt already consumed),
+      // so this should succeed without timing out.
+      const store2 = new MultiLevelCachingStore(url, {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      await store2.init();
 
-        // init() must resolve now that the validation chain has unwound.
-        await initPromise;
-      }
-    );
-
-    it(
-      'two stores sharing a datasetId: disposing the first cancels its queue entry, the second can still validate',
-      { timeout: 15_000 },
-      async () => {
-        // Two stores using the same URL share the same datasetId
-        // (SHA-256(url)). The first to start init populates the
-        // static validationQueues entry; the second waits on it.
-        // When the first is disposed mid-validation, its queue entry
-        // is aborted (self-evicting when the aborted validation settles)
-        // — so the second can install its own entry and complete cleanly.
-        const url = 'https://example.com/shared-dataset.zarr';
-
-        // First fetch hangs forever to keep store-1's validation
-        // in flight; second fetch resolves so store-2 can finish.
-        let firstAttempt = true;
-        global.fetch = vi.fn((_url: string, init?: RequestInit) => {
-          if (firstAttempt) {
-            firstAttempt = false;
-            return new Promise<Response>((_resolve, reject) => {
-              init?.signal?.addEventListener(
-                'abort',
-                () => reject(new DOMException('Aborted', 'AbortError')),
-                { once: true }
-              );
-            });
-          }
-          // Subsequent fetches return a real response so store-2 can
-          // finish init (this includes both the .zattrs probe and
-          // chunk fetches).
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            async arrayBuffer() {
-              return new Uint8Array([1, 2, 3]).buffer;
-            },
-            async text() {
-              return '{}';
-            },
-            headers: new Headers(),
-          } as unknown as Response);
-        }) as unknown as typeof fetch;
-
-        const store1 = new MultiLevelCachingStore(url, {
-          l1MaxSize: 20 * 1024 * 1024,
-          l2MaxSize: 4096,
-        });
-        const init1 = store1.init();
-        // Let init1 enter validateCache → fetchWithRetry.
-        await new Promise((r) => setTimeout(r, 50));
-
-        // Dispose store1 mid-validation — its queue entry should be
-        // aborted, allowing init2 (which would otherwise wait on
-        // store1's queue) to install its own entry.
-        await store1.dispose();
-        await init1;
-
-        // Now create + init a second store on the same URL. The
-        // hanging fetch is gone (firstAttempt already consumed),
-        // so this should succeed without timing out.
-        const store2 = new MultiLevelCachingStore(url, {
-          l1MaxSize: 20 * 1024 * 1024,
-          l2MaxSize: 4096,
-        });
-        await store2.init();
-
-        // Cleanup.
-        await store2.dispose();
-      }
-    );
+      // Cleanup.
+      await store2.dispose();
+    });
 
     it('disposed-store reads unwind quietly without touching tiers', async () => {
       // After dispose, callers must not be able to populate L1/L2 or
@@ -2016,58 +2008,54 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
-    it(
-      'VC-2: cache-validation HEAD probe uses a shorter timeout than data fetches',
-      { timeout: 15_000 },
-      async () => {
-        // Verify timing: the validation HEAD probe should abort under the
-        // shorter `validationTimeoutMs` budget (5 s), not the full 30 s
-        // `timeoutMs` data budget. We assert that the FIRST attempt's abort
-        // fires within ~validationTimeoutMs / maxAttempts.
-        const startTimes = new Map<string, number>();
-        const abortTimes = new Map<string, number>();
-        global.fetch = vi.fn((url: string, init?: RequestInit) => {
-          const path = url.replace('https://example.com/timeout.zarr/', '');
-          startTimes.set(path, Date.now());
-          const signal = init?.signal as AbortSignal | undefined;
-          return new Promise<Response>((_resolve, reject) => {
-            signal?.addEventListener(
-              'abort',
-              () => {
-                abortTimes.set(path, Date.now());
-                reject(new DOMException('Aborted', 'AbortError'));
-              },
-              { once: true }
-            );
-          });
-        }) as any;
-
-        const timeoutStore = new MultiLevelCachingStore('https://example.com/timeout.zarr', {
-          l1MaxSize: 20 * 1024 * 1024,
-          l2MaxSize: 4096,
+    it('VC-2: cache-validation HEAD probe uses a shorter timeout than data fetches', async () => {
+      // Verify timing: the validation HEAD probe should abort under the
+      // shorter `validationTimeoutMs` budget (5 s), not the full 30 s
+      // `timeoutMs` data budget. We assert that the FIRST attempt's abort
+      // fires within ~validationTimeoutMs / maxAttempts.
+      const startTimes = new Map<string, number>();
+      const abortTimes = new Map<string, number>();
+      global.fetch = vi.fn((url: string, init?: RequestInit) => {
+        const path = url.replace('https://example.com/timeout.zarr/', '');
+        startTimes.set(path, Date.now());
+        const signal = init?.signal as AbortSignal | undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => {
+              abortTimes.set(path, Date.now());
+              reject(new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true }
+          );
         });
-        const initPromise = timeoutStore.init();
+      }) as any;
 
-        // Let the validation budget run through enough retries for our
-        // measurement, but stay well under the data-fetch budget.
-        await new Promise((r) => setTimeout(r, 2500));
+      const timeoutStore = new MultiLevelCachingStore('https://example.com/timeout.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      const initPromise = timeoutStore.init();
 
-        // Whichever root document the probe reached for — the budget under
-        // test is the validation one, not the document's spelling.
-        const rootDoc = [...startTimes.keys()].find(isRootDocRequest);
-        expect(rootDoc).toBeDefined();
-        const start = startTimes.get(rootDoc as string);
-        const abort = abortTimes.get(rootDoc as string);
-        expect(start).toBeDefined();
-        expect(abort).toBeDefined();
-        // First-attempt abort should fire within ~validationTimeoutMs/4 ≈ 1.25 s
-        // (validation budget), not 30 s/4 ≈ 7.5 s (data budget).
-        expect((abort as number) - (start as number)).toBeLessThan(2000);
+      // Let the validation budget run through enough retries for our
+      // measurement, but stay well under the data-fetch budget.
+      await new Promise((r) => setTimeout(r, 2500));
 
-        await timeoutStore.dispose();
-        await initPromise;
-      }
-    );
+      // Whichever root document the probe reached for — the budget under
+      // test is the validation one, not the document's spelling.
+      const rootDoc = [...startTimes.keys()].find(isRootDocRequest);
+      expect(rootDoc).toBeDefined();
+      const start = startTimes.get(rootDoc as string);
+      const abort = abortTimes.get(rootDoc as string);
+      expect(start).toBeDefined();
+      expect(abort).toBeDefined();
+      // First-attempt abort should fire within ~validationTimeoutMs/4 ≈ 1.25 s
+      // (validation budget), not 30 s/4 ≈ 7.5 s (data budget).
+      expect((abort as number) - (start as number)).toBeLessThan(2000);
+
+      await timeoutStore.dispose();
+      await initPromise;
+    });
   });
 
   describe('Debug Features', () => {

@@ -418,7 +418,7 @@ describe('zarr-loader', () => {
       }));
 
       await expect(loadScene('http://timeout.test/data.zarr')).rejects.toThrow();
-    }, 15000);
+    });
 
     it('rejects when open() returns null (missing .zgroup)', async () => {
       mockFetchStore = {
