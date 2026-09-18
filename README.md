@@ -323,9 +323,11 @@ microscopy benchmark (4–107 M voxels; spinning-disk, confocal, light-sheet and
 fits at each volume's cross-validated splat budget land between 26 and 67 dB PSNR at
 6–340× compression (median 99×), measured as the bytes of the source volume at its
 stored bit depth (uint16 for most, uint8 or float32 where that is how the source is
-stored) over the bytes of the stored splat archive (manuscript in preparation). The two
-showcase fits above cover gigavoxel-scale source datasets, well beyond the benchmark's
-4–107 M-voxel range. `luxar gsplat compare` reports PSNR/SSIM/MSE for your own data.
+stored) over the bytes of the stored splat archive (manuscript in preparation). The
+single-volume Tribolium fit above is a gigavoxel source well beyond the benchmark's
+per-volume range, so its compression exceeds the quoted ceiling; the *C. elegans* figure
+instead aggregates 400 timepoints of 10.7 M voxels each. `luxar gsplat compare` reports
+PSNR/SSIM/MSE for your own data.
 
 ### Emission and absorption, not just glow
 
