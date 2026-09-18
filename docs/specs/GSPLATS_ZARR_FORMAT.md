@@ -1602,6 +1602,13 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 | `cholesky_factors_diag` | CHOLESKY_DIAG | `log_perchannel_u8` (per-column log) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | `signed_log_perchannel_u8` (per-column signed-log; absent if d==1) |
 
+Standalone gsplat writers accept `amplitude_bits="auto"`. When
+`fitting/source_dtype` is an 8-bit integer dtype, AUTO selects
+`geolog_scalar_uint8` regardless of the encoder's linear/log choice; missing,
+invalid, floating-point, and wider integer source dtypes retain the existing
+AUTO selection. The option defaults to 16, so existing direct-save behavior is
+unchanged.
+
 **Centers** are uint16 per-axis fixed-point (`linear_perchannel_u16`) in AUTO and
 MEMORY — each axis quantized over its own [min, max] to 65536 levels, decoded back to
 float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relative

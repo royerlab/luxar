@@ -35,6 +35,7 @@ save_gsplats(
     label_vocabulary={0: "bone"}, # id -> name; must name every id present
     ordering="hilbert",           # "morton", "hilbert", or "none"
     encoding_mode=EncodingMode.AUTO,  # AUTO, PRECISION, or MEMORY
+    amplitude_bits="auto",        # uint8 source -> 8-bit log; else AUTO default
     fitting_info={"time_seconds": 45.3, "iterations": 850},
     fitting_config=None,          # Fitter-specific config (optional)
     provenance_info=None,         # Image lineage metadata (optional)

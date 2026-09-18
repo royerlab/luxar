@@ -98,6 +98,7 @@ def make_dataset_ctx(
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     *,
     compressor: Optional[Any] = None,
+    positive_scalar_bits: Optional[Literal[8, 16]] = None,
 ) -> DatasetCtx:
     """Build a standalone :class:`DatasetCtx` (encoder + mode + compressor).
 
@@ -109,6 +110,7 @@ def make_dataset_ctx(
         encoder=ArrayEncoder(),
         encoding_mode=encoding_mode,
         compressor=compressor,
+        positive_scalar_bits=positive_scalar_bits,
     )
 
 
