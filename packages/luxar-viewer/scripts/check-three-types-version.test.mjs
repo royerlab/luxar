@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,7 +7,12 @@ import { checkThreeTypesVersion } from './check-three-types-version.mjs';
 
 const roots = [];
 
-function makeFixture({ runtime = '~0.185.1', types = '~0.185.4' } = {}) {
+function makeFixture({
+  runtime = '~0.185.1',
+  types = '~0.185.4',
+  indexVersion = '0.185.1',
+  readmeVersion = '0.185.1',
+} = {}) {
   const viewerRoot = mkdtempSync(join(tmpdir(), 'luxar-three-types-'));
   writeFileSync(
     join(viewerRoot, 'package.json'),
@@ -15,6 +20,16 @@ function makeFixture({ runtime = '~0.185.1', types = '~0.185.4' } = {}) {
       peerDependencies: { three: runtime },
       devDependencies: { '@types/three': types },
     })
+  );
+  const embedRoot = join(viewerRoot, 'examples', 'embed');
+  mkdirSync(embedRoot, { recursive: true });
+  writeFileSync(
+    join(embedRoot, 'index.html'),
+    `"three": "https://cdn.jsdelivr.net/npm/three@${indexVersion}/build/three.module.js"`
+  );
+  writeFileSync(
+    join(embedRoot, 'README.md'),
+    `"three": "https://cdn.jsdelivr.net/npm/three@${readmeVersion}/build/three.module.js"`
   );
   roots.push(viewerRoot);
   return viewerRoot;
@@ -32,6 +47,23 @@ describe('checkThreeTypesVersion', () => {
   it('rejects a type-only minor bump', () => {
     expect(checkThreeTypesVersion(makeFixture({ types: '~0.186.0' }))).toEqual(
       expect.arrayContaining([expect.stringContaining('@types/three targets r186')])
+    );
+  });
+
+  it.each([
+    { field: 'indexVersion', path: 'examples/embed/index.html' },
+    { field: 'readmeVersion', path: 'examples/embed/README.md' },
+  ])('rejects a stale $path importmap pin', ({ field, path }) => {
+    expect(checkThreeTypesVersion(makeFixture({ [field]: '0.184.1' }))).toEqual(
+      expect.arrayContaining([expect.stringContaining(`${path} targets r184`)])
+    );
+  });
+
+  it('rejects a malformed importmap pin', () => {
+    expect(checkThreeTypesVersion(makeFixture({ indexVersion: 'latest' }))).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('examples/embed/index.html must pin three@0.MINOR.PATCH'),
+      ])
     );
   });
 
