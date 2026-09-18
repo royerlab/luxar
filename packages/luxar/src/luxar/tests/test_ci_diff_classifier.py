@@ -157,8 +157,8 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
     (
         "packages/luxar-launcher/pkgconfig/webkit2gtk-4.0.pc",
         "py",
-        "test_linux_launcher_builds_against_webkitgtk_4_1 parses the compatibility "
-        "module",
+        "test_linux_launcher_build_is_configured_for_webkitgtk_4_1 parses the "
+        "compatibility module",
     ),
     (
         "packages/luxar-launcher/pkgconfig/webkit2gtk-4.0.pc",
@@ -1844,8 +1844,10 @@ def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:
         assert checkout["with"]["ref"] == expected_ref, job_name
 
 
-def test_linux_launcher_builds_against_webkitgtk_4_1(workflow: str) -> None:
-    """The launcher must compile and run on current 4.1-only Linux hosts."""
+def test_linux_launcher_build_is_configured_for_webkitgtk_4_1(
+    workflow: str,
+) -> None:
+    """The required CI and local build paths must select WebKitGTK 4.1."""
     job = yaml.safe_load(workflow)["jobs"]["go-launcher"]
     assert job["runs-on"] == "ubuntu-latest"
     assert job["env"]["PKG_CONFIG_PATH"] == (
