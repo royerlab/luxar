@@ -1864,14 +1864,85 @@ def test_linux_launcher_build_is_configured_for_webkitgtk_4_1(
 
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     assert (
-        'PKG_CONFIG_PATH="$(CURDIR)/$(LAUNCHER_SRC_DIR)/pkgconfig'
-        '$${PKG_CONFIG_PATH:+:$$PKG_CONFIG_PATH}"' in makefile
+        "LAUNCHER_PKG_CONFIG_DIR := $(CURDIR)/$(LAUNCHER_SRC_DIR)/pkgconfig" in makefile
     )
+    assert "pkg-config --exists webkit2gtk-4.1" in makefile
+    assert makefile.count("$(LAUNCHER_WEBKIT_ENV)") == 3
 
     compatibility_module = (
         REPO / "packages/luxar-launcher/pkgconfig/webkit2gtk-4.0.pc"
     ).read_text(encoding="utf-8")
     assert "Requires: webkit2gtk-4.1" in compatibility_module
+
+
+def test_linux_launcher_makefile_selects_compatibility_module_conditionally(
+    tmp_path: Path,
+) -> None:
+    """The local launcher commands must preserve 4.0-only hosts and bridge 4.1."""
+    pkgconfig_dir = tmp_path / "pkgconfig"
+    pkgconfig_dir.mkdir()
+    module = pkgconfig_dir / "webkit2gtk-4.1.pc"
+    module.write_text(
+        "\n".join(
+            (
+                "Name: WebKitGTK 4.1 test module",
+                "Description: test module",
+                "Version: 4.1",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    probe = """\
+.PHONY: print-launcher-pkg-config-path
+print-launcher-pkg-config-path:
+\t@$(LAUNCHER_WEBKIT_ENV) printf '%s' "$${PKG_CONFIG_PATH-}"
+"""
+    base_env = {
+        **os.environ,
+        "PKG_CONFIG_LIBDIR": str(pkgconfig_dir),
+        "PKG_CONFIG_PATH": "/existing/pkgconfig",
+    }
+
+    proc = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-f",
+            str(REPO / "Makefile"),
+            "-f",
+            "-",
+            "print-launcher-pkg-config-path",
+        ],
+        input=probe,
+        text=True,
+        capture_output=True,
+        check=True,
+        cwd=REPO,
+        env=base_env,
+    )
+    expected_shim = REPO / "packages/luxar-launcher/pkgconfig"
+    assert proc.stdout == f"{expected_shim}:/existing/pkgconfig"
+
+    module.rename(pkgconfig_dir / "webkit2gtk-4.0.pc")
+    proc = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-f",
+            str(REPO / "Makefile"),
+            "-f",
+            "-",
+            "print-launcher-pkg-config-path",
+        ],
+        input=probe,
+        text=True,
+        capture_output=True,
+        check=True,
+        cwd=REPO,
+        env=base_env,
+    )
+    assert proc.stdout == "/existing/pkgconfig"
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
