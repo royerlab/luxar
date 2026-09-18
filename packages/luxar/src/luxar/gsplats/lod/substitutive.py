@@ -548,7 +548,7 @@ def _reduce_one_level_grouped(
     """One reduction level that never merges across exact barrier groups.
 
     Splats are partitioned by their exact coordinate in the barrier dims (all
-    dims (all dims except ``coarsen_dims``) and by ``label_ids`` when present;
+    dims except ``coarsen_dims``) and by ``label_ids`` when present;
     each group is reduced independently with the **unchanged**
     :func:`_reduce_one_level` and a proportional share of ``M_target``, then
     concatenated. Within a group every coordinate barrier and categorical id is
@@ -1367,7 +1367,6 @@ def merge_to_count(
 
     Raises:
         ValueError: If ``n_target < 1`` or ``method`` is not recognised.
-            Mixed labels are treated as exact categorical barriers.
     """
     if n_target < 1:
         raise ValueError(f"n_target must be >= 1, got {n_target}")

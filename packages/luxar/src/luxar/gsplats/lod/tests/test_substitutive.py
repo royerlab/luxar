@@ -2337,7 +2337,7 @@ class TestTileContainmentTolerance:
         assert _within_box(self._at(1e9, sigma=1.0), (0, 1, 2), box)
 
 
-def _mass_by_label(data: GSplatData) -> dict[int, float]:
+def _render_light_by_label(data: GSplatData) -> dict[int, float]:
     labels = np.asarray(data.label_ids)
     factors = unpack_tril(np.asarray(data.cholesky_factors), data.ndim)
     masses = np.asarray(data.amplitudes) * np.abs(
@@ -2372,11 +2372,11 @@ def test_label_barrier_merge_to_count_preserves_groups_and_mass() -> None:
     assert merged.n_splats == 2
     np.testing.assert_array_equal(np.sort(merged.label_ids), np.array([0, 1]))
     assert merged.label_vocabulary == {0: "zero", 1: "one"}
-    input_mass = _mass_by_label(labeled)
-    output_mass = _mass_by_label(merged)
-    assert output_mass.keys() == input_mass.keys()
-    for label, expected in input_mass.items():
-        assert output_mass[label] == pytest.approx(expected, rel=1e-6)
+    input_light = _render_light_by_label(labeled)
+    output_light = _render_light_by_label(merged)
+    assert output_light.keys() == input_light.keys()
+    for label, expected in input_light.items():
+        assert output_light[label] == pytest.approx(expected, rel=1e-6)
 
 
 def test_single_label_is_preserved_without_changing_the_target_count() -> None:
@@ -2394,6 +2394,10 @@ def test_single_label_is_preserved_without_changing_the_target_count() -> None:
     assert merged.n_splats == 2
     np.testing.assert_array_equal(merged.label_ids, np.array([7, 7], np.uint16))
     assert merged.label_vocabulary == {7: "seven"}
+
+    unchanged = merge_to_count(data, n_target=data.n_splats, device="cpu")
+    np.testing.assert_array_equal(unchanged.label_ids, data.label_ids)
+    assert unchanged.label_vocabulary == {7: "seven"}
 
 
 def test_low_level_merge_still_refuses_mixed_label_ids() -> None:
@@ -2424,6 +2428,69 @@ def test_label_barrier_is_carried_through_every_substitutive_level() -> None:
         level = out.at_substitutive(level_index).flattened()
         np.testing.assert_array_equal(np.unique(level.label_ids), np.array([0, 1]))
         assert level.label_vocabulary == {0: "zero", 1: "one"}
+
+
+def test_label_barrier_round_trips_through_the_written_ladder(tmp_path) -> None:
+    out = make_substitutive_lod(
+        _two_label_data(),
+        compression_factor=8,
+        levels=2,
+        method="kmeans",
+        device="cpu",
+    )
+    path = tmp_path / "labeled.gsplats.zarr"
+
+    out.save(path, ordering="none")
+    loaded = GSplatData.load(path)
+
+    assert loaded.n_substitutive == out.n_substitutive
+    for level_index in range(loaded.n_substitutive):
+        level = loaded.at_substitutive(level_index).flattened()
+        np.testing.assert_array_equal(np.unique(level.label_ids), np.array([0, 1]))
+        assert level.label_vocabulary == {0: "zero", 1: "one"}
+
+
+def test_label_barrier_survives_volume_refinement() -> None:
+    centers = np.array(
+        [
+            [2, 2, 2],
+            [2, 3, 2],
+            [3, 2, 2],
+            [3, 3, 2],
+            [5, 5, 5],
+            [5, 6, 5],
+            [6, 5, 5],
+            [6, 6, 5],
+        ],
+        dtype=np.float32,
+    )
+    factors = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (len(centers), 1))
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(len(centers), dtype=np.float32),
+        cholesky_factors=factors,
+        label_ids=np.tile(np.array([0, 1], dtype=np.uint8), 4),
+        label_vocabulary={0: "zero", 1: "one"},
+    )
+    grid = np.mgrid[0:8, 0:8, 0:8].astype(np.float32)
+    volume = np.exp(-sum((grid[dim] - 3.5) ** 2 for dim in range(3)) / 8).astype(
+        np.float32
+    )
+
+    out = make_substitutive_lod(
+        data,
+        compression_factor=4,
+        levels=1,
+        method="kmeans",
+        refine="volume",
+        refine_iters=1,
+        volume=volume,
+        device="cpu",
+    )
+    coarse = out.at_substitutive(1).flattened()
+    np.testing.assert_array_equal(np.sort(coarse.label_ids), np.array([0, 1]))
+    assert coarse.label_vocabulary == {0: "zero", 1: "one"}
+    assert out.substitutive_levels[1].stats["refine_stats"]["n_pieces"] == 2
 
 
 def test_label_and_coordinate_barriers_compose() -> None:
@@ -2460,7 +2527,7 @@ def test_label_and_coordinate_barriers_compose() -> None:
     assert groups == {(0, 0), (0, 1), (1, 0), (1, 1)}
 
 
-def test_unlabeled_merge_to_count_default_path_is_byte_stable() -> None:
+def test_unlabeled_substitutive_default_path_is_byte_stable() -> None:
     data = GSplatData(
         centers=np.array(
             [[0, 0, 0], [0.2, 0, 0], [5, 0, 0], [5.2, 0, 0]],
@@ -2473,13 +2540,15 @@ def test_unlabeled_merge_to_count_default_path_is_byte_stable() -> None:
         colors=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]], dtype=np.float32),
     )
 
-    merged = merge_to_count(
+    ladder = make_substitutive_lod(
         data,
-        n_target=2,
+        compression_factor=2,
+        levels=1,
         method="kmeans",
         coverage_inflation=1.0,
         device="cpu",
     )
+    merged = ladder.at_substitutive(1).flattened()
 
     assert np.array_equal(
         merged.centers,
