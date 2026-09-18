@@ -181,7 +181,7 @@ The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`,
 
 **System library dependencies (end-user runtime):**
 - macOS: `WebKit.framework` — system-provided, present on every Mac, no install needed
-- Linux: SONAME `libwebkit2gtk-4.1.so.0`, packaged on Debian/Ubuntu as `libwebkit2gtk-4.1-0`. It is absent on minimal/server installs, where the prebuilt launcher cannot start until the runtime is installed — see the launcher README.
+- Linux: builds made through the compatibility module need SONAME `libwebkit2gtk-4.1.so.0`, packaged on Debian/Ubuntu as `libwebkit2gtk-4.1-0`; builds made on a 4.0-only host instead need `libwebkit2gtk-4.0-37`. These are absent on minimal/server installs, where the prebuilt launcher cannot start until its matching runtime is installed. `ldd <launcher-binary>` is authoritative — see the launcher README.
 
 **Wheel packaging:** `_launchers/` and `_launcher_assets/` (icons) live inside the Python package, so they ride along into wheel builds automatically when present. Run `make build-launchers` before `hatch build` to populate the binaries; without it the wheel installs but `luxar export --native` raises `LauncherNotBuiltError` with a clear "run `make build-launchers`" hint.
 

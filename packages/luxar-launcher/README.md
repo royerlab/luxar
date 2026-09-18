@@ -128,8 +128,11 @@ The Makefile enables the compatibility module only when pkg-config can resolve
 available instead of being shadowed by the shim.
 
 End users who run the prebuilt binary need only the runtime library, not the
-`-dev` package: the SONAME `libwebkit2gtk-4.1.so.0`, shipped on Debian/Ubuntu
-as **`libwebkit2gtk-4.1-0`**.
+`-dev` package. A launcher built through the compatibility module needs SONAME
+`libwebkit2gtk-4.1.so.0`, shipped on Debian/Ubuntu as
+**`libwebkit2gtk-4.1-0`**; one built on a 4.0-only host instead needs
+**`libwebkit2gtk-4.0-37`**. `ldd <launcher-binary>` is authoritative for a
+particular build.
 
 `LUXAR_LAUNCHER_NO_WEBVIEW=1` still cannot rescue a missing runtime: it is read
 by Go code after the dynamic loader resolves WebKitGTK. The env var is for when
