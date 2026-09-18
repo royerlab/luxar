@@ -477,13 +477,17 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
             with pytest.raises(ValueError, match="energy"):
                 scene.add_mesh(f"m_{key}", _V, _F, **{key: {"reference_energy": 1.0}})
 
-        # Refused on KEY PRESENCE, not on what the dict happens to hold: a
-        # ``quality``-only ``level_stats`` is not an energy stamp, but it has no
-        # meaning on a mesh either, so the container goes too. Deliberate breadth —
-        # the day substitutive mesh levels land, this narrows to the energy keys and
-        # this assertion is what makes that an explicit decision.
-        with pytest.raises(ValueError, match="energy"):
+        # Non-energy fields share these containers but do not engage brightness
+        # compensation. Mesh substitutive levels use the separate geometric-error
+        # currency, and a caller-authored quality field remains legal too.
+        assert (
             scene.add_mesh("m_quality", _V, _F, level_stats={"quality": 0.9})
+            is not None
+        )
+        assert (
+            scene.add_mesh("m_error", _V, _F, level_stats={"geometric_error": 0.1})
+            is not None
+        )
 
         # The keys are refused, not the whole attrs surface: a mesh with ordinary
         # render attrs still writes.

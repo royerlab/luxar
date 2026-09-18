@@ -2175,6 +2175,7 @@ class TestMeshLodRevealRecipe:
             ({"levels_given": True}, "-L/--levels", "--n-lods"),
             ({"subst_method_given": True}, "--subst-method", "-m/--add-method"),
             ({"compression_given": True}, "-K/--compression-factor", "no equivalent"),
+            ({"attribute_weight_given": True}, "--attribute-weight", "no equivalent"),
         ],
     )
     def test_a_substitutive_knob_under_recipe_reveal_is_REFUSED(
@@ -2200,6 +2201,7 @@ class TestMeshLodRevealRecipe:
                 levels_given=given.get("levels_given", False),
                 compression_given=given.get("compression_given", False),
                 subst_method_given=given.get("subst_method_given", False),
+                attribute_weight_given=given.get("attribute_weight_given", False),
             )
         message = _plain(str(excinfo.value))
         assert expect_typed in message

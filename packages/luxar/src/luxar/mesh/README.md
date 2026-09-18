@@ -91,7 +91,9 @@ caller: a ladder's levels are a true partition of the faces too, so
   tier. QEM applies the link-condition veto that preserves manifoldness and is selected
   by `auto` through 10,000 vertices. Multi-level QEM ladders reuse one collapse
   sequence and snapshot each requested target; `add_mesh(substitutive_lod=…)` writes the
-  resulting `kind=lod` group. Partitioning (`split.py`, above) is a *different* axis and
+  resulting `kind=lod` group. `attribute_weight>0` opts into colour/scalar-aware reduction
+  (a QEM merge penalty, or exact attribute barriers for clustering), and every written level
+  carries a separate normalized `level_stats.geometric_error` bound. Partitioning (`split.py`, above) is a *different* axis and
   also ships — it divides one surface in space rather than approximating it at lower detail.
   No two of the three can be combined in one `add_mesh` call. See
   `docs/specs/MESH_NODE_SPEC.md` §9.

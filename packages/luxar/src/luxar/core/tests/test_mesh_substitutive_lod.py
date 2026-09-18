@@ -153,6 +153,38 @@ def ladder_children(nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 class TestLadderShape:
+    def test_every_level_carries_separate_geometric_error(self, tmp_path):
+        verts, faces = octasphere(3)
+        children = ladder_children(
+            write_ladder(tmp_path, verts, faces, substitutive_lod={"method": "cluster"})
+        )
+
+        errors = [child["level_stats"]["geometric_error"] for child in children]
+        assert all(0.0 < error < 1.0 for error in errors[:-1])
+        assert errors[-1] == 0.0
+        assert all("reference_energy" not in child["level_stats"] for child in children)
+        assert all("quality" not in child["level_stats"] for child in children)
+
+    def test_attribute_weight_is_forwarded_to_the_decimator(self, tmp_path):
+        verts, faces = octasphere(3)
+        side = verts[:, 0] + 0.31 * verts[:, 1] >= 0
+        colors = np.zeros((len(verts), 3), np.uint8)
+        colors[side, 0] = 255
+        colors[~side, 2] = 255
+        store = tmp_path / "ladder.luxar.zarr"
+        write_ladder(
+            tmp_path,
+            verts,
+            faces,
+            colors=colors,
+            substitutive_lod={"method": "qem", "attribute_weight": 1.0},
+        )
+
+        for level_colors_array in level_colors(store):
+            assert not np.any(
+                (level_colors_array[:, 0] > 0) & (level_colors_array[:, 2] > 0)
+            )
+
     def test_writes_a_kind_lod_group_of_progressively_coarser_meshes(self, tmp_path):
         verts, faces = octasphere(4)  # 1026 vertices, 2048 faces
         nodes = write_ladder(

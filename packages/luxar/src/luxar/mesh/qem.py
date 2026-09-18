@@ -10,7 +10,9 @@ from numpy.typing import NDArray
 
 from .decimate import (
     DecimatedMesh,
+    _appearance_features,
     _average_per_cluster,
+    _normalized_collapse_error,
     _recompute_normals,
     _validate_decimate_inputs,
 )
@@ -182,10 +184,25 @@ def _edge_cost(
     v: int,
     positions: NDArray[np.float64],
     quadrics: NDArray[np.float64],
+    attribute_sums: NDArray[np.float64] | None = None,
+    attribute_counts: NDArray[np.float64] | None = None,
+    attribute_scale: float = 0.0,
 ) -> float:
     """Cheap heap-ordering cost evaluated at the edge midpoint."""
     midpoint = 0.5 * (positions[u] + positions[v])
-    return max(_quadric_cost(midpoint, quadrics[u] + quadrics[v]), 0.0)
+    cost = max(_quadric_cost(midpoint, quadrics[u] + quadrics[v]), 0.0)
+    if attribute_sums is not None and attribute_counts is not None:
+        count_u = attribute_counts[u]
+        count_v = attribute_counts[v]
+        mean_delta = attribute_sums[u] / count_u - attribute_sums[v] / count_v
+        cost += (
+            attribute_scale
+            * count_u
+            * count_v
+            / (count_u + count_v)
+            * float(mean_delta @ mean_delta)
+        )
+    return cost
 
 
 def _edge_faces(u: int, v: int, vertex_faces: list[set[int]]) -> set[int]:
@@ -324,6 +341,9 @@ def _push_edge(
     positions: NDArray[np.float64],
     quadrics: NDArray[np.float64],
     versions: NDArray[np.int64],
+    attribute_sums: NDArray[np.float64] | None = None,
+    attribute_counts: NDArray[np.float64] | None = None,
+    attribute_scale: float = 0.0,
 ) -> int:
     """Push one current edge, returning the next stable tie-break serial."""
     if u == v or not alive[u] or not alive[v]:
@@ -337,7 +357,15 @@ def _push_edge(
     heapq.heappush(
         heap,
         (
-            _edge_cost(u, v, positions, quadrics),
+            _edge_cost(
+                u,
+                v,
+                positions,
+                quadrics,
+                attribute_sums,
+                attribute_counts,
+                attribute_scale,
+            ),
             u,
             v,
             int(versions[u]),
@@ -357,6 +385,9 @@ def _build_heap(
     positions: NDArray[np.float64],
     quadrics: NDArray[np.float64],
     versions: NDArray[np.int64],
+    attribute_sums: NDArray[np.float64] | None = None,
+    attribute_counts: NDArray[np.float64] | None = None,
+    attribute_scale: float = 0.0,
 ) -> tuple[list[HeapEntry], int]:
     """Build the initial edge heap and its last serial number."""
     heap: list[HeapEntry] = []
@@ -375,6 +406,9 @@ def _build_heap(
                     positions=positions,
                     quadrics=quadrics,
                     versions=versions,
+                    attribute_sums=attribute_sums,
+                    attribute_counts=attribute_counts,
+                    attribute_scale=attribute_scale,
                 )
     return heap, serial
 
@@ -393,6 +427,8 @@ def _apply_collapse(
     neighbors: list[set[int]],
     vertex_faces: list[set[int]],
     boundary_vertices: NDArray[np.bool_],
+    attribute_sums: NDArray[np.float64] | None = None,
+    attribute_counts: NDArray[np.float64] | None = None,
 ) -> None:
     """Apply one accepted edge collapse and rebuild its local topology."""
     affected = neighbors[u] | neighbors[v] | {u, v}
@@ -411,6 +447,9 @@ def _apply_collapse(
 
     positions[u] = target
     quadrics[u] += quadrics[v]
+    if attribute_sums is not None and attribute_counts is not None:
+        attribute_sums[u] += attribute_sums[v]
+        attribute_counts[u] += attribute_counts[v]
     alive[v] = False
     parent[v] = u
     _rebuild_neighbors(affected, work_faces, neighbors, vertex_faces)
@@ -467,6 +506,9 @@ def _collapse_to_target(
     neighbors: list[set[int]],
     boundary_vertices: NDArray[np.bool_],
     state: _CollapseState | None = None,
+    attribute_sums: NDArray[np.float64] | None = None,
+    attribute_counts: NDArray[np.float64] | None = None,
+    attribute_scale: float = 0.0,
 ) -> _CollapseState:
     """Collapse valid edges until the referenced surface reaches its target."""
     if state is None:
@@ -478,6 +520,9 @@ def _collapse_to_target(
             positions=positions,
             quadrics=quadrics,
             versions=versions,
+            attribute_sums=attribute_sums,
+            attribute_counts=attribute_counts,
+            attribute_scale=attribute_scale,
         )
         parent = np.arange(len(vertices), dtype=np.int64)
         remaining = int(np.unique(work_faces).size)
@@ -520,6 +565,8 @@ def _collapse_to_target(
             neighbors=neighbors,
             vertex_faces=vertex_faces,
             boundary_vertices=boundary_vertices,
+            attribute_sums=attribute_sums,
+            attribute_counts=attribute_counts,
         )
         remaining -= 1
         # Only ``u`` acquired a new position and quadric. Costs for edges between
@@ -539,6 +586,9 @@ def _collapse_to_target(
                 positions=positions,
                 quadrics=quadrics,
                 versions=versions,
+                attribute_sums=attribute_sums,
+                attribute_counts=attribute_counts,
+                attribute_scale=attribute_scale,
             )
     return _CollapseState(heap, serial, parent, remaining)
 
@@ -601,6 +651,12 @@ def _compact_output(
         output_normals,
         output_colors,
         output_scalars,
+        _normalized_collapse_error(
+            vertices.astype(np.float64),
+            output_vertices,
+            inverse,
+            spatial_dims,
+        ),
     )
 
 
@@ -614,6 +670,7 @@ def decimate_qem(
     colors: NDArray[Any] | None = None,
     scalars: Any = None,
     spatial_dims: tuple[int, ...] | None = None,
+    attribute_weight: float = 0.0,
 ) -> DecimatedMesh:
     """Reduce a mesh by quadric edge collapse without violating the link condition.
 
@@ -643,6 +700,7 @@ def decimate_qem(
         colors=colors,
         scalars=scalars,
         spatial_dims=spatial_dims,
+        attribute_weight=attribute_weight,
     )[0]
 
 
@@ -656,6 +714,7 @@ def decimate_qem_ladder(
     colors: NDArray[Any] | None = None,
     scalars: Any = None,
     spatial_dims: tuple[int, ...] | None = None,
+    attribute_weight: float = 0.0,
 ) -> list[DecimatedMesh]:
     """Build several QEM levels from one collapse sequence.
 
@@ -665,6 +724,10 @@ def decimate_qem_ladder(
     targets = [int(target) for target in target_vertices]
     if not targets:
         return []
+    if not np.isfinite(attribute_weight) or attribute_weight < 0:
+        raise ValueError(
+            f"attribute_weight must be finite and >= 0, got {attribute_weight}"
+        )
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     input_faces = np.ascontiguousarray(faces, dtype=np.uint32)
     spatial_dims = _validate_decimate_inputs(
@@ -687,6 +750,22 @@ def decimate_qem_ladder(
     alive = np.ones(len(vertices), dtype=bool)
     versions = np.zeros(len(vertices), dtype=np.int64)
     quadrics = _vertex_quadrics(positions, work_faces)
+    attribute_features = (
+        _appearance_features(colors, scalars, len(vertices))
+        if attribute_weight > 0
+        else None
+    )
+    attribute_sums = (
+        attribute_features.copy() if attribute_features is not None else None
+    )
+    attribute_counts = (
+        np.ones(len(vertices), dtype=np.float64)
+        if attribute_features is not None
+        else None
+    )
+    attribute_scale = (
+        attribute_weight**2 * max(_coordinate_extent(positions), 1e-12) ** 2
+    )
     vertex_faces, neighbors, boundary_vertices = _build_topology(
         work_faces, len(vertices)
     )
@@ -712,6 +791,9 @@ def decimate_qem_ladder(
             neighbors=neighbors,
             boundary_vertices=boundary_vertices,
             state=state,
+            attribute_sums=attribute_sums,
+            attribute_counts=attribute_counts,
+            attribute_scale=attribute_scale,
         )
         levels[target] = _compact_output(
             vertices,

@@ -743,6 +743,32 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     expect(findActiveLevelStatus(container)?.textContent).toBe('L1/2 · ~60%');
   });
 
+  it('appends the separate normalized mesh error without energy stamps', () => {
+    registryGetMock.mockReturnValue({
+      activeChildIndex: 0,
+      children: [
+        {
+          object: {
+            visible: true,
+            userData: {
+              nodeType: 'mesh',
+              visibleTriangleCount: 10,
+              attrs: { level_stats: { geometric_error: 0.125 } },
+            },
+          },
+        },
+        {},
+      ],
+      selectorMode: 'auto',
+    });
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+
+    expect(findActiveLevelStatus(container)?.textContent).toBe('L1/2 · ε≤13%');
+  });
+
   it('dropdown options are 1-based labels with 0-based values', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeLodSceneGraph());

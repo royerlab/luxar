@@ -83,6 +83,35 @@ def edge_audit(n_vertices: int, faces: np.ndarray) -> tuple[int, int, int]:
 
 
 class TestDecimateCluster:
+    def test_attribute_barrier_prevents_boundary_smearing(self) -> None:
+        v, f = octasphere(3)
+        side = v[:, 0] + 0.31 * v[:, 1] >= 0
+        colors = np.zeros((len(v), 3), np.uint8)
+        colors[side, 0] = 255
+        colors[~side, 2] = 255
+
+        default = decimate_cluster(v, f, target_vertices=40, colors=colors)
+        preserved = decimate_cluster(
+            v, f, target_vertices=40, colors=colors, attribute_weight=1.0
+        )
+
+        assert default.colors is not None and preserved.colors is not None
+        assert np.any((default.colors[:, 0] > 0) & (default.colors[:, 2] > 0))
+        assert not np.any((preserved.colors[:, 0] > 0) & (preserved.colors[:, 2] > 0))
+        edges, boundary, nonmanifold = edge_audit(
+            len(preserved.vertices), preserved.faces
+        )
+        assert len(preserved.vertices) - edges + len(preserved.faces) == 2
+        assert boundary == 0 and nonmanifold == 0
+
+    def test_reports_normalized_collapse_error(self) -> None:
+        v, f = octasphere(3)
+        coarse = decimate_cluster(v, f, target_vertices=40)
+        unchanged = decimate_cluster(v, f, target_vertices=len(v))
+
+        assert 0.0 < coarse.geometric_error < 1.0
+        assert unchanged.geometric_error == 0.0
+
     def test_a_ladder_of_levels_is_strictly_coarser_and_still_a_sphere(self) -> None:
         v, f = octasphere(4)
         previous = len(v)
@@ -452,6 +481,48 @@ def test_the_cell_search_is_robust_to_non_monotone_cluster_counts() -> None:
 
 
 class TestDecimateQEM:
+    def test_attribute_quadric_preserves_a_colour_boundary(self) -> None:
+        v, f = octasphere(3)
+        side = v[:, 0] + 0.31 * v[:, 1] >= 0
+        colors = np.zeros((len(v), 3), np.uint8)
+        colors[side, 0] = 255
+        colors[~side, 2] = 255
+
+        default = decimate_qem(v, f, target_vertices=40, colors=colors)
+        preserved = decimate_qem(
+            v, f, target_vertices=40, colors=colors, attribute_weight=1.0
+        )
+
+        assert default.colors is not None and preserved.colors is not None
+        assert np.any((default.colors[:, 0] > 0) & (default.colors[:, 2] > 0))
+        assert not np.any((preserved.colors[:, 0] > 0) & (preserved.colors[:, 2] > 0))
+        edges, boundary, nonmanifold = edge_audit(
+            len(preserved.vertices), preserved.faces
+        )
+        assert len(preserved.vertices) - edges + len(preserved.faces) == 2
+        assert boundary == 0 and nonmanifold == 0
+
+    def test_attribute_quadric_preserves_a_scalar_boundary(self) -> None:
+        v, f = octasphere(3)
+        scalars = (v[:, 0] + 0.31 * v[:, 1] >= 0).astype(np.float32)
+
+        default = decimate_qem(v, f, target_vertices=40, scalars=scalars)
+        preserved = decimate_qem(
+            v, f, target_vertices=40, scalars=scalars, attribute_weight=1.0
+        )
+
+        assert default.scalars is not None and preserved.scalars is not None
+        assert np.any((default.scalars > 0) & (default.scalars < 1))
+        assert set(np.unique(preserved.scalars)) == {0.0, 1.0}
+
+    @pytest.mark.parametrize("value", [-1.0, np.inf, np.nan])
+    def test_attribute_weight_must_be_nonnegative_and_finite(
+        self, value: float
+    ) -> None:
+        v, f = octasphere(1)
+        with pytest.raises(ValueError, match="attribute_weight"):
+            decimate_qem(v, f, target_vertices=10, attribute_weight=value)
+
     def test_boundary_and_incident_face_caches_stay_exact_after_each_collapse(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

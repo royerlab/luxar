@@ -56,7 +56,11 @@ export interface FreshnessChild {
        * across a partition's leaves; ``quality`` = measured Q, for UX).
        */
       attrs?: {
-        level_stats?: { quality?: number; reference_energy?: number };
+        level_stats?: {
+          quality?: number;
+          reference_energy?: number;
+          geometric_error?: number;
+        };
       };
     };
   };
