@@ -11,8 +11,8 @@ The exported folder contains everything needed to view the scene:
 Usage::
 
     luxar export my_scene.luxar.zarr -o my_export/
-    cd my_export && python serve.py
-    cd my_export && python serve.py --control --host 0.0.0.0   # kiosk
+    cd my_export && python3 serve.py
+    cd my_export && python3 serve.py --control --host 0.0.0.0   # kiosk
 """
 
 from __future__ import annotations
@@ -428,10 +428,22 @@ def _generate_readme(
         else ""
     )
 
+    # Column-aligned whatever the data directory is called; the old listing
+    # hard-coded the padding for "data" and went crooked for anything else.
+    entries = [
+        ("viewer/", "The Luxar viewer (HTML, JS, CSS, WASM)"),
+        (f"{data_dir_name}/", "The zarr dataset"),
+        ("serve.py", "Local HTTP server + control relay (stdlib only)"),
+        ("luxar_qr.py", "QR encoder, imported by serve.py for the panel URL"),
+        ("README.txt", "This file"),
+    ]
+    width = max(len(name) for name, _ in entries)
+    structure = "\n".join(f"    {name:<{width}}  {what}" for name, what in entries)
+
     if facts.has_control_panel:
         kiosk = """Kiosk mode: driving the display from a tablet
 ---------------------------------------------
-THIS SCENE HAS A CONTROL PANEL, so `python serve.py` already starts it: the
+THIS SCENE HAS A CONTROL PANEL, so `python3 serve.py` already starts it: the
 relay is on and the server binds every interface, because that is the only way
 a tablet can reach it. On start the script prints two URLs and a QR code:
 
@@ -441,9 +453,9 @@ a tablet can reach it. On start the script prints two URLs and a QR code:
 The QR is also written to control-qr.png, which you can print or show on a
 second screen.
 
-    python serve.py --no-control          Display only, no relay
-    python serve.py --host 127.0.0.1      Local only, tablet cannot reach it
-    python serve.py --control-token WORD  Require a secret
+    python3 serve.py --no-control          Display only, no relay
+    python3 serve.py --host 127.0.0.1      Local only, no tablet
+    python3 serve.py --control-token WORD  Require a secret
 
 Anyone who can reach this machine on the network can drive the display. A
 foreign web page cannot -- the relay checks the request origin on the
@@ -456,7 +468,7 @@ history: an exhibit lock, not a password.
     else:
         kiosk = """Kiosk mode: driving the display from a tablet
 ---------------------------------------------
-    python serve.py --control --host 0.0.0.0 --control-token SECRET
+    python3 serve.py --control --host 0.0.0.0 --control-token SECRET
 
 This scene declares no control panel, so the relay is off by default and
 there are no authored stops for a panel to show. With --control the script
@@ -480,36 +492,38 @@ This folder contains a self-contained Luxar scene viewer.
 
 {about}Quick Start
 -----------
-    python serve.py
+    python3 serve.py
 
-This starts a local HTTP server and opens the viewer in your browser.
+This starts a local HTTP server and opens the viewer in your browser. On
+Windows the command is `python serve.py`; on macOS and Linux use `python3`,
+because a stock macOS has no `python` at all.
 
 Requirements
 ------------
-- Python 3.9 or newer (stdlib only, no extra packages needed)
+- Python 3.9 or newer. Nothing to install: the scripts here use only the
+  standard library (tested on macOS's own Python 3.9).
 - A modern web browser (Chrome, Firefox, Safari, Edge)
 
 Options
 -------
-    python serve.py --port 9000     Use a custom port
-    python serve.py --no-open       Don't open browser automatically
-    python serve.py --host 0.0.0.0  Accept connections from the network
-    python serve.py --control       Host the touch-panel relay (see below)
+    python3 serve.py --port 9000    Use a custom port
+    python3 serve.py --no-open      Don't open a browser automatically
+
+If the port is busy the script picks the next free one and prints what it
+chose. Press Ctrl+C to stop it.
 
 {kiosk}Folder Structure
 ----------------
-    viewer/         The Luxar viewer (HTML, JS, CSS, WASM)
-    {data_dir_name}/             The zarr dataset
-    serve.py        Local HTTP server + control relay (Python stdlib only)
-    luxar_qr.py     QR encoder, imported by serve.py for the panel URL
-    README.txt      This file
-
+{structure}
 Notes
 -----
 - Do NOT open the viewer's HTML files directly. Both pages
   (viewer/index.html and the touch panel viewer/control.html) need a server:
   the file:// protocol cannot fetch the dataset.
-- The serve.py script uses only Python stdlib -- no pip install needed
+- Nothing here needs `pip install`. serve.py is standard library only, and
+  luxar_qr.py -- which it imports to draw the QR -- is a plain file shipped
+  in this folder, not a package. Delete it and the server still runs; it
+  just prints the panel URL without a QR beside it.
 - To share this scene: zip the entire folder and send it
 """
     (output / "README.txt").write_text(readme)

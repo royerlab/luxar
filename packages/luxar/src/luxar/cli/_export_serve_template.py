@@ -2,8 +2,8 @@
 """Serve this exported Luxar scene locally.
 
 Usage:
-    python serve.py [--port PORT] [--host HOST] [--no-open]
-    python serve.py --control [--control-token SECRET]
+    python3 serve.py [--port PORT] [--host HOST] [--no-open]
+    python3 serve.py --control [--control-token SECRET]
 
 Requirements:
     Python 3.9+ (stdlib only -- no pip install needed)

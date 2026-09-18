@@ -44,3 +44,19 @@ than complaining. The shape is asserted in the tests now.
 Native app bundles are deliberately untouched: a `.app` with an embedded
 WebView has no console to print a URL to and needs its own pairing surface,
 which is a separate design.
+
+Four things the README got wrong, found by reading the shipped file rather
+than the template. Quick Start said `python serve.py`, and a stock macOS has
+no `python` at all -- it worked on the author's machine only because
+miniconda was on the PATH, which is exactly the audience this folder is not
+for. The Options block listed `--control` and `--host` as things to turn on
+while the kiosk section above it said they were already the default, so the
+two contradicted each other; those options now belong to the kiosk section
+alone. The folder listing hard-coded its column padding for a data directory
+called "data" and went crooked for any other name. And "stdlib only" was
+nearly true rather than true: it now says what `luxar_qr.py` is and that
+deleting it costs you the QR and nothing else.
+
+The floor is tested, not asserted: the exported folder was run end to end
+under `/usr/bin/python3`, which on this machine is Python 3.9.6, the same
+version the README claims.
