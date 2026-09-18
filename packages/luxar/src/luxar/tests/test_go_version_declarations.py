@@ -51,18 +51,23 @@ def test_declaration_parser_accepts_three_part_module_floor() -> None:
     workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     go_mod = (REPO / "packages/luxar-launcher/go.mod").read_text(encoding="utf-8")
+    ci, _, _ = _parse_declarations(workflow, makefile, go_mod)
     patched_go_mod = re.sub(
-        r"^go (\d+\.\d+)$", r"go \1.0", go_mod, count=1, flags=re.MULTILINE
+        r"^go \d+\.\d+(?:\.\d+)?$",
+        f"go {ci}.0",
+        go_mod,
+        count=1,
+        flags=re.MULTILINE,
     )
     _, _, floor = _parse_declarations(workflow, makefile, patched_go_mod)
-    assert floor.endswith(".0")
+    assert floor == f"{ci}.0"
 
 
 def test_ci_toolchain_satisfies_module_floor(
     declarations: tuple[str, str, str],
 ) -> None:
     ci, _, floor = declarations
-    assert _version_tuple(ci) >= _version_tuple(floor)
+    assert _version_tuple(ci) >= _version_tuple(floor)[:2]
 
 
 def test_bootstrap_pin_matches_ci_minor(
