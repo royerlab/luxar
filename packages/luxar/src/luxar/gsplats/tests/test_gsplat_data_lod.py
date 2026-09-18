@@ -29,8 +29,10 @@ _LABEL_COUNT = 3
 _LABEL_VOCABULARY = {i: f"class-{i}" for i in range(_LABEL_COUNT)}
 
 
-def _label_operation(operation, *, id: str, refuses: bool = False):
-    return pytest.param(operation, refuses, id=id)
+def _label_operation(
+    operation, *, id: str, refuses: bool = False, labels_follow_centers: bool = True
+):
+    return pytest.param(operation, refuses, labels_follow_centers, id=id)
 
 
 _LABEL_CHANNEL_OPERATIONS = (
@@ -144,7 +146,7 @@ _LABEL_CHANNEL_OPERATIONS = (
             verbose=False,
         ),
         id="make-substitutive-lod",
-        refuses=True,
+        labels_follow_centers=False,
     ),
 )
 
@@ -375,11 +377,18 @@ class TestGSplatDataLOD:
                     assert int(label_id) == int(center[0])
                 assert sublod.label_vocabulary == vocabulary
 
-    @pytest.mark.parametrize("operation,refuses", _LABEL_CHANNEL_OPERATIONS)
+    @pytest.mark.parametrize(
+        "operation,refuses,labels_follow_centers", _LABEL_CHANNEL_OPERATIONS
+    )
     @pytest.mark.parametrize("laddered", [False, True], ids=["flat", "laddered"])
     @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
     def test_operations_carry_or_refuse_categorical_channel(
-        self, operation, refuses: bool, laddered: bool, labeled: bool
+        self,
+        operation,
+        refuses: bool,
+        labels_follow_centers: bool,
+        laddered: bool,
+        labeled: bool,
     ) -> None:
         centers = np.column_stack(
             [np.arange(12, dtype=np.float32), np.zeros((12, 2), dtype=np.float32)]
@@ -424,8 +433,13 @@ class TestGSplatDataLOD:
         for sublod in sublods:
             assert sublod.label_ids is not None
             assert sublod.label_vocabulary == _LABEL_VOCABULARY
-            expected = np.rint(sublod.centers[:, 0]).astype(np.int64) % _LABEL_COUNT
-            np.testing.assert_array_equal(sublod.label_ids, expected)
+            if labels_follow_centers:
+                expected = np.rint(sublod.centers[:, 0]).astype(np.int64) % _LABEL_COUNT
+                np.testing.assert_array_equal(sublod.label_ids, expected)
+            else:
+                assert set(np.asarray(sublod.label_ids).tolist()) == set(
+                    _LABEL_VOCABULARY
+                )
 
     def test_with_label_ids_accepts_integer_sequence(self) -> None:
         source = _make_3d_gsplat(6)
