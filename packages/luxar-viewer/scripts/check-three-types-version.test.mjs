@@ -40,8 +40,10 @@ afterEach(() => {
 });
 
 describe('checkThreeTypesVersion', () => {
-  it('passes when runtime and types share a minor', () => {
-    expect(checkThreeTypesVersion(makeFixture())).toEqual([]);
+  it('passes when declarations and embed pins share a minor with different patches', () => {
+    expect(
+      checkThreeTypesVersion(makeFixture({ indexVersion: '0.185.2', readmeVersion: '0.185.3' }))
+    ).toEqual([]);
   });
 
   it('rejects a type-only minor bump', () => {
@@ -71,6 +73,7 @@ describe('checkThreeTypesVersion', () => {
     { runtime: '^0.185.1', types: '~0.185.4' },
     { runtime: '~0.185.1', types: '0.185.4' },
     { runtime: '~0.185', types: '~0.185.4' },
+    { runtime: '~1.2.0', types: '~1.2.3' },
   ])('rejects non-plain tilde ranges: %o', ({ runtime, types }) => {
     expect(checkThreeTypesVersion(makeFixture({ runtime, types }))).toEqual(
       expect.arrayContaining([expect.stringContaining('Expected plain ~0.MINOR.PATCH ranges')])
