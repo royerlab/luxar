@@ -1215,7 +1215,303 @@ def _selected_line_topology(
     raise AssertionError(f"unsupported coarse Lines topology {line_type!r}")
 
 
-def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
+def _line_merge_inputs(
+    *,
+    vert_arr: np.ndarray,
+    widths: np.ndarray,
+    polylines: List[np.ndarray],
+    displayed: List[int],
+    slice_ids: np.ndarray,
+    source_colors: Any,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build per-polyline merge inputs with canonical traversal directions."""
+    from ..lod.group import same_type_color_classes
+
+    lengths = np.asarray([polyline.size for polyline in polylines], dtype=np.int64)
+    if np.unique(lengths).size > 1:
+        raise ValueError(
+            "substitutive_lod method='merge' currently requires uniform-length "
+            "polylines so corresponding vertices are defined; resample the "
+            "polylines to a common vertex count or use method='subsample'"
+        )
+    centres = np.vstack([np.mean(vert_arr[polyline], axis=0) for polyline in polylines])
+    mean_widths = np.asarray(
+        [float(np.mean(widths[polyline])) for polyline in polylines], dtype=np.float64
+    )
+    directions = np.vstack(
+        [
+            vert_arr[p[-1], displayed[:3]] - vert_arr[p[0], displayed[:3]]
+            if p.size > 1
+            else np.zeros(min(3, len(displayed)), dtype=np.float32)
+            for p in polylines
+        ]
+    )
+    dominant = np.argmax(np.abs(directions), axis=1)
+    reverse = directions[np.arange(len(polylines)), dominant] < 0
+    canonical_directions = directions.copy()
+    canonical_directions[reverse] *= -1
+    norms = np.linalg.norm(canonical_directions, axis=1, keepdims=True)
+    unit_directions = np.divide(
+        canonical_directions,
+        norms,
+        out=np.zeros_like(canonical_directions),
+        where=norms > 0,
+    )
+    orientation_classes = np.rint((unit_directions + 1.0) * 3.5).astype(np.int64)
+    polyline_colors = (
+        None
+        if source_colors is None
+        else np.vstack([np.mean(source_colors[p], axis=0) for p in polylines])
+    )
+    color_classes = same_type_color_classes(polyline_colors)
+    barrier_parts = [slice_ids[:, None], lengths[:, None], orientation_classes]
+    if color_classes is not None:
+        barrier_parts.append(color_classes[:, None])
+    return (
+        centres,
+        mean_widths,
+        canonical_directions,
+        np.column_stack(barrier_parts),
+        reverse,
+    )
+
+
+def _merged_line_bin(
+    *,
+    bin_id: int,
+    assignments: np.ndarray,
+    merge_weights: np.ndarray,
+    merged_widths: np.ndarray,
+    polylines: List[np.ndarray],
+    reverse: np.ndarray,
+    vert_arr: np.ndarray,
+    source_colors: Any,
+    displayed: List[int],
+    light_integrals: np.ndarray,
+    offset: int,
+) -> tuple[np.ndarray, np.ndarray, Any, Any, int]:
+    """Construct one merged representative polyline and its local edges."""
+    from ..lod.lines import compute_lines_light_integral
+
+    members = np.flatnonzero(assignments == bin_id)
+    member_polylines = [
+        polylines[int(member)][::-1] if reverse[int(member)] else polylines[int(member)]
+        for member in members
+    ]
+    template = member_polylines[0]
+    member_weight = merge_weights[members] / np.sum(merge_weights[members])
+    vertices = np.tensordot(
+        member_weight,
+        np.stack([vert_arr[polyline] for polyline in member_polylines]),
+        axes=(0, 0),
+    ).astype(np.float32)
+    colors_out = (
+        None
+        if source_colors is None
+        else np.tensordot(
+            member_weight,
+            np.stack([source_colors[polyline] for polyline in member_polylines]),
+            axes=(0, 0),
+        ).astype(np.float32)
+    )
+    widths_out = np.full(template.size, merged_widths[bin_id], dtype=np.float32)
+    if colors_out is not None:
+        represented = compute_lines_light_integral(
+            vertices[:, displayed[:3]],
+            [np.arange(template.size, dtype=np.intp)],
+            widths_out,
+            colors_out,
+        )[0]
+        target = float(np.sum(light_integrals[members]))
+        colors_out[:, :3] *= np.float32(
+            target / represented if represented > 0.0 else 0.0
+        )
+    local = np.arange(offset, offset + template.size, dtype=np.intp)
+    edges = np.column_stack((local[:-1], local[1:])) if template.size > 1 else None
+    return vertices, widths_out, colors_out, edges, offset + template.size
+
+
+def _same_type_line_coarse_levels(
+    *,
+    method: str,
+    vert_arr: np.ndarray,
+    widths: np.ndarray,
+    polylines: List[np.ndarray],
+    displayed: List[int],
+    slice_ids: np.ndarray,
+    source_colors: Any,
+    light_integrals: np.ndarray,
+    compression_factor: int,
+    levels: int,
+    seed: int,
+    indices: Any,
+    line_type: str,
+) -> List[Any]:
+    """Construct finest-to-coarsest same-type line level descriptors."""
+    from ....gsplats.lift import same_type_merge_level
+    from ..lod.lines import indexed_components_are_chains
+
+    if method != "merge":
+        order = _subsampled_polyline_order(
+            vert_arr[:, displayed[:3]],
+            polylines,
+            widths,
+            slice_ids,
+            seed,
+            indices if line_type == "indexed" else None,
+        )
+        return _coarse_polyline_levels(
+            order, compression_factor=compression_factor, levels=levels
+        )
+    if (
+        line_type == "indexed"
+        and indices is not None
+        and not indexed_components_are_chains(
+            len(vert_arr), np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+        )
+    ):
+        raise ValueError(
+            "substitutive_lod method='merge' requires indexed Lines components to be chains"
+        )
+    centres, mean_widths, directions, barriers, reverse = _line_merge_inputs(
+        vert_arr=vert_arr,
+        widths=widths,
+        polylines=polylines,
+        displayed=displayed,
+        slice_ids=slice_ids,
+        source_colors=source_colors,
+    )
+    coarse: List[Any] = []
+    previous_count = len(polylines)
+    for level in range(1, levels + 1):
+        count = max(1, len(polylines) // (compression_factor**level))
+        if count >= previous_count:
+            continue
+        _, merged_widths, assignments, merge_weights = same_type_merge_level(
+            centres,
+            mean_widths,
+            light_integrals,
+            n_target=count,
+            spatial_dims=displayed[:3],
+            barrier_keys=barriers,
+            directions=directions,
+        )
+        parts: List[List[Any]] = [[], [], [], []]
+        offset = 0
+        for bin_id in range(count):
+            vertices, widths_out, colors_out, edges, offset = _merged_line_bin(
+                bin_id=bin_id,
+                assignments=assignments,
+                merge_weights=merge_weights,
+                merged_widths=merged_widths,
+                polylines=polylines,
+                reverse=reverse,
+                vert_arr=vert_arr,
+                source_colors=source_colors,
+                displayed=displayed,
+                light_integrals=light_integrals,
+                offset=offset,
+            )
+            parts[0].append(vertices)
+            parts[1].append(widths_out)
+            if colors_out is not None:
+                parts[2].append(colors_out)
+            if edges is not None:
+                parts[3].append(edges)
+        coarse.append(
+            (
+                np.concatenate(parts[0]),
+                np.concatenate(parts[1]),
+                np.concatenate(parts[2]) if parts[2] else None,
+                np.concatenate(parts[3]).reshape(-1) if parts[3] else None,
+                count,
+            )
+        )
+        previous_count = count
+    return coarse
+
+
+def _report_line_merge_channels(
+    method: str, *, sharpness: Any, labels: Any, keys: Any, scalars: Any, colors: Any
+) -> None:
+    """Report line channels that merge drops or bakes into representative color."""
+    if method != "merge":
+        return
+    for channel, value in (
+        ("sharpness", sharpness),
+        ("labels", labels),
+        ("keys", keys),
+    ):
+        if value is not None:
+            aprint(
+                f"  ↳ merge drops per-vertex {channel}; representatives have no source identity"
+            )
+    if scalars is not None and colors is None:
+        aprint("  ↳ merge bakes per-vertex scalars through the authored colormap")
+
+
+def _warn_continuous_line_axes(axes: List[int]) -> None:
+    """Warn when continuous hidden axes cannot define independent line slices."""
+    if not axes:
+        return
+    warnings.warn(
+        "substitutive_lod with coarse='lines' found continuous hidden "
+        f"dimensions {tuple(axes)}; they are not treated as independent slices, "
+        "so per-slice preservation is not applied. Hidden slice dimensions "
+        "should be discrete (categorical / timepoint / channel).",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _same_type_line_counts(
+    coarse_first: List[Any], method: str, finest: int
+) -> List[int]:
+    """Return coarse-to-fine element counts for merged or subsampled lines."""
+    if method == "merge":
+        return [int(level[4]) for level in coarse_first] + [finest]
+    return [int(level.size) for level in coarse_first] + [finest]
+
+
+def _line_quality_reference(
+    enabled: bool,
+    vertices: np.ndarray,
+    widths: Any,
+    line_type: str,
+    indices: Any,
+) -> Any:
+    """Build the optional lifted-GSplat reference used for line quality scoring."""
+    if not enabled:
+        return None
+    from ....gsplats.lift import lift_lines_to_gsplats
+
+    return lift_lines_to_gsplats(
+        vertices, widths, line_type=line_type, indices=indices, colors=None
+    )
+
+
+def _line_colors_for_energy(
+    colors: Any, scalars: Any, attrs: Dict[str, Any], n_vertices: int
+) -> Any:
+    """Resolve explicit or scalar-mapped line colors for energy accounting."""
+    if scalars is None or colors is not None:
+        return colors
+    colormap = attrs.get("colormap")
+    if colormap is None:
+        raise ValueError(
+            "substitutive_lod on Lines with scalars requires a colormap "
+            "(scalars map to color via a colormap LUT). Pass colormap=..., "
+            "or provide explicit per-vertex colors."
+        )
+    from ....colormaps import scalars_to_colors
+
+    scalar_array = np.broadcast_to(
+        np.asarray(scalars, dtype=np.float64).reshape(-1), (n_vertices,)
+    )
+    return scalars_to_colors(scalar_array, colormap)
+
+
+def _add_lines_subsampled_lod_wrapper_impl(
     group: "Group",
     *,
     name: str,
@@ -1236,7 +1532,7 @@ def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
     attrs: Dict[str, Any],
 ) -> Union["Group", Lines]:
     """Write seeded whole-polyline Lines levels above the original Lines node."""
-    from ....gsplats.lift import lift_lines_to_gsplats, same_type_merge_level
+    from ....gsplats.lift import lift_lines_to_gsplats
     from ....gsplats.lod.quality import mixture_quality
     from ..lod.group import (
         assert_same_type_slice_capacity,
@@ -1244,9 +1540,9 @@ def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
         effective_blending_mode,
         level_additive_lod,
         level_attrs_with_quality,
+        normalized_same_type_colors,
         resolve_lod_ladder,
         resolve_same_type_axes,
-        same_type_colors_for_energy,
         subsampled_same_type_level_channels,
     )
     from ..lod.lines import (
@@ -1257,21 +1553,7 @@ def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
     )
 
     n_vertices = int(vert_arr.shape[0])
-    colors_for_energy = colors
-    if scalars is not None and colors is None:
-        colormap = attrs.get("colormap")
-        if colormap is None:
-            raise ValueError(
-                "substitutive_lod on Lines with scalars requires a colormap "
-                "(scalars map to color via a colormap LUT). Pass colormap=..., "
-                "or provide explicit per-vertex colors."
-            )
-        from ....colormaps import scalars_to_colors
-
-        scalar_array = np.broadcast_to(
-            np.asarray(scalars, dtype=np.float64).reshape(-1), (n_vertices,)
-        )
-        colors_for_energy = scalars_to_colors(scalar_array, colormap)
+    colors_for_energy = _line_colors_for_energy(colors, scalars, attrs, n_vertices)
     widths_for_energy = np.broadcast_to(
         np.asarray(widths, dtype=np.float64).reshape(-1), (n_vertices,)
     )
@@ -1287,16 +1569,7 @@ def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
         group._find_scene(), vert_arr, extend_to_all, "lines"
     )
     slice_ids, resident_slices = _polyline_slice_ids(vert_arr, polylines, hidden)
-    if continuous_hidden:
-        warnings.warn(
-            f"substitutive_lod with coarse='lines' found continuous hidden "
-            f"dimensions {tuple(continuous_hidden)}; they are not treated as "
-            "independent slices, so per-slice preservation is not applied. "
-            "Hidden slice dimensions should be discrete (categorical / "
-            "timepoint / channel).",
-            RuntimeWarning,
-            stacklevel=3,
-        )
+    _warn_continuous_line_axes(continuous_hidden)
     assert_same_type_slice_capacity(
         same_type="lines",
         element_name="polylines",
@@ -1306,118 +1579,42 @@ def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
         levels=int(spec["levels"]),
     )
     displayed_vertices = vert_arr[:, displayed[:3]]
-    order = _subsampled_polyline_order(
-        displayed_vertices,
-        polylines,
-        widths_for_energy,
-        slice_ids,
-        int(spec.get("seed") or 0),
-        indices if line_type == "indexed" else None,
-    )
     method = spec.get("method", "subsample")
+    normalized_colors_for_energy = normalized_same_type_colors(
+        colors_for_energy,
+        n_vertices,
+        integer_storage=colors is not None and not is_broadcast_color(colors),
+    )
     light_integrals = compute_lines_light_integral(
         displayed_vertices,
         polylines,
         widths_for_energy,
-        same_type_colors_for_energy(colors_for_energy, n_vertices),
+        normalized_colors_for_energy,
         indices if line_type == "indexed" else None,
     )
-    coarse: List[Any]
-    if method == "merge":
-        if (
-            line_type == "indexed"
-            and indices is not None
-            and not indexed_components_are_chains(
-                n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
-            )
-        ):
-            raise ValueError(
-                "substitutive_lod method='merge' requires indexed Lines components "
-                "to be chains"
-            )
-        centres = np.vstack([np.mean(vert_arr[p], axis=0) for p in polylines])
-        mean_widths = np.asarray(
-            [float(np.mean(widths_for_energy[p])) for p in polylines], dtype=np.float64
-        )
-        lengths = np.asarray([p.size for p in polylines], dtype=np.int64)
-        directions = np.vstack(
-            [
-                vert_arr[p[-1], displayed[:3]] - vert_arr[p[0], displayed[:3]]
-                if p.size > 1
-                else np.zeros(min(3, len(displayed)), dtype=np.float32)
-                for p in polylines
-            ]
-        )
-        orientation = np.argmax(np.abs(directions), axis=1)
-        orientation *= 2
-        orientation += (
-            directions[np.arange(n_polylines), orientation // 2] >= 0
-        ).astype(np.int64)
-        barriers = np.column_stack((slice_ids, lengths, orientation))
-        coarse = []
-        previous_count = n_polylines
-        source_colors = same_type_colors_for_energy(colors_for_energy, n_vertices)
-        if source_colors is None:
-            source_colors = np.ones((n_vertices, 3), dtype=np.float32)
-        for level in range(1, int(spec["levels"]) + 1):
-            count = max(1, n_polylines // (compression_factor**level))
-            if count >= previous_count:
-                continue
-            _, merged_widths, assignments = same_type_merge_level(
-                centres,
-                mean_widths,
-                light_integrals,
-                n_target=count,
-                spatial_dims=range(min(3, centres.shape[1])),
-                barrier_keys=barriers,
-            )
-            merged_vertex_parts = []
-            merged_width_parts = []
-            merged_color_parts = []
-            level_edges = []
-            offset = 0
-            for bin_id in range(count):
-                members = np.flatnonzero(assignments == bin_id)
-                template = polylines[int(members[0])]
-                member_weight = light_integrals[members]
-                if not np.any(member_weight > 0):
-                    member_weight = np.ones(members.size, dtype=np.float64)
-                member_weight = member_weight / np.sum(member_weight)
-                vertices = np.tensordot(
-                    member_weight,
-                    np.stack([vert_arr[polylines[int(i)]] for i in members]),
-                    axes=(0, 0),
-                ).astype(np.float32)
-                colors_out = np.tensordot(
-                    member_weight,
-                    np.stack([source_colors[polylines[int(i)]] for i in members]),
-                    axes=(0, 0),
-                ).astype(np.float32)
-                merged_vertex_parts.append(vertices)
-                merged_width_parts.append(
-                    np.full(template.size, merged_widths[bin_id], dtype=np.float32)
-                )
-                merged_color_parts.append(colors_out)
-                if template.size > 1:
-                    local = np.arange(offset, offset + template.size, dtype=np.intp)
-                    level_edges.append(np.column_stack((local[:-1], local[1:])))
-                offset += template.size
-            coarse.append(
-                (
-                    np.concatenate(merged_vertex_parts),
-                    np.concatenate(merged_width_parts),
-                    np.concatenate(merged_color_parts),
-                    np.concatenate(level_edges).reshape(-1) if level_edges else None,
-                    count,
-                )
-            )
-            previous_count = count
-    else:
-        coarse = _coarse_polyline_levels(
-            order,
-            compression_factor=compression_factor,
-            levels=int(spec["levels"]),
-        )
+    _report_line_merge_channels(
+        method,
+        sharpness=sharpness,
+        labels=labels,
+        keys=keys,
+        scalars=scalars,
+        colors=colors,
+    )
+    coarse = _same_type_line_coarse_levels(
+        method=method,
+        vert_arr=vert_arr,
+        widths=widths_for_energy,
+        polylines=polylines,
+        displayed=displayed,
+        slice_ids=slice_ids,
+        source_colors=normalized_colors_for_energy,
+        light_integrals=light_integrals,
+        compression_factor=compression_factor,
+        levels=int(spec["levels"]),
+        seed=int(spec.get("seed") or 0),
+        indices=indices,
+        line_type=line_type,
+    )
     if not coarse:
         aprint(
             f"  ⚠ substitutive_lod '{name}': input too small to synthesize coarse "
@@ -1480,9 +1677,7 @@ def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
     )
     parent_node = parent or group
     coarse_first = list(reversed(coarse))
-    counts = [
-        int(level[4] if method == "merge" else level.size) for level in coarse_first
-    ] + [n_polylines]
+    counts = _same_type_line_counts(coarse_first, method, n_polylines)
     coverage_vals, lod_selector = resolve_lod_ladder(
         spec.get("coverage_fractions"),
         counts,
@@ -1510,16 +1705,8 @@ def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
     auto_compensates = blending_mode in {"additive", "luminous"}
     compensation = spec.get("brightness_compensation", "auto")
     quality_stamps = bool(spec["quality_stamps"])
-    quality_reference = (
-        lift_lines_to_gsplats(
-            vert_arr,
-            widths,
-            line_type=line_type,
-            indices=indices,
-            colors=None,
-        )
-        if quality_stamps
-        else None
+    quality_reference = _line_quality_reference(
+        quality_stamps, vert_arr, widths, line_type, indices
     )
     level_vertices: Any
     level_widths: Any
@@ -1534,6 +1721,7 @@ def _add_lines_subsampled_lod_wrapper_impl(  # noqa: C901
             vertex_indices = None
             level_scalars = None
             level_attrs = dict(child_attrs)
+            level_attrs.pop("colormap", None)
             requested_gain = 1.0
             color_gain = 1.0
         else:

@@ -2206,6 +2206,169 @@ def test_same_type_lines_store_contains_only_lines(tmp_path, method: str) -> Non
     root = zarr.open(str(out), mode="r")
     group = root["curves"]
     assert group.attrs["kind"] == "lod"
-    assert {group[name].attrs["type"] for name in group.group_keys()} == {"lines"}
-    tree = str(root.tree()).lower()
-    assert "cholesky" not in tree and "gsplat" not in tree
+    forbidden = {
+        "centers",
+        "amplitudes",
+        "cholesky_factors_diag",
+        "cholesky_factors_offdiag",
+    }
+    for name in group.group_keys():
+        child = group[name]
+        assert child.attrs["type"] == "lines"
+        assert forbidden.isdisjoint(child.array_keys())
+
+
+def test_lines_merge_normalizes_uint8_conserves_light_and_keeps_absent_colors(
+    tmp_path,
+) -> None:
+    vertices = np.column_stack(
+        (
+            np.repeat(np.arange(8, dtype=np.float32), 2),
+            np.tile([0.0, 1.0], 8),
+            np.zeros(16),
+        )
+    )
+    colors = np.tile(np.array([180, 20, 0], dtype=np.uint8), (16, 1))
+    out = tmp_path / "lines-energy.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "curves",
+            vertices,
+            0.2,
+            colors=colors,
+            line_type="segments",
+            blending_mode="additive",
+            substitutive_lod=dict(
+                coarse="lines", method="merge", compression_factor=2, levels=1
+            ),
+        )
+    coarse = zarr.open(str(out), mode="r")["curves/child_0"]
+    decoder = ArrayDecoder()
+    coarse_colors = decoder.decode(coarse["colors"], coarse)
+    assert float(np.max(coarse_colors)) < 10.0
+    coarse_vertices = decoder.decode(coarse["vertices"], coarse)
+    coarse_widths = decoder.decode(coarse["widths"], coarse)
+    coarse_segments = decoder.decode(coarse["segments"], coarse)
+    from luxar.core.group.lod.lines import compute_lines_light_integral
+
+    source = compute_lines_light_integral(
+        vertices,
+        [np.array([2 * i, 2 * i + 1]) for i in range(8)],
+        np.full(16, 0.2),
+        colors / 255.0,
+    )
+    merged_polylines = identify_polylines(
+        len(coarse_vertices), "indexed", coarse_segments
+    )
+    merged = compute_lines_light_integral(
+        coarse_vertices,
+        merged_polylines,
+        coarse_widths,
+        coarse_colors,
+        coarse_segments,
+    )
+    assert float(np.sum(merged)) == pytest.approx(float(np.sum(source)), rel=3e-3)
+
+    plain = tmp_path / "lines-no-colors.luxar.zarr"
+    with LuxarZarrCompiler(plain) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "curves",
+            vertices,
+            0.2,
+            line_type="segments",
+            substitutive_lod=dict(
+                coarse="lines", method="merge", compression_factor=2, levels=1
+            ),
+        )
+    assert "colors" not in zarr.open(str(plain), mode="r")["curves/child_0"]
+
+
+def test_lines_merge_canonicalizes_antiparallel_traversal(tmp_path) -> None:
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+        dtype=np.float32,
+    )
+    out = tmp_path / "lines-antiparallel.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "curves",
+            vertices,
+            0.1,
+            line_type="segments",
+            substitutive_lod=dict(
+                coarse="lines", method="merge", compression_factor=2, levels=1
+            ),
+        )
+    coarse = zarr.open(str(out), mode="r")["curves/child_0"]
+    merged = ArrayDecoder().decode(coarse["vertices"], coarse)
+    np.testing.assert_allclose(merged[:, 0], [0.0, 1.0], atol=1e-5)
+    np.testing.assert_allclose(merged[:, 1], [0.5, 0.5], atol=1e-5)
+
+
+def test_lines_merge_uses_displayed_columns_and_bakes_scalars(tmp_path) -> None:
+    dims = Dimensions(
+        [
+            Dimension("t", categories=["0"], display=False),
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+        ]
+    )
+    vertices = np.array(
+        [
+            [0, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 10],
+            [0, 1, 0, 10],
+            [0, 20, 0, 0],
+            [0, 21, 0, 0],
+            [0, 20, 0, 10],
+            [0, 21, 0, 10],
+        ],
+        dtype=np.float32,
+    )
+    out = tmp_path / "lines-displayed.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_lines(
+            "curves",
+            vertices,
+            0.1,
+            line_type="segments",
+            scalars=np.zeros(len(vertices), dtype=np.float32),
+            colormap="viridis",
+            substitutive_lod=dict(
+                coarse="lines", method="merge", compression_factor=2, levels=1
+            ),
+        )
+    coarse = zarr.open(str(out), mode="r")["curves/child_0"]
+    widths = ArrayDecoder().decode(coarse["widths"], coarse)
+    assert float(np.max(widths)) > 0.1
+    assert (
+        "colors" in coarse
+        and "scalars" not in coarse
+        and "colormap" not in coarse.attrs
+    )
+
+
+def test_lines_merge_reports_varying_length_requirement(tmp_path) -> None:
+    vertices = np.column_stack(
+        (np.arange(7, dtype=np.float32), np.zeros(7), np.zeros(7))
+    )
+    indices = np.array([0, 1, 1, 2, 3, 4, 4, 5, 5, 6], dtype=np.intp)
+    with pytest.raises(ValueError, match="uniform-length polylines"):
+        with LuxarZarrCompiler(tmp_path / "varying.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                vertices,
+                0.1,
+                indices=indices,
+                line_type="indexed",
+                substitutive_lod=dict(
+                    coarse="lines", method="merge", compression_factor=2, levels=1
+                ),
+            )

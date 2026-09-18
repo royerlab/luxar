@@ -298,9 +298,13 @@ class Group(Node):
                 ``max_aspect`` (anisotropy cap on the coarse levels, default
                 3.0; ``None`` disables), and ``quality_stamps`` (measure
                 per-level quality, default ``True``).
-                ``coarse="points"`` refuses ``method``, ``truncation_radius``,
-                ``device``, ``coarsen_dims``, and ``max_aspect`` because they
-                do not affect the written same-type geometry.
+                ``coarse="points"`` accepts ``method="subsample"`` or
+                ``method="merge"``. Merge writes moment-matched representatives,
+                preserves discrete hidden coordinates and colour classes, bakes
+                scalar colormaps, and drops identity channels on coarse levels.
+                It refuses numeric brightness compensation because its per-bin
+                RGB scale already conserves source light. ``truncation_radius``,
+                ``device``, ``coarsen_dims``, and ``max_aspect`` remain refused.
                 Integer ``coarsen_dims`` entries name the scene-ordered position
                 columns after ``dim_order`` has been applied.
                 For stacked nodes, every discrete hidden coordinate must fit in
@@ -448,11 +452,13 @@ class Group(Node):
                 lifted to isotropic "bead" gaussians and reduced by the gsplat
                 substitutive pipeline, assembled as a ``kind="lod"`` Group whose
                 finest child is the original Lines node. ``coarse="lines"``
-                instead writes nested seeded subsamples of whole polylines,
-                preserving selected channels and scaling widths under additive /
-                luminous blending; the coarsest level must represent every
-                occupied discrete hidden coordinate. ``scalars``+``colormap``
-                are baked only for the Gaussian coarse path.
+                writes either seeded whole-polyline subsamples or, with
+                ``method="merge"``, equal-vertex-count centroid polylines with
+                transverse moment-matched widths. Merge preserves hidden
+                coordinates, orientation, and colour classes; bakes scalar
+                colormaps; and drops identity channels on coarse levels. The
+                coarsest level must represent every occupied discrete hidden
+                coordinate.
                 Each level carries ``level_stats.quality`` unless the spec sets
                 ``quality_stamps=False``.
                 Composes with ``additive_lod`` (which then describes how each

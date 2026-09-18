@@ -253,7 +253,11 @@ With `coarse="points"`, `method="subsample"` takes exact `N/K^level` prefixes
 of a spatially stratified ordering and writes those rows as Points children.
 `method="merge"` instead writes light-weighted representatives whose isotropic
 radius matches the members' combined second moment (own radii plus centre
-spread), with the existing 3× coverage inflation applied to the spread term. On a
+spread), with the existing 3× coverage inflation applied to the spread term.
+Merge never crosses a quantized RGB colour class. It bakes scalars through the
+authored colormap and drops sharpness, labels, and keys with a diagnostic.
+Numeric `brightness_compensation` is refused because each representative
+already rescales RGB to conserve its bin's source light. On a
 stacked node, each discrete hidden coordinate is spatially ordered independently
 and the orders are round-robin interleaved so a coarse level does not starve
 individual slices. Dimensions named by `extend_to_all` are excluded because the
@@ -281,8 +285,13 @@ Lines keeps the lifted-GSplat default too. With `coarse="lines"`,
 `method="subsample"` takes exact `P/K^level` prefixes of a seeded salience
 ordering. `method="merge"` clusters whole, orientation-compatible polylines and
 writes their light-weighted centroid polyline with a scalar width from the
-bundle's transverse second moment. Both write Lines children; no gsplat child or
-Cholesky array is materialised. Discrete hidden coordinates are ordered independently and
+bundle's transverse second moment. Merge currently requires equal vertex counts
+so corresponding vertices are defined; resample varying-length streamlines or
+use `method="subsample"`. It never crosses a quantized RGB colour class, bakes
+scalars through the authored colormap, and drops sharpness, labels, and keys with
+a diagnostic. Numeric `brightness_compensation` is refused because its per-bin
+colour rescale already conserves source light. Both write Lines children; no
+gsplat child or Cholesky array is materialised. Discrete hidden coordinates are ordered independently and
 round-robin interleaved; dimensions named by `extend_to_all` are excluded because
 the node is not sliced there. Authoring refuses a ladder whose coarsest polyline
 count cannot represent every remaining occupied slice, or a polyline that crosses

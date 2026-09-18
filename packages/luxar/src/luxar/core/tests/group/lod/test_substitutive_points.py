@@ -2006,9 +2006,7 @@ def test_same_type_points_store_contains_only_points(tmp_path, method: str) -> N
     root = zarr.open(str(out), mode="r")
     group = root["cloud"]
     assert group.attrs["kind"] == "lod"
-    assert {group[name].attrs["type"] for name in group.group_keys()} == {"points"}
-    tree = str(root.tree()).lower()
-    assert "cholesky" not in tree and "gsplat" not in tree
+    _assert_only_geometry_leaves(group, "points")
 
 
 def test_points_merge_writes_new_moment_representatives(tmp_path) -> None:
@@ -2033,3 +2031,78 @@ def test_points_merge_writes_new_moment_representatives(tmp_path) -> None:
     merged_radii = decoder.decode(coarse["radii"], coarse)
     assert not set(map(tuple, merged_positions)).issubset(set(map(tuple, positions)))
     assert np.all(merged_radii > 1.0)
+
+
+def _assert_only_geometry_leaves(group, geometry: str) -> None:
+    forbidden = {
+        "centers",
+        "amplitudes",
+        "cholesky_factors_diag",
+        "cholesky_factors_offdiag",
+    }
+    for name in group.group_keys():
+        child = group[name]
+        if child.attrs.get("kind"):
+            _assert_only_geometry_leaves(child, geometry)
+        else:
+            assert child.attrs["type"] == geometry
+            assert forbidden.isdisjoint(child.array_keys())
+
+
+def test_points_merge_normalizes_uint8_and_conserves_light(tmp_path) -> None:
+    out = tmp_path / "points-merge-energy.luxar.zarr"
+    positions = np.column_stack(
+        (np.arange(32, dtype=np.float32), np.zeros(32), np.zeros(32))
+    )
+    radii = np.full(32, 0.3, dtype=np.float32)
+    colors = np.tile(np.array([200, 10, 0], dtype=np.uint8), (32, 1))
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            colors=colors,
+            radii=radii,
+            blending_mode="additive",
+            substitutive_lod=dict(
+                coarse="points", method="merge", compression_factor=2, levels=1
+            ),
+        )
+    group = zarr.open(str(out), mode="r")["cloud"]
+    child = group["child_0"]
+    decoder = ArrayDecoder()
+    coarse_colors = decoder.decode(child["colors"], child)
+    coarse_radii = decoder.decode(child["radii"], child)
+    assert float(np.max(coarse_colors)) < 10.0
+    source_light = np.sum(
+        (radii**3) * (colors[:, :3] / 255.0 @ np.array([0.2126, 0.7152, 0.0722]))
+    )
+    coarse_light = np.sum(
+        (coarse_radii**3) * (coarse_colors[:, :3] @ np.array([0.2126, 0.7152, 0.0722]))
+    )
+    assert coarse_light == pytest.approx(source_light, rel=3e-3)
+
+
+def test_points_merge_bakes_scalars_and_preserves_color_classes(tmp_path) -> None:
+    out = tmp_path / "points-merge-scalars.luxar.zarr"
+    positions = np.column_stack(
+        (np.arange(8, dtype=np.float32), np.zeros(8), np.zeros(8))
+    )
+    scalars = np.repeat(np.array([0.0, 1.0], dtype=np.float32), 4)
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            scalars=scalars,
+            colormap="viridis",
+            radii=0.2,
+            substitutive_lod=dict(
+                coarse="points", method="merge", compression_factor=2, levels=1
+            ),
+        )
+    coarse = zarr.open(str(out), mode="r")["cloud/child_0"]
+    assert "colors" in coarse and "scalars" not in coarse
+    assert "colormap" not in coarse.attrs
+    decoded = ArrayDecoder().decode(coarse["colors"], coarse)
+    assert np.unique(np.round(decoded[:, :3], 3), axis=0).shape[0] == 2
