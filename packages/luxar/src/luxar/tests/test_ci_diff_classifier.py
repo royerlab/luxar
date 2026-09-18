@@ -1883,6 +1883,10 @@ def test_linux_launcher_build_is_configured_for_webkitgtk_4_1(
     assert "Requires: webkit2gtk-4.1" in compatibility_module
 
 
+@pytest.mark.skipif(
+    shutil.which("pkg-config") is None,
+    reason="pkg-config is required to exercise launcher module selection",
+)
 @pytest.mark.parametrize(
     ("module_name", "uses_shim"),
     (("webkit2gtk-4.1.pc", True), ("webkit2gtk-4.0.pc", False)),
