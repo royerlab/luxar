@@ -21,9 +21,16 @@ Scope is deliberately the narrow case this needs, not the QR standard:
 * **Mask pattern chosen by the standard's penalty rules**, because a bad mask
   is the usual reason a home-made QR scans on one phone and not another.
 
-Correctness is not argued, it is pinned: ``test_qr.py`` asserts the matrix is
-bit-identical to `segno`'s for a spread of payloads and versions. segno is a
-TEST dependency for exactly that reason and is never imported at runtime.
+Correctness is not argued, it is pinned by a DECODER: ``test_qr.py`` renders
+each matrix and asserts `zxing-cpp` reads the payload back, over a spread of
+sizes and versions. zxing-cpp is a TEST dependency for exactly that reason and
+is never imported at runtime.
+
+Comparing against another ENCODER was tried first and was actively misleading:
+this encoder and `segno` disagreed, reading segno's source made segno look like
+the deviant, and a decoder then showed segno's symbols scanned while ours did
+not scan at all. Two real bugs were hiding behind that reasoning. "Does it
+scan" is the only property that matters, so only a decoder can be the oracle.
 """
 
 from __future__ import annotations
@@ -113,6 +120,14 @@ _VERSION_BITS: dict[int, int] = {
 }
 
 
+# The symbol under construction. ``_Grid`` holds 0/1 for a placed module and
+# ``None`` for one the data walk still has to fill; ``_Mask`` marks every module
+# the walk must skip, which is not the same set -- a reserved module can still be
+# ``None`` (the format strips are claimed long before their bits are known).
+_Grid = list[list[int | None]]
+_Mask = list[list[bool]]
+
+
 # ---------------------------------------------------------------------------
 # GF(256) arithmetic and Reed-Solomon
 # ---------------------------------------------------------------------------
@@ -198,13 +213,8 @@ def _pick_version(length: int) -> int:
     )
 
 
-def _encode_data(data: bytes, version: int) -> list[int]:
-    """Payload -> interleaved data + error-correction codewords."""
-    total, ec_per_block, (g1, g2) = _VERSION_TABLE[version]
-    blocks = g1 + g2
-    data_codewords = total - ec_per_block * blocks
-
-    count_bits = 8 if version < 10 else 16
+def _data_codewords(data: bytes, version: int, data_codewords: int) -> list[int]:
+    """Payload -> exactly ``data_codewords`` bytes: header, data, terminator, padding."""
     bits: list[int] = []
 
     def put(value: int, width: int) -> None:
@@ -212,7 +222,7 @@ def _encode_data(data: bytes, version: int) -> list[int]:
             bits.append((value >> i) & 1)
 
     put(0b0100, 4)  # byte mode
-    put(len(data), count_bits)
+    put(len(data), 8 if version < 10 else 16)
     for byte in data:
         put(byte, 8)
 
@@ -226,32 +236,55 @@ def _encode_data(data: bytes, version: int) -> list[int]:
     codewords = [
         int("".join(str(b) for b in bits[i : i + 8]), 2) for i in range(0, len(bits), 8)
     ]
-    for pad in (0xEC, 0x11):
-        while len(codewords) < data_codewords:
-            codewords.append(pad)
-            pad = 0x11 if pad == 0xEC else 0xEC
-    codewords = codewords[:data_codewords]
+    pad = 0xEC
+    while len(codewords) < data_codewords:
+        codewords.append(pad)
+        pad = 0x11 if pad == 0xEC else 0xEC
+    return codewords[:data_codewords]
 
-    # Split into blocks. Group 2 blocks hold one more data codeword each.
-    short_len = data_codewords // blocks
-    data_blocks, ec_blocks, pos = [], [], 0
+
+def _split_blocks(
+    codewords: list[int], version: int
+) -> tuple[list[list[int]], list[list[int]]]:
+    """Split into the version's blocks and compute each one's EC codewords.
+
+    Group 2 blocks hold one more data codeword each than group 1, which is the
+    whole reason the split is not a plain even division.
+    """
+    _, ec_per_block, (g1, g2) = _VERSION_TABLE[version]
+    blocks = g1 + g2
+    short_len = len(codewords) // blocks
+    data_blocks: list[list[int]] = []
+    ec_blocks: list[list[int]] = []
+    pos = 0
     for index in range(blocks):
         size = short_len + (1 if index >= g1 else 0)
         block = codewords[pos : pos + size]
         pos += size
         data_blocks.append(block)
         ec_blocks.append(_rs_remainder(block, ec_per_block))
+    return data_blocks, ec_blocks
 
-    # Interleave: column-major across blocks, data first then EC.
+
+def _interleave(data_blocks: list[list[int]], ec_blocks: list[list[int]]) -> list[int]:
+    """Column-major across blocks, all data first and then all error correction."""
     out: list[int] = []
     for i in range(max(len(b) for b in data_blocks)):
         for block in data_blocks:
             if i < len(block):
                 out.append(block[i])
-    for i in range(ec_per_block):
+    for i in range(len(ec_blocks[0])):
         for block in ec_blocks:
             out.append(block[i])
     return out
+
+
+def _encode_data(data: bytes, version: int) -> list[int]:
+    """Payload -> interleaved data + error-correction codewords."""
+    total, ec_per_block, (g1, g2) = _VERSION_TABLE[version]
+    data_codewords = total - ec_per_block * (g1 + g2)
+    codewords = _data_codewords(data, version, data_codewords)
+    return _interleave(*_split_blocks(codewords, version))
 
 
 # ---------------------------------------------------------------------------
@@ -276,19 +309,9 @@ _FORMAT_BITS = (
 )  # fmt: skip
 
 
-def _place_function_patterns(
-    size: int, version: int
-) -> tuple[list[list[int | None]], list[list[bool]]]:
-    """An empty grid with finders, timing, alignment and format areas reserved.
-
-    Returns ``(grid, reserved)``. ``grid`` holds 0/1 for placed modules and
-    ``None`` where data goes; ``reserved`` marks every module the data walk
-    must skip.
-    """
-    grid: list[list[int | None]] = [[None] * size for _ in range(size)]
-    reserved = [[False] * size for _ in range(size)]
-
-    def finder(top: int, left: int) -> None:
+def _place_finders(grid: _Grid, reserved: _Mask, size: int) -> None:
+    """The three 7x7 finder patterns, each with its one-module light separator."""
+    for top, left in ((0, 0), (0, size - 7), (size - 7, 0)):
         for dr in range(-1, 8):
             for dc in range(-1, 8):
                 r, c = top + dr, left + dc
@@ -298,11 +321,9 @@ def _place_function_patterns(
                 grid[r][c] = 1 if ring in (0, 1, 3) else 0
                 reserved[r][c] = True
 
-    finder(0, 0)
-    finder(0, size - 7)
-    finder(size - 7, 0)
 
-    # Timing patterns along row and column 6.
+def _place_timing(grid: _Grid, reserved: _Mask, size: int) -> None:
+    """The alternating timing patterns along row and column 6."""
     for i in range(size):
         if not reserved[6][i]:
             grid[6][i] = 1 if i % 2 == 0 else 0
@@ -311,33 +332,45 @@ def _place_function_patterns(
             grid[i][6] = 1 if i % 2 == 0 else 0
             reserved[i][6] = True
 
-    # Alignment patterns. Exactly THREE centres are omitted -- the ones that
-    # would sit on a finder: (first, first), (first, last) and (last, first).
-    # Every other centre is drawn even when it lands on the timing row or
-    # column, where the alignment pattern takes precedence and the timing
-    # pattern simply continues either side of it.
-    #
-    # Skipping any centre whose module was already reserved (the obvious
-    # shortcut) is WRONG from version 7 up, where centres like (6, 22) and
-    # (22, 6) lie on the timing lines and are real patterns. It is right by
-    # accident for versions 2-6, whose only non-finder centre is (last, last),
-    # which is why the bug survived until a multi-alignment version was
-    # decoded.
-    centres = _ALIGNMENT[version]
-    if centres:
-        first, last = centres[0], centres[-1]
-        skip = {(first, first), (first, last), (last, first)}
-        for r in centres:
-            for c in centres:
-                if (r, c) in skip:
-                    continue
-                for dr in range(-2, 3):
-                    for dc in range(-2, 3):
-                        ring = max(abs(dr), abs(dc))
-                        grid[r + dr][c + dc] = 1 if ring in (0, 2) else 0
-                        reserved[r + dr][c + dc] = True
 
-    # Format-information areas (filled later) and the always-dark module.
+def _place_alignment(grid: _Grid, reserved: _Mask, version: int) -> None:
+    """The 5x5 alignment patterns at every centre pair except three.
+
+    Exactly THREE centres are omitted -- the ones that would sit on a finder:
+    ``(first, first)``, ``(first, last)`` and ``(last, first)``. Every other
+    centre is drawn even when it lands on the timing row or column, where the
+    alignment pattern takes precedence and the timing pattern simply continues
+    either side of it.
+
+    Skipping any centre whose module was already reserved (the obvious
+    shortcut) is WRONG from version 7 up, where centres like (6, 22) and
+    (22, 6) lie on the timing lines and are real patterns. It is right by
+    accident for versions 2-6, whose only non-finder centre is (last, last),
+    which is why the bug survived until a multi-alignment version was decoded.
+    """
+    centres = _ALIGNMENT[version]
+    if not centres:
+        return
+    first, last = centres[0], centres[-1]
+    skip = {(first, first), (first, last), (last, first)}
+    for r in centres:
+        for c in centres:
+            if (r, c) in skip:
+                continue
+            for dr in range(-2, 3):
+                for dc in range(-2, 3):
+                    ring = max(abs(dr), abs(dc))
+                    grid[r + dr][c + dc] = 1 if ring in (0, 2) else 0
+                    reserved[r + dr][c + dc] = True
+
+
+def _reserve_format_areas(grid: _Grid, reserved: _Mask, size: int) -> None:
+    """Reserve both format-information strips and set the always-dark module.
+
+    The format bits themselves depend on the mask, so they are written once the
+    mask is chosen; here the modules are only claimed so the data walk skips
+    them.
+    """
     for i in range(9):
         for r, c in ((8, i), (i, 8)):
             if 0 <= r < size and 0 <= c < size:
@@ -348,22 +381,39 @@ def _place_function_patterns(
     grid[size - 8][8] = 1  # dark module
     reserved[size - 8][8] = True
 
-    # Version information for 7+.
-    if version >= 7:
-        value = _VERSION_BITS[version]
-        for i in range(18):
-            bit = (value >> i) & 1
-            grid[size - 11 + i % 3][i // 3] = bit
-            reserved[size - 11 + i % 3][i // 3] = True
-            grid[i // 3][size - 11 + i % 3] = bit
-            reserved[i // 3][size - 11 + i % 3] = True
 
+def _place_version_info(grid: _Grid, reserved: _Mask, size: int, version: int) -> None:
+    """The two 18-bit version blocks, which exist only from version 7 up."""
+    if version < 7:
+        return
+    value = _VERSION_BITS[version]
+    for i in range(18):
+        bit = (value >> i) & 1
+        grid[size - 11 + i % 3][i // 3] = bit
+        reserved[size - 11 + i % 3][i // 3] = True
+        grid[i // 3][size - 11 + i % 3] = bit
+        reserved[i // 3][size - 11 + i % 3] = True
+
+
+def _place_function_patterns(size: int, version: int) -> tuple[_Grid, _Mask]:
+    """An empty grid with finders, timing, alignment and format areas reserved.
+
+    Returns ``(grid, reserved)``. ``grid`` holds 0/1 for placed modules and
+    ``None`` where data goes; ``reserved`` marks every module the data walk
+    must skip. Order matters only in that the finders run first, so the timing
+    pass can tell a finder module from a free one.
+    """
+    grid: _Grid = [[None] * size for _ in range(size)]
+    reserved: _Mask = [[False] * size for _ in range(size)]
+    _place_finders(grid, reserved, size)
+    _place_timing(grid, reserved, size)
+    _place_alignment(grid, reserved, version)
+    _reserve_format_areas(grid, reserved, size)
+    _place_version_info(grid, reserved, size, version)
     return grid, reserved
 
 
-def _place_data(
-    grid: list[list[int | None]], reserved: list[list[bool]], codewords: list[int]
-) -> None:
+def _place_data(grid: _Grid, reserved: _Mask, codewords: list[int]) -> None:
     """Walk the two-module-wide serpentine and drop the bit stream in."""
     size = len(grid)
     bits = [(byte >> i) & 1 for byte in codewords for i in range(7, -1, -1)]
@@ -384,20 +434,9 @@ def _place_data(
         col -= 2
 
 
-def _penalty(matrix: list[list[bool]]) -> int:
-    """The standard's four penalty rules, used to choose the mask.
-
-    Implemented to the letter because the mask is chosen by comparing these
-    scores: a wrong rule picks a different mask, and the symbol then differs
-    from every conforming encoder's even though both scan. `test_qr.py` pins
-    the result against segno, which is what catches that.
-    """
-    size = len(matrix)
-    lines = [list(row) for row in matrix] + [list(col) for col in zip(*matrix)]
+def _penalty_runs(lines: list[list[bool]]) -> int:
+    """Rule 1: a run of five or more same-coloured modules scores 3, +1 each beyond five."""
     score = 0
-
-    # Rule 1: each run of five or more same-coloured modules scores 3, plus one
-    # for every module beyond five.
     for line in lines:
         run, prev = 1, line[0]
         for value in line[1:]:
@@ -409,8 +448,13 @@ def _penalty(matrix: list[list[bool]]) -> int:
             run, prev = 1, value
         if run >= 5:
             score += 3 + (run - 5)
+    return score
 
-    # Rule 2: every 2x2 block of one colour scores 3.
+
+def _penalty_blocks(matrix: list[list[bool]]) -> int:
+    """Rule 2: every 2x2 block of one colour scores 3."""
+    size = len(matrix)
+    score = 0
     for r in range(size - 1):
         for c in range(size - 1):
             quad = (
@@ -421,23 +465,47 @@ def _penalty(matrix: list[list[bool]]) -> int:
             )
             if all(quad) or not any(quad):
                 score += 3
+    return score
 
-    # Rule 3: the finder-lookalike 1:1:3:1:1 with four light modules on either
-    # side, in rows and in columns, scores 40 each.
+
+def _penalty_finder_lookalike(lines: list[list[bool]], size: int) -> int:
+    """Rule 3: a 1:1:3:1:1 finder lookalike with four light modules on one side scores 40."""
     dark_light = [True, False, True, True, True, False, True]
     before = [False] * 4 + dark_light
     after = dark_light + [False] * 4
+    score = 0
     for line in lines:
         for i in range(size - 10):
             window = line[i : i + 11]
             if window == before or window == after:
                 score += 40
+    return score
 
-    # Rule 4: deviation of the dark share from 50%, in 5% steps.
+
+def _penalty_dark_balance(matrix: list[list[bool]], size: int) -> int:
+    """Rule 4: deviation of the dark share from 50%, in 5% steps, scores 10 a step."""
     dark = sum(1 for row in matrix for value in row if value)
     percent = dark * 100 / (size * size)
-    score += 10 * (int(abs(percent - 50)) // 5)
-    return score
+    return 10 * (int(abs(percent - 50)) // 5)
+
+
+def _penalty(matrix: list[list[bool]]) -> int:
+    """The standard's four penalty rules, summed, used to choose the mask.
+
+    Implemented to the letter because the mask is chosen by comparing these
+    scores: a wrong rule picks a different mask, and the symbol then differs
+    from every conforming encoder's even though both scan. That makes the rules
+    the part of this module least likely to fail loudly, so each is its own
+    named function against the clause it implements.
+    """
+    size = len(matrix)
+    lines = [list(row) for row in matrix] + [list(col) for col in zip(*matrix)]
+    return (
+        _penalty_runs(lines)
+        + _penalty_blocks(matrix)
+        + _penalty_finder_lookalike(lines, size)
+        + _penalty_dark_balance(matrix, size)
+    )
 
 
 def qr_matrix(data: str) -> list[list[bool]]:
