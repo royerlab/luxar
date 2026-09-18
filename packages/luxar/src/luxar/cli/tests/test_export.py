@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from urllib.request import urlopen
 
@@ -19,6 +20,7 @@ from typer.testing import CliRunner
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.cli import app
 from luxar.cli import export as export_module
+from luxar.cli import main as main_module
 from luxar.cli.export import (
     _copy_viewer,
     _copy_zarr_data,
@@ -980,3 +982,35 @@ def test_the_server_is_quiet_about_client_disconnects_but_not_about_faults() -> 
     # And the check is on the live exception, not a broad swallow.
     assert "sys.exc_info()[1]" in content
     assert "except Exception" not in content.split("def handle_error")[1][:600]
+
+
+def test_every_surface_that_names_the_serve_command_says_python3() -> None:
+    """The run command is printed in two places and they have to agree.
+
+    Stock macOS ships no `python` on PATH, and neither do most Linux distros;
+    the bare name only resolves where a conda or pyenv shim happens to provide
+    one. The generated README was corrected to `python3` and the CLI's own
+    "To view:" line was not, so `luxar export` went on telling every operator
+    to run a command that fails on the machine they just exported from.
+
+    This pins the pair rather than either one alone: the failure was not a
+    wrong string, it was a correction that reached one surface out of two.
+    `python serve.py` is still allowed where it is explicitly the WINDOWS
+    spelling, which is the only place the bare name is right.
+    """
+    cli_main = Path(main_module.__file__).read_text(encoding="utf-8")
+    hint = [ln for ln in cli_main.splitlines() if "To view: cd" in ln]
+    assert hint, "the export command no longer prints a run hint"
+    for line in hint:
+        assert "python3 serve.py" in line, line
+
+    with TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        _generate_readme(out, "data")
+        readme = (out / "README.txt").read_text(encoding="utf-8")
+    assert "python3 serve.py" in readme
+    # The bare name survives only as the Windows spelling, in the one sentence
+    # that says so.
+    for para in readme.split("\n\n"):
+        if "python serve.py" in para and "python3 serve.py" not in para:
+            assert "Windows" in para, para

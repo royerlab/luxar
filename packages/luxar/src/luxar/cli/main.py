@@ -628,7 +628,11 @@ def export(
                 overwrite=overwrite,
             )
             aprint(f"Exported to {result}")
-            aprint(f"To view: cd {result} && python serve.py")
+            # `python3`, not `python`: stock macOS and most Linux distros ship no
+            # `python` on PATH, so the bare name only works where a conda/pyenv
+            # shim happens to provide it. The README says python3 for the same
+            # reason; this line is the other surface that has to agree.
+            aprint(f"To view: cd {result} && python3 serve.py")
 
         if open_browser:
             import subprocess
