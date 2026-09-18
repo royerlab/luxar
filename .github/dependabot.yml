@@ -17,6 +17,14 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     target-branch: "dev"
+    groups:
+      typescript-eslint:
+        patterns:
+          - "@typescript-eslint/*"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
     # Keep this aligned with .nvmrc; check:node-types enforces the #2519 contract.
     ignore:
       - dependency-name: "@types/node"

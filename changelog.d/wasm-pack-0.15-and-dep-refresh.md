@@ -22,8 +22,9 @@ the top of the Makefile.
 Routine dependency refreshes ride along: `zarrita` 0.7.4, `mediabunny` 1.54.0,
 Vitest 4.1.10, ESLint 10.8.1, Knip 6.32.2, dependency-cruiser 18.2.0, tsx, and
 `globals`. `@typescript-eslint`'s plugin and parser had drifted onto different
-versions and now move together. `@types/three` keeps its `~0.185.1` range and
-picks up 0.185.4 within it.
+versions and now move together; Dependabot groups the family so they stay
+aligned. The Vitest runner, coverage provider, and UI are grouped for the same
+reason. `@types/three` keeps its `~0.185.1` range and picks up 0.185.4 within it.
 
 `THREE_VERSION_NOTES.md` gains the explanation for something that has looked like
 an oversight for a while: `three` is pinned at `~0.184.0` while `@types/three`
