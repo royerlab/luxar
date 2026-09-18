@@ -2336,6 +2336,74 @@ def test_lines_merge_normalizes_uint8_conserves_light_and_keeps_absent_colors(
     )
 
 
+def test_lines_merge_caps_uncolored_width_and_carries_residual_in_color(
+    tmp_path,
+) -> None:
+    n_polylines = 256
+    bundle_x = np.repeat(np.linspace(0.0, 100.0, 4), n_polylines // 4)
+    bundle_y = np.tile(np.linspace(-0.05, 0.05, n_polylines // 4), 4)
+    vertices = np.zeros((n_polylines * 2, 3), dtype=np.float32)
+    vertices[0::2, 0] = bundle_x
+    vertices[1::2, 0] = bundle_x + 1.0
+    vertices[0::2, 1] = bundle_y
+    vertices[1::2, 1] = bundle_y
+
+    groups = {}
+    for method in ("subsample", "merge"):
+        out = tmp_path / f"lines-uncolored-{method}.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                vertices,
+                0.2,
+                line_type="segments",
+                blending_mode="additive",
+                substitutive_lod=dict(
+                    coarse="lines",
+                    method=method,
+                    compression_factor=4,
+                    levels=3,
+                    quality_stamps=False,
+                ),
+            )
+        groups[method] = zarr.open(str(out), mode="r")["curves"]
+
+    decoder = ArrayDecoder()
+    subsample = groups["subsample"]["child_0"]
+    merged = groups["merge"]["child_0"]
+    subsample_width = float(np.max(decoder.decode(subsample["widths"], subsample)))
+    merged_width = float(np.max(decoder.decode(merged["widths"], merged)))
+    assert merged_width <= subsample_width * 1.01
+    assert "colors" in merged
+
+    merged_vertices = decoder.decode(merged["vertices"], merged)
+    merged_widths = decoder.decode(merged["widths"], merged)
+    merged_colors = decoder.decode(merged["colors"], merged)
+    merged_segments = decoder.decode(merged["segments"], merged)
+    merged_polylines = identify_polylines(
+        len(merged_vertices), "indexed", merged_segments
+    )
+    from luxar.core.group.lod.lines import compute_lines_light_integral
+
+    source_light = compute_lines_light_integral(
+        vertices,
+        [np.array([2 * i, 2 * i + 1]) for i in range(n_polylines)],
+        np.full(n_polylines * 2, 0.2),
+        None,
+    )
+    merged_light = compute_lines_light_integral(
+        merged_vertices,
+        merged_polylines,
+        merged_widths,
+        merged_colors,
+        merged_segments,
+    )
+    assert float(np.sum(merged_light)) == pytest.approx(
+        float(np.sum(source_light)), rel=3e-3
+    )
+
+
 def test_lines_merge_random_orientation_and_colors_are_soft_preferences(
     tmp_path,
 ) -> None:
@@ -2372,10 +2440,23 @@ def test_lines_merge_random_orientation_and_colors_are_soft_preferences(
             indices=indices,
             line_type="indexed",
             substitutive_lod=dict(
-                coarse="lines", method="merge", compression_factor=4, levels=2
+                coarse="lines",
+                method="merge",
+                compression_factor=4,
+                levels=2,
+                quality_stamps=False,
             ),
         )
-    assert zarr.open(str(out), mode="r")["curves/child_0"].attrs["type"] == "lines"
+    group = zarr.open(str(out), mode="r")["curves"]
+    assert [int(group[f"child_{index}"].attrs["n_segments"]) for index in range(3)] == [
+        48,
+        192,
+        768,
+    ]
+    child = group["child_0"]
+    merged_vertices = ArrayDecoder().decode(child["vertices"], child)
+    assert np.all(merged_vertices >= np.min(vertices, axis=0) - 1e-5)
+    assert np.all(merged_vertices <= np.max(vertices, axis=0) + 1e-5)
 
 
 def test_lines_merge_diagnostics_skip_unsynthesized_levels(tmp_path, capsys) -> None:

@@ -460,7 +460,9 @@ class Group(Node):
                 coordinates, uses orientation and colour as soft ordering
                 preferences, bakes scalar colormaps, and drops identity channels
                 on coarse levels. Additive/luminous levels conserve per-bin light
-                through width and, only when needed, HDR colour. The
+                through width up to the transition's pixel-floor cap, then
+                through residual HDR colour, materialising a colour channel when
+                needed. The
                 coarsest level must represent every occupied discrete hidden
                 coordinate.
                 Each level carries ``level_stats.quality`` unless the spec sets

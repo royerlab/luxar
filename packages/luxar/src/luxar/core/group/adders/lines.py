@@ -1133,14 +1133,25 @@ def _coarse_polyline_levels(
     order: np.ndarray, *, compression_factor: int, levels: int
 ) -> List[np.ndarray]:
     """Build nested exact-count polyline subsamples, finest to coarsest."""
-    n_polylines = int(order.size)
-    out: List[np.ndarray] = []
+    return [
+        np.sort(order[:count]).astype(np.intp, copy=False)
+        for count in _coarse_line_counts(
+            int(order.size), compression_factor=compression_factor, levels=levels
+        )
+    ]
+
+
+def _coarse_line_counts(
+    n_polylines: int, *, compression_factor: int, levels: int
+) -> List[int]:
+    """Return distinct coarse polyline counts, finest to coarsest."""
+    out: List[int] = []
     previous_count = n_polylines
     for level in range(1, levels + 1):
         count = max(1, n_polylines // (compression_factor**level))
         if count >= previous_count:
             continue
-        out.append(np.sort(order[:count]).astype(np.intp, copy=False))
+        out.append(count)
         previous_count = count
     return out
 
@@ -1290,8 +1301,9 @@ def _merged_line_bin(
     displayed: List[int],
     light_integrals: np.ndarray,
     auto_compensates: bool,
+    max_width: Optional[float],
     offset: int,
-) -> tuple[np.ndarray, np.ndarray, Any, Any, int]:
+) -> tuple[np.ndarray, np.ndarray, Any, Any, int, float, float]:
     """Construct one merged representative polyline and its local edges."""
     from ..lod.lines import compute_lines_light_integral
 
@@ -1317,6 +1329,8 @@ def _merged_line_bin(
         ).astype(np.float32)
     )
     widths_out = np.full(template.size, merged_widths[bin_id], dtype=np.float32)
+    width_gain = 1.0
+    color_gain = 1.0
     if auto_compensates:
         represented = compute_lines_light_integral(
             vertices[:, displayed[:3]],
@@ -1326,13 +1340,29 @@ def _merged_line_bin(
         )[0]
         target = float(np.sum(light_integrals[members]))
         required_gain = target / represented if represented > 0.0 else 1.0
-        if colors_out is None or required_gain < 1.0:
-            widths_out *= np.float32(required_gain)
-        else:
-            colors_out[:, :3] *= np.float32(required_gain)
+        width_gain = required_gain
+        if required_gain > 1.0 and max_width is not None:
+            width_gain = min(
+                required_gain,
+                max(1.0, max_width / float(np.max(widths_out))),
+            )
+        widths_out *= np.float32(width_gain)
+        color_gain = required_gain / width_gain
+        if color_gain > 1.0:
+            if colors_out is None:
+                colors_out = np.ones((template.size, 3), dtype=np.float32)
+            colors_out[:, :3] *= np.float32(color_gain)
     local = np.arange(offset, offset + template.size, dtype=np.intp)
     edges = np.column_stack((local[:-1], local[1:])) if template.size > 1 else None
-    return vertices, widths_out, colors_out, edges, offset + template.size
+    return (
+        vertices,
+        widths_out,
+        colors_out,
+        edges,
+        offset + template.size,
+        width_gain,
+        color_gain,
+    )
 
 
 def _same_type_line_coarse_levels(
@@ -1351,6 +1381,8 @@ def _same_type_line_coarse_levels(
     indices: Any,
     line_type: str,
     auto_compensates: bool,
+    activation_thresholds: List[float],
+    lod_selector: str,
 ) -> List[Any]:
     """Construct finest-to-coarsest same-type line level descriptors."""
     from ....gsplats.lift import same_type_merge_level
@@ -1389,11 +1421,10 @@ def _same_type_line_coarse_levels(
         )
     )
     coarse: List[Any] = []
-    previous_count = len(polylines)
-    for level in range(1, levels + 1):
-        count = max(1, len(polylines) // (compression_factor**level))
-        if count >= previous_count:
-            continue
+    level_counts = _coarse_line_counts(
+        len(polylines), compression_factor=compression_factor, levels=levels
+    )
+    for level_index, count in enumerate(level_counts):
         _, merged_widths, assignments, merge_weights = same_type_merge_level(
             centres,
             mean_widths,
@@ -1405,9 +1436,29 @@ def _same_type_line_coarse_levels(
             directions=directions,
         )
         parts: List[List[Any]] = [[], [], [], []]
+        color_parts: List[Any] = []
+        width_gains: List[float] = []
+        color_gains: List[float] = []
+        max_width = None
+        if auto_compensates:
+            max_width = float(np.max(widths)) * _line_width_gain_cap(
+                vert_arr,
+                widths,
+                displayed,
+                activation_thresholds[level_index],
+                lod_selector,
+            )
         offset = 0
         for bin_id in range(count):
-            vertices, widths_out, colors_out, edges, offset = _merged_line_bin(
+            (
+                vertices,
+                widths_out,
+                colors_out,
+                edges,
+                offset,
+                width_gain,
+                color_gain,
+            ) = _merged_line_bin(
                 bin_id=bin_id,
                 assignments=assignments,
                 merge_weights=merge_weights,
@@ -1419,24 +1470,42 @@ def _same_type_line_coarse_levels(
                 displayed=displayed,
                 light_integrals=light_integrals,
                 auto_compensates=auto_compensates,
+                max_width=max_width,
                 offset=offset,
             )
             parts[0].append(vertices)
             parts[1].append(widths_out)
-            if colors_out is not None:
-                parts[2].append(colors_out)
+            color_parts.append(colors_out)
+            width_gains.append(width_gain)
+            color_gains.append(color_gain)
             if edges is not None:
                 parts[3].append(edges)
+        if max(color_gains, default=1.0) > 1.0:
+            child_index = len(level_counts) - level_index - 1
+            aprint(
+                f"  ↳ child_{child_index}: capped width gain at "
+                f"{max(width_gains):.3g}×; carrying "
+                f"{max(color_gains):.3g}× in HDR color"
+            )
+        level_colors = None
+        if any(colors is not None for colors in color_parts):
+            level_colors = np.concatenate(
+                [
+                    colors
+                    if colors is not None
+                    else np.ones((len(vertices), 3), dtype=np.float32)
+                    for vertices, colors in zip(parts[0], color_parts, strict=True)
+                ]
+            )
         coarse.append(
             (
                 np.concatenate(parts[0]),
                 np.concatenate(parts[1]),
-                np.concatenate(parts[2]) if parts[2] else None,
+                level_colors,
                 np.concatenate(parts[3]).reshape(-1) if parts[3] else None,
                 count,
             )
         )
-        previous_count = count
     return coarse
 
 
@@ -1604,6 +1673,27 @@ def _add_lines_subsampled_lod_wrapper_impl(
     parent_node = parent or group
     blending_mode = effective_blending_mode(parent_node, attrs, "lines")
     auto_compensates = blending_mode in {"additive", "luminous"}
+    planned_coarse_counts = _coarse_line_counts(
+        n_polylines,
+        compression_factor=compression_factor,
+        levels=int(spec["levels"]),
+    )
+    planned_counts: List[int] = []
+    coverage_vals: List[float] = []
+    lod_selector = ""
+    if planned_coarse_counts:
+        planned_counts = list(reversed(planned_coarse_counts)) + [n_polylines]
+        coverage_vals, lod_selector = resolve_lod_ladder(
+            spec.get("coverage_fractions"),
+            planned_counts,
+            parent_node,
+            name=name,
+            length_error=lambda n_explicit, n_levels: (
+                f"coverage_fractions has {n_explicit} entries but the LOD ladder "
+                f"has {n_levels} levels "
+                f"({len(planned_coarse_counts)} lines + 1 finest)"
+            ),
+        )
     coarse = _same_type_line_coarse_levels(
         method=method,
         vert_arr=vert_arr,
@@ -1619,6 +1709,8 @@ def _add_lines_subsampled_lod_wrapper_impl(
         indices=indices,
         line_type=line_type,
         auto_compensates=auto_compensates,
+        activation_thresholds=list(reversed(coverage_vals[1:])),
+        lod_selector=lod_selector,
     )
     if not coarse:
         aprint(
@@ -1690,16 +1782,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
     )
     coarse_first = list(reversed(coarse))
     counts = _same_type_line_counts(coarse_first, method, n_polylines)
-    coverage_vals, lod_selector = resolve_lod_ladder(
-        spec.get("coverage_fractions"),
-        counts,
-        parent_node,
-        name=name,
-        length_error=lambda n_explicit, n_levels: (
-            f"coverage_fractions has {n_explicit} entries but the LOD ladder "
-            f"has {n_levels} levels ({len(coarse_first)} lines + 1 finest)"
-        ),
-    )
+    assert counts == planned_counts
     lod_attrs = {key: value for key, value in attrs.items() if key in COMPOSITING_ATTRS}
     child_attrs = {
         key: value for key, value in attrs.items() if key not in COMPOSITING_ATTRS

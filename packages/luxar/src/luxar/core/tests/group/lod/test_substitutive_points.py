@@ -2161,10 +2161,27 @@ def test_points_merge_random_colors_are_soft_ordering_preferences(tmp_path) -> N
             positions,
             colors=colors,
             substitutive_lod=dict(
-                coarse="points", method="merge", compression_factor=4, levels=2
+                coarse="points",
+                method="merge",
+                compression_factor=4,
+                levels=2,
+                quality_stamps=False,
             ),
         )
-    assert zarr.open(str(out), mode="r")["cloud/child_0"].attrs["type"] == "points"
+    group = zarr.open(str(out), mode="r")["cloud"]
+    assert [int(group[f"child_{index}"].attrs["n_points"]) for index in range(3)] == [
+        64,
+        256,
+        1024,
+    ]
+    child = group["child_0"]
+    decoder = ArrayDecoder()
+    coarse_colors = decoder.decode(child["colors"], child)
+    coarse_radii = decoder.decode(child["radii"], child)
+    luminance = np.array([0.2126, 0.7152, 0.0722])
+    source_light = float(np.sum(colors[:, :3] / 255.0 @ luminance))
+    coarse_light = float(np.sum((coarse_radii**3) * (coarse_colors[:, :3] @ luminance)))
+    assert coarse_light == pytest.approx(source_light, rel=5e-3)
 
 
 def test_same_type_color_classes_preserve_hdr_contrast() -> None:

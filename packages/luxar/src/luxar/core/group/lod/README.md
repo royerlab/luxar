@@ -293,11 +293,14 @@ so corresponding vertices are defined; resample varying-length streamlines or
 use `method="subsample"`. Quantized orientation and RGB channels are soft
 Morton-ordering dimensions, so compatible polylines are preferred without
 making every class a mandatory representative; HDR RGB is normalized against
-the node maximum before quantization. Merge bakes scalars through the authored
+the node maximum before quantization. These preference dimensions have co-equal
+Morton weight with position, so merge is intended for colour/orientation-coherent
+input; unrelated per-element classes can widen the representatives. Merge bakes scalars through the authored
 colormap and drops sharpness, labels, and keys with a diagnostic. Numeric
 `brightness_compensation` is refused. Under additive/luminous blending, per-bin
-light is conserved through width and, only when width cannot carry an increase
-on a coloured node, HDR colour. Both write Lines children; no
+light is conserved through width up to the transition's pixel-floor cap, then
+through residual HDR colour, materialising a colour channel when an uncoloured
+node needs one. Both write Lines children; no
 gsplat child or Cholesky array is materialised. Discrete hidden coordinates are ordered independently and
 round-robin interleaved; dimensions named by `extend_to_all` are excluded because
 the node is not sliced there. Authoring refuses a ladder whose coarsest polyline
