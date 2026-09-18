@@ -134,3 +134,25 @@ def test_old_go_remedy_matches_platform(
     assert result.returncode != 0
     assert f"Go binary: {go}" in result.stdout
     assert remedy in result.stdout
+
+
+def test_old_local_go_reports_reinstall_remedy(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    go = home / ".local/go/bin/go"
+    go.parent.mkdir(parents=True)
+    go.write_text(
+        "#!/bin/sh\necho 'go version go1.22.10 linux/amd64'\n", encoding="utf-8"
+    )
+    go.chmod(0o755)
+    env = os.environ | {"HOME": str(home), "PATH": os.defpath}
+    result = subprocess.run(
+        ["make", "--silent", "install-go", "OS=linux"],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert f"Go binary: {go}" in result.stdout
+    assert "Reinstall the local toolchain: rm -rf ~/.local/go" in result.stdout
