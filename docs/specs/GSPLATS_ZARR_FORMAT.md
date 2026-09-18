@@ -101,8 +101,8 @@ The vocabulary is duplicated on every leaf and additive rung and therefore lands
 in consolidated metadata; keep the authored vocabulary compact, but do not prune
 it independently while deriving related leaves or LOD levels. If that cost becomes
 material, the format should add a shared subtree-level vocabulary.
-This refusal is a writer-side rule, not an on-disk capability stamp, and does not
-bump the format version. Older Luxar versions therefore cannot distinguish a
+These restrictions are writer-side rules, not on-disk capability stamps, and do
+not bump the format version. Older Luxar versions therefore cannot distinguish a
 labeled store before rewriting it and may silently drop the channel in operations
 such as flattening or LOD construction; use a label-aware version for all edits.
 
