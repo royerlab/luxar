@@ -98,8 +98,9 @@ existing splats. Points and Lines do not inherit this barrier when lifted to
 GSplats because their lift currently carries no label channel. Exporters without
 a vocabulary-bearing categorical field must refuse the channel rather than drop it.
 The vocabulary is duplicated on every leaf and additive rung and therefore lands
-in consolidated metadata; keep it to the small id set actually in use. If that
-cost becomes material, the format should add a shared subtree-level vocabulary.
+in consolidated metadata; keep the authored vocabulary compact, but do not prune
+it independently while deriving related leaves or LOD levels. If that cost becomes
+material, the format should add a shared subtree-level vocabulary.
 This refusal is a writer-side rule, not an on-disk capability stamp, and does not
 bump the format version. Older Luxar versions therefore cannot distinguish a
 labeled store before rewriting it and may silently drop the channel in operations
