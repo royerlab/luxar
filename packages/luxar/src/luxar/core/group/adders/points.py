@@ -851,10 +851,7 @@ def _same_type_point_coarse_levels(
         (n_points,),
     )
     color_classes = same_type_color_classes(source_colors)
-    barrier_parts = [pos_arr[:, discrete_hidden]] if discrete_hidden else []
-    if color_classes is not None:
-        barrier_parts.append(color_classes[:, None])
-    barriers = np.column_stack(barrier_parts) if barrier_parts else None
+    barriers = pos_arr[:, discrete_hidden] if discrete_hidden else None
     coarse: List[Any] = []
     previous_count = n_points
     for level in range(1, levels + 1):
@@ -869,6 +866,7 @@ def _same_type_point_coarse_levels(
                 n_target=count,
                 spatial_dims=displayed[:3],
                 barrier_keys=barriers,
+                ordering_keys=color_classes,
             )
         )
         previous_count = count
@@ -947,13 +945,26 @@ def _same_type_point_level_payload(
             for channel in range(color_source.shape[1])
         ]
     ).astype(np.float32)
-    target = np.bincount(assignments, weights=energy, minlength=len(level_positions))
-    represented = compute_points_energy(
-        len(level_positions), level_radii, level_colors, None
-    )
-    level_colors[:, :3] *= np.divide(
-        target, represented, out=np.zeros_like(target), where=represented > 0.0
-    )[:, None].astype(np.float32)
+    color_gain = np.ones(len(level_positions), dtype=np.float64)
+    if auto_compensates:
+        target = np.bincount(
+            assignments, weights=energy, minlength=len(level_positions)
+        )
+        represented = compute_points_energy(
+            len(level_positions), level_radii, level_colors, None
+        )
+        required_gain = np.divide(
+            target,
+            represented,
+            out=np.ones_like(target),
+            where=represented > 0.0,
+        )
+        radius_gain = np.cbrt(np.minimum(required_gain, 1.0))
+        level_radii = np.asarray(level_radii, dtype=np.float32) * radius_gain.astype(
+            np.float32
+        )
+        color_gain = np.maximum(required_gain, 1.0)
+        level_colors[:, :3] *= color_gain[:, None].astype(np.float32)
     level_attrs = dict(child_attrs)
     level_attrs.pop("colormap", None)
     return (
@@ -965,7 +976,7 @@ def _same_type_point_level_payload(
         None,
         None,
         level_attrs,
-        1.0,
+        float(np.max(color_gain, initial=1.0)),
     )
 
 
@@ -1086,14 +1097,6 @@ def _add_points_subsampled_lod_wrapper_impl(
         None,
     )
     method = spec.get("method", "subsample")
-    _report_point_merge_channels(
-        method,
-        sharpness=sharpness,
-        labels=labels,
-        keys=keys,
-        scalars=scalars,
-        colors=colors,
-    )
     coarse = _same_type_point_coarse_levels(
         method=method,
         scene=scene,
@@ -1135,6 +1138,14 @@ def _add_points_subsampled_lod_wrapper_impl(
             substitutive_lod=None,
             **attrs,
         )
+    _report_point_merge_channels(
+        method,
+        sharpness=sharpness,
+        labels=labels,
+        keys=keys,
+        scalars=scalars,
+        colors=colors,
+    )
 
     slices = resident_slices if additive_lod is None else 1
     resolved_additive = compose_additive_under_substitutive(

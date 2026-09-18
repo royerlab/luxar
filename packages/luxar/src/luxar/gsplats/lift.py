@@ -96,15 +96,19 @@ def _merge_weights(
     return safe, totals
 
 
-def _morton_order_numpy(points: NDArray[np.float64]) -> NDArray[np.intp]:
-    """Return a deterministic Morton order without optional dependencies."""
-    ranges = np.ptp(points, axis=0)
-    normalized = (points - points.min(axis=0)) / np.where(ranges > 0, ranges, 1.0)
-    grid = np.clip(normalized * 65535.0, 0.0, 65535.0).astype(np.uint64)
-    codes = np.zeros(points.shape[0], dtype=np.uint64)
-    for bit in range(16):
-        for axis in range(points.shape[1]):
-            codes |= ((grid[:, axis] >> bit) & 1) << (bit * points.shape[1] + axis)
+def _morton_order(points: NDArray[np.float64]) -> NDArray[np.intp]:
+    """Return a deterministic nD Morton order within one uint64 code."""
+    if points.ndim != 2:
+        raise ValueError(f"Morton coordinates must be (N, d); got shape {points.shape}")
+    if points.shape[1] == 0:
+        return np.arange(points.shape[0], dtype=np.intp)
+    from ..utils.spatial_ordering import morton_encode_nd, normalize_coords_to_grid
+
+    bits_per_dim = min(21, 64 // points.shape[1])
+    grid = normalize_coords_to_grid(
+        points, points.min(axis=0), points.max(axis=0), 2**bits_per_dim
+    )
+    codes = morton_encode_nd(grid, bits_per_dim)
     return np.argsort(codes, kind="stable").astype(np.intp, copy=False)
 
 
@@ -140,7 +144,7 @@ def _merge_allocation(group_ids: NDArray[np.intp], n_target: int) -> NDArray[np.
 
 
 def _merge_assignments(
-    spatial: NDArray[np.float64],
+    ordering: NDArray[np.float64],
     group_ids: NDArray[np.intp],
     allocation: NDArray[np.intp],
 ) -> NDArray[np.intp]:
@@ -150,7 +154,7 @@ def _merge_assignments(
     for group_id, bins in enumerate(allocation):
         rows = np.flatnonzero(group_ids == group_id)
         local_bins = (np.arange(rows.size, dtype=np.int64) * int(bins)) // rows.size
-        assignments[rows[_morton_order_numpy(spatial[rows])]] = offset + local_bins
+        assignments[rows[_morton_order(ordering[rows])]] = offset + local_bins
         offset += int(bins)
     return assignments
 
@@ -211,6 +215,7 @@ def same_type_merge_level(
     n_target: int,
     spatial_dims: Sequence[int],
     barrier_keys: Optional[NDArray] = None,
+    ordering_keys: Optional[NDArray] = None,
     directions: Optional[NDArray] = None,
     coverage_inflation: float = 3.0,
 ) -> tuple[
@@ -223,9 +228,11 @@ def same_type_merge_level(
 
     Returns representative centres, scalar extents, and the source-to-bin
     assignment, and the effective member weights. Barrier-key rows are never
-    combined. Point extents are radii; centre variance is converted into radius
-    units before coverage inflation. When directions are supplied, only spread
-    transverse to each bin's weighted mean direction contributes to the extent.
+    combined; ordering keys are soft Morton dimensions that encourage compatible
+    members without increasing the minimum representative count. Point extents
+    are radii; centre variance is converted into radius units before coverage
+    inflation. When directions are supplied, only spread transverse to each
+    bin's weighted mean direction contributes to the extent.
     """
     pos = np.asarray(positions, dtype=np.float64)
     if pos.ndim != 2:
@@ -252,7 +259,15 @@ def same_type_merge_level(
     group_ids = _merge_group_ids(barrier_keys, n)
     allocation = _merge_allocation(group_ids, n_target)
     spatial_columns = list(spatial_dims)
-    assignments = _merge_assignments(pos[:, spatial_columns], group_ids, allocation)
+    ordering = pos[:, spatial_columns]
+    if ordering_keys is not None:
+        preferences = np.asarray(ordering_keys, dtype=np.float64)
+        if preferences.ndim == 1:
+            preferences = preferences[:, None]
+        if preferences.shape[0] != n:
+            raise ValueError("ordering_keys must have one row per element")
+        ordering = np.column_stack((ordering, preferences))
+    assignments = _merge_assignments(ordering, group_ids, allocation)
 
     safe_mass, bin_mass = _merge_weights(mass, assignments, n_target)
     centres = _weighted_merge_centres(pos, assignments, safe_mass, bin_mass)

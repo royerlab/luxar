@@ -24,6 +24,7 @@ from luxar.core.group.lod.group import (
     WHOLE_OBJECT_FINEST_ANCHOR,
     level_attrs_with_quality,
     partitioned_coverage_fractions,
+    same_type_color_classes,
 )
 from luxar.core.group.lod.points import resolve_substitutive_axis_points
 from luxar.encoding import ArrayDecoder
@@ -35,6 +36,8 @@ from luxar.gsplats.lift import (
     render_light,
 )
 from luxar.io.compiler import LuxarZarrCompiler
+
+from .same_type_assertions import assert_only_geometry_leaves
 
 # ────────────────────────────────────────────────────────────────────────
 # Resolver
@@ -124,6 +127,16 @@ class TestResolveSubstitutiveAxisPoints:
         message = str(exc_info.value)
         assert "coarse" in message
         assert "brightness_compensation" in message
+
+    def test_merge_refuses_numeric_brightness_compensation(self) -> None:
+        with pytest.raises(ValueError, match="method='merge'"):
+            resolve_substitutive_axis_points(
+                dict(
+                    coarse="points",
+                    method="merge",
+                    brightness_compensation=2.5,
+                )
+            )
 
     def test_max_aspect_key_resolved(self) -> None:
         # Mirror of the Lines resolver test (shared implementation, but the
@@ -2006,7 +2019,7 @@ def test_same_type_points_store_contains_only_points(tmp_path, method: str) -> N
     root = zarr.open(str(out), mode="r")
     group = root["cloud"]
     assert group.attrs["kind"] == "lod"
-    _assert_only_geometry_leaves(group, "points")
+    assert_only_geometry_leaves(group, "points")
 
 
 def test_points_merge_writes_new_moment_representatives(tmp_path) -> None:
@@ -2031,22 +2044,6 @@ def test_points_merge_writes_new_moment_representatives(tmp_path) -> None:
     merged_radii = decoder.decode(coarse["radii"], coarse)
     assert not set(map(tuple, merged_positions)).issubset(set(map(tuple, positions)))
     assert np.all(merged_radii > 1.0)
-
-
-def _assert_only_geometry_leaves(group, geometry: str) -> None:
-    forbidden = {
-        "centers",
-        "amplitudes",
-        "cholesky_factors_diag",
-        "cholesky_factors_offdiag",
-    }
-    for name in group.group_keys():
-        child = group[name]
-        if child.attrs.get("kind"):
-            _assert_only_geometry_leaves(child, geometry)
-        else:
-            assert child.attrs["type"] == geometry
-            assert forbidden.isdisjoint(child.array_keys())
 
 
 def test_points_merge_normalizes_uint8_and_conserves_light(tmp_path) -> None:
@@ -2081,6 +2078,117 @@ def test_points_merge_normalizes_uint8_and_conserves_light(tmp_path) -> None:
         (coarse_radii**3) * (coarse_colors[:, :3] @ np.array([0.2126, 0.7152, 0.0722]))
     )
     assert coarse_light == pytest.approx(source_light, rel=3e-3)
+
+
+def test_points_merge_deep_ladder_stays_visible_and_conserves_light(tmp_path) -> None:
+    out = tmp_path / "points-merge-deep.luxar.zarr"
+    rng = np.random.default_rng(42)
+    positions = rng.uniform(0.0, 100.0, size=(512, 3)).astype(np.float32)
+    radii = np.full(512, 0.3, dtype=np.float32)
+    colors = np.tile(np.array([200, 10, 0], dtype=np.uint8), (512, 1))
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            colors=colors,
+            radii=radii,
+            blending_mode="additive",
+            substitutive_lod=dict(
+                coarse="points", method="merge", compression_factor=4, levels=2
+            ),
+        )
+    group = zarr.open(str(out), mode="r")["cloud"]
+    decoder = ArrayDecoder()
+    source_light = float(
+        np.sum(
+            (radii**3) * (colors[:, :3] / 255.0 @ np.array([0.2126, 0.7152, 0.0722]))
+        )
+    )
+    for name in ("child_0", "child_1"):
+        child = group[name]
+        coarse_colors = decoder.decode(child["colors"], child)
+        coarse_radii = decoder.decode(child["radii"], child)
+        assert float(np.max(coarse_colors[:, :3])) > 0.5
+        assert float(np.max(coarse_colors[:, 1])) > 0.02
+        coarse_light = float(
+            np.sum(
+                (coarse_radii**3)
+                * (coarse_colors[:, :3] @ np.array([0.2126, 0.7152, 0.0722]))
+            )
+        )
+        assert coarse_light == pytest.approx(source_light, rel=5e-3)
+
+
+@pytest.mark.parametrize("blending_mode", ["normal", "max", "opaque"])
+def test_points_merge_nonadditive_keeps_weighted_color(
+    tmp_path, blending_mode: str
+) -> None:
+    out = tmp_path / f"points-{blending_mode}.luxar.zarr"
+    rng = np.random.default_rng(43)
+    positions = rng.uniform(0.0, 100.0, size=(128, 3)).astype(np.float32)
+    colors = np.tile(np.array([200, 10, 0], dtype=np.uint8), (128, 1))
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            colors=colors,
+            radii=0.3,
+            blending_mode=blending_mode,
+            substitutive_lod=dict(
+                coarse="points", method="merge", compression_factor=4, levels=1
+            ),
+        )
+    child = zarr.open(str(out), mode="r")["cloud/child_0"]
+    decoded = ArrayDecoder().decode(child["colors"], child)
+    np.testing.assert_allclose(
+        decoded[:, :3],
+        np.broadcast_to(colors[0] / 255.0, decoded[:, :3].shape),
+        atol=1 / 255,
+    )
+
+
+def test_points_merge_random_colors_are_soft_ordering_preferences(tmp_path) -> None:
+    out = tmp_path / "points-random-colors.luxar.zarr"
+    rng = np.random.default_rng(44)
+    positions = rng.normal(size=(1024, 3)).astype(np.float32)
+    colors = rng.integers(0, 256, size=(1024, 3), dtype=np.uint8)
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            colors=colors,
+            substitutive_lod=dict(
+                coarse="points", method="merge", compression_factor=4, levels=2
+            ),
+        )
+    assert zarr.open(str(out), mode="r")["cloud/child_0"].attrs["type"] == "points"
+
+
+def test_same_type_color_classes_preserve_hdr_contrast() -> None:
+    classes = same_type_color_classes(
+        np.array([[2.0, 2.0, 2.0], [10.0, 5.0, 2.0]], dtype=np.float32)
+    )
+    assert classes.shape == (2, 3)
+    assert not np.array_equal(classes[0], classes[1])
+
+
+def test_points_merge_diagnostics_skip_unsynthesized_levels(tmp_path, capsys) -> None:
+    with LuxarZarrCompiler(tmp_path / "points-small.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            np.zeros((1, 3), dtype=np.float32),
+            sharpness=np.ones(1, dtype=np.float32),
+            substitutive_lod=dict(
+                coarse="points", method="merge", compression_factor=4, levels=1
+            ),
+        )
+    output = capsys.readouterr().out
+    assert "input too small" in output
+    assert "merge drops per-point sharpness" not in output
 
 
 def test_points_merge_bakes_scalars_and_preserves_color_classes(tmp_path) -> None:

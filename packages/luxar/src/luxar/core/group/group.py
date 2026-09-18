@@ -300,10 +300,12 @@ class Group(Node):
                 per-level quality, default ``True``).
                 ``coarse="points"`` accepts ``method="subsample"`` or
                 ``method="merge"``. Merge writes moment-matched representatives,
-                preserves discrete hidden coordinates and colour classes, bakes
-                scalar colormaps, and drops identity channels on coarse levels.
-                It refuses numeric brightness compensation because its per-bin
-                RGB scale already conserves source light. ``truncation_radius``,
+                preserves discrete hidden coordinates, uses quantized colour as
+                a soft ordering preference, bakes scalar colormaps, and drops
+                identity channels on coarse levels. Under additive/luminous
+                blending it conserves per-bin light by reducing radius before
+                increasing RGB, so SDR colours remain representable. It refuses
+                numeric brightness compensation. ``truncation_radius``,
                 ``device``, ``coarsen_dims``, and ``max_aspect`` remain refused.
                 Integer ``coarsen_dims`` entries name the scene-ordered position
                 columns after ``dim_order`` has been applied.
@@ -455,8 +457,10 @@ class Group(Node):
                 writes either seeded whole-polyline subsamples or, with
                 ``method="merge"``, equal-vertex-count centroid polylines with
                 transverse moment-matched widths. Merge preserves hidden
-                coordinates, orientation, and colour classes; bakes scalar
-                colormaps; and drops identity channels on coarse levels. The
+                coordinates, uses orientation and colour as soft ordering
+                preferences, bakes scalar colormaps, and drops identity channels
+                on coarse levels. Additive/luminous levels conserve per-bin light
+                through width and, only when needed, HDR colour. The
                 coarsest level must represent every occupied discrete hidden
                 coordinate.
                 Each level carries ``level_stats.quality`` unless the spec sets

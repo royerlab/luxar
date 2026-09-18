@@ -1462,12 +1462,12 @@ def normalized_same_type_colors(
 
 
 def same_type_color_classes(colors: Any) -> Any:
-    """Encode coarse RGB colour classes for merge barriers."""
+    """Quantize RGB into soft merge-ordering dimensions."""
     if colors is None:
         return None
-    rgb = np.clip(np.asarray(colors, dtype=np.float32)[:, :3], 0.0, 1.0)
-    quantized = np.rint(rgb * 7.0).astype(np.int64)
-    return quantized[:, 0] * 64 + quantized[:, 1] * 8 + quantized[:, 2]
+    rgb = np.clip(np.asarray(colors, dtype=np.float32)[:, :3], 0.0, None)
+    scale = max(1.0, float(np.max(rgb, initial=0.0)))
+    return np.rint(np.clip(rgb / scale, 0.0, 1.0) * 7.0).astype(np.int64)
 
 
 def materialize_same_type_colors(

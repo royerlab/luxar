@@ -1223,7 +1223,7 @@ def _line_merge_inputs(
     displayed: List[int],
     slice_ids: np.ndarray,
     source_colors: Any,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build per-polyline merge inputs with canonical traversal directions."""
     from ..lod.group import same_type_color_classes
 
@@ -1264,14 +1264,15 @@ def _line_merge_inputs(
         else np.vstack([np.mean(source_colors[p], axis=0) for p in polylines])
     )
     color_classes = same_type_color_classes(polyline_colors)
-    barrier_parts = [slice_ids[:, None], lengths[:, None], orientation_classes]
+    preference_parts = [orientation_classes]
     if color_classes is not None:
-        barrier_parts.append(color_classes[:, None])
+        preference_parts.append(color_classes)
     return (
         centres,
         mean_widths,
         canonical_directions,
-        np.column_stack(barrier_parts),
+        slice_ids[:, None],
+        np.column_stack(preference_parts),
         reverse,
     )
 
@@ -1288,6 +1289,7 @@ def _merged_line_bin(
     source_colors: Any,
     displayed: List[int],
     light_integrals: np.ndarray,
+    auto_compensates: bool,
     offset: int,
 ) -> tuple[np.ndarray, np.ndarray, Any, Any, int]:
     """Construct one merged representative polyline and its local edges."""
@@ -1315,7 +1317,7 @@ def _merged_line_bin(
         ).astype(np.float32)
     )
     widths_out = np.full(template.size, merged_widths[bin_id], dtype=np.float32)
-    if colors_out is not None:
+    if auto_compensates:
         represented = compute_lines_light_integral(
             vertices[:, displayed[:3]],
             [np.arange(template.size, dtype=np.intp)],
@@ -1323,9 +1325,11 @@ def _merged_line_bin(
             colors_out,
         )[0]
         target = float(np.sum(light_integrals[members]))
-        colors_out[:, :3] *= np.float32(
-            target / represented if represented > 0.0 else 0.0
-        )
+        required_gain = target / represented if represented > 0.0 else 1.0
+        if colors_out is None or required_gain < 1.0:
+            widths_out *= np.float32(required_gain)
+        else:
+            colors_out[:, :3] *= np.float32(required_gain)
     local = np.arange(offset, offset + template.size, dtype=np.intp)
     edges = np.column_stack((local[:-1], local[1:])) if template.size > 1 else None
     return vertices, widths_out, colors_out, edges, offset + template.size
@@ -1346,6 +1350,7 @@ def _same_type_line_coarse_levels(
     seed: int,
     indices: Any,
     line_type: str,
+    auto_compensates: bool,
 ) -> List[Any]:
     """Construct finest-to-coarsest same-type line level descriptors."""
     from ....gsplats.lift import same_type_merge_level
@@ -1373,13 +1378,15 @@ def _same_type_line_coarse_levels(
         raise ValueError(
             "substitutive_lod method='merge' requires indexed Lines components to be chains"
         )
-    centres, mean_widths, directions, barriers, reverse = _line_merge_inputs(
-        vert_arr=vert_arr,
-        widths=widths,
-        polylines=polylines,
-        displayed=displayed,
-        slice_ids=slice_ids,
-        source_colors=source_colors,
+    centres, mean_widths, directions, barriers, preferences, reverse = (
+        _line_merge_inputs(
+            vert_arr=vert_arr,
+            widths=widths,
+            polylines=polylines,
+            displayed=displayed,
+            slice_ids=slice_ids,
+            source_colors=source_colors,
+        )
     )
     coarse: List[Any] = []
     previous_count = len(polylines)
@@ -1394,6 +1401,7 @@ def _same_type_line_coarse_levels(
             n_target=count,
             spatial_dims=displayed[:3],
             barrier_keys=barriers,
+            ordering_keys=preferences,
             directions=directions,
         )
         parts: List[List[Any]] = [[], [], [], []]
@@ -1410,6 +1418,7 @@ def _same_type_line_coarse_levels(
                 source_colors=source_colors,
                 displayed=displayed,
                 light_integrals=light_integrals,
+                auto_compensates=auto_compensates,
                 offset=offset,
             )
             parts[0].append(vertices)
@@ -1592,14 +1601,9 @@ def _add_lines_subsampled_lod_wrapper_impl(
         normalized_colors_for_energy,
         indices if line_type == "indexed" else None,
     )
-    _report_line_merge_channels(
-        method,
-        sharpness=sharpness,
-        labels=labels,
-        keys=keys,
-        scalars=scalars,
-        colors=colors,
-    )
+    parent_node = parent or group
+    blending_mode = effective_blending_mode(parent_node, attrs, "lines")
+    auto_compensates = blending_mode in {"additive", "luminous"}
     coarse = _same_type_line_coarse_levels(
         method=method,
         vert_arr=vert_arr,
@@ -1614,6 +1618,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
         seed=int(spec.get("seed") or 0),
         indices=indices,
         line_type=line_type,
+        auto_compensates=auto_compensates,
     )
     if not coarse:
         aprint(
@@ -1640,6 +1645,14 @@ def _add_lines_subsampled_lod_wrapper_impl(
             substitutive_lod=None,
             **attrs,
         )
+    _report_line_merge_channels(
+        method,
+        sharpness=sharpness,
+        labels=labels,
+        keys=keys,
+        scalars=scalars,
+        colors=colors,
+    )
 
     slices = resident_slices if additive_lod is None else 1
     additive_suppress_reason = (
@@ -1675,7 +1688,6 @@ def _add_lines_subsampled_lod_wrapper_impl(
             "ladder where one applies."
         ),
     )
-    parent_node = parent or group
     coarse_first = list(reversed(coarse))
     counts = _same_type_line_counts(coarse_first, method, n_polylines)
     coverage_vals, lod_selector = resolve_lod_ladder(
@@ -1701,8 +1713,6 @@ def _add_lines_subsampled_lod_wrapper_impl(
     lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
     total_light = float(np.sum(light_integrals))
-    blending_mode = effective_blending_mode(parent_node, attrs, "lines")
-    auto_compensates = blending_mode in {"additive", "luminous"}
     compensation = spec.get("brightness_compensation", "auto")
     quality_stamps = bool(spec["quality_stamps"])
     quality_reference = _line_quality_reference(

@@ -869,3 +869,13 @@ def test_same_type_merge_zero_weight_fallback_is_bin_local() -> None:
     assert centres[0, 0] == pytest.approx(0.5)
     assert centres[1, 0] == pytest.approx(10.75)
     np.testing.assert_array_equal(weights, [1.0, 1.0, 1.0, 3.0])
+
+
+def test_same_type_morton_order_preserves_locality_in_five_dimensions() -> None:
+    from luxar.gsplats.lift import _morton_order
+
+    points = np.random.default_rng(46).random((2048, 5))
+    order = _morton_order(points)
+    ordered_steps = np.linalg.norm(np.diff(points[order], axis=0), axis=1)
+    unordered_steps = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    assert float(np.mean(ordered_steps)) < 0.8 * float(np.mean(unordered_steps))

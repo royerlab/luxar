@@ -31,6 +31,8 @@ from luxar.gsplats.lift import (
 )
 from luxar.io.compiler import LuxarZarrCompiler
 
+from .same_type_assertions import assert_only_geometry_leaves
+
 
 def _segments(n_seg, seed=0):
     rng = np.random.default_rng(seed)
@@ -147,6 +149,16 @@ class TestResolveSubstitutiveAxisLines:
     def test_brightness_compensation_only_applies_to_lines_coarse(self) -> None:
         with pytest.raises(ValueError, match="applies only when coarse='lines'"):
             resolve_substitutive_axis_lines(dict(brightness_compensation=2.0))
+
+    def test_merge_refuses_numeric_brightness_compensation(self) -> None:
+        with pytest.raises(ValueError, match="method='merge'"):
+            resolve_substitutive_axis_lines(
+                dict(
+                    coarse="lines",
+                    method="merge",
+                    brightness_compensation=2.5,
+                )
+            )
 
     def test_non_ascending_coverage_fractions_raises(self) -> None:
         with pytest.raises(ValueError, match="strictly increasing"):
@@ -2206,16 +2218,7 @@ def test_same_type_lines_store_contains_only_lines(tmp_path, method: str) -> Non
     root = zarr.open(str(out), mode="r")
     group = root["curves"]
     assert group.attrs["kind"] == "lod"
-    forbidden = {
-        "centers",
-        "amplitudes",
-        "cholesky_factors_diag",
-        "cholesky_factors_offdiag",
-    }
-    for name in group.group_keys():
-        child = group[name]
-        assert child.attrs["type"] == "lines"
-        assert forbidden.isdisjoint(child.array_keys())
+    assert_only_geometry_leaves(group, "lines")
 
 
 def test_lines_merge_normalizes_uint8_conserves_light_and_keeps_absent_colors(
@@ -2278,11 +2281,119 @@ def test_lines_merge_normalizes_uint8_conserves_light_and_keeps_absent_colors(
             vertices,
             0.2,
             line_type="segments",
+            blending_mode="additive",
+            substitutive_lod=dict(
+                coarse="lines", method="merge", compression_factor=2, levels=2
+            ),
+        )
+    uncolored_source = compute_lines_light_integral(
+        vertices,
+        [np.array([2 * i, 2 * i + 1]) for i in range(8)],
+        np.full(16, 0.2),
+        None,
+    )
+    plain_root = zarr.open(str(plain), mode="r")["curves"]
+    for child_name in ("child_0", "child_1"):
+        plain_group = plain_root[child_name]
+        assert "colors" not in plain_group
+        plain_vertices = decoder.decode(plain_group["vertices"], plain_group)
+        plain_widths = decoder.decode(plain_group["widths"], plain_group)
+        plain_segments = decoder.decode(plain_group["segments"], plain_group)
+        plain_polylines = identify_polylines(
+            len(plain_vertices), "indexed", plain_segments
+        )
+        plain_light = compute_lines_light_integral(
+            plain_vertices,
+            plain_polylines,
+            plain_widths,
+            None,
+            plain_segments,
+        )
+        assert float(np.sum(plain_light)) == pytest.approx(
+            float(np.sum(uncolored_source)), rel=3e-3
+        )
+
+    normal = tmp_path / "lines-normal.luxar.zarr"
+    with LuxarZarrCompiler(normal) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "curves",
+            vertices,
+            0.2,
+            colors=colors,
+            line_type="segments",
+            blending_mode="normal",
             substitutive_lod=dict(
                 coarse="lines", method="merge", compression_factor=2, levels=1
             ),
         )
-    assert "colors" not in zarr.open(str(plain), mode="r")["curves/child_0"]
+    normal_group = zarr.open(str(normal), mode="r")["curves/child_0"]
+    normal_colors = decoder.decode(normal_group["colors"], normal_group)
+    np.testing.assert_allclose(
+        normal_colors[:, :3],
+        np.broadcast_to(colors[0] / 255.0, normal_colors[:, :3].shape),
+        atol=1 / 255,
+    )
+
+
+def test_lines_merge_random_orientation_and_colors_are_soft_preferences(
+    tmp_path,
+) -> None:
+    rng = np.random.default_rng(45)
+    n_polylines = 256
+    starts = rng.normal(size=(n_polylines, 3))
+    directions = rng.normal(size=(n_polylines, 3))
+    steps = np.linspace(0.0, 1.0, 4)
+    vertices = (
+        (starts[:, None, :] + steps[None, :, None] * directions[:, None, :])
+        .reshape(-1, 3)
+        .astype(np.float32)
+    )
+    colors = rng.random((len(vertices), 3), dtype=np.float32)
+    indices = np.concatenate(
+        [
+            np.column_stack(
+                (
+                    np.arange(4 * i, 4 * i + 3),
+                    np.arange(4 * i + 1, 4 * i + 4),
+                )
+            ).reshape(-1)
+            for i in range(n_polylines)
+        ]
+    )
+    out = tmp_path / "lines-random-preferences.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "curves",
+            vertices,
+            0.2,
+            colors=colors,
+            indices=indices,
+            line_type="indexed",
+            substitutive_lod=dict(
+                coarse="lines", method="merge", compression_factor=4, levels=2
+            ),
+        )
+    assert zarr.open(str(out), mode="r")["curves/child_0"].attrs["type"] == "lines"
+
+
+def test_lines_merge_diagnostics_skip_unsynthesized_levels(tmp_path, capsys) -> None:
+    with LuxarZarrCompiler(tmp_path / "lines-small.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "curves",
+            np.zeros((2, 3), dtype=np.float32),
+            0.1,
+            sharpness=np.ones(2, dtype=np.float32),
+            line_type="segments",
+            substitutive_lod=dict(
+                coarse="lines", method="merge", compression_factor=4, levels=1
+            ),
+        )
+    output = capsys.readouterr().out
+    assert "input too small" in output
+    assert "merge drops per-vertex sharpness" not in output
 
 
 def test_lines_merge_canonicalizes_antiparallel_traversal(tmp_path) -> None:
