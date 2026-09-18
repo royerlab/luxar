@@ -1560,3 +1560,23 @@ class TestEquiEnergyLinesLadder:
         for k, lvl in enumerate(levels, start=1):
             cum += float(sum(energy[start_to_idx[int(pl[0])]] for pl in lvl))
             assert cum >= total * k / 4 - 1e-9
+
+
+def test_lines_light_integral_handles_empty_and_singleton_polylines() -> None:
+    from luxar.core.group.lod.lines import compute_lines_light_integral
+
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    widths = np.array([1.0, 2.0, 4.0], dtype=np.float32)
+    colors = np.ones((3, 3), dtype=np.float32)
+    polylines = [
+        np.empty(0, dtype=np.intp),
+        np.array([0], dtype=np.intp),
+        np.array([0, 1, 2], dtype=np.intp),
+        np.empty(0, dtype=np.intp),
+    ]
+    light = compute_lines_light_integral(vertices, polylines, widths, colors)
+    np.testing.assert_allclose(light, [0.0, 0.0, 7.5, 0.0])
+    assert compute_lines_light_integral(vertices, [], widths, colors).shape == (0,)

@@ -23,7 +23,6 @@ import numpy as np
 from arbol import aprint
 
 from ....typing_utils.constants import (
-    DEFAULT_BLENDING_MODE_BY_GEOMETRY,
     DEFAULT_POINT_RADIUS,
 )
 from ....typing_utils.json_safe import json_safe_value
@@ -775,72 +774,20 @@ def add_points_multi_lod_wrapper_impl(
     )
 
 
-def _float_point_colors(
-    colors: Any, n_points: int, indices: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """Materialize selected point colors as float32 display values."""
-    if colors is None:
-        count = n_points if indices is None else int(indices.size)
-        return np.ones((count, 3), dtype=np.float32)
-    if is_broadcast_color(colors):
-        array = np.asarray(colors)
-        count = n_points if indices is None else int(indices.size)
-        array = np.broadcast_to(array, (count, len(colors)))
-    else:
-        array = np.asarray(colors)
-        if array.ndim == 2 and array.shape[0] == 1:
-            count = n_points if indices is None else int(indices.size)
-            array = np.broadcast_to(array, (count, array.shape[1]))
-        elif indices is not None:
-            array = array[indices]
-    source_dtype = array.dtype
-    result = np.asarray(array, dtype=np.float32).copy()
-    if np.issubdtype(source_dtype, np.integer):
-        result /= float(np.iinfo(source_dtype).max)
-    return result
-
-
-def _point_colors_for_energy(colors: Any, n_points: int) -> Any:
-    """Broadcast a uniform color without materializing an N×RGB copy."""
-    if colors is None:
-        return None
-    if is_broadcast_color(colors):
-        return np.broadcast_to(np.asarray(colors), (n_points, len(colors)))
-    array = np.asarray(colors)
-    if array.ndim == 2 and array.shape[0] == 1:
-        return np.broadcast_to(array, (n_points, array.shape[1]))
-    return array
-
-
-def _coarse_point_axes(
-    scene: Any, positions: np.ndarray
-) -> tuple[List[int], List[int], List[int]]:
-    """Displayed, discrete-hidden, and continuous-hidden position columns."""
-    dims = getattr(scene, "dimensions", None) if scene is not None else None
-    aligned = dims is not None and int(getattr(dims, "ndim", -1)) == positions.shape[1]
-    if not aligned or dims is None:
-        return list(range(min(3, positions.shape[1]))), [], []
-    displayed = list(dims.displayed)
-    discrete_hidden = [
-        column
-        for column in dims.non_displayed
-        if bool(dims.dimensions[column].discrete)
-    ]
-    continuous_hidden = [
-        column
-        for column in dims.non_displayed
-        if not bool(dims.dimensions[column].discrete)
-    ]
-    return displayed, discrete_hidden, continuous_hidden
-
-
 def _stratified_point_order(
-    scene: Any, positions: np.ndarray, compression: int, seed: int
+    scene: Any,
+    positions: np.ndarray,
+    compression: int,
+    seed: int,
+    extend_to_all: Optional[Union[List[str], str]],
 ) -> np.ndarray:
     """Order displayed-space points evenly, round-robin across hidden slices."""
+    from ..lod.group import resolve_same_type_axes
     from ..lod.spatial_uniform import stratified_grid_order
 
-    displayed, hidden, _ = _coarse_point_axes(scene, positions)
+    displayed, hidden, _ = resolve_same_type_axes(
+        scene, positions, extend_to_all, "points"
+    )
     rng = np.random.default_rng(seed)
 
     def local_order(rows: np.ndarray) -> np.ndarray:
@@ -870,62 +817,6 @@ def _stratified_point_order(
     return np.lexsort((slice_ids, within_slice_rank)).astype(np.intp, copy=False)
 
 
-def _assert_coarse_point_slice_capacity(
-    *, n_points: int, resident_slices: int, compression_factor: int, levels: int
-) -> None:
-    """Refuse a ladder whose coarsest prefix cannot represent every slice."""
-    coarsest_count = max(1, n_points // (compression_factor**levels))
-    if resident_slices > coarsest_count:
-        raise ValueError(
-            "substitutive_lod with coarse='points' cannot preserve every hidden "
-            f"coordinate: the coarsest level has {coarsest_count} points for "
-            f"{resident_slices} hidden slices. Reduce levels/compression_factor "
-            "or use coarse='gsplats'."
-        )
-
-
-def _effective_point_blending_mode(parent: "Node", attrs: Dict[str, Any]) -> str:
-    """Resolve nearest-setter-wins blending mode for a new Points child."""
-    if "blending_mode" in attrs:
-        return str(attrs["blending_mode"])
-    current: Optional["Node"] = parent
-    while current is not None:
-        if "blending_mode" in current.attrs:
-            return str(current.attrs["blending_mode"])
-        current = current.parent
-    return DEFAULT_BLENDING_MODE_BY_GEOMETRY["points"]
-
-
-def _subsampled_point_level_channels(
-    *,
-    colors: Any,
-    colors_for_energy: Any,
-    scalars: Any,
-    indices: np.ndarray,
-    n_points: int,
-    gain: float,
-    child_attrs: Dict[str, Any],
-) -> tuple[Any, Any, Dict[str, Any]]:
-    """Prepare one same-type coarse level's color/scalar representation."""
-    level_attrs = dict(child_attrs)
-    if scalars is not None and colors is None and gain == 1.0:
-        return None, slice_optional_array(scalars, indices, n_points), level_attrs
-    if gain == 1.0 and colors_for_energy is None:
-        return None, None, level_attrs
-    if gain == 1.0 and colors is not None:
-        level_colors = (
-            colors
-            if is_broadcast_color(colors)
-            else slice_optional_array(colors, indices, n_points)
-        )
-        return level_colors, None, level_attrs
-
-    level_colors = _float_point_colors(colors_for_energy, n_points, indices)
-    level_colors[:, :3] *= np.float32(gain)
-    level_attrs.pop("colormap", None)
-    return level_colors, None, level_attrs
-
-
 def _add_points_subsampled_lod_wrapper_impl(
     group: "Group",
     *,
@@ -950,9 +841,14 @@ def _add_points_subsampled_lod_wrapper_impl(
     from ....gsplats.lift import coarse_point_levels
     from ....utils.lod_breakpoints import hidden_coordinate_count
     from ..lod.group import (
+        assert_same_type_slice_capacity,
         compose_additive_under_substitutive,
+        effective_blending_mode,
         level_additive_lod,
         resolve_lod_ladder,
+        resolve_same_type_axes,
+        same_type_colors_for_energy,
+        subsampled_same_type_level_channels,
     )
     from ..lod.points import compute_points_energy, resolve_additive_axis_points
 
@@ -974,7 +870,9 @@ def _add_points_subsampled_lod_wrapper_impl(
 
     scene = group._find_scene()
     compression_factor = int(spec["compression_factor"])
-    _, discrete_hidden, continuous_hidden = _coarse_point_axes(scene, pos_arr)
+    _, discrete_hidden, continuous_hidden = resolve_same_type_axes(
+        scene, pos_arr, extend_to_all, "points"
+    )
     resident_slices = hidden_coordinate_count(pos_arr, discrete_hidden)
     if continuous_hidden:
         warnings.warn(
@@ -986,8 +884,10 @@ def _add_points_subsampled_lod_wrapper_impl(
             RuntimeWarning,
             stacklevel=3,
         )
-    _assert_coarse_point_slice_capacity(
-        n_points=n_points,
+    assert_same_type_slice_capacity(
+        same_type="points",
+        element_name="points",
+        elements=n_points,
         resident_slices=resident_slices,
         compression_factor=compression_factor,
         levels=int(spec["levels"]),
@@ -998,6 +898,7 @@ def _add_points_subsampled_lod_wrapper_impl(
         pos_arr,
         compression_factor,
         int(spec.get("seed") or 0),
+        extend_to_all,
     )
     radii_for_energy = None
     if radii is not None:
@@ -1007,7 +908,7 @@ def _add_points_subsampled_lod_wrapper_impl(
     energy = compute_points_energy(
         n_points,
         radii_for_energy,
-        _point_colors_for_energy(colors_for_energy, n_points),
+        same_type_colors_for_energy(colors_for_energy, n_points),
         None,
     )
     coarse = coarse_point_levels(
@@ -1017,6 +918,10 @@ def _add_points_subsampled_lod_wrapper_impl(
         levels=int(spec["levels"]),
     )
     if not coarse:
+        aprint(
+            f"  ⚠ substitutive_lod '{name}': input too small to synthesize coarse "
+            "levels; writing the flat Points node."
+        )
         return add_points_impl(
             group,
             name=name,
@@ -1072,7 +977,7 @@ def _add_points_subsampled_lod_wrapper_impl(
     )
     lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
-    blending_mode = _effective_point_blending_mode(parent_node, attrs)
+    blending_mode = effective_blending_mode(parent_node, attrs, "points")
     auto_compensates = blending_mode in {"additive", "luminous"}
     compensation = spec.get("brightness_compensation", "auto")
     for child_index, (indices, measured_gain) in enumerate(coarse_first):
@@ -1084,12 +989,12 @@ def _add_points_subsampled_lod_wrapper_impl(
             if compensation == "auto"
             else float(compensation) ** reduction_level
         )
-        level_colors, level_scalars, level_attrs = _subsampled_point_level_channels(
+        level_colors, level_scalars, level_attrs = subsampled_same_type_level_channels(
             colors=colors,
             colors_for_energy=colors_for_energy,
             scalars=scalars,
             indices=indices,
-            n_points=n_points,
+            n_elements=n_points,
             gain=gain,
             child_attrs=child_attrs,
         )

@@ -60,6 +60,39 @@ DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
 DEFAULT_METHOD: LinesMethodName = DEFAULT_ADDITIVE_METHOD
 
 
+def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float]]:
+    """Pop and validate the Lines-only substitutive representation keys."""
+    from .group import resolve_same_type_representation
+
+    return resolve_same_type_representation(
+        kwargs,
+        geometry="Lines",
+        same_type="lines",
+        inapplicable_reasons={
+            "truncation_radius": (
+                "it controls the Gaussian footprint used by the lift, and "
+                "same-type line levels are not lifted"
+            ),
+            "max_aspect": (
+                "it caps anisotropy on merged Gaussian levels, and same-type "
+                "line levels contain no Gaussians"
+            ),
+            "method": (
+                "it selects the Gaussian clustering algorithm, and same-type "
+                "line levels use seeded whole-polyline subsampling"
+            ),
+            "device": (
+                "it selects where Gaussian clustering runs, and same-type "
+                "line levels use the CPU polyline sampler"
+            ),
+            "coarsen_dims": (
+                "it selects Gaussian merge dimensions, and same-type line "
+                "levels preserve discrete hidden coordinates automatically"
+            ),
+        },
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Polyline identification
 # ─────────────────────────────────────────────────────────────────────
@@ -334,6 +367,7 @@ def compute_additive_order_lines(
     seed: Optional[int] = None,
     reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
+    indices: Optional[NDArray] = None,
 ) -> Tuple[NDArray[np.intp], List[int]]:
     """Compute an additive ordering permutation over **polylines** (not vertices).
 
@@ -354,6 +388,9 @@ def compute_additive_order_lines(
             defaulting to the columns with non-zero extent (which drops a
             *constant* time/channel column but not a *stacked* one — see
             :func:`~luxar.core.group.lod.reveal.radial_element_score`).
+        indices: Authored ``indexed`` edges. When provided, ``salience`` measures
+            component length over these edges instead of consecutive component
+            vertices.
 
     Returns:
         ``(polyline_permutation, per_level_polyline_counts)``. The
@@ -373,19 +410,27 @@ def compute_additive_order_lines(
     if method == "salience":
         if widths is None:
             raise ValueError("salience ordering requires per-vertex widths; got None")
-        score = np.empty(p, dtype=np.float64)
-        for i, members in enumerate(polylines):
-            if members.size < 2:
-                # Length-0 segment (degenerate): use width alone.
-                score[i] = float(widths[members].max()) if members.size else 0.0
-                continue
-            # Polyline length = sum of consecutive vertex distances. For
-            # segments-type pairs this is just the single segment length.
-            pts = vertices[members, :3].astype(np.float64)
-            seg_lens = np.linalg.norm(pts[1:] - pts[:-1], axis=1)
-            total_len = float(seg_lens.sum())
-            max_w = float(widths[members].max())
-            score[i] = total_len * max_w
+        starts, ends, owners = _polyline_segment_rows(
+            polylines, indices=indices, n_vertices=vertices.shape[0]
+        )
+        segment_lengths = np.linalg.norm(
+            vertices[ends, :3].astype(np.float64)
+            - vertices[starts, :3].astype(np.float64),
+            axis=1,
+        )
+        total_lengths = np.bincount(
+            owners, weights=segment_lengths, minlength=p
+        ).astype(np.float64, copy=False)
+        edge_counts = np.bincount(owners, minlength=p)
+        max_widths = np.array(
+            [
+                float(widths[members].max()) if members.size else 0.0
+                for members in polylines
+            ],
+            dtype=np.float64,
+        )
+        score = total_lengths * max_widths
+        score[edge_counts == 0] = max_widths[edge_counts == 0]
         perm = np.argsort(-score, kind="stable").astype(np.intp)
         return perm, []
 
@@ -510,6 +555,83 @@ def compute_lines_energy(
             mean_lum = 1.0
         out[i] = max(0.0, mean_lum) * max(0.0, tube_volume)
     return out
+
+
+def _polyline_segment_rows(
+    polylines: List[NDArray[np.intp]],
+    *,
+    indices: Optional[NDArray],
+    n_vertices: int,
+) -> tuple[NDArray[np.intp], NDArray[np.intp], NDArray[np.intp]]:
+    """Return segment endpoint rows and their owning polyline ids."""
+    if indices is not None:
+        edges = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+        vertex_owners = np.full(n_vertices, -1, dtype=np.intp)
+        for owner, members in enumerate(polylines):
+            vertex_owners[members] = owner
+        owners = vertex_owners[edges[:, 0]]
+        included = owners >= 0
+        if not np.any(included):
+            empty = np.empty(0, dtype=np.intp)
+            return empty, empty, empty
+        selected_edges = edges[included]
+        selected_owners = owners[included]
+        if np.any(vertex_owners[selected_edges[:, 1]] != selected_owners):
+            raise ValueError("indexed edges must stay within one polyline component")
+        return selected_edges[:, 0], selected_edges[:, 1], selected_owners
+
+    lengths = np.fromiter((members.size for members in polylines), dtype=np.intp)
+    flat_members = np.concatenate(polylines).astype(np.intp, copy=False)
+    if flat_members.size < 2:
+        empty = np.empty(0, dtype=np.intp)
+        return empty, empty, empty
+    adjacent = np.ones(flat_members.size - 1, dtype=bool)
+    boundaries = np.cumsum(lengths, dtype=np.intp)[:-1] - 1
+    boundaries = boundaries[(boundaries >= 0) & (boundaries < adjacent.size)]
+    adjacent[boundaries] = False
+    starts = flat_members[:-1][adjacent]
+    ends = flat_members[1:][adjacent]
+    owners = np.repeat(
+        np.arange(len(polylines), dtype=np.intp), np.maximum(lengths - 1, 0)
+    )
+    return starts, ends, owners
+
+
+def compute_lines_light_integral(
+    vertices: NDArray,
+    polylines: List[NDArray[np.intp]],
+    widths: NDArray,
+    colors: Optional[NDArray],
+    indices: Optional[NDArray] = None,
+) -> NDArray[np.float64]:
+    """Per-polyline screen-light integral ``Σ(length × width × luminance)``.
+
+    ``indices`` supplies the authored edge multiset for indexed components;
+    otherwise consecutive polyline members define the segments.
+    """
+    if not polylines:
+        return np.empty(0, dtype=np.float64)
+    pts3 = vertices[:, :3].astype(np.float64, copy=False)
+    vertex_widths = np.asarray(widths, dtype=np.float64)
+    vertex_luminance = (
+        np.ones(vertices.shape[0], dtype=np.float64)
+        if colors is None
+        else np.asarray(colors, dtype=np.float64)[:, :3]
+        @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
+    )
+    starts, ends, owners = _polyline_segment_rows(
+        polylines, indices=indices, n_vertices=vertices.shape[0]
+    )
+    if starts.size == 0:
+        return np.zeros(len(polylines), dtype=np.float64)
+    segment_lengths = np.linalg.norm(pts3[ends] - pts3[starts], axis=1)
+    segment_widths = 0.5 * (vertex_widths[ends] + vertex_widths[starts])
+    segment_luminance = 0.5 * (vertex_luminance[ends] + vertex_luminance[starts])
+    return np.bincount(
+        owners,
+        weights=segment_lengths * segment_widths * segment_luminance,
+        minlength=len(polylines),
+    ).astype(np.float64, copy=False)
 
 
 def _energy_string_polyline_cuts(
@@ -758,11 +880,9 @@ LinesAdditiveSpec = Union[None, bool, dict]
 def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
     """Translate the ``substitutive_lod=`` kwarg value into a normalized dict.
 
-    The substitutive axis coarsens a line set by **synthesising gsplats**: each
-    segment is lifted to a string of isotropic "bead" Gaussians (view-independent,
-    summing to a smooth tube) and the gsplat substitutive pipeline builds
-    fewer-but-larger representative levels, which become the coarse levels of a
-    lines LOD ladder (the finest level stays the original Lines node).
+    The default coarsens by **synthesising gsplats**. ``coarse="lines"`` instead
+    writes seeded whole-polyline subsamples, with explicit blending-aware width
+    compensation, while keeping the finest level as the original Lines node.
 
     Thin wrapper over the shared
     :func:`luxar.core.group.lod.group.resolve_substitutive_axis` (one
@@ -771,4 +891,21 @@ def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
     """
     from .group import resolve_substitutive_axis
 
-    return resolve_substitutive_axis(spec, "Lines")
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        spec = {}
+    if not isinstance(spec, dict):
+        return resolve_substitutive_axis(spec, "Lines")
+
+    kwargs = dict(spec)
+    coarse, brightness = _resolve_lines_representation(kwargs)
+    resolved = resolve_substitutive_axis(
+        kwargs,
+        "Lines",
+        extra_valid_keys=("coarse", "brightness_compensation"),
+    )
+    assert resolved is not None
+    resolved["coarse"] = coarse
+    resolved["brightness_compensation"] = brightness
+    return resolved

@@ -308,7 +308,7 @@ class TestAddPointsSubstitutiveLod:
             scene.add_points(
                 "cloud",
                 positions,
-                colors=(1.0, 0.0, 0.0),
+                colors=(1, 0, 0),
                 substitutive_lod=dict(coarse="points", levels=1),
             )
         group = zarr.open(str(out), mode="r")["cloud"]
@@ -380,6 +380,34 @@ class TestAddPointsSubstitutiveLod:
                         coarse="points", compression_factor=4, levels=1
                     ),
                 )
+
+    def test_points_coarse_ignores_extended_hidden_axis(self, tmp_path) -> None:
+        positions = np.column_stack(
+            [
+                np.arange(16, dtype=np.float32),
+                np.zeros((16, 3), dtype=np.float32),
+            ]
+        )
+        dims = Dimensions(
+            [
+                Dimension("time", categories=list(map(str, range(16))), display=False),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+        out = tmp_path / "points-extended-time.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "cloud",
+                positions,
+                extend_to_all=["time"],
+                substitutive_lod=dict(coarse="points", compression_factor=4, levels=1),
+                additive_lod=False,
+            )
+        group = zarr.open(str(out), mode="r")["cloud"]
+        assert group["child_0"].attrs["n_points"] == 4
 
     def test_points_coarse_sorted_sheet_remains_spatially_balanced(
         self, tmp_path
