@@ -955,3 +955,28 @@ def test_the_export_ships_the_qr_encoder_beside_serve(tmp_path: Path) -> None:
     template = export_module.SERVE_TEMPLATE.read_text()
     assert "from luxar_qr import" in template
     assert f"from {shipped.stem} import" in template
+
+
+def test_the_server_is_quiet_about_client_disconnects_but_not_about_faults() -> None:
+    """A cancelled chunk fetch is not a server error and must not print one.
+
+    The viewer abandons in-flight requests on every camera move and every
+    level-of-detail decision, and each abandonment aborts a response the
+    server is still writing. `socketserver` calls that a handler crash: one
+    scene load printed dozens of `BrokenPipeError` tracebacks and buried the
+    two URLs and the QR the operator needs, which read as the server falling
+    over. It was not; the scene worked throughout.
+
+    The suppression is deliberately narrow, asserted here, because the
+    tempting fix -- a bare `except` around `do_GET` -- would have hidden real
+    handler faults too.
+    """
+    content = _get_serve_script_content("data")
+    assert "def handle_error" in content
+    for quiet in ("BrokenPipeError", "ConnectionResetError", "ConnectionAbortedError"):
+        assert quiet in content, quiet
+    # Anything else still reaches the base implementation.
+    assert "super().handle_error(request, client_address)" in content
+    # And the check is on the live exception, not a broad swallow.
+    assert "sys.exc_info()[1]" in content
+    assert "except Exception" not in content.split("def handle_error")[1][:600]

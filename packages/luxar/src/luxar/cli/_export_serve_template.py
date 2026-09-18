@@ -44,10 +44,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 
-try:  # shipped beside this script by the exporter; absent = URLs only
-    from luxar_qr import qr_ascii, qr_matrix, qr_png_bytes
+# `luxar_qr` only exists in an EXPORTED folder, where the exporter copies
+# `luxar/cli/_qr.py` beside this script. mypy cannot see it from the source
+# tree, hence the ignore; the try/except is what makes a folder missing the
+# file still serve, printing the panel URL without a QR under it.
+try:
+    from luxar_qr import (  # type: ignore[import-not-found]
+        qr_ascii,
+        qr_matrix,
+        qr_png_bytes,
+    )
 except ImportError:  # pragma: no cover - exercised by deleting the file
-    qr_matrix = None  # type: ignore[assignment]
+    qr_matrix = None
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -588,6 +596,35 @@ class ControlServer(http.server.ThreadingHTTPServer):
             self.address_family = socket.AF_INET6
         super().__init__(address, handler)
         self.relay = relay
+
+    #: Client disconnects, not faults. A browser that has changed its mind
+    #: closes the socket mid-response and the write raises one of these.
+    QUIET_ERRORS = (
+        BrokenPipeError,
+        ConnectionResetError,
+        ConnectionAbortedError,
+    )
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Swallow client disconnects; report anything else as usual.
+
+        The viewer CANCELS in-flight chunk fetches constantly -- every camera
+        move and every level-of-detail decision abandons requests it no longer
+        wants -- and each cancellation aborts a response the server is still
+        writing. `socketserver` treats that as a handler crash and prints a
+        full traceback, so one scene load buried the two URLs and the QR the
+        operator actually needs under dozens of `BrokenPipeError`s and looked
+        like the server falling over. It is not an error at all: the client
+        asked for less, not the server failing to give it.
+
+        Deliberately narrow. Any other exception still goes to the base
+        implementation, because a real handler fault must stay loud -- the
+        tempting fix, wrapping `do_GET` in a bare `except`, would have hidden
+        those too.
+        """
+        if isinstance(sys.exc_info()[1], self.QUIET_ERRORS):
+            return
+        super().handle_error(request, client_address)
 
 
 class LuxarHandler(http.server.SimpleHTTPRequestHandler):

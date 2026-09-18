@@ -87,3 +87,23 @@ had both pages in one browser, where the display becomes a throttled
 background tab. The same two pages in two separate browser processes work over
 the same network. That is now in TESTING.txt, because anyone testing a kiosk
 on one laptop with two tabs will hit it and report it as broken.
+
+One more found by running it rather than testing it: a scene load printed
+dozens of `BrokenPipeError` tracebacks. The viewer cancels in-flight chunk
+fetches on every camera move and every level-of-detail decision, each
+cancellation aborts a response the server is still writing, and
+`socketserver` treats that as a handler crash. Nothing was broken -- the scene
+worked throughout -- but the two URLs and the QR an operator needs were buried
+under stack traces that read as the server falling over.
+
+`ControlServer.handle_error` now swallows `BrokenPipeError`,
+`ConnectionResetError` and `ConnectionAbortedError` and passes everything else
+to the base implementation, so a real handler fault stays loud. The narrowness
+is asserted in the tests, because the tempting fix -- a bare `except` around
+`do_GET` -- would have hidden those too.
+
+Worth recording how this was missed: every earlier check looked at HTTP status
+codes and browser state and never at the server's own stderr. Forty
+deliberately aborted mid-response requests now produce zero tracebacks, and a
+full browser load with six story steps leaves the server output at its
+27-line banner.
