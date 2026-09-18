@@ -134,6 +134,13 @@ test = [
     # Exercise the custom root-level hatch_build.py hook directly in tests.
     "hatchling>=1.27",
     "hypothesis>=6.0",
+    # The ORACLE for the hand-rolled QR encoder in `luxar.cli._qr`, which the
+    # exported scene folder needs because that folder has nothing installed.
+    # A decoder, deliberately, not another encoder: comparing two encoders
+    # only proves they agree, and the first version of ours produced symbols
+    # that were the right size with the right patterns and would not scan.
+    # Test-only -- nothing at runtime imports it.
+    "zxing-cpp>=2.2",
     # `fastapi.testclient` (test_cli_integration.py) is a re-export of
     # starlette's TestClient, which refuses to import without httpx. It reached
     # the DEFAULT env transitively via a `dev` dependency, so the omission was
