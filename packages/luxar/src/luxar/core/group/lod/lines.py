@@ -70,8 +70,8 @@ def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float]]
         same_type="lines",
         inapplicable_reasons={
             "truncation_radius": (
-                "it controls the Gaussian footprint used by the lift, and "
-                "same-type line levels are not lifted"
+                "it controls stored Gaussian footprints; same-type line levels "
+                "store Lines and use a fixed lift only for quality measurement"
             ),
             "max_aspect": (
                 "it caps anisotropy on merged Gaussian levels, and same-type "
@@ -82,8 +82,8 @@ def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float]]
                 "line levels use seeded whole-polyline subsampling"
             ),
             "device": (
-                "it selects where Gaussian clustering runs, and same-type "
-                "line levels use the CPU polyline sampler"
+                "it selects where Gaussian clustering runs; same-type line "
+                "levels use the CPU sampler and a CPU-pinned quality estimate"
             ),
             "coarsen_dims": (
                 "it selects Gaussian merge dimensions, and same-type line "

@@ -22,9 +22,11 @@ from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.group import (
     PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
+    level_attrs_with_quality,
     partitioned_coverage_fractions,
 )
 from luxar.core.group.lod.points import resolve_substitutive_axis_points
+from luxar.encoding import ArrayDecoder
 from luxar.gsplats.lift import (
     LIFT_TRUNCATION_RADIUS,
     coarse_point_levels,
@@ -51,6 +53,7 @@ class TestResolveSubstitutiveAxisPoints:
             assert r["compression_factor"] == 4
             assert r["levels"] == 3
             assert r["method"] == "auto"
+            assert r["quality_stamps"] is True
             # The resolver's default feeds the point/line lift, whose T is a
             # profile-matching parameter (3.0) — deliberately NOT the render
             # default DEFAULT_TRUNCATION_RADIUS (2.75). See lift.py.
@@ -60,6 +63,28 @@ class TestResolveSubstitutiveAxisPoints:
         r = resolve_substitutive_axis_points(dict(K=8, n_lods=2))
         assert r["compression_factor"] == 8
         assert r["levels"] == 2
+
+    def test_quality_stamps_can_be_disabled(self) -> None:
+        assert (
+            resolve_substitutive_axis_points({"quality_stamps": False})[
+                "quality_stamps"
+            ]
+            is False
+        )
+
+    def test_quality_stamps_must_be_bool(self) -> None:
+        with pytest.raises(TypeError, match="quality_stamps must be bool"):
+            resolve_substitutive_axis_points({"quality_stamps": "no"})
+
+    @pytest.mark.parametrize("level_stats", [[1, 2], "x", 3.0, object()])
+    def test_quality_attrs_reject_non_mapping_stats(self, level_stats) -> None:
+        with pytest.raises(TypeError, match="level_stats must be a JSON-safe mapping"):
+            level_attrs_with_quality({"level_stats": level_stats}, 0.5)
+
+    @pytest.mark.parametrize("quality", [np.nan, np.inf, -np.inf])
+    def test_quality_attrs_reject_non_finite_quality(self, quality: float) -> None:
+        with pytest.raises(ValueError, match="quality must be finite"):
+            level_attrs_with_quality({}, quality)
 
     def test_points_coarse_subsample_vocabulary(self) -> None:
         r = resolve_substitutive_axis_points(
@@ -208,6 +233,14 @@ def _build(tmp_path, *, n=6000, levels=3, radius_scale=1.0, **kw):
 
 
 class TestAddPointsSubstitutiveLod:
+    def test_lifted_quality_stamps_can_be_disabled(self, tmp_path) -> None:
+        group, _ = _build(tmp_path, n=96, levels=1, quality_stamps=False)
+        children = [group[f"child_{i}"] for i in range(2)]
+        assert [child.attrs["type"] for child in children] == ["gsplats", "points"]
+        assert all(
+            "quality" not in child.attrs.get("level_stats", {}) for child in children
+        )
+
     def test_points_coarse_levels_stay_points_and_compensate_hdr(
         self, tmp_path
     ) -> None:
@@ -248,6 +281,94 @@ class TestAddPointsSubstitutiveLod:
             np.testing.assert_allclose(
                 decoded, np.broadcast_to(expected * gain, decoded.shape), rtol=1e-5
             )
+        qualities = [
+            float(group[f"child_{i}"].attrs["level_stats"]["quality"]) for i in range(3)
+        ]
+        assert qualities[-1] == pytest.approx(1.0)
+        assert qualities == sorted(qualities)
+        assert qualities[-2] > qualities[0]
+
+    @pytest.mark.parametrize(
+        "colors",
+        [
+            np.column_stack(
+                (
+                    np.tile(np.array([[0.2, 0.4, 0.6]], dtype=np.float32), (64, 1)),
+                    np.linspace(0.2, 0.8, 64, dtype=np.float32),
+                )
+            ),
+            (0.2, 0.4, 0.6, 0.8),
+        ],
+    )
+    def test_points_coarse_accepts_rgba(self, tmp_path, colors) -> None:
+        out = tmp_path / "points-rgba.luxar.zarr"
+        positions = np.stack(
+            np.meshgrid(np.arange(4), np.arange(4), np.arange(4)), -1
+        ).reshape(-1, 3)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                positions.astype(np.float32),
+                colors=colors,
+                substitutive_lod=dict(
+                    coarse="points",
+                    compression_factor=4,
+                    levels=1,
+                    seed=7,
+                    brightness_compensation=4.0,
+                ),
+            )
+
+        group = zarr.open(str(out), mode="r")["cloud"]
+        assert [group[f"child_{i}"].attrs["type"] for i in range(2)] == [
+            "points",
+            "points",
+        ]
+        source_colors = np.asarray(colors, dtype=np.float32)
+        source_colors = np.broadcast_to(source_colors, (64, 4))
+        position_to_index = {
+            tuple(position): index for index, position in enumerate(positions)
+        }
+        decoder = ArrayDecoder()
+        for child_index, gain in ((0, 4.0), (1, 1.0)):
+            child = group[f"child_{child_index}"]
+            child_positions = decoder.decode(child["positions"], child)
+            selected = np.array(
+                [position_to_index[tuple(position)] for position in child_positions]
+            )
+            decoded = decoder.decode(child["colors"], child)
+            decoded = np.broadcast_to(decoded, (selected.size, decoded.shape[-1]))
+            assert decoded.shape[1] == 4
+            np.testing.assert_allclose(
+                decoded[:, :3], source_colors[selected, :3] * gain, rtol=1e-5
+            )
+            np.testing.assert_allclose(decoded[:, 3], source_colors[selected, 3])
+
+    def test_points_coarse_quality_stamps_can_be_disabled(self, tmp_path) -> None:
+        out = tmp_path / "points-no-quality.luxar.zarr"
+        positions = np.stack(
+            np.meshgrid(np.arange(4), np.arange(4), np.arange(4)), -1
+        ).reshape(-1, 3)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                positions.astype(np.float32),
+                substitutive_lod=dict(
+                    coarse="points",
+                    compression_factor=4,
+                    levels=1,
+                    seed=7,
+                    quality_stamps=False,
+                ),
+            )
+
+        group = zarr.open(str(out), mode="r")["cloud"]
+        assert all(
+            "quality" not in group[f"child_{i}"].attrs.get("level_stats", {})
+            for i in range(2)
+        )
 
     def test_points_coarse_auto_does_not_brighten_normal_blending(
         self, tmp_path
@@ -940,6 +1061,12 @@ class TestSubstitutiveComposedWithAdditive:
         # they carry no fraction stamps and are skipped.
         children = self._children(grp)
         finest_name = children[-1]
+        qualities = [
+            float(grp[name].attrs["level_stats"]["quality"]) for name in children
+        ]
+        assert qualities[-1] == pytest.approx(1.0)
+        assert qualities == sorted(qualities)
+        assert qualities[-2] > qualities[0]
         coarse_checked = 0  # coarse (non-finest) laddered children actually asserted
         for name in children:
             child = grp[name]

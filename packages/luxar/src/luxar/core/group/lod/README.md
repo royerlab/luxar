@@ -215,7 +215,8 @@ levels still ends with an N/4-sized commit, which is not a progressive paint.
 kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 `coarse`, `brightness_compensation`, `method`, `truncation_radius`, `device`,
-`seed`, `coverage_fractions`
+`seed`, `quality_stamps` (measure per-level quality, default `True`),
+`coverage_fractions`
 (explicit per-level viewport-relative thresholds, strict-ascending in
 `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`
 (per-splat anisotropy cap on the
@@ -237,7 +238,9 @@ With the default `coarse="gsplats"`, it:
    isotropic lifted splats level over level, whose view-dependent ray integrals
    flare end-on and pop between levels), and **rescales** each coarse level's
    amplitudes to conserve render-light (`Σ a·σ³`) so the LOD seam does not dim
-   on zoom-out.
+   on zoom-out. Unless `quality_stamps=False`, each returned level carries
+   `level_stats.quality`, measured against the lifted finest on the spec's
+   `device`.
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
    the original Points node as the finest child; `display_type="points"`. With
    an explicit `partition=`, the finest child is instead a spatial partition and
@@ -265,8 +268,11 @@ the same RGB path. The expected HDR warning is suppressed
 for these synthesized compensated children. The gain conserves the summed light
 over the whole node, not within each neighbourhood, so sparse and dense regions
 can shift relative brightness. `truncation_radius`, `max_aspect`, `method`,
-`device`, and `coarsen_dims` are refused because this arm performs no Gaussian
-lift or merge.
+`device`, and `coarsen_dims` are refused because they do not affect the written
+same-type geometry. By default each child carries a `level_stats.quality` stamp
+measured from a fixed isotropic lift on CPU; for Points this scores the geometric
+subsample and radii, not RGB/alpha or the brightness-compensation gain. Set
+`quality_stamps=False` to skip that measurement.
 
 Lines keeps the lifted-GSplat default too. With `coarse="lines"`, it instead
 takes exact `P/K^level` prefixes of a seeded salience ordering and writes every
@@ -281,9 +287,12 @@ conserves it at each level. Width growth is capped near the shader's pixel floor
 at the level transition and the residual gain is carried by float32 HDR color,
 keeping coarse fibers fiber-shaped; other modes keep unit gain, and a numeric
 override applies per reduction level through the same capped width/HDR-color
-split. The Gaussian lift controls
-(`truncation_radius`, `max_aspect`, `method`, `device`, and `coarsen_dims`) are
-refused on this same-type arm.
+split. The Gaussian lift controls (`truncation_radius`, `max_aspect`, `method`,
+`device`, and `coarsen_dims`) are refused because they do not affect the written
+same-type geometry. By default each child carries a `level_stats.quality` stamp
+measured from a fixed bead lift on CPU; it captures the subsample and width
+compensation, but not RGB/alpha or any residual HDR color gain. Set
+`quality_stamps=False` to skip that measurement.
 
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given
@@ -364,6 +373,9 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    to Points. The cap matters most here: Morton bins chunk a 1D bead string,
    so uncapped representatives elongate ~K× more per level and flare when
    viewed end-on (the "haphazard brightness/hue pops between levels" bug).
+   Unless `quality_stamps=False`, each returned level carries
+   `level_stats.quality`, measured against the lifted finest on the spec's
+   `device`.
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
    the original Lines node as the finest child; `display_type="lines"`.
    Thresholds are auto-derived through `group.derive_coverage_fractions`

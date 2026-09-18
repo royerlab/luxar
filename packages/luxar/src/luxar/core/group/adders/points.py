@@ -838,13 +838,15 @@ def _add_points_subsampled_lod_wrapper_impl(
     attrs: Dict[str, Any],
 ) -> Union["Group", Points]:
     """Write spatially stratified Points levels above the original Points node."""
-    from ....gsplats.lift import coarse_point_levels
+    from ....gsplats.lift import coarse_point_levels, lift_points_to_gsplats
+    from ....gsplats.lod.quality import mixture_quality
     from ....utils.lod_breakpoints import hidden_coordinate_count
     from ..lod.group import (
         assert_same_type_slice_capacity,
         compose_additive_under_substitutive,
         effective_blending_mode,
         level_additive_lod,
+        level_attrs_with_quality,
         resolve_lod_ladder,
         resolve_same_type_axes,
         same_type_colors_for_energy,
@@ -980,6 +982,16 @@ def _add_points_subsampled_lod_wrapper_impl(
     blending_mode = effective_blending_mode(parent_node, attrs, "points")
     auto_compensates = blending_mode in {"additive", "luminous"}
     compensation = spec.get("brightness_compensation", "auto")
+    quality_stamps = bool(spec["quality_stamps"])
+    quality_reference = (
+        lift_points_to_gsplats(
+            pos_arr,
+            DEFAULT_POINT_RADIUS if radii is None else radii,
+            colors=None,
+        )
+        if quality_stamps
+        else None
+    )
     for child_index, (indices, measured_gain) in enumerate(coarse_first):
         reduction_level = len(coarse_first) - child_index
         gain = (
@@ -998,6 +1010,17 @@ def _add_points_subsampled_lod_wrapper_impl(
             gain=gain,
             child_attrs=child_attrs,
         )
+        level_radii = slice_optional_array(radii, indices, n_points)
+        if quality_reference is not None:
+            quality_level = lift_points_to_gsplats(
+                pos_arr[indices],
+                DEFAULT_POINT_RADIUS if level_radii is None else level_radii,
+                colors=None,
+            )
+            level_attrs = level_attrs_with_quality(
+                level_attrs,
+                mixture_quality(quality_level, quality_reference, device="cpu").quality,
+            )
         with warnings.catch_warnings():
             if gain > 1.0:
                 warnings.filterwarnings(
@@ -1009,7 +1032,7 @@ def _add_points_subsampled_lod_wrapper_impl(
                 f"child_{child_index}",
                 pos_arr[indices],
                 colors=level_colors,
-                radii=slice_optional_array(radii, indices, n_points),
+                radii=level_radii,
                 sharpness=slice_optional_array(sharpness, indices, n_points),
                 scalars=level_scalars,
                 labels=slice_optional_array(labels, indices, n_points),
@@ -1051,7 +1074,11 @@ def _add_points_subsampled_lod_wrapper_impl(
             additive_lod=resolved_additive,
             additive_lod_slices=slices,
             wrapper_coverage_fraction=coverage_vals[-1],
-            **child_attrs,
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if quality_stamps
+                else child_attrs
+            ),
         )
     else:
         lod_group_node.add_points(
@@ -1075,7 +1102,11 @@ def _add_points_subsampled_lod_wrapper_impl(
             ),
             substitutive_lod=None,
             coverage_fraction=coverage_vals[-1],
-            **child_attrs,
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if quality_stamps
+                else child_attrs
+            ),
         )
     return lod_group_node
 
@@ -1162,6 +1193,7 @@ def add_points_substitutive_lod_wrapper_impl(
         compose_additive_under_substitutive,
         gsplat_additive_lod_from,
         level_additive_lod,
+        level_attrs_with_quality,
         resident_slice_count,
         resolve_lod_ladder,
     )
@@ -1268,6 +1300,7 @@ def add_points_substitutive_lod_wrapper_impl(
         seed=spec.get("seed"),
         coarsen_dims=coarsen_dims,
         max_aspect=spec.get("max_aspect", 3.0),
+        quality_stamps=bool(spec["quality_stamps"]),
     )
 
     # Degenerate input -> finest Points shape rather than a one-child LOD group.
@@ -1398,7 +1431,13 @@ def add_points_substitutive_lod_wrapper_impl(
             lod_group=None,
             additive_lod=gsplat_additive_lod_from(lvl_spec, int(lvl_data.n_splats)),
             coverage_fraction=coverage_vals[idx],
-            **gsplat_child_attrs,
+            **(
+                level_attrs_with_quality(
+                    gsplat_child_attrs, float(lvl_data.stats["quality"])
+                )
+                if spec["quality_stamps"]
+                else gsplat_child_attrs
+            ),
         )
 
     if fine_partition is not None:
@@ -1424,7 +1463,11 @@ def add_points_substitutive_lod_wrapper_impl(
             additive_lod=finest_additive,
             additive_lod_slices=slices,
             wrapper_coverage_fraction=coverage_vals[-1],
-            **child_attrs,
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if spec["quality_stamps"]
+                else child_attrs
+            ),
         )
         return lod_group_node
 
@@ -1453,7 +1496,11 @@ def add_points_substitutive_lod_wrapper_impl(
         ),
         substitutive_lod=None,
         coverage_fraction=coverage_vals[-1],
-        **child_attrs,
+        **(
+            level_attrs_with_quality(child_attrs, 1.0)
+            if spec["quality_stamps"]
+            else child_attrs
+        ),
     )
 
     return lod_group_node

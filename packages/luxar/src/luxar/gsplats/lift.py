@@ -860,6 +860,7 @@ def coarse_substitutive_levels(
     seed: Optional[int] = None,
     coarsen_dims: Optional[Sequence[int]] = None,
     max_aspect: Optional[float] = 3.0,
+    quality_stamps: bool = True,
 ) -> "List[GSplatData]":
     """Coarse substitutive levels of a lifted point cloud (render-light conserved).
 
@@ -880,9 +881,11 @@ def coarse_substitutive_levels(
 
     Returns the coarse levels **finest → coarsest** (substitutive index 1..L),
     each a flat :class:`GSplatData` — one entry per synthesised coarser level.
-    Empty only if the pyramid collapsed to level 0 alone; for degenerate input
-    the coarsest entry (``[-1]``) may itself have ``n_splats == 0`` (callers
-    treat both as "no usable coarse levels" — see the adders' degenerate guards).
+    When ``quality_stamps`` is true and the reference is non-empty, every level
+    carries its measured value in ``stats["quality"]``. Empty only if the pyramid
+    collapsed to level 0 alone; for degenerate input the coarsest entry (``[-1]``)
+    may itself have ``n_splats == 0`` (callers treat both as "no usable coarse
+    levels" — see the adders' degenerate guards).
     """
     from .lod.substitutive import make_substitutive_lod
 
@@ -904,19 +907,22 @@ def coarse_substitutive_levels(
             lvl = _cap_aspect(lvl, coarsen_dims, float(max_aspect)).flattened()
         ls = render_light(lvl)
         scale = (light0 / ls) if ls > 0 else 1.0
-        out.append(
-            GSplatData(
-                centers=np.asarray(lvl.centers, dtype=np.float32),
-                amplitudes=(
-                    np.asarray(lvl.amplitudes, dtype=np.float64) * scale
-                ).astype(np.float32),
-                cholesky_factors=np.asarray(lvl.cholesky_factors, dtype=np.float32),
-                colors=(
-                    None if lvl.colors is None else np.asarray(lvl.colors, np.float32)
-                ),
-                truncation_radius=float(lifted.truncation_radius),
-            )
+        final_level = GSplatData(
+            centers=np.asarray(lvl.centers, dtype=np.float32),
+            amplitudes=(np.asarray(lvl.amplitudes, dtype=np.float64) * scale).astype(
+                np.float32
+            ),
+            cholesky_factors=np.asarray(lvl.cholesky_factors, dtype=np.float32),
+            colors=(None if lvl.colors is None else np.asarray(lvl.colors, np.float32)),
+            truncation_radius=float(lifted.truncation_radius),
         )
+        if quality_stamps and lifted.n_splats > 0:
+            from .lod.quality import mixture_quality
+
+            final_level.stats["quality"] = mixture_quality(
+                final_level, lifted, device=device
+            ).quality
+        out.append(final_level)
     return out
 
 

@@ -527,7 +527,7 @@ describe('displayedQualityFraction (Q·e readout)', () => {
     expect(displayedQualityFraction(node)).toBeCloseTo(0.6, 10);
   });
 
-  it('defaults Q to 1 when the level quality was not measured (e-only stamps)', () => {
+  it('reports unmeasured when the level has energy but no quality stamp', () => {
     const node: ProgressNode = {
       visible: true,
       userData: {
@@ -538,7 +538,27 @@ describe('displayedQualityFraction (Q·e readout)', () => {
         attrs: { level_stats: { reference_energy: 100 } },
       },
     };
-    expect(displayedQualityFraction(node)).toBeCloseTo(0.8, 10);
+    expect(displayedQualityFraction(node)).toBeNull();
+  });
+
+  it('reports a partially quality-stamped subtree as unmeasured', () => {
+    const measured: ProgressNode = {
+      userData: {
+        nodeType: 'gsplats',
+        visibleSplatCount: 10,
+        committedEnergyFraction: 0.8,
+        attrs: { level_stats: { quality: 0.75, reference_energy: 100 } },
+      },
+    };
+    const unmeasured: ProgressNode = {
+      userData: {
+        nodeType: 'gsplats',
+        visibleSplatCount: 10,
+        committedEnergyFraction: 0.9,
+        attrs: { level_stats: { reference_energy: 100 } },
+      },
+    };
+    expect(displayedQualityFraction(group([measured, unmeasured]))).toBeNull();
   });
 
   it('returns null on an unstamped dataset or an empty subtree', () => {

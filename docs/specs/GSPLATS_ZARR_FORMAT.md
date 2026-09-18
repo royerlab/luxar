@@ -743,7 +743,13 @@ to counts.
   quality *Q* = `1 − ‖level − finest‖²/‖finest‖²` ∈ [0, 1] of the COMPLETE
   level vs its group's finest content (constant-cost sampled estimator, see
   `luxar.gsplats.lod.quality`). The finest side is 1.0 by definition
-  (including each part leaf of an `overview` fine partition).
+  (including each part leaf of an `overview` fine partition). Synthesised-GSplat
+  levels measure the final float32 level immediately before serialization, so
+  amplitude encoding/quantization is not included. Same-type Points and Lines
+  levels measure a fixed isotropic point/bead lift of the geometry that is
+  written: Points score the geometric subsample and radii, while Lines also
+  capture width compensation. Neither same-type arm scores RGB/alpha or residual
+  HDR color gain.
 - **`level_stats.median_footprint`** (per GSplat `kind=lod` child): median
   geometric-mean marginal sigma across the columns named by sibling key
   **`level_stats.footprint_dims`**, in node-local scene units. Those indices
@@ -756,12 +762,13 @@ to counts.
   measurement). The viewer retained that policy after the #2685 sweep.
   Missing, invalid, or mismatched stamps keep the occupancy selector unchanged;
   explicit legacy `coverage_fractions` are therefore never overridden.
+  Points/Lines `kind=lod` children carry `quality` but no `median_footprint`, so
+  they remain occupancy-selected.
   `lodBias` remains an area factor, so the accepted footprint scales by
   `1/sqrt(b)`; for bias ≥ 1 it is inert once the finest stamped level is
   selected, while bias below 1 can select a coarser level.
-  Content-changing rewrites drop both measured keys rather than carrying stale
-  values; rebuilding or running `gsplat annotate-quality` restores them. Points
-  and Lines have no equivalent stamp yet and remain occupancy-selected.
+  Content-changing GSplat rewrites drop both measured keys rather than carrying
+  stale values; rebuilding or running `gsplat annotate-quality` restores them.
 
 The viewer's recursive quality algebra: a leaf currently shows the estimate
 `q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its
@@ -774,11 +781,12 @@ candidate's loaded energy fraction `e(k)` reaches a threshold (0.6) instead of
 waiting for the count crossover; `Q` feeds the layers-panel / data-monitor
 readouts.
 
-Stamps are written by every recipe build (`RecipeParams.quality_stamps`,
-default on; `Q` measurement can be disabled with `--no-quality-stamps`) and
-can be retrofitted onto existing stores in place — no refit, no re-ladder —
-with `luxar gsplat annotate-quality <store> [--with-quality]` (re-stamps the
-root `content_hash`, so viewer caches invalidate automatically).
+Stamps are written by every recipe build (`RecipeParams.quality_stamps`, default
+on; `Q` measurement can be disabled with `--no-quality-stamps`) and by Points /
+Lines scene substitutive ladders unless their spec sets `quality_stamps=False`.
+GSplat stamps can be retrofitted onto existing stores in place — no refit, no
+re-ladder — with `luxar gsplat annotate-quality <store> [--with-quality]`
+(re-stamps the root `content_hash`, so viewer caches invalidate automatically).
 
 Related build-side geometry: `stream:<C>` ladders inside a lod group are
 **sibling-aware** — every level with a coarser sibling starts its ladder at

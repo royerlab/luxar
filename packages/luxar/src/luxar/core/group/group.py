@@ -296,10 +296,11 @@ class Group(Node):
                 ``levels`` (``n_lods``), ``method``, ``truncation_radius``,
                 ``device``, ``seed``, ``coverage_fractions``, ``coarsen_dims``,
                 ``max_aspect`` (anisotropy cap on the coarse levels, default
-                3.0; ``None`` disables).
+                3.0; ``None`` disables), and ``quality_stamps`` (measure
+                per-level quality, default ``True``).
                 ``coarse="points"`` refuses ``method``, ``truncation_radius``,
-                ``device``, ``coarsen_dims``, and ``max_aspect`` because no
-                Gaussian lift or merge occurs.
+                ``device``, ``coarsen_dims``, and ``max_aspect`` because they
+                do not affect the written same-type geometry.
                 Integer ``coarsen_dims`` entries name the scene-ordered position
                 columns after ``dim_order`` has been applied.
                 For stacked nodes, every discrete hidden coordinate must fit in
@@ -452,6 +453,8 @@ class Group(Node):
                 luminous blending; the coarsest level must represent every
                 occupied discrete hidden coordinate. ``scalars``+``colormap``
                 are baked only for the Gaussian coarse path.
+                Each level carries ``level_stats.quality`` unless the spec sets
+                ``quality_stamps=False``.
                 Composes with ``additive_lod`` (which then describes how each
                 level streams in; every level is laddered by default, pass
                 ``additive_lod=False`` to opt out). Mutually exclusive with

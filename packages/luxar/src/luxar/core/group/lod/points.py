@@ -80,8 +80,8 @@ def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]
         same_type="points",
         inapplicable_reasons={
             "truncation_radius": (
-                "it controls the Gaussian footprint used by the lift, and "
-                "same-type point levels are not lifted"
+                "it controls stored Gaussian footprints; same-type point levels "
+                "store Points and use a fixed lift only for quality measurement"
             ),
             "max_aspect": (
                 "it caps anisotropy on merged Gaussian levels, and same-type "
@@ -92,8 +92,8 @@ def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]
                 "point levels are spatially stratified instead"
             ),
             "device": (
-                "it selects where Gaussian clustering runs, and same-type "
-                "point levels use the CPU point sampler"
+                "it selects where Gaussian clustering runs; same-type point "
+                "levels use the CPU sampler and a CPU-pinned quality estimate"
             ),
             "coarsen_dims": (
                 "it selects Gaussian merge dimensions, and same-type point "
