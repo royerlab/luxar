@@ -746,6 +746,14 @@ def _reject_before_wrapper(
         raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
 
+def _resolved_source_dtype(result: Any, override: Optional[str]) -> Optional[str]:
+    """Prefer an explicit source dtype, else use recorded fitting provenance."""
+    if override is not None:
+        return override
+    value = result.stats.get("source_dtype")
+    return value if isinstance(value, str) else None
+
+
 def add_gsplats_from_data_impl(
     group: "Group",
     *,
@@ -825,9 +833,7 @@ def add_gsplats_from_data_impl(
             )
             lod_group = {**lod_group, "coarsen_dims": resolved}
 
-    if _source_dtype is None:
-        value = result.stats.get("source_dtype")
-        _source_dtype = value if isinstance(value, str) else None
+    _source_dtype = _resolved_source_dtype(result, _source_dtype)
 
     # Resolve the two LOD axes. Substitutive first (it can produce a
     # multi-level result), then additive (uniform across levels).
