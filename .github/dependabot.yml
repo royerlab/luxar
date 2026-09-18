@@ -22,6 +22,11 @@ updates:
       - dependency-name: "@types/node"
         update-types:
           - "version-update:semver-major"
+      # three runtime upgrades follow THREE_VERSION_NOTES.md and move both ranges together.
+      - dependency-name: "@types/three"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
 
   # Rust / WASM acceleration crate
   - package-ecosystem: cargo
