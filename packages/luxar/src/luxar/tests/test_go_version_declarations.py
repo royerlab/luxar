@@ -16,16 +16,46 @@ def _version_tuple(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
 
+def _parse_declarations(
+    workflow: str, makefile: str, go_mod: str
+) -> tuple[str, str, str]:
+    job = re.search(r"(?ms)^  go-launcher:\n(.*?)(?=^  \S|\Z)", workflow)
+    assert job, "ci.yml must define the go-launcher job"
+    ci = re.search(r"go-version: '(\d+\.\d+)'", job.group(1))
+    assert ci, "the go-launcher job must declare a major.minor go-version"
+    bootstrap = re.search(r"^GO_VERSION \?= (\d+\.\d+\.\d+)$", makefile, re.MULTILINE)
+    assert bootstrap, "Makefile must declare a three-part GO_VERSION pin"
+    floor = re.search(r"^go (\d+\.\d+(?:\.\d+)?)$", go_mod, re.MULTILINE)
+    assert floor, "go.mod must declare a two- or three-part Go language floor"
+    return ci.group(1), bootstrap.group(1), floor.group(1)
+
+
 @pytest.fixture(scope="module")
 def declarations() -> tuple[str, str, str]:
     workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     go_mod = (REPO / "packages/luxar-launcher/go.mod").read_text(encoding="utf-8")
-    ci = re.search(r"go-version: '(\d+\.\d+)'", workflow)
-    bootstrap = re.search(r"^GO_VERSION \?= (\d+\.\d+\.\d+)$", makefile, re.MULTILINE)
-    floor = re.search(r"^go (\d+\.\d+)$", go_mod, re.MULTILINE)
-    assert ci and bootstrap and floor
-    return ci.group(1), bootstrap.group(1), floor.group(1)
+    return _parse_declarations(workflow, makefile, go_mod)
+
+
+def test_declaration_parser_scopes_ci_version_to_launcher_job() -> None:
+    workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    go_mod = (REPO / "packages/luxar-launcher/go.mod").read_text(encoding="utf-8")
+    unrelated_job = "  unrelated:\n    with:\n      go-version: '9.99'\n"
+    ci, _, _ = _parse_declarations(unrelated_job + workflow, makefile, go_mod)
+    assert ci == "1.27"
+
+
+def test_declaration_parser_accepts_three_part_module_floor() -> None:
+    workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    go_mod = (REPO / "packages/luxar-launcher/go.mod").read_text(encoding="utf-8")
+    patched_go_mod = re.sub(
+        r"^go (\d+\.\d+)$", r"go \1.0", go_mod, count=1, flags=re.MULTILINE
+    )
+    _, _, floor = _parse_declarations(workflow, makefile, patched_go_mod)
+    assert floor.endswith(".0")
 
 
 def test_ci_toolchain_satisfies_module_floor(
