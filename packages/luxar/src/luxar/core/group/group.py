@@ -907,6 +907,7 @@ class Group(Node):
         partition: Any = None,
         substitutive_lod: Any = _UNSET_LOD,
         additive_lod: Any = _UNSET_LOD,
+        _source_dtype: Optional[str] = None,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add a Gaussian splats node.
@@ -1020,6 +1021,7 @@ class Group(Node):
                 fill_sigma=fill_sigma,
                 substitutive_lod=resolved_substitutive_lod,
                 additive_lod=resolved_additive_lod,
+                _source_dtype=_source_dtype,
                 # The array adder has always preserved caller amplitudes.
                 normalize_amplitudes=False,
                 partition=partition,
@@ -1052,6 +1054,7 @@ class Group(Node):
                 fill=fill,
                 fill_sigma=fill_sigma,
                 partition=partition,
+                _source_dtype=_source_dtype,
                 **attrs,
             ),
         )

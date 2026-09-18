@@ -1738,6 +1738,146 @@ class TestMergeOrchestrator:
         # Total splat count conserved vs the flat-concat path.
         assert total_splats(node) == total
 
+    @pytest.mark.parametrize(
+        ("n_tiles", "n_t", "n_c", "flat", "channel_colors"),
+        [
+            (1, 1, 1, False, None),
+            (3, 1, 1, False, None),
+            (1, 1, 2, False, None),
+            (1, 1, 2, False, [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]),
+            (2, 1, 1, True, None),
+            (2, 2, 1, True, None),
+            (2, 1, 2, True, None),
+            (2, 1, 2, True, [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]),
+        ],
+    )
+    def test_merge_preserves_source_matched_amplitudes(
+        self,
+        tmp_path: Path,
+        n_tiles: int,
+        n_t: int,
+        n_c: int,
+        flat: bool,
+        channel_colors,
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import iter_leaves
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        expected_parts = []
+        source_values = np.geomspace(
+            1e-3, 1.0, n_t * n_c * n_tiles * 32, dtype=np.float32
+        )
+        offset = 0
+        for timepoint in range(n_t):
+            for channel in range(n_c):
+                for tile_index in range(n_tiles):
+                    path = tiles_dir / output_filename(
+                        timepoint, channel, tile_index, n_t, n_c, n_tiles
+                    )
+                    tile = self._tile(32, offset)
+                    tile.amplitudes[:] = source_values[offset : offset + tile.n_splats]
+                    offset += tile.n_splats
+                    tile.stats["source_dtype"] = "uint8"
+                    tile.save(path, amplitude_bits="auto")
+                    expected_parts.append(tile.amplitudes)
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=n_t, n_channels=n_c, n_tiles=n_tiles),
+            out_dir,
+            channel_colors=channel_colors,
+            verbose=False,
+            flat=flat,
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        amplitude_arrays = []
+
+        def collect(group) -> None:
+            if "amplitudes" in group.array_keys():
+                amplitude_arrays.append(group["amplitudes"])
+            for name in group.group_keys():
+                collect(group[name])
+
+        collect(root)
+        assert amplitude_arrays
+        assert root["fitting"].attrs["source_dtype"] == "uint8"
+        for array in amplitude_arrays:
+            encoding = array.attrs["encoding"]
+            if encoding["name"] == "array_ref":
+                assert np.dtype(root[encoding["target"]].dtype) == np.dtype(np.uint8)
+            else:
+                assert np.dtype(array.dtype) == np.dtype(np.uint8)
+                assert encoding["name"] == "geolog_scalar_uint8"
+        node, _ = self._read_tree(final)
+        actual = np.concatenate(
+            [
+                sublod.amplitudes
+                for leaf in iter_leaves(node)
+                for sublod in leaf.additive_sublods
+            ]
+        )
+        expected = np.concatenate(expected_parts)
+        np.testing.assert_allclose(
+            np.sort(actual), np.sort(expected), rtol=0.04, atol=1e-7
+        )
+
+    @pytest.mark.parametrize("rebuild_final", [False, True])
+    def test_flat_merge_resume_does_not_require_deleted_tiles(
+        self, tmp_path: Path, rebuild_final: bool
+    ) -> None:
+        import shutil
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        n_timepoints = 2 if rebuild_final else 1
+        self._write_tiles(out_dir / "tiles", n_t=n_timepoints, n_c=1, n_k=2)
+        manifest = BatchManifest(n_timepoints=n_timepoints, n_channels=1, n_tiles=2)
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
+
+        shutil.rmtree(out_dir / "tiles")
+        if rebuild_final:
+            shutil.rmtree(final)
+
+        assert merge_batch_results(manifest, out_dir, verbose=False, flat=True) == final
+
+    @pytest.mark.parametrize("n_tiles", [1, 2])
+    def test_merge_recipe_records_source_dtype(
+        self, tmp_path: Path, n_tiles: int
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for tile_index in range(n_tiles):
+            tile = self._tile(8, tile_index)
+            tile.stats["source_dtype"] = "uint8"
+            tile.save(
+                tiles_dir / output_filename(0, 0, tile_index, 1, 1, n_tiles),
+                amplitude_bits="auto",
+            )
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_tiles),
+            out_dir,
+            verbose=False,
+            recipe="stream",
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert root["fitting"].attrs["source_dtype"] == "uint8"
+
     def test_partition_matches_flat_total_and_has_tight_bounds(
         self, tmp_path: Path
     ) -> None:

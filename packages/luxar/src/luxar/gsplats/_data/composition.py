@@ -31,6 +31,18 @@ def _without_footprint_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _agreed_source_dtype(stats_list: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+    """Carry one recorded source dtype when every input that records it agrees."""
+    values = [stats["source_dtype"] for stats in stats_list if "source_dtype" in stats]
+    if (
+        values
+        and isinstance(values[0], str)
+        and all(value == values[0] for value in values)
+    ):
+        return {"source_dtype": values[0]}
+    return {}
+
+
 def _concatenate_label_channel(items: Sequence[Any]) -> tuple[Any, Any]:
     """Concatenate compatible categorical channels, or fail loudly."""
     presence = {item.label_ids is not None for item in items}
@@ -214,6 +226,7 @@ class CompositionMixin(_GSplatDataOps):
                 "splats_per_source": [0 for _ in datasets],
             }
             empty_stats.update(agreed_normalization_stats([x.stats for x in datasets]))
+            empty_stats.update(_agreed_source_dtype([x.stats for x in datasets]))
             label_ids, label_vocabulary = _concatenate_label_channel(datasets)
             return make(
                 centers=np.empty((0, d), dtype=np.float32),
@@ -265,6 +278,7 @@ class CompositionMixin(_GSplatDataOps):
         from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
         merged_stats.update(agreed_normalization_stats([d.stats for d in datasets]))
+        merged_stats.update(_agreed_source_dtype([d.stats for d in datasets]))
         total_time = sum(d.stats.get("time_seconds", 0) for d in non_empty)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
@@ -749,6 +763,9 @@ class CompositionMixin(_GSplatDataOps):
             "merged_from_channels": len(gsplats_per_channel),
             "splats_per_channel": [len(g.amplitudes) for g in gsplats_per_channel],
         }
+        merged_stats.update(
+            _agreed_source_dtype([g.stats for g in gsplats_per_channel])
+        )
         total_time = sum(g.stats.get("time_seconds", 0) for g in gsplats_per_channel)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time

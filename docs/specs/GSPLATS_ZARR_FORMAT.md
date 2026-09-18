@@ -1609,6 +1609,11 @@ invalid, floating-point, and wider integer source dtypes retain the existing
 AUTO selection. The option defaults to 16, so existing direct-save behavior is
 unchanged.
 
+For scene compilation, `LuxarZarrCompiler(gsplat_amplitude_bits="auto")`
+resolves that policy independently for each GSplatData/file node from its
+recorded `fitting/source_dtype`; explicit `8` or `16` remains a compiler-wide
+override. Point radii and line widths are unaffected.
+
 **Centers** are uint16 per-axis fixed-point (`linear_perchannel_u16`) in AUTO and
 MEMORY — each axis quantized over its own [min, max] to 65536 levels, decoded back to
 float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relative

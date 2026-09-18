@@ -104,6 +104,8 @@ def run_decimate_dataset(
                     output_path,
                     reduced.tree,
                     encoding_mode=encoding_mode_obj,
+                    amplitude_bits="auto",
+                    source_dtype=reduced.stats.get("source_dtype"),
                     compress=compress,
                     fitting_info=fitting,
                     fitting_config=config,

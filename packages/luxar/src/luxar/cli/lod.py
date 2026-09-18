@@ -1001,6 +1001,7 @@ def lod_recipe(
                         output_path,
                         ordering=ordering,  # type: ignore[arg-type]
                         encoding_mode=encoding_obj,
+                        amplitude_bits="auto",
                         compress=compress,  # type: ignore[arg-type]
                         root_attrs=source_appearance,
                     )
@@ -1016,6 +1017,8 @@ def lod_recipe(
                         result,
                         ordering=ordering,  # type: ignore[arg-type]
                         encoding_mode=encoding_obj,
+                        amplitude_bits="auto",
+                        source_dtype=data.stats.get("source_dtype"),
                         fitting_info=fitting_info,
                         fitting_config=fitting_config,
                         provenance_info=provenance_info,

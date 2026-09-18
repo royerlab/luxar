@@ -149,7 +149,9 @@ def add_gsplats_from_file_impl(
     # tree (kind=partition root, or lod with non-leaf children) has no flat
     # GSplatData equivalent, so it is GRAFTED node-for-node, reusing the scene's
     # own builders — the same subtree the file already holds.
-    node, stats = load_gsplat_node(path)
+    node, stats = load_gsplat_node(path, include_stats=True)
+    source_dtype = stats.get("source_dtype")
+    source_dtype = source_dtype if isinstance(source_dtype, str) else None
 
     if flatten:
         from luxar.gsplats.gsplat_data import GSplatData
@@ -164,6 +166,7 @@ def add_gsplats_from_file_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             lod_group=lod_group,
+            _source_dtype=source_dtype,
             **attrs,
         )
 
@@ -189,6 +192,7 @@ def add_gsplats_from_file_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             lod_group=lod_group,
+            _source_dtype=source_dtype,
             **attrs,
         )
 
@@ -236,7 +240,13 @@ def add_gsplats_from_file_impl(
         raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
     return graft_gsplat_node(
-        group, name=name, node=node, parent=parent, extend_to_all=extend_to_all, **attrs
+        group,
+        name=name,
+        node=node,
+        parent=parent,
+        extend_to_all=extend_to_all,
+        _source_dtype=source_dtype,
+        **attrs,
     )
 
 
@@ -722,6 +732,7 @@ def graft_gsplat_node(
     normalize_amplitudes: NormalizeSpec = True,
     _under_partition: Optional[bool] = None,
     _normalized: bool = False,
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     """Graft a pre-built ``GSplatNode`` subtree into the scene, node-for-node.
@@ -779,7 +790,11 @@ def graft_gsplat_node(
             node=node,
             parent=parent,
             extend_to_all=extend_to_all,
-            attrs={**attrs, "normalize_amplitudes": normalize_amplitudes},
+            attrs={
+                **attrs,
+                "normalize_amplitudes": normalize_amplitudes,
+                "_source_dtype": _source_dtype,
+            },
         )
 
     from luxar.gsplats.gsplat_data import GSplatData
@@ -845,6 +860,7 @@ def graft_gsplat_node(
             # Already normalised above, tree-wide. Re-running it on this leaf's
             # own distribution is the per-part hazard described there.
             normalize_amplitudes=False,
+            _source_dtype=_source_dtype,
             **attrs,
         )
 
@@ -959,6 +975,7 @@ def graft_gsplat_node(
                 # A nested ladder inside a partition-bound one is still inside the
                 # same tile, so the binding propagates down.
                 _under_partition=partition_bound,
+                _source_dtype=_source_dtype,
                 **child_attrs,
             )
         return wrapper
@@ -1016,6 +1033,7 @@ def graft_gsplat_node(
                 extend_to_all=extend_to_all,
                 _under_partition=child_under_partition,
                 _normalized=True,
+                _source_dtype=_source_dtype,
                 **child_attrs,
             )
         return wrapper

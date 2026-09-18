@@ -746,6 +746,14 @@ def _reject_before_wrapper(
         raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
 
+def _resolved_source_dtype(result: Any, override: Optional[str]) -> Optional[str]:
+    """Prefer an explicit source dtype, else use recorded fitting provenance."""
+    if override is not None:
+        return override
+    value = result.stats.get("source_dtype")
+    return value if isinstance(value, str) else None
+
+
 def add_gsplats_from_data_impl(
     group: "Group",
     *,
@@ -759,6 +767,7 @@ def add_gsplats_from_data_impl(
     lod_group: Any = None,
     additive_lod: Any = None,
     normalize_amplitudes: NormalizeSpec = True,
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -823,6 +832,8 @@ def add_gsplats_from_data_impl(
                 dim_order=dim_order,
             )
             lod_group = {**lod_group, "coarsen_dims": resolved}
+
+    _source_dtype = _resolved_source_dtype(result, _source_dtype)
 
     # Resolve the two LOD axes. Substitutive first (it can produce a
     # multi-level result), then additive (uniform across levels).
@@ -894,6 +905,7 @@ def add_gsplats_from_data_impl(
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
+            _source_dtype=_source_dtype,
             **attrs,
         )
 
@@ -912,6 +924,7 @@ def add_gsplats_from_data_impl(
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
+            _source_dtype=_source_dtype,
             **attrs,
         )
 
@@ -931,5 +944,6 @@ def add_gsplats_from_data_impl(
         dim_order=dim_order,
         fill=fill,
         fill_sigma=fill_sigma,
+        _source_dtype=_source_dtype,
         **attrs,
     )
