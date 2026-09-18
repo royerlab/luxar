@@ -5,8 +5,8 @@
     "cc-by": {
       "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
       "license": "cc-by-4.0",
-      "zenodo_doi": "10.5281/zenodo.21912280",
-      "zenodo_record": "21912280",
+      "zenodo_doi": "10.5281/zenodo.22804363",
+      "zenodo_record": "22804363",
       "zenodo_conceptdoi": "10.5281/zenodo.21912279",
       "base_url": null,
       "published": true
@@ -23,8 +23,8 @@
     "h2afva": {
       "title": "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint light-sheet timelapse as Gaussian splats (with a lighter 51-timepoint fit)",
       "license": "cc-by-4.0",
-      "zenodo_doi": "10.5281/zenodo.21912284",
-      "zenodo_record": "21912284",
+      "zenodo_doi": "10.5281/zenodo.22807312",
+      "zenodo_record": "22807312",
       "zenodo_conceptdoi": "10.5281/zenodo.21912283",
       "base_url": null,
       "published": true
@@ -32,8 +32,8 @@
     "droso-timelapse": {
       "title": "Drosophila melanogaster embryogenesis: a 500-timepoint light-sheet timelapse as Gaussian splats",
       "license": "cc-by-4.0",
-      "zenodo_doi": "10.5281/zenodo.22118695",
-      "zenodo_record": "22118695",
+      "zenodo_doi": "10.5281/zenodo.22804386",
+      "zenodo_record": "22804386",
       "zenodo_conceptdoi": "10.5281/zenodo.22118694",
       "base_url": null,
       "published": true
@@ -455,7 +455,6 @@
     "gsplats_4d_neuromast_2ch": {
       "bucket": "zenodo",
       "record": "cc-by",
-      "base_url": "https://data.luxarviewer.dev/inputs/neuromast-z-2713/",
       "license": "cc-by-4.0",
       "source": "Neuromast 2-channel light-sheet timelapse (iSIM)",
       "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). The imaging itself is unpublished; for the biology of this organ see Erzberger et al. (2020), co-authored by the data author: Erzberger, A., Jacobo, A., Dasgupta, A. & Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949-957 (2020). doi:10.1038/s41567-020-0894-9.",
@@ -581,15 +580,16 @@
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 1115714088,
+          "approx_bytes": 1112445452,
           "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
           "files": [
             {
               "name": "h2afva_51tp.gsplats.zarr.zip",
-              "sha256": "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae",
-              "bytes": 1115714088,
+              "sha256": "bb2f5d00b8a63e525ab6cd182b896c21f9a8a8b9bb3a64507611d0ab54bdc761",
+              "bytes": 1112445452,
               "superseded_sha256": [
-                "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11"
+                "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11",
+                "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae"
               ]
             }
           ]
@@ -627,8 +627,11 @@
       "files": [
         {
           "name": "drosophila_embryogenesis_500tp.gsplats.zarr.zip",
-          "sha256": "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b",
-          "bytes": 863811020
+          "sha256": "ee3193babb074e16958665bb96e880dea7d9af695b4521c1c2fbb81991f5b393",
+          "bytes": 1158979910,
+          "superseded_sha256": [
+            "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b"
+          ]
         }
       ]
     },
