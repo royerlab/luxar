@@ -1,0 +1,4 @@
+Name: webkit2gtk-4.0 compatibility module
+Description: Resolve webview_go's legacy pkg-config request to WebKitGTK 4.1
+Version: 4.1
+Requires: webkit2gtk-4.1

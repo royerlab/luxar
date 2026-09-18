@@ -155,6 +155,17 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "wiring",
     ),
     (
+        "packages/luxar-launcher/pkgconfig/webkit2gtk-4.0.pc",
+        "py",
+        "test_linux_launcher_builds_against_webkitgtk_4_1 parses the compatibility "
+        "module",
+    ),
+    (
+        "packages/luxar-launcher/pkgconfig/webkit2gtk-4.0.pc",
+        "go",
+        "the launcher cgo build resolves webview_go's pkg-config request through it",
+    ),
+    (
         "packages/luxar-viewer/src/tests/unit/gallery-selection.test.ts",
         "py",
         "the classifier scans it for repo-rooted readFileSync inputs",
@@ -1831,6 +1842,34 @@ def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:
         if job_name == "changes":
             continue
         assert checkout["with"]["ref"] == expected_ref, job_name
+
+
+def test_linux_launcher_builds_against_webkitgtk_4_1(workflow: str) -> None:
+    """The launcher must compile and run on current 4.1-only Linux hosts."""
+    job = yaml.safe_load(workflow)["jobs"]["go-launcher"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["env"]["PKG_CONFIG_PATH"] == (
+        "${{ github.workspace }}/packages/luxar-launcher/pkgconfig"
+    )
+
+    install_step = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Install WebView build deps (cgo)"
+    )
+    assert "libwebkit2gtk-4.1-dev" in install_step["run"]
+    assert "libwebkit2gtk-4.0-dev" not in install_step["run"]
+
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    assert (
+        'PKG_CONFIG_PATH="$(CURDIR)/$(LAUNCHER_SRC_DIR)/pkgconfig'
+        '$${PKG_CONFIG_PATH:+:$$PKG_CONFIG_PATH}"' in makefile
+    )
+
+    compatibility_module = (
+        REPO / "packages/luxar-launcher/pkgconfig/webkit2gtk-4.0.pc"
+    ).read_text(encoding="utf-8")
+    assert "Requires: webkit2gtk-4.1" in compatibility_module
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:

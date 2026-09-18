@@ -2095,10 +2095,9 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 			*) echo "❌ Unsupported Linux architecture: $$ARCH"; exit 1 ;; \
 		esac; \
 		echo "  • linux/$$GOARCH (CGO=1, WebKitGTK)..."; \
-		echo "    Requires: libwebkit2gtk-4.0-dev + pkg-config"; \
-		echo "    (webview_go pins webkit2gtk-4.0 — this is why CI builds the"; \
-		echo "     launcher on ubuntu-22.04; 24.04 ships only the 4.1 package)"; \
-		GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o "$$OUT_ABS/linux-$$GOARCH" .; \
+		echo "    Requires: libwebkit2gtk-4.1-dev + pkg-config"; \
+		PKG_CONFIG_PATH="$(CURDIR)/$(LAUNCHER_SRC_DIR)/pkgconfig$${PKG_CONFIG_PATH:+:$$PKG_CONFIG_PATH}" \
+			GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o "$$OUT_ABS/linux-$$GOARCH" .; \
 		cd - >/dev/null; \
 	else \
 		echo "❌ Unsupported host OS: $(OS)"; \

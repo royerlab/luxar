@@ -174,14 +174,14 @@ The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`,
 1. Locates `go` (PATH or `~/.local/go/bin/go`)
 2. Builds the launcher with **`CGO_ENABLED=1`** because the WebView library links against system WebKit
 3. On macOS: builds `darwin-arm64` + `darwin-amd64` then `lipo`-merges into `darwin-universal`. Fails loudly if amd64 build fails (no silent rename — universal binary must actually be universal)
-4. On Linux: builds `linux-<host-arch>` (requires `libwebkit2gtk-4.0-dev` + `pkg-config` — the pinned `webview_go` declares `#cgo pkg-config: gtk+-3.0 webkit2gtk-4.0`, which is why CI builds the launcher on ubuntu-22.04; 24.04 ships only the 4.1 package)
+4. On Linux: builds `linux-<host-arch>` against `libwebkit2gtk-4.1-dev` + `pkg-config`. The pinned `webview_go` still asks for `webkit2gtk-4.0`, so the build prepends the checked-in `packages/luxar-launcher/pkgconfig` compatibility module, which resolves that request to 4.1 without vendoring the binding.
 5. Drops binaries into `packages/luxar/src/luxar/cli/_launchers/`
 
 **Critical constraint: CGO blocks pure cross-compilation.** Unlike Rust/WASM (where pure-Go cross-compile from any host worked previously), the launcher cannot be built for Linux from a macOS host or vice-versa without a CGO cross-toolchain (Zig, etc.). For full cross-platform release artifacts, build each OS on its own CI matrix runner.
 
 **System library dependencies (end-user runtime):**
 - macOS: `WebKit.framework` — system-provided, present on every Mac, no install needed
-- Linux: SONAME `libwebkit2gtk-4.0.so.37`, packaged on Debian/Ubuntu as `libwebkit2gtk-4.0-37` — the runtime counterpart of the `webkit2gtk-4.0` pkg-config module the pinned `webview_go` links. Missing on minimal/server installs **and on distros that ship only 4.1** (verified: Ubuntu 24.04 offers only `libwebkit2gtk-4.1-0`), where the prebuilt launcher cannot start at all — see the launcher README
+- Linux: SONAME `libwebkit2gtk-4.1.so.0`, packaged on Debian/Ubuntu as `libwebkit2gtk-4.1-0`. It is absent on minimal/server installs, where the prebuilt launcher cannot start until the runtime is installed — see the launcher README.
 
 **Wheel packaging:** `_launchers/` and `_launcher_assets/` (icons) live inside the Python package, so they ride along into wheel builds automatically when present. Run `make build-launchers` before `hatch build` to populate the binaries; without it the wheel installs but `luxar export --native` raises `LauncherNotBuiltError` with a clear "run `make build-launchers`" hint.
 
@@ -196,7 +196,7 @@ make build-launchers
   └─ Linux:  GOOS=linux GOARCH=$(uname -m) CGO_ENABLED=1 go build → linux-<arch>
 ```
 
-**Runtime fallback:** end users can set `LUXAR_LAUNCHER_NO_WEBVIEW=1` to make the launcher open the system default browser instead of the embedded WebView. Useful for headless smoke tests. It does *not* let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time (cgo), so the loader aborts before `main()` on a system missing the `webkit2gtk-4.0` runtime.
+**Runtime fallback:** end users can set `LUXAR_LAUNCHER_NO_WEBVIEW=1` to make the launcher open the system default browser instead of the embedded WebView. Useful for headless smoke tests. It does *not* let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time (cgo), so the loader aborts before `main()` on a system missing the `webkit2gtk-4.1` runtime.
 
 See `packages/luxar-launcher/README.md` for source-level details and `packages/luxar/src/luxar/cli/README.md` for the full bundle output structure.
 
