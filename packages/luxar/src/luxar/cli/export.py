@@ -126,11 +126,51 @@ class SceneFacts:
     has_control_panel: bool = False
     #: The dimension the panel steps, and how many stops it names.
     chapter_dimension: str | None = None
+    #: Authored ``Chapter`` entries. NOT the number of tiles: a chapter only
+    #: supplies a slot's sublabel, so a dimension coordinate with no authored
+    #: chapter still gets a tile, labelled from the dimension's categories.
     chapter_count: int = 0
+    #: Tiles the panel actually draws -- one per coordinate of the chapter
+    #: dimension. The protein-universe scene authors 20 chapters on a 21-value
+    #: dimension (slot 0 is the Overview), so quoting `chapter_count` in the
+    #: testing notes told the operator to expect 20 tiles and count 21.
+    panel_tiles: int = 0
     #: Dimension names in order, and which of them the viewer displays.
     dimensions: tuple[str, ...] = ()
     displayed: tuple[str, ...] = ()
     citation: str | None = None
+
+    @property
+    def stops(self) -> int:
+        """Tiles the panel draws, for operator-facing text.
+
+        Falls back to the authored chapter count so a `SceneFacts` built by
+        hand -- a test, or any caller not going through `read_scene_facts` --
+        still reports a sensible number instead of silently printing zero and
+        dropping the scene summary from the README entirely.
+        """
+        return self.panel_tiles or self.chapter_count
+
+
+def _coordinate_count(dim: dict) -> int:
+    """How many coordinates a dimension has, and so how many tiles it draws.
+
+    Prefers the explicit ``categories`` list, which is what labels the tiles.
+    Falls back to the inclusive span of ``range`` in units of ``step`` for a
+    continuous or discrete dimension that names no categories. Returns 0 when
+    neither is readable, so the caller can choose its own fallback.
+    """
+    cats = dim.get("categories")
+    if isinstance(cats, list) and cats:
+        return len(cats)
+    rng = dim.get("range")
+    step = dim.get("step") or 1
+    if isinstance(rng, (list, tuple)) and len(rng) == 2 and step:
+        try:
+            return int(round((float(rng[1]) - float(rng[0])) / float(step))) + 1
+        except (TypeError, ValueError, ZeroDivisionError):
+            return 0
+    return 0
 
 
 def read_scene_facts(source: Path) -> SceneFacts:
@@ -154,6 +194,7 @@ def read_scene_facts(source: Path) -> SceneFacts:
     # than complaining -- so the shape is asserted in the export tests.
     dims = (attrs.get("scene_dimensions") or {}).get("dimensions") or []
     names, shown = [], []
+    panel_tiles = 0
     for dim in dims if isinstance(dims, list) else []:
         if not isinstance(dim, dict):
             continue
@@ -163,12 +204,15 @@ def read_scene_facts(source: Path) -> SceneFacts:
         names.append(name)
         if dim.get("display"):
             shown.append(name)
+        if name == panel.get("chapter_dimension"):
+            panel_tiles = _coordinate_count(dim)
     citation = attrs.get("citation") or {}
     return SceneFacts(
         title=viewer.get("title") or None,
         has_control_panel=bool(panel),
         chapter_dimension=panel.get("chapter_dimension") or None,
         chapter_count=len(chapters) if isinstance(chapters, dict) else 0,
+        panel_tiles=panel_tiles,
         dimensions=tuple(names),
         displayed=tuple(shown),
         citation=(citation.get("ref") or citation.get("short") or None)
@@ -354,7 +398,7 @@ def _generate_testing_notes(output: Path, facts: "SceneFacts") -> None:
     like the panel being broken when it is the network, and limits worth
     stating before someone finds them and assumes they are bugs.
     """
-    stops = facts.chapter_count or 0
+    stops = facts.stops
     notes = f"""Testing this package
 ====================
 
@@ -505,8 +549,7 @@ def _generate_readme(
             scene_lines.append(f"    Steppable    {hidden}")
     if facts.has_control_panel and facts.chapter_dimension:
         scene_lines.append(
-            f"    Panel        {facts.chapter_count} stops "
-            f"along '{facts.chapter_dimension}'"
+            f"    Panel        {facts.stops} stops along '{facts.chapter_dimension}'"
         )
     if facts.citation:
         scene_lines.append(f"    Data         {facts.citation}")

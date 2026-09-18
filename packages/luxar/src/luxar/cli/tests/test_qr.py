@@ -151,3 +151,54 @@ def test_inverting_swaps_dark_and_light_but_keeps_the_shape() -> None:
     inverted = qr_ascii(matrix, border=2, invert=True)
     assert normal != inverted
     assert len(normal) == len(inverted)
+
+
+def test_padding_codewords_are_the_specified_alternating_pair() -> None:
+    """Pin the pad bytes, which the decoder oracle structurally cannot see.
+
+    "Does it scan" is the right oracle for almost everything here, but it has
+    one blind spot: padding lives PAST the terminator, so a symbol with wrong
+    pad bytes still decodes to the right payload. The error correction is
+    computed over those bytes, so a conforming reader is happy and only a
+    comparison against the specification catches it — and it was exactly one
+    codeword of padding that started the segno confusion described above.
+
+    The standard fills the remaining data capacity with 0b11101100 and
+    0b00010001 alternating, beginning with 0b11101100.
+    """
+    version = 1
+    total, ec_per_block, (g1, g2) = _qr._VERSION_TABLE[version]
+    capacity = total - ec_per_block * (g1 + g2)
+
+    def expected_pad(payload_len: int) -> list[int]:
+        """Codewords the payload itself occupies, then the rest as pad bytes."""
+        used_bits = 4 + 8 + 8 * payload_len  # mode + count + data
+        used = -(-min(used_bits + 4, capacity * 8) // 8)  # + terminator, rounded up
+        return [(0xEC, 0x11)[i % 2] for i in range(capacity - used)]
+
+    codewords = _qr._data_codewords(b"hi", version, capacity)
+    assert len(codewords) == capacity
+    # 4 bits mode + 8 bits count + 2 payload bytes + 4 bits terminator, padded
+    # to a byte boundary, is 4 codewords; the remaining 15 are padding, and 15
+    # is ODD -- the alternation does not end on a pair.
+    assert codewords[:4] == [0x40, 0x26, 0x86, 0x90]
+    assert codewords[4:] == expected_pad(2)
+    assert codewords[4:] == [0xEC, 0x11] * 7 + [0xEC]
+
+    # The two boundaries where an off-by-one in the fill loop would hide: a
+    # payload that lands exactly on capacity takes no padding, and one byte
+    # less takes exactly one pad codeword.
+    exact_len = capacity - 2
+    assert expected_pad(exact_len) == []
+    exact = _qr._data_codewords(b"Z" * exact_len, version, capacity)
+    assert len(exact) == capacity
+    # The 12-bit header (4 mode + 8 count) is not a whole number of bytes, so
+    # payload bytes STRADDLE codeword boundaries: the final codeword is the low
+    # nibble of the last "Z" (0x5A -> 1010) followed by the four terminator
+    # zeros, which is 0xA0 -- not 0x5A, and not a pad byte.
+    assert exact[-1] == 0xA0
+
+    one_short = _qr._data_codewords(b"Z" * (exact_len - 1), version, capacity)
+    assert expected_pad(exact_len - 1) == [0xEC]
+    assert one_short[-1] == 0xEC
+    assert len(one_short) == capacity

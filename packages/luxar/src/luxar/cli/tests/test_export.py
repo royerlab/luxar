@@ -22,12 +22,15 @@ from luxar.cli import app
 from luxar.cli import export as export_module
 from luxar.cli import main as main_module
 from luxar.cli.export import (
+    SceneFacts,
     _copy_viewer,
     _copy_zarr_data,
     _generate_readme,
     _generate_serve_script,
+    _generate_testing_notes,
     _get_serve_script_content,
     export_scene,
+    read_scene_facts,
 )
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -1014,3 +1017,80 @@ def test_every_surface_that_names_the_serve_command_says_python3() -> None:
     for para in readme.split("\n\n"):
         if "python serve.py" in para and "python3 serve.py" not in para:
             assert "Windows" in para, para
+
+
+def test_panel_tile_count_comes_from_the_dimension_not_the_chapter_dict() -> None:
+    """A coordinate with no authored Chapter still gets a tile.
+
+    A `Chapter` only supplies a slot's sublabel; the tile itself, and its main
+    label, come from the chapter dimension's `categories`. The protein-universe
+    scene authors 20 chapters on a 21-value `story` dimension because slot 0 is
+    the Overview, so quoting the chapter count told the operator to expect 20
+    tiles on the tablet and then count 21 -- in a TESTING.txt whose whole job is
+    to say what a correct run looks like.
+
+    Both numbers are kept because they answer different questions, and this
+    pins which one the operator-facing text uses.
+    """
+    attrs = {
+        "viewer_config": {
+            "control_panel": {
+                "chapter_dimension": "story",
+                # Authored for slots 1..3 only; slot 0 is an unauthored overview.
+                "chapters": {"1": {}, "2": {}, "3": {}},
+            }
+        },
+        "scene_dimensions": {
+            "dimensions": [
+                {"name": "story", "categories": ["Overview", "A", "B", "C"]},
+                {"name": "x", "display": True},
+            ]
+        },
+    }
+    with patch("luxar.cli.export.read_node_attrs", return_value=attrs):
+        facts = read_scene_facts(Path("ignored"))
+    assert facts.chapter_count == 3
+    assert facts.panel_tiles == 4
+
+    with TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        _generate_testing_notes(out, facts)
+        notes = (out / "TESTING.txt").read_text(encoding="utf-8")
+    assert "show 4 tiles" in notes
+    assert "show 3 tiles" not in notes
+
+
+def test_panel_tile_count_falls_back_to_a_range_then_to_the_chapters() -> None:
+    """A dimension naming no categories is counted from its inclusive range.
+
+    And when the dimension cannot be found at all, the authored chapter count
+    is still better than printing zero tiles.
+    """
+
+    def facts_for(dims: list[dict]) -> SceneFacts:
+        attrs = {
+            "viewer_config": {
+                "control_panel": {
+                    "chapter_dimension": "t",
+                    "chapters": {"1": {}, "2": {}},
+                }
+            },
+            "scene_dimensions": {"dimensions": dims},
+        }
+        with patch("luxar.cli.export.read_node_attrs", return_value=attrs):
+            return read_scene_facts(Path("ignored"))
+
+    # Inclusive span in units of step: 0..20 by 1 is 21 coordinates, not 20.
+    assert facts_for([{"name": "t", "range": [0, 20], "step": 1}]).panel_tiles == 21
+    assert facts_for([{"name": "t", "range": [0, 10], "step": 2}]).panel_tiles == 6
+
+    # Dimension absent: the count is genuinely unknown, so `panel_tiles` stays
+    # 0 and only the operator-facing `stops` substitutes the authored chapters
+    # -- the fallback lives in one place rather than at each use site.
+    absent = facts_for([{"name": "other"}])
+    assert absent.panel_tiles == 0
+    assert absent.stops == 2
+    # And a hand-built SceneFacts that knows only the chapter count still
+    # reports something, which is what stopped the README dropping its whole
+    # "About this scene" block when this field was introduced.
+    assert SceneFacts(chapter_count=20).stops == 20
