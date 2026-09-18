@@ -2560,7 +2560,13 @@ def test_droso_500tp_tracks_the_published_unculled_rebuild(gen: Any) -> None:
     )
     assert info["quality_quotable"] is False
     assert "published v2.0.0 bytes" in info["quality_note"]
-    assert "published archive carries no stamps" in info["quality_caveat"]
+    assert "per-timepoint fit-time quality stamps" in info["quality_caveat"]
+    assert "reference is unclassified" in info["quality_caveat"]
+    assert (
+        "no archive-level reconstruction figure is published" in info["quality_caveat"]
+    )
+    assert "carries no stamps" not in info["quality_caveat"]
+    assert "refit" not in info["quality_caveat"]
 
 
 def test_droso_gastrulation_keeps_the_archive_measurement(gen: Any) -> None:
