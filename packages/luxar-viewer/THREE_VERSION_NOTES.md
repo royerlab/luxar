@@ -17,6 +17,9 @@ Both pins sit on the same minor. That is new: the repo carried a deliberate
 one-minor skew (`three@~0.184.0` against `@types/three@~0.185.1`) from the r185
 type fix landing before the runtime could follow. The runtime caught up in
 #1683, and the skew is closed — a future bump moves both together.
+`pnpm check:three-types` enforces that shared minor across both declarations
+and the embed importmaps. Reopening a deliberate skew therefore requires an
+explicit change to the guard, not just different ranges in `package.json`.
 
 ## Why the types were allowed to lead, and why that is over
 
@@ -204,10 +207,13 @@ Trigger an explicit `~0.186.0` (or higher) bump when one of:
 1. Three.js releases notes for a stable WebGPU API surface, or
 2. Luxar needs a specific rendering or TSL feature only present in a newer minor.
 
-To perform the bump, edit the two ranges in `package.json` **by hand**. `three`
-lives under `peerDependencies`, and `pnpm add -E` would both move it into
-`dependencies` (shipping a second copy of three to every consumer of the
-published package) and replace the tilde with an exact version:
+To perform the bump, edit the two ranges in `package.json` **by hand**.
+Dependabot intentionally ignores `@types/three` minor and major updates because
+it cannot update the peer runtime alongside them; patch updates within the
+current minor remain automated. `three` lives under `peerDependencies`, and
+`pnpm add -E` would both move it into `dependencies` (shipping a second copy of
+three to every consumer of the published package) and replace the tilde with an
+exact version:
 
 ```jsonc
 "peerDependencies": { "three": "~0.186.0" }
@@ -218,6 +224,7 @@ Then:
 
 ```bash
 pnpm install
+pnpm check:three-types
 pnpm typecheck
 pnpm test --run
 # BEFORE regenerating anything — the failure set is the evidence:
@@ -230,8 +237,8 @@ All must be clean, and the regenerated snapshot diff must be _read_ rather than
 merely made green. Also bump the revision floor in
 `src/core/app/init/environment-guards.ts` (`assertThreeRevision`), which tracks
 the peer range's minor, and the pinned importmap URL in `examples/embed/`
-(`index.html` and `README.md`) — an importmap bypasses npm, so nothing else
-catches it and the example throws the guard's own error on load.
+(`index.html` and `README.md`). `pnpm check:three-types` verifies that both
+importmaps stay on the peer range's minor before the example can drift.
 
 The full E2E run is not ceremony: it is exactly what caught #1683, which
 `pnpm typecheck` and all ~11,900 unit tests passed straight through.

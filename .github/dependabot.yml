@@ -22,7 +22,8 @@ updates:
       - dependency-name: "@types/node"
         update-types:
           - "version-update:semver-major"
-      # three runtime upgrades follow THREE_VERSION_NOTES.md and move both ranges together.
+      # Dependabot cannot update the peer runtime; check:three-types enforces the
+      # THREE_VERSION_NOTES.md coupling while declaration patch updates stay automated.
       - dependency-name: "@types/three"
         update-types:
           - "version-update:semver-minor"
