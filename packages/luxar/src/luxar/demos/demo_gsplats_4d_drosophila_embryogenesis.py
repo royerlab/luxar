@@ -225,7 +225,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        # The largest payload in the corpus by some margin: 1,158,979,910 bytes
+        # The largest default demo download: 1,158,979,910 bytes
         # MEASURED on the shipped artifact, not projected. A one-time download,
         # with the prior generation measured at 0-2.3 MB in 0-4 requests per
         # timepoint after `optimize --profile archive` (173 requests before).
