@@ -321,10 +321,11 @@ on the viewing machine.
 This is lossy, so fidelity is measured rather than asserted. Across a 17-volume
 microscopy benchmark (4–107 M voxels; spinning-disk, confocal, light-sheet and iSIM),
 fits at each volume's cross-validated splat budget land between 26 and 67 dB PSNR at
-6–340× compression (median 99×), measured as the source volume at its stored bit depth
-(uint16 for most, uint8 or float32 where that is how the source is stored) over the
-bytes of the stored splat archive (manuscript in preparation). `luxar gsplat compare`
-reports PSNR/SSIM/MSE for your own data.
+6–340× compression (median 99×), measured as the bytes of the source volume at its
+stored bit depth (uint16 for most, uint8 or float32 where that is how the source is
+stored) over the bytes of the stored splat archive (manuscript in preparation). The two
+showcase fits above cover gigavoxel-scale source datasets, well beyond the benchmark's
+4–107 M-voxel range. `luxar gsplat compare` reports PSNR/SSIM/MSE for your own data.
 
 ### Emission and absorption, not just glow
 
