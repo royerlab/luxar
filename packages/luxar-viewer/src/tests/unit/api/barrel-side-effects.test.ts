@@ -68,19 +68,7 @@ describe('Public barrel side effects', () => {
 
     // Now import the barrel. Whatever is loaded here is what consumers see.
     await import('../../../index');
-    // This hook transforms the ENTIRE public module graph from cold — after
-    // `vi.resetModules()` there is nothing cached to reuse — so it is bounded by
-    // Vite's transform throughput, not by anything the assertions do. Against the
-    // 15 s local `hookTimeout` it fails as "Hook timed out in 15000ms" on a
-    // loaded machine, taking all 14 embeddability assertions silently with it:
-    // a hook failure reports as an infrastructure error, not as a barrel
-    // regression, so the suite reads as noise rather than as a finding.
-    // Observed doing exactly that while the rest of the suite was green.
-    //
-    // Keep the exceptional 90 s budget here rather than lifting the shared
-    // ceilings further: 15 s stays strict locally, while CI's 60 s ceiling
-    // covers contention for ordinary hooks without masking longer hangs.
-  }, 90_000);
+  });
 
   it('does not patch any of the five console methods (log/warn/error/info/debug)', () => {
     const pre = (globalThis as BarrelTestGlobals).__preBarrelConsole;
