@@ -466,6 +466,8 @@ def run_partition_dataset(
                     output_path,
                     partition_node,
                     encoding_mode=encoding_mode_obj,
+                    amplitude_bits="auto",
+                    source_dtype=data.stats.get("source_dtype"),
                     compress=compress,
                     fitting_info=fitting,
                     fitting_config=config,

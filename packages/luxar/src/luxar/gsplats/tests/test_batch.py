@@ -1738,6 +1738,68 @@ class TestMergeOrchestrator:
         # Total splat count conserved vs the flat-concat path.
         assert total_splats(node) == total
 
+    @pytest.mark.parametrize("n_tiles", [1, 3])
+    def test_merge_preserves_source_matched_amplitudes(
+        self, tmp_path: Path, n_tiles: int
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.tree import iter_leaves
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        self._write_tiles(tiles_dir, n_t=1, n_c=1, n_k=n_tiles)
+        expected_parts = []
+        for tile_index in range(n_tiles):
+            path = tiles_dir / output_filename(0, 0, tile_index, 1, 1, n_tiles)
+            tile = GSplatData.load(path)
+            tile.amplitudes[:] = np.geomspace(
+                1e-3, 1.0, tile.n_splats, dtype=np.float32
+            )
+            tile.stats["source_dtype"] = "uint8"
+            tile.save(path, amplitude_bits="auto")
+            expected_parts.append(tile.amplitudes)
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_tiles),
+            out_dir,
+            verbose=False,
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        amplitude_arrays = []
+
+        def collect(group) -> None:
+            if "amplitudes" in group.array_keys():
+                amplitude_arrays.append(group["amplitudes"])
+            for name in group.group_keys():
+                collect(group[name])
+
+        collect(root)
+        assert amplitude_arrays
+        for array in amplitude_arrays:
+            encoding = array.attrs["encoding"]
+            if encoding["name"] == "array_ref":
+                assert np.dtype(root[encoding["target"]].dtype) == np.dtype(np.uint8)
+            else:
+                assert np.dtype(array.dtype) == np.dtype(np.uint8)
+                assert encoding["name"] == "geolog_scalar_uint8"
+        node, _ = self._read_tree(final)
+        actual = np.concatenate(
+            [
+                sublod.amplitudes
+                for leaf in iter_leaves(node)
+                for sublod in leaf.additive_sublods
+            ]
+        )
+        expected = np.concatenate(expected_parts)
+        np.testing.assert_allclose(
+            np.sort(actual), np.sort(expected), rtol=0.04, atol=1e-7
+        )
+
     def test_partition_matches_flat_total_and_has_tight_bounds(
         self, tmp_path: Path
     ) -> None:

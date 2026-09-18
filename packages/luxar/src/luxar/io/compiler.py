@@ -19,6 +19,7 @@ from typing import (
     Dict,
     Iterator,
     List,
+    Literal,
     Mapping,
     Optional,
     Sequence,
@@ -127,6 +128,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         version: Luxar format version
         enable_spatial_index: Whether to build spatial indices for points
         encoding_mode: Encoding mode for array storage
+        gsplat_amplitude_bits: Optional AUTO amplitude tier for GSplats only
 
     Examples:
         Basic usage with context manager:
@@ -174,6 +176,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ordering_method: SpatialOrderingMethod = "hilbert",
         float16_allowed: bool = False,
         auto_partition_max_elements: Optional[int] = None,
+        gsplat_amplitude_bits: Optional[Literal[8, 16]] = None,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -194,6 +197,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 auto-partition). Useful for large datasets where you want a
                 per-part frustum-cull benefit without explicit per-call
                 boilerplate.
+            gsplat_amplitude_bits: Optional AUTO amplitude tier for GSplats only.
+                ``8`` selects uint8 geometric-log amplitudes when the adaptive
+                encoder would otherwise use more than 8 bits; ``16`` retains
+                the historical default. Points radii and Lines widths are
+                unaffected.
 
         Note:
             Physical units should be specified per-dimension using the Dimensions
@@ -265,6 +273,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 f"got {auto_partition_max_elements}"
             )
         self.auto_partition_max_elements: Optional[int] = auto_partition_max_elements
+        if gsplat_amplitude_bits not in (None, 8, 16):
+            raise ValueError(
+                "gsplat_amplitude_bits must be 8, 16, or None; "
+                f"got {gsplat_amplitude_bits!r}"
+            )
+        self._gsplat_amplitude_bits = gsplat_amplitude_bits
 
         # Emit the ACES-vs-LUT tone-mapping warning at most once per compile,
         # the first time a colormap LUT is written (see _write_colormap_lut_if_needed).
@@ -1879,12 +1893,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     # Per-attribute dataset serializers — bodies live in _compiler/datasets/
     # ------------------------------------------------------------------
 
-    def _make_dataset_ctx(self) -> DatasetCtx:
+    def _make_dataset_ctx(
+        self, *, positive_scalar_bits: Optional[Literal[8, 16]] = None
+    ) -> DatasetCtx:
         """Build the narrow encoder-config context for dataset serializers."""
         return DatasetCtx(
             encoder=self._encoder,
             encoding_mode=self._encoding_mode,
             compressor=self.compressor,
+            positive_scalar_bits=positive_scalar_bits,
         )
 
     def _claim_authoring_warning(self, kind: str, path: str) -> bool:
@@ -1923,7 +1940,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             scene_tone_mapping = self._scene.viewer_config.tone_mapping
         return GSplatsWriteCtx(
             store=self.store,
-            dataset_ctx=self._make_dataset_ctx(),
+            dataset_ctx=self._make_dataset_ctx(
+                positive_scalar_bits=self._gsplat_amplitude_bits
+            ),
             ordering_ctx=self._make_ordering_ctx(),
             compressor=self.compressor,
             scene_tone_mapping=scene_tone_mapping,

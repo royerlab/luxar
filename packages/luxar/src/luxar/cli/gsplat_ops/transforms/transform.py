@@ -557,6 +557,7 @@ def run_transform_dataset(
                     data.save(
                         output_path,
                         encoding_mode=encoding_mode_obj,
+                        amplitude_bits="auto",
                         include_fitting_info=True,
                         compress=compress,
                         root_attrs=read_authored_appearance(input_path),
@@ -569,6 +570,8 @@ def run_transform_dataset(
                         output_path,
                         result_node,
                         encoding_mode=encoding_mode_obj,
+                        amplitude_bits="auto",
+                        source_dtype=(stats or {}).get("source_dtype"),
                         compress=compress,
                         fitting_info=fitting_info,
                         fitting_config=fitting_config,

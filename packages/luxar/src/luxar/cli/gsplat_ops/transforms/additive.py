@@ -234,6 +234,8 @@ def run_additive_dataset(
                     output_path,
                     result,
                     encoding_mode=encoding_mode_obj,
+                    amplitude_bits="auto",
+                    source_dtype=(stats or {}).get("source_dtype"),
                     compress=compress,
                     fitting_info=fitting_info,
                     fitting_config=fitting_config,

@@ -186,6 +186,46 @@ def _tile_path(
     )
 
 
+def _source_dtype_for_tiles(
+    tiles_dir: Path,
+    t_indices: List[int],
+    c_indices: List[int],
+    n_tiles: int,
+    label: str,
+) -> Optional[str]:
+    """Return the unanimous recorded source dtype, else ``None``."""
+    from luxar._zarr_compat import open_group
+
+    source_dtypes: set[str] = set()
+    for t_real in t_indices:
+        for c_real in c_indices:
+            for tile_index in range(n_tiles):
+                tile_path = _tile_path(
+                    tiles_dir,
+                    t_real,
+                    c_real,
+                    tile_index,
+                    max(t_indices),
+                    max(c_indices),
+                    n_tiles,
+                    label,
+                )
+                if tile_path is None:
+                    continue
+                root = open_group(tile_path, mode="r")
+                source_dtype = (
+                    root["fitting"].attrs.get("source_dtype")
+                    if "fitting" in root
+                    else None
+                )
+                if not isinstance(source_dtype, str):
+                    return None
+                source_dtypes.add(source_dtype)
+                if len(source_dtypes) > 1:
+                    return None
+    return next(iter(source_dtypes), None)
+
+
 def _copy_or_resave_tile(
     source: Path,
     destination: Path,
@@ -1011,7 +1051,10 @@ def _merge_partition(
     recipe_params: "Optional[RecipeParams]" = None,
 ) -> Path:
     """Streaming tile-outer partition merge (the default, memory-safe path)."""
-    from luxar.gsplats.io.save_gsplats import write_partition_streaming
+    from luxar.gsplats.io.save_gsplats import (
+        resolve_amplitude_bits,
+        write_partition_streaming,
+    )
     from luxar.gsplats.merged_quality import collect_part_provenance
 
     tiles_dir = output_dir / "tiles"
@@ -1028,6 +1071,8 @@ def _merge_partition(
     t_indices, c_indices = _tile_indices(manifest)
     # Slot label MUST match what the fit array wrote (uniform=tile, content=box).
     label = "box" if manifest.mode == "content" else "tile"
+    source_dtype = _source_dtype_for_tiles(tiles_dir, t_indices, c_indices, n_k, label)
+    amplitude_bits = resolve_amplitude_bits("auto", source_dtype=source_dtype)
     # Reduction provenance for the pipeline/ group (None without a recipe),
     # plus the one background level every task subtracted (#1175) — the merge's
     # only chance to record it, since neither branch below has a root node whose
@@ -1072,7 +1117,12 @@ def _merge_partition(
                 _drop_root_quality(part)
                 part.stats["part_provenance"] = single_part_provenance
                 part.stats.update(floor_stats)
-                part.save(final_path, barrier_dims=barrier_dims, root_attrs=root_attrs)
+                part.save(
+                    final_path,
+                    amplitude_bits="auto",
+                    barrier_dims=barrier_dims,
+                    root_attrs=root_attrs,
+                )
                 if verbose:
                     aprint(f"  Wrote bare leaf: {part.n_splats:,} splats, {part.ndim}D")
             else:
@@ -1091,6 +1141,8 @@ def _merge_partition(
                     final_path,
                     node,
                     fitting_info={"part_provenance": single_part_provenance},
+                    amplitude_bits=amplitude_bits,
+                    source_dtype=source_dtype,
                     pipeline_info=pipeline_info,
                     barrier_dims=barrier_dims,
                     root_attrs=root_attrs,
@@ -1174,6 +1226,8 @@ def _merge_partition(
             final_path,
             _parts,
             max_elements=0,
+            amplitude_bits=amplitude_bits,
+            source_dtype=source_dtype,
             fitting_info=lambda: {"part_provenance": list(part_provenance)},
             pipeline_info=pipeline_info,
             barrier_dims=barrier_dims,
@@ -1267,6 +1321,7 @@ def _merge_flat(
                     merged = GSplatData.concatenate(datasets)
                     merged.save(
                         out_path,
+                        amplitude_bits="auto",
                         root_attrs=_dimension_root_attrs(
                             manifest.dimension_metadata, merged.ndim
                         )
@@ -1304,6 +1359,7 @@ def _merge_flat(
                 )
                 stacked.save(
                     out_path,
+                    amplitude_bits="auto",
                     root_attrs=_dimension_root_attrs(
                         manifest.dimension_metadata, stacked.ndim
                     ),
@@ -1336,6 +1392,7 @@ def _merge_flat(
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
             final.save(
                 final_path,
+                amplitude_bits="auto",
                 root_attrs=_dimension_root_attrs(
                     manifest.dimension_metadata, final.ndim
                 ),
@@ -1359,6 +1416,7 @@ def _merge_flat(
                 final = GSplatData.concatenate(datasets)
                 final.save(
                     final_path,
+                    amplitude_bits="auto",
                     root_attrs=_dimension_root_attrs(
                         manifest.dimension_metadata, final.ndim
                     ),
