@@ -659,10 +659,25 @@ def collect_test_file_counts(root: Path) -> dict[str, Any]:
         if viewer.exists()
         else []
     )
+    # CUDA tests are the GPU-kernel subset of the Python suite. Keep this narrower
+    # than every test whose name mentions CUDA: build/configuration tests do not
+    # require a GPU and therefore do not belong in the GPU-only coverage count.
+    python_root = root / "packages" / "luxar" / "src" / "luxar"
+    cuda_tests = [
+        path
+        for path in py_tests
+        if path.is_relative_to(python_root)
+        and "/cuda/tests/" in f"/{path.relative_to(python_root).as_posix()}"
+    ]
+    go_tests = [p for p in root.rglob("*_test.go") if not _is_skipped(p)]
     return {
         "python_count": len(py_tests),
         "ts_count": len(ts_tests),
         "e2e_count": len(e2e_tests),
+        "cuda_count": len(cuda_tests),
+        "cuda_files": [str(p) for p in cuda_tests],
+        "go_count": len(go_tests),
+        "go_files": [str(p) for p in go_tests],
     }
 
 
@@ -682,6 +697,24 @@ def get_test_statistics(
             "incomplete_kind": None,
         },
         "e2e": {"test_files": 0, "test_count": 0},
+        # GPU-kernel subset of the Python suite (counted once, inside "python").
+        "cuda": {
+            "test_files": 0,
+            "test_count": 0,
+            "test_passed": 0,
+            "test_skipped": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        },
+        "go": {
+            "test_files": 0,
+            "test_count": 0,
+            "test_passed": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        },
         "error": None,
     }
 
@@ -689,6 +722,20 @@ def get_test_statistics(
     test_stats["python"]["test_files"] = inventory["python_count"]
     test_stats["typescript"]["test_files"] = inventory["ts_count"]
     test_stats["e2e"]["test_files"] = inventory["e2e_count"]
+    test_stats["cuda"]["test_files"] = inventory["cuda_count"]
+    test_stats["go"]["test_files"] = inventory["go_count"]
+    # Static Go test count (`func TestX`), available without a Go toolchain.
+    go_static = 0
+    for gf in inventory["go_files"]:
+        try:
+            go_static += len(
+                re.findall(
+                    r"^func Test\w*\s*\(", Path(gf).read_text(errors="ignore"), re.M
+                )
+            )
+        except OSError:
+            pass
+    test_stats["go"]["test_count"] = go_static
 
     # Rust test-file heuristic: any .rs file containing a #[test] or #[cfg(test)].
     rust_path = root / "packages" / "luxar-viewer" / "src" / "wasm" / "rust"
@@ -710,9 +757,111 @@ def get_test_statistics(
         return test_stats
 
     _run_python_tests(root, test_stats, run_coverage=run_coverage)
+    _run_cuda_tests(root, test_stats, inventory["cuda_files"])
     _run_typescript_tests(root, test_stats, run_coverage=run_coverage)
     _run_rust_tests(root, test_stats)
+    _run_go_tests(root, test_stats, inventory["go_files"])
     return test_stats
+
+
+def _run_cuda_tests(
+    root: Path, test_stats: dict[str, Any], cuda_files: list[str]
+) -> None:
+    """Run only the CUDA-kernel test files and record collected / passed / skipped.
+
+    These tests are already part of the Python run; this pass exists so the
+    report can show how many exist and how many actually executed on this host
+    (without a CUDA device they skip rather than fail).
+    """
+    if not cuda_files:
+        return
+    with asection("CUDA-kernel tests (subset of the Python suite)"):
+        cmd = [
+            "hatch",
+            "run",
+            "pytest",
+            "-q",
+            "--tb=no",
+            "-p",
+            "no:cacheprovider",
+            *cuda_files,
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=1800, cwd=root
+            )
+        except FileNotFoundError:
+            _mark_incomplete(test_stats["cuda"], "tool_missing", "hatch not found")
+            return
+        except subprocess.TimeoutExpired:
+            _mark_incomplete(test_stats["cuda"], "timeout", "test run timed out")
+            return
+        sec = test_stats["cuda"]
+        for key, pat in (
+            ("test_passed", r"(\d+) passed"),
+            ("test_skipped", r"(\d+) skipped"),
+            ("test_failed", r"(\d+) failed"),
+        ):
+            m = re.search(pat, result.stdout + result.stderr)
+            sec[key] = int(m.group(1)) if m else 0
+        sec["test_count"] = (
+            sec["test_passed"] + sec["test_skipped"] + sec["test_failed"]
+        )
+        aprint(
+            f"Collected: {sec['test_count']}, Passed: {sec['test_passed']}, "
+            f"Skipped (no CUDA device): {sec['test_skipped']}, Failed: {sec['test_failed']}"
+        )
+        if result.returncode not in (0, 1) and sec["test_count"] == 0:
+            _mark_incomplete(
+                sec,
+                "run_failed",
+                f"test run exited with code {result.returncode} and produced no results",
+            )
+
+
+def _run_go_tests(root: Path, test_stats: dict[str, Any], go_files: list[str]) -> None:
+    """Run `go test -v ./...` once for every Go module in the repository."""
+    if not go_files:
+        return
+    module_roots = sorted(
+        path.parent for path in root.rglob("go.mod") if not _is_skipped(path)
+    )
+    sec = test_stats["go"]
+    if not module_roots:
+        _mark_incomplete(sec, "run_failed", "no go.mod found for Go tests")
+        return
+    with asection("Go tests"):
+        passed = failed = 0
+        for module_root in module_roots:
+            try:
+                result = subprocess.run(
+                    ["go", "test", "-v", "./..."],
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                    cwd=module_root,
+                )
+            except FileNotFoundError:
+                aprint("go not found; skipping Go tests")
+                _mark_incomplete(sec, "tool_missing", "go not found")
+                return
+            except subprocess.TimeoutExpired:
+                _mark_incomplete(sec, "timeout", "test run timed out")
+                return
+            module_passed = len(re.findall(r"^--- PASS:", result.stdout, re.M))
+            module_failed = len(re.findall(r"^--- FAIL:", result.stdout, re.M))
+            passed += module_passed
+            failed += module_failed
+            sec["test_passed"], sec["test_failed"] = passed, failed
+            if passed + failed:
+                sec["test_count"] = passed + failed
+            if result.returncode != 0 and module_failed == 0:
+                _mark_incomplete(
+                    sec,
+                    "run_failed",
+                    f"go test exited with code {result.returncode} and produced no results",
+                )
+        aprint(f"Passed: {passed}, Failed: {failed}")
 
 
 def _run_python_tests(
@@ -1038,7 +1187,7 @@ def validate_measurements(
         return []
 
     problems: list[str] = []
-    for lang in ("python", "typescript", "rust"):
+    for lang in ("python", "typescript", "rust", "go", "cuda"):
         section = test_stats.get(lang, {})
         reason = section.get("incomplete")
         if reason is None:
@@ -1284,21 +1433,25 @@ def generate_html_report(stats: dict[str, Any], output_file: Path) -> None:
         + tests["typescript"]["test_files"]
         + tests["e2e"]["test_files"]
         + tests["rust"]["test_files"]
+        + tests.get("go", {}).get("test_files", 0)
     )
     total_tests = (
         tests["python"]["test_count"]
         + tests["typescript"]["test_count"]
         + tests["rust"]["test_count"]
+        + tests.get("go", {}).get("test_count", 0)
     )
     total_passed = (
         tests["python"]["test_passed"]
         + tests["typescript"]["test_passed"]
         + tests["rust"]["test_passed"]
+        + tests.get("go", {}).get("test_passed", 0)
     )
     total_failed = (
         tests["python"]["test_failed"]
         + tests["typescript"]["test_failed"]
         + tests["rust"]["test_failed"]
+        + tests.get("go", {}).get("test_failed", 0)
     )
 
     py = langs["python"]
@@ -1457,7 +1610,7 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
     <div class="stat-card"><h3>Lines of Code</h3><div class="value">{total_code_lines:,}</div><div class="label">Executable only</div></div>
     <div class="stat-card"><h3>Total Lines</h3><div class="value">{total_lines:,}</div><div class="label">Incl. comments &amp; blanks</div></div>
     <div class="stat-card"><h3>Languages</h3><div class="value">{active_langs}</div><div class="label">Active in tree</div></div>
-    <div class="stat-card"><h3>Test Files</h3><div class="value">{total_test_files:,}</div><div class="label">Py + TS + Rust + E2E</div></div>
+    <div class="stat-card"><h3>Test Files</h3><div class="value">{total_test_files:,}</div><div class="label">Py + TS + Rust + Go + E2E</div></div>
     <div class="stat-card"><h3>Tests</h3><div class="value">{total_tests:,}</div><div class="label">Collected cases</div></div>
     <div class="stat-card"><h3>Coverage</h3><div class="value">{weighted_cov:.1f}%</div><div class="label">Py/TS weighted</div></div>
     <div class="stat-card"><h3>Commits</h3><div class="value">{git["total_commits"]:,}</div><div class="label">{git["commits_last_30_days"]} in last 30d</div></div>
@@ -1683,38 +1836,48 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
 
     out.append(f"""<section><h2>Test &amp; Quality Metrics</h2>
 <table>
-<tr><th>Metric</th><th class="number">Python</th><th class="number">TypeScript</th><th class="number">Rust</th><th class="number">E2E</th><th class="number">Total</th><th>Status</th></tr>
+<tr><th>Metric</th><th class="number">Python</th><th class="number">of which CUDA</th><th class="number">TypeScript</th><th class="number">Rust</th><th class="number">Go</th><th class="number">E2E</th><th class="number">Total</th><th>Status</th></tr>
 <tr><td>Test Files</td>
     <td class="number">{tests["python"]["test_files"]:,}</td>
+    <td class="number">{tests.get("cuda", {}).get("test_files", 0):,}</td>
     <td class="number">{tests["typescript"]["test_files"]:,}</td>
     <td class="number">{tests["rust"]["test_files"]:,}</td>
+    <td class="number">{tests.get("go", {}).get("test_files", 0):,}</td>
     <td class="number">{tests["e2e"]["test_files"]:,}</td>
     <td class="number">{total_test_files:,}</td>
     <td><span class="health-indicator health-good">Good</span></td></tr>
 <tr><td>Test Count</td>
     <td class="number">{tests["python"]["test_count"]:,}</td>
+    <td class="number">{tests.get("cuda", {}).get("test_count", 0):,}</td>
     <td class="number">{tests["typescript"]["test_count"]:,}</td>
     <td class="number">{tests["rust"]["test_count"]:,}</td>
+    <td class="number">{tests.get("go", {}).get("test_count", 0):,}</td>
     <td class="number">&mdash;</td>
     <td class="number">{total_tests:,}</td>
     <td><span class="health-indicator health-good">Comprehensive</span></td></tr>
 <tr><td>Tests Passed</td>
     <td class="number">{tests["python"]["test_passed"]:,}</td>
+    <td class="number">{tests.get("cuda", {}).get("test_passed", 0):,} <small>({tests.get("cuda", {}).get("test_skipped", 0):,} skipped, no GPU)</small></td>
     <td class="number">{tests["typescript"]["test_passed"]:,}</td>
     <td class="number">{tests["rust"]["test_passed"]:,}</td>
+    <td class="number">{tests.get("go", {}).get("test_passed", 0):,}</td>
     <td class="number">&mdash;</td>
     <td class="number">{total_passed:,}</td>
     <td>{pass_status}</td></tr>
 <tr><td>Code Coverage</td>
     <td class="number">{py_cov:.1f}%</td>
+    <td class="number">&mdash;</td>
     <td class="number">{ts_cov:.1f}%</td>
+    <td class="number">&mdash;</td>
     <td class="number">&mdash;</td>
     <td class="number">&mdash;</td>
     <td class="number">{weighted_cov:.1f}%</td>
     <td>{cov_status}</td></tr>
 <tr><td>Tests per 1K LOC</td>
     <td class="number">{py_tpk:.1f}</td>
+    <td class="number">&mdash;</td>
     <td class="number">{ts_tpk:.1f}</td>
+    <td class="number">&mdash;</td>
     <td class="number">&mdash;</td>
     <td class="number">&mdash;</td>
     <td class="number">{total_tpk:.1f}</td>
@@ -1883,11 +2046,13 @@ def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
         + tests["typescript"]["test_files"]
         + tests["e2e"]["test_files"]
         + tests["rust"]["test_files"]
+        + tests.get("go", {}).get("test_files", 0)
     )
     total_tests = (
         tests["python"]["test_count"]
         + tests["typescript"]["test_count"]
         + tests["rust"]["test_count"]
+        + tests.get("go", {}).get("test_count", 0)
     )
 
     lines: list[str] = []
@@ -1987,13 +2152,14 @@ def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
     if cuda["files"]:
         lines.append(
             f"- **CUDA** &mdash; {cuda['files']:,} files, {cuda['code_lines']:,} LOC, "
-            f"{cuda['definitions'].get('kernels', 0):,} kernels."
+            f"{cuda['definitions'].get('kernels', 0):,} kernels "
+            f"(tests {tests.get('cuda', {}).get('test_count', 0):,}, GPU hosts)."
         )
     go = langs["go"]
     if go["files"]:
         lines.append(
             f"- **Go (launchers)** &mdash; {go['files']:,} files, "
-            f"{go['code_lines']:,} LOC."
+            f"{go['code_lines']:,} LOC (tests {tests.get('go', {}).get('test_count', 0):,})."
         )
     lines.append("")
 
@@ -2026,32 +2192,48 @@ def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
     # Tests
     lines.append("## Tests & Coverage")
     lines.append("")
-    lines.append("| Metric | Python | TypeScript | Rust | E2E | Total |")
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+    cuda_tests = tests.get("cuda", {})
+    go_tests = tests.get("go", {})
     lines.append(
-        f"| Test files | {tests['python']['test_files']:,} | "
+        "| Metric | Python | of which CUDA | TypeScript | Rust | Go | E2E | Total |"
+    )
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.append(
+        f"| Test files | {tests['python']['test_files']:,} | {cuda_tests.get('test_files', 0):,} | "
         f"{tests['typescript']['test_files']:,} | "
-        f"{tests['rust']['test_files']:,} | "
+        f"{tests['rust']['test_files']:,} | {go_tests.get('test_files', 0):,} | "
         f"{tests['e2e']['test_files']:,} | {total_test_files:,} |"
     )
     lines.append(
-        f"| Tests collected | {tests['python']['test_count']:,} | "
+        f"| Tests collected | {tests['python']['test_count']:,} | {cuda_tests.get('test_count', 0):,} | "
         f"{tests['typescript']['test_count']:,} | "
-        f"{tests['rust']['test_count']:,} | &mdash; | {total_tests:,} |"
+        f"{tests['rust']['test_count']:,} | {go_tests.get('test_count', 0):,} | &mdash; | {total_tests:,} |"
     )
     total_passed = (
         tests["python"]["test_passed"]
         + tests["typescript"]["test_passed"]
         + tests["rust"]["test_passed"]
+        + tests.get("go", {}).get("test_passed", 0)
+    )
+    cuda_passed_cell = (
+        f"{cuda_tests.get('test_passed', 0):,} ({cuda_tests.get('test_skipped', 0):,} skipped, no GPU)"
+        if cuda_tests.get("test_skipped")
+        else f"{cuda_tests.get('test_passed', 0):,}"
     )
     lines.append(
-        f"| Tests passed | {tests['python']['test_passed']:,} | "
+        f"| Tests passed | {tests['python']['test_passed']:,} | {cuda_passed_cell} | "
         f"{tests['typescript']['test_passed']:,} | "
-        f"{tests['rust']['test_passed']:,} | &mdash; | {total_passed:,} |"
+        f"{tests['rust']['test_passed']:,} | {go_tests.get('test_passed', 0):,} | &mdash; | {total_passed:,} |"
     )
     lines.append(
-        f"| Coverage | {py_cov:.1f}% | {ts_cov:.1f}% | &mdash; | &mdash; | "
+        f"| Coverage | {py_cov:.1f}% | &mdash; | {ts_cov:.1f}% | &mdash; | &mdash; | &mdash; | "
         f"{weighted_cov:.1f}% |"
+    )
+    lines.append("")
+    lines.append(
+        "_CUDA tests are the GPU-kernel subset of the Python suite (counted once, in the Python and Total "
+        "columns); on a host without a CUDA device they skip rather than fail. Go tests are the native "
+        "launcher's. E2E counts Playwright spec files._"
     )
     lines.append("")
 
