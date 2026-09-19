@@ -1116,6 +1116,38 @@ def warn_if_level_erases_volume(volume: "Any", level: float, *, what: str) -> No
     )
 
 
+def _validate_preselected_tile_metadata(
+    *,
+    preselected_tile: bool,
+    volume_shape: tuple[int, ...],
+    tile_spec: "Any",
+    tile_idx: int,
+    n_tiles: int,
+    fit_config: dict,
+    parsed_seeds: "Any",
+    nonempty_tiles: Optional[int],
+) -> None:
+    """Validate the durable plan-to-worker tile-local handoff."""
+    if not preselected_tile:
+        return
+    expected_shape = tuple(
+        int(span.stop) - int(span.start) for span in tile_spec.slices
+    )
+    if volume_shape != expected_shape:
+        raise typer.BadParameter(
+            "--tile-region loaded shape "
+            f"{volume_shape} but tile {tile_idx}/{n_tiles} requires {expected_shape}"
+        )
+    if fit_config.get("norm_range") is None:
+        raise typer.BadParameter(
+            "tile-local worker metadata requires a plan-resolved --norm-range"
+        )
+    if _needs_nonempty_tile_scan(parsed_seeds, n_tiles) and nonempty_tiles is None:
+        raise typer.BadParameter(
+            "tile-local integer seed budgets require --tile-nonempty-count"
+        )
+
+
 def fit_single_tile(
     ctx: FitPipelineCtx,
     volume: "Any",
@@ -1152,6 +1184,16 @@ def fit_single_tile(
     if tile_idx < 0 or tile_idx >= len(specs):
         aprint(f"Error: tile index {tile_idx} out of range [0, {len(specs)})")
         raise typer.Exit(1)
+    _validate_preselected_tile_metadata(
+        preselected_tile=preselected_tile,
+        volume_shape=tuple(volume.shape),
+        tile_spec=specs[tile_idx],
+        tile_idx=tile_idx,
+        n_tiles=len(specs),
+        fit_config=fit_config,
+        parsed_seeds=parsed_seeds,
+        nonempty_tiles=nonempty_tiles,
+    )
 
     # Extract params that are explicit in fit_tile to avoid
     # "got multiple values" conflicts with **fit_config

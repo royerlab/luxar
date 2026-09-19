@@ -20,40 +20,36 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional, Tuple
 
-from luxar.gsplats.batch.manifest import BatchJob, BatchManifest
+from luxar.gsplats.batch.manifest import (
+    BatchJob,
+    BatchManifest,
+    tile_local_read_plan,
+)
 
 
 def _tile_local_read_args(manifest: BatchManifest, job: BatchJob) -> list[str]:
     """Worker metadata that replaces its full-frame tile scan and read."""
-    rows = manifest.tile_signal_weights
-    if not rows or not manifest.spatial_shape:
+    plan = tile_local_read_plan(manifest)
+    if plan is None:
         return []
-    row_index = job.task_id // manifest.n_tiles
-    if not 0 <= row_index < len(rows):
-        return []
-    weights = rows[row_index]
-    if len(weights) != manifest.n_tiles:
-        return []
-
-    from luxar.gsplats.tiling import compute_tile_specs
-
-    specs = compute_tile_specs(
-        tuple(manifest.spatial_shape), manifest.tile_size, manifest.tile_overlap
-    )
-    if len(specs) != manifest.n_tiles:
-        return []
-    spec = specs[job.tile_index]
-    region = ",".join(f"{span.start}:{span.stop}" for span in spec.slices)
-    shape = ",".join(str(size) for size in manifest.spatial_shape)
-    nonempty = sum(weight > 0.0 for weight in weights) or manifest.n_tiles
-    return [
+    if not 0 <= job.tile_index < len(plan.regions):
+        raise ValueError(
+            f"tile index {job.tile_index} is outside 0..{len(plan.regions) - 1}"
+        )
+    args = [
         "--tile-region",
-        region,
+        plan.regions[job.tile_index],
         "--tile-volume-shape",
-        shape,
-        "--tile-nonempty-count",
-        str(nonempty),
+        plan.volume_shape,
     ]
+    if plan.nonempty_counts is not None:
+        row_index = job.task_id // manifest.n_tiles
+        if not 0 <= row_index < len(plan.nonempty_counts):
+            raise ValueError(
+                f"task {job.task_id} maps to missing tile-local count row {row_index}"
+            )
+        args += ["--tile-nonempty-count", str(plan.nonempty_counts[row_index])]
+    return args
 
 
 def iter_fit_arg_flags(fit_args: Dict[str, Any]) -> Iterator[Tuple[str, Optional[str]]]:

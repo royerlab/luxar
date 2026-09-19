@@ -155,49 +155,54 @@ def _parallel_worker_env_lines(
 
 def _tile_local_fit_command_parts(manifest: BatchManifest) -> list[str]:
     """Render hidden worker arguments for tile-local reads."""
-    if not manifest.tile_signal_weights:
+    from luxar.gsplats.batch.manifest import tile_local_read_plan
+
+    plan = tile_local_read_plan(manifest)
+    if plan is None:
         return []
-    return [
+    parts = [
         '    --tile-region "$TILE_REGION"',
         '    --tile-volume-shape "$TILE_VOLUME_SHAPE"',
-        '    --tile-nonempty-count "$NONEMPTY_COUNT"',
     ]
+    if plan.nonempty_counts is not None:
+        parts.append('    --tile-nonempty-count "$NONEMPTY_COUNT"')
+    return parts
 
 
 def _tile_local_variable_lines(manifest: BatchManifest) -> list[str]:
     """Render manifest-derived shell arrays for tile-local reads."""
-    if not manifest.tile_signal_weights:
+    from luxar.gsplats.batch.manifest import tile_local_read_plan
+
+    plan = tile_local_read_plan(manifest)
+    if plan is None:
         return []
-
-    from luxar.gsplats.tiling import compute_tile_specs
-
-    specs = compute_tile_specs(
-        tuple(manifest.spatial_shape), manifest.tile_size, manifest.tile_overlap
-    )
-    regions = [
-        ",".join(f"{span.start}:{span.stop}" for span in spec.slices) for spec in specs
+    lines = [
+        "TILE_REGIONS=("
+        + " ".join(shlex.quote(region) for region in plan.regions)
+        + ")",
+        "TILE_VOLUME_SHAPE=" + shlex.quote(plan.volume_shape),
     ]
-    counts = [
-        sum(weight > 0.0 for weight in row) or manifest.n_tiles
-        for row in manifest.tile_signal_weights
-    ]
-    return [
-        "TILE_REGIONS=(" + " ".join(shlex.quote(region) for region in regions) + ")",
-        "NONEMPTY_COUNTS=(" + " ".join(str(count) for count in counts) + ")",
-        "TILE_VOLUME_SHAPE="
-        + shlex.quote(",".join(str(size) for size in manifest.spatial_shape)),
-        "",
-    ]
+    if plan.nonempty_counts is not None:
+        lines.append(
+            "NONEMPTY_COUNTS=("
+            + " ".join(str(count) for count in plan.nonempty_counts)
+            + ")"
+        )
+    lines.append("")
+    return lines
 
 
 def _tile_local_task_lines(manifest: BatchManifest) -> list[str]:
     """Render task-local lookups for tile-local reads."""
-    if not manifest.tile_signal_weights:
+    from luxar.gsplats.batch.manifest import tile_local_read_plan
+
+    plan = tile_local_read_plan(manifest)
+    if plan is None:
         return []
-    return [
-        '    local TILE_REGION="${TILE_REGIONS[$K]}"',
-        '    local NONEMPTY_COUNT="${NONEMPTY_COUNTS[$TC_IDX]}"',
-    ]
+    lines = ['    local TILE_REGION="${TILE_REGIONS[$K]}"']
+    if plan.nonempty_counts is not None:
+        lines.append('    local NONEMPTY_COUNT="${NONEMPTY_COUNTS[$TC_IDX]}"')
+    return lines
 
 
 def generate_fit_sbatch(

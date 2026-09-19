@@ -2485,7 +2485,7 @@ def test_single_tile_worker_uses_preselected_region_and_planned_divisor(
     fit_single_tile(
         _single_tile_ctx("4/9"),
         selected,
-        {"floor": "none", "cull_retention": 0.0},
+        {"floor": "none", "norm_range": (0.0, 1.0), "cull_retention": 0.0},
         100,
         full_volume_shape=(80, 80),
         nonempty_tiles=2,
@@ -2496,6 +2496,42 @@ def test_single_tile_worker_uses_preselected_region_and_planned_divisor(
     assert seen["origin"] == (32.0, 32.0)
     assert seen["tile_data"] is selected
     assert seen["seeds"] == 50
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")
+def test_single_tile_worker_rejects_wrong_preselected_shape() -> None:
+    import typer
+
+    from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+
+    with pytest.raises(typer.BadParameter, match="loaded shape.*requires"):
+        fit_single_tile(
+            _single_tile_ctx("4/9"),
+            np.ones((47, 48), dtype=np.float32),
+            {"floor": "none", "norm_range": (0.0, 1.0)},
+            100,
+            full_volume_shape=(80, 80),
+            nonempty_tiles=2,
+            preselected_tile=True,
+        )
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")
+def test_single_tile_worker_requires_shared_norm_range() -> None:
+    import typer
+
+    from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+
+    with pytest.raises(typer.BadParameter, match="plan-resolved --norm-range"):
+        fit_single_tile(
+            _single_tile_ctx("4/9"),
+            np.ones((48, 48), dtype=np.float32),
+            {"floor": "none"},
+            100,
+            full_volume_shape=(80, 80),
+            nonempty_tiles=2,
+            preselected_tile=True,
+        )
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")

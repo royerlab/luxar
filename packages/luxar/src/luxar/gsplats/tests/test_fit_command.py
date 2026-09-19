@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from luxar.gsplats.batch.fit_command import (
     build_task_fit_argv,
     fit_args_to_tokens,
@@ -78,7 +80,8 @@ def test_uniform_argv_carries_tile_local_plan_metadata() -> None:
         tile_overlap=2,
         n_timepoints=1,
         n_channels=1,
-        tile_signal_weights=[[1.0, 0.0, 3.0, 0.0]],
+        tile_local_reads=True,
+        tile_nonempty_counts=[2],
     )
     argv = build_task_fit_argv(manifest, _job(k=2), "out.tmp", argv0=_ARGV0)
     assert argv[argv.index("--tile-region") + 1] == "4:8,0:6"
@@ -89,6 +92,52 @@ def test_uniform_argv_carries_tile_local_plan_metadata() -> None:
     assert '--tile-region "$TILE_REGION"' in script
     assert "TILE_REGIONS=(0:6,0:6 0:6,4:8 4:8,0:6 4:8,4:8)" in script
     assert "NONEMPTY_COUNTS=(2)" in script
+
+
+def test_tile_local_argv_without_integer_seed_count() -> None:
+    from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+    manifest = BatchManifest(
+        input_path="in.zarr",
+        output_dir="/o",
+        mode="uniform",
+        spatial_shape=(8, 8),
+        n_tiles=4,
+        tile_size=6,
+        tile_overlap=2,
+        n_timepoints=1,
+        n_channels=1,
+        tile_local_reads=True,
+    )
+    argv = build_task_fit_argv(manifest, _job(k=2), "out.tmp", argv0=_ARGV0)
+    assert argv[argv.index("--tile-region") + 1] == "4:8,0:6"
+    assert "--tile-nonempty-count" not in argv
+
+    script = generate_fit_sbatch(manifest, "# preamble\n")
+    assert '--tile-region "$TILE_REGION"' in script
+    assert "NONEMPTY_COUNTS=" not in script
+    assert "--tile-nonempty-count" not in script
+
+
+def test_tile_local_grid_mismatch_is_loud_for_local_and_slurm() -> None:
+    from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+    manifest = BatchManifest(
+        input_path="in.zarr",
+        output_dir="/o",
+        mode="uniform",
+        spatial_shape=(8, 8, 8),
+        n_tiles=7,
+        tile_size=4,
+        tile_overlap=0,
+        n_timepoints=1,
+        n_channels=1,
+        tile_local_reads=True,
+    )
+    with pytest.raises(ValueError, match="grid mismatch"):
+        build_task_fit_argv(manifest, _job(), "out.tmp", argv0=_ARGV0)
+    with pytest.raises(ValueError, match="grid mismatch"):
+        generate_fit_sbatch(manifest, "# preamble\n")
 
 
 def test_content_argv() -> None:
