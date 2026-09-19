@@ -577,7 +577,7 @@ repo root and used by `luxar export --native ...`) honor:
   exported scene in the system default browser instead. Useful for
   smoke-testing the launcher without a graphical session. It does not let
   the prebuilt Linux binary run without libwebkit2gtk — WebKit is linked
-  at build time, so the `webkit2gtk-4.0` runtime must be present to start.
+  at build time, so the `webkit2gtk-4.1` runtime must be present to start.
 - `LUXAR_CACHE_BUDGET_MB=<N>` — Total in-memory cache pool (L0 + L1 +
   S-cache) the launcher passes to the viewer via `?cacheBudgetMB=`
   (default 2048). WebKit WebViews don't implement `performance.memory`,

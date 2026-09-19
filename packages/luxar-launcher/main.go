@@ -13,7 +13,7 @@
 // LUXAR_LAUNCHER_NO_WEBVIEW=1 falls back to the system default browser
 // (no native window, server runs until SIGINT/SIGTERM). This is useful
 // for headless smoke-tests where no window is wanted; it does NOT let the
-// binary run without a WebView runtime — cgo links libwebkit2gtk-4.0 at
+// binary run without a WebView runtime — cgo links libwebkit2gtk-4.1 at
 // build time, so the loader aborts before main() on a system lacking it.
 package main
 

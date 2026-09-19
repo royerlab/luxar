@@ -286,7 +286,7 @@ luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 
 
 **Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. `--native` produces `macos`, `linux-amd64`, and `linux-arm64` bundles only. CGO blocks pure cross-compilation, so each platform's binary must be built on a host of the matching OS (typically via CI).
 
-**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests. It does not let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time, so the launcher needs the `webkit2gtk-4.0` runtime to start regardless.
+**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests. It does not let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time, so the launcher needs the `webkit2gtk-4.1` runtime to start regardless.
 
 See `packages/luxar-launcher/README.md` for the launcher source itself.
 

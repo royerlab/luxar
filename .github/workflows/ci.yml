@@ -178,7 +178,7 @@ jobs:
             # snapshot test reads scripts/zenodo_record_text/. coverage.yml,
             # cadence-liveness.yml, and external-reference-audits.yml are also
             # pytest inputs, and workflow files match no language domain alone.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|(^|/)go\.mod$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.(gitattributes|gitignore)$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/(manifest|media-manifest)\.json$|^scripts/zenodo_record_text/|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(index\.rst$|api/gsplats\.rst$|guides/(developer/DEMO_SITE_RUNBOOK|user/(CLI_REFERENCE|FORMAT_AND_MIGRATION|LUXAR_ZARR_FORMAT))\.md$|specs/(GSPLATS_DIMENSION_MAPPING|GSPLATS_ZARR_FORMAT)\.md$)|^(control|format)-contract/|^\.github/workflows/(cadence-liveness|coverage|cuda-nightly|docs|external-reference-audits)\.yml$|^packages/luxar(-viewer)?/README\.md$|^packages/luxar-launcher/control_contract\.go$|^packages/luxar/src/luxar/(cli|gsplats(/(io|lod))?|core/group/(lod|gsplats_pipeline))/README\.md$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|scripts/bake-env\.mjs$|src/(config/(control-contract\.ts$|sections/(camera|rendering-controls)/data\.ts$)|data/(attrs-composer\.ts$|codecs/README\.md$|loaders/spatial-query/tolerance-computer\.ts$|scene-loader/lifecycle/load-scene\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$|unit/(gallery-selection\.test\.ts$|config/generated-fixture-freshness\.test\.ts$))|types/(data-monitor-types|format-contract|geometry-capabilities|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|(^|/)go\.mod$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.(gitattributes|gitignore)$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/(manifest|media-manifest)\.json$|^scripts/zenodo_record_text/|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(index\.rst$|api/gsplats\.rst$|guides/(developer/DEMO_SITE_RUNBOOK|user/(CLI_REFERENCE|FORMAT_AND_MIGRATION|LUXAR_ZARR_FORMAT))\.md$|specs/(GSPLATS_DIMENSION_MAPPING|GSPLATS_ZARR_FORMAT)\.md$)|^(control|format)-contract/|^\.github/workflows/(cadence-liveness|coverage|cuda-nightly|docs|external-reference-audits)\.yml$|^packages/luxar(-viewer)?/README\.md$|^packages/luxar-launcher/(control_contract\.go$|pkgconfig/)|^packages/luxar/src/luxar/(cli|gsplats(/(io|lod))?|core/group/(lod|gsplats_pipeline))/README\.md$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|scripts/bake-env\.mjs$|src/(config/(control-contract\.ts$|sections/(camera|rendering-controls)/data\.ts$)|data/(attrs-composer\.ts$|codecs/README\.md$|loaders/spatial-query/tolerance-computer\.ts$|scene-loader/lifecycle/load-scene\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$|unit/(gallery-selection\.test\.ts$|config/generated-fixture-freshness\.test\.ts$))|types/(data-monitor-types|format-contract|geometry-capabilities|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
             # gallery-selection.test.ts also reads the root README and both gallery
             # manifests; generated-fixture-freshness.test.ts checks the Makefile's
@@ -186,7 +186,7 @@ jobs:
             # colormap tables from scripts/generate_builtin_colormaps.py.
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^\.nvmrc$|^Makefile$|^README\.md$|^scripts/generate_builtin_colormaps\.py$|^scripts/gallery/(media-)?manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
-            printf '%s\n' "$changed" | grep -qE '(\.go$|^packages/luxar/src/luxar/cli/_launchers/|(^|/)go\.(mod|sum)$)' && dom_go=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.go$|^packages/luxar-launcher/pkgconfig/|^packages/luxar/src/luxar/cli/_launchers/|(^|/)go\.(mod|sum)$)' && dom_go=true || true
             # This workflow DEFINES how every suite is invoked, so it belongs to all
             # four domains: an edit that breaks a step's command, condition or setup
             # has to be caught by the run that contains it, not by the next unrelated
@@ -1372,13 +1372,15 @@ jobs:
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    # Pinned to 22.04: the launcher's webview_go (latest available) links
-    # webkit2gtk-4.0 via pkg-config, and ubuntu-24.04 (ubuntu-latest) ships only
-    # the 4.1 dev package. 22.04 provides libwebkit2gtk-4.0-dev.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GOTOOLCHAIN: local
+      # webview_go still asks pkg-config for webkit2gtk-4.0. The checked-in
+      # compatibility module resolves that request to the 4.1 API/SONAME.
+      # This job therefore needs an image carrying libwebkit2gtk-4.1-dev.
+      # webkitgtk-6.0 uses GTK4 and requires a new binding, not this shim.
+      PKG_CONFIG_PATH: ${{ github.workspace }}/packages/luxar-launcher/pkgconfig
     defaults:
       run:
         working-directory: packages/luxar-launcher
@@ -1397,9 +1399,9 @@ jobs:
       - name: Install WebView build deps (cgo)
         if: needs.changes.outputs.dom_go != 'false'
         # The launcher binds github.com/webview/webview_go, which is cgo over
-        # WebKitGTK; go vet/build/test must compile the C bindings. webview_go
-        # links webkit2gtk-4.0, so install the 4.0 dev package (present on 22.04).
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.0-dev pkg-config
+        # WebKitGTK; go vet/build/test must compile the C bindings against the
+        # compatibility module, not merely inspect Go code.
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev pkg-config
 
       - name: go vet
         if: needs.changes.outputs.dom_go != 'false'

@@ -368,15 +368,12 @@ down (or press Ctrl+C in the terminal where it was launched).
 Requirements
 ------------
 The launcher links WebKitGTK at build time, so it needs the
-webkit2gtk-4.0 runtime library installed to start at all:
+webkit2gtk-4.1 runtime library installed to start at all:
 
-    sudo apt-get install -y libwebkit2gtk-4.0-37
+    sudo apt-get install -y libwebkit2gtk-4.1-0
 
-Distros that ship only webkit2gtk-4.1 (e.g. Ubuntu 24.04) do not carry
-the 4.0 runtime in their default archive, so the launcher will not start
-there until it is installed separately. Once the library is present, you
-can open the system browser instead of a native window (e.g. for headless
-smoke tests):
+Once the library is present, you can open the system browser instead of a
+native window (e.g. for headless smoke tests):
 
     LUXAR_LAUNCHER_NO_WEBVIEW=1 ./luxar-launcher
 

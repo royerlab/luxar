@@ -165,9 +165,8 @@ make clean-launchers  # Clean built launcher binaries
 #   Opens the system default browser instead of the embedded WebView —
 #   useful for headless smoke tests. NOT a rescue for a missing
 #   libwebkit2gtk: cgo links WebKit at build time, so the binary has a hard
-#   DT_NEEDED on libwebkit2gtk-4.0.so and the loader aborts before main()
-#   ever reads this variable. A 4.1-only distro (Ubuntu 24.04+) needs the
-#   4.0 runtime installed, or a separate browser-only build. See #998.
+#   DT_NEEDED on libwebkit2gtk-4.1.so and the loader aborts before main()
+#   ever reads this variable. Install the 4.1 runtime first. See #998.
 # Runtime override: LUXAR_CACHE_BUDGET_MB=<N> ./luxar-launcher
 #   Total in-memory cache pool (L0+L1+S-cache) the launcher passes to the
 #   viewer via ?cacheBudgetMB=. Its implied non-cache remainder also becomes the

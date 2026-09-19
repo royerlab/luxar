@@ -113,7 +113,7 @@ Linux) and serves the bundled zarr internally:
 
    out/
      MyScene-linux-amd64/
-       luxar-launcher             # ELF, +x (needs webkit2gtk-4.0 runtime)
+       luxar-launcher             # ELF, +x (needs webkit2gtk-4.1 runtime)
        viewer/                    # Luxar viewer
        data/                      # Zarr dataset
        MyScene.png                # Icon (FreeDesktop convention)
@@ -205,7 +205,7 @@ embedded WebView; the local HTTP server still runs, you press
 **Ctrl+C** to stop. This does *not* let the prebuilt Linux binary run
 without ``libwebkit2gtk`` — WebKit is linked at build time, so the loader
 aborts before the launcher can read this variable on a system missing the
-``webkit2gtk-4.0`` runtime.
+``webkit2gtk-4.1`` runtime.
 
 
 Looking ahead: signing and notarization
