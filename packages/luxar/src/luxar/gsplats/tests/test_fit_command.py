@@ -139,6 +139,29 @@ def test_tile_local_grid_mismatch_is_loud_for_local_and_slurm() -> None:
     with pytest.raises(ValueError, match="grid mismatch"):
         generate_fit_sbatch(manifest, "# preamble\n")
 
+    manifest.n_tiles = 8
+    manifest.tile_nonempty_counts = [1, 1]
+    with pytest.raises(ValueError, match="count mismatch"):
+        build_task_fit_argv(manifest, _job(), "out.tmp", argv0=_ARGV0)
+    with pytest.raises(ValueError, match="count mismatch"):
+        generate_fit_sbatch(manifest, "# preamble\n")
+
+    for invalid_count in (0, 9):
+        manifest.tile_nonempty_counts = [invalid_count]
+        with pytest.raises(ValueError, match="between 1 and n_tiles"):
+            build_task_fit_argv(manifest, _job(), "out.tmp", argv0=_ARGV0)
+        with pytest.raises(ValueError, match="between 1 and n_tiles"):
+            generate_fit_sbatch(manifest, "# preamble\n")
+
+    manifest.tile_nonempty_counts = [1]
+    with pytest.raises(ValueError, match="tile index 8 is outside"):
+        build_task_fit_argv(manifest, _job(k=8), "out.tmp", argv0=_ARGV0)
+
+    missing_row_job = _job()
+    missing_row_job.task_id = 8
+    with pytest.raises(ValueError, match="missing tile-local count row 1"):
+        build_task_fit_argv(manifest, missing_row_job, "out.tmp", argv0=_ARGV0)
+
 
 def test_content_argv() -> None:
     m = BatchManifest(
