@@ -1,14 +1,15 @@
 """Per-dtype compressor policy for Luxar zarr arrays.
 
 Measured on 64 KiB re-chunked code arrays of a Hilbert-ordered fit (native +
-in-browser decode — manuscript supplementary ``codec_selection``), the best general-purpose configuration is not one
-compressor but a policy keyed on the ELEMENT WIDTH of the stored codes:
+in-browser decode — manuscript supplementary ``codec_selection``), the best
+general-purpose configuration is not one compressor but a policy keyed on the
+ELEMENT WIDTH of the stored codes:
 
 - multi-byte integer codes (uint16 fixed-point / quantized) → ``zstd`` level 9
   with BYTE shuffle (C-Blosc skips bit shuffle on any block whose element
   count is not a multiple of 8, which a 64 KiB chunk of (N, 3) uint16 codes is
   whenever Blosc's level-dependent block size leaves it as one block; byte
-  shuffle at level >= 7 is what engages);
+  shuffle engages and compresses these codes at every level);
 - single-byte codes (uint8) → ``zstd`` level 9, no shuffle (filters are
   no-ops or harmful for single-byte payloads);
 - floats → ``zstd`` level 9, no shuffle (an engineering simplification for the
