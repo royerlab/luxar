@@ -277,7 +277,8 @@ def fit_tile(
         Coordinate space for output centers (``"real"`` or ``"voxel"``).
     progressive : bool, default False
         If True, use progressive fitting (multiple passes on residuals)
-        instead of standard single-pass fitting. Produces multi-LOD result.
+        instead of standard single-pass fitting. The passes are an
+        optimisation schedule: each tile still returns one flat splat set.
     max_splats_per_pass : int, default 5000
         Maximum splats per progressive pass (ignored if progressive=False).
     psnr_patience : float, default 0.5
@@ -316,8 +317,9 @@ def fit_tile(
     Returns
     -------
     GSplatData
-        Fit result with centers in global volume coordinates.
-        Multi-LOD if progressive=True.
+        Fit result with centers in global volume coordinates (a single
+        flat LOD; ``progressive=True`` changes how each tile is optimised,
+        not the structure of the result).
 
     Raises
     ------
@@ -736,9 +738,10 @@ def fit_tiled(
     above the denoise probe's budget keeps its raw-basis level, since the
     histogram-mode shift is not measurable on a bounded crop.
 
-    When ``progressive=True``, each tile is fitted using progressive
-    residual decomposition, producing a multi-LOD result where LODs are
-    merged across tiles (LOD 0 = all tiles' coarse splats, etc.).
+    When ``progressive=True``, each tile is fitted in several residual
+    passes; the progressive fitter flattens its passes before returning, so
+    the tiles are concatenated exactly as in the single-pass case. (Tile
+    results that do carry additive sub-LODs are merged level by level.)
 
     Parameters
     ----------

@@ -518,7 +518,7 @@ class TestTiledProgressive:
 
     @pytest.mark.slow
     def test_tiled_progressive_basic(self, shared_tiled_progressive_fit) -> None:
-        """Basic tiled+progressive produces multi-LOD result."""
+        """Basic tiled+progressive produces a flat, non-empty result."""
         result = shared_tiled_progressive_fit.result
         assert result.n_splats > 0
         assert result.n_additive_sublods >= 1  # At least one LOD
