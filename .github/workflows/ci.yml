@@ -941,11 +941,12 @@ jobs:
         working-directory: packages/luxar-viewer
         run: pnpm test:generate-fixtures
 
-      - name: Check (overrides + Node types + format + typecheck + lint + layers + knip + coverage)
+      - name: Check (overrides + dependency types + format + typecheck + lint + layers + knip + coverage)
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         # `pnpm run check:ci` runs in this order:
         #   check:overrides (security pins single-sourced in pnpm-workspace.yaml)
         #   → check:node-types (@types/node package major matches .nvmrc)
+        #   → check:three-types (@types/three and embed pins match the three peer minor)
         #   → check:format → typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)

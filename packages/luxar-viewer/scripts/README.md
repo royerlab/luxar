@@ -19,6 +19,10 @@ scripts/
 ├── check-build-identity.test.mjs  # unit coverage for the stamp gate
 ├── check-coverage-slack.mjs       # Coverage floor/baseline drift gate and refresh printer
 ├── check-lib-exports.mjs          # Post-build sanity check on dist/lib/
+├── check-node-types-version.mjs   # Node runtime/@types major-version declaration guard
+├── check-node-types-version.test.mjs # unit coverage for the Node types guard
+├── check-three-types-version.mjs  # Three runtime/types/embed minor-version declaration guard
+├── check-three-types-version.test.mjs # unit coverage for the Three types guard
 ├── public-api-exports.json        # The public barrel's value-export list (shared with the barrel unit test)
 ├── check-jsdoc-coverage.ts        # Standalone JSDoc coverage report
 ├── check-overrides.mjs            # pnpm overrides single-source guard
