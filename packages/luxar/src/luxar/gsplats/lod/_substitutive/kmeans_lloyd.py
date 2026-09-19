@@ -279,8 +279,10 @@ def _cost_increment_lloyd_vectorized(
     representative template it best projects onto, then rebuilds templates and
     recomputes the global projection energy ``P = Σ_b ⟨f,Ḡ⟩² / ‖Ḡ‖²``. A pass
     is committed only if it strictly *increases* ``P`` (within a numerical
-    tolerance; equivalently, strictly decreases the L² residual ‖f‖² − P), so
-    the refinement is monotone and never worse than the warm start. An
+    tolerance). ``P`` omits the partition-dependent Σ_b ‖f_b‖² term, so this is
+    a heuristic surrogate for the L² residual, not a monotone bound on it: a
+    committed pass can raise the per-bin residual sum. The refinement is
+    monotone in ``P`` and never worse than the warm start in ``P``. An
     equal-energy pass is rejected and iteration stops at the first pass that
     fails to improve ``P``.
 

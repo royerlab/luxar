@@ -389,7 +389,10 @@ def lod_recipe(
         None, "--lloyd-iters", min=0, help="Lloyd refinement passes (default 5)."
     ),
     candidate_bins_k: Optional[int] = typer.Option(
-        None, "--candidate-bins-k", min=1, help="Lloyd spatial-hash top-k (default 12)."
+        None,
+        "--candidate-bins-k",
+        min=1,
+        help="Lloyd candidate bins per splat: the current bins of its k Morton-order neighbours (default 12).",
     ),
     coverage_inflation: Optional[float] = typer.Option(
         None,

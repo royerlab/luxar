@@ -26,7 +26,8 @@ Hard-won stability discipline (each violation was observed to corrupt results):
    therefore rebuilt from the *current* geometry every ``rebuild_every`` steps,
    and the objective is only **trusted** — compared, snapshotted — immediately
    after a rebuild. The seed is evaluated first, so the returned best iterate is
-   provably never worse than the seed in the trusted metric.
+   provably never worse than the seed in the trusted metric — the sparse pair
+   objective (neighbour pairs within the 3σ/5σ radii), not the full mixture L².
 2. **PD by construction.** Coarse Cholesky diagonals are softplus-floored, so
    every covariance sum entering
    :func:`~luxar.gsplats.lod._kernels.gaussian_pair_inner_product_torch` is PD

@@ -850,3 +850,32 @@ def test_coarse_substitutive_levels_quality_stamps_can_be_disabled():
 
     assert len(coarse) == 1
     assert "quality" not in coarse[0].stats
+
+
+def test_same_type_merge_zero_weight_fallback_is_bin_local() -> None:
+    from luxar.gsplats.lift import same_type_merge_level
+
+    positions = np.array([[0.0], [1.0], [10.0], [11.0]], dtype=np.float32)
+    barriers = np.array([0, 0, 1, 1])
+    centres, _, assignments, weights = same_type_merge_level(
+        positions,
+        np.ones(4, dtype=np.float32),
+        np.array([0.0, 0.0, 1.0, 3.0]),
+        n_target=2,
+        spatial_dims=[0],
+        barrier_keys=barriers,
+    )
+    assert set(assignments[:2]) != set(assignments[2:])
+    assert centres[0, 0] == pytest.approx(0.5)
+    assert centres[1, 0] == pytest.approx(10.75)
+    np.testing.assert_array_equal(weights, [1.0, 1.0, 1.0, 3.0])
+
+
+def test_same_type_morton_order_preserves_locality_in_five_dimensions() -> None:
+    from luxar.gsplats.lift import _morton_order
+
+    points = np.random.default_rng(46).random((2048, 5))
+    order = _morton_order(points)
+    ordered_steps = np.linalg.norm(np.diff(points[order], axis=0), axis=1)
+    unordered_steps = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    assert float(np.mean(ordered_steps)) < 0.8 * float(np.mean(unordered_steps))

@@ -26,8 +26,10 @@ Main API
 Tiled Fitting
 -------------
 
-Fit large volumes tile-by-tile with cosine (Hann) apodization for seamless
-stitching. Used by ``luxar gsplat fit --tiling uniform/content``.
+Fit large volumes tile-by-tile. The uniform grid (``luxar gsplat fit --tiling
+uniform``) blends overlapping tiles with half-Hann (cosine) ramps for seamless
+stitching; content tiling (``--tiling content``) fits halo-padded boxes without
+a window and keeps each box's core (see Content Planning below).
 
 .. autofunction:: luxar.gsplats.fit_tiled_gaussian_splats
 

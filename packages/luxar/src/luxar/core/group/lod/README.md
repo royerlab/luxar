@@ -249,8 +249,18 @@ With the default `coarse="gsplats"`, it:
    `adaptive` shape used by `demo_biodiversity_planetary_scale` remains
    hand-built; this composition is the global-coarse `overview` shape.
 
-With `coarse="points"`, it instead takes exact `N/K^level` prefixes of a
-spatially stratified ordering and writes those rows as Points children. On a
+With `coarse="points"`, `method="subsample"` takes exact `N/K^level` prefixes
+of a spatially stratified ordering and writes those rows as Points children.
+`method="merge"` instead writes light-weighted representatives whose isotropic
+radius matches the members' combined second moment (own radii plus centre
+spread), with the existing 3× coverage inflation applied to the spread term.
+Quantized RGB channels are soft Morton-ordering dimensions, normalized against
+the node's RGB maximum for HDR input, so nearby colours are preferred without
+turning each class into a mandatory representative. Merge bakes scalars through
+the authored colormap and drops sharpness, labels, and keys with a diagnostic.
+Numeric `brightness_compensation` is refused. Under additive/luminous blending,
+each representative conserves its bin's source light by reducing radius before
+increasing RGB, which keeps attenuated SDR colours representable. On a
 stacked node, each discrete hidden coordinate is spatially ordered independently
 and the orders are round-robin interleaved so a coarse level does not starve
 individual slices. Dimensions named by `extend_to_all` are excluded because the
@@ -267,17 +277,31 @@ input colour dtype; a numeric compensation overrides the per-level gain through
 the same RGB path. The expected HDR warning is suppressed
 for these synthesized compensated children. The gain conserves the summed light
 over the whole node, not within each neighbourhood, so sparse and dense regions
-can shift relative brightness. `truncation_radius`, `max_aspect`, `method`,
-`device`, and `coarsen_dims` are refused because they do not affect the written
+can shift relative brightness. `truncation_radius`, `max_aspect`, `device`, and
+`coarsen_dims` are refused because they do not affect the written
 same-type geometry. By default each child carries a `level_stats.quality` stamp
 measured from a fixed isotropic lift on CPU; for Points this scores the geometric
 subsample and radii, not RGB/alpha or the brightness-compensation gain. Set
 `quality_stamps=False` to skip that measurement.
 
-Lines keeps the lifted-GSplat default too. With `coarse="lines"`, it instead
-takes exact `P/K^level` prefixes of a seeded salience ordering and writes every
-prefix as a Lines child, preserving whole-polyline topology and selected
-per-vertex channels. Discrete hidden coordinates are ordered independently and
+Lines keeps the lifted-GSplat default too. With `coarse="lines"`,
+`method="subsample"` takes exact `P/K^level` prefixes of a seeded salience
+ordering. `method="merge"` clusters whole, orientation-compatible polylines and
+writes their light-weighted centroid polyline with a scalar width from the
+bundle's transverse second moment. Merge currently requires equal vertex counts
+so corresponding vertices are defined; resample varying-length streamlines or
+use `method="subsample"`. Quantized orientation and RGB channels are soft
+Morton-ordering dimensions, so compatible polylines are preferred without
+making every class a mandatory representative; HDR RGB is normalized against
+the node maximum before quantization. These preference dimensions have co-equal
+Morton weight with position, so merge is intended for colour/orientation-coherent
+input; unrelated per-element classes can widen the representatives. Merge bakes scalars through the authored
+colormap and drops sharpness, labels, and keys with a diagnostic. Numeric
+`brightness_compensation` is refused. Under additive/luminous blending, per-bin
+light is conserved through width up to the transition's pixel-floor cap, then
+through residual HDR colour, materialising a colour channel when an uncoloured
+node needs one. Both write Lines children; no
+gsplat child or Cholesky array is materialised. Discrete hidden coordinates are ordered independently and
 round-robin interleaved; dimensions named by `extend_to_all` are excluded because
 the node is not sliced there. Authoring refuses a ladder whose coarsest polyline
 count cannot represent every remaining occupied slice, or a polyline that crosses

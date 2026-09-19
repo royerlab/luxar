@@ -78,7 +78,214 @@ __all__ = [
     "lift_lines_to_gsplats",
     "lift_points_to_gsplats",
     "render_light",
+    "same_type_merge_level",
 ]
+
+
+def _merge_weights(
+    weights: NDArray, assignments: NDArray[np.intp], n_target: int
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return non-negative member weights with zero-mass fallback per bin."""
+    safe = np.clip(np.asarray(weights, dtype=np.float64), 0.0, None)
+    totals = np.bincount(assignments, weights=safe, minlength=n_target)
+    zero_bins = totals <= 0.0
+    if np.any(zero_bins):
+        safe = safe.copy()
+        safe[zero_bins[assignments]] = 1.0
+        totals = np.bincount(assignments, weights=safe, minlength=n_target)
+    return safe, totals
+
+
+def _morton_order(points: NDArray[np.float64]) -> NDArray[np.intp]:
+    """Return a deterministic nD Morton order within one uint64 code."""
+    if points.ndim != 2:
+        raise ValueError(f"Morton coordinates must be (N, d); got shape {points.shape}")
+    if points.shape[1] == 0:
+        return np.arange(points.shape[0], dtype=np.intp)
+    from ..utils.spatial_ordering import morton_encode_nd, normalize_coords_to_grid
+
+    bits_per_dim = min(21, 64 // points.shape[1])
+    grid = normalize_coords_to_grid(
+        points, points.min(axis=0), points.max(axis=0), 2**bits_per_dim
+    )
+    codes = morton_encode_nd(grid, bits_per_dim)
+    return np.argsort(codes, kind="stable").astype(np.intp, copy=False)
+
+
+def _merge_group_ids(barrier_keys: Optional[NDArray], n: int) -> NDArray[np.intp]:
+    """Map merge-barrier rows to compact group identifiers."""
+    if barrier_keys is None:
+        return np.zeros(n, dtype=np.intp)
+    keys = np.asarray(barrier_keys)
+    if keys.ndim == 1:
+        keys = keys[:, None]
+    if keys.shape[0] != n:
+        raise ValueError("barrier_keys must have one row per element")
+    return np.unique(keys, axis=0, return_inverse=True)[1].astype(np.intp, copy=False)
+
+
+def _merge_allocation(group_ids: NDArray[np.intp], n_target: int) -> NDArray[np.intp]:
+    """Allocate target representatives across preserved barrier groups."""
+    group_count = int(group_ids.max()) + 1 if group_ids.size else 0
+    if n_target < group_count:
+        raise ValueError(
+            f"n_target={n_target} cannot preserve {group_count} merge barriers"
+        )
+    sizes = np.bincount(group_ids, minlength=group_count)
+    raw = sizes.astype(np.float64) * (n_target / max(1, group_ids.size))
+    allocation = np.minimum(np.maximum(1, np.floor(raw).astype(np.intp)), sizes)
+    while int(allocation.sum()) < n_target:
+        candidates = np.flatnonzero(allocation < sizes)
+        allocation[candidates[np.argmax(raw[candidates] - allocation[candidates])]] += 1
+    while int(allocation.sum()) > n_target:
+        candidates = np.flatnonzero(allocation > 1)
+        allocation[candidates[np.argmin(raw[candidates] - allocation[candidates])]] -= 1
+    return allocation
+
+
+def _merge_assignments(
+    ordering: NDArray[np.float64],
+    group_ids: NDArray[np.intp],
+    allocation: NDArray[np.intp],
+) -> NDArray[np.intp]:
+    """Assign Morton-ordered source rows to representatives within each group."""
+    assignments = np.empty(group_ids.size, dtype=np.intp)
+    offset = 0
+    for group_id, bins in enumerate(allocation):
+        rows = np.flatnonzero(group_ids == group_id)
+        local_bins = (np.arange(rows.size, dtype=np.int64) * int(bins)) // rows.size
+        assignments[rows[_morton_order(ordering[rows])]] = offset + local_bins
+        offset += int(bins)
+    return assignments
+
+
+def _weighted_merge_centres(
+    positions: NDArray[np.float64],
+    assignments: NDArray[np.intp],
+    weights: NDArray[np.float64],
+    totals: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Compute weighted representative centres for each assignment bin."""
+    centres = np.zeros((totals.size, positions.shape[1]), dtype=np.float64)
+    for axis in range(positions.shape[1]):
+        centres[:, axis] = (
+            np.bincount(
+                assignments, weights=weights * positions[:, axis], minlength=totals.size
+            )
+            / totals
+        )
+    return centres
+
+
+def _merge_spread(
+    delta: NDArray[np.float64],
+    assignments: NDArray[np.intp],
+    weights: NDArray[np.float64],
+    totals: NDArray[np.float64],
+    directions: Optional[NDArray],
+) -> tuple[NDArray[np.float64], int]:
+    """Compute per-bin spatial spread, optionally transverse to directions."""
+    spread_dims = delta.shape[1]
+    if directions is not None:
+        direction_array = np.asarray(directions, dtype=np.float64)
+        if direction_array.shape != delta.shape:
+            raise ValueError("directions must match positions on spatial_dims")
+        mean_direction = _weighted_merge_centres(
+            direction_array, assignments, weights, totals
+        )
+        norms = np.linalg.norm(mean_direction, axis=1)
+        valid = norms > 0.0
+        mean_direction[valid] /= norms[valid, None]
+        axial = np.sum(delta * mean_direction[assignments], axis=1)
+        delta = delta - axial[:, None] * mean_direction[assignments]
+        spread_dims = max(1, spread_dims - 1)
+    squared = np.sum(delta * delta, axis=1)
+    spread = (
+        np.bincount(assignments, weights=weights * squared, minlength=totals.size)
+        / totals
+    )
+    return spread, spread_dims
+
+
+def same_type_merge_level(
+    positions: NDArray,
+    extents: NDArray,
+    weights: NDArray,
+    *,
+    n_target: int,
+    spatial_dims: Sequence[int],
+    barrier_keys: Optional[NDArray] = None,
+    ordering_keys: Optional[NDArray] = None,
+    directions: Optional[NDArray] = None,
+    coverage_inflation: float = 3.0,
+) -> tuple[
+    NDArray[np.float32],
+    NDArray[np.float32],
+    NDArray[np.intp],
+    NDArray[np.float64],
+]:
+    """Merge isotropic same-type elements by spatial bins and second moments.
+
+    Returns representative centres, scalar extents, and the source-to-bin
+    assignment, and the effective member weights. Barrier-key rows are never
+    combined; ordering keys are soft Morton dimensions that encourage compatible
+    members without increasing the minimum representative count. Point extents
+    are radii; centre variance is converted into radius units before coverage
+    inflation. When directions are supplied, only spread transverse to each
+    bin's weighted mean direction contributes to the extent.
+    """
+    pos = np.asarray(positions, dtype=np.float64)
+    if pos.ndim != 2:
+        raise ValueError(f"positions must be (N, d); got shape {pos.shape}")
+    extent_array = np.asarray(extents, dtype=np.float64).reshape(-1)
+    weight_array = np.asarray(weights, dtype=np.float64).reshape(-1)
+    if extent_array.size not in {1, pos.shape[0]}:
+        raise ValueError("positions and extents must describe the same elements")
+    if weight_array.size not in {1, pos.shape[0]}:
+        raise ValueError("positions and weights must describe the same elements")
+    size = np.broadcast_to(extent_array, (pos.shape[0],))
+    mass = np.broadcast_to(weight_array, (pos.shape[0],))
+    if n_target < 1:
+        raise ValueError(f"n_target must be >= 1, got {n_target}")
+    n = pos.shape[0]
+    if n_target >= n:
+        return (
+            pos.astype(np.float32),
+            size.astype(np.float32),
+            np.arange(n, dtype=np.intp),
+            np.clip(mass, 0.0, None),
+        )
+
+    group_ids = _merge_group_ids(barrier_keys, n)
+    allocation = _merge_allocation(group_ids, n_target)
+    spatial_columns = list(spatial_dims)
+    ordering = pos[:, spatial_columns]
+    if ordering_keys is not None:
+        preferences = np.asarray(ordering_keys, dtype=np.float64)
+        if preferences.ndim == 1:
+            preferences = preferences[:, None]
+        if preferences.shape[0] != n:
+            raise ValueError("ordering_keys must have one row per element")
+        ordering = np.column_stack((ordering, preferences))
+    assignments = _merge_assignments(ordering, group_ids, allocation)
+
+    safe_mass, bin_mass = _merge_weights(mass, assignments, n_target)
+    centres = _weighted_merge_centres(pos, assignments, safe_mass, bin_mass)
+    delta = pos[:, spatial_columns] - centres[assignments][:, spatial_columns]
+    spread, spread_dims = _merge_spread(
+        delta, assignments, safe_mass, bin_mass, directions
+    )
+    intra = (
+        np.bincount(assignments, weights=safe_mass * size * size, minlength=n_target)
+        / bin_mass
+    )
+    variance = intra + 2.25 * float(coverage_inflation) * spread / spread_dims
+    return (
+        centres.astype(np.float32),
+        np.sqrt(np.maximum(variance, 0.0)).astype(np.float32),
+        assignments,
+        safe_mass,
+    )
 
 
 def coarse_point_levels(

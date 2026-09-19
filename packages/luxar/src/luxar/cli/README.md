@@ -286,7 +286,7 @@ luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 
 
 **Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. `--native` produces `macos`, `linux-amd64`, and `linux-arm64` bundles only. CGO blocks pure cross-compilation, so each platform's binary must be built on a host of the matching OS (typically via CI).
 
-**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests. It does not let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time, so the launcher needs the `webkit2gtk-4.0` runtime to start regardless.
+**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests. It does not let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time, so the launcher needs the `webkit2gtk-4.1` runtime to start regardless.
 
 See `packages/luxar-launcher/README.md` for the launcher source itself.
 
@@ -502,7 +502,7 @@ luxar gsplat annotate-quality splats.gsplats.zarr --dry-run       # print stamps
 **Options**: `--with-quality` (also measure per-level mixture-L2 quality Q vs each lod group's finest content; slower), `--max-pair-splats` (subsample cap for the Q measurement, default 2000000), `--device` (auto/cpu/cuda/mps), `--dry-run`.
 
 #### Tiled Fitting
-For large volumes, use tiled fitting. `--tiling auto` (the default) picks the mode automatically: `none` if the volume fits one tile, `content` if a density is supplied (`--cal`/density knobs), else `uniform`. A tiled fit (`--tiling uniform` or `--tiling content`) emits a `kind=partition` by default (one part per tile/box, for viewer frustum culling); pass `--flat` for a single flat leaf. Whole-volume fits (`--tiling none`/small auto) stay a single leaf.
+For large volumes, use tiled fitting. `--tiling auto` (the default) picks the mode automatically: `none` unless BOTH some dimension exceeds `--tile-size` AND the volume has more than 64 M voxels; when it does tile, `content` if a density is supplied (`--cal`/density knobs), else `uniform`. A tiled fit (`--tiling uniform` or `--tiling content`) emits a `kind=partition` by default (one part per tile/box, for viewer frustum culling); pass `--flat` for a single flat leaf. Whole-volume fits (`--tiling none`/small auto) stay a single leaf.
 
 Uniform tiling uses Hann cosine apodization for seamless stitching:
 ```bash

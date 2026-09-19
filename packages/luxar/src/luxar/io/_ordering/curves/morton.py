@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+from ....utils.spatial_ordering import morton_encode_nd as _morton_encode_numpy
+
 
 def _get_morton_numba_kernel():  # type: ignore[no-untyped-def]
     """Lazy-compile the Numba Morton encoding kernel on first use."""
@@ -86,12 +88,7 @@ def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
         return out
 
     # Fallback: vectorized NumPy
-    morton = np.zeros(n_points, dtype=np.uint64)
-    for bit in range(bits_per_dim):
-        for dim in range(n_dims):
-            coord_bit = (coords[:, dim] >> bit) & 1
-            morton |= coord_bit.astype(np.uint64) << (bit * n_dims + dim)
-    return morton
+    return _morton_encode_numpy(coords, bits_per_dim)
 
 
 def morton_encode_128bit(

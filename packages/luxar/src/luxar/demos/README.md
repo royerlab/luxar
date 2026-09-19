@@ -74,8 +74,8 @@ signal channels from H5J metadata and decodes the stitched HEVC channel payloads
 
 The LOD topology a fitting demo writes its cached artifact with is chosen in
 `_lod_policy.py`, not left to whichever fitter the demo happened to call
-(`fit_gaussian_splats` returns one additive sub-LOD, the progressive fitter
-several, which is how five shipped archives ended up with no ladder at all).
+(both `fit_gaussian_splats` and the progressive fitter return one additive
+sub-LOD, which is how five shipped archives ended up with no ladder at all).
 Demos call `save_with_lod(result, cache_file, recipe=...)` in place of
 `result.save(...)`; the per-recipe parameters live in one table there so two
 demos asking for `levels` cannot drift apart. `adaptive` is the one that changes

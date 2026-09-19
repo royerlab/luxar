@@ -280,7 +280,10 @@ class TestBundleLinuxFolder:
         assert launcher.stat().st_mode & stat.S_IEXEC
         assert (folder / "viewer" / "index.html").is_file()
         assert is_consolidated(folder / "data")
-        assert "Quick start" in (folder / "README.txt").read_text()
+        readme = (folder / "README.txt").read_text()
+        assert "Quick start" in readme
+        assert "libwebkit2gtk-4.1-0" in readme
+        assert "libwebkit2gtk-4.0-37" not in readme
 
 
 # ─── Atomic staging (issue #687) ─────────────────────────────────────────────

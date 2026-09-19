@@ -781,6 +781,7 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 	@GO_BIN=$$(command -v go || echo "$(HOME)/.local/go/bin/go"); \
 	if [ -x "$$GO_BIN" ] || command -v go >/dev/null 2>&1; then \
 		echo "Running Go launcher unit tests..."; \
+		$(LAUNCHER_WEBKIT_ENV) \
 		(cd $(LAUNCHER_SRC_DIR) && "$$GO_BIN" test ./...) || exit $$?; \
 	else \
 		echo "⚠️  go not found - Go launcher tests skipped"; \
@@ -891,6 +892,7 @@ check-all:  ## All quality checks (Python/TS/Rust/Go), no tests — WARNING: ref
 	@echo "🐹 Running Go launcher checks (go vet)..."
 	@GO_BIN=$$(command -v go || echo "$(HOME)/.local/go/bin/go"); \
 	if [ -x "$$GO_BIN" ] || command -v go >/dev/null 2>&1; then \
+		$(LAUNCHER_WEBKIT_ENV) \
 		(cd $(LAUNCHER_SRC_DIR) && "$$GO_BIN" vet ./...) || exit $$?; \
 		echo "✅ Go launcher vet passed"; \
 	else \
@@ -2016,6 +2018,14 @@ clean-wasm:  ## Clean WASM build artifacts
 
 LAUNCHER_SRC_DIR := packages/luxar-launcher
 LAUNCHER_OUT_DIR := packages/luxar/src/luxar/cli/_launchers
+LAUNCHER_PKG_CONFIG_DIR := $(CURDIR)/$(LAUNCHER_SRC_DIR)/pkgconfig
+LAUNCHER_WEBKIT_ENV = \
+	if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists webkit2gtk-4.1 2>/dev/null; then \
+		echo "  • WebKitGTK 4.1 found; using the bundled webkit2gtk-4.0 → 4.1 compatibility module." >&2; \
+		export PKG_CONFIG_PATH="$(LAUNCHER_PKG_CONFIG_DIR)$${PKG_CONFIG_PATH:+:$$PKG_CONFIG_PATH}"; \
+	elif [ "$(OS)" = "linux" ]; then \
+		echo "⚠️  WebKitGTK 4.1 not found; falling back to system webkit2gtk-4.0. A resulting 4.0-linked binary will not start on 4.1-only distributions." >&2; \
+	fi;
 
 install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball on Linux)
 	@# Single shell command so PATH updates persist within the recipe.
@@ -2131,9 +2141,8 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 			*) echo "❌ Unsupported Linux architecture: $$ARCH"; exit 1 ;; \
 		esac; \
 		echo "  • linux/$$GOARCH (CGO=1, WebKitGTK)..."; \
-		echo "    Requires: libwebkit2gtk-4.0-dev + pkg-config"; \
-		echo "    (webview_go pins webkit2gtk-4.0 — this is why CI builds the"; \
-		echo "     launcher on ubuntu-22.04; 24.04 ships only the 4.1 package)"; \
+		echo "    Prefers: libwebkit2gtk-4.1-dev + pkg-config (falls back to installed 4.0)"; \
+		$(LAUNCHER_WEBKIT_ENV) \
 		GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o "$$OUT_ABS/linux-$$GOARCH" .; \
 		cd - >/dev/null; \
 	else \
