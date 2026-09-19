@@ -69,6 +69,8 @@ from numpy.typing import NDArray
 # Keep the automatic tier below the one-minute boundary.
 QEM_AUTO_VERTEX_LIMIT = 10_000
 DECIMATION_METHODS = frozenset({"cluster", "qem"})
+_ORPHAN_NEAREST_PAIR_BUDGET = 4_000_000
+_ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET = 1_000_000
 
 
 class DecimatedMesh(NamedTuple):
@@ -150,14 +152,33 @@ def _normalized_collapse_error(
     if np.any(missing):
         # Components whose every face collapsed have no surviving root. They still
         # belong to the source surface, so omitting them would understate the error
-        # exactly when a small feature disappeared. Orphans are rare by construction,
-        # so map each one to its own nearest real coarse vertex rather than inflating
-        # the bound by forcing disconnected islands through one shared representative.
+        # exactly when a small feature disappeared. Keep the tighter per-orphan bound
+        # while its pairwise search is cheap, but fall back to the previous shared
+        # representative for many-component meshes rather than making error reporting
+        # quadratic in both memory and time.
         output_spatial = output_vertices[:, spatial]
-        orphan_distances = np.linalg.norm(
-            source_spatial[missing, None, :] - output_spatial[None, :, :], axis=2
-        )
-        representative_indices[missing] = np.argmin(orphan_distances, axis=1)
+        orphan_spatial = source_spatial[missing]
+        pair_count = len(orphan_spatial) * len(output_spatial)
+        if pair_count > _ORPHAN_NEAREST_PAIR_BUDGET:
+            orphan_centroid = orphan_spatial.mean(axis=0)
+            shared_index = int(
+                np.argmin(np.linalg.norm(output_spatial - orphan_centroid, axis=1))
+            )
+            representative_indices[missing] = shared_index
+        else:
+            block_size = max(
+                1, _ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET // len(output_spatial)
+            )
+            missing_indices = np.flatnonzero(missing)
+            for start in range(0, len(orphan_spatial), block_size):
+                stop = min(start + block_size, len(orphan_spatial))
+                distances = np.linalg.norm(
+                    orphan_spatial[start:stop, None, :] - output_spatial[None, :, :],
+                    axis=2,
+                )
+                representative_indices[missing_indices[start:stop]] = np.argmin(
+                    distances, axis=1
+                )
     representatives = output_vertices[representative_indices][:, spatial]
     return float(
         np.linalg.norm(source_spatial - representatives, axis=1).max() / diagonal

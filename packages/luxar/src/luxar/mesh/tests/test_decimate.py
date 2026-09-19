@@ -122,6 +122,27 @@ class TestDecimateCluster:
 
         assert error == pytest.approx(0.4)
 
+    def test_many_disconnected_components_bound_orphan_work(self) -> None:
+        n_islands = 5_000
+        offsets = np.random.default_rng(7).random((n_islands, 3), dtype=np.float32)
+        tetra = np.array(
+            [[0, 0, 0], [0.01, 0, 0], [0, 0.01, 0], [0, 0, 0.01]],
+            dtype=np.float32,
+        )
+        vertices = (offsets[:, None, :] + tetra[None, :, :]).reshape(-1, 3)
+        tetra_faces = np.array(
+            [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]], dtype=np.uint32
+        )
+        faces = (
+            tetra_faces[None, :, :]
+            + (4 * np.arange(n_islands, dtype=np.uint32))[:, None, None]
+        ).reshape(-1, 3)
+
+        coarse = decimate_cluster(vertices, faces, target_vertices=len(vertices) // 4)
+
+        assert 0 < len(coarse.vertices) < len(vertices)
+        assert np.isfinite(coarse.geometric_error)
+
     def test_a_ladder_of_levels_is_strictly_coarser_and_still_a_sphere(self) -> None:
         v, f = octasphere(4)
         previous = len(v)
