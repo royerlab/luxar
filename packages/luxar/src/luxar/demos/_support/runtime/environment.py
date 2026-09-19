@@ -28,6 +28,12 @@ from typing import Any, Union
 from arbol import aprint, asection
 
 from ...._zarr_compat import read_node_attrs
+from .cli import run_luxar_cli
+
+#: Cube face size the CLI defaults to, mirrored here so a scene naming none
+#: still passes an explicit value. A literal rather than an import: see the
+#: note at the call site about keeping `luxar.demos` off `luxar.cli`.
+_DEFAULT_RESOLUTION = 128
 
 #: Sources whose lighting a bake can freeze. `hdri` is already a fixed file and
 #: `room` is procedural and identical everywhere, so neither gains anything.
@@ -59,25 +65,27 @@ def bake_scene_environment(store: Union[str, Path]) -> bool:
     if (path / "environment").exists():
         return False
 
+    probe = config.get("probe")
+    resolution = int(config.get("resolution") or _DEFAULT_RESOLUTION)
     with asection("Baking the scene environment"):
         try:
-            from ....cli.env_ops.bake import DEFAULT_RESOLUTION, bake_environment
-
-            probe = config.get("probe")
-            report = bake_environment(
-                path,
-                probe="auto" if probe is None else str(probe),
-                resolution=int(config.get("resolution") or DEFAULT_RESOLUTION),
+            # Through the CLI, not by importing the bake: `luxar.demos` must
+            # not depend on `luxar.cli` in the import graph, which is the same
+            # reason `run_luxar_cli` resolves its app dynamically.
+            run_luxar_cli(
+                "env",
+                "bake",
+                str(path),
+                "--probe",
+                "auto" if probe is None else str(probe),
+                "--resolution",
+                str(resolution),
             )
         except Exception as error:  # noqa: BLE001 - see the module docstring
             aprint(f"Skipped: {error}")
             aprint("The viewer will capture the environment live instead.")
             return False
-        attached = report.attach
-        if attached is None:
-            aprint("Captured but not attached.")
+        if not (path / "environment").exists():
+            aprint("Skipped: the bake produced no environment group.")
             return False
-        aprint(
-            f"✓ attached {attached.array_name} ({report.resolution}px, probe {report.probe})"
-        )
         return True
