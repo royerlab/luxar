@@ -537,7 +537,8 @@ knob aimed at the other recipe is refused by name rather than silently dropped.
 
 Takes an input scene and an output scene, plus `--node` and `--overwrite`, and then the
 knobs of the chosen recipe — `-L/--levels` (default 3), `-K/--compression-factor`
-(default 4 — level *i* targets `V / K**i` vertices) and `--subst-method` for `levels`;
+(default 4 — level *i* targets `V / K**i` vertices), `--subst-method`, and the opt-in
+`--attribute-weight` for `levels`;
 `-m/--add-method`, `--n-lods`, `--counts`, `--reveal-center` and `--spatial-dims` for
 `reveal`. The output path is normalized to the
 canonical `<stem>.luxar.zarr`, so an output argument of `out` writes `out.luxar.zarr`; that
@@ -562,6 +563,12 @@ orientation veto can stop well above the requested count and shorten the ladder;
 also requires at least three coarsening dimensions;
 `auto` falls back to clustering for a one- or two-dimensional coarsening, while explicit
 `qem` is refused. The selected tier is printed with the reason.
+
+`--attribute-weight 0` is the default and keeps geometry-only decimation. A positive value
+makes QEM penalize merging vertices with different normalized colours/scalars; on the
+vectorized `cluster` tier it makes exact attribute tuples hard grid-cell barriers. Each level
+is stamped with a normalized conservative geometric-error bound, displayed separately from
+the GSplat/Points/Lines mixture-quality percentage as `ε≤…%` in the Layers panel.
 
 The flag was called `--method` before August 2026, and `-m` was its short form. `--method`
 is gone, and `-m` has since been **claimed** by `--add-method` — the additive ordering it

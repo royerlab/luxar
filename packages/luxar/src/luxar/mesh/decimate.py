@@ -69,6 +69,10 @@ from numpy.typing import NDArray
 # Keep the automatic tier below the one-minute boundary.
 QEM_AUTO_VERTEX_LIMIT = 10_000
 DECIMATION_METHODS = frozenset({"cluster", "qem"})
+# 4M exact pairs cost ~0.15 s per call, or ~3 s across a 25-pass bisection.
+_ORPHAN_NEAREST_PAIR_BUDGET = 4_000_000
+# 1M pairs cap each 3D distance temporary at 3M float64 elements.
+_ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET = 1_000_000
 
 
 class DecimatedMesh(NamedTuple):
@@ -85,12 +89,109 @@ class DecimatedMesh(NamedTuple):
     # NamedTuple: an earlier position would silently reassign every positional
     # construction site.
     scalars: Any = None
+    # Maximum source-vertex displacement to its coarse representative,
+    # normalized by the source spatial bounding-box diagonal.
+    geometric_error: float = 0.0
+
+
+def _appearance_features(
+    colors: NDArray[Any] | None,
+    scalars: Any,
+    n_vertices: int,
+) -> NDArray[np.float64] | None:
+    """Normalized per-vertex appearance columns, omitting constant channels."""
+    columns: list[NDArray[np.float64]] = []
+    if colors is not None and colors.ndim == 2 and colors.shape[:1] == (n_vertices,):
+        columns.append(np.asarray(colors, dtype=np.float64).reshape(n_vertices, -1))
+    if isinstance(scalars, np.ndarray) and scalars.shape[:1] == (n_vertices,):
+        columns.append(np.asarray(scalars, dtype=np.float64).reshape(n_vertices, -1))
+    if not columns:
+        return None
+    values = np.concatenate(columns, axis=1)
+    spans = np.ptp(values, axis=0)
+    varying = spans > 0
+    if not np.any(varying):
+        return None
+    values = values[:, varying]
+    return (values - values.min(axis=0)) / spans[varying]
+
+
+def _appearance_classes(
+    colors: NDArray[Any] | None,
+    scalars: Any,
+    n_vertices: int,
+) -> NDArray[np.int64] | None:
+    """Compact exact-equivalence keys for cluster attribute barriers."""
+    classes: list[NDArray[np.int64]] = []
+    if colors is not None and colors.ndim == 2 and colors.shape[:1] == (n_vertices,):
+        _, inverse = np.unique(colors, axis=0, return_inverse=True)
+        classes.append(np.asarray(inverse, dtype=np.int64))
+    if isinstance(scalars, np.ndarray) and scalars.shape[:1] == (n_vertices,):
+        values = np.asarray(scalars).reshape(n_vertices, -1)
+        _, inverse = np.unique(values, axis=0, return_inverse=True)
+        classes.append(np.asarray(inverse, dtype=np.int64))
+    if not classes:
+        return None
+    return np.column_stack(classes)
+
+
+def _normalized_collapse_error(
+    source_vertices: NDArray[np.float64],
+    output_vertices: NDArray[np.float64],
+    inverse: NDArray[np.int64],
+    spatial_dims: tuple[int, ...],
+) -> float:
+    """Upper-bound source-to-coarse surface error from collapse representatives."""
+    if not len(inverse):
+        return 0.0
+    spatial = np.asarray(spatial_dims, dtype=np.intp)
+    source_spatial = source_vertices[:, spatial]
+    diagonal = float(np.linalg.norm(np.ptp(source_spatial, axis=0)))
+    if diagonal <= 0.0:
+        return 0.0
+    representative_indices = inverse.copy()
+    missing = representative_indices < 0
+    if np.any(missing):
+        # Components whose every face collapsed have no surviving root. They still
+        # belong to the source surface, so omitting them would understate the error
+        # exactly when a small feature disappeared. Keep the tighter per-orphan bound
+        # while its pairwise search is cheap, but fall back to the previous shared
+        # representative for many-component meshes rather than making error reporting
+        # quadratic in both memory and time.
+        output_spatial = output_vertices[:, spatial]
+        orphan_spatial = source_spatial[missing]
+        pair_count = len(orphan_spatial) * len(output_spatial)
+        if pair_count > _ORPHAN_NEAREST_PAIR_BUDGET:
+            orphan_centroid = orphan_spatial.mean(axis=0)
+            shared_index = int(
+                np.argmin(np.linalg.norm(output_spatial - orphan_centroid, axis=1))
+            )
+            representative_indices[missing] = shared_index
+        else:
+            block_size = max(
+                1, _ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET // len(output_spatial)
+            )
+            missing_indices = np.flatnonzero(missing)
+            for start in range(0, len(orphan_spatial), block_size):
+                stop = min(start + block_size, len(orphan_spatial))
+                distances = np.linalg.norm(
+                    orphan_spatial[start:stop, None, :] - output_spatial[None, :, :],
+                    axis=2,
+                )
+                representative_indices[missing_indices[start:stop]] = np.argmin(
+                    distances, axis=1
+                )
+    representatives = output_vertices[representative_indices][:, spatial]
+    return float(
+        np.linalg.norm(source_spatial - representatives, axis=1).max() / diagonal
+    )
 
 
 def _cluster_keys(
     vertices: NDArray[np.float64],
     spatial_dims: tuple[int, ...],
     cell: float,
+    attribute_classes: NDArray[np.int64] | None = None,
 ) -> NDArray[np.int64]:
     """Grid cell per vertex over ``spatial_dims``; every OTHER dim is a barrier.
 
@@ -104,11 +205,14 @@ def _cluster_keys(
     spatial = np.asarray(spatial_dims, dtype=np.intp)
     grid = np.floor(vertices[:, spatial] / cell).astype(np.int64)
     barrier = [i for i in range(d) if i not in set(spatial_dims)]
-    if not barrier:
-        return grid
+    parts = [grid]
     # Barrier columns are compared exactly; float bits are fine as an equality key.
-    exact = vertices[:, barrier].view(np.int64).reshape(n, len(barrier))
-    return np.concatenate([grid, exact], axis=1)
+    if barrier:
+        exact = vertices[:, barrier].view(np.int64).reshape(n, len(barrier))
+        parts.append(exact)
+    if attribute_classes is not None:
+        parts.append(attribute_classes)
+    return np.concatenate(parts, axis=1)
 
 
 def _validate_normal_frame(
@@ -206,6 +310,7 @@ def decimate_cluster(
     colors: NDArray[Any] | None = None,
     scalars: Any = None,
     spatial_dims: tuple[int, ...] | None = None,
+    attribute_weight: float = 0.0,
     max_iterations: int = 24,
 ) -> DecimatedMesh:
     """Reduce ``vertices`` toward ``target_vertices`` by vertex clustering.
@@ -259,6 +364,10 @@ def decimate_cluster(
             0) would be dropped in silence — a degenerate mesh would come out as a
             plain leaf with nothing naming which mesh caused it.
     """
+    if not np.isfinite(attribute_weight) or attribute_weight < 0:
+        raise ValueError(
+            f"attribute_weight must be finite and >= 0, got {attribute_weight}"
+        )
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
     spatial_dims = _validate_decimate_inputs(
@@ -269,6 +378,11 @@ def decimate_cluster(
         return DecimatedMesh(vertices, faces, normals, colors, scalars)
 
     v64 = vertices.astype(np.float64)
+    attribute_classes = (
+        _appearance_classes(colors, scalars, len(vertices))
+        if attribute_weight > 0
+        else None
+    )
     spatial = np.asarray(spatial_dims, dtype=np.intp)
     extent = float(
         np.max(v64[:, spatial].max(axis=0) - v64[:, spatial].min(axis=0)) or 1.0
@@ -297,7 +411,15 @@ def decimate_cluster(
     best: DecimatedMesh | None = None
     for _ in range(max_iterations):
         candidate = _cluster_once(
-            v64, faces, spatial_dims, guess, normals, normal_dims, colors, scalars
+            v64,
+            faces,
+            spatial_dims,
+            guess,
+            normals,
+            normal_dims,
+            colors,
+            scalars,
+            attribute_classes,
         )
         count = candidate.vertices.shape[0]
         # A candidate with no surviving triangle is not a usable level regardless of
@@ -323,7 +445,15 @@ def decimate_cluster(
     if best is None:
         # Every probe overshot. Return the least-reduced one we can still build.
         best = _cluster_once(
-            v64, faces, spatial_dims, lo, normals, normal_dims, colors, scalars
+            v64,
+            faces,
+            spatial_dims,
+            lo,
+            normals,
+            normal_dims,
+            colors,
+            scalars,
+            attribute_classes,
         )
     if best.faces.shape[0] == 0:
         # Reachable only for input that has no surface to begin with — every
@@ -485,9 +615,12 @@ def _cluster_once(
     normal_dims: tuple[int, ...] | None,
     colors: NDArray[Any] | None,
     scalars: Any = None,
+    attribute_classes: NDArray[np.int64] | None = None,
 ) -> DecimatedMesh:
     """One clustering pass at a fixed cell size."""
-    keys = _cluster_keys(v64, spatial_dims, max(cell, 1e-12))
+    keys = _cluster_keys(
+        v64, spatial_dims, max(cell, 1e-12), attribute_classes=attribute_classes
+    )
     _, inverse = np.unique(keys, axis=0, return_inverse=True)
     inverse = np.asarray(inverse).reshape(-1)
     n_clusters = int(inverse.max()) + 1 if inverse.size else 0
@@ -542,7 +675,7 @@ def _cluster_once(
     if new_f.shape[0]:
         referenced = np.unique(new_f)
         if referenced.size != new_v.shape[0]:
-            remap = np.zeros(new_v.shape[0], dtype=np.int64)
+            remap = np.full(new_v.shape[0], -1, dtype=np.int64)
             remap[referenced] = np.arange(referenced.size)
             new_f = remap[new_f].astype(np.uint32)
             new_v = new_v[referenced]
@@ -550,6 +683,9 @@ def _cluster_once(
                 new_colors = new_colors[referenced]
             if scalars_per_vertex:
                 new_scalars = new_scalars[referenced]
+            inverse = remap[inverse]
+
+    geometric_error = _normalized_collapse_error(v64, new_v, inverse, spatial_dims)
 
     new_normals = None
     if normals is not None and normal_dims is not None:
@@ -563,6 +699,7 @@ def _cluster_once(
         normals=new_normals,
         colors=new_colors,
         scalars=new_scalars,
+        geometric_error=geometric_error,
     )
 
 

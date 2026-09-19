@@ -517,6 +517,7 @@ def _reject_cross_recipe_flags(
     levels_given: bool,
     compression_given: bool,
     subst_method_given: bool,
+    attribute_weight_given: bool,
 ) -> None:
     """Refuse a knob used against the recipe it does not belong to.
 
@@ -585,6 +586,7 @@ def _reject_cross_recipe_flags(
         ("-L/--levels", levels_given, "--n-lods"),
         ("-K/--compression-factor", compression_given, "no equivalent"),
         ("--subst-method", subst_method_given, "-m/--add-method"),
+        ("--attribute-weight", attribute_weight_given, "no equivalent"),
     ):
         if not given:
             continue
@@ -704,6 +706,7 @@ def _build_ladder_specs(
     levels: int,
     compression_factor: int,
     method: str,
+    attribute_weight: float,
     add_method: Optional[str],
     n_lods: Optional[int],
     counts: Optional[str],
@@ -759,6 +762,7 @@ def _build_ladder_specs(
         "levels": levels,
         "compression_factor": compression_factor,
         "method": method,
+        "attribute_weight": attribute_weight,
     }
     resolve_substitutive_axis_mesh(substitutive_spec)
     resolve_decimation_method(
@@ -775,6 +779,7 @@ def run_lod(
     levels: int,
     compression_factor: int,
     method: str,
+    attribute_weight: float,
     overwrite: bool,
     recipe: str = RECIPE_LEVELS,
     add_method: Optional[str] = None,
@@ -821,6 +826,7 @@ def run_lod(
         levels_given=False,
         compression_given=False,
         subst_method_given=False,
+        attribute_weight_given=attribute_weight != 0.0,
     )
 
     from luxar import LuxarZarrCompiler
@@ -891,6 +897,7 @@ def run_lod(
             levels=levels,
             compression_factor=compression_factor,
             method=method,
+            attribute_weight=attribute_weight,
             add_method=add_method,
             n_lods=n_lods,
             counts=counts,
@@ -1118,6 +1125,17 @@ def lod_command(
             "mixture."
         ),
     ),
+    attribute_weight: float = typer.Option(
+        0.0,
+        "--attribute-weight",
+        min=0.0,
+        help=(
+            "[--recipe levels] Opt-in appearance preservation. QEM adds a "
+            "normalized colour/scalar merge penalty; on cluster, any positive "
+            "value is the same hard barrier between exact colour/scalar values. "
+            "Zero keeps the existing geometry-only behavior."
+        ),
+    ),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace an existing output."
     ),
@@ -1248,6 +1266,7 @@ def lod_command(
         levels_given=_was_supplied(ctx, "levels"),
         compression_given=_was_supplied(ctx, "compression_factor"),
         subst_method_given=_was_supplied(ctx, "method"),
+        attribute_weight_given=_was_supplied(ctx, "attribute_weight"),
     )
     try:
         run_lod(
@@ -1257,6 +1276,7 @@ def lod_command(
             levels=levels,
             compression_factor=compression_factor,
             method=method,
+            attribute_weight=attribute_weight,
             overwrite=overwrite,
             recipe=recipe,
             add_method=add_method,

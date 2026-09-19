@@ -36,7 +36,10 @@ import { BLENDING_MODES } from '../../rendering/blending-state';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import type { LODGroupRegistry } from '../../scene/lod-group-registry';
-import { displayedQualityFraction } from '../../scene/lod-display-gate';
+import {
+  displayedGeometricErrorFraction,
+  displayedQualityFraction,
+} from '../../scene/lod-display-gate';
 import { MESH_DEFAULTS } from '../../rendering/materials/mesh/appearance';
 import {
   PHYSICAL_MESH_KNOB_KEYS,
@@ -1131,9 +1134,16 @@ export class LayerControls {
       // unstamped (legacy) datasets.
       const q = displayedQualityFraction(entry.children[shown]?.object ?? {});
       const qualityStr = q == null ? '' : ` · ~${Math.round(q * 100)}%`;
-      return `L${shown + 1}/${entry.children.length}${qualityStr}${suffix}`;
+      const geometricError = displayedGeometricErrorFraction(entry.children[shown]?.object ?? {});
+      const errorStr =
+        geometricError == null || geometricError === 0
+          ? ''
+          : ` · ε≤${Math.round(geometricError * 100)}%`;
+      return `L${shown + 1}/${entry.children.length}${qualityStr}${errorStr}${suffix}`;
     }
     if (this.isBroadcastPartition(primary)) {
+      // This readout summarizes nested level indices only; ε is scoped to the
+      // direct kind=lod branch above until partition-wide error aggregation exists.
       // Aggregate across EVERY nested lod_group, not just the first: under
       // auto-selection each part picks its own level by its own on-screen
       // size, so they legitimately diverge (the mosaic recipe is unbalanced

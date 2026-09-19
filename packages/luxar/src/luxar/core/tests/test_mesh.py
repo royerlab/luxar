@@ -477,17 +477,38 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
             with pytest.raises(ValueError, match="energy"):
                 scene.add_mesh(f"m_{key}", _V, _F, **{key: {"reference_energy": 1.0}})
 
-        # Refused on KEY PRESENCE, not on what the dict happens to hold: a
-        # ``quality``-only ``level_stats`` is not an energy stamp, but it has no
-        # meaning on a mesh either, so the container goes too. Deliberate breadth —
-        # the day substitutive mesh levels land, this narrows to the energy keys and
-        # this assertion is what makes that an explicit decision.
-        with pytest.raises(ValueError, match="energy"):
+        # Non-energy fields share these containers but do not engage brightness
+        # compensation. Mesh substitutive levels use the separate geometric-error
+        # currency, and a caller-authored quality field remains legal too.
+        assert (
             scene.add_mesh("m_quality", _V, _F, level_stats={"quality": 0.9})
+            is not None
+        )
+        assert (
+            scene.add_mesh("m_error", _V, _F, level_stats={"geometric_error": 0.1})
+            is not None
+        )
 
         # The keys are refused, not the whole attrs surface: a mesh with ordinary
         # render attrs still writes.
         assert scene.add_mesh("plain", _V, _F, opacity=0.5) is not None
+
+
+@pytest.mark.parametrize("container", ["level_stats", "lod_stats"])
+@pytest.mark.parametrize("substitutive_lod", [False, True])
+@pytest.mark.parametrize("value", [None, "not-a-dict"])
+def test_mesh_rejects_non_dict_stats_containers(
+    tmp_path, container: str, substitutive_lod: bool, value: object
+) -> None:
+    with LuxarZarrCompiler(
+        tmp_path / f"{container}-{substitutive_lod}.luxar.zarr"
+    ) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        kwargs = {container: value}
+        if substitutive_lod:
+            kwargs["substitutive_lod"] = True
+        with pytest.raises(ValueError, match=rf"{container} must be a dict"):
+            scene.add_mesh("m", _V, _F, **kwargs)
 
 
 def test_every_sibling_structural_parameter_is_bound_by_name() -> None:

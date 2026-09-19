@@ -42,6 +42,7 @@ where the two names meet.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -149,7 +150,8 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
     * ``None`` / ``False`` → no-op (the caller writes a plain mesh leaf).
     * ``True`` / ``dict()`` → defaults (K=4, levels=3, method="auto").
     * ``dict(...)`` → keys ``compression_factor`` (alias ``K``), ``levels``
-      (alias ``n_lods``), ``method``, ``coverage_fractions``, ``coarsen_dims``.
+      (alias ``n_lods``), ``method``, ``coverage_fractions``, ``coarsen_dims``,
+      ``attribute_weight``.
 
     ``method`` accepts :data:`MESH_SUBSTITUTIVE_METHODS`. ``auto`` resolves to
     topology-preserving ``qem`` through 10,000 vertices and vectorized ``cluster``
@@ -207,12 +209,18 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
     # Shape/type only here; names and the "display" default are resolved against
     # the scene in the adder, exactly as the other three geometries do it.
     coarsen_dims = _validate_coarsen_dims_spec(kwargs.pop("coarsen_dims", None))
+    attribute_weight = float(kwargs.pop("attribute_weight", 0.0))
+    if not math.isfinite(attribute_weight) or attribute_weight < 0:
+        raise ValueError(
+            "substitutive_lod for Mesh: attribute_weight must be finite and >= 0; "
+            f"got {attribute_weight}"
+        )
 
     if kwargs:
         raise ValueError(
             f"substitutive_lod for Mesh: unrecognized keys {sorted(kwargs)}. "
             "Valid keys: compression_factor (K), levels (n_lods), method, "
-            "coverage_fractions, coarsen_dims. (A mesh's vocabulary is SHORTER "
+            "coverage_fractions, coarsen_dims, attribute_weight. (A mesh's vocabulary is SHORTER "
             "than Points/Lines/GSplats — see this module's docstring for the "
             "four lift-only keys it deliberately omits.)"
         )
@@ -223,6 +231,7 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
         "method": method,
         "coverage_fractions": explicit_coverage,
         "coarsen_dims": coarsen_dims,
+        "attribute_weight": attribute_weight,
     }
 
 

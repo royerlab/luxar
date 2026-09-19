@@ -1842,6 +1842,25 @@ make `auto` fall back to clustering and make explicit `qem` invalid. It is reach
 exactly as the row predicted: the LOD registry hides inactive levels and the picking system
 skips hidden nodes.
 
+Appearance preservation is opt-in through `attribute_weight` (default `0`, so existing
+geometry-only output is unchanged). QEM adds a normalized colour/scalar within-cluster
+sum-of-squares term to the geometric edge-collapse quadric; `attribute_weight=1` puts one
+full-range appearance-channel step on the scale of the source spatial extent. The vectorized
+`cluster` tier has no edge-cost quadric to extend, so any positive weight instead adds the
+exact per-vertex colour/scalar tuple to the grid key as a hard class barrier. This is
+deliberately method-specific: continuous attributes that vary at every vertex can prevent
+cluster reduction, while QEM can trade their penalty against geometry.
+
+Every substitutive level also carries `level_stats.geometric_error`: the maximum distance
+from a source vertex to the coarse representative it collapsed into, normalized by the
+source spatial bounding-box diagonal. Because that representative is a vertex of the coarse
+surface, the value is a conservative source-vertex-to-surface error bound; the original
+finest level is stamped `0`. It is **not** mixture `quality = 1 - ||A-B||²/||B||²`, and mesh
+still carries neither `reference_energy` nor `energy_fraction_cum`. The viewer therefore
+folds it separately: the Layers readout shows the worst visible mesh error (`ε≤…%`) without
+requiring an energy pair, while mixed-geometry `Q·e` remains unchanged and never averages
+the two currencies.
+
 The **ADDITIVE** ladder row above is untouched and still correct — *as a row about LOD*.
 The `lod` capability flag gates `kind=lod` groups, whose levels REPLACE one another; an
 additive ladder is `additive_<i>/` subgroups inside a leaf, and as a **level of detail** it
@@ -1988,13 +2007,11 @@ method is the only thing an authoring call keys on, and it already covers both c
 group, where the stamps bite, and `--recipe stream -m radial` writes a bare one, where they
 are inert. One predicate, both cases, no scope test needed.
 
-The rule is **enforced at write time**: `add_mesh` raises if `level_stats` or `lod_stats` is
-supplied (`_reject_energy_stamps` in `packages/luxar/src/luxar/core/group/adders/mesh.py`) — on key
-presence, deliberately broader than the energy fields themselves, since neither attribute has any
-meaning on a mesh today. Substitutive mesh levels are the one thing that would change that
-(`level_stats.quality` is a legitimate non-energy stamp): the decimator has since landed, so
-narrowing the guard to the energy keys — rather than routing around it — is the outstanding
-follow-up. It has to be the adder that refuses,
+The rule is **enforced at write time**: `add_mesh` raises when either container carries
+`reference_energy` or `energy_fraction_cum` (`_reject_energy_stamps` in
+`packages/luxar/src/luxar/core/group/adders/mesh.py`). The containers themselves remain legal
+because substitutive levels now stamp the separate `level_stats.geometric_error` currency.
+It has to be the adder that refuses,
 because the write path's allow-list `_ALLOWED_NODE_ATTRS` in
 `packages/luxar/src/luxar/io/_compiler/node_common.py` is geometry-blind and would let either key
 through on any node type. The refusal is prophylactic rather than a fix for a live bug: one latch

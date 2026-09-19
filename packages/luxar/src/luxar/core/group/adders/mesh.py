@@ -295,7 +295,7 @@ def _reject_physical_transmission_conflicts(name: str, attrs: Dict[str, Any]) ->
 
 
 def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
-    """Refuse hand-supplied LOD quality stamps on a mesh (spec §9.1).
+    """Refuse hand-supplied additive-energy fields on a mesh (spec §9.1).
 
     ``level_stats`` / ``lod_stats`` carry the ``energy_fraction_cum`` and
     ``reference_energy`` pair that an additive ladder writes. The allow-list in
@@ -327,27 +327,38 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
     mesh ladder carries no energy stamps at all — the only route by which a mesh
     could acquire one is a caller writing it by hand, which is exactly this.
 
-    The check is on KEY PRESENCE, deliberately broader than the energy fields
-    themselves: refusing the container is the rule §9.1 states, and the container is
-    also what a ladder needs exclusive use of. Substitutive mesh levels are the one
-    thing this would touch — ``level_stats`` also carries the non-energy ``quality``
-    stamp a level may legitimately want — so narrowing it to the energy keys stays
-    the follow-up for whoever needs that. The message says which attribute is
-    refused and what it is FOR; it does not claim the supplied dict actually holds a
-    stamp.
+    The check rejects a non-dict container, then inspects valid containers for the
+    ENERGY FIELDS: substitutive levels use ``level_stats.geometric_error`` for their
+    separate surface-error currency, which must never be mistaken for mixture
+    ``quality`` or acquire the energy pair that makes the viewer's brightness
+    compensation engage.
     """
-    supplied = sorted(k for k in ("level_stats", "lod_stats") if k in attrs)
+    for container in ("level_stats", "lod_stats"):
+        value = attrs.get(container)
+        if container in attrs and not isinstance(value, dict):
+            raise TypeError(
+                f"{container} must be a dict when adding a mesh; "
+                f"got {type(value).__name__}"
+            )
+
+    energy_keys = {"reference_energy", "energy_fraction_cum"}
+    supplied = sorted(
+        f"{container}.{key}"
+        for container in ("level_stats", "lod_stats")
+        if isinstance(attrs.get(container), dict)
+        for key in energy_keys & set(attrs[container])
+    )
     if supplied:
         raise ValueError(
-            f"Cannot add mesh '{name}' with {' and '.join(supplied)}. That is where "
-            "an additive ladder writes its energy stamps, and the viewer's brightness "
+            f"Cannot add mesh '{name}' with {' and '.join(supplied)}. Those are the "
+            "fields an additive ladder writes as energy stamps, and the viewer's brightness "
             "compensation is gated on the BLENDING MODE, not the geometry type — "
             "so a stamped mesh in 'additive' or 'luminous' would be scaled by "
             "1/energy_fraction_cum. That brightens a dimmer prefix correctly and a "
             "holed surface wrongly (spec §9.1). A mesh ladder writes both attributes "
             "itself, and it is reveal-only — a partial surface at full brightness — "
             "so it carries no energy stamp by construction; supplying one by hand is "
-            "what is refused. Omit them and pass additive_lod= instead."
+            "what is refused. Non-energy level_stats fields remain valid."
         )
 
 
@@ -1600,6 +1611,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
         colors=per_vertex_colors,
         scalars=per_vertex_scalars,
         spatial_dims=spatial_dims,
+        attribute_weight=spec["attribute_weight"],
     )
 
     coarse: List[Any] = []
@@ -1615,10 +1627,16 @@ def add_mesh_substitutive_lod_wrapper_impl(
         previous = count
 
     if not coarse:
+        weight_note = (
+            f" A positive attribute_weight={spec['attribute_weight']} can prevent "
+            "attribute-incompatible vertices from merging."
+            if spec["attribute_weight"] > 0
+            else ""
+        )
         aprint(
             f"  📐 Substitutive-LOD '{name}': no level reduced the surface "
             f"({n_vertices:,} vertices at K={compression_factor}) — writing a "
-            "plain mesh leaf instead."
+            f"plain mesh leaf instead.{weight_note}"
         )
         return add_mesh_impl(
             group,
@@ -1672,6 +1690,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
     child_attrs.pop("coverage_fraction", None)
+    caller_level_stats = child_attrs.pop("level_stats", None)
     lod_attrs.setdefault("display_type", "mesh")
 
     # ONE display window for the whole ladder, stamped on every child. Each
@@ -1716,6 +1735,10 @@ def add_mesh_substitutive_lod_wrapper_impl(
             dim_order=None,
             fill=None,
             coverage_fraction=coverage_vals[idx],
+            level_stats={
+                **(caller_level_stats if isinstance(caller_level_stats, dict) else {}),
+                "geometric_error": level.geometric_error,
+            },
             **child_attrs,
         )
 
@@ -1744,6 +1767,10 @@ def add_mesh_substitutive_lod_wrapper_impl(
         dim_order=None,
         fill=None,
         coverage_fraction=coverage_vals[-1],
+        level_stats={
+            **(caller_level_stats if isinstance(caller_level_stats, dict) else {}),
+            "geometric_error": 0.0,
+        },
         **child_attrs,
     )
 

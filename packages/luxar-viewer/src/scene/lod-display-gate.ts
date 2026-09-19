@@ -229,6 +229,47 @@ export function displayedQualityFraction(node: ProgressNode): number | null {
   return subtreeDisplayProgress(node, null)?.quality ?? null;
 }
 
+interface GeometricErrorAccumulator {
+  anyMesh: boolean;
+  known: boolean;
+  worst: number;
+}
+
+function includeGeometricError(
+  userData: ProgressNode['userData'],
+  count: number | null,
+  acc: GeometricErrorAccumulator
+): void {
+  if (count == null || count <= 0 || userData?.nodeType !== 'mesh') return;
+  acc.anyMesh = true;
+  const error = userData.attrs?.level_stats?.geometric_error;
+  if (typeof error === 'number') acc.worst = Math.max(acc.worst, error);
+  else acc.known = false;
+}
+
+function foldGeometricError(
+  node: ProgressNode,
+  isRoot: boolean,
+  acc: GeometricErrorAccumulator
+): void {
+  if (!isRoot && node.visible === false) return;
+  includeGeometricError(node.userData, countFromUserData(node.userData), acc);
+  for (const child of node.children ?? []) foldGeometricError(child, false, acc);
+}
+
+/**
+ * Worst normalized mesh collapse error among the visible non-empty mesh leaves.
+ * This is deliberately separate from {@link displayedQualityFraction}: mesh
+ * geometric error is an upper-bound distance, not mixture Q, and requires no
+ * energy stamp. A partially stamped mesh subtree is reported as unknown rather
+ * than blending measured and legacy levels.
+ */
+export function displayedGeometricErrorFraction(node: ProgressNode): number | null {
+  const acc: GeometricErrorAccumulator = { anyMesh: false, known: true, worst: 0 };
+  foldGeometricError(node, true, acc);
+  return acc.anyMesh && acc.known ? acc.worst : null;
+}
+
 /**
  * The aspiration-side shape for {@link shouldHoldPreviousDisplay}: a
  * `FreshnessChild` plus the one lazy-lifecycle field the hold decision reads

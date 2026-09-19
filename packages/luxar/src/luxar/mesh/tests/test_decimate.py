@@ -17,7 +17,10 @@ import pytest
 
 from .. import qem
 from ..decimate import (
+    _ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET,
+    _ORPHAN_NEAREST_PAIR_BUDGET,
     QEM_AUTO_VERTEX_LIMIT,
+    _normalized_collapse_error,
     decimate,
     decimate_cluster,
     decimate_ladder,
@@ -83,6 +86,94 @@ def edge_audit(n_vertices: int, faces: np.ndarray) -> tuple[int, int, int]:
 
 
 class TestDecimateCluster:
+    def test_attribute_barrier_prevents_boundary_smearing(self) -> None:
+        v, f = octasphere(3)
+        side = v[:, 0] + 0.31 * v[:, 1] >= 0
+        colors = np.zeros((len(v), 3), np.uint8)
+        colors[side, 0] = 255
+        colors[~side, 2] = 255
+
+        default = decimate_cluster(v, f, target_vertices=40, colors=colors)
+        preserved = decimate_cluster(
+            v, f, target_vertices=40, colors=colors, attribute_weight=1.0
+        )
+
+        assert default.colors is not None and preserved.colors is not None
+        assert np.any((default.colors[:, 0] > 0) & (default.colors[:, 2] > 0))
+        assert not np.any((preserved.colors[:, 0] > 0) & (preserved.colors[:, 2] > 0))
+        edges, boundary, nonmanifold = edge_audit(
+            len(preserved.vertices), preserved.faces
+        )
+        assert len(preserved.vertices) - edges + len(preserved.faces) == 2
+        assert boundary == 0 and nonmanifold == 0
+
+    def test_reports_normalized_collapse_error(self) -> None:
+        v, f = octasphere(3)
+        coarse = decimate_cluster(v, f, target_vertices=40)
+        unchanged = decimate_cluster(v, f, target_vertices=len(v))
+
+        assert 0.0 < coarse.geometric_error < 1.0
+        assert unchanged.geometric_error == 0.0
+
+    def test_orphan_vertices_use_their_own_nearest_coarse_vertex(
+        self, monkeypatch
+    ) -> None:
+        module = importlib.import_module("luxar.mesh.decimate")
+        monkeypatch.setattr(module, "_ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET", 2)
+        source = np.array([[-5, 0, 0], [5, 0, 0]], dtype=np.float64)
+        output = np.array([[-1, 0, 0], [1, 0, 0]], dtype=np.float64)
+        inverse = np.array([-1, -1], dtype=np.int64)
+
+        error = _normalized_collapse_error(source, output, inverse, (0, 1, 2))
+
+        assert error == pytest.approx(0.4)
+
+    def test_large_orphan_search_uses_a_conservative_shared_representative(
+        self, monkeypatch
+    ) -> None:
+        module = importlib.import_module("luxar.mesh.decimate")
+        monkeypatch.setattr(module, "_ORPHAN_NEAREST_PAIR_BUDGET", 3)
+        source = np.array([[-5, 0, 0], [5, 0, 0]], dtype=np.float64)
+        output = np.array([[-1, 0, 0], [1, 0, 0]], dtype=np.float64)
+        inverse = np.array([-1, -1], dtype=np.int64)
+
+        error = _normalized_collapse_error(source, output, inverse, (0, 1, 2))
+
+        assert error == pytest.approx(0.6)
+
+    def test_many_disconnected_components_bound_orphan_work(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        n_islands = 5_000
+        offsets = np.random.default_rng(7).random((n_islands, 3), dtype=np.float32)
+        tetra = np.array(
+            [[0, 0, 0], [0.01, 0, 0], [0, 0.01, 0], [0, 0, 0.01]],
+            dtype=np.float32,
+        )
+        vertices = (offsets[:, None, :] + tetra[None, :, :]).reshape(-1, 3)
+        tetra_faces = np.array(
+            [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]], dtype=np.uint32
+        )
+        faces = (
+            tetra_faces[None, :, :]
+            + (4 * np.arange(n_islands, dtype=np.uint32))[:, None, None]
+        ).reshape(-1, 3)
+        norm_sizes: list[int] = []
+        norm = np.linalg.norm
+
+        def recording_norm(values: Any, *args: Any, **kwargs: Any) -> Any:
+            norm_sizes.append(np.asarray(values).size)
+            return norm(values, *args, **kwargs)
+
+        monkeypatch.setattr(np.linalg, "norm", recording_norm)
+
+        coarse = decimate_cluster(vertices, faces, target_vertices=len(vertices) // 4)
+
+        assert 0 < len(coarse.vertices) < len(vertices)
+        assert 0.0 < coarse.geometric_error < 1.0
+        assert max(norm_sizes) <= 3 * _ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET
+        assert sum(norm_sizes) <= 2 * _ORPHAN_NEAREST_PAIR_BUDGET
+
     def test_a_ladder_of_levels_is_strictly_coarser_and_still_a_sphere(self) -> None:
         v, f = octasphere(4)
         previous = len(v)
@@ -452,6 +543,70 @@ def test_the_cell_search_is_robust_to_non_monotone_cluster_counts() -> None:
 
 
 class TestDecimateQEM:
+    def test_attribute_quadric_preserves_a_colour_boundary(self) -> None:
+        v, f = octasphere(3)
+        side = v[:, 0] + 0.31 * v[:, 1] >= 0
+        colors = np.zeros((len(v), 3), np.uint8)
+        colors[side, 0] = 255
+        colors[~side, 2] = 255
+
+        default = decimate_qem(v, f, target_vertices=40, colors=colors)
+        preserved = decimate_qem(
+            v, f, target_vertices=40, colors=colors, attribute_weight=1.0
+        )
+
+        assert default.colors is not None and preserved.colors is not None
+        assert np.any((default.colors[:, 0] > 0) & (default.colors[:, 2] > 0))
+        assert not np.any((preserved.colors[:, 0] > 0) & (preserved.colors[:, 2] > 0))
+        edges, boundary, nonmanifold = edge_audit(
+            len(preserved.vertices), preserved.faces
+        )
+        assert len(preserved.vertices) - edges + len(preserved.faces) == 2
+        assert boundary == 0 and nonmanifold == 0
+        assert 0.0 < preserved.geometric_error < 1.0
+
+    def test_mid_weight_stays_in_the_partial_colour_tradeoff_regime(self) -> None:
+        v, f = octasphere(3)
+        side = v[:, 0] + 0.31 * v[:, 1] >= 0
+        colors = np.zeros((len(v), 3), np.uint8)
+        colors[side, 0] = 255
+        colors[~side, 2] = 255
+
+        default = decimate_qem(v, f, target_vertices=40, colors=colors)
+        partial = decimate_qem(
+            v, f, target_vertices=40, colors=colors, attribute_weight=0.05
+        )
+
+        assert default.colors is not None and partial.colors is not None
+        default_mixed = np.count_nonzero(
+            (default.colors[:, 0] > 0) & (default.colors[:, 2] > 0)
+        )
+        partial_mixed = np.count_nonzero(
+            (partial.colors[:, 0] > 0) & (partial.colors[:, 2] > 0)
+        )
+        assert 0 < partial_mixed < default_mixed
+
+    def test_attribute_quadric_preserves_a_scalar_boundary(self) -> None:
+        v, f = octasphere(3)
+        scalars = (v[:, 0] + 0.31 * v[:, 1] >= 0).astype(np.float32)
+
+        default = decimate_qem(v, f, target_vertices=40, scalars=scalars)
+        preserved = decimate_qem(
+            v, f, target_vertices=40, scalars=scalars, attribute_weight=1.0
+        )
+
+        assert default.scalars is not None and preserved.scalars is not None
+        assert np.any((default.scalars > 0) & (default.scalars < 1))
+        assert set(np.unique(preserved.scalars)) == {0.0, 1.0}
+
+    @pytest.mark.parametrize("value", [-1.0, np.inf, np.nan])
+    def test_attribute_weight_must_be_nonnegative_and_finite(
+        self, value: float
+    ) -> None:
+        v, f = octasphere(1)
+        with pytest.raises(ValueError, match="attribute_weight"):
+            decimate_qem(v, f, target_vertices=10, attribute_weight=value)
+
     def test_boundary_and_incident_face_caches_stay_exact_after_each_collapse(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

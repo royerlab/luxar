@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  displayedGeometricErrorFraction,
   displayedQualityFraction,
   shouldHoldPreviousDisplay,
   subtreeDisplayProgress,
@@ -568,5 +569,60 @@ describe('displayedQualityFraction (Q·e readout)', () => {
     };
     expect(displayedQualityFraction(unstamped)).toBeNull();
     expect(displayedQualityFraction({ visible: true, children: [] })).toBeNull();
+  });
+});
+
+describe('displayedGeometricErrorFraction (mesh error readout)', () => {
+  it('reports mesh error without an energy pair and keeps it out of mixture Q', () => {
+    const mesh: ProgressNode = {
+      userData: {
+        nodeType: 'mesh',
+        visibleTriangleCount: 20,
+        attrs: { level_stats: { geometric_error: 0.125 } },
+      },
+    };
+    expect(displayedGeometricErrorFraction(mesh)).toBeCloseTo(0.125, 10);
+    expect(displayedQualityFraction(mesh)).toBeNull();
+  });
+
+  it('takes the worst mesh error and ignores non-mesh quality currencies', () => {
+    const root = group([
+      {
+        userData: {
+          nodeType: 'mesh',
+          visibleTriangleCount: 20,
+          attrs: { level_stats: { geometric_error: 0.05 } },
+        },
+      },
+      {
+        userData: {
+          nodeType: 'mesh',
+          visibleTriangleCount: 30,
+          attrs: { level_stats: { geometric_error: 0.12 } },
+        },
+      },
+      {
+        userData: {
+          nodeType: 'gsplats',
+          visibleSplatCount: 10,
+          attrs: { level_stats: { quality: 0.8, reference_energy: 2 } },
+        },
+      },
+    ]);
+    expect(displayedGeometricErrorFraction(root)).toBeCloseTo(0.12, 10);
+  });
+
+  it('returns null when any visible non-empty mesh leaf is unstamped', () => {
+    const stamped: ProgressNode = {
+      userData: {
+        nodeType: 'mesh',
+        visibleTriangleCount: 20,
+        attrs: { level_stats: { geometric_error: 0.05 } },
+      },
+    };
+    const legacy: ProgressNode = {
+      userData: { nodeType: 'mesh', visibleTriangleCount: 10 },
+    };
+    expect(displayedGeometricErrorFraction(group([stamped, legacy]))).toBeNull();
   });
 });
