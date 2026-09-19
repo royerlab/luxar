@@ -8,34 +8,80 @@
  * (`net::ERR_INSUFFICIENT_RESOURCES`) — the ceiling that capped large
  * substitutive-LOD scenes (~10M+ finest points).
  *
- * Both data-fetch paths funnel through {@link withFetchGate}: the
- * multi-level caching store's network tier (`fetch-retry.ts`, the default) and
- * the no-cache `FetchStore` (`data/zarr.ts`). A single shared counter caps the
- * total in flight, keeping throughput high (HTTP/2 multiplexes happily at this
- * width) while staying within the browser's socket/memory budget.
+ * All data-fetch paths funnel through {@link withFetchGate}: the multi-level
+ * caching store's network tier (`fetch-retry.ts`, the default), zipped-store
+ * range reads (`range-reader.ts`), and the no-cache `FetchStore`
+ * (`data/zarr.ts`). Shared lane counters cap the total in flight, keeping
+ * throughput high while staying within the browser's socket/memory budget.
+ *
+ * Data and metadata use separate lanes. Body-sized chunk reads stay bounded,
+ * and on multiplexed transports a root `zarr.json` / `.zattrs` probe does not
+ * wait behind every active chunk body. HTTP/1.1 can still queue both lanes on
+ * the browser's smaller per-origin socket pool.
  */
 
 /**
- * Maximum chunk `fetch()` calls in flight across every data path at once.
+ * Maximum chunk responses in flight across every data path at once.
  *
- * 64 is chosen for HTTP/2: high enough that multiplexing keeps the pipe full on
- * a multi-thousand-chunk visible range, low enough to stay clear of the
- * `net::ERR_INSUFFICIENT_RESOURCES` ceiling described above. Shared globally —
- * the cap is on total concurrency, not per store or per node.
+ * 24 keeps enough HTTP/2 streams ready to fill ordinary broadband while
+ * bounding a representative 500 KiB chunk wave to about 12 MiB. Shared
+ * globally — the cap is on total concurrency through response-body
+ * consumption, not per store or per node. Metadata has its own four-slot lane.
  */
-export const MAX_CONCURRENT_CHUNK_FETCHES = 64;
+export const MAX_CONCURRENT_CHUNK_FETCHES = 24;
+export const MAX_CONCURRENT_METADATA_FETCHES = 4;
 
-let activeFetches = 0;
-const fetchQueue: (() => void)[] = [];
+export type FetchLane = 'data' | 'metadata';
+
+const ZARR_METADATA_KEYS = new Set(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata']);
+
+interface FetchGateState {
+  active: number;
+  readonly limit: number;
+  readonly queue: Array<() => void>;
+}
+
+const fetchGates: Record<FetchLane, FetchGateState> = {
+  data: { active: 0, limit: MAX_CONCURRENT_CHUNK_FETCHES, queue: [] },
+  metadata: { active: 0, limit: MAX_CONCURRENT_METADATA_FETCHES, queue: [] },
+};
+
+let fetchProgressEpoch = 0;
+
+export function fetchLaneForKey(key: string): FetchLane {
+  const basename = key.slice(key.lastIndexOf('/') + 1);
+  return ZARR_METADATA_KEYS.has(basename) ? 'metadata' : 'data';
+}
+
+/** Record response-body progress shared by all live fetch leases. */
+export function noteFetchProgress(): void {
+  fetchProgressEpoch += 1;
+}
+
+/** Monotonic aggregate-progress snapshot used by body-stall watchdogs. */
+export function getFetchProgressEpoch(): number {
+  return fetchProgressEpoch;
+}
+
+/** Reset aggregate progress state between isolated tests. */
+export function resetFetchProgressEpoch(): void {
+  fetchProgressEpoch = 0;
+}
+
+/** Current leases in one lane, including the caller while its body is read. */
+export function getActiveFetchCount(lane: FetchLane): number {
+  return fetchGates[lane].active;
+}
 
 /** p-limit-style gate: never lets more than the cap run concurrently. */
-export function withFetchGate<T>(fn: () => Promise<T>): Promise<T> {
+export function withFetchGate<T>(fn: () => Promise<T>, lane: FetchLane = 'data'): Promise<T> {
+  const gate = fetchGates[lane];
   const acquire =
-    activeFetches < MAX_CONCURRENT_CHUNK_FETCHES
-      ? ((activeFetches += 1), Promise.resolve())
+    gate.active < gate.limit
+      ? ((gate.active += 1), Promise.resolve())
       : new Promise<void>((resolve) =>
-          fetchQueue.push(() => {
-            activeFetches += 1;
+          gate.queue.push(() => {
+            gate.active += 1;
             resolve();
           })
         );
@@ -43,8 +89,8 @@ export function withFetchGate<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } finally {
-      activeFetches -= 1;
-      const next = fetchQueue.shift(); // hand the freed slot to the next waiter
+      gate.active -= 1;
+      const next = gate.queue.shift(); // hand the freed slot to the next waiter
       if (next) next();
     }
   });
@@ -63,8 +109,9 @@ export function boundedConcurrencyStore<S extends object>(store: S): S {
         const orig = Reflect.get(target, prop, receiver);
         if (typeof orig === 'function') {
           return (...args: unknown[]) =>
-            withFetchGate(() =>
-              (orig as (...a: unknown[]) => Promise<unknown>).apply(target, args)
+            withFetchGate(
+              () => (orig as (...a: unknown[]) => Promise<unknown>).apply(target, args),
+              typeof args[0] === 'string' ? fetchLaneForKey(args[0]) : 'data'
             );
         }
       }

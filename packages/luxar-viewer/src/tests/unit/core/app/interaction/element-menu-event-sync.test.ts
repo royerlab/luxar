@@ -7,7 +7,8 @@
  * shared command surface (`input/input-handler.ts`), and the layer contract in
  * `.dependency-cruiser.cjs` forbids `input/` from importing `core/` — so the
  * command cannot import the constant and hard-codes the string instead.
- * (`open-dataset-browser` is duplicated the same way, for the same reason.)
+ * (`OPEN_DATASET_BROWSER_EVENT` is duplicated the same way, for the same reason —
+ * see `dataset-browser-event-sync.test.ts`.)
  *
  * The bindings no longer dispatch anything themselves: they gate on focus and
  * route into `commands.openElementMenu`, the same command the on-screen

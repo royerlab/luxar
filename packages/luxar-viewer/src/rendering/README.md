@@ -6,7 +6,7 @@
 
 The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r185. Each of the 9 production shaders (3 geometry visual + 3 geometry picking + mega-shader + FXAA + bloom-threshold) ships as a `ShaderSource` pair: a `WebGLRenderer`-targeted GLSL3 string and a `WebGPURenderer`-targeted TSL factory. `MaterialManager` dispatches on `RendererCapabilities.apiSurface` so the same scene graph renders identically through either backend. Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
 
-The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURenderer` (TSL `NodeMaterial`) is selectable via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it falls back to its internal WebGL2 backend when no WebGPU adapter is available. Every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`. For diagnostics, `?renderer=webgpu&webgpu-force-webgl` constructs `WebGPURenderer({ forceWebGL: true })`: Luxar still uses TSL `NodeMaterial` shaders and the WebGPURenderer API surface, but Three.js routes rendering through its internal WebGL2 backend instead of native WebGPU.
+The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURenderer` (TSL `NodeMaterial`) is selectable via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it falls back to its internal WebGL2 backend when no WebGPU adapter is available. Every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`. For diagnostics, `?renderer=webgpu&webgpuForceWebgl` constructs `WebGPURenderer({ forceWebGL: true })`: Luxar still uses TSL `NodeMaterial` shaders and the WebGPURenderer API surface, but Three.js routes rendering through its internal WebGL2 backend instead of native WebGPU.
 
 **The TSL half is lazily loaded.** Because WebGL is the default, the entire `three/webgpu` cone — the 9 TSL material classes and every TSL graph factory — sits behind a single `await import()` in `rendering/tsl/load.ts` and is fetched only when `selectBackend()` actually chooses WebGPU. That keeps ~182 kB gzipped off the initial payload for the default session (issue #1679). Consequences worth knowing before you edit a material: the `MaterialManager` dispatch tables hold **thunks**, not classes (`VISUAL_FACTORIES[kind][backend]()`); the `ShaderSource.webgpu` closures obtain their factory from `requireTslMaterials()` rather than importing it; `material-sync-helpers.ts` uses structural probes instead of `instanceof` on TSL classes; and a value import of `three/webgpu` from production code outside the lazy cone — `rendering/tsl/registry.ts` and the `*-tsl` / `*.tsl` modules it owns — is an ESLint error (`src/tests/**` is exempt: it ships nothing, and the parity harness drives the WebGPU path directly). See `tsl/README.md`.
 
@@ -36,7 +36,7 @@ rendering/
 ├── blending-state.ts                   # THREE blending state for every Luxar mode
 ├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
 ├── material-sync-helpers.ts            # Geometry-commit material sync helpers
-├── webgl-blend-warmup.ts               # WebGL-only pre-link of every reachable blend-mode program variant (`?no-blend-warmup`)
+├── webgl-blend-warmup.ts               # WebGL-only pre-link of every reachable blend-mode program variant (`?noBlendWarmup`)
 ├── tsl/                                # The lazy three/webgpu boundary — registry.ts (sole entry to the cone) + load.ts (sole `await import()`) + slot.ts (zero-runtime-import accessor). See tsl/README.md.
 ├── display-range.ts                    # Pure display-window ↔ shader intensity/offset math + resolveColormapWindow (shared by all 3 node factories)
 
@@ -539,6 +539,7 @@ Multisample Anti-Aliasing:
 Super-Sample Anti-Aliasing:
 
 - Renders at higher resolution (1.5x, 2x, 3x, 4x)
+- Suspends MSAA while the multiplier is above 1x to avoid redundant multisample allocations
 - Best possible quality
 - **Heavy performance cost**
 - Recommended only for screenshots or high-end GPUs
@@ -614,6 +615,7 @@ postProcessing.updateDetectorNoiseSettings({
 
 #### MSAA Not Working
 
+- SSAA above 1x suspends MSAA; disable SSAA to see the configured MSAA mode
 - Check console for GPU support warnings
 - Under WebGL2, MSAA requires float-buffer extensions on the active context; check `RendererCapabilities.maxMSAASamples > 0`
 - Under WebGPU, MSAA is native (no extension required); the same `maxMSAASamples` query reports the adapter's supported sample counts

@@ -261,12 +261,12 @@ export interface MonitorUIState {
 /**
  * Explicit cache telemetry state — distinguishes the three
  * "not-enabled" variants from each other so the UI can render an
- * accurate disabled-reason. A `?no-cache` URL run produces no
+ * accurate disabled-reason. A `?noCache` URL run produces no
  * provider, so without this state the cache tab would default to
  * `enabled` and mislead the user.
  *
  *   - `enabled`           : caching is on AND providers are wired.
- *   - `disabled-no-cache` : caching turned off via `?no-cache`.
+ *   - `disabled-no-cache` : caching turned off via `?noCache`.
  *   - `disabled-config`   : turned off via app config.
  *   - `not-wired`         : caching is on but providers haven't been
  *                           wired yet (e.g. mid-scene-transition).
@@ -317,6 +317,10 @@ export interface CacheMetrics {
     writes: number;
     /** Failed gets (file not present, size mismatch, I/O error). */
     misses: number;
+    /** Reads canceled before filesystem I/O. */
+    canceledReads?: number;
+    activeReads?: number;
+    queuedReads?: number;
     /**
      * R3: surface OPFS health counters so the cache tab can render
      * them inline (rather than only signalling them via the
@@ -724,6 +728,9 @@ export interface CacheStatsProvider {
       reads: number;
       writes: number;
       misses: number;
+      canceledReads?: number;
+      activeReads?: number;
+      queuedReads?: number;
       /** Fixed OPFS/disk byte budget. */
       maxSize?: number;
       /**
@@ -766,7 +773,7 @@ export interface CacheStatsProvider {
       unvalidatedExternalDataset: boolean;
       /**
        * S2: `true` when OPFS L2 storage is operational, or when the tier
-       * was deliberately skipped (`?no-cache` / `?no-opfs` — no L2
+       * was deliberately skipped (`?noCache` / `?noOpfs` — no L2
        * expected). `false` only for UNREQUESTED degradation: L2 was
        * expected but could not be initialised, or the OPFS circuit
        * breaker disabled it after repeated timeouts. Older providers omit

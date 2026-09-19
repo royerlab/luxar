@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 from pathlib import Path
@@ -246,6 +247,73 @@ class TestDonutFill:
         mask = np.zeros_like(V, dtype=bool)
         with pytest.raises(ValueError):
             donut_median_fill(V, mask, radius=0)
+
+    def test_fill_invariant_to_heldout_values(self):
+        # The blind-spot argument needs the filled volume to be a function of
+        # the UNMASKED voxels only. A dense mask makes masked neighbours common.
+        rng = np.random.default_rng(3)
+        V = rng.random((12, 12, 12), dtype=np.float32)
+        mask = rng.random((12, 12, 12)) < 0.3
+        V_perturbed = V.copy()
+        V_perturbed[mask] = rng.random(int(mask.sum()), dtype=np.float32) * 100
+        np.testing.assert_array_equal(
+            donut_median_fill(V, mask), donut_median_fill(V_perturbed, mask)
+        )
+
+    def test_masked_neighbours_excluded(self):
+        # 3x3x3 block: centre held out; 13 donors are 0, 12 donors are 1 and
+        # one donor (value 1) is itself held out. Including it would give a
+        # 26-value median of 0.5; excluding it leaves 13 zeros + 12 ones -> 0.
+        V = np.zeros((3, 3, 3), dtype=np.float32)
+        flat = [i for i in range(27) if i != 13]
+        for i in flat[13:]:
+            V.flat[i] = 1.0
+        mask = np.zeros((3, 3, 3), dtype=bool)
+        mask.flat[13] = True
+        mask.flat[flat[-1]] = True
+        assert np.median(V.flat[flat]) == 0.5  # the biased (old) estimate
+        filled = donut_median_fill(V, mask)
+        assert filled.flat[13] == 0.0
+        assert filled.flat[flat[-1]] == 1.0
+
+    def test_all_donors_masked_expands_to_nearest_shell(self):
+        V = np.arange(1000, dtype=np.float32).reshape(10, 10, 10)
+        mask = np.zeros_like(V, dtype=bool)
+        mask[2:8, 2:8, 2:8] = True
+        filled = donut_median_fill(V, mask)
+        centre = (5, 5, 5)
+        shell = [
+            tuple(centre[dim] + offset[dim] for dim in range(3))
+            for offset in itertools.product(range(-3, 4), repeat=3)
+            if max(map(abs, offset)) == 3
+            and not mask[tuple(centre[dim] + offset[dim] for dim in range(3))]
+        ]
+        expected = np.median([V[index] for index in shell])
+        assert filled[centre] == expected
+        assert filled[centre] != np.median(V[~mask])
+        assert np.isfinite(filled).all()
+
+    def test_genuine_nan_donor_propagates(self):
+        V = np.ones((3, 3, 3), dtype=np.float32)
+        V[0, 0, 0] = np.nan
+        mask = np.zeros_like(V, dtype=bool)
+        mask[1, 1, 1] = True
+        assert np.isnan(donut_median_fill(V, mask)[1, 1, 1])
+
+    def test_chunked_gather_matches_single_chunk(self, monkeypatch):
+        import luxar.gsplats.calibration.masking as masking_module
+
+        rng = np.random.default_rng(5)
+        V = rng.random((8, 8, 8), dtype=np.float32)
+        mask = rng.random(V.shape) < 0.3
+        expected = donut_median_fill(V, mask)
+        monkeypatch.setattr(masking_module, "_MAX_DONUT_BYTES", 26 * V.itemsize * 2)
+        np.testing.assert_array_equal(donut_median_fill(V, mask), expected)
+
+    def test_every_voxel_masked_raises(self):
+        V = np.zeros((3, 3), dtype=np.float32)
+        with pytest.raises(ValueError, match="every voxel"):
+            donut_median_fill(V, np.ones((3, 3), dtype=bool))
 
 
 # -----------------------------------------------------------------------------
@@ -882,8 +950,10 @@ class TestCalibrateSmoke:
         assert result.held_out_peak_selected.confidence_db == pytest.approx(
             expected.confidence_db
         )
-        assert result.held_out_peak_selected.confidence_db != pytest.approx(
-            result.held_out_peak.confidence_db, abs=1e-4
+        assert not np.allclose(
+            result.held_out_psnr_fg_weighted_db,
+            result.held_out_psnr_db,
+            atol=1e-4,
         )
 
     def test_invalid_metric_is_rejected_before_fitting(self, monkeypatch):

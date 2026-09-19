@@ -6,8 +6,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { config } from '../../../config';
+import { LuxarFlyControls } from '../../../controls/luxar-fly-controls';
 import { LuxarOrbitControls } from '../../../controls/luxar-orbit-controls';
 import { projectOnTrackball } from '../../../controls/luxar-orbit-controls/math/trackball';
+import { VIEW_AXIS_ROLL_SIGN } from '../../../controls/touch-twist';
 import {
   mouseAction,
   type OrbitInputCtx,
@@ -599,6 +601,71 @@ describe('LuxarOrbitControls', () => {
       return delta;
     };
 
+    it('#2593 uses the touch-twist roll direction for Shift+wheel', () => {
+      expect(roll(100, WheelEvent.DOM_DELTA_PIXEL)).toBeCloseTo(
+        VIEW_AXIS_ROLL_SIGN * 100 * 0.0005,
+        12
+      );
+    });
+
+    it('#2593 composes the same Shift+wheel gesture in the same direction across controllers', () => {
+      camera.position.set(3, 2, 5);
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld();
+      const orbitForward = camera.getWorldDirection(new THREE.Vector3());
+      const orbitUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+      controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
+      controls.enableViewAxisRotation();
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 100, shiftKey: true, cancelable: true })
+      );
+      controls.update();
+
+      const flyCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+      flyCamera.position.set(3, 2, 5);
+      flyCamera.lookAt(0, 0, 0);
+      flyCamera.updateMatrixWorld();
+      const flyForward = flyCamera.getWorldDirection(new THREE.Vector3());
+      const flyUp = new THREE.Vector3(0, 1, 0).applyQuaternion(flyCamera.quaternion);
+      const flyElement = document.createElement('div');
+      document.body.appendChild(flyElement);
+      const flyControls = new LuxarFlyControls(flyCamera, flyElement, {
+        inertialMode: true,
+        rotationSpeed: 1,
+      });
+      flyElement.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 100, shiftKey: true, cancelable: true })
+      );
+      flyControls.update(1);
+
+      const signedRoll = (
+        beforeUp: THREE.Vector3,
+        forward: THREE.Vector3,
+        afterUp: THREE.Vector3
+      ) =>
+        Math.atan2(
+          forward.dot(new THREE.Vector3().crossVectors(beforeUp, afterUp)),
+          beforeUp.dot(afterUp)
+        );
+      const orbitRoll = signedRoll(orbitUp, orbitForward, camera.up);
+      const flyRoll = signedRoll(flyUp, flyForward, flyCamera.up);
+
+      expect(orbitRoll).toBeCloseTo(VIEW_AXIS_ROLL_SIGN * 0.05, 12);
+      expect(flyRoll).toBeCloseTo(VIEW_AXIS_ROLL_SIGN * 0.06, 12);
+      expect(Math.sign(orbitRoll)).toBe(Math.sign(flyRoll));
+      expect(camera.getWorldDirection(new THREE.Vector3()).angleTo(orbitForward)).toBeCloseTo(
+        0,
+        12
+      );
+      expect(flyCamera.getWorldDirection(new THREE.Vector3()).angleTo(flyForward)).toBeCloseTo(
+        0,
+        12
+      );
+
+      flyControls.dispose();
+      document.body.removeChild(flyElement);
+    });
+
     it('#2531 normalizes deltaMode: a line-mode notch rolls as far as its pixel equivalent', () => {
       // jsdom defaults deltaMode to 0, so the other wheel tests here only
       // ever built pixel-mode events. Firefox reports 3 LINES where Chromium
@@ -612,8 +679,8 @@ describe('LuxarOrbitControls', () => {
       expect(lineMode).not.toBe(0);
       // Far more than the pre-fix value, which consumed the raw 3 as pixels.
       expect(Math.abs(lineMode)).toBeGreaterThan(Math.abs(roll(3, 0)) * 10);
-      // Pixel mode itself is unchanged (default speed 0.0005).
-      expect(roll(100, 0)).toBeCloseTo(100 * 0.0005, 12);
+      // Pixel-mode magnitude itself is unchanged (default speed 0.0005).
+      expect(roll(100, 0)).toBeCloseTo(-100 * 0.0005, 12);
     });
 
     it('#2531 page mode scales by domElement.clientHeight (pins the element argument)', () => {
@@ -628,8 +695,8 @@ describe('LuxarOrbitControls', () => {
       // neither is the clamp.
       Object.defineProperty(domElement, 'clientHeight', { configurable: true, get: () => 600 });
 
-      expect(roll(0.2, 2)).toBeCloseTo(120 * 0.0005, 12);
-      expect(roll(0.2, 2)).not.toBeCloseTo(160 * 0.0005, 6);
+      expect(roll(0.2, 2)).toBeCloseTo(-120 * 0.0005, 12);
+      expect(roll(0.2, 2)).not.toBeCloseTo(-160 * 0.0005, 6);
     });
 
     it('#2565 reads deltaX when Shift+wheel arrives on the horizontal axis', () => {
@@ -643,7 +710,7 @@ describe('LuxarOrbitControls', () => {
           cancelable: true,
         })
       );
-      expect((controls as any).rollDelta).toBeCloseTo(100 * 0.0005, 12);
+      expect((controls as any).rollDelta).toBeCloseTo(-100 * 0.0005, 12);
     });
 
     it('#2565 normalizes a line-mode deltaX fallback at the orbit call site', () => {
@@ -658,7 +725,7 @@ describe('LuxarOrbitControls', () => {
           cancelable: true,
         })
       );
-      expect((controls as any).rollDelta).toBeCloseTo(48 * 0.0005, 12);
+      expect((controls as any).rollDelta).toBeCloseTo(-48 * 0.0005, 12);
     });
 
     it('#2565 does not dispatch change when both wheel axes are zero', () => {

@@ -17,7 +17,7 @@ shipped mechanism rather than a new one.
 
 Encoded bytes deliberately go into a zarr *array* rather than a loose file beside
 the store. The store abstraction is what makes ``.zarr.zip``, remote HTTP,
-consolidated metadata and ``luxar optimise`` work, and — the decisive one —
+consolidated metadata and ``luxar optimize`` work, and — the decisive one —
 ``content_hash`` covers arrays. A loose PNG would not be hashed, so editing a
 texture would not invalidate a warm viewer cache and users would keep seeing the
 old image with no way to tell.

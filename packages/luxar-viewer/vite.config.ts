@@ -4,7 +4,12 @@ import { fileURLToPath } from 'url';
 // Explicit `.ts` extension: Vite's future native config loader (Node's own TS
 // support) does not do extensionless resolution, and 8.2 warns about it.
 import { checkoutIdentityPlugin, ensureCheckoutIdentity } from './tools/e2e-server-identity.ts';
-import { buildDefine, buildIdentity, buildIdentityHtmlPlugin } from './tools/build-identity.ts';
+import {
+  buildDefine,
+  buildIdentity,
+  buildIdentityHtmlPlugin,
+  viewerVersionDefine,
+} from './tools/build-identity.ts';
 
 const viewerRoot = fileURLToPath(new URL('.', import.meta.url));
 const projectRoot = resolve(viewerRoot, '../..');
@@ -13,8 +18,9 @@ const identity = buildIdentity();
 export default defineConfig(({ command }) => ({
   // Stamp the bundle with version + commit + build time. Reaches `dist/` and
   // therefore the wheel, `luxar export` folders and the hosted site in one
-  // place; `tools/build-identity.ts` explains why it may never throw.
-  define: buildDefine(identity),
+  // place; `tools/build-identity.ts` explains why it may never throw. The
+  // bare package version rides along as `VIEWER_VERSION` (src/version.ts).
+  define: { ...buildDefine(identity), ...viewerVersionDefine() },
   plugins: [
     buildIdentityHtmlPlugin(identity),
     ...(command === 'serve'
@@ -52,6 +58,21 @@ export default defineConfig(({ command }) => ({
     // lazy (that is the assertion with teeth — see scripts/check-eager-chunks.mjs).
     chunkSizeWarningLimit: 1700,
     rolldownOptions: {
+      // TWO html entries, and both must be named. Vite's implicit default is
+      // `index.html` alone; the moment `input` is set that default is gone, so
+      // omitting `index` here would silently build only the control panel.
+      //
+      // `control.html` is the kiosk touch panel. It shares this build (rather
+      // than living in its own package) so it rides into `dist`, `luxar export`
+      // and the native bundles for free — all three copy the directory whole —
+      // and so it can reuse the viewer's own modules. It must NOT pull `three`
+      // or the codecs in: `scripts/check-eager-chunks.mjs` asserts that per
+      // entry, because a shared chunk could drag them in without any import in
+      // this page's own source.
+      input: {
+        index: resolve(viewerRoot, 'index.html'),
+        control: resolve(viewerRoot, 'control.html'),
+      },
       output: {
         // Split the `three` package into core / tsl / webgpu so each
         // subsystem gets its own cacheable chunk. Without this, the

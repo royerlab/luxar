@@ -871,6 +871,7 @@ def write_gsplat_arrays(
         ctx=ctx,
         log_label_singular="amplitude",
         per_array_bytes=True,
+        deduplicate=ctx.deduplicate_positive_scalar,
     )
 
     # Display range for the viewer's colormap window. GSplat amplitudes are

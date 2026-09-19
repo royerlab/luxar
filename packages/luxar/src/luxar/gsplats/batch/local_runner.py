@@ -6,8 +6,8 @@ The local counterpart of the Slurm fit array + merge: given a planned
 subprocess pool, then run the existing streaming merge to a ``kind=partition``
 ``.gsplats.zarr``.  The :mod:`task_pool` env hook pins GPU workers via
 ``CUDA_VISIBLE_DEVICES`` and exposes their host/device quality-memory shares;
-per-GPU concurrency is sized from each card's free VRAM.  Resumable: a task
-whose output already exists is skipped.
+auto concurrency is sized from per-card VRAM plus host RAM, CPU count, and a
+hard cap. Resumable: a task whose output already exists is skipped.
 
 This engine consumes only the manifest + already-parsed merge options, so it has
 no dependency on the CLI layer.
@@ -33,7 +33,12 @@ from luxar.gsplats.merged_quality import (
     QUALITY_WORKERS_PER_DEVICE_ENV,
     QUALITY_WORKERS_PER_HOST_ENV,
 )
-from luxar.gsplats.utils.device import resolve_gpu_selection, resolve_jobs_per_gpu
+from luxar.gsplats.utils.device import (
+    WorkerLimitReason,
+    format_worker_limit,
+    resolve_gpu_selection,
+    resolve_jobs_per_gpu,
+)
 
 
 def _task_voxels(manifest: BatchManifest) -> int:
@@ -98,14 +103,50 @@ def _worker_env(gpu: int, workers: dict[int, int], host_workers: int) -> dict[st
     quality_host_workers = str(max(1, host_workers))
     if gpu < 0:
         return {
+            "CUDA_VISIBLE_DEVICES": "",
             QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
             QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
         }
+    parent_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    parent_tokens = parent_visible.split(",") if parent_visible else []
+    visible_token = parent_tokens[gpu].strip() if gpu < len(parent_tokens) else str(gpu)
     return {
-        "CUDA_VISIBLE_DEVICES": str(gpu),
+        "CUDA_VISIBLE_DEVICES": visible_token,
         QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
         QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
     }
+
+
+def _gpu_device_name(gpu: int) -> str:
+    """Return the parent-visible CUDA device name for startup diagnostics."""
+    try:
+        import torch
+
+        return str(torch.cuda.get_device_properties(gpu).name)
+    except (AttributeError, RuntimeError, AssertionError):
+        return "unknown GPU"
+
+
+def _report_gpu_mappings(
+    gpu_indices: list[int], workers: dict[int, int], host_workers: int
+) -> None:
+    """Print the parent-visible index, child token, and device name per GPU."""
+    if not gpu_indices:
+        aprint("CUDA hidden from workers; fit device forced to CPU")
+        return
+    for gpu in gpu_indices:
+        visible_token = _worker_env(gpu, workers, host_workers)["CUDA_VISIBLE_DEVICES"]
+        aprint(
+            f"visible index {gpu} -> CUDA_VISIBLE_DEVICES={visible_token} "
+            f"({_gpu_device_name(gpu)})"
+        )
+
+
+def _worker_argv(argv: list[str], gpu: int) -> list[str]:
+    """Force the CPU sentinel while leaving GPU workers env-pinned."""
+    if gpu < 0:
+        return [*argv, "--device", "cpu"]
+    return argv
 
 
 def _active_worker_counts(
@@ -126,6 +167,19 @@ def _active_worker_counts(
 def _active_host_workers(active_workers: dict[int, int], n_run: int) -> int:
     """Count workers sharing host RAM, capped by runnable tasks."""
     return max(1, min(sum(active_workers.values()), n_run))
+
+
+def _auto_limit_suffix(
+    jobs_per_gpu: str | int,
+    n_run: int,
+    workers: dict[int, int],
+    limiting_resource: WorkerLimitReason,
+) -> str:
+    """Describe the effective limiter for an automatic local worker count."""
+    if not (isinstance(jobs_per_gpu, str) and jobs_per_gpu.strip().lower() == "auto"):
+        return ""
+    limit = "task count" if n_run < sum(workers.values()) else limiting_resource
+    return f", {format_worker_limit(limit)}"
 
 
 def _staging_path(out: Path, token: str | int) -> Path:
@@ -250,7 +304,8 @@ def run_batch_local(
         ``--gpus`` spec: ``auto`` (cards above a VRAM floor) / ``all`` / ``cpu`` /
         ``'0,1,3'``.
     jobs_per_gpu
-        Concurrent fit workers per GPU (``auto`` sizes from each card's free VRAM).
+        Concurrent fit workers per GPU. ``auto`` applies shared GPU-memory, host
+        RAM, CPU-thread, and configurable hard-cap limits.
     resume
         Skip tasks whose output (or ``.empty`` marker) already exists.
     channel_colors, recipe, recipe_params
@@ -273,14 +328,13 @@ def run_batch_local(
 
     gpu_indices = resolve_gpu_selection(gpus)
     task_ids = [j.task_id for j in manifest.jobs]
-    workers = resolve_jobs_per_gpu(
+    worker_plan = resolve_jobs_per_gpu(
         gpu_indices,
         task_voxels=_task_voxels(manifest),
         jobs_per_gpu=jobs_per_gpu,
     )
+    workers = worker_plan.workers
     assignment = build_device_assignment(task_ids, workers)
-    global_workers = max(1, min(sum(workers.values()), len(task_ids)))
-
     job_by_id = {j.task_id: j for j in manifest.jobs}
 
     # Per-invocation staging token: host + pid. Two concurrent run_batch_local()
@@ -300,6 +354,7 @@ def run_batch_local(
     active_workers = _active_worker_counts(task_ids, assignment, workers, _skip)
     n_run = sum(0 if _skip(task_id) else 1 for task_id in task_ids)
     active_host_workers = _active_host_workers(active_workers, n_run)
+    global_workers = max(1, min(sum(workers.values()), n_run))
 
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
@@ -313,19 +368,25 @@ def run_batch_local(
         # its replacement exists, and a failed refit would then leave nothing.
         shutil.rmtree(staging, ignore_errors=True)
         Path(str(staging) + ".empty").unlink(missing_ok=True)
-        return build_task_fit_argv(
-            manifest, job, staging, denoise_h=_denoise_h_for_job(manifest, job)
+        return _worker_argv(
+            build_task_fit_argv(
+                manifest, job, staging, denoise_h=_denoise_h_for_job(manifest, job)
+            ),
+            assignment.get(task_id, -1),
         )
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)
         return _worker_env(gpu, active_workers, active_host_workers)
 
-    dev_desc = "CPU" if not gpu_indices else f"GPU(s) {gpu_indices}"
+    active_gpu_indices = [gpu for gpu in workers if gpu >= 0]
+    dev_desc = "CPU" if not active_gpu_indices else f"GPU(s) {active_gpu_indices}"
+    auto_limit = _auto_limit_suffix(jobs_per_gpu, n_run, workers, worker_plan.limit)
     with asection(
         f"Local batch fit: {n_run}/{len(task_ids)} tasks on {dev_desc}, "
-        f"{global_workers} concurrent worker(s)"
+        f"{global_workers} concurrent worker(s){auto_limit}"
     ):
+        _report_gpu_mappings(active_gpu_indices, active_workers, active_host_workers)
         if verbose and n_run < len(task_ids):
             aprint(f"Resuming: {len(task_ids) - n_run} task(s) already complete")
 

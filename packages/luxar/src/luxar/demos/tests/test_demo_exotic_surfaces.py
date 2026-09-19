@@ -297,3 +297,66 @@ def test_occlusion_spans_a_visible_range(surface: Surface):
     assert spread > 0.25, f"{surface.key}: only {spread:.3f} of range used"
     assert shade.max() <= 1.0
     assert shade.min() >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# The family ladder
+#
+# Two nodes on a two-stop categorical axis, each carrying only its own
+# coordinate. `family_ladder` therefore applies the 1/8 resident share BY HAND
+# rather than through `slices=`, which would also relax the commit ceiling to
+# 1,800,000 on a node with no second slice to spend it on. Every number below is
+# measured: the first two against the built store, the third against a
+# `--resolution=172` point count.
+# ---------------------------------------------------------------------------
+
+
+def _ladder_increments(counts: list[int]) -> list[int]:
+    return [
+        cut - previous for previous, cut in zip([0, *counts[:-1]], counts, strict=True)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("points", "expected"),
+    [
+        (857_226, [107_154, 214_308, 428_616, 857_226]),  # Minimal surfaces
+        (464_073, [58_010, 116_020, 232_040, 464_073]),  # Algebraic surfaces
+    ],
+)
+def test_family_ladder_opens_on_an_eighth_of_the_wall(
+    points: int, expected: list[int]
+) -> None:
+    """The shipped cuts at the authored RESOLUTION, and why they are those.
+
+    The unsliced download budget would open on 39,062 points — 4.56% of the
+    minimal family and 8.42% of the algebraic one, both under the ladder gate's
+    10% rung-0 share floor for a node the viewer slices.
+    """
+    counts = _demo.family_ladder(points)["counts"]
+
+    assert counts == expected
+    assert counts[0] == -(-points // 8) > 39_062
+
+
+@pytest.mark.parametrize("points", [857_226, 2_023_609, 6_000_000])
+def test_family_ladder_stays_under_the_gates_absolute_commit_cap(
+    points: int,
+) -> None:
+    """A high-resolution build must not author a level the gate fails.
+
+    Counts scale about as ``resolution**2`` (measured: the minimal family is
+    857,226 points at 112 and 2,023,609 at 172), and each node holds ONE hidden
+    coordinate — so the gate's largest-coordinate-fetch measurement is the whole
+    level and its 1,000,000 cap applies to these increments directly. Borrowing
+    ``slices=2`` for the share floor also doubled the commit ceiling to
+    1,800,000, which authors a 1,011,801-element increment at 172.
+    """
+    increments = _ladder_increments(_demo.family_ladder(points)["counts"])
+
+    assert max(increments) <= 900_000
+
+
+def test_family_ladder_leaves_a_tiny_node_flat() -> None:
+    """The `resolution=8` build path: nothing to stream, so no rungs."""
+    assert _demo.family_ladder(100)["counts"] == [100]

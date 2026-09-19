@@ -34,12 +34,17 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../../../rendering/material-manager';
+import { createPostProcessing } from '../../../scene/scene-manager/render-pipeline/post-processing-setup';
 import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import type { DataRefractionSplit } from '../../../rendering/post-processing/post-processing-manager/refraction-split';
 import { getGlassDepthTexture } from '../../../rendering/materials/_shared/glass-partition';
 import { loadTslMaterials } from '../../../rendering/tsl/load';
+import { log, Modules } from '../../../utils/log';
 
-function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilities {
+function mockCaps(
+  apiSurface: 'webgl2' | 'webgpu' = 'webgl2',
+  overrides: Partial<RendererCapabilities> = {}
+): RendererCapabilities {
   return {
     apiSurface,
     framebufferYDown: apiSurface === 'webgpu',
@@ -54,19 +59,25 @@ function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilit
       recommendedColorSpace: 'srgb',
     },
     maxTextureSize: 4096,
+    maxRenderbufferSize: 4096,
     maxMSAASamples: 4,
     pointSizeRange: [1, 1024],
     readBackbufferPixels: () => Promise.resolve({ pixels: new Uint8Array(), width: 0, height: 0 }),
+    ...overrides,
   };
 }
 
 function makeMockRenderer(opts: { pixelRatio?: number } = {}): Renderer {
   const canvas = document.createElement('canvas');
+  const pixelRatio = opts.pixelRatio ?? 1;
   return {
     outputColorSpace: THREE.LinearSRGBColorSpace,
     toneMapping: THREE.NoToneMapping,
-    getPixelRatio: () => opts.pixelRatio ?? 1,
-    setSize: vi.fn(),
+    getPixelRatio: () => pixelRatio,
+    setSize: vi.fn((width: number, height: number) => {
+      canvas.width = Math.floor(width * pixelRatio);
+      canvas.height = Math.floor(height * pixelRatio);
+    }),
     domElement: canvas,
   } as unknown as Renderer;
 }
@@ -246,6 +257,29 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     materialManager.setCaps(mockCaps('webgl2'));
   });
 
+  it('warns once per transition into framebuffer-limited sizing', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const mgr = makeManager({ width: 5000, height: 3000 });
+    const limitWarnings = () =>
+      warning.mock.calls.filter(
+        ([module, message]) =>
+          module === Modules.POST_PROCESSING && String(message).includes('framebuffer limit')
+      );
+
+    mgr.resize(5000, 3000);
+    expect(limitWarnings()).toHaveLength(1);
+    mgr.resize(5001, 3000);
+    mgr.resize(5002, 3000);
+    expect(limitWarnings()).toHaveLength(1);
+
+    mgr.resize(1000, 600);
+    mgr.resize(5000, 3000);
+    expect(limitWarnings()).toHaveLength(2);
+
+    mgr.dispose();
+    warning.mockRestore();
+  });
+
   it('disposes the previous hdrTarget before allocating a new one', () => {
     const mgr = makeManager({ width: 64, height: 64 });
     const internals = peek(mgr);
@@ -288,8 +322,46 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
       onResize
     );
 
+    const replacementCamera = new THREE.OrthographicCamera();
+    mgr.setCamera(replacementCamera);
     mgr.resize(96, 96);
-    expect(onResize).toHaveBeenCalled();
+    expect(onResize).toHaveBeenCalledWith({ width: 96, height: 96 }, replacementCamera);
+
+    mgr.dispose();
+  });
+
+  it('keeps a projected pivot fixed when the SSAA multiplier changes', () => {
+    const width = 2509;
+    const height = 1328;
+    const renderer = makeMockRenderer({ pixelRatio: 2 });
+    Object.defineProperty(renderer.domElement, 'clientWidth', { value: width });
+    Object.defineProperty(renderer.domElement, 'clientHeight', { value: height });
+    const capabilities = mockCaps('webgl2', {
+      maxTextureSize: 32768,
+      maxRenderbufferSize: 32768,
+    });
+    materialManager.setCaps(capabilities);
+    const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+    camera.position.set(10, 5, 12);
+    camera.lookAt(new THREE.Vector3(1, 0, 0));
+    camera.updateMatrixWorld(true);
+    const pivot = new THREE.Vector3(4, -2, 1);
+    const projectedBefore = pivot.clone().project(camera);
+    const mgr = createPostProcessing({
+      renderer,
+      capabilities,
+      scene: new THREE.Scene(),
+      camera,
+      onResize: vi.fn(),
+    });
+
+    mgr.setSSAAEnabled(true);
+    mgr.setSSAAMultiplier(3);
+    camera.updateMatrixWorld(true);
+
+    const projectedAfter = pivot.clone().project(camera);
+    expect(projectedAfter.x).toBeCloseTo(projectedBefore.x, 12);
+    expect(projectedAfter.y).toBeCloseTo(projectedBefore.y, 12);
 
     mgr.dispose();
   });
@@ -359,6 +431,122 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     expect(peek(mgr).hdrTarget).not.toBe(hdrAfterFirst);
 
     mgr.dispose();
+  });
+
+  it('clamps oversized SSAA targets and resizes attachments before the canvas', () => {
+    const renderer = makeMockRenderer({ pixelRatio: 2 });
+    const capabilities = mockCaps('webgl2', {
+      maxTextureSize: 16384,
+      maxRenderbufferSize: 8192,
+    });
+    materialManager.setCaps(capabilities);
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    mgr.setSSAAEnabled(true);
+
+    const internals = peek(mgr);
+    const ldrSetSize = vi.spyOn(internals.ldrTarget, 'setSize');
+    const rendererSetSize = renderer.setSize as ReturnType<typeof vi.fn>;
+    rendererSetSize.mockClear();
+
+    mgr.resize(2509, 1328);
+
+    const [logicalWidth, logicalHeight] = rendererSetSize.mock.lastCall!;
+    expect(logicalWidth).toBe(4096);
+    expect(logicalHeight).toBe(2167);
+    expect(peek(mgr).hdrTarget.width).toBe(8192);
+    expect(peek(mgr).hdrTarget.height).toBe(4334);
+    expect(peek(mgr).ldrTarget.width).toBe(8192);
+    expect(peek(mgr).ldrTarget.height).toBe(4334);
+    expect(renderer.domElement.width).toBe(8192);
+    expect(renderer.domElement.height).toBe(4334);
+    expect(ldrSetSize.mock.invocationCallOrder[0]).toBeLessThan(
+      rendererSetSize.mock.invocationCallOrder[0]
+    );
+
+    mgr.dispose();
+  });
+
+  it('suspends MSAA renderbuffers while SSAA is active and restores them afterward', () => {
+    const renderer = makeMockRenderer({ pixelRatio: 2 });
+    const capabilities = mockCaps('webgl2', {
+      maxTextureSize: 16384,
+      maxRenderbufferSize: 8192,
+    });
+    materialManager.setCaps(capabilities);
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 2509, height: 1328 }
+    );
+
+    mgr.setMSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.setSSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+    expect(peek(mgr).hdrTarget.width).toBe(8192);
+    expect(peek(mgr).hdrTarget.height).toBe(4334);
+
+    mgr.setSSAAMultiplier(1);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.setSSAAMultiplier(1.5);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+
+    mgr.rebuildAfterContextRestore();
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+
+    mgr.setSSAAEnabled(false);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.dispose();
+  });
+
+  it('logs the effective MSAA state while SSAA suspends configured samples', () => {
+    const mgr = makeManager();
+    mgr.setMSAAEnabled(true);
+    const updateLog = vi.spyOn(log, 'update').mockImplementation(() => {});
+    const infoLog = vi.spyOn(log, 'info').mockImplementation(() => {});
+
+    mgr.setSSAAEnabled(true);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA enabled (2x); MSAA: 4x configured; suspended by SSAA'
+    );
+
+    mgr.setSSAAMultiplier(1);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA multiplier changed to 1x; MSAA: 4x'
+    );
+    mgr.setMSAASamples(2);
+    expect(infoLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'MSAA samples set to 2x');
+
+    mgr.setSSAAMultiplier(1.5);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA multiplier changed to 1.5x; MSAA: 2x configured; suspended by SSAA'
+    );
+    mgr.setMSAASamples(4);
+    expect(infoLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'MSAA samples set to 4x configured; suspended by SSAA'
+    );
+
+    mgr.setSSAAEnabled(false);
+    expect(updateLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'SSAA disabled; MSAA: 4x');
+
+    mgr.dispose();
+    updateLog.mockRestore();
+    infoLog.mockRestore();
   });
 
   it('reallocates after rebuildAfterContextRestore even at an identical size', () => {

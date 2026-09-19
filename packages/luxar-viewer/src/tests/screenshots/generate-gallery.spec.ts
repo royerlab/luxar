@@ -85,6 +85,11 @@ import {
 import { mediaKeyIndex, requireMediaBaseUrl, resolveGalleryOnly } from './gallery-selection';
 import { resolveTimelapseSettleMs, waitForTimelapseSliceSettled } from './gallery-timelapse-settle';
 import {
+  describeGalleryDataState,
+  isGalleryDataReady,
+  readBakedDimensionStep,
+} from './gallery-dimension-readiness';
+import {
   checkGalleryMediaSize,
   collectGalleryMediaSizeIssues,
   formatGalleryCaptureMetrics,
@@ -200,6 +205,7 @@ interface DemoEntry {
   // right for compact subjects, but diffuse clouds / survey cones (DESI) want a
   // wider framing so the whole structure reads instead of zooming into the core.
   fillTarget?: number;
+  // Relative override applied after the scene reaches its baked opening step.
   dimensionNav?: { key: string; steps: number };
   // Initial view orientation (degrees), applied after F and before fill: orbit
   // the camera to this azimuth/elevation around the target so the subject is
@@ -239,7 +245,7 @@ interface DemoEntry {
     // developmental series is empty at t0, so the poster wants a late timepoint.
     framePoint?: number;
   };
-  // Force the finest LOD (adds ``&lod-finest``). Default TRUE — a coarse level
+  // Force the finest LOD (adds ``&lodFinest``). Default TRUE — a coarse level
   // looks blurry in a hero still. Set FALSE for a very heavy scene (e.g. the
   // 2.3M-segment global rivers globe) where forcing all elements makes each
   // software-GL frame take minutes: the viewport-relative coverage LOD then
@@ -304,29 +310,36 @@ async function waitForLuxarReady(page: any, timeout = 60000): Promise<void> {
 
 async function waitForDataLoaded(
   page: any,
-  timeout = 60000,
-  requireElements = true
+  {
+    timeout = 60000,
+    requireElements = true,
+    expectedDimensionStep = null,
+  }: {
+    timeout?: number;
+    requireElements?: boolean;
+    expectedDimensionStep?: number[] | null;
+  } = {}
 ): Promise<void> {
   // Geometry-agnostic: totalElements sums points + gsplats + lines + triangles,
   // so this works for all four geometry types and mixed scenes (totalPoints alone
   // stays 0 for a pure Lines demo like dipc_3d_genome, or a pure Mesh one).
   //
-  // `requireElements = false` waits only for the loader to go idle. That is the
-  // pre-`dimensionNav` gate: a scene whose DEFAULT slice is empty (an nD demo
-  // parked on a hidden-axis position that holds nothing) has zero elements until
-  // the dimension is stepped, so insisting on elements here would time out before
-  // the navigation that fills the scene ever runs.
-  await page.waitForFunction(
-    (needElements: boolean) => {
-      const debug = (window as any).__luxarDebug;
-      if (!debug || !debug.getState) return false;
-      const state = debug.getState();
-      if (!state || state.isLoading) return false;
-      return needElements ? state.totalElements > 0 : true;
-    },
-    requireElements,
-    { timeout }
-  );
+  // `requireElements = false` permits an empty initial slice while still waiting
+  // for the authored dimension step. This is reserved for dimensionNav scenes,
+  // whose explicit post-load navigation may be what populates the slice.
+  const readinessOptions = { requireElements, expectedDimensionStep };
+  try {
+    await page.waitForFunction(isGalleryDataReady, readinessOptions, { timeout });
+  } catch (error) {
+    let diagnostics = 'diagnostics unavailable';
+    try {
+      diagnostics = await page.evaluate(describeGalleryDataState, readinessOptions);
+    } catch {
+      // Preserve the original readiness failure if the page is already gone.
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Gallery data readiness failed: ${reason}; ${diagnostics}`, { cause: error });
+  }
 }
 
 /** Navigate a non-displayed dimension (e.g. to a populated timepoint). */
@@ -1361,25 +1374,30 @@ for (const demo of DEMOS) {
     }
 
     const dataUrl = `${DATA_SERVER}/${demo.dataset}`;
-    // &lod-finest forces the finest LOD level regardless of screen coverage —
+    const bakedDimensionStep = await readBakedDimensionStep(dataUrl);
+    // &lodFinest forces the finest LOD level regardless of screen coverage —
     // a coarse level looks blurry in a hero still even when the subject is small.
     // Opt out (lodFinest:false) for a very heavy scene where forcing every
     // element makes each software-GL frame take minutes (see DemoEntry.lodFinest).
-    const finestParam = demo.lodFinest === false ? '' : '&lod-finest';
+    const finestParam = demo.lodFinest === false ? '' : '&lodFinest';
     const viewerUrl = `${VIEWER_URL}/?src=${dataUrl}&debug${finestParam}`;
     console.log(`[${demo.id}] ${dataUrl}`);
 
     await installChromeHider(page); // survives Vite reloads (must precede goto)
     await page.goto(viewerUrl, { waitUntil: 'networkidle' });
     await waitForLuxarReady(page);
-    // A dimensionNav demo may be EMPTY at its default slice, so only require a
-    // settled loader until after the navigation has run.
+    // A dimensionNav demo may be empty until its explicit post-load navigation.
+    // Every scene without that override must have geometry at its baked step.
     const needsNav = Boolean(demo.dimensionNav);
-    await waitForDataLoaded(page, 60000, !needsNav);
+    const initialLoadOptions = {
+      requireElements: !needsNav,
+      expectedDimensionStep: bakedDimensionStep,
+    };
+    await waitForDataLoaded(page, initialLoadOptions);
     // Settle: a Vite "re-optimizing deps" full reload can fire right after first
     // paint; wait out any in-flight reload and re-confirm the scene is loaded.
     await page.waitForTimeout(1500);
-    await waitForDataLoaded(page, 60000, !needsNav);
+    await waitForDataLoaded(page, initialLoadOptions);
     console.log(`[${demo.id}] data loaded`);
 
     if (demo.dimensionNav) {
@@ -1400,6 +1418,8 @@ for (const demo of DEMOS) {
       console.log(`[${demo.id}] timelapse still framePoint=${frac}`);
     }
 
+    // Camera fitting and exposure must measure a fixed radius, not a live dolly phase.
+    await page.evaluate(() => (window as any).__luxarDebug?.controls?.setAutoDolly?.(false));
     await hideChrome(page);
     // Frame FIRST (F restores the authored camera or bounds-fits), optionally
     // orient to a demo-specified view angle, THEN fill the screen — both the

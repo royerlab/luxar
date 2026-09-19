@@ -729,7 +729,7 @@ def test_radial_explicit_centre_overrides_the_bbox():
     radii = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
     data = _ray_gsplat(radii)
 
-    order = compute_additive_order(data, method="radial", reveal_centre=[1.0, 0.0, 0.0])
+    order = compute_additive_order(data, method="radial", reveal_center=[1.0, 0.0, 0.0])
 
     # Aimed at the near end, so it reveals strictly outward from r=1.
     assert list(radii[order]) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -799,7 +799,7 @@ def test_radial_still_reveals_when_every_axis_is_degenerate():
 def test_radial_rejects_a_mis_shaped_centre():
     data = _ray_gsplat(np.array([1.0, 2.0], dtype=np.float32))
     with pytest.raises(ValueError, match="one coordinate per spatial axis"):
-        compute_additive_order(data, method="radial", reveal_centre=[0.0, 0.0])
+        compute_additive_order(data, method="radial", reveal_center=[0.0, 0.0])
 
 
 @pytest.mark.parametrize(
@@ -814,7 +814,7 @@ def test_radial_rejects_a_non_finite_centre(bad: float) -> None:
     """
     data = _make_random_gsplat(n=8, ndim=3, seed=4)
     with pytest.raises(ValueError, match="must be finite"):
-        compute_additive_order(data, method="radial", reveal_centre=[bad, 0.0, 0.0])
+        compute_additive_order(data, method="radial", reveal_center=[bad, 0.0, 0.0])
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
@@ -824,7 +824,7 @@ def test_radial_refuses_non_finite_centers(bad: float) -> None:
     Measured before the guard: `compute_additive_order(..., method="radial")`
     returned the identity permutation — every distance non-finite, all equal under
     the stable argsort, ladder emitted in INPUT order. The element side behaved the
-    same way and Lines raised a misleading `reveal_centre` error, so the three
+    same way and Lines raised a misleading `reveal_center` error, so the three
     implementations of one ordering disagreed about malformed data. Now they share
     `validate_finite_reveal_coords` and each names its own array.
     """
@@ -1017,7 +1017,7 @@ def test_radial_excludes_an_asymmetric_degenerate_time_axis() -> None:
 def test_radial_spatial_dims_override_selects_the_shell_axes() -> None:
     """`spatial_dims=` overrides the default selection: a ray that varies only
     along axis 3 is ordered by axis 3 when it is named explicitly, and
-    `reveal_centre` carries one coordinate PER SELECTED axis (not per ndim)."""
+    `reveal_center` carries one coordinate PER SELECTED axis (not per ndim)."""
     r = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
     n = r.size
     centers = np.zeros((n, 4), dtype=np.float32)
@@ -1032,20 +1032,20 @@ def test_radial_spatial_dims_override_selects_the_shell_axes() -> None:
     )
 
     order = compute_additive_order(
-        data, method="radial", spatial_dims=[3], reveal_centre=[1.0]
+        data, method="radial", spatial_dims=[3], reveal_center=[1.0]
     )
 
     # Aimed at r=1 along the selected axis -> reveals strictly outward.
     assert list(r[order]) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0])
 
 
-def test_radial_reveal_centre_length_checked_against_selected_dims() -> None:
-    """`reveal_centre` is validated against the SELECTED axes, not ndim: one
+def test_radial_reveal_center_length_checked_against_selected_dims() -> None:
+    """`reveal_center` is validated against the SELECTED axes, not ndim: one
     selected axis but a three-vector centre is a mismatch and must be rejected."""
     data = _ray_gsplat(np.array([1.0, 2.0, 3.0], dtype=np.float32))  # 3D
     with pytest.raises(ValueError, match="one coordinate per spatial axis"):
         compute_additive_order(
-            data, method="radial", spatial_dims=[0], reveal_centre=[0.0, 0.0, 0.0]
+            data, method="radial", spatial_dims=[0], reveal_center=[0.0, 0.0, 0.0]
         )
 
 
@@ -1707,3 +1707,68 @@ def test_a_malformed_order_is_refused(order: np.ndarray, match: str) -> None:
 # `interleave_order_across_slices` does NOT reject `[0, 0, 1, …]` would be a
 # change detector — it would go red for the correct future change of adding
 # duplicate detection. The reasoning lives in `_validate_interleave_order`.
+
+
+# ── equi-energy breakpoints ────────────────────────────────────────────
+
+
+def _make_heavy_tailed_gsplat(n: int = 4_000, seed: int = 3) -> GSplatData:
+    """Log-normal amplitudes: a few heavy splats and a long dim tail."""
+    rng = np.random.default_rng(seed)
+    centers = (rng.random((n, 3)) * 100).astype(np.float32)
+    amplitudes = rng.lognormal(mean=0.0, sigma=1.6, size=n).astype(np.float32)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    return GSplatData(centers=centers, amplitudes=amplitudes, cholesky_factors=chol)
+
+
+def test_make_additive_lod_equi_energy_rungs_share_the_energy() -> None:
+    data = _make_heavy_tailed_gsplat()
+    out = make_additive_lod(data, method="self_energy", breakpoints="equi-energy:4")
+    subs = out.additive_sublods
+    assert len(subs) == 4
+    counts = [int(s.n_splats) for s in subs]
+    assert sum(counts) == data.n_splats
+    # Heaviest first: the first rung is a handful, the last is the dim majority.
+    assert counts[0] < counts[-1]
+    assert counts == sorted(counts)
+    # The e(k) stamps read ~k/4 at the cuts: each rung's cumulative energy
+    # reaches its share, and the previous rung sat below it.
+    e_cum = [float(s.stats["energy_fraction_cum"]) for s in subs]
+    for k, e in enumerate(e_cum, start=1):
+        assert e >= k / 4 - 1e-6
+    for k in range(1, 4):
+        assert e_cum[k - 1] < (k + 1) / 4
+    assert e_cum[-1] == pytest.approx(1.0)
+    for s in subs:
+        assert s.stats["lod_breakpoints_kind"] == "equi-energy"
+        assert s.stats["lod_equi_energy_rungs"] == 4
+
+
+def test_make_additive_lod_equi_energy_splits_at_the_commit_cap(monkeypatch) -> None:
+    import luxar.gsplats.lod.additive as additive_mod
+
+    original = additive_mod.equi_energy_cuts
+    monkeypatch.setattr(
+        additive_mod,
+        "equi_energy_cuts",
+        lambda energy, n_rungs: original(energy, n_rungs, max_commit=500),
+    )
+    data = _make_heavy_tailed_gsplat(n=3_000)
+    built = make_additive_lod(data, method="self_energy", breakpoints="equi-energy:3")
+    rung_counts = [int(rung.n_splats) for rung in built.additive_sublods]
+    assert max(rung_counts) <= 500
+    assert sum(rung_counts) == data.n_splats
+
+
+def test_equi_energy_rung_count_is_unknown_without_the_energy_curve() -> None:
+    from luxar.gsplats.lod.additive import additive_rung_count
+
+    assert additive_rung_count(10_000, breakpoints="equi-energy:4") is None
+
+
+@pytest.mark.parametrize("bad", ["equi-energy:", "equi-energy:zero", "equi-energy:0"])
+def test_equi_energy_invalid_payloads_raise(bad: str) -> None:
+    data = _make_random_gsplat(64)
+    with pytest.raises(ValueError, match="equi-energy"):
+        make_additive_lod(data, breakpoints=bad)

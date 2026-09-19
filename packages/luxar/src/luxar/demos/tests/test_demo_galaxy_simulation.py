@@ -223,3 +223,164 @@ def test_globular_light_is_held_across_star_counts(factor: int) -> None:
 def test_density_scale_survives_a_degenerate_star_count() -> None:
     """A zero would divide by zero before the count validator ever sees it."""
     assert _demo.density_scale(0) > 0.0
+
+
+# =============================================================================
+# The played-layer ladder.
+#
+# `played_layer_ladder` is the highest-risk arithmetic in the #2657 ladder pass:
+# T is PLAYED, so rung 0 has to clear a PER-FRAME floor that `stream_ladder`
+# knows nothing about, and the floor then has to be clamped so it cannot author a
+# ladder the gate rejects. Every number here is measured, either off the built
+# store or off the flag combinations named in LADDER_GATE_AUDITED_ROWS.
+# =============================================================================
+
+
+def _increments(counts: list[int]) -> list[int]:
+    """Per-rung commit sizes from cumulative cuts."""
+    return [
+        cut - previous for previous, cut in zip([0, *counts[:-1]], counts, strict=True)
+    ]
+
+
+def test_the_thin_age_bin_gets_the_per_frame_floor() -> None:
+    """`Disc 50-300 Myr` at the authored build: 966 stars x 241 frames.
+
+    The one node in the corpus where the floor BINDS. Without it rung 0 is the
+    unsliced 39,062-element download budget, whose sparsest frame is a measured
+    144 rows — under the gate's 250-row absolute first-paint floor.
+    """
+    rows, stops = 232_806, 241
+
+    counts = _demo.played_layer_ladder(rows, stops)["counts"]
+
+    assert counts[0] == stops * _demo.FIRST_RUNG_ROWS_PER_FRAME == 72_300
+    assert counts == [72_300, 144_600, rows]
+    assert max(_increments(counts)) / rows < 0.379 + 1e-3
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        (3_001_655, [375_207, 750_414, 1_500_828, 3_001_655]),  # Disc 0.3-2 Gyr
+        (10_741_129, [1_342_642, 2_685_284, 5_370_568, 10_741_129]),  # Disc 2-6 Gyr
+        (10_097_900, [1_262_238, 2_524_476, 5_048_952, 10_097_900]),  # Disc > 6 Gyr
+        (723_000, [90_375, 180_750, 361_500, 723_000]),  # HII regions
+        (4_820_000, [602_500, 1_205_000, 2_410_000, 4_820_000]),  # Bulge
+    ],
+)
+def test_a_fat_played_layer_keeps_the_policy_share_rung(
+    rows: int, expected: list[int]
+) -> None:
+    """The three fat age bins, the HII regions and the bulge.
+
+    The floor is a ``max()``, so a layer whose ``n/8`` share rung already exceeds
+    it keeps the policy's own ladder byte-for-byte — which is why passing the
+    floor on every played layer costs the shipped store nothing. Asserted as the
+    whole cut LIST, read off the built store, and not just rung 0: the commit
+    ceiling also has to stay scaled by the slice count, or the same rung 0
+    resolves into six rungs instead of four.
+    """
+    counts = _demo.played_layer_ladder(rows, 241)["counts"]
+
+    assert counts == expected
+    assert counts[0] == -(-rows // 8) > 241 * _demo.FIRST_RUNG_ROWS_PER_FRAME
+
+
+def test_the_floor_is_clamped_to_the_gates_degeneracy_bound() -> None:
+    """``--stars 40000 --frames 600``: 405 stars in ``50-300 Myr``.
+
+    243,000 rows against an unclamped 180,000-row floor is a rung 0 holding 74%
+    of the node, past the gate's 0.6 bound on any single level.
+    """
+    rows, stops = 243_000, 600
+
+    counts = _demo.played_layer_ladder(rows, stops)["counts"]
+
+    assert counts[0] < stops * _demo.FIRST_RUNG_ROWS_PER_FRAME
+    assert max(_increments(counts)) / rows <= _demo.LADDER_GATE_MAX_RUNG_SHARE
+
+
+def test_the_clamp_never_leaves_an_audited_layer_unladdered() -> None:
+    """``--stars 250000 --frames 900``: 242 stars in ``< 50 Myr``.
+
+    217,800 rows against an unclamped 270,000-row floor resolves to a single cut
+    — a FLAT leaf above the gate's 200,000-row threshold, which is the very
+    thing the ladder pass exists to remove.
+    """
+    counts = _demo.played_layer_ladder(217_800, 900)["counts"]
+
+    assert len(counts) > 1
+    assert max(_increments(counts)) / 217_800 <= _demo.LADDER_GATE_MAX_RUNG_SHARE
+
+
+@pytest.mark.parametrize("rows", [26_510, 60_000])
+def test_a_layer_below_the_gate_threshold_keeps_its_flat_leaf(rows: int) -> None:
+    """26,510 rows is `Disc < 50 Myr` at the authored build.
+
+    The clamp must NOT reach down here. Below 200,000 rows the gate audits
+    neither ladder arm, so a flat leaf passes — while a ladder whose rung 0
+    cannot put 250 rows in a frame turns a SKIPPED node into an audited, failing
+    one (measured: 28 rows at the sparsest frame of a 26,510-row layer laddered
+    at a third of the node).
+    """
+    assert _demo.played_layer_ladder(rows, 241)["counts"] == [rows]
+
+
+def test_the_floored_rung_fills_every_frame_in_a_built_store(tmp_path: Path) -> None:
+    """The end-to-end arm: measure the sparsest frame off the written rung.
+
+    Built at the shipped `Disc 50-300 Myr` shape rather than through
+    `generate_galaxy`, because the floor only engages above 39,062 rows and the
+    thin bin is ~1% of the disc — so a real build that reaches it costs ~5M
+    points, while this reproduces the shipped store's rung-0 histogram exactly
+    (p05 = 275, min = 264) in under a second.
+
+    This is the assertion the gate makes: rung 0's SPARSEST frames, not its
+    busiest, decide whether playback renders anything.
+    """
+    from collections import Counter
+
+    import numpy as np
+    import zarr
+
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+    from luxar.encoding.decoder import decode_coordinate_columns
+
+    stars, frames = 966, 241
+    rng = np.random.default_rng(0)
+    xyz = rng.normal(scale=5.0, size=(stars, 3)).astype(np.float32)
+    positions = np.empty((stars * frames, 4), dtype=np.float32)
+    for frame, t_myr in enumerate(_demo.frame_times(frames)):
+        rows = slice(frame * stars, (frame + 1) * stars)
+        positions[rows, :3] = xyz
+        positions[rows, 3] = t_myr
+
+    dimensions = Dimensions(
+        [
+            Dimension("X", unit="kpc", range=(-36, 36), display=True),
+            Dimension("Y", unit="kpc", range=(-36, 36), display=True),
+            Dimension("Z", unit="kpc", range=(-36, 36), display=True),
+            _demo.time_dimension(frames),
+        ]
+    )
+    output = tmp_path / "played_layer.luxar.zarr"
+    with LuxarZarrCompiler(output) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
+        scene.add_points(
+            "Disc probe",
+            positions=positions,
+            additive_lod=_demo.played_layer_ladder(len(positions), frames),
+        )
+
+    root = zarr.open(str(output), mode="r")
+    rung = root["Disc probe"]["additive_0"]
+    histogram = Counter(
+        tuple(row) for row in decode_coordinate_columns(rung["positions"], [3], root)
+    )
+    per_frame = sorted(histogram.values())
+
+    assert int(dict(rung.attrs)["n_points"]) == 72_300
+    assert len(per_frame) == frames, "rung 0 must reach every frame"
+    # The gate's reduction: the lower 5th-percentile ORDER STATISTIC.
+    assert per_frame[int(0.05 * (frames - 1))] >= 250

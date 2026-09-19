@@ -86,6 +86,7 @@ from typing import Iterator as _Iterator
 
 import numpy as np
 import zarr
+import zarr.errors
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # The canonical home of the alias — `typing_utils.protocols` only re-imports
@@ -169,6 +170,11 @@ def _format_from_env() -> int:
 #: module all read the module attribute at CALL time, so an override applies to
 #: every write that follows it.
 ZARR_FORMAT = _format_from_env()
+
+_UNKNOWN_CODEC_ERRORS = (
+    KeyError,
+    getattr(zarr.errors, "UnknownCodecError", KeyError),
+)
 
 
 def zarr_format() -> int:
@@ -803,7 +809,7 @@ def _to_v3_filter(filter_obj: Any) -> Any:
     codec_id = config.pop("id", None)
     try:
         codec_cls = zarr.registry.get_codec_class(str(codec_id))
-    except KeyError:
+    except _UNKNOWN_CODEC_ERRORS:
         raise ValueError(
             f"filter {codec_id!r} has no format-3 codec registered under that "
             f"name; register one (entry-point group 'zarr.codecs') before "
@@ -1047,7 +1053,7 @@ def list_raw_keys(group: zarr.Group) -> frozenset[str]:
     DOCUMENT's bytes, and "no such key" is unobservable for precisely the names
     where the distinction decides whether a payload contributes bytes to the
     content hash (``luxar.io._compiler.finalize.hashing._payload_terms``) or is
-    safe to copy (``luxar.io.optimise._copy_payload_files``). A directory
+    safe to copy (``luxar.io.optimize._copy_payload_files``). A directory
     LISTING is not folded: the store reports the names it actually stores, and
     Python compares them case-sensitively on every platform.
 
@@ -1115,7 +1121,7 @@ def write_raw_bytes(group: zarr.Group, key: str, payload: bytes) -> None:
     case-insensitive filesystem. Callers still own the REST of the name check —
     that a payload name is a single path component at all, and what to do about a
     refused one — since only they know whether skipping, refusing or renaming is
-    the right answer (``luxar.io.optimise._copy_payload_files`` decides all
+    the right answer (``luxar.io.optimize._copy_payload_files`` decides all
     three).
 
     Args:

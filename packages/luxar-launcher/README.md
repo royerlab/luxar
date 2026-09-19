@@ -7,7 +7,7 @@ WebView window. Setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` falls back to the
 user's default browser (no native window) — useful for headless smoke
 tests. It does *not* let the launcher run without `libwebkit2gtk`: the
 prebuilt Linux binary links WebKit at build time and will not start
-without the webkit2gtk-4.0 runtime (see "Build dependencies (Linux)"
+without the webkit2gtk-4.1 runtime (see "Build dependencies (Linux)"
 below).
 
 The launcher forces browser revalidation for everything it serves — mutable
@@ -20,6 +20,42 @@ in Chrome. Without this override, it would fall back to a tiny fixed budget and
 re-decode timelapse
 frames on every loop. Override with `LUXAR_CACHE_BUDGET_MB=<N>` on a
 memory-constrained machine (e.g. `=512`).
+
+## Kiosk mode (remote control)
+
+The app can host the remote-control relay, so an exported scene drives a kiosk
+without a Python checkout. Off by default, because a native app that silently
+started listening would be a surprise nobody asked for:
+
+```bash
+# Loopback only — useful for a second browser window on the same machine.
+LUXAR_LAUNCHER_CONTROL=1 ./luxar-launcher
+
+# A tablet on the LAN. The token is strongly advised: without one, anything
+# that can reach this machine can drive the display.
+LUXAR_LAUNCHER_CONTROL=1 \
+  LUXAR_LAUNCHER_HOST=0.0.0.0 \
+  LUXAR_LAUNCHER_CONTROL_TOKEN=$(openssl rand -hex 8) \
+  ./luxar-launcher
+```
+
+The app prints the touch-panel URL on stderr. `LUXAR_LAUNCHER_HOST` resolves a
+wildcard bind to a concrete address before printing, because `http://0.0.0.0:PORT`
+is not something a tablet can dial.
+
+`hub.go` is the relay, and it is the **second** implementation of one — the
+first is `luxar.cli.control_hub`. Everything the two must agree on (roles, the
+close code for a refused handshake, the JSON-RPC error codes, the pending cap)
+is generated into `control_contract.go` from `control-contract/contract.yaml`;
+`hatch run check-control-contract` fails the build if this copy drifts from the
+Python one. Do not edit the generated file.
+
+The relay refuses three things, mirroring the Python hub: an unknown `?role=`
+(refused rather than defaulted, since a typo attaching as a *controller* would
+attach with authority), a wrong token (compared in constant time), and a
+cross-origin browser handshake — a WebSocket handshake is not subject to the
+same-origin policy and has no CORS preflight, so without that check any page a
+visitor opened could drive the display, and binding loopback would not help.
 
 ## Build
 
@@ -78,27 +114,27 @@ the logo changes.
 
 ## Build dependencies (Linux)
 
-The WebView binding links against **`webkit2gtk-4.0`** — the pinned
-`webview_go` declares `#cgo linux ... pkg-config: gtk+-3.0 webkit2gtk-4.0`.
-Install the 4.0 dev package before running `make build-launchers`:
+The pinned `webview_go` still requests `webkit2gtk-4.0` from pkg-config, but
+Luxar supplies a compatibility module that resolves that request to
+**`webkit2gtk-4.1`**. Install the 4.1 dev package before running
+`make build-launchers`:
 
 ```bash
-sudo apt-get install -y libwebkit2gtk-4.0-dev pkg-config
+sudo apt-get install -y libwebkit2gtk-4.1-dev pkg-config
 ```
 
-End users who run the prebuilt binary need only the runtime library, not the
-`-dev` package: the versioned SONAME `libwebkit2gtk-4.0.so.37`, shipped on
-Debian/Ubuntu as **`libwebkit2gtk-4.0-37`** (the unversioned
-`libwebkit2gtk-4.0` is not an installable package name).
+The Makefile enables the compatibility module only when pkg-config can resolve
+4.1; on an older development host with only 4.0, the native 4.0 module remains
+available instead of being shadowed by the shim.
 
-On a distro that ships **only** 4.1, the prebuilt launcher does not start at
-all: cgo links WebKit at build time, so the binary carries a hard
-`DT_NEEDED` on `libwebkit2gtk-4.0.so.37` and the dynamic loader aborts before
-`main()` runs. This is the mainstream case, not an edge one — verified on
-Ubuntu 24.04.4 LTS, where apt offers only `libwebkit2gtk-4.1-0` /
-`libwebkit2gtk-4.1-dev` and `libwebkit2gtk-4.0-37` does not exist. `LUXAR_LAUNCHER_NO_WEBVIEW=1` cannot rescue that
-— it is read by Go code that never executes, and webview's own probe only
-chooses between 4.0/4.1 variants that are *already loaded* (`RTLD_NOLOAD`),
-it does not load one. Such a system needs the 4.0 runtime installed, or a
-separately built browser-only launcher. The env var is for when the library
-IS present and you simply don't want a window (headless smoke tests).
+End users who run the prebuilt binary need only the runtime library, not the
+`-dev` package. A launcher built through the compatibility module needs SONAME
+`libwebkit2gtk-4.1.so.0`, shipped on Debian/Ubuntu as
+**`libwebkit2gtk-4.1-0`**; one built on a 4.0-only host instead needs
+**`libwebkit2gtk-4.0-37`**. `ldd <launcher-binary>` is authoritative for a
+particular build.
+
+`LUXAR_LAUNCHER_NO_WEBVIEW=1` still cannot rescue a missing runtime: it is read
+by Go code after the dynamic loader resolves WebKitGTK. The env var is for when
+the library is present and you simply do not want a native window (for example,
+in a headless smoke test).

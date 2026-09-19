@@ -44,10 +44,11 @@ material, LOD, sorting, and worker resources.
 
 ## Public surface
 
-The constructor also accepts loader and asset-path overrides plus `lodFade`, `lodEnergyComp`,
-`lodFinest`, and `depthSort` feature switches. `renderOrder` defaults to 10. `requestRender` is
-optional only for hosts that render continuously; an on-demand host must use it to schedule a
-future frame when progressive geometry, a lazy LOD level, or a retry commits asynchronously.
+The constructor also accepts loader and asset-path overrides plus `gpuPoolMaxBytes`, `lodFade`,
+`lodEnergyComp`, `lodFinest`, `lodBias`, and `depthSort` feature switches. `renderOrder` defaults to 10.
+`requestRender` is optional only for hosts that render continuously; an on-demand host must use it
+to schedule a future frame when progressive geometry, a lazy LOD level, or a retry commits
+asynchronously.
 
 | Member | Contract |
 | --- | --- |

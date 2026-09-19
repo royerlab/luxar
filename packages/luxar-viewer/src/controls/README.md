@@ -46,8 +46,10 @@ controls/
 │   └── input/                         #   DOM-event handler cluster
 │       ├── keyboard.ts
 │       ├── mouse.ts
+│       ├── touch.ts
 │       └── wheel.ts
 │
+├── touch-twist.ts                     # Shared gesture roll sign + angle wrapping
 ├── types.ts                            # TypeScript type definitions + cycle helper
 └── README.md                           # This documentation
 ```

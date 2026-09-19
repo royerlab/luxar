@@ -51,6 +51,8 @@ vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
     // manager returns null when nothing is playing. The t+1 prefetch reads
     // the playing set / next-value peek — default: nothing playing.
     getFrameBudgetMs: vi.fn(() => null),
+    getPlaybackLadderDepth: vi.fn(() => null),
+    getScrubLadderDepth: vi.fn(() => null),
     isAnyPlaying: vi.fn(() => false),
     getPlayingDimIndices: vi.fn(() => []),
     peekNextValue: vi.fn(() => null),

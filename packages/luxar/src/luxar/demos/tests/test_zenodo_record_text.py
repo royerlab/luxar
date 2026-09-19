@@ -50,6 +50,9 @@ class _FrameWriter(Protocol):
         gsplats: bool = True,
         kind: str | None = None,
         part_provenance: list[dict[str, Any]] | None = None,
+        extra_root_attrs: dict[str, Any] | None = None,
+        fitting_attrs: dict[str, Any] | None = None,
+        zarr_format: int = 2,
     ) -> None: ...
 
 
@@ -106,20 +109,21 @@ def _write_frame(
     gsplats: bool = True,
     kind: str | None = None,
     part_provenance: list[dict[str, Any]] | None = None,
+    extra_root_attrs: dict[str, Any] | None = None,
+    fitting_attrs: dict[str, Any] | None = None,
+    zarr_format: int = 2,
     layout: _ArchiveLayout,
 ) -> None:
     """Write a store zipped from outside its directory or from inside it."""
     prefix = f"{path.name.split('.')[0]}.gsplats.zarr/" if layout == "wrapped" else ""
     with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
         root_attrs = {
             "format_type": "gsplats_zarr" if gsplats else "luxar_zarr",
             "n_splats": n_splats,
         }
         if kind is not None:
             root_attrs["kind"] = kind
-        zf.writestr(f"{prefix}.zattrs", json.dumps(root_attrs))
-        zf.writestr(f"{prefix}fitting/.zgroup", json.dumps({"zarr_format": 2}))
+        root_attrs.update(extra_root_attrs or {})
         fitting = {}
         if psnr is not None:
             fitting["psnr_db"] = psnr
@@ -129,7 +133,21 @@ def _write_frame(
             fitting["source_bytes"] = source_bytes
         if part_provenance is not None:
             fitting["part_provenance"] = part_provenance
-        zf.writestr(f"{prefix}fitting/.zattrs", json.dumps(fitting))
+        fitting.update(fitting_attrs or {})
+        if zarr_format == 2:
+            zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
+            zf.writestr(f"{prefix}.zattrs", json.dumps(root_attrs))
+            zf.writestr(f"{prefix}fitting/.zgroup", json.dumps({"zarr_format": 2}))
+            zf.writestr(f"{prefix}fitting/.zattrs", json.dumps(fitting))
+        else:
+            zf.writestr(
+                f"{prefix}zarr.json",
+                json.dumps({"zarr_format": 3, "attributes": root_attrs}),
+            )
+            zf.writestr(
+                f"{prefix}fitting/zarr.json",
+                json.dumps({"zarr_format": 3, "attributes": fitting}),
+            )
 
 
 @pytest.fixture(params=get_args(_ArchiveLayout), ids=lambda layout: f"{layout}-store")
@@ -524,7 +542,82 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         info = gen._read_archive(path)
 
         assert info["frames"] is None
-        assert info["source_bytes"] is None
+        assert info["source_bytes"] == 1000
+
+    def test_new_partition_layout_recovers_source_grid_and_frames(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
+        path = tmp_path / "partition-timelapse.gsplats.zarr.zip"
+        fitting = {
+            "source_shape": [500, 108, 1352, 532],
+            "source_dtype": "uint16",
+            "source_bytes": 77_680_512_000,
+            "source_voxels": 38_840_256_000,
+        }
+        write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            kind="partition",
+            extra_root_attrs={"ndim": 4},
+            zarr_format=3,
+            part_provenance=[
+                {"coordinate": 0.0, "fitting": fitting},
+                {"coordinate": 1.0, "fitting": dict(fitting)},
+            ],
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["source_shape"] == [500, 108, 1352, 532]
+        assert info["source_dtype"] == "uint16"
+        assert info["source_bytes"] == 77_680_512_000
+        assert info["source_voxels"] == 38_840_256_000
+        assert info["frames"] == 500
+
+    def test_plain_4d_source_is_not_assumed_to_be_a_timelapse(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
+        path = tmp_path / "plain-4d.gsplats.zarr.zip"
+        write_frame(
+            path,
+            extra_root_attrs={"ndim": 4},
+            fitting_attrs={"source_shape": [5, 6, 7, 8]},
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["source_shape"] == [5, 6, 7, 8]
+        assert info["frames"] is None
+
+    def test_legacy_layout_keeps_explicit_frames_with_per_frame_shape(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
+        path = tmp_path / "legacy-timelapse.gsplats.zarr.zip"
+        fitting = {
+            "source_shape": [108, 1352, 532],
+            "source_dtype": "uint16",
+            "source_bytes": 155_361_024,
+            "source_voxels": 77_680_512,
+        }
+        write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            fitting_attrs={"frames": 500},
+            part_provenance=[
+                {"coordinate": 0.0, "fitting": fitting},
+                {"coordinate": 1.0, "fitting": dict(fitting)},
+            ],
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["source_shape"] == [108, 1352, 532]
+        assert info["source_dtype"] == "uint16"
+        assert info["source_bytes"] == 310_722_048
+        assert info["source_voxels"] == 155_361_024
+        assert info["frames"] == 500
 
     def test_nested_single_part_is_not_reported_as_one_frame(
         self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
@@ -545,6 +638,29 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         info = gen._read_archive(path)
 
         assert info["frames"] is None
+
+    def test_flatten_summary_is_not_reported_as_one_frame(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
+        path = tmp_path / "flattened-partition.gsplats.zarr.zip"
+        write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            part_provenance=[
+                {
+                    "part_count": 2,
+                    "fit_reference": {"kind": "acquisition"},
+                    "fitting": {"source_bytes": 7000},
+                }
+            ],
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] is None
+        assert info["source_bytes"] == 7000
+        assert info["quality_quotable"] is True
 
     def test_check_does_not_demand_scores_classified_as_unquotable(
         self, gen: Any, monkeypatch: pytest.MonkeyPatch
@@ -1643,6 +1759,7 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
         "source_shape": None,
         "source_dtype": None,
         "source_bytes": None,
+        "source_voxels": None,
         "frames": None,
         "measured_from": None,
         "measured_sha256": None,
@@ -1743,6 +1860,7 @@ def test_refresh_description_matches_the_committed_sidecar(
         "source_shape",
         "source_dtype",
         "source_bytes",
+        "source_voxels",
         "frames",
         "quality_quotable",
         "measured_from",
@@ -2393,11 +2511,17 @@ def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> N
         info["ndim"],
         info["format_version"],
         info["topology"],
-    ) == (121_163_285, 4, "3.4", "progressive ladder, 12 steps")
+    ) == (121_163_285, 4, "3.4", "progressive ladder, 4 steps")
     assert info["measured_sha256"] == (
-        "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae"
+        "bb2f5d00b8a63e525ab6cd182b896c21f9a8a8b9bb3a64507611d0ab54bdc761"
     )
+    assert info["source_shape"] == [407, 2048, 2048]
+    assert info["source_bytes"] == 174_122_336_256
+    assert info["source_voxels"] == 87_061_168_128
+    assert info["frames"] == 51
     assert "one 4D leaf" in info["quality_note"]
+    assert "re-laddered from the prior 03780663" in info["quality_note"]
+    assert "earlier c5e14be9 generation" in info["quality_note"]
     assert "does not retain source_archive" in info["quality_note"]
 
 
@@ -2416,7 +2540,7 @@ def test_h2afva_unscored_variants_publish_consistent_caveats(gen: Any) -> None:
         assert "every-fifth-frame slice" in info["quality_caveat"]
 
 
-def test_droso_500tp_keeps_archive_derived_quotability(gen: Any) -> None:
+def test_droso_500tp_tracks_the_published_unculled_rebuild(gen: Any) -> None:
     info = gen.load_characteristics()[
         "gsplats_4d_drosophila_embryogenesis/"
         "drosophila_embryogenesis_500tp.gsplats.zarr.zip"
@@ -2424,9 +2548,25 @@ def test_droso_500tp_keeps_archive_derived_quotability(gen: Any) -> None:
 
     assert info["psnr_db"] is None
     assert info["foreground_psnr_db"] is None
-    assert info["measured_from"] == "hosted"
-    assert info["quality_quotable"] is None
-    assert "published archive carries no stamps" in info["quality_caveat"]
+    assert info["n_splats"] == 128_000_000
+    assert info["topology"] == "progressive ladder, 4 steps"
+    assert info["source_shape"] == [500, 108, 1352, 532]
+    assert info["source_bytes"] == 77_680_512_000
+    assert info["source_voxels"] == 38_840_256_000
+    assert info["frames"] == 500
+    assert info["measured_from"] == "staged"
+    assert info["measured_sha256"] == (
+        "ee3193babb074e16958665bb96e880dea7d9af695b4521c1c2fbb81991f5b393"
+    )
+    assert info["quality_quotable"] is False
+    assert "published v2.0.0 bytes" in info["quality_note"]
+    assert "per-timepoint fit-time quality stamps" in info["quality_caveat"]
+    assert "reference is unclassified" in info["quality_caveat"]
+    assert (
+        "no archive-level reconstruction figure is published" in info["quality_caveat"]
+    )
+    assert "carries no stamps" not in info["quality_caveat"]
+    assert "refit" not in info["quality_caveat"]
 
 
 def test_droso_gastrulation_keeps_the_archive_measurement(gen: Any) -> None:
@@ -2786,6 +2926,22 @@ def _deposition(description: str) -> dict[str, Any]:
     }
 
 
+def _published_record(
+    description: str,
+    *,
+    submitted: bool = True,
+    modified: str = "2026-09-11T00:00:00Z",
+) -> dict[str, Any]:
+    return {
+        "metadata": {
+            "description": description,
+            "license": {"id": "cc-by-4.0"},
+        },
+        "submitted": submitted,
+        "modified": modified,
+    }
+
+
 def _capture_manifest(path: Path, records: dict[str, int]) -> None:
     path.write_text(
         json.dumps(
@@ -2919,6 +3075,141 @@ def test_capture_does_not_sleep_after_the_final_retry(
         capture.fetch(1, "token")
 
     assert sleeps == [3, 6, 9, 12, 15]
+
+
+def test_capture_check_accepts_matching_public_records_without_a_token(
+    capture: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"first": 10, "second": 20})
+    descriptions = {10: "Loïc 10", 20: "second"}
+    modified = "2026-09-11T00:00:00Z"
+    index = {
+        key: {
+            "description_sha256": hashlib.sha256(
+                descriptions[deposition].encode("utf-8")
+            ).hexdigest(),
+            "description_chars": len(descriptions[deposition]),
+            "submitted": True,
+            "zenodo_modified": modified,
+            "license": "cc-by-4.0",
+        }
+        for key, deposition in {"first": 10, "second": 20}.items()
+    }
+    index_bytes = json.dumps(index).encode("utf-8")
+    (tmp_path / "records.json").write_bytes(index_bytes)
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+    monkeypatch.setenv("ZENODO_TOKEN", "must-not-leak")
+    requested = []
+
+    def urlopen(request: Any, **_kwargs: Any) -> Any:
+        requested.append(request)
+        deposition = int(request.full_url.rsplit("/", 1)[1])
+        return io.StringIO(
+            json.dumps(_published_record(descriptions[deposition], modified=modified))
+        )
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", urlopen)
+
+    assert capture.main(["--check"]) == 0
+    assert capsys.readouterr().out == "first            OK\nsecond           OK\n"
+    assert [request.full_url for request in requested] == [
+        "https://zenodo.org/api/records/10",
+        "https://zenodo.org/api/records/20",
+    ]
+    assert all("Authorization" not in request.headers for request in requested)
+    assert not list(tmp_path.glob("*.html"))
+    assert (tmp_path / "records.json").read_bytes() == index_bytes
+
+
+def test_capture_check_reports_unreachable_record_and_continues(
+    capture: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"missing": 10, "available": 20})
+    description = "available"
+    modified = "2026-09-11T00:00:00Z"
+    (tmp_path / "records.json").write_text(
+        json.dumps(
+            {
+                "available": {
+                    "description_sha256": hashlib.sha256(
+                        description.encode("utf-8")
+                    ).hexdigest(),
+                    "description_chars": len(description),
+                    "submitted": True,
+                    "zenodo_modified": modified,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+
+    def urlopen(request: Any, **_kwargs: Any) -> Any:
+        deposition = int(request.full_url.rsplit("/", 1)[1])
+        if deposition == 10:
+            raise urllib.error.HTTPError(request.full_url, 404, "NOT FOUND", {}, None)
+        return io.StringIO(
+            json.dumps(_published_record(description, modified=modified))
+        )
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", urlopen)
+
+    assert capture.main(["--check"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "missing unreachable: HTTP Error 404: NOT FOUND\navailable        OK\n"
+    )
+    assert captured.err == ""
+
+
+def test_capture_check_reports_every_public_record_mismatch(
+    capture: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"record": 10})
+    (tmp_path / "records.json").write_text(
+        json.dumps(
+            {
+                "record": {
+                    "description_sha256": "0" * 64,
+                    "description_chars": 1,
+                    "submitted": False,
+                    "zenodo_modified": "2026-09-02T00:00:00Z",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+    monkeypatch.setattr(
+        capture.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: io.StringIO(json.dumps(_published_record("changed"))),
+    )
+
+    assert capture.main(["--check"]) == 1
+    output = capsys.readouterr().out
+    assert "record description_sha256:" in output
+    assert "record description_chars: 1 != 7" in output
+    assert "record submitted: False != True" in output
+    assert (
+        "record zenodo_modified: '2026-09-02T00:00:00Z' != "
+        "'2026-09-11T00:00:00Z'" in output
+    )
 
 
 class TestCheckExplainsAnAbsentFigure:

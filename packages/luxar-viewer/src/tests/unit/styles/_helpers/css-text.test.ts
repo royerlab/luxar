@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { expandImports, stripComments } from './css-text';
+import { expandImports, ruleBody, stripComments } from './css-text';
 
 describe('expandImports — @import syntax coverage [styles.md C4]', () => {
   let dir: string;
@@ -110,5 +110,36 @@ describe('stripComments', () => {
   it('an unterminated quote stops at the line break', () => {
     const css = ['.x { font-family: "Broken;', 'body { margin: 0; }'].join('\n');
     expect(stripComments(css)).toMatch(/^body\s*\{/m);
+  });
+});
+
+describe('ruleBody', () => {
+  const overlaySelector =
+    '.luxar-overlay-layer .luxar-overlay--text:not(.luxar-overlay--center-anchored, .luxar-overlay--right-anchored)';
+
+  it('matches a prettier-wrapped selector', () => {
+    const css = [
+      '.luxar-overlay-layer',
+      '  .luxar-overlay--text:not(',
+      '    .luxar-overlay--center-anchored,',
+      '    .luxar-overlay--right-anchored',
+      '  ) {',
+      '  width: 18ch;',
+      '}',
+    ].join('\n');
+
+    expect(ruleBody(css, overlaySelector)).toContain('width: 18ch;');
+  });
+
+  it('matches punctuation with tighter stylesheet spacing', () => {
+    const css =
+      '.luxar-overlay-layer .luxar-overlay--text:not(.luxar-overlay--center-anchored,.luxar-overlay--right-anchored) { width: 18ch; }';
+
+    expect(ruleBody(css, overlaySelector)).toContain('width: 18ch;');
+  });
+
+  it('preserves descendant combinators', () => {
+    expect(ruleBody('.a.b { color: red; }', '.a .b')).toBe('');
+    expect(ruleBody('.a:not(.x).y { color: red; }', '.a:not(.x) .y')).toBe('');
   });
 });

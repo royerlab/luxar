@@ -86,7 +86,7 @@ def run_decimate_dataset(
                 verbose=True,
             )
 
-            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+            from luxar.gsplats.io.load_gsplats import read_rebuild_root_attrs
 
             with asection(f"Saving to {output_path.name}"):
                 # Thread the (already scrubbed) provenance through the tree writer
@@ -104,12 +104,14 @@ def run_decimate_dataset(
                     output_path,
                     reduced.tree,
                     encoding_mode=encoding_mode_obj,
+                    amplitude_bits="auto",
+                    source_dtype=reduced.stats.get("source_dtype"),
                     compress=compress,
                     fitting_info=fitting,
                     fitting_config=config,
                     provenance_info=provenance,
                     pipeline_info=pipeline,
-                    root_attrs=read_authored_appearance(input_path),
+                    root_attrs=read_rebuild_root_attrs(input_path),
                 )
                 kept = 100.0 * reduced.n_splats / max(data.n_splats, 1)
                 aprint(

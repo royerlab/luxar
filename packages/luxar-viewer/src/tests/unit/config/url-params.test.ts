@@ -1,10 +1,139 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import {
   buildDataSourceBrowserUrl,
+  getParam,
+  hasParam,
   normalizeDataSourceUrl,
   readUrlParams,
   replaceBrowserDataSourceUrl,
+  URL_PARAM_KEYS,
 } from '../../../config/url-params';
+
+const PACKAGE_ROOT = new URL('../../../../', import.meta.url);
+
+/** The old kebab spellings retired by the 2026-09 camelCase hard cut. */
+const RETIRED_KEBAB_SPELLINGS = [
+  'no-cache',
+  'no-slice-cache',
+  'no-opfs',
+  'cache-debug',
+  'clear-cache',
+  'no-lod-fade',
+  'no-links',
+  'no-lod-energy',
+  'lod-finest',
+  'no-blend-warmup',
+  'no-prefetch',
+  'prefetch-debug',
+  'cache-stats',
+  'webgpu-force-webgl',
+  'perf-timestamp',
+  'lod-bias',
+  'no-density-guard',
+  'density-cap',
+  'bake-env',
+  'env-resolution',
+] as const;
+
+describe('URL_PARAM_KEYS', () => {
+  it('has unique wire spellings', () => {
+    const values = Object.values(URL_PARAM_KEYS);
+    expect(new Set(values).size).toBe(values.length);
+  });
+
+  it('is an identity table: every key IS its wire spelling', () => {
+    // The identity is what makes `URL_PARAM_KEYS.noCache` read as the flag it
+    // names and keeps `UrlParamKey` equal to the set of wire spellings.
+    const nonIdentity = Object.entries(URL_PARAM_KEYS).filter(([key, wire]) => key !== wire);
+    expect(nonIdentity).toEqual([]);
+  });
+
+  it('spells every parameter camelCase (no kebab-case, no exceptions)', () => {
+    // The camelCase convention decided for the release. `bakeEnv` and
+    // `envResolution` are emitted by the Python `luxar env bake` CLI
+    // (cli/env_ops/bake.py), so a wire change here must land on that side too.
+    const kebab = Object.values(URL_PARAM_KEYS).filter((wire) => !/^[a-z][A-Za-z0-9]*$/.test(wire));
+    expect(kebab).toEqual([]);
+  });
+
+  it('no longer recognizes any retired kebab spelling (hard cut, no alias)', () => {
+    const params = readUrlParams(`?${RETIRED_KEBAB_SPELLINGS.join('&')}`);
+    expect(params).toEqual(readUrlParams(''));
+    for (const retired of RETIRED_KEBAB_SPELLINGS) {
+      expect(Object.values(URL_PARAM_KEYS) as string[]).not.toContain(retired);
+    }
+  });
+
+  it.each([
+    ['packages/luxar-viewer/README.md', 'README.md', '### URL Parameters', /^##/m],
+    [
+      'docs/guides/user/VIEWER_GUIDE.md',
+      '../../docs/guides/user/VIEWER_GUIDE.md',
+      '## URL Parameters',
+      /^## /m,
+    ],
+  ])('documents every wire spelling in %s', (_label, relPath, heading, nextHeading) => {
+    // Doc parity: the docs are prose, so nothing else would notice a renamed
+    // or added parameter that never reached them. Slice the section under
+    // the heading and require each spelling to appear as a parameter
+    // (`?noCache`, `&noCache`, or a table cell `` `noCache` ``), not merely
+    // as a substring of some other word.
+    const text = readFileSync(fileURLToPath(new URL(relPath, PACKAGE_ROOT)), 'utf8');
+    const start = text.indexOf(heading);
+    expect(start, `${relPath} has a "${heading}" section`).toBeGreaterThan(-1);
+    const body = text.slice(start + heading.length);
+    const end = body.search(nextHeading);
+    const section = end === -1 ? body : body.slice(0, end);
+    const undocumented = Object.values(URL_PARAM_KEYS).filter((wire) => {
+      const escaped = wire.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+      return !new RegExp(`(?:[?&]|\\| \`)${escaped}(?![A-Za-z0-9-])`).test(section);
+    });
+    expect(undocumented).toEqual([]);
+  });
+});
+
+describe('deprecated URL parameter aliases', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('resolves a flag through an injected alias and warns exactly once per alias', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const aliases = { 'legacy-no-cache': URL_PARAM_KEYS.noCache };
+    const params = new URLSearchParams('?legacy-no-cache');
+    expect(hasParam(params, URL_PARAM_KEYS.noCache, aliases)).toBe(true);
+    expect(hasParam(params, URL_PARAM_KEYS.noCache, aliases)).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('"legacy-no-cache" is deprecated');
+    expect(warn.mock.calls[0]?.[0]).toContain('"noCache"');
+  });
+
+  it('returns the value supplied under an alias', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const aliases = { 'legacy-dpr': URL_PARAM_KEYS.dpr };
+    expect(getParam(new URLSearchParams('?legacy-dpr=2'), URL_PARAM_KEYS.dpr, aliases)).toBe('2');
+    expect(getParam(new URLSearchParams('?other=1'), URL_PARAM_KEYS.dpr, aliases)).toBeNull();
+  });
+
+  it('prefers the canonical spelling and does not warn when it is present', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const aliases = { 'legacy-theme': URL_PARAM_KEYS.theme };
+    const params = new URLSearchParams('?theme=dark&legacy-theme=light');
+    expect(getParam(params, URL_PARAM_KEYS.theme, aliases)).toBe('dark');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('is inert for an alias that maps to a different key', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const aliases = { 'legacy-kiosk': URL_PARAM_KEYS.kiosk };
+    expect(hasParam(new URLSearchParams('?legacy-kiosk'), URL_PARAM_KEYS.debug, aliases)).toBe(
+      false
+    );
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
 
 describe('readUrlParams', () => {
   it('returns null/false defaults for an empty query string', () => {
@@ -13,20 +142,27 @@ describe('readUrlParams', () => {
       src: null,
       theme: null,
       title: null,
+      control: null,
+      controlToken: null,
+      controlAllowCrossOrigin: false,
+      panel: null,
       debug: false,
+      kiosk: false,
       noCache: false,
       noSliceCache: false,
       noOpfs: false,
+      opfsReadConcurrency: null,
       cacheDebug: false,
       clearCache: false,
       lodFade: true,
-      allowLinks: true, // element links are ON by default (opt-out via ?no-links)
-      lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
-      blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?no-blend-warmup)
+      allowLinks: true, // element links are ON by default (opt-out via ?noLinks)
+      lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?noLodEnergy)
+      blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?noBlendWarmup)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
-      densityGuard: true, // projected-density guard is ON by default (opt-out via ?no-density-guard)
-      densityCap: null, // configured cap unless ?density-cap=N
-      lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
+      densityGuard: true, // projected-density guard is ON by default (opt-out via ?noDensityGuard)
+      densityCap: null, // configured cap unless ?densityCap=N
+      lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lodFinest)
+      lodBias: null, // normal LOD thresholds unless ?lodBias=N
       noPrefetch: false,
       prefetchDebug: false,
       cacheStats: false,
@@ -39,33 +175,33 @@ describe('readUrlParams', () => {
       input: null,
       lineJoin: null,
       linePrimitive: null,
-      bakeEnv: false, // the `luxar env bake` driver's one-shot (opt-in via ?bake-env)
+      bakeEnv: false, // the `luxar env bake` driver's one-shot (opt-in via ?bakeEnv)
       probe: null,
       envResolution: null,
     });
   });
 
-  it('parses the environment bake parameters (?bake-env&probe=&env-resolution=)', () => {
-    expect(readUrlParams('?bake-env').bakeEnv).toBe(true);
-    expect(readUrlParams('?bake-env&probe=node:clusters/shell&env-resolution=256')).toMatchObject({
+  it('parses the environment bake parameters (?bakeEnv&probe=&envResolution=)', () => {
+    expect(readUrlParams('?bakeEnv').bakeEnv).toBe(true);
+    expect(readUrlParams('?bakeEnv&probe=node:clusters/shell&envResolution=256')).toMatchObject({
       bakeEnv: true,
       probe: 'node:clusters/shell',
       envResolution: 256,
     });
     expect(readUrlParams('?probe=%201,2,3%20').probe).toBe('1,2,3');
     expect(readUrlParams('?probe=').probe).toBeNull();
-    expect(readUrlParams('?env-resolution=abc').envResolution).toBeNull();
-    expect(readUrlParams('?env-resolution=0').envResolution).toBe(16);
-    expect(readUrlParams('?env-resolution=8192').envResolution).toBe(1024);
+    expect(readUrlParams('?envResolution=abc').envResolution).toBeNull();
+    expect(readUrlParams('?envResolution=0').envResolution).toBe(16);
+    expect(readUrlParams('?envResolution=8192').envResolution).toBe(1024);
   });
 
-  it('parses ?density-cap= as a positive float, anything else → null', () => {
-    expect(readUrlParams('?density-cap=8').densityCap).toBe(8);
-    expect(readUrlParams('?density-cap=2.5').densityCap).toBe(2.5);
-    expect(readUrlParams('?density-cap=0').densityCap).toBeNull();
-    expect(readUrlParams('?density-cap=-4').densityCap).toBeNull();
-    expect(readUrlParams('?density-cap=lots').densityCap).toBeNull();
-    expect(readUrlParams('?density-cap=').densityCap).toBeNull();
+  it('parses ?densityCap= as a positive float, anything else → null', () => {
+    expect(readUrlParams('?densityCap=8').densityCap).toBe(8);
+    expect(readUrlParams('?densityCap=2.5').densityCap).toBe(2.5);
+    expect(readUrlParams('?densityCap=0').densityCap).toBeNull();
+    expect(readUrlParams('?densityCap=-4').densityCap).toBeNull();
+    expect(readUrlParams('?densityCap=lots').densityCap).toBeNull();
+    expect(readUrlParams('?densityCap=').densityCap).toBeNull();
   });
 
   it('parses ?title=, decoding and trimming; blank collapses to null', () => {
@@ -75,24 +211,24 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?title=').title).toBeNull();
   });
 
-  it('lodFade defaults ON and is disabled only by ?no-lod-fade', () => {
+  it('lodFade defaults ON and is disabled only by ?noLodFade', () => {
     expect(readUrlParams('').lodFade).toBe(true);
     expect(readUrlParams('?debug').lodFade).toBe(true);
-    expect(readUrlParams('?no-lod-fade').lodFade).toBe(false);
+    expect(readUrlParams('?noLodFade').lodFade).toBe(false);
   });
 
-  it('allowLinks defaults ON and is disabled only by ?no-links', () => {
+  it('allowLinks defaults ON and is disabled only by ?noLinks', () => {
     expect(readUrlParams('').allowLinks).toBe(true);
     expect(readUrlParams('?debug').allowLinks).toBe(true);
-    expect(readUrlParams('?no-links').allowLinks).toBe(false);
+    expect(readUrlParams('?noLinks').allowLinks).toBe(false);
     // Not confusable with the other no-* flags that share a prefix.
-    expect(readUrlParams('?no-lod-fade').allowLinks).toBe(true);
+    expect(readUrlParams('?noLodFade').allowLinks).toBe(true);
   });
 
-  it('lodEnergyComp defaults ON and is disabled only by ?no-lod-energy', () => {
+  it('lodEnergyComp defaults ON and is disabled only by ?noLodEnergy', () => {
     expect(readUrlParams('').lodEnergyComp).toBe(true);
     expect(readUrlParams('?debug').lodEnergyComp).toBe(true);
-    expect(readUrlParams('?no-lod-energy').lodEnergyComp).toBe(false);
+    expect(readUrlParams('?noLodEnergy').lodEnergyComp).toBe(false);
   });
 
   it('depthSort defaults ON and is disabled only by an explicit 0/false/off value', () => {
@@ -108,16 +244,26 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?depthSort=OFF').depthSort).toBe(false);
   });
 
-  it('lodFinest defaults OFF and is enabled only by ?lod-finest', () => {
+  it('lodFinest defaults OFF and is enabled only by ?lodFinest', () => {
     expect(readUrlParams('').lodFinest).toBe(false);
     expect(readUrlParams('?debug').lodFinest).toBe(false);
-    expect(readUrlParams('?lod-finest').lodFinest).toBe(true);
+    expect(readUrlParams('?lodFinest').lodFinest).toBe(true);
   });
 
-  it('blendWarmup defaults ON and is disabled only by ?no-blend-warmup', () => {
+  it('parses ?lodBias= as a positive float, anything else → null', () => {
+    expect(readUrlParams('').lodBias).toBeNull();
+    expect(readUrlParams('?lodBias=4').lodBias).toBe(4);
+    expect(readUrlParams('?lodBias=0.25').lodBias).toBe(0.25);
+    expect(readUrlParams('?lodBias=0').lodBias).toBeNull();
+    expect(readUrlParams('?lodBias=-2').lodBias).toBeNull();
+    expect(readUrlParams('?lodBias=lots').lodBias).toBeNull();
+    expect(readUrlParams('?lodBias=').lodBias).toBeNull();
+  });
+
+  it('blendWarmup defaults ON and is disabled only by ?noBlendWarmup', () => {
     expect(readUrlParams('').blendWarmup).toBe(true);
     expect(readUrlParams('?debug').blendWarmup).toBe(true);
-    expect(readUrlParams('?no-blend-warmup').blendWarmup).toBe(false);
+    expect(readUrlParams('?noBlendWarmup').blendWarmup).toBe(false);
   });
 
   it('parses dpr as a positive float, rejecting zero/negative/non-numeric', () => {
@@ -177,6 +323,13 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?cacheBudgetMB=-5').cacheBudgetMB).toBeNull();
     expect(readUrlParams('?cacheBudgetMB=abc').cacheBudgetMB).toBeNull();
     expect(readUrlParams('').cacheBudgetMB).toBeNull();
+  });
+
+  it('parses opfsReadConcurrency as a positive integer', () => {
+    expect(readUrlParams('?opfsReadConcurrency=16').opfsReadConcurrency).toBe(16);
+    expect(readUrlParams('?opfsReadConcurrency=0').opfsReadConcurrency).toBeNull();
+    expect(readUrlParams('?opfsReadConcurrency=1.5').opfsReadConcurrency).toBeNull();
+    expect(readUrlParams('?opfsReadConcurrency=abc').opfsReadConcurrency).toBeNull();
   });
 
   it('parses and trims valid src and theme strings', () => {
@@ -247,7 +400,7 @@ describe('readUrlParams', () => {
 
   it('treats valueless flags as boolean true', () => {
     const params = readUrlParams(
-      '?debug&no-cache&no-slice-cache&no-opfs&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats&webgpu-force-webgl'
+      '?debug&noCache&noSliceCache&noOpfs&cacheDebug&clearCache&noPrefetch&prefetchDebug&cacheStats&webgpuForceWebgl'
     );
     expect(params.debug).toBe(true);
     expect(params.noCache).toBe(true);
@@ -261,11 +414,11 @@ describe('readUrlParams', () => {
     expect(params.webgpuForceWebGL).toBe(true);
   });
 
-  it('cache-stats is independent of cache-debug (different concerns)', () => {
-    expect(readUrlParams('?cache-stats').cacheStats).toBe(true);
-    expect(readUrlParams('?cache-stats').cacheDebug).toBe(false);
-    expect(readUrlParams('?cache-debug').cacheStats).toBe(false);
-    expect(readUrlParams('?cache-debug').cacheDebug).toBe(true);
+  it('?cacheStats is independent of ?cacheDebug (different concerns)', () => {
+    expect(readUrlParams('?cacheStats').cacheStats).toBe(true);
+    expect(readUrlParams('?cacheStats').cacheDebug).toBe(false);
+    expect(readUrlParams('?cacheDebug').cacheStats).toBe(false);
+    expect(readUrlParams('?cacheDebug').cacheDebug).toBe(true);
   });
 
   it('accepts a leading question mark or omits it', () => {
@@ -279,23 +432,23 @@ describe('readUrlParams', () => {
     expect(params.debug).toBe(false);
   });
 
-  describe('?webgpu-force-webgl', () => {
+  describe('?webgpuForceWebgl', () => {
     it('parses the diagnostic WebGPURenderer WebGL-backend flag', () => {
       expect(readUrlParams('').webgpuForceWebGL).toBe(false);
-      expect(readUrlParams('?webgpu-force-webgl').webgpuForceWebGL).toBe(true);
-      expect(readUrlParams('?renderer=webgpu&webgpu-force-webgl').webgpuForceWebGL).toBe(true);
+      expect(readUrlParams('?webgpuForceWebgl').webgpuForceWebGL).toBe(true);
+      expect(readUrlParams('?renderer=webgpu&webgpuForceWebgl').webgpuForceWebGL).toBe(true);
     });
   });
 
-  describe('?perf-timestamp', () => {
+  describe('?perfTimestamp', () => {
     it('parses the GPU timestamp-query opt-in flag', () => {
       expect(readUrlParams('').perfTimestamp).toBe(false);
-      expect(readUrlParams('?perf-timestamp').perfTimestamp).toBe(true);
-      expect(readUrlParams('?renderer=webgpu&perf-timestamp').perfTimestamp).toBe(true);
+      expect(readUrlParams('?perfTimestamp').perfTimestamp).toBe(true);
+      expect(readUrlParams('?renderer=webgpu&perfTimestamp').perfTimestamp).toBe(true);
     });
 
     it('does not affect other flags when present alone', () => {
-      const params = readUrlParams('?perf-timestamp');
+      const params = readUrlParams('?perfTimestamp');
       expect(params.perfTimestamp).toBe(true);
       expect(params.debug).toBe(false);
       expect(params.webgpuForceWebGL).toBe(false);

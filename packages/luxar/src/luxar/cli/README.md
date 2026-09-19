@@ -50,7 +50,7 @@ print(result.stdout)
 - `_traceback.py` - Shared quiet-error reporting with the `LUXAR_TRACEBACK` opt-in escape hatch
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
-- `optimise_command.py` - The `luxar optimise` command (a thin Typer layer over `luxar.io.optimise`)
+- `optimize_command.py` - The `luxar optimize` command (a thin Typer layer over `luxar.io.optimize`)
 - `restamp_lod_command.py` - The `luxar restamp-lod` command (a thin Typer layer over `luxar.io.lod_restamp`)
 - `gsplat_commands.py` - Thin registration hub (~56 lines) that assembles the `gsplat` sub-app: fit, cal, render, denoise, lod, convert, migrate-format, reencode, info, napari, view, compare, annotate-quality, transform, merge, cull, filter, slice, partition, flatten, additive, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess
 - `gsplat_ops/` - The gsplat subcommand implementations: 8 root modules (scene/inspect/interchange registration, `benchmark`, `recipe_shared`, `planner`, `encoding`, `loading`) plus three subpackages — `fitting/` (fit/cal/render/denoise), `batch/` (`batch-fit`), `transforms/` (edit-style commands) — 31 modules across them. Each subpackage's registration surface is its `commands.py`; the `__init__.py` files are docstring-only. See `gsplat_ops/README.md`.
@@ -62,6 +62,7 @@ print(result.stdout)
 - `../_process.py` - Shared package-root child-process lifecycle primitive; see `../README.md`
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
+- `_export_serve_template.py` - The `serve.py` that `luxar export` writes into an export folder, copied with two values substituted. A real module rather than a string inside `export.py` so ruff, mypy and the test suite see it — it hosts the touch-panel relay behind `--control`, and a WebSocket relay hidden in an f-string (where every brace has to be doubled) is unreviewable. **Stdlib only**, because an export folder gets zipped and handed to someone who has never installed Luxar. It is the third implementation of the relay in `control_hub.py`, so it carries a copy of the generated wire contract that `tests/test_export_control_relay.py` pins to `_control_contract.py`.
 - `native_app.py` - Native bundle producers (macOS `.app`, Linux portable folder) for `luxar export --native`
 - `network_simulation.py` - Network simulation middleware and profile definitions
 - `_launchers/` - Go-compiled launcher binaries (populated by `make build-launchers`; ride along in wheel builds)
@@ -159,26 +160,26 @@ luxar info data.luxar.zarr --format json # JSON output
 
 `--stats` also reports the store's **chunk layout** — average chunk KB, the
 share of arrays under the 16 KB floor, and the projected request count for a
-full load — computed off the same helper `luxar optimise` plans from, so a
+full load — computed off the same helper `luxar optimize` plans from, so a
 store that is badly chunked for streaming is visible without hosting it first.
 When the mean chunk is under 32 KB it also warns that the load will be
 round-trip bound on an HTTP/1.1 host (which `luxar serve` is): measured 10.6 s vs
 4.0 s over HTTP/2 for the same 1.5 M-point example at 25 Mbps / 30 ms RTT.
 
-### `luxar optimise`
+### `luxar optimize`
 Re-chunk an existing store for streaming. One structure-preserving pass: only
 zarr chunk shapes change, values stay bit-identical, and no refit / source
 volume / GPU is involved.
 ```bash
-luxar optimise scene.luxar.zarr optimised.luxar.zarr
-luxar optimise scene.luxar.zarr --dry-run                    # report only
-luxar optimise scene.luxar.zarr out.luxar.zarr --target-kb 128
-luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # 256 KB
-luxar optimise scene.luxar.zarr out.luxar.zarr --profile local    # 64 KB
-luxar optimise scene.luxar.zarr out.luxar.zarr --profile archive  # 1 MB
-luxar optimise scene.luxar.zarr out.luxar.zarr --verify      # re-read + compare every array
-luxar optimise fit.gsplats.zarr fit_opt.gsplats.zarr         # standalone gsplat trees
-luxar optimise arbitrary.zarr out.zarr --generic             # plain zarr
+luxar optimize scene.luxar.zarr optimized.luxar.zarr
+luxar optimize scene.luxar.zarr --dry-run                    # report only
+luxar optimize scene.luxar.zarr out.luxar.zarr --target-kb 128
+luxar optimize scene.luxar.zarr out.luxar.zarr --profile hosting  # 256 KB
+luxar optimize scene.luxar.zarr out.luxar.zarr --profile local    # 64 KB
+luxar optimize scene.luxar.zarr out.luxar.zarr --profile archive  # 1 MB
+luxar optimize scene.luxar.zarr out.luxar.zarr --verify      # re-read + compare every array
+luxar optimize fit.gsplats.zarr fit_opt.gsplats.zarr         # standalone gsplat trees
+luxar optimize arbitrary.zarr out.zarr --generic             # plain zarr
 ```
 
 dtype, codecs, filters, `fill_value`, memory order, the chunk key layout, the
@@ -199,7 +200,7 @@ deleted first, so a failure leaves nothing partial behind and never costs both
 copies. Larger profiles trade partial-query bytes for
 full-load requests — see the CLI reference before reaching for `--profile
 hosting` on a store the viewer will slice into. The logic lives in
-`luxar.io.optimise`.
+`luxar.io.optimize`.
 
 ### `luxar restamp-lod`
 Re-derive a store's LOD switch thresholds in place. An attributes-only pass: the
@@ -208,6 +209,7 @@ ladder rewrite moves no chunk data and opens no array.
 luxar restamp-lod scene.luxar.zarr                      # every legacy ladder
 luxar restamp-lod scene.luxar.zarr --dry-run            # report only
 luxar restamp-lod scene.luxar.zarr --group tiled/part_0 # one ladder (repeatable)
+luxar restamp-lod scene.luxar.zarr --anchor 0.25        # re-anchor whole-object ladders
 luxar restamp-lod fit.gsplats.zarr --group /            # the gsplats root ladder
 ```
 
@@ -219,13 +221,18 @@ tile-bound — and its group stamped `screen-area`. Tile-bound is the tree
 writers' full rule: a real multi-part `kind=partition` above the ladder, OR a
 `kind=partition` among the ladder's own children (the `overview` recipe's coarse
 cap, which is pinned at fills-screen on purpose). A group already on
-`screen-area` is skipped, so a second run changes nothing, `content_hash`
-included.
+`screen-area` is skipped by default, so a second run changes nothing,
+`content_hash` included. `--anchor` sets the requested finest area for every
+whole-object ladder the pass processes, both legacy ladders being migrated and
+already-`screen-area` groups rebuilt from their stored level count.
+Partition-bound ladders keep their fills-screen `1.0` anchor. A ladder already
+matching the requested anchor remains a no-op, including its `content_hash`.
 
-It is never automatic: an authored `coverage_fractions=[...]` list and a legacy
-derived one are indistinguishable on disk, so running the command IS the opt-in
-and the per-group old→new ladder is printed as the audit trail. Sibling of
-`luxar optimise` rather than a flag on it — that pass preserves every attribute
+It is never automatic: an authored `coverage_fractions=[...]` list and a derived
+one are indistinguishable on disk, including a hand-authored ladder already
+stamped `screen-area`, so running the command IS the opt-in and the per-group
+old→new ladder is printed as the audit trail. Sibling of
+`luxar optimize` rather than a flag on it — that pass preserves every attribute
 and refuses same-path work; this one changes only attributes and works in place.
 A `.zarr.zip` is refused (nothing to write back to). When anything changes the
 `content_hash` is restamped and the metadata re-consolidated, then read back and
@@ -279,7 +286,7 @@ luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 
 
 **Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. `--native` produces `macos`, `linux-amd64`, and `linux-arm64` bundles only. CGO blocks pure cross-compilation, so each platform's binary must be built on a host of the matching OS (typically via CI).
 
-**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests. It does not let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time, so the launcher needs the `webkit2gtk-4.0` runtime to start regardless.
+**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests. It does not let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time, so the launcher needs the `webkit2gtk-4.1` runtime to start regardless.
 
 See `packages/luxar-launcher/README.md` for the launcher source itself.
 
@@ -401,7 +408,7 @@ luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-jso
 ```
 
 #### `luxar gsplat cal`
-Calibrate the splat count `K` via blind-spot cross-validation. Sweeps `K`, identifies the held-out PSNR peak (`K*`) using the manuscript's Noise2Self protocol (5% donut-median masking), and reports the noise floor. Defaults to the `n2s` fit preset so the held-out curve has enough optimiser budget to reach the overfit regime.
+Calibrate the splat count `K` via blind-spot cross-validation. Sweeps `K`, identifies the held-out PSNR peak (`K*`) using the manuscript's Noise2Self protocol (5% donut-median masking), and reports the noise floor. Defaults to the `n2s` fit preset so the held-out curve has enough optimizer budget to reach the overfit regime.
 ```bash
 luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster sweep
@@ -495,7 +502,7 @@ luxar gsplat annotate-quality splats.gsplats.zarr --dry-run       # print stamps
 **Options**: `--with-quality` (also measure per-level mixture-L2 quality Q vs each lod group's finest content; slower), `--max-pair-splats` (subsample cap for the Q measurement, default 2000000), `--device` (auto/cpu/cuda/mps), `--dry-run`.
 
 #### Tiled Fitting
-For large volumes, use tiled fitting. `--tiling auto` (the default) picks the mode automatically: `none` if the volume fits one tile, `content` if a density is supplied (`--cal`/density knobs), else `uniform`. A tiled fit (`--tiling uniform` or `--tiling content`) emits a `kind=partition` by default (one part per tile/box, for viewer frustum culling); pass `--flat` for a single flat leaf. Whole-volume fits (`--tiling none`/small auto) stay a single leaf.
+For large volumes, use tiled fitting. `--tiling auto` (the default) picks the mode automatically: `none` unless BOTH some dimension exceeds `--tile-size` AND the volume has more than 64 M voxels; when it does tile, `content` if a density is supplied (`--cal`/density knobs), else `uniform`. A tiled fit (`--tiling uniform` or `--tiling content`) emits a `kind=partition` by default (one part per tile/box, for viewer frustum culling); pass `--flat` for a single flat leaf. Whole-volume fits (`--tiling none`/small auto) stay a single leaf.
 
 Uniform tiling uses Hann cosine apodization for seamless stitching:
 ```bash
@@ -550,19 +557,20 @@ luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slur
 luxar gsplat benchmark --list                         # Show profiled GPUs
 ```
 
-The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared. Content planning rejects on-the-fly `--denoise` and `--progressive` because content-box workers do not implement them; `batch-fit submit --preprocess` is the supported denoising route because it denoises to a store before the boxes fit.
+The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared. Content planning rejects on-the-fly `--denoise` and `--progressive` because content-box workers do not implement them; `batch-fit submit --preprocess` is the supported denoising route because it denoises to a store before the boxes fit. Output remains in voxel index space by default. Pass `--physical` to scale fitted centers, covariance, tile/box origins, partition split planes, and quality scoring with the selected NGFF `coordinateTransformations` spatial scale; an explicit `voxel_size` in `--config` wins. Merged stores record scaled spatial axes at scale 1 and retain the NGFF unit only when it supplied the spacing, so converted scenes can label the scale bar honestly. Planning rejects `--physical` when no spacing is available, when the config requests `output_space: voxel`, or when `--merge-refine volume` would crop a physical-space part on the source voxel grid.
 
 #### `luxar gsplat batch-fit run`
-Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. One worker is pinned per GPU via `CUDA_VISIBLE_DEVICES`; per-GPU concurrency is sized from each card's free VRAM. Resumable — re-running skips tiles already on disk.
+Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. Workers are pinned per GPU via `CUDA_VISIBLE_DEVICES`; automatic concurrency accounts for GPU memory and shared host RAM/CPU limits. Resumable — re-running skips tiles already on disk.
 ```bash
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256                  # uniform, every GPU
+luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256 --physical       # NGFF physical coordinates
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto # content plan
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10
 luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --merge-n-lods 4  # per-part LOD
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                                  # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run   # plan only
 ```
-`--gpus` SELECTS devices here: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`. Not to be confused with `submit --gpus-per-task`, which is a COUNT.
+`--gpus` SELECTS devices here: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`. `LUXAR_AUTO_WORKER_HARD_CAP` overrides the automatic host-wide concurrency cap. Not to be confused with `submit --gpus-per-task`, which is a COUNT.
 
 #### `luxar gsplat batch-fit submit`
 Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by default; pass `--dry-run` to plan without submitting.
@@ -570,6 +578,7 @@ Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by d
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu                    # Submit to Slurm
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --physical         # NGFF physical coordinates
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --gpus-per-task 2  # 2 GPUs per Slurm task
 ```
 `--gpus-per-task` is a COUNT of GPUs to request for each task, emitted verbatim as `#SBATCH --gpus-per-task`. It is deliberately not spelled `--gpus`: that means the opposite thing one command over, where `batch-fit run --gpus` SELECTS which local devices to use.

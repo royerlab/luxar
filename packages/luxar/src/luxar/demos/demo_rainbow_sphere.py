@@ -52,6 +52,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # Opening framing. The default fit backs off until the whole bounding sphere is
@@ -222,6 +223,7 @@ def generate_rainbow_sphere(
                 # grey. Nothing clips at either value — this is about keeping
                 # the rainbow saturated, not about staying in range.
                 intensity=0.012,
+                additive_lod=stream_ladder(n_points),
                 layer=True,
             )
 

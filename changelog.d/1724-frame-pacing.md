@@ -108,5 +108,5 @@ With pacing in place the same scene settles (`animating=false`) at 15 s and
 that asserts the scene really loaded, then both halves of the fix: the loop idles
 within a bounded budget (stably, not just for one poll tick), and the control
 channel stays responsive afterwards under individually bounded probes. Neither
-the spec nor the un-parked example is in the CI smoke subset
+the spec nor the un-parked example is in the smoke subset
 (`pnpm test:e2e:smoke`), so both run only in the full E2E suite.

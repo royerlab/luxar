@@ -13,7 +13,7 @@ exactly these scenes. The guard measures the density per node each frame
 thins blendable nodes on the shaders with brightness compensation, and stops
 the refinement loop from admitting rungs the view cannot resolve.
 
-`?no-density-guard` clears `enabled` for a session, and `?density-cap=N`
+`?noDensityGuard` clears `enabled` for a session, and `?densityCap=N`
 overrides `capElementsPerPixel` for a session (both the thinning ladder and the
 rung gate follow it; the Performance popover's Thinning row shows the cap in
 force) — the lever for sweeping the threshold on one scene without a rebuild.

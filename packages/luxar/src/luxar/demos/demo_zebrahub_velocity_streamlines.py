@@ -64,6 +64,10 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.lod.group import (
+    DEFAULT_LADDER_BYTES_PER_ELEMENT,
+    DEFAULT_LADDER_TARGET_MS,
+)
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
 from luxar.demos import (
     FlowField,
@@ -75,7 +79,14 @@ from luxar.demos import (
     rk4_step,
 )
 from luxar.demos._cinematic_camera import pull_in
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import get_categorical_color
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_MAX_ADDITIVE_COMMIT,
+    capped_stream_cuts,
+    streaming_chunk_splats,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -87,6 +98,11 @@ DRIVE_FOLDER_URL: Final = (
     "https://drive.google.com/drive/folders/1kWWqy38ZKU_-dpVPO8Bh5TjPcmly8qvW"
 )
 CACHE_VERSION: Final = "v1"
+FIRST_RUNG_LINE_VERTICES: Final = streaming_chunk_splats(
+    DEFAULT_LADDER_TARGET_MS,
+    DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_LADDER_BYTES_PER_ELEMENT,
+)
 
 # obsm keys: required for the 3D RNA-velocity vectors and a 3D UMAP layout.
 # The atlas h5ad uses ``velocity_umap`` for the 3D velocity; the position key
@@ -114,6 +130,28 @@ VIEWER_EXPOSURE_EV: Final = 0.0
 LINE_INTENSITY: Final = float(2.0**-7.0)  # ≈ 0.00781
 CELL_INTENSITY: Final = LINE_INTENSITY * 0.5
 REF_CUBE_INTENSITY: Final = LINE_INTENSITY * 0.35
+#: Streamlines are the point of the demo and read too faint at the comet gain
+#: (2026-09-10 review). The Layers panel shows a direct-colour node's gain as a
+#: COLOUR RANGE ``0 – 1/intensity``; the reviewed setting was 0 – 45.26 on a
+#: slider that spanned 0 – 128 (the old 2^-7 gain), i.e. 2.8x brighter.
+STREAMLINE_WINDOW_TOP: Final = 45.26
+STREAMLINE_INTENSITY: Final = 1.0 / STREAMLINE_WINDOW_TOP
+
+#: Bloom (2026-09-10 review): the shipped 0.74 strength / 0.55 radius / 0.0
+#: threshold haloed every additive line into a fog. A faint, wide bloom over a
+#: full mipmap chain keeps only the brightest cores glowing.
+BLOOM_THRESHOLD: Final = 0.01
+BLOOM_STRENGTH: Final = 0.05
+BLOOM_RADIUS: Final = 1.0
+BLOOM_LEVELS: Final = 8
+
+#: One-paragraph subtitle under the title; the legend used to carry a longer
+#: version of this and is now only the anatomy-class key.
+SUBTITLE: Final = (
+    "Cells coloured by anatomy class. Comet tails point along each cell's "
+    "RNA velocity; streamlines advect every cell briefly through the smoothed "
+    "velocity field and fade with advection time."
+)
 
 
 @dataclass(frozen=True)
@@ -194,6 +232,33 @@ class StreamlineGeometry:
     segments: np.ndarray
     colors: np.ndarray
     streamline_count: int
+
+
+def streamline_ladder(
+    n_polylines: int, max_vertices_per_polyline: int
+) -> dict[str, Any]:
+    """Bound a large Lines ladder in whole-polylines and vertex work.
+
+    The Lines string spelling is an uncapped vertex-count doubling ladder and
+    raises on the 4,444,978-vertex hifi set. Explicit counts are polyline counts,
+    so size them conservatively with the preset's maximum vertices per path;
+    every resulting commit is then bounded by the 900,000-vertex ceiling.
+    """
+    if n_polylines < 1:
+        raise ValueError(f"n_polylines must be >= 1; got {n_polylines}")
+    if max_vertices_per_polyline < 1:
+        raise ValueError(
+            f"max_vertices_per_polyline must be >= 1; got {max_vertices_per_polyline}"
+        )
+    return {
+        "counts": capped_stream_cuts(
+            n_polylines,
+            max(1, FIRST_RUNG_LINE_VERTICES // max_vertices_per_polyline),
+            max(1, DEFAULT_MAX_ADDITIVE_COMMIT // max_vertices_per_polyline),
+        ),
+        "method": "random",
+        "seed": 0,
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -787,14 +852,8 @@ def build_legend_html(
         '<div style="font-size:1.25vh;line-height:1.45;'
         "background:rgba(0,0,0,0.58);padding:0.7vh 0.9vh;"
         'border-radius:5px;max-width:34vh">'
-        '<div style="color:#ffcc44;font-weight:bold;margin-bottom:0.45vh">'
-        "Zebrahub RNA-velocity field</div>"
-        '<div style="color:#ddd;margin-bottom:0.6vh">'
-        "Cells colored by anatomy ontology class.  Each cell carries a comet "
-        "tail: <b>tip → head</b> = local RNA-velocity direction.  "
-        "Streamlines briefly forward-advect every cell through the smoothed "
-        "velocity field and fade out along advection time."
-        "</div>"
+        # The explanatory paragraph moved to SUBTITLE under the title
+        # (2026-09-10 review); this box is only the colour key now.
         '<div style="color:#ffcc44;font-weight:bold;margin-bottom:0.25vh">'
         f"Top anatomy classes ({len(anatomy_categories)})</div>"
     ]
@@ -911,9 +970,10 @@ def write_scene(
             tone_mapping="ACES",
             exposure=VIEWER_EXPOSURE_EV,
             bloom_enabled=True,
-            bloom_strength=0.74,
-            bloom_radius=0.55,
-            bloom_threshold=0.0,
+            bloom_strength=BLOOM_STRENGTH,
+            bloom_radius=BLOOM_RADIUS,
+            bloom_threshold=BLOOM_THRESHOLD,
+            bloom_levels=BLOOM_LEVELS,
             auto_rotate=True,
             auto_rotate_speed=0.16,
             dynamic_clipping_enabled=True,
@@ -964,6 +1024,7 @@ def write_scene(
                 opacity=0.95,
                 intensity=LINE_INTENSITY,
                 layer=True,
+                additive_lod=stream_ladder(len(comet_vertices), geometry="lines"),
             )
 
             if len(streamlines.vertices) > 0:
@@ -977,9 +1038,13 @@ def write_scene(
                     line_type="indexed",
                     blending_mode="additive",
                     opacity=0.95,
-                    intensity=LINE_INTENSITY,
+                    intensity=STREAMLINE_INTENSITY,
                     layer=True,
                     substitutive_lod=streamline_lod,
+                    additive_lod=streamline_ladder(
+                        streamlines.streamline_count,
+                        preset.streamline_steps + 1,
+                    ),
                 )
 
             add_reference_cube_to_scene(
@@ -1014,10 +1079,23 @@ def write_scene(
                 transition_duration=0.15,
                 hover=True,
             )
+            # Subtitle under the title (word-wrapped by `width`).
+            scene.add_text(
+                SUBTITLE,
+                position=(0.02, 0.10),
+                font_size=0.02,
+                anchor="top-left",
+                color="rgba(255,255,255,0.45)",
+                width=0.58,
+                line_height=1.35,
+            )
+            # Colour key in the lower-left corner (2026-09-10 review), clear of
+            # the caption at bottom-right and the hover label at centre-left;
+            # x = 0.06 keeps it right of the control rail on a laptop window.
             scene.add_html(
                 build_legend_html(data.anatomy_categories, palette, counts),
-                position=(0.98, 0.50),
-                anchor="center-right",
+                position=(0.06, 0.98),
+                anchor="bottom-left",
                 opacity=0.92,
             )
             add_demo_caption(

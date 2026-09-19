@@ -54,6 +54,7 @@ from ..encoding import (
 )
 from ..io.reader import DEFAULT_COMP
 from ..io.writer import RollbackState, ZarrWriterProtocol
+from ..typing_utils._format_contract import FORMAT_TYPE_SCENE, SOFTWARE_VERSION_ATTR
 from ..typing_utils.aliases import (
     ChunkSpec,
     ColorArray,
@@ -62,6 +63,7 @@ from ..typing_utils.aliases import (
     PointsMetadata,
     PositionArray,
     ScalarArray,
+    SpatialOrderingMethod,
 )
 from ..typing_utils.constants import LUXAR_VERSION_CURRENT, RESERVED_ROOT_GROUPS
 from ..utils.arbol_warnings import arbol_warnings
@@ -126,6 +128,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         version: Luxar format version
         enable_spatial_index: Whether to build spatial indices for points
         encoding_mode: Encoding mode for array storage
+        gsplat_amplitude_bits: Optional AUTO amplitude tier for GSplats only
 
     Examples:
         Basic usage with context manager:
@@ -170,9 +173,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         version: str = LUXAR_VERSION_CURRENT,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
-        ordering_method: Literal["morton", "hilbert"] = "hilbert",
+        ordering_method: SpatialOrderingMethod = "hilbert",
         float16_allowed: bool = False,
         auto_partition_max_elements: Optional[int] = None,
+        gsplat_amplitude_bits: Optional[Literal["auto", 8, 16]] = None,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -193,6 +197,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 auto-partition). Useful for large datasets where you want a
                 per-part frustum-cull benefit without explicit per-call
                 boilerplate.
+            gsplat_amplitude_bits: Optional AUTO amplitude tier for GSplats only.
+                ``8`` selects uint8 geometric-log amplitudes when the adaptive
+                encoder would otherwise use more than 8 bits; ``16`` retains
+                the historical default. ``"auto"`` resolves each GSplat node
+                from its recorded ``fitting/source_dtype``. Points radii and
+                Lines widths are unaffected.
 
         Note:
             Physical units should be specified per-dimension using the Dimensions
@@ -264,6 +274,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 f"got {auto_partition_max_elements}"
             )
         self.auto_partition_max_elements: Optional[int] = auto_partition_max_elements
+        if gsplat_amplitude_bits not in (None, "auto", 8, 16):
+            raise ValueError(
+                "gsplat_amplitude_bits must be 'auto', 8, 16, or None; "
+                f"got {gsplat_amplitude_bits!r}"
+            )
+        self._gsplat_amplitude_bits = gsplat_amplitude_bits
 
         # Emit the ACES-vs-LUT tone-mapping warning at most once per compile,
         # the first time a colormap LUT is written (see _write_colormap_lut_if_needed).
@@ -280,12 +296,29 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._encoding_mode = encoding_mode
         self._float16_allowed = float16_allowed
 
-        # Create root Zarr group
+        # Create root Zarr group with the scene 0.2 self-identifying header:
+        # `format_version` + `format_type` mirror the gsplats header so a reader
+        # can tell the two store kinds apart from the root attrs alone, and
+        # `luxar_software_version` records the writing release for provenance
+        # (excluded from `content_hash` by both hashers — see
+        # `_compiler/finalize/hashing.py::HASH_EXCLUDED_ATTRS`). No `timestamp`:
+        # a scene digest must be reproducible across two compiles of the same
+        # script. The 0.1 `luxar_version` key is no longer written; readers keep
+        # it as a legacy fallback (`typing_utils/format_version.py`).
+        #
+        # Lazy import: `luxar/__init__.py` defines `__version__` before it
+        # imports `io`, but this module is also importable on its own, and a
+        # module-level `from .. import __version__` would make that order
+        # load-bearing.
+        from .. import __version__ as luxar_software_version
+
         self.store = zarr_open_group(self._store_path, mode="w")
         self.store.attrs.update(
             {
-                "luxar_version": version,
+                "format_version": version,
+                "format_type": FORMAT_TYPE_SCENE,
                 "type": "scene",
+                SOFTWARE_VERSION_ATTR: luxar_software_version,
             }
         )
 
@@ -406,7 +439,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Package the finalized directory store and atomically publish it."""
         if self._archive_path is None or self._archive_artifact_path is None:
             return
-        from .optimise import _package
+        from .optimize import _package
 
         try:
             aprint(f"📦 Packaging scene archive at {self._archive_path}")
@@ -1655,6 +1688,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
         keys: Optional[Sequence[str]] = None,
+        _source_dtype: Optional[str] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write Gaussian splats data to Zarr (single-LOD, flat layout).
@@ -1685,7 +1719,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """
         self._check_not_finalized("write_gsplats")
         metadata = _write_gsplats_impl(
-            self._make_gsplats_ctx(),
+            self._make_gsplats_ctx(source_dtype=_source_dtype),
             path,
             centers,
             amplitudes,
@@ -1706,6 +1740,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         path: NodePath,
         leaf: Any,  # luxar.gsplats.tree.GSplatLeaf
+        _source_dtype: Optional[str] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write a ``GSplatLeaf`` (single set or additive ladder) into the scene.
@@ -1737,7 +1772,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # the F1/F5 chokepoint) + strip the leading slash.
         path = _validate_node_path(path)
         metadata = _write_gsplat_leaf_subtree_impl(
-            self._make_gsplats_ctx(), path, leaf, **attrs
+            self._make_gsplats_ctx(source_dtype=_source_dtype), path, leaf, **attrs
         )
         self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
@@ -1861,12 +1896,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     # Per-attribute dataset serializers — bodies live in _compiler/datasets/
     # ------------------------------------------------------------------
 
-    def _make_dataset_ctx(self) -> DatasetCtx:
+    def _make_dataset_ctx(
+        self,
+        *,
+        positive_scalar_bits: Optional[Literal[8, 16]] = None,
+        deduplicate_positive_scalar: bool = True,
+    ) -> DatasetCtx:
         """Build the narrow encoder-config context for dataset serializers."""
         return DatasetCtx(
             encoder=self._encoder,
             encoding_mode=self._encoding_mode,
             compressor=self.compressor,
+            positive_scalar_bits=positive_scalar_bits,
+            deduplicate_positive_scalar=deduplicate_positive_scalar,
         )
 
     def _claim_authoring_warning(self, kind: str, path: str) -> bool:
@@ -1898,14 +1940,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             claim_authoring_warning=self._claim_authoring_warning,
         )
 
-    def _make_gsplats_ctx(self) -> GSplatsWriteCtx:
+    def _make_gsplats_ctx(
+        self, *, source_dtype: Optional[str] = None
+    ) -> GSplatsWriteCtx:
         """Build the narrow context for the extracted GSplats write pipelines."""
+        amplitude_bits = self._gsplat_amplitude_bits
+        if amplitude_bits == "auto":
+            from luxar.gsplats.io.save_gsplats import resolve_amplitude_bits
+
+            amplitude_bits = resolve_amplitude_bits("auto", source_dtype=source_dtype)
         scene_tone_mapping = None
         if self._scene is not None and self._scene.viewer_config is not None:
             scene_tone_mapping = self._scene.viewer_config.tone_mapping
         return GSplatsWriteCtx(
             store=self.store,
-            dataset_ctx=self._make_dataset_ctx(),
+            dataset_ctx=self._make_dataset_ctx(
+                positive_scalar_bits=amplitude_bits,
+                deduplicate_positive_scalar=self._gsplat_amplitude_bits != "auto",
+            ),
             ordering_ctx=self._make_ordering_ctx(),
             compressor=self.compressor,
             scene_tone_mapping=scene_tone_mapping,

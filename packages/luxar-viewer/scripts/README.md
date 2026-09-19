@@ -12,13 +12,18 @@ perf-bench JSON captures into a Markdown table.
 scripts/
 ├── ab-webgpu-vs-webgl.mjs         # Real-WebGPU vs WebGL screenshot A/B (SSIM/NCC), the
 │                                  #   MESH_PHYSICAL_MATERIALS_SPEC §3.6 acceptance test
-├── bake-env.mjs                   # Headless driver for `luxar env bake`: opens ?bake-env,
+├── bake-env.mjs                   # Headless driver for `luxar env bake`: opens ?bakeEnv,
 │                                  #   waits for the capture, writes the .env.bin container
 ├── build-wasm.sh             # Rust → WASM build via wasm-pack (pnpm build:wasm[:dev])
 ├── check-build-identity.mjs       # Asserts a built bundle carries its build stamp
 ├── check-build-identity.test.mjs  # unit coverage for the stamp gate
 ├── check-coverage-slack.mjs       # Coverage floor/baseline drift gate and refresh printer
 ├── check-lib-exports.mjs          # Post-build sanity check on dist/lib/
+├── check-node-types-version.mjs   # Node runtime/@types major-version declaration guard
+├── check-node-types-version.test.mjs # unit coverage for the Node types guard
+├── check-three-types-version.mjs  # Three runtime/types/embed minor-version declaration guard
+├── check-three-types-version.test.mjs # unit coverage for the Three types guard
+├── public-api-exports.json        # The public barrel's value-export list (shared with the barrel unit test)
 ├── check-jsdoc-coverage.ts        # Standalone JSDoc coverage report
 ├── check-overrides.mjs            # pnpm overrides single-source guard
 ├── check-typedoc-warnings.mjs     # Baseline-driven TypeDoc warning ratchet
@@ -57,8 +62,12 @@ in the parent README's "Embedding" section. Checks:
 
 1. The expected files exist (`luxar-viewer.js`, `luxar-viewer.css`,
    `types/index.d.ts`).
-2. The JS bundle re-exports the public symbols — `LuxarApp`,
-   `bootstrapStandalone`, `readUrlParams`, `StorageKeys`.
+2. The JS bundle's runtime exports are EXACTLY the list in
+   `public-api-exports.json` — the same list the source barrel is held to
+   by `src/tests/unit/api/barrel-side-effects.test.ts`, so a lost export
+   fails here and a leaked one fails in both places. `VIEWER_VERSION` must
+   also equal `package.json`'s version (the `define` is silent when it
+   goes wrong).
 3. Dynamic-importing the bundle does **not** patch the host `console.log`
    (the side-effect-free guarantee from `src/index.ts`).
 4. `three` is externalized: the bundle text must not contain a

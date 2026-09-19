@@ -1,12 +1,12 @@
 {
   "cc-by": {
-    "deposition": "21912280",
-    "doi": "10.5281/zenodo.21912280",
+    "deposition": "22804363",
+    "doi": "10.5281/zenodo.22804363",
     "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
     "license": "cc-by-4.0",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "language": "eng",
-    "publication_date": "2026-09-02",
+    "publication_date": "2026-09-17",
     "keywords": [
       "Gaussian splatting",
       "volume visualization",
@@ -130,10 +130,10 @@
     "custom": {
       "code:codeRepository": "https://github.com/royerlab/luxar"
     },
-    "submitted": false,
-    "description_sha256": "32eab51f9497c7ef0450b06cf213743426149565ec93b265865b27447510558f",
-    "description_chars": 22937,
-    "zenodo_modified": "2026-09-02T20:53:40.103780+00:00"
+    "submitted": true,
+    "description_sha256": "aa848f4cd55df4fc562f6724585db86afd716233316150cf09005ec7ad5a296a",
+    "description_chars": 24115,
+    "zenodo_modified": "2026-09-18T05:59:54.747107+00:00"
   },
   "cc-by-sa": {
     "deposition": "21912282",
@@ -181,19 +181,19 @@
     "custom": {
       "code:codeRepository": "https://github.com/royerlab/luxar"
     },
-    "submitted": false,
+    "submitted": true,
     "description_sha256": "78ed4ec7b56918ecfcc21f912fcf972c01f035a9c6a9b32913356a008c0e7807",
     "description_chars": 6856,
-    "zenodo_modified": "2026-09-02T20:53:43.406450+00:00"
+    "zenodo_modified": "2026-09-02T21:22:08.610882+00:00"
   },
   "h2afva": {
-    "deposition": "21912284",
-    "doi": "10.5281/zenodo.21912284",
+    "deposition": "22807312",
+    "doi": "10.5281/zenodo.22807312",
     "title": "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint light-sheet timelapse as Gaussian splats (with a lighter 51-timepoint fit)",
     "license": "cc-by-4.0",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "language": "eng",
-    "publication_date": "2026-09-02",
+    "publication_date": "2026-09-17",
     "keywords": [
       "Gaussian splatting",
       "light-sheet microscopy",
@@ -234,19 +234,19 @@
     "custom": {
       "code:codeRepository": "https://github.com/royerlab/luxar"
     },
-    "submitted": false,
-    "description_sha256": "35a9be49c758d91c5d7107e4888b76623553414fbc71269a1a043300c4ceb536",
-    "description_chars": 6299,
-    "zenodo_modified": "2026-09-02T20:53:45.667967+00:00"
+    "submitted": true,
+    "description_sha256": "05635760271cd5571f932a79a24e829be74805e82e40a5d86b0e57cc4e41e8d3",
+    "description_chars": 6297,
+    "zenodo_modified": "2026-09-18T06:00:07.782525+00:00"
   },
   "droso-timelapse": {
-    "deposition": "22118695",
-    "doi": "10.5281/zenodo.22118695",
+    "deposition": "22804386",
+    "doi": "10.5281/zenodo.22804386",
     "title": "Drosophila melanogaster embryogenesis: a 500-timepoint light-sheet timelapse as Gaussian splats",
     "license": "cc-by-4.0",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "language": "eng",
-    "publication_date": "2026-09-02",
+    "publication_date": "2026-09-17",
     "keywords": [
       "Gaussian splatting",
       "light-sheet microscopy",
@@ -304,10 +304,10 @@
         }
       }
     },
-    "submitted": false,
-    "description_sha256": "5e61cb110e88b655f3a604d281411fd19c8aea57da92f6d7e5d55b30e782ea7a",
-    "description_chars": 3282,
-    "zenodo_modified": "2026-09-02T20:53:48.019925+00:00"
+    "submitted": true,
+    "description_sha256": "5037bef6f3aa59edb3178597d0fe77fb32eed78c93409d61ec664f711b3fc06e",
+    "description_chars": 3830,
+    "zenodo_modified": "2026-09-18T06:00:18.766843+00:00"
   },
-  "_captured_utc": "2026-09-02T20:54:07Z"
+  "_captured_utc": "2026-09-18T08:16:03Z"
 }

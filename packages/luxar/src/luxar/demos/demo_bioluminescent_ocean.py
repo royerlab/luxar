@@ -103,6 +103,8 @@ from luxar.utils.paths import get_demos_output_dir
 
 # Animation settings
 DEFAULT_N_FRAMES = 250  # Smooth animation
+#: One turntable revolution, in seconds (Navigation popover value, 2026-09-10).
+AUTO_ROTATE_PERIOD_S = 73.0
 DEFAULT_N_JELLYFISH = 8
 
 # Ocean volume (arbitrary units)
@@ -729,6 +731,14 @@ def generate_ocean_scene(
                 # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
                 allow_high_dpr=True,
                 cinematic_mode=True,
+                # Slow turntable on by default (2026-09-10 review): the swarm
+                # is a volume of drifting bodies and one fixed view flattens it.
+                # `auto_rotate_speed` is revolutions per MINUTE, so a 73 s turn
+                # is 60/73; `vertical` keeps the jellyfish upright as it spins.
+                auto_rotate=True,
+                auto_rotate_speed=60.0 / AUTO_ROTATE_PERIOD_S,
+                auto_rotate_axis="vertical",
+                natural_drag=True,
             ),
         )
 

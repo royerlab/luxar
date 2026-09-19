@@ -61,7 +61,7 @@ export interface RenderingControllers {
 export interface DensityGuardControl {
   isEnabled(): boolean;
   /**
-   * True when `?no-density-guard` turned the guard off for this session. The
+   * True when `?noDensityGuard` turned the guard off for this session. The
    * stored per-scene setting is then neither applied nor overwritten, the
    * same way a URL DPR pin leaves the stored DPR flags alone.
    */
@@ -70,7 +70,7 @@ export interface DensityGuardControl {
   setEnabled(enabled: boolean): void;
   /** Nodes currently thinned and the smallest keep fraction among them (1 when none). */
   thinning(): { nodes: number; minKeep: number };
-  /** The effective blendable cap (elements per pixel), `?density-cap=N` included. */
+  /** The effective blendable cap (elements per pixel), `?densityCap=N` included. */
   capElementsPerPixel(): number;
 }
 

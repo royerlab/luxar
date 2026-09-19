@@ -134,6 +134,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
@@ -151,6 +152,12 @@ SCENE_NAME = "gsplats_3d_decimation_study.luxar.zarr"
 #: ``fg_psnr`` is the measured foreground PSNR (see the module docstring); it is
 #: recorded here so each entry's label states the cost of that step rather than
 #: leaving the viewer to guess.
+#: Layers-panel look shared by all four detail levels (2026-09-10 re-tune):
+#: volumetric with this optical depth, viridis over a 0 - LEVEL_WINDOW_TOP
+#: display window, gamma 2.2, opacity 1.
+LEVEL_ABSORPTION = 2.05
+LEVEL_WINDOW_TOP = 0.076
+
 LEVELS = [
     {
         "file": "h2afva_full.gsplats.zarr.zip",
@@ -351,6 +358,7 @@ def create_luxar_scene(level_paths: list[Path], output_path: Path) -> Path:
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: How Far Can You Decimate?"
             scene.attrs["description"] = (
                 "One zebrafish embryo (zebrahub h2afva) at four measured detail "
@@ -391,9 +399,18 @@ def create_luxar_scene(level_paths: list[Path], output_path: Path) -> Path:
                         # reach (+/-0.3) inside its own category.
                         extend_to_all=[],
                         fill_sigma={"Detail": 0.1},
-                        blending_mode="normal",
+                        # Appearance hand-tuned in the hosted viewer's Layers
+                        # panel (2026-09-10), the same for every level so the
+                        # Detail selector compares like with like: volumetric
+                        # (emission-absorption) instead of alpha-over, so the
+                        # near nuclei screen the far ones and the embryo reads
+                        # as a solid; display window 0 - 0.076 on the viridis
+                        # LUT (stored as intensity = 1/0.076, offset 0).
+                        blending_mode="volumetric",
+                        absorption=LEVEL_ABSORPTION,
+                        opacity=1.0,
                         colormap="viridis",
-                        intensity=1.0,
+                        intensity=1.0 / LEVEL_WINDOW_TOP,
                         gamma=2.2,
                         layer=True,
                     )

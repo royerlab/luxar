@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { OPEN_DATASET_BROWSER_EVENT } from '../../../core/app/interaction/canvas-actions';
 
 const jsdomDocument = document;
 const ownershipMocks = vi.hoisted(() => ({ install: vi.fn() }));
@@ -190,6 +191,7 @@ describe('LuxarApp', () => {
       camera: { position: { x: 1, y: 2, z: 3 }, up: { x: 0, y: 1, z: 0 }, near: 0.1, far: 100 },
       // The ControlsManager surface the embedder hooks subscribe to.
       controls: {
+        setEnabled: vi.fn(),
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getFocusTarget: vi.fn(() => ({ x: 0, y: 0, z: 0 })),
@@ -245,6 +247,7 @@ describe('LuxarApp', () => {
     };
 
     mockRenderingControls = {
+      hide: vi.fn(),
       setAnimationController: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
       setDensityGuardControl: vi.fn(),
@@ -441,6 +444,26 @@ describe('LuxarApp', () => {
 
       expect(callOrder).toEqual(['ownership', 'loadSceneData']);
       expect(ownershipMocks.install).toHaveBeenCalledTimes(1);
+    });
+
+    it('installs control event consumers before the initial dataset load', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      mockSceneManager.loadSceneData.mockImplementation(async () => {
+        const events = (
+          app as unknown as {
+            embedderEvents: { hasListeners(event: string): boolean };
+          }
+        ).embedderEvents;
+        expect(events.hasListeners('selection')).toBe(true);
+        expect(events.hasListeners('element-click')).toBe(true);
+        expect(events.hasListeners('element-contextmenu')).toBe(true);
+      });
+
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        control: 'ws://localhost:5173/control',
+      });
     });
 
     it('initialized starts false on a freshly-constructed LuxarApp (pre-init invariant)', () => {
@@ -1156,12 +1179,12 @@ describe('LuxarApp', () => {
       expect(mockClearError).toHaveBeenCalled();
     });
 
-    it('should register open-dataset-browser event listener', async () => {
+    it('should register the OPEN_DATASET_BROWSER_EVENT listener', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(mockAddEventListener).toHaveBeenCalledWith(
-        'open-dataset-browser',
+        OPEN_DATASET_BROWSER_EVENT,
         expect.any(Function)
       );
     });
@@ -1182,7 +1205,7 @@ describe('LuxarApp', () => {
 
       try {
         const openBrowser = mockAddEventListener.mock.calls.find(
-          (call) => call[0] === 'open-dataset-browser'
+          (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
         )?.[1] as (() => void) | undefined;
         expect(openBrowser).toBeDefined();
 
@@ -1213,11 +1236,11 @@ describe('LuxarApp', () => {
       ).rejects.toThrow('initial load failed');
 
       const browserRegistration = mockAddEventListener.mock.calls.find(
-        (call) => call[0] === 'open-dataset-browser'
+        (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
       );
       expect(browserRegistration).toBeDefined();
       expect(mockRemoveEventListener).toHaveBeenCalledWith(
-        'open-dataset-browser',
+        OPEN_DATASET_BROWSER_EVENT,
         browserRegistration![1]
       );
       expect(() => app.switchDataset('http://example.com/retry.zarr')).toThrow(/before init/);
@@ -1323,7 +1346,7 @@ describe('LuxarApp', () => {
       const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
       const onClose = browserCall[0].onClose as () => void;
       const openBrowser = mockAddEventListener.mock.calls.find(
-        (call) => call[0] === 'open-dataset-browser'
+        (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
       )?.[1] as (() => void) | undefined;
       expect(openBrowser).toBeDefined();
 
@@ -1739,18 +1762,38 @@ describe('LuxarApp', () => {
       }
     });
 
-    it('getViewerState bundles dataset, camera, dims, rendering and layers', async () => {
+    it('getViewerState bundles dataset, title, presentation, camera, dims, rendering and layers', async () => {
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({
+        control_panel: { title: 'Touch tour', columns: 3 },
+      });
       await app.init({ canvas: mockCanvas, src: SRC });
+      document.title = 'Protein stories';
       mockRenderingControls.getSettingsSnapshot.mockReturnValue({ exposure: 0.25 });
 
       const state = app.getViewerState();
 
       expect(state.src).toBe(SRC);
+      expect(state.title).toBe('Protein stories');
+      expect(state.controlPanel).toEqual({ title: 'Touch tour', columns: 3 });
       expect(state.camera).toMatchObject({ position: [1, 2, 3] });
       expect(state.dimensions).toMatchObject({ ndim: 0 });
       expect(state.rendering).toEqual({ exposure: 0.25 });
       // LayersPanel is mocked: its summaries come back undefined → empty list.
       expect(state.layers).toEqual([]);
+    });
+
+    it('keeps authored scene overlays visible in kiosk mode', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const hideOverlay = vi.fn();
+      const internals = app as unknown as {
+        overlayManager: { hide: () => void; dispose: () => void };
+        applyKiosk: (config: { ui: { kiosk: { enabled: boolean } } }) => void;
+      };
+      internals.overlayManager = { hide: hideOverlay, dispose: vi.fn() };
+
+      internals.applyKiosk({ ui: { kiosk: { enabled: true } } });
+
+      expect(hideOverlay).not.toHaveBeenCalled();
     });
   });
 

@@ -161,7 +161,7 @@ Three consequences, each load-bearing:
   `-score`.
 - **The centre is the bounding-box centre, not the scene origin**, so a dataset
   sitting far from the origin still reveals from its own middle rather than from
-  one corner. Override with `reveal_centre`.
+  one corner. Override with `reveal_center`.
 - **A `radial` ladder carries NO energy stamps** (`energy_fraction_cum` per
   sub-LOD, `reference_energy` on the leaf), and this is enforced at authoring
   time. The viewer multiplies brightness by `1/e(k)` while a ladder is
@@ -189,7 +189,7 @@ Distance is measured only over the axes with non-zero **covariance** extent
 `sigma=0` — cannot become a shell dimension (the splats furthest in time would
 otherwise land at the end of the ladder). Override with `spatial_dims`.
 
-#### On a PARTITIONED recipe, pass `--reveal-centre` explicitly
+#### On a PARTITIONED recipe, pass `--reveal-center` explicitly
 
 With `tiles` / `overview` / `adaptive`, the ladder is built **per part**, and the
 default centre is each part's *own* bounding box. So `-m radial` without a centre
@@ -199,8 +199,8 @@ middle at once — not one reveal growing from the object's middle. Measured on 
 
 | | → own part centre | → global centre |
 |---|---|---|
-| no `--reveal-centre` | **16.3–17.6** (part avg 27–28) | 35–36 (part avg 37) |
-| `--reveal-centre 0,0,0` | 24–25 (part avg 27–28) | **24–26** (part avg 37) |
+| no `--reveal-center` | **16.3–17.6** (part avg 27–28) | 35–36 (part avg 37) |
+| `--reveal-center 0,0,0` | 24–25 (part avg 27–28) | **24–26** (part avg 37) |
 
 Both behaviours are useful and this is a deliberate default, not an oversight:
 per-part centres make each *visible* tile paint its own middle first, which is the
@@ -209,7 +209,7 @@ want the whole object to grow from one point, **pass the centre**:
 
 ```bash
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr \
-    --recipe tiles -m radial --reveal-centre 0,0,0
+    --recipe tiles -m radial --reveal-center 0,0,0
 ```
 
 The `batch-fit` path (`--merge-add-method radial`) accepts the method but has
@@ -328,6 +328,14 @@ into LOD levels:
   with `streaming_chunk_splats(target_ms, bandwidth_mbps,
   bytes_per_splat)` — e.g. 200 ms @ 25 Mbps @ 45 B/splat → ~14 k. The
   CLI's `--target-ms`/`--bandwidth-mbps` do this for you.
+- `"equi-energy:<n>"` — `n` rungs at **equal shares of cumulative
+  self-energy** along the ordering, then any increment above
+  `DEFAULT_MAX_ADDITIVE_COMMIT` split into capped steps. Under a
+  contribution-first ordering (`self_energy`) the first rung is the few
+  heaviest splats and each later rung is fatter in count for the same light:
+  fast first paint, and the slow rungs are the ones whose absence shows
+  least. The `e(k)` stamps read ≈ `k/n` at the requested cuts by
+  construction. Shared with Points/Lines (`equi_energy_cuts`).
 - `list[int]` — explicit cumulative splat counts. The list length sets
   the number of levels. Example: `[1000, 5000, 25000]`. In per-part /
   per-level contexts (partitioned parts, pyramid levels) the counts are
@@ -622,7 +630,8 @@ in `O(N log N)` (sub-second at 256K).
   are the current bins of a splat's Morton-curve neighbours — an
   `O(N·k)` gather, not a spatial-hash kNN), rebuilds templates, and keeps
   the pass only if the global projection energy `P = Σ_b ⟨f,Ḡ⟩²/‖Ḡ‖²`
-  does not decrease. So the result is never worse than the warm start.
+  strictly increases. So the result is never worse than the warm start in
+  projection energy `P`.
 - A reduction of **256K splats → 64K builds in ~3–4 s on CPU** (vs.
   ~1 hr before); the full 6-level ladder builds in ~5 s. Quality is high:
   a 4× reduction reconstructs at ~46 dB PSNR vs. the full set (Lloyd adds

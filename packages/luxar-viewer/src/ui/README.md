@@ -146,6 +146,10 @@ icon per panel (Help, Home, Navigation, Dimensions, Rendering, Layers,
 Data monitor, Datasets, Recording, Logs, View options, Settings, Performance),
 each with a hover tooltip showing its shortcut. Home, Navigation, Settings and
 Performance open rail popovers (see [`rail-panels/`](./rail-panels/README.md)).
+On a device that cannot hover the first-run hint says "Tap these controls (hold
+for options)" instead of "Hover", and under a coarse pointer the rail gains a
+momentary **Hide panels** item that closes every open surface — see
+`core/app/init/build-rail-items.ts` and the UI Design Guide §11.5.
 
 **Design:**
 
@@ -254,6 +258,19 @@ micro-header row over one wrapping row of selectable chips.
   - `Bounce`: Ping-pong back and forth
   - Single-select chips with the current mode marked
 
+- **Detail Section**: The playback detail — how many additive-ladder rungs
+  every frame is drawn at while the dimension plays
+  - `Auto` (default, or the scene's authored `playback_lod_depth`): each ladder
+    is pinned at the first rung whose energy stamp reaches the configured
+    threshold; ladders without stamps stream time-budgeted
+  - `1` … `8` / `All`: pin the rung count; every frame waits for exactly that
+    many rungs (or the whole ladder), so quality is constant and the frame rate
+    adapts to the data
+  - `Fast`: time-budgeted streaming — each tick shows whatever rungs were
+    resident within its budget (fast cadence, quality varies frame to frame).
+    The active setting shows as the muted header readout; scrubbing uses the
+    same detail, with an unpinned refine once the scrub settles.
+
 - **Step Section**: The per-tick quantum for playback **and** the `[` / `]`
   keys — FPS then only decides how often a step lands
   - `Auto` (default): the historical behavior — continuous dimensions traverse
@@ -313,6 +330,12 @@ animManager.addEventListener('complete', (e) => {
 - Integrates with `AnimationController` for frame updates
 - Updates dimension values via `SceneDimsManager`
 - CSS styling in `styles/components/dimension-sliders.css`
+- Coarse pointers (`getInputProfile().coarsePointer`): each slider row gains `‹ ›`
+  step buttons (one base step per tap — the `[ ]` step) in the same
+  controls wrapper the play button joins, and the dimension name becomes a chip that
+  selects that dimension as the `[ ]` target (`SliderConfig.onSelectDimension` tells
+  the input layer). Neither exists on a mouse machine; their styling lives in
+  `styles/components/coarse-pointer.css`.
 - See `scene/animation/dimension-animation-manager.ts` for core animation logic
 
 ### 2. Rendering Controls
@@ -414,7 +437,7 @@ containment without stealing focus from a dialog stacked on top.
 The panel declares `O` and `H` as passthrough keys: `O` is its own toggle, and
 `H` is the shortcut its welcome banner advertises with an `H Help` chip — modal
 containment would otherwise make that chip dead. The manual-entry
-`#manual-path` field is deliberately NOT wired into type-to-filter: it takes a
+`#luxar-dataset-browser-manual-path` field is deliberately NOT wired into type-to-filter: it takes a
 URL, not a filter query, so stray keystrokes should not be routed into it. Click
 or Tab into it to type, which is a deliberate act; from there the ordinary
 typing guard applies, and `Escape` still closes the panel.

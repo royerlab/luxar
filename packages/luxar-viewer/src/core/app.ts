@@ -20,8 +20,15 @@ import type {
 } from './app/embedder/events';
 import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
 import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-driver';
+import { ControlClient } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
+import { resolveKioskMode } from '../config/kiosk';
+import { applyKioskMode } from './app/kiosk/apply-kiosk';
+import {
+  extractControlPanelConfig,
+  type ControlPanelSettings,
+} from '../config/zarr-bridge/control-panel';
 import type { AudioEngine } from '../audio/audio-engine';
 import type { AudioPatch, AudioState } from '../types/audio';
 import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
@@ -52,6 +59,7 @@ import type { PickingSystem } from '../rendering/picking/picking-system';
 import type { LabelLoader, ImageLabelLoader } from '../data/loaders';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import { installCanvasGestureOwnership } from './app/interaction/canvas-gesture-ownership';
+import { installContextMenuOwnership } from './app/interaction/context-menu-ownership';
 import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
@@ -80,7 +88,7 @@ import { initColormapLegend as initColormapLegendImpl } from './app/overlays/ini
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
-import { getSceneLoader } from '../data/scene-loader-manager';
+import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
 import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
@@ -134,7 +142,7 @@ export class LuxarApp {
   private isDisposed = false;
   /**
    * App-level event listeners (beforeunload, focus, visibilitychange,
-   * open-dataset-browser, plus the picking system's mousemove + control
+   * luxar-open-dataset-browser, plus the picking system's mousemove + control
    * change subscriptions). Disposed in one call from {@link dispose}.
    */
   private events = new EventGroup();
@@ -167,6 +175,23 @@ export class LuxarApp {
    */
   private waypointListener?: () => void;
   private waypointDriver?: WaypointDriver;
+  /** Remote-control channel, present only when `options.control` is set. */
+  private controlClient?: ControlClient;
+  /**
+   * The scene's authored control-panel block, as last loaded.
+   *
+   * Held for `getViewerState()` alone: the touch panel is a separate page and
+   * cannot read the store's attributes itself. Reset on every dataset load, so
+   * switching scenes cannot leave the previous scene's panel authoring behind.
+   */
+  private controlPanelConfig: ControlPanelSettings | null = null;
+  /**
+   * Teardown for the kiosk watchdog, if one is running.
+   *
+   * Held so `switchDataset` cannot leave the previous scene's watchdog
+   * listening on a canvas whose context state it no longer describes.
+   */
+  private kioskTeardown: (() => void) | null = null;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -248,6 +273,14 @@ export class LuxarApp {
       installCanvasGestureOwnership(options.canvas, this.events);
     }
 
+    // The same claim for the secondary click, across every surface the viewer
+    // mounts — WebKit resolves the context-menu target to the overlay above
+    // the canvas, not to the canvas the controls listen on.
+    installContextMenuOwnership(
+      options.canvas instanceof HTMLCanvasElement ? options.canvas : null,
+      this.events
+    );
+
     // Mutable accumulator: pipeline writes each subsystem here as it
     // constructs it, so even if init() throws partway through, the
     // already-constructed pieces are visible to dispose().
@@ -293,6 +326,12 @@ export class LuxarApp {
       // Install this before routing so O / the rail control can open the
       // browser while a slow initial dataset load is still in progress.
       this.setupDatasetBrowserShortcut();
+      // Install before the initial load so its first recorded transient
+      // failure can arm the bounded retry backoff immediately.
+      this.setupOnlineRetry();
+      // The control client eagerly attaches the selection / element event
+      // consumers that picking checks once, during dataset provisioning.
+      this.installControlClient();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -309,7 +348,6 @@ export class LuxarApp {
 
       this.setupDisposeOnUnload();
       this.setupFocusHandling();
-      this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
       // Touch double-tap re-frames on EVERY scene — not only the ones the
@@ -513,6 +551,40 @@ export class LuxarApp {
     // AFTER the waypoints: the opening slice is final, so the first slab
     // evaluation starts exactly the sounds the opening story owns.
     this.installAudio(viewerConfig?.audio);
+    // Kept rather than applied: nothing in THIS page reads it. The control
+    // panel is a separate page and asks for it over the wire, so the display's
+    // only job is to remember what the store said.
+    this.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
+    this.applyKiosk(viewerConfig);
+  }
+
+  /**
+   * Lock the display down when the scene or the URL asks for it.
+   *
+   * Resolved from BOTH the authored `ui.kiosk` block and `?kiosk`, with the URL
+   * winning — see `config/kiosk.ts`. Re-applied on every dataset load, and the
+   * previous watchdog torn down first, so switching scenes cannot accumulate
+   * listeners on a long-running exhibit.
+   */
+  private applyKiosk(viewerConfig: ZarrViewerConfig | undefined): void {
+    this.kioskTeardown?.();
+    this.kioskTeardown = null;
+    // `this.options?` because this now runs inside the viewer-config pass,
+    // which a partially-constructed app can reach before its options are set —
+    // and a missing option means "no ?kiosk", not a crash that aborts the rest
+    // of the load (theme, dimension state, the render loop after it).
+    const mode = resolveKioskMode(viewerConfig?.ui?.kiosk, this.options?.kiosk === true);
+    if (!mode.enabled) return;
+    this.kioskTeardown = applyKioskMode(mode, {
+      setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
+      setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
+      hidePanels: () => {
+        this.renderingControls.hide();
+        this.scaleBar?.hide();
+        this.layersPanel?.hide();
+      },
+      canvas: this.sceneManager.renderer?.domElement,
+    });
   }
 
   /**
@@ -624,6 +696,42 @@ export class LuxarApp {
     this.waypointDriver = undefined;
   }
 
+  /**
+   * Attach the remote-control channel, when one was asked for.
+   *
+   * Built before initial dataset routing because its eager `selection` and
+   * element listeners must exist when picking is provisioned. `this.events`
+   * owns the teardown (see `CONTROL_FORWARDED_EVENTS`).
+   *
+   * `invoke` indexes the app by method name, which is safe precisely because
+   * `isControlMethodAllowed` has already vetted the name against a list the
+   * lock test keeps exhaustive.
+   */
+  private installControlClient(): void {
+    const socketUrl = this.options.control;
+    if (socketUrl === undefined || socketUrl === null || socketUrl.length === 0) return;
+    const callable = this as unknown as Record<string, (...args: unknown[]) => unknown>;
+    // `on` is generic over the event map, so its payload type is narrowed per
+    // event name. The client subscribes by dynamic name and sanitizes whatever
+    // arrives, so it wants the un-narrowed shape.
+    const subscribeByName = this.on.bind(this) as unknown as (
+      event: string,
+      listener: (payload: unknown) => void
+    ) => () => void;
+    this.controlClient = new ControlClient({
+      socketUrl,
+      token: this.options.controlToken ?? null,
+      invoke: (method, params) => callable[method].apply(this, params),
+      subscribe: subscribeByName,
+      events: this.events,
+    });
+    this.controlClient.connect();
+    this.events.add(() => {
+      this.controlClient?.dispose();
+      this.controlClient = undefined;
+    });
+  }
+
   private applyViewerConfigStateCore(viewerConfig: ZarrViewerConfig | undefined): void {
     applyViewerConfigStateHelper(viewerConfig, {
       showHelp: () => showHelpOverlay(this.inputHandler.getRegisteredShortcutBindings()),
@@ -652,6 +760,9 @@ export class LuxarApp {
         if (options.stepSize !== undefined) {
           manager?.setStepSize(dim, options.stepSize);
         }
+      },
+      setDefaultLadderDepth: (ladderDepth) => {
+        this.inputHandler.getAnimationManager()?.setDefaultLadderDepth(ladderDepth);
       },
     });
   }
@@ -810,10 +921,15 @@ export class LuxarApp {
    * the manager so dataset switches keep pointing at the current loader.
    */
   private setupOnlineRetry(): void {
+    const manager = SceneLoaderManager.getInstance();
     installOnlineRetry({
       events: this.events,
       getLoader: () => getSceneLoader(),
       toast: (message, durationMs) => notifier.toast(message, durationMs),
+      subscribeAutoRetryableFailure: (listener) => {
+        manager.setAutoRetryableFailureCallback(listener);
+        return () => manager.setAutoRetryableFailureCallback(null);
+      },
     });
   }
 
@@ -1225,11 +1341,16 @@ export class LuxarApp {
     }
     return {
       src: this.currentDatasetSrc ?? this.options.src ?? null,
+      // Read from the document rather than kept as a field: the authored
+      // title, the `?title=` parameter and the built-in default all land
+      // there already, so this reports what is actually on the tab.
+      title: document.title,
       camera: this.getCameraPose(),
       dimensions: this.getDimensions(),
       rendering: this.getRenderingSettings(),
       layers: this.getLayers(),
       audio: this.getAudioState(),
+      controlPanel: this.controlPanelConfig,
     };
   }
 

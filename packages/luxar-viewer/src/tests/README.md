@@ -234,9 +234,8 @@ installAllMocks(); // Sets up all mocks at once
 
 **What it mocks**:
 
-- `navigator.storage.getDirectory()` - OPFS root access
-- File handle operations (read, write, remove)
-- Directory iteration
+- `navigator.storage.getDirectory()` - OPFS root access (the global default REJECTS, exercising the L1-only fallback)
+- `createFakeOpfsRoot()` - an in-memory root → `luxar/` namespace dir → dataset dir chain for tests that need a working L2 (file read/write/remove, directory iteration)
 
 **Usage**: Enables cache tests without real browser storage
 
@@ -904,10 +903,9 @@ Tests run automatically on:
 - No linting errors
 
 **E2E in CI**: the GitHub Actions `e2e-tests` job is intentionally
-disabled (`if: false` in `.github/workflows/ci.yml`) — a dormant
-smoke subset (`pnpm test:e2e:smoke`) is defined and re-enabling is a
-one-line change. Until then, run E2E locally (`pnpm test:e2e`)
-before PR/merge.
+limited to the mobile/touch suite in `.github/workflows/ci.yml`. Run the full
+desktop corpus locally with `pnpm test:e2e`; use `pnpm test:e2e:smoke` or
+`pnpm test:e2e:smoke:strict` for faster interaction-focused checks.
 
 **Pre-commit Checklist**:
 

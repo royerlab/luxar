@@ -21,9 +21,11 @@ import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
 import { archiveFaultFrom } from '../cache/chunk-source';
+import { unsupportedFormatVersionFrom } from '../data/format-version';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { buildInfo, buildInfoLine } from '../config/build-info';
+import { VIEWER_VERSION } from '../version';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { cachePoolOverrideBytes } from '../cache/heap-budget';
@@ -129,6 +131,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // Standalone-only — library embedders configure via LuxarAppOptions.
   const userSettings = initUserSettings();
 
+  if (urlParams.opfsReadConcurrency !== null) {
+    config.cache.opfsReadConcurrency = urlParams.opfsReadConcurrency;
+  }
+
   // Pin the input profile (`?input=touch|mouse`) BEFORE anything reads it:
   // the GPU byte budget below, the cache pool's device class, gesture routing
   // and the touch UI all derive from `getInputProfile()`, and it memoises on
@@ -142,15 +148,19 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // path: `navigator.deviceMemory` is Chromium-only and spec-capped at 8 GB, so
   // on a large machine it pins the budget at its ceiling and the pool's
   // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
-  // the only way to reproduce constrained-device behaviour on a roomy box. In
+  // the only way to reproduce constrained-device behaviour on a roomy box;
+  // values around 384 MiB keep the byte-budget eviction path binding. In
   // desktop WebKit it is the sole signal and may raise or lower the 512 MB
-  // fallback. On mobile WebKit the device-class term is the other signal, so
-  // `?cacheBudgetMB=` can only lower its 128 MiB share.
+  // fallback. On mobile WebKit it replaces the device-class pool in the shared
+  // remainder, but the independent 128 MiB mobile safety cap remains a peer
+  // minimum, so the override can only lower it.
   // The persisted Settings budget remains cache-only by design; the regression
-  // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
-  // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
-  // measurement. A MOBILE device class is folded in (inside
-  // `computeAutoBudget`): on WebKit it is the only memory signal a phone has.
+  // guard is "threads stored cache preferences into loaderConfig when no URL
+  // params are set". The ambient JS heap limit is folded in because pooled
+  // geometry retains CPU-side ArrayBuffers; unlike the eager loader, the GPU
+  // term uses the full non-cache remainder with its own 2 GB ceiling. A MOBILE
+  // device class is folded in (inside `computeAutoBudget`): on WebKit it is the
+  // only memory signal a phone has.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
@@ -326,23 +336,30 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // `?dpr=<value>` pins a fixed pixel ratio for deterministic
     // E2E/visual runs; undefined → normal adaptive-DPR behavior.
     pinnedDPR: urlParams.dpr ?? undefined,
-    // On-by-default rendering feature flags (`?no-lod-fade`,
-    // `?no-lod-energy`, `?depthSort=0` disable). Threaded as options so
+    // On-by-default rendering feature flags (`?noLodFade`,
+    // `?noLodEnergy`, `?depthSort=0` disable). Threaded as options so
     // an embedder-supplied `urlParams` object controls them too — the
     // init pipeline reads options, never window.location.
     lodFade: urlParams.lodFade,
     allowLinks: urlParams.allowLinks,
+    // Already resolved and validated by `normalizeControlSocketUrl`; null when
+    // `?control` was absent or its value was refused.
+    control: urlParams.control,
+    controlToken: urlParams.controlToken,
+    kiosk: urlParams.kiosk,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
     densityGuard: urlParams.densityGuard,
-    // `?density-cap=<N>` sweeps the guard's threshold for one session.
+    // `?densityCap=<N>` sweeps the guard's threshold for one session.
     densityCap: urlParams.densityCap ?? undefined,
-    // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
+    // Opt-in capture-quality override (`?lodFinest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
+    // Session-wide replacement-LOD threshold bias (`?lodBias=N`).
+    lodBias: urlParams.lodBias ?? undefined,
     // The shared init pipeline applies the mobile default so direct LuxarApp
     // embedders and the standalone app behave identically.
     blendWarmup: urlParams.blendWarmup,
-    // `?bake-env[&probe=…][&env-resolution=…]` — the `luxar env bake` driver.
+    // `?bakeEnv[&probe=…][&envResolution=…]` — the `luxar env bake` driver.
     bakeEnvironment: urlParams.bakeEnv
       ? { probe: urlParams.probe ?? undefined, resolution: urlParams.envResolution ?? undefined }
       : undefined,
@@ -376,7 +393,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     window.__luxarDebug = {
       app,
       consoleInterceptor,
-      version: buildInfo().version,
+      version: VIEWER_VERSION,
       // Perf probes must not wait for the dataset load + blend warm-up that
       // gate the runtime surface (`getState` etc.): the load timeline is
       // readable from here on, and installDebugInterface swaps in the
@@ -396,10 +413,14 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     await app.init(appOptions);
   } catch (error) {
     log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
-    const archiveFault = archiveFaultFrom(error);
+    // Two failures carry a user-actionable message of their own: an archive
+    // fault (wrong `?src=` path) and a refused format version (the message
+    // names the version, the supported set and the remedy). Everything else
+    // is a programming/environment error and keeps the generic text.
+    const surfaced = archiveFaultFrom(error) ?? unsupportedFormatVersionFrom(error);
     showError(
-      archiveFault
-        ? archiveFault.message
+      surfaced
+        ? surfaced.message
         : 'Failed to start the application. Please check the console for details.',
       shortcutForAction,
       {

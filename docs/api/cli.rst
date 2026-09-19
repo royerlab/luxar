@@ -196,13 +196,13 @@ Implementation of the ``luxar info`` dataset-inspection command.
    :members:
    :undoc-members:
 
-Optimise Command
+Optimize Command
 ----------------
 
-Implementation of the ``luxar optimise`` re-chunking command — a thin Typer
-layer over :mod:`luxar.io.optimise`, which owns every decision about what a
+Implementation of the ``luxar optimize`` re-chunking command — a thin Typer
+layer over :mod:`luxar.io.optimize`, which owns every decision about what a
 re-chunk may change and what it must not.
 
-.. automodule:: luxar.cli.optimise_command
+.. automodule:: luxar.cli.optimize_command
    :members:
    :undoc-members:

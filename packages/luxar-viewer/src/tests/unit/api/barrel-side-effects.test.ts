@@ -14,6 +14,31 @@
  */
 
 import { describe, expect, it, beforeAll, vi } from 'vitest';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+
+/**
+ * The public value-export list shared with `scripts/check-lib-exports.mjs`.
+ * Read through `fs` rather than a JSON import so the test's view of the file
+ * is the file itself, not a module-cache copy. `import.meta.url` is not a
+ * `file:` URL under the jsdom environment this file runs in, so the path is
+ * resolved from the process cwd — the viewer package when vitest runs from
+ * its own config, the repo root under `make test-fast`.
+ */
+function publicApiExports(): string[] {
+  const candidates = [
+    join(process.cwd(), 'scripts', 'public-api-exports.json'),
+    join(process.cwd(), 'packages', 'luxar-viewer', 'scripts', 'public-api-exports.json'),
+  ];
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (path === undefined) {
+    throw new Error(`public-api-exports.json not found at ${candidates.join(' or ')}`);
+  }
+  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  const exportsList = (parsed as { exports?: unknown }).exports;
+  if (!Array.isArray(exportsList)) throw new Error('public-api-exports.json has no exports array');
+  return exportsList as string[];
+}
 
 type ConsoleMethod = 'log' | 'warn' | 'error' | 'info' | 'debug';
 const CONSOLE_METHODS: readonly ConsoleMethod[] = ['log', 'warn', 'error', 'info', 'debug'];
@@ -41,21 +66,12 @@ describe('Public barrel side effects', () => {
     }
     (globalThis as BarrelTestGlobals).__preBarrelConsole = snapshot;
 
-    // Now import the barrel. Whatever is loaded here is what consumers see.
+    // This is the suite's only cold full-graph probe. A timeout here is reported
+    // as infrastructure failure and skips all 14 embeddability assertions; if it
+    // recurs, investigate a load-dependent barrel stall rather than raising the budget.
+    // Whatever is loaded here is what consumers see.
     await import('../../../index');
-    // This hook transforms the ENTIRE public module graph from cold — after
-    // `vi.resetModules()` there is nothing cached to reuse — so it is bounded by
-    // Vite's transform throughput, not by anything the assertions do. Against the
-    // 15 s local `hookTimeout` it fails as "Hook timed out in 15000ms" on a
-    // loaded machine, taking all 14 embeddability assertions silently with it:
-    // a hook failure reports as an infrastructure error, not as a barrel
-    // regression, so the suite reads as noise rather than as a finding.
-    // Observed doing exactly that while the rest of the suite was green.
-    //
-    // Keep the exceptional 90 s budget here rather than lifting the shared
-    // ceilings further: 15 s stays strict locally, while CI's 60 s ceiling
-    // covers contention for ordinary hooks without masking longer hangs.
-  }, 90_000);
+  });
 
   it('does not patch any of the five console methods (log/warn/error/info/debug)', () => {
     const pre = (globalThis as BarrelTestGlobals).__preBarrelConsole;
@@ -203,27 +219,21 @@ describe('Public barrel side effects', () => {
   it('does not leak additional unexpected exports (public surface lock)', async () => {
     // api.md G3 fix: a mutation that adds a leaky export would silently
     // expand the public surface and never fail any test. Pin the FULL
-    // value-export set; new public APIs must update this list.
+    // value-export set against scripts/public-api-exports.json — the SAME
+    // list `scripts/check-lib-exports.mjs` holds the built dist/lib bundle
+    // to, so the source barrel and the shipped bundle cannot disagree about
+    // what is public. New public APIs must update that file.
     const mod = await import('../../../index');
     const valueExports = Object.keys(mod).sort();
-    expect(valueExports).toEqual(
-      [
-        'InputContext',
-        'KeyAction',
-        'LuxarApp',
-        'LuxarLayer',
-        'StorageKeys',
-        'applyBlendingStateToMaterial',
-        'applyColormapTextureToMaterial',
-        'applyScalarRangeToMaterial',
-        'bootstrapStandalone',
-        'buildInfo',
-        'buildInfoLine',
-        'getCompleteBlendingState',
-        'normalizeDataSourceUrl',
-        'readUrlParams',
-        'supportsScalarColormap',
-      ].sort()
-    );
+    expect(valueExports).toEqual(publicApiExports());
+  });
+
+  it('keeps scripts/public-api-exports.json sorted and duplicate-free', () => {
+    // The list is the canonical form both consumers compare against; an
+    // unsorted or duplicated entry would still "match" a sorted actual set
+    // by accident in one consumer and not the other.
+    const listed = publicApiExports();
+    expect(listed).toEqual([...new Set(listed)].sort());
+    expect(listed.length).toBeGreaterThan(0);
   });
 });

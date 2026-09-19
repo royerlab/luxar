@@ -65,6 +65,39 @@ def _require_plan_volume_shape(volume: Any, fitplan: Any) -> None:
         )
 
 
+def _validate_parallel_content_frame(
+    physical_coordinates: bool,
+    jobs: str | int,
+    *,
+    plan_only: bool = False,
+    plan_box: Optional[int] = None,
+) -> None:
+    """Reject a parallel mode whose assembler cannot scale the plan tree."""
+    if plan_only or plan_box is not None:
+        return
+    try:
+        n_jobs = int(jobs)
+    except ValueError:
+        return
+    if physical_coordinates and n_jobs > 1:
+        raise typer.BadParameter(
+            "--physical-coordinates is not supported with parallel content fitting "
+            "(-j/--jobs > 1); use -j 1."
+        )
+
+
+def _cleanup_plan_before_parallel_refusal(
+    physical_coordinates: bool,
+    jobs: int,
+    created_plan: bool,
+    keep_boxes: bool,
+    plan_json_path: Path,
+) -> None:
+    """Remove an internal plan before rejecting its resolved worker count."""
+    if physical_coordinates and jobs > 1 and created_plan and not keep_boxes:
+        plan_json_path.unlink(missing_ok=True)
+
+
 def _fill_source_dtype(fit_config: dict, source_dtype: Optional[str]) -> None:
     """Use the loader dtype unless configured; mirrors fit._stamp_source_dtype."""
     if not fit_config.get("source_dtype") and source_dtype:
@@ -78,6 +111,7 @@ def _stamp_content_box_output(
     device: Optional[str],
     *,
     verbose: bool,
+    grid_scale: "Optional[tuple[float, ...]]" = None,
 ) -> None:
     """Describe a standalone content box after its halo splats were removed.
 
@@ -103,6 +137,8 @@ def _stamp_content_box_output(
     z0, z1, y0, y1, x0, x1 = box.box
     shape = (z1 - z0, y1 - y0, x1 - x0)
     origin = np.asarray((z0, y0, x0), dtype=np.float32)
+    if grid_scale is not None:
+        origin = origin * np.asarray(grid_scale, dtype=np.float32)
     scored = GSplatData(
         centers=(result.centers - origin).astype(np.float32, copy=False),
         amplitudes=result.amplitudes,
@@ -115,7 +151,7 @@ def _stamp_content_box_output(
         scored,
         core,
         volume_shape=shape,
-        grid_scale=None,
+        grid_scale=grid_scale,
         device=device,
         verbose=verbose,
         image_min=fit_image_min(result.stats),
@@ -225,6 +261,8 @@ def run_content_fit(
     lr: Optional[float] = None,
     floor: Optional[str] = None,
     norm_range: "Optional[tuple[float, float]]" = None,
+    voxel_size: "Optional[tuple[float, ...]]" = None,
+    physical_coordinates: bool = False,
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
@@ -298,6 +336,7 @@ def run_content_fit(
                 "lr": lr,
                 "floor": floor,
                 "norm_range": norm_range,
+                "voxel_size": voxel_size,
                 # `0.0` ("keep every splat") is not None, so it still wins here.
                 "cull_retention": cull_retention,
             },
@@ -312,6 +351,7 @@ def run_content_fit(
         fk.pop("seeds", None)
         fk.pop("device", None)
         fk["verbose"] = False
+        fk["_content_physical"] = physical_coordinates
         return fk
 
     # Validate the EFFECTIVE floor spec BEFORE the volume is read: a typo
@@ -320,6 +360,9 @@ def run_content_fit(
     # usage error, not a bare ValueError from inside the fit. (`--floor` itself
     # is not validated by Typer: it is a free-form string spec.)
     validate_floor_spec(_fit_kwargs().get("floor", "auto"))
+    _validate_parallel_content_frame(
+        physical_coordinates, jobs, plan_only=plan_only, plan_box=plan_box
+    )
 
     # ── worker mode: fit ONE box of an existing plan (a -j parallel subprocess) ──
     if plan_box is not None:
@@ -354,8 +397,14 @@ def run_content_fit(
         # it here too rather than falling back to per-crop normalization.
         _ensure_planned_norm_range(vol, fk, False)
         cap = int(fitplan.density.get("saturation_cap", 0)) if fitplan.density else 0
+        content_physical = bool(fk.pop("_content_physical", False))
         box_result = _fit_one_box(
-            vol, fitplan.boxes[plan_box], int(fitplan.overlap), cap, **fk
+            vol,
+            fitplan.boxes[plan_box],
+            int(fitplan.overlap),
+            cap,
+            content_physical=content_physical,
+            **fk,
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         if box_result.n_splats == 0:
@@ -364,14 +413,25 @@ def run_content_fit(
             # Save the fitted dataset AS IS: rebuilding it from bare arrays
             # dropped the fit's truncation_radius and per-box stats (#1637),
             # and suppressing fitting info here discarded those stats on disk.
+            from luxar.gsplats.tiling import resolve_grid_scale
+
             _stamp_content_box_output(
                 box_result,
                 vol,
                 fitplan.boxes[plan_box],
                 device,
                 verbose=verbose,
+                grid_scale=(
+                    resolve_grid_scale(
+                        vol.ndim,
+                        voxel_size=fk.get("voxel_size"),
+                        output_space=fk.get("output_space", "real"),
+                    )
+                    if content_physical
+                    else None
+                ),
             )
-            box_result.save(output)
+            box_result.save(output, amplitude_bits="auto")
         return
 
     # ── resolve density ──
@@ -508,20 +568,30 @@ def run_content_fit(
         raise typer.BadParameter("content fit requires --output/-o")
 
     # ── fit (sequential or parallel box subprocesses); partition unless --flat ──
-    from luxar.gsplats.fit_tiled_parallel import resolve_jobs
+    from luxar.gsplats.fit_tiled_parallel import (
+        report_auto_jobs,
+        resolve_jobs,
+    )
     from luxar.gsplats.planner.fit_planned_parallel import max_padded_box_voxels
 
     n_budgeted = sum(1 for b in fitplan.boxes if b.budget > 0)
     try:
-        n_jobs = resolve_jobs(
+        worker_limit = resolve_jobs(
             jobs,
             tile_voxels=max_padded_box_voxels(fitplan),
             num_tiles=max(1, n_budgeted),
             device=device,
         )
+        n_jobs = worker_limit.count
     except ValueError:
         aprint(f"Error: --jobs must be an integer or 'auto', got '{jobs}'")
         raise typer.Exit(1)
+
+    report_auto_jobs(jobs, worker_limit)
+    _cleanup_plan_before_parallel_refusal(
+        physical_coordinates, n_jobs, created_plan, keep_boxes, plan_json_path
+    )
+    _validate_parallel_content_frame(physical_coordinates, n_jobs)
 
     partition = not flat
     t0 = time.perf_counter()

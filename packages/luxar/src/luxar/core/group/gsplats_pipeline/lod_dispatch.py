@@ -30,6 +30,24 @@ if TYPE_CHECKING:
     from ..group import Group
 
 
+def _remap_footprint_stats(
+    stats: Dict[str, Any], dim_order: Optional[List[str]], scene_names: List[str]
+) -> Dict[str, Any]:
+    """Map footprint columns from input data order to stored scene order."""
+    remapped = dict(stats)
+    footprint_dims = remapped.get("footprint_dims")
+    if dim_order is None or not isinstance(footprint_dims, list):
+        return remapped
+    try:
+        remapped["footprint_dims"] = [
+            scene_names.index(dim_order[column]) for column in footprint_dims
+        ]
+    except (IndexError, TypeError, ValueError):
+        remapped.pop("median_footprint", None)
+        remapped.pop("footprint_dims", None)
+    return remapped
+
+
 def add_gsplats_as_lod_group_impl(
     group: "Group",
     *,
@@ -41,6 +59,7 @@ def add_gsplats_as_lod_group_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> "Group":
     """Build a kind=lod ``Group`` with one gsplats child per substitutive level.
@@ -126,6 +145,20 @@ def add_gsplats_as_lod_group_impl(
     for child_idx, s in enumerate(order):
         child_name = f"child_{child_idx}"
         level_view = result.at_substitutive(s)
+        level_attrs = dict(child_attrs)
+        level_stats = _remap_footprint_stats(
+            result.substitutive_levels[s].stats,
+            dim_order,
+            group._find_scene()._dimensions.names,
+        )
+        _, safe_level_stats = json_safe_value(level_stats)
+        _, safe_caller_stats = json_safe_value(level_attrs.get("level_stats") or {})
+        merged_level_stats = {
+            **(safe_level_stats or {}),
+            **(safe_caller_stats or {}),
+        }
+        if merged_level_stats:
+            level_attrs["level_stats"] = merged_level_stats
         # Recursive dispatch — but explicitly None on both LOD axes so
         # the resolvers no-op and we never re-enter the kind=lod branch.
         lod_group_node.add_gsplats_from_data(
@@ -147,7 +180,8 @@ def add_gsplats_as_lod_group_impl(
             # one node, i.e. the levels rescaled against each other and the
             # brightness pops at every LOD switch.
             normalize_amplitudes=False,
-            **child_attrs,
+            _source_dtype=_source_dtype,
+            **level_attrs,
         )
 
     return lod_group_node
@@ -163,6 +197,7 @@ def add_gsplats_multi_lod_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> GSplats:
     """Write multi-additive-LOD GSplatData as a single leaf via the shared walker.
@@ -272,6 +307,7 @@ def add_gsplats_multi_lod_impl(
         metadata = writer.write_gsplat_leaf_subtree(  # type: ignore[attr-defined]
             path,
             leaf,
+            _source_dtype=_source_dtype,
             **attrs,
         )
 

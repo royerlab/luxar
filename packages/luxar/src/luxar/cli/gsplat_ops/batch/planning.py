@@ -28,6 +28,7 @@ from arbol import aprint, asection
 from luxar.cli.gsplat_ops.fitting.fit_utils import CONTENT_UNSUPPORTED_FIT_FLAGS
 from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
+from luxar.typing_utils.enums import PhysicalUnit
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.io.ome_zarr import OMEZarrInfo
@@ -46,6 +47,7 @@ class FitConfig:
     iters: Optional[int] = None
     config: Optional[Path] = None
     floor: Optional[str] = "auto"
+    physical: bool = False
     progressive: bool = False
     splats_per_pass: Optional[int] = None
     psnr_patience: Optional[float] = None
@@ -1522,6 +1524,88 @@ def resolve_uniform_grid_scale(fit: FitConfig, ndim: int) -> Optional[List[float
     return list(scale) if scale is not None else None
 
 
+def _physical_voxel_size(
+    fit: FitConfig,
+    ome_info: "OMEZarrInfo",
+    axes_list: Optional[List[str]],
+    ndim: int,
+) -> "Tuple[Optional[List[float]], bool]":
+    """Resolve ``--physical`` spacing and whether workers need an override."""
+    if not fit.physical:
+        return None, False
+
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.tiling import resolve_grid_scale
+
+    config = load_fit_config(preset=fit.preset, config_path=fit.config)
+    if config.get("output_space", "real") != "real":
+        raise typer.BadParameter(
+            "--physical requires output_space: real; remove the config override "
+            "or omit --physical to keep voxel coordinates."
+        )
+
+    configured = config.get("voxel_size")
+    discovered = ome_info.voxel_size
+    if discovered is not None and axes_list is None:
+        discovered = tuple(
+            spacing
+            for size, spacing in zip(ome_info.spatial_shape, discovered, strict=True)
+            if size != 1
+        )
+    selected = configured if configured is not None else discovered
+    if selected is None:
+        raise typer.BadParameter(
+            "--physical requested physical coordinates, but the selected OME-Zarr "
+            "array has no usable spatial scale in coordinateTransformations and "
+            "the fit config does not define voxel_size."
+        )
+    try:
+        resolve_grid_scale(ndim, voxel_size=selected, output_space="real")
+        values = (
+            [float(selected)] * ndim
+            if isinstance(selected, (int, float))
+            else [float(value) for value in selected]
+        )
+    except (TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"--physical voxel size is invalid: {exc}") from exc
+    return values, configured is None
+
+
+def _configure_physical_fit_args(
+    fit_args: dict[str, str],
+    fit: FitConfig,
+    ome_info: "OMEZarrInfo",
+    axes_list: Optional[List[str]],
+    ndim: int,
+) -> "Tuple[Optional[List[float]], bool]":
+    """Resolve physical spacing and add the worker-only override when needed."""
+    voxel_size, uses_ngff_spacing = _physical_voxel_size(fit, ome_info, axes_list, ndim)
+    if uses_ngff_spacing:
+        assert voxel_size is not None
+        fit_args["voxel-size"] = ",".join(str(value) for value in voxel_size)
+    return voxel_size, uses_ngff_spacing
+
+
+def _configure_content_physical(
+    fit_args: dict[str, str], fit: FitConfig, mode: str
+) -> None:
+    """Mark content workers only when physical output was explicitly requested."""
+    if fit.physical and mode == "content":
+        fit_args["physical-coordinates"] = ""
+
+
+def _batch_grid_scale(
+    fit: FitConfig,
+    mode: str,
+    physical_voxel_size: Optional[List[float]],
+    ndim: int,
+) -> Optional[List[float]]:
+    """Resolve the coordinate frame recorded on the batch manifest."""
+    if physical_voxel_size is not None:
+        return physical_voxel_size
+    return resolve_uniform_grid_scale(fit, ndim) if mode != "content" else None
+
+
 def resolve_merge_recipe_args(
     merge: MergeConfig,
     *,
@@ -1800,6 +1884,44 @@ def _worker_spatial_shape(
     return tuple(size for size in spatial_shape if size != 1)
 
 
+def _batch_dimension_metadata(
+    info: "OMEZarrInfo",
+    axes_list: Optional[List[str]],
+    n_timepoints: int,
+    *,
+    physical_coordinates: bool = False,
+    ngff_spatial_units: bool = False,
+) -> List[dict[str, Any]]:
+    """Describe output columns in ``_worker_spatial_shape`` order, then time."""
+    spatial_indices = list(info.spatial_indices)
+    if axes_list is None:
+        spatial_indices = [index for index in spatial_indices if info.shape[index] != 1]
+
+    def descriptor(index: int, *, spatial: bool = False) -> dict[str, Any]:
+        unit = info.axis_units[index]
+        scale = (
+            1.0
+            if spatial and physical_coordinates
+            else info.axis_scales[index]
+            if info.axis_scales is not None
+            else 1.0
+        )
+        result: dict[str, Any] = {"name": info.axes[index], "scale": float(scale)}
+        unit_is_honest = not spatial or not physical_coordinates or ngff_spatial_units
+        if unit and scale == 1.0 and unit_is_honest:
+            try:
+                unit = PhysicalUnit.validate(unit).value
+            except ValueError:
+                pass
+            result["unit"] = unit
+        return result
+
+    metadata = [descriptor(index, spatial=True) for index in spatial_indices]
+    if n_timepoints > 1 and info.time_axis is not None:
+        metadata.append(descriptor(info.time_axis))
+    return metadata
+
+
 def _validate_content_spatial_shape(
     mode: str,
     spatial: Tuple[int, ...],
@@ -1953,6 +2075,10 @@ def plan_batch(
             emits_timepoint=n_t_full > 1 or bool(timepoints_slice),
         )
 
+        physical_voxel_size, uses_ngff_spacing = _configure_physical_fit_args(
+            fit_args, fit, ome_info, axes_list, len(spatial)
+        )
+
         t_indices = (
             _parse_slice(timepoints_slice, n_t_full)
             if timepoints_slice
@@ -1988,6 +2114,7 @@ def plan_batch(
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"
+    _configure_content_physical(fit_args, fit, mode)
     _validate_content_spatial_shape(mode, spatial, ome_info.spatial_shape, axes_list)
     content_plan = None
     plan_path_str: Optional[str] = None
@@ -2005,13 +2132,11 @@ def plan_batch(
     downscale_factors = validate_config_downscale(fit, len(spatial))
 
     # The frame the tasks will emit in, resolved once and recorded on the
-    # manifest for the merge (#1587). Uniform only: a content merge takes its
-    # split planes from the shared plan's own boxes, not from a rebuilt grid.
+    # manifest for the merge (#1587). A content merge takes its split planes
+    # from the shared plan's boxes; physical output scales that tree separately.
     # Ahead of the floor resolution below because it reads only the fit config:
     # a frame the merge cannot reconcile fails before any voxel is sampled.
-    grid_scale = (
-        resolve_uniform_grid_scale(fit, len(spatial)) if mode != "content" else None
-    )
+    grid_scale = _batch_grid_scale(fit, mode, physical_voxel_size, len(spatial))
     _validate_merge_refine_frame(merge, grid_scale)
 
     # 3a. Background floor: ONE level for the whole timelapse, resolved here and
@@ -2254,6 +2379,13 @@ def plan_batch(
         channel_axes=ome_info.channel_axes,
         channel_shape=ome_info.channel_shape,
         spatial_shape=spatial,
+        dimension_metadata=_batch_dimension_metadata(
+            ome_info,
+            axes_list,
+            n_t,
+            physical_coordinates=grid_scale is not None,
+            ngff_spatial_units=uses_ngff_spacing,
+        ),
         mode=mode,
         tile_size=tile_size_resolved,
         tile_overlap=tile_overlap,

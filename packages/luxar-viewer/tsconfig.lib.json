@@ -15,6 +15,7 @@
     "src/**/*.test.ts",
     "src/**/*.spec.ts",
     "src/core/main.ts",
+    "src/core/control-panel/main.ts",
     "src/lib-styles-entry.ts"
   ]
 }

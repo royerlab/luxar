@@ -2,6 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "src/core/main.ts",
+    "src/core/control-panel/main.ts",
     "src/index.ts",
     "src/lib-styles-entry.ts",
     "src/tests/**/*.{test,spec}.ts",
@@ -13,6 +14,7 @@
   "project": ["src/**/*.ts"],
   "ignore": [
     "src/rendering/shaders/index.ts",
+    "src/tests/type/node-runtime-contract.ts",
     "src/types/format-contract.ts",
     "typedoc.json",
     "src/tests/builders/**",

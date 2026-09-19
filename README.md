@@ -27,7 +27,7 @@ Three ideas carry most of the design:
   Gaussians instead of shipped as voxel grids — which is what lets a 3.3 GB
   light-sheet stack, or a 400-timepoint timelapse, travel over a network at all.
 
-**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 86 live demos, no
+**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 88 live demos, no
 install. Or open your own data in the hosted viewer:
 [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
@@ -74,7 +74,7 @@ is the slow exception).
 | **Interoperable** | Reads classical 3D-Gaussian-splatting captures (INRIA, `.splat`, `.spz`, SuperSplat, PlayCanvas SOG); writes INRIA PLY |
 | **Shareable** | `luxar export` produces a standalone offline folder, or a native bundle — a double-clickable macOS `.app`, a portable Linux folder — that opens with no Luxar install |
 
-> **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support. Chromium, Firefox and WebKit are all tested — see [Browser Compatibility](#browser-compatibility) for what was measured and what was not. Touch/mobile devices are not currently supported.
+> **Requirements:** The Luxar viewer needs a browser with **WebGL2** support. Chromium, Firefox and WebKit are all tested — see [Browser Compatibility](#browser-compatibility) for what was measured and what was not. Touch input is implemented (one- and two-finger orbit/fly gestures, tap-to-pick, long-press menus, a coarse-pointer layout) and exercised by a Chromium-emulated iPhone/iPad/Pixel Playwright suite; performance on real phones and tablets has not been benchmarked, so treat mobile as supported but unmeasured.
 
 ---
 
@@ -93,7 +93,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 91 bundled demos
+luxar demo              # Browse the 90 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -107,7 +107,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 91 Luxar demos  ·  75 built  ·  8 cached  ·  8 not generated yet
+🎬 90 Luxar demos  ·  75 built  ·  8 cached  ·  7 not generated yet
 
  ASTRONOMY ──────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
@@ -116,13 +116,13 @@ geometry, what it needs, and whether you have already built it:
 
  MEDICAL ────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB
- • 28  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
+ • 29  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
 
- SYNTHETIC ─────────────────────────────────────────────────────────── 20 demos
+ SYNTHETIC ─────────────────────────────────────────────────────────── 18 demos
  ✓ 10  cloud                                   points
    11  collision                               points
  ...
- ✓ 21  exotic_surfaces                         points
+ ✓ 22  exotic_surfaces                         points
 
  ✓ built   • inputs cached   (blank) not generated yet
  GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply
@@ -315,14 +315,19 @@ The *C. elegans* fit is bundled under `packages/luxar/src/luxar/demos/data/`;
 the Tribolium fit is produced locally because its source is not redistributable.
 Both use full source resolution, and the single-file Tribolium fit works out to
 about 7 bytes per splat on disk. They then
-render in any WebGL2 desktop browser: no 3D textures, no ray-marching, and no CUDA
+render in any WebGL2 browser: no 3D textures, no ray-marching, and no CUDA
 on the viewing machine.
 
-This is lossy, so fidelity is measured rather than asserted. Across a 13-dataset
-microscopy benchmark (4–107 M voxels; confocal, spinning-disk and light-sheet), fits
-at a fixed 32K-splat budget land between 25 and 43 dB PSNR, with a median 30×
-compression at each dataset's cross-validated splat budget (manuscript in
-preparation). `luxar gsplat compare` reports PSNR/SSIM/MSE for your own data.
+This is lossy, so fidelity is measured rather than asserted. Across a 17-volume
+microscopy benchmark (4–107 M voxels; spinning-disk, confocal, light-sheet and iSIM),
+fits at each volume's cross-validated splat budget land between 26 and 67 dB PSNR at
+6–340× compression (median 99×), measured as the bytes of the source volume at its
+stored bit depth (uint16 for most, uint8 or float32 where that is how the source is
+stored) over the bytes of the stored splat archive (manuscript in preparation). The
+single-volume Tribolium fit above is a gigavoxel source well beyond the benchmark's
+per-volume range, so its compression exceeds the quoted ceiling; the *C. elegans* figure
+instead aggregates 400 timepoints of 10.7 M voxels each. `luxar gsplat compare` reports
+PSNR/SSIM/MSE for your own data.
 
 ### Emission and absorption, not just glow
 
@@ -337,9 +342,11 @@ the render continuously:
 | small | attenuated projection — near structure pops, occluded structure dims | depth cueing in dense timelapses |
 | large | dense smoke- or ink-like medium | opaque tissue, anatomy |
 
-Because fitted amplitudes *are* densities (fluorophore concentration) rather than
-learned opacities, κ is interpretable as the turbidity of the sample instead of
-being an arbitrary rendering constant. Absorption is also orientation-consistent —
+Because fitted amplitudes are background-relative image intensities — proportional
+to the detected fluorescence after floor subtraction and normalisation, not a
+calibrated fluorophore concentration — rather than learned opacities, κ is still
+interpretable as an effective turbidity of the sample instead of being an arbitrary
+rendering constant. Absorption is also orientation-consistent —
 an elongated splat seen end-on absorbs more than the same splat seen side-on, which
 a stored per-splat opacity cannot express. All three geometry types render the same
 physics, on both the WebGL/GLSL and WebGPU/TSL backends.
@@ -853,8 +860,8 @@ luxar demo run <key|#> [-- ARGS]       # Run a demo (forwards ARGS to it)
 luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar viewer [--data PATH] [OPTIONS]    # Serve viewer only or viewer + data
 luxar info PATH [--stats]               # Dataset information (--stats also reports the chunk layout)
-luxar optimise SRC DST [--profile ...]  # Re-chunk an existing store for streaming (values stay bit-identical)
-luxar restamp-lod STORE [--dry-run]     # Re-derive legacy LOD thresholds in place (attrs only)
+luxar optimize SRC DST [--profile ...]  # Re-chunk an existing store for streaming (values stay bit-identical)
+luxar restamp-lod STORE [--dry-run]     # Re-derive LOD thresholds in place (attrs only)
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)
@@ -912,7 +919,7 @@ layout and how to add a new skill.
 | Document | Description |
 |----------|-------------|
 | **[Documentation site](https://royerlab.github.io/luxar/)** | Tutorials, guides, format specs, and the generated Python + TypeScript API reference |
-| **[Live demo gallery](https://demos.luxarviewer.dev)** | 86 demos as interactive scenes in the browser |
+| **[Live demo gallery](https://demos.luxarviewer.dev)** | 88 demos as interactive scenes in the browser |
 | **[Hosted viewer](https://luxarviewer.dev)** | Open any reachable scene: `luxarviewer.dev/?src=<url>` |
 | [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md) | How the two sites above are hosted and published |
 | [Python Package README](packages/luxar/README.md) | Full Python API documentation |
@@ -1021,9 +1028,10 @@ run `pnpm test:e2e:browsers`. The checked-in visual snapshot corpus is
 Chromium-only, so this command ignores snapshot assertions and compares
 functional behavior rather than pixels.
 
-Not verified: the full E2E suite on any engine but Chromium; **Safari and Edge
-themselves** — Playwright's WebKit is a WebKit build, not Safari, and Edge is
-Chromium-based but untested; and any performance comparison between engines.
+Not verified: the full E2E suite on any engine but Chromium; real phones and
+tablets, including touch behaviour in iOS Safari; **Safari and Edge themselves**
+— Playwright's WebKit is a WebKit build, not Safari, and Edge is Chromium-based
+but untested; and any performance comparison between engines.
 WebKit lacks main-thread `FileSystemFileHandle.createWritable()`, so Safari and
 the native WKWebView launcher fall back to L1-only caching; see the
 [`opfs-unavailable` cache badge](packages/luxar-viewer/src/cache/README.md#cache-status-badges).
@@ -1035,12 +1043,12 @@ the native WKWebView launcher fall back to L1-only caching; see the
 | `?src=<url>` | Data source URL (Zarr store) |
 | `?theme=light` | Set UI theme (`light` or `dark`) |
 | `?debug` | Enable debug mode (`window.__luxarDebug`) |
-| `?no-cache` | Disable all caching tiers (S-cache + L0/L1/L2) |
-| `?cache-debug` | Show cache hit/miss statistics |
-| `?clear-cache` | Clear the OPFS persistent cache on load |
-| `?no-prefetch` | Disable predictive chunk prefetching |
+| `?noCache` | Disable all caching tiers (S-cache + L0/L1/L2) |
+| `?cacheDebug` | Show cache hit/miss statistics |
+| `?clearCache` | Clear the OPFS persistent cache on load |
+| `?noPrefetch` | Disable predictive chunk prefetching |
 | `?renderer=webgl\|webgpu` | Select WebGLRenderer + GLSL (production default) or opt into WebGPURenderer + TSL |
-| `?webgpu-force-webgl` | With `?renderer=webgpu`, keep WebGPURenderer + TSL but force Three.js's internal WebGL2 backend for diagnostics |
+| `?webgpuForceWebgl` | With `?renderer=webgpu`, keep WebGPURenderer + TSL but force Three.js's internal WebGL2 backend for diagnostics |
 
 ---
 
@@ -1103,17 +1111,17 @@ Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Gala
 
 The Python package does not ship these artifacts. The demos consume **derived
 products** — Gaussian-splat fits and point catalogues computed from the datasets
-credited above — archived on Zenodo in four records. The ShareAlike files need a
-separate record because a Zenodo record carries a single licence field; the two
-large timelapses each have their own record so the data collector is credited on
-the recording itself:
+credited above — archived on Zenodo in four demo-data records. The ShareAlike
+files need a separate record because a Zenodo record carries a single licence
+field; the two large timelapses each have their own record so the data collector
+is credited on the recording itself:
 
 | Record | Contents | Cite |
 |---|---|---|
 | Permissively licensed (CC-BY, CC0, public domain) | 46 files, 1.2 GiB | [10.5281/zenodo.21912279](https://doi.org/10.5281/zenodo.21912279) |
 | ShareAlike (CC BY-SA 4.0) | 3 files, 20 MiB | [10.5281/zenodo.21912281](https://doi.org/10.5281/zenodo.21912281) |
 | Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
-| *Drosophila* embryogenesis (500 timepoints) | 1 file, 824 MiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
+| *Drosophila* embryogenesis (500 timepoints) | 1 file, 1.1 GiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
 
 These records cover 25 of the 31 demo datasets. The other six are built locally
 because redistribution is not permitted or not yet available, or because

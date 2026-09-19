@@ -2,7 +2,7 @@
  * Mobile: the runtime budgets are device-aware.
  *
  * On a phone the DPR cap resolves to 2 even when a scene allows high DPR, and
- * the GPU byte budget is the mobile pool share rather than the 512 MB desktop
+ * the GPU byte budget uses the independent mobile cap rather than the 512 MB desktop
  * fallback. Both are read through the debug surface and the console.
  */
 
@@ -34,7 +34,7 @@ test.describe('mobile runtime clamps', () => {
     expect(renderer).toBeLessThanOrEqual(2);
   });
 
-  test('the GPU byte budget takes the mobile pool share, not the desktop fallback', async ({
+  test('the GPU byte budget takes the independent mobile cap, not the desktop fallback', async ({
     page,
   }) => {
     const captured = captureConsoleMessages(page);
@@ -42,7 +42,7 @@ test.describe('mobile runtime clamps', () => {
     await waitForLuxarReady(page);
     const line = captured.logs.find((text) => /GPU byte budget/.test(text));
     expect(line, 'a GPU byte budget log line').toBeDefined();
-    expect(line).toMatch(/mobile device class/);
+    expect(line).toMatch(/mobile safety cap/);
     expect(line).not.toMatch(/no memory signal/);
   });
 });

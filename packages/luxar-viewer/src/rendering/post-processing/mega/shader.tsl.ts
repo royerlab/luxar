@@ -346,8 +346,14 @@ export function megaWebGPUFactory(
   //     against the new texture. See
   //     `material-tsl.ts::setHdrSceneTexture` /
   //     `setBloom`. (Contrast with the bloom pyramid's
-  //     `bloom/bloom.tsl.ts`, where the input texture changes per pass and
-  //     the factory can't be re-run — that path needs `.onUpdate`.)
+  //     `bloom/bloom.tsl.ts` and `fxaa/fxaa.tsl.ts`, where the input
+  //     texture changes per pass and the factory can't be re-run —
+  //     those bind through `_shared/live-texture-tsl.ts`'s
+  //     `bindLiveTexture`, which swaps in `updateBefore`. NOT
+  //     `.onUpdate('render')`: node updates run in graph order, so a
+  //     texture swapped there reaches the sample-tap clones after some
+  //     of them have already derived their render-target Y-flip from
+  //     the previous texture — #2584.)
   const uHdrScene = texture(
     (uniforms.uHdrScene.value as THREE.Texture | null) ?? new THREE.Texture()
   );

@@ -27,7 +27,8 @@ the documentation checks.
    dependency overrides remain single-sourced.
 2. `scripts/check_documentation.py` checks README, Python docstring, TypeScript
    JSDoc, and tracked repository-path completeness against
-   `scripts/docs_baseline.json`.
+   `scripts/docs_baseline.json`. It also runs the git-free changelog fragment
+   validator as a hard check that cannot be baselined.
 3. `pnpm run test:typedoc-warnings` runs the ratchet's own `node:test` suite, so
    a broken checker cannot report a green gate.
 4. TypeDoc converts and validates the viewer API without emitting output, then
@@ -84,6 +85,18 @@ For tracked package `README.md` files:
 - Backticked path-like references must resolve to tracked repository files.
 - Distinct broken references in one README receive distinct baseline keys.
 
+### Changelog fragments
+
+For every pending entry under `changelog.d/`:
+
+- the file must be valid UTF-8;
+- the entry must use the documented `#### Title` plus prose format; and
+- each invalid fragment receives its own stable finding key.
+
+Unlike completeness debt, a fragment-format failure is a hard gate. Adding its
+key to `scripts/docs_baseline.json` does not make the check pass, and an invalid
+fragment also blocks `--update-baseline` until the fragment is fixed.
+
 Each finding has a stable, portable key:
 
 ```text
@@ -116,8 +129,8 @@ The checker compares current failing keys with that list:
 - **Still baselined** = current ∩ baseline: tolerated existing debt.
 - **Fixed** = baseline − current: entries that should be removed.
 
-Exit code `1` means there are new findings. Existing baseline debt alone does
-not fail the build.
+Exit code `1` means there are new findings or an invalid changelog fragment.
+Existing baseline debt alone does not fail the build.
 
 Regenerate the baseline only after inspecting every addition and removal:
 

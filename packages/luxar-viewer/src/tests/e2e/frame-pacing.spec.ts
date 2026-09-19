@@ -21,7 +21,7 @@
  *    0.5 ms in-page but measured 111 s across the bridge in the wedge).
  *
  * Neither this spec nor the un-parked `performance_benchmark_example` case in
- * `all-examples-smoke-test.spec.ts` is in the CI smoke subset
+ * `all-examples-smoke-test.spec.ts` is in the smoke subset
  * (`pnpm test:e2e:smoke`), so both run only in the full E2E suite.
  */
 
@@ -175,10 +175,10 @@ test.describe('Frame pacing (#1724)', () => {
   }) => {
     const consoleMessages = captureConsoleMessages(page);
 
-    // `&no-opfs` for the same reason as the smoke spec: nothing here asserts
+    // `&noOpfs` for the same reason as the smoke spec: nothing here asserts
     // the L2 OPFS tier, and automated Chromium's OPFS stalls systemically
     // (10 s per op — issue #1645), starving scene readiness past the budget.
-    await page.goto(`/?src=${EXAMPLES_BASE}/${DATASET}&debug&no-opfs`, {
+    await page.goto(`/?src=${EXAMPLES_BASE}/${DATASET}&debug&noOpfs`, {
       timeout: NAV_TIMEOUT_MS,
     });
     await waitForReadyWithDiagnostics(page, READY_TIMEOUT_MS, consoleMessages.errors);

@@ -23,6 +23,7 @@ from luxar.io._compiler.finalize.amplitude_window import (
     _NODE_TYPES,
     _child_nodes,
     _lod_children,
+    _ordered_children,
 )
 from luxar.typing_utils._format_contract import GEOMETRY_TYPES
 
@@ -102,6 +103,22 @@ def test_sorted_name_is_the_last_resort_for_a_foreign_store() -> None:
     )
 
     assert _names(_lod_children(root)) == ["coarse", "fine", "mid"]
+
+
+def test_numeric_partition_names_have_stable_row_order() -> None:
+    root = _group(
+        {
+            "part_10": {"type": "points"},
+            "part_2": {"type": "points"},
+            "part_9": {"type": "points"},
+        }
+    )
+
+    assert _names(_ordered_children(root, "part_")) == [
+        "part_2",
+        "part_9",
+        "part_10",
+    ]
 
 
 # ────────────────────────────────────────────────────────────────────────

@@ -93,14 +93,14 @@ export function formatKeepFraction(keep: number): string {
   return keep >= 1 ? '1' : `1/${Math.round(1 / keep)}`;
 }
 
-/** `4`, `2.5`, `0.25`: the cap as typed in `?density-cap=` (to 3 decimals), never `4.00`. */
+/** `4`, `2.5`, `0.25`: the cap as typed in `?densityCap=` (to 3 decimals), never `4.00`. */
 export function formatCap(cap: number): string {
   return String(Number(cap.toFixed(3)));
 }
 
 /**
  * Text for the Thinning row: what the guard is doing to the frame right now,
- * and the cap it is doing it against (so a `?density-cap=N` sweep is readable
+ * and the cap it is doing it against (so a `?densityCap=N` sweep is readable
  * without the console).
  */
 export function formatThinning(control: DensityGuardControl): string {
@@ -120,7 +120,7 @@ interface DensityGuardControls {
 
 /**
  * The Density Guard toggle + Thinning readout. The toggle is bound to the
- * guard's LIVE state, not the stored flag: under `?no-density-guard` the
+ * guard's LIVE state, not the stored flag: under `?noDensityGuard` the
  * stored flag may say on while the guard is off, and the box must not lie.
  * The stored flag is only written when the session is not URL-disabled.
  */
@@ -142,7 +142,7 @@ function addDensityGuardControls(
       '  (they load as you zoom in)\n' +
       '• Only for additive / luminous / volumetric blending; max, normal and\n' +
       '  opaque nodes are never thinned\n' +
-      '• OFF: every element is drawn (the ?no-density-guard URL flag does the\n' +
+      '• OFF: every element is drawn (the ?noDensityGuard URL flag does the\n' +
       '  same for one session)'
   );
   const row = createDisplayRow(
@@ -151,7 +151,7 @@ function addDensityGuardControls(
       '• none: every visible node is under its density cap\n' +
       '• N nodes · keep 1/K: N nodes are drawn at a 1/K subset (the densest\n' +
       '  one at 1/K), each brightened ×K to compensate\n' +
-      '• cap C: the elements-per-pixel threshold in force (?density-cap=N\n' +
+      '• cap C: the elements-per-pixel threshold in force (?densityCap=N\n' +
       '  overrides it for one session, for threshold sweeps)\n' +
       '• Zooming in restores detail step by step'
   );

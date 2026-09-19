@@ -605,7 +605,11 @@ export class InputHandler {
       selectDimension: (index) => this.selectDimension(index),
       toggleHelp: () => this.toggleHelp(),
       toggleDimensionSliders: () => this.toggleDimensionSliders(),
-      toggleDatasetBrowser: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
+      // Literal, not the core/ constant: the layer contract forbids input/ →
+      // core/ imports. `dataset-browser-event-sync.test.ts` pins the spelling
+      // to `OPEN_DATASET_BROWSER_EVENT`.
+      toggleDatasetBrowser: () =>
+        window.dispatchEvent(new CustomEvent('luxar-open-dataset-browser')),
       openElementMenu: (event) => {
         event.preventDefault();
         window.dispatchEvent(new CustomEvent('luxar-open-element-menu'));
@@ -620,6 +624,7 @@ export class InputHandler {
       cycleDataMonitor: () => this.handleDataMonitorCycle(),
       recenterCamera: () => this.recenterCamera(),
       exportViewerState: () => this.exportViewerState(),
+      closeAllPanels: () => this.panelCoordinator.closeAll(),
       handleEscape: () => this.handleEscapeKey(),
       shouldHandleSpaceKey: () => this.shouldHandleSpaceKey(),
     };

@@ -35,6 +35,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  OPEN_DATASET_BROWSER_EVENT,
+  OPEN_ELEMENT_MENU_EVENT,
+} from '../../../core/app/interaction/canvas-actions';
 
 import { InputHandler } from '../../../input';
 import * as registerAll from '../../../input/input-handler/key-bindings/register-all';
@@ -279,8 +283,8 @@ describe('InputHandler UI-action surface', () => {
 
     const seen: string[] = [];
     const listener = (event: Event) => seen.push(event.type);
-    window.addEventListener('open-dataset-browser', listener);
-    window.addEventListener('luxar-open-element-menu', listener);
+    window.addEventListener(OPEN_DATASET_BROWSER_EVENT, listener);
+    window.addEventListener(OPEN_ELEMENT_MENU_EVENT, listener);
 
     try {
       commands.toggleDatasetBrowser();
@@ -289,13 +293,13 @@ describe('InputHandler UI-action surface', () => {
       const preventDefault = vi.spyOn(menuEvent, 'preventDefault');
       commands.openElementMenu(menuEvent);
 
-      expect(seen).toEqual(['open-dataset-browser', 'luxar-open-element-menu']);
+      expect(seen).toEqual([OPEN_DATASET_BROWSER_EVENT, OPEN_ELEMENT_MENU_EVENT]);
       // The element menu is bound to a key the browser also acts on, so
       // suppressing the default is part of the contract, not incidental.
       expect(preventDefault).toHaveBeenCalled();
     } finally {
-      window.removeEventListener('open-dataset-browser', listener);
-      window.removeEventListener('luxar-open-element-menu', listener);
+      window.removeEventListener(OPEN_DATASET_BROWSER_EVENT, listener);
+      window.removeEventListener(OPEN_ELEMENT_MENU_EVENT, listener);
     }
   });
 });

@@ -5,6 +5,21 @@
  * eliminating the need for 'as any' type assertions throughout the codebase.
  */
 
+import type { ZarrKioskConfig } from '../config/kiosk';
+import {
+  ND_TRANSFORM_PERMUTATION_KEY,
+  type AttrKey,
+  type DimensionAttrKey,
+  type NdTransformAffineKey,
+} from './format-contract';
+
+/**
+ * Type-level set equality: `true` only when `A` and `B` are the same union.
+ * Used to LOCK hand-written attr interfaces to the generated format contract —
+ * a key added on one side without the other fails `pnpm typecheck`.
+ */
+export type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
 /**
  * Per-dimension affine transform for continuous/discrete dimensions.
  * Applied as: effective_value = scale * original_value + offset
@@ -42,8 +57,17 @@ export type NdTransformMap = Record<string, NdTransformEntry>;
 export function isPermutation(
   entry: NdTransformEntry | null | undefined
 ): entry is NdTransformPermutation {
-  return entry !== null && typeof entry === 'object' && 'permutation' in entry;
+  return entry !== null && typeof entry === 'object' && ND_TRANSFORM_PERMUTATION_KEY in entry;
 }
+
+/**
+ * Lock: the affine entry's keys are exactly the contract's
+ * `nd_transform_affine_keys` (B8). Compile error on drift.
+ */
+export const ND_TRANSFORM_AFFINE_KEYS_MATCH_CONTRACT: Equals<
+  keyof NdTransformAffine,
+  NdTransformAffineKey
+> = true;
 
 /**
  * nD bounding box (min/max per dimension)
@@ -74,6 +98,18 @@ export interface SceneDimensionAttrs {
     description?: string;
   }>;
 }
+
+/** One entry of `SceneDimensionAttrs.dimensions`. */
+export type SceneDimensionEntry = SceneDimensionAttrs['dimensions'][number];
+
+/**
+ * Lock: a dimension entry's keys are exactly the contract's
+ * `dimension_attr_keys` (B9) — mirrored by Python's `Dimension.to_dict()`.
+ */
+export const DIMENSION_ATTR_KEYS_MATCH_CONTRACT: Equals<
+  keyof SceneDimensionEntry,
+  DimensionAttrKey
+> = true;
 
 /** The authored camera block — the scene-level `camera` and each waypoint's `camera`. */
 export interface ZarrCameraConfig {
@@ -200,6 +236,14 @@ export interface ZarrViewerConfig {
   // Cinematic
   cinematic_mode?: boolean;
 
+  /**
+   * Authored playback detail for every dimension: how deep additive ladders are
+   * loaded per frame while playing or scrubbing. A positive integer pins that
+   * many rungs, `'all'` the whole ladder, `'auto'` the energy rule (default),
+   * `'fast'` the time-budgeted streaming. Python: `ViewerConfig.playback_lod_depth`.
+   */
+  playback_lod_depth?: number | 'auto' | 'all' | 'fast';
+
   // Vignette
   vignette_enabled?: boolean;
   vignette_darkness?: number;
@@ -252,6 +296,10 @@ export interface ZarrViewerConfig {
     show_scale_bar?: boolean;
     show_layers?: boolean;
     show_overlays?: boolean;
+    // Unattended-display lockdown. Resolved (with `?kiosk`) by
+    // `config/kiosk.ts::resolveKioskMode`, which validates the shape — so
+    // this mirrors the writer's field names and nothing more.
+    kiosk?: ZarrKioskConfig;
   };
 
   // Theme
@@ -278,13 +326,43 @@ export interface ZarrViewerConfig {
 
   // Sound layer defaults (master gain, buses, ducking, panning).
   audio?: ZarrAudioConfig;
+
+  // Touch-panel authoring: heading, which dimension the tiles walk, per-chapter
+  // overrides, author CSS. `unknown` on purpose — the shape is validated by
+  // `config/zarr-bridge/control-panel.ts`, and declaring it structurally here
+  // would let a caller read a field the validator has not checked.
+  control_panel?: unknown;
 }
 
 /**
  * Zarr group attributes for the root scene
  */
 export interface ZarrSceneAttrs {
-  /** Scene format version */
+  /**
+   * Scene format version (`'0.2'` today; scene 0.2+). Checked by
+   * `data/format-version.ts` against `SUPPORTED_SCENE_VERSIONS`.
+   */
+  format_version?: string;
+
+  /**
+   * Root-header marker identifying the store kind: `FORMAT_TYPE_SCENE`
+   * (`'luxar_zarr'`) for a compiled scene, `FORMAT_TYPE_GSPLATS` for a
+   * detached `.gsplats.zarr` opened directly.
+   */
+  format_type?: string;
+
+  /**
+   * Luxar SOFTWARE version (`luxar.__version__`) that wrote the scene.
+   * Provenance only — excluded from `content_hash`, so it never invalidates
+   * a cache.
+   */
+  luxar_software_version?: string;
+
+  /**
+   * Scene 0.1 LEGACY version key. Read as a fallback when `format_version`
+   * is absent (published 0.1 stores carry only this); never written by a
+   * current compiler.
+   */
   luxar_version?: string;
 
   /** Scene-level dimensions */
@@ -299,12 +377,37 @@ export interface ZarrSceneAttrs {
   /** Scene-level position bounds (union of all node bounds) */
   position_bounds?: PositionBounds;
 
+  /**
+   * Post-order xxhash64 digest of the whole store (values + storage identity +
+   * attrs), stamped at compile time. The OPFS cache validates against it and the
+   * scene-identity watchdog baselines on it.
+   */
+  content_hash?: string;
+
   /** Viewer configuration hints from Python API */
   viewer_config?: ZarrViewerConfig;
 
   /** Any additional metadata */
   [key: string]: unknown;
 }
+
+/**
+ * The contract's structural `attr_keys` a scene ROOT carries. Lock (B10): each
+ * must be a declared key of `ZarrSceneAttrs`, so a header key added to the
+ * contract cannot be silently untyped on the viewer side.
+ */
+export type RootAttrKey = Extract<
+  AttrKey,
+  | 'format_version'
+  | 'format_type'
+  | 'luxar_software_version'
+  | 'type'
+  | 'content_hash'
+  | 'scene_dimensions'
+  | 'position_bounds'
+>;
+/** Compile-time lock that every root-header contract key is typed on `ZarrSceneAttrs`. */
+export const ROOT_ATTR_KEYS_TYPED: RootAttrKey extends keyof ZarrSceneAttrs ? true : false = true;
 
 /**
  * 4x4 transformation matrix laid out as a flat 16-element array,

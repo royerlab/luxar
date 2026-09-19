@@ -24,6 +24,25 @@ import {
 import { extractRenderingOverrides } from '../../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../types/zarr';
 
+/**
+ * Version stamp of the per-scene rendering-settings document in localStorage.
+ *
+ * The stored value is an envelope `{ version, settings }` rather than the bare
+ * settings object, so a future change to what the settings MEAN (a renamed
+ * key, a rescaled range) can bump this number and have every older document
+ * treated as absent — the zarr `viewer_config` defaults then apply, exactly as
+ * on a first visit — instead of being merged as if nothing had changed. Same
+ * reset-to-defaults policy as `SETTINGS_VERSION` (config/user-settings.ts)
+ * and `OPFS_ENCODING_VERSION` (cache/types.ts).
+ */
+export const RENDERING_SETTINGS_VERSION = 1 as const;
+
+/** On-disk shape of a per-scene rendering-settings document. */
+interface RenderingSettingsEnvelope {
+  version: number;
+  settings: Partial<RenderingSettings>;
+}
+
 /** RenderingSettings with the orbit/fly feel fields narrowed to non-optional concretes. */
 export type FullySpecifiedRenderingSettings = RenderingSettings & {
   orbitZoomSpeed: number;
@@ -76,8 +95,7 @@ export function buildResetDefaults(
 export function clearStoredSettings(sceneId: string): void {
   if (!sceneId) return;
   try {
-    const key = StorageKeys.rendering(sceneId);
-    localStorage.removeItem(key);
+    localStorage.removeItem(StorageKeys.rendering(sceneId));
   } catch (err) {
     log.warning(Modules.RENDERING_CONTROLS, 'Failed to clear saved rendering settings', err);
   }
@@ -123,12 +141,18 @@ export function stripDynamicClippingPlanes(
   return copy;
 }
 
-/** Persist current settings under the scene id. Quota-safe. */
+/**
+ * Persist current settings under the scene id, wrapped in the
+ * `{ version: RENDERING_SETTINGS_VERSION, settings }` envelope. Quota-safe.
+ */
 export function saveSettingsToStorage(sceneId: string, settings: RenderingSettings): void {
   if (!sceneId) return;
   try {
-    const key = StorageKeys.rendering(sceneId);
-    localStorage.setItem(key, serializeSettings(stripDynamicClippingPlanes(settings)));
+    const envelope: RenderingSettingsEnvelope = {
+      version: RENDERING_SETTINGS_VERSION,
+      settings: JSON.parse(serializeSettings(stripDynamicClippingPlanes(settings))),
+    };
+    localStorage.setItem(StorageKeys.rendering(sceneId), JSON.stringify(envelope));
   } catch (err) {
     log.warning(
       Modules.RENDERING_CONTROLS,
@@ -139,20 +163,43 @@ export function saveSettingsToStorage(sceneId: string, settings: RenderingSettin
 }
 
 export interface LoadedSettings {
-  /** Whether any settings string was found in localStorage (regardless of parseability). */
+  /**
+   * Whether a CURRENT-version settings document was found in localStorage.
+   * A missing document, a pre-envelope value, or a document from another
+   * `RENDERING_SETTINGS_VERSION` all report `false` — the caller then applies
+   * the zarr `viewer_config` defaults exactly as on a first visit.
+   */
   stored: boolean;
-  /** Parsed loaded settings, or null on parse failure / no value. */
+  /** Parsed loaded settings, or null when `stored` is false or the settings member is malformed. */
   loaded: Partial<RenderingSettings> | null;
 }
 
-/** Read settings from localStorage. Quota-safe. */
+/**
+ * Parse a stored document into its envelope, or `null` when it is not a
+ * current-version envelope (unparsable, bare pre-envelope settings, or a
+ * different `version`).
+ */
+function parseEnvelope(raw: string): RenderingSettingsEnvelope | null {
+  const parsed = deserializeSettings(raw) as Partial<RenderingSettingsEnvelope> | null;
+  if (!parsed || parsed.version !== RENDERING_SETTINGS_VERSION) return null;
+  if (typeof parsed.settings !== 'object' || parsed.settings === null) return null;
+  return parsed as RenderingSettingsEnvelope;
+}
+
+/**
+ * Read settings from localStorage. Quota-safe.
+ *
+ * A document that is not a current-version envelope is REMOVED (one
+ * `log.info` line names the key and the version found) and reported as
+ * `{ stored: false, loaded: null }`, so stale documents cannot linger and
+ * a later `saveSettingsToStorage` writes a fresh envelope.
+ */
 export function loadSettingsFromStorage(sceneId: string): LoadedSettings {
   if (!sceneId) return { stored: false, loaded: null };
 
   let stored: string | null = null;
   try {
-    const key = StorageKeys.rendering(sceneId);
-    stored = localStorage.getItem(key);
+    stored = localStorage.getItem(StorageKeys.rendering(sceneId));
   } catch (err) {
     log.warning(
       Modules.RENDERING_CONTROLS,
@@ -163,6 +210,28 @@ export function loadSettingsFromStorage(sceneId: string): LoadedSettings {
 
   if (!stored) return { stored: false, loaded: null };
 
-  const loaded = deserializeSettings(stored);
-  return { stored: true, loaded };
+  const envelope = parseEnvelope(stored);
+  if (!envelope) {
+    const found = describeStoredVersion(stored);
+    log.info(
+      Modules.CONFIG,
+      `${StorageKeys.rendering(sceneId)} version ${found} != ${RENDERING_SETTINGS_VERSION}, using defaults`
+    );
+    try {
+      localStorage.removeItem(StorageKeys.rendering(sceneId));
+    } catch (err) {
+      log.warning(Modules.RENDERING_CONTROLS, 'Failed to remove stale rendering settings', err);
+    }
+    return { stored: false, loaded: null };
+  }
+
+  return { stored: true, loaded: envelope.settings };
+}
+
+/** Human-readable version of a rejected document, for the one log line. */
+function describeStoredVersion(raw: string): string {
+  const parsed = deserializeSettings(raw) as { version?: unknown } | null;
+  if (!parsed) return 'unparsable';
+  if (parsed.version === undefined) return 'none (pre-envelope)';
+  return JSON.stringify(parsed.version);
 }

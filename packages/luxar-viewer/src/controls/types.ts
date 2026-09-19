@@ -33,8 +33,8 @@ export function nextControlType(current: ControlType | string): ControlType {
  * - `horizontal` — the screen-right axis. The scene tumbles over the top, like
  *                  a wheel rolling away from the viewer.
  * - `view`       — the view direction. A pure roll: the camera never moves, the
- *                  scene spins in the image plane (the same axis Shift+scroll
- *                  roll uses, and with the same sign).
+ *                  scene spins in the image plane (the same axis and right-hand
+ *                  sign a positive Shift+scroll roll delta uses).
  *
  * **World frame** — a fixed scene axis, the classic turntable: the subject
  * spins about its OWN axis at any camera elevation, where a camera-frame

@@ -22,6 +22,23 @@ meanwhile cancelled it. The merge daemon now brings exactly one PR up to date at
 time, so each rebased head gets an uninterrupted CI window.
 ```
 
+**Compatibility events carry a title prefix.** A fragment announcing that a
+public name now emits a deprecation notice starts its title with `Deprecated:`;
+one that removes a name whose window has closed starts with `Removed:`; one that
+changes something incompatibly without a window (a format major bump, say) starts
+with `Breaking:`. Ordinary entries carry no prefix. The prefixes are what lets a
+reader scan a release's notes for compatibility events, and the
+[Compatibility & Deprecation Policy](../docs/guides/user/COMPATIBILITY_POLICY.md)
+defines when each applies. For example:
+
+```markdown
+#### Deprecated: `luxar.io.optimise_store` in favour of `optimize_store`
+
+The British spelling stays importable as an alias that warns (`DeprecationWarning`,
+"deprecated since Luxar 2026.10.01 … removed after 2027.04.01") and forwards to the
+American one, which is now the documented name.
+```
+
 Name the file after the PR number when you know it (e.g. `1490.md`); an issue number
 or a short slug also works. Numeric names are folded in ascending order.
 
@@ -30,6 +47,7 @@ or a short slug also works. Numeric names are folded in ascending order.
 At release-prep, fold every fragment into `CHANGELOG.md` and delete the fragments:
 
 ```bash
+python3 scripts/changelog_build.py --check  # validate every fragment; no git history needed
 make changelog-draft          # preview what would be written; changes nothing
 make changelog                # fold fragments under ## [Unreleased] / ### <Month> and remove them
 make changelog MONTH="August 2026"   # pin the month heading explicitly
@@ -38,11 +56,15 @@ make changelog MONTH="August 2026"   # pin the month heading explicitly
 Commit that in the normal version-bump PR, then follow **Cutting a release** below
 before tagging the release (`make release`).
 
+`--check` validates fragment encoding and format only. The release fold still
+needs git history to resolve each fragment's authored month unless `MONTH` is set.
+
 ## Notes
 
 - Fragments are **Markdown** and touch no source domain, so a fragment-only PR runs
-  no code test suite (only the fast docs gate) — see the `changes` job in
-  `.github/workflows/ci.yml`.
+  no code test suite (only the fast docs gate). That gate runs the git-free
+  fragment validator and reports every malformed entry in one pass — see the
+  `changes` job in `.github/workflows/ci.yml`.
 - `CHANGELOG.md` also carries a `merge=union` attribute (`.gitattributes`) so any
   direct edit during the transition still auto-resolves on rebase.
 - Not every PR needs a fragment (pure refactors, test-only changes, trivial fixes

@@ -153,8 +153,44 @@ class TestSpecsAreValidRequirements:
             f"reader cannot tell whether it is still needed: {unexplained}"
         )
 
+    def test_pyarrow_floor_starts_at_numpy_copy_control_release(self) -> None:
+        packaging = pytest.importorskip("packaging.requirements")
+        version_mod = pytest.importorskip("packaging.version")
+
+        specifier = packaging.Requirement(INSTALL_SPECS["pyarrow"].spec).specifier
+        assert version_mod.Version("12.0.0") not in specifier, (
+            "pyarrow 12 lacks ChunkedArray.to_numpy(zero_copy_only=...)"
+        )
+        assert version_mod.Version("13.0.0") in specifier
+
 
 class TestHatchEnvironments:
+    def test_default_environment_matches_shared_demo_dependencies(self) -> None:
+        pyproject = _pyproject()
+        if not pyproject.is_file():  # installed wheel — no source tree to check
+            pytest.skip("pyproject.toml not available (installed package)")
+
+        import tomllib
+
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        Requirement = pytest.importorskip("packaging.requirements").Requirement
+        default_dependencies = {
+            Requirement(raw).name.lower(): Requirement(raw)
+            for raw in data["tool"]["hatch"]["envs"]["default"]["dependencies"]
+        }
+        demo_dependencies = {
+            Requirement(raw).name.lower(): Requirement(raw)
+            for raw in data["project"]["optional-dependencies"]["demos"]
+        }
+
+        shared = default_dependencies.keys() & demo_dependencies.keys()
+        assert shared, "default Hatch environment must share dependencies with demos"
+        for name in sorted(shared):
+            assert (
+                default_dependencies[name].specifier
+                == demo_dependencies[name].specifier
+            ), f"default Hatch environment and demos extra disagree on {name}"
+
     def test_moderngl_stays_out_of_python_matrix_environments(self) -> None:
         """The optional GPU renderer must not block Python matrix setup."""
         pyproject = _pyproject()
@@ -321,8 +357,9 @@ class TestSpecsMatchPyproject:
                 "9.0.0",
                 "10.0",
                 "12.0.0",
+                "13.0.0",
                 # A date-versioned sample below the 2023.1.0 floor shared by
-                # tifffile/imagecodecs: without one in [12.0.0, 2023.1.0) those
+                # tifffile/imagecodecs: without one in [13.0.0, 2023.1.0) those
                 # rows have a decade-wide blind window where a relaxed pin reads
                 # identical to the current one.
                 "2020.1.1",

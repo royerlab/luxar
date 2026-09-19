@@ -9,7 +9,7 @@ import os
 import re
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 import pytest
@@ -74,6 +74,54 @@ def sample_gsplats(tmp_path: Path) -> Path:
     out = tmp_path / "test.gsplats.zarr"
     data.save(out)
     return out
+
+
+@pytest.fixture
+def source_matched_gsplats(tmp_path: Path) -> Path:
+    """A fit-like uint8-source store using source-matched amplitudes."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    rng = np.random.default_rng(2783)
+    n, d = 32, 3
+    data = GSplatData(
+        centers=(rng.random((n, d)) * 10).astype(np.float32),
+        amplitudes=np.geomspace(1e-3, 1.0, n).astype(np.float32),
+        cholesky_factors=np.tile(
+            np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+        ),
+        stats={"source_dtype": "uint8"},
+    )
+    out = tmp_path / "fit.gsplats.zarr"
+    data.save(out, amplitude_bits="auto")
+    return out
+
+
+def _amplitude_arrays(path: Path) -> list[Any]:
+    root = zarr.open_group(str(path), mode="r")
+    arrays: list[Any] = []
+
+    def collect(group: Any) -> None:
+        if "amplitudes" in group.array_keys():
+            arrays.append(group["amplitudes"])
+        for name in group.group_keys():
+            collect(group[name])
+
+    collect(root)
+    return arrays
+
+
+def _assert_source_matched_amplitudes(path: Path) -> None:
+    root = zarr.open_group(str(path), mode="r")
+    arrays = _amplitude_arrays(path)
+    assert arrays
+    for array in arrays:
+        encoding = array.attrs["encoding"]
+        if encoding["name"] == "array_ref":
+            target = root[encoding["target"]]
+            assert np.dtype(target.dtype) == np.dtype(np.uint8)
+            continue
+        assert np.dtype(array.dtype) == np.dtype(np.uint8)
+        assert encoding["name"] == "geolog_scalar_uint8"
 
 
 @pytest.fixture
@@ -835,6 +883,110 @@ class TestCullCommand:
 
 
 class TestConvertCommand:
+    def test_convert_preserves_source_matched_amplitudes(
+        self, runner: CliRunner, source_matched_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import iter_leaves
+
+        rewritten = tmp_path / "lod.gsplats.zarr"
+        out = tmp_path / "scene.luxar.zarr"
+        lod_result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(source_matched_gsplats),
+                str(rewritten),
+                "--recipe",
+                "stream",
+                "--n-lods",
+                "3",
+            ],
+        )
+        assert lod_result.exit_code == 0, normalized_cli_output(lod_result)
+        expected_node, _ = load_gsplat_node(rewritten)
+        expected = np.concatenate(
+            [
+                sublod.amplitudes
+                for leaf in iter_leaves(expected_node)
+                for sublod in leaf.additive_sublods
+            ]
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "convert",
+                str(rewritten),
+                str(out),
+                "--no-center",
+                "--scale-intensity",
+                "1",
+            ],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        _assert_source_matched_amplitudes(out)
+        root = zarr.open_group(str(out), mode="r")
+        from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+        actual_node = read_gsplat_node(root["gsplats"], root)
+        actual = np.concatenate(
+            [
+                sublod.amplitudes
+                for leaf in iter_leaves(actual_node)
+                for sublod in leaf.additive_sublods
+            ]
+        )
+        np.testing.assert_array_equal(np.sort(actual), np.sort(expected))
+
+    def test_convert_applies_stored_dimension_metadata(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        partition_result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "partition",
+                str(sample_gsplats_4d),
+                str(partition),
+                "--parts",
+                "2",
+            ],
+        )
+        assert partition_result.exit_code == 0, partition_result.stdout
+        root = zarr.open_group(str(partition), mode="r+")
+        root.attrs["dimension_metadata"] = [
+            {"name": "z", "unit": "micrometer", "scale": 2.0},
+            {"name": "y", "unit": "micrometer", "scale": 0.75},
+            {"name": "x", "unit": "micrometer", "scale": 0.75},
+            {"name": "time", "unit": "second", "scale": 0.5},
+        ]
+
+        out = tmp_path / "scene.luxar.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "convert", str(partition), str(out), "--no-center"],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        dimensions = zarr.open_group(str(out), mode="r").attrs["scene_dimensions"]
+        descriptors = dimensions["dimensions"]
+        assert [item["name"] for item in descriptors] == ["z", "y", "x", "time"]
+        assert [item["unit"] for item in descriptors] == [
+            "micrometer",
+            "micrometer",
+            "micrometer",
+            "second",
+        ]
+        assert [item["scale"] for item in descriptors] == [2.0, 0.75, 0.75, 0.5]
+        assert descriptors[3]["step"] == 7.0
+
     def test_convert_basic(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -4214,10 +4366,10 @@ class TestLODCommand:
             assert "energy_fraction_cum" in stats, f"additive_{i} is unstamped"
         assert "reference_energy" in dict(root.attrs["level_stats"])
 
-    def test_reveal_centre_relocates_the_first_shell(
+    def test_reveal_center_relocates_the_first_shell(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--reveal-centre` must change the OUTPUT, not merely be accepted.
+        """`--reveal-center` must change the OUTPUT, not merely be accepted.
 
         Pinned to a corner, the first shell must sit closer to that corner than
         the default (bbox-centred) ladder's first shell does.
@@ -4240,7 +4392,7 @@ class TestLODCommand:
 
         assert runner.invoke(app, base + [str(default_out)] + tail).exit_code == 0
         pinned = runner.invoke(
-            app, base + [str(pinned_out)] + tail + ["--reveal-centre", "0,0,0"]
+            app, base + [str(pinned_out)] + tail + ["--reveal-center", "0,0,0"]
         )
         assert pinned.exit_code == 0, pinned.output
 
@@ -4256,7 +4408,7 @@ class TestLODCommand:
         Silently ignoring them would hand back an energy-ordered ladder while the
         user believed they had asked for a repositioned reveal.
         """
-        for flag, value in (("--reveal-centre", "0,0,0"), ("--spatial-dims", "0,1")):
+        for flag, value in (("--reveal-center", "0,0,0"), ("--spatial-dims", "0,1")):
             out = tmp_path / f"x{flag}.gsplats.zarr"
             result = runner.invoke(
                 app,
@@ -4300,7 +4452,7 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
-    def test_reveal_centre_length_must_match_spatial_dims(
+    def test_reveal_center_length_must_match_spatial_dims(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
         """The centre carries one coordinate per measured axis."""
@@ -4319,7 +4471,7 @@ class TestLODCommand:
                 "radial",
                 "--spatial-dims",
                 "0,1",
-                "--reveal-centre",
+                "--reveal-center",
                 "1,2,3",
             ],
             # fmt: on
@@ -4328,9 +4480,9 @@ class TestLODCommand:
         assert not out.exists()
 
     def test_spatial_dims_preserves_the_listed_order(self) -> None:
-        """`--spatial-dims` must NOT sort — the order pairs with `--reveal-centre`.
+        """`--spatial-dims` must NOT sort — the order pairs with `--reveal-center`.
 
-        It went through `sorted(set(...))`, so `--spatial-dims 2,0 --reveal-centre
+        It went through `sorted(set(...))`, so `--spatial-dims 2,0 --reveal-center
         10,20` silently meant "axis 0 centred at 10, axis 2 at 20" rather than the
         pairing the user typed. Deliberately unlike `--coarsen-dims`, where a
         barrier SET is order-free.
@@ -4343,17 +4495,17 @@ class TestLODCommand:
     @pytest.mark.parametrize(
         "spec", ["nan,0,0", "inf,0,0", "0,-inf,0"], ids=["nan", "inf", "-inf"]
     )
-    def test_reveal_centre_rejects_non_finite_coordinates(self, spec: str) -> None:
+    def test_reveal_center_rejects_non_finite_coordinates(self, spec: str) -> None:
         """`float("nan")` parses happily, so this needed an explicit check.
 
         With a non-finite centre every distance is non-finite; they all compare
         equal under the stable argsort, so the ladder comes out in input order and
         the user gets no reveal and no error.
         """
-        from luxar.cli.reveal_options import parse_reveal_centre
+        from luxar.cli.reveal_options import parse_reveal_center
 
         with pytest.raises(typer.BadParameter, match="finite"):
-            parse_reveal_centre(spec)
+            parse_reveal_center(spec)
 
     def test_spatial_dims_rejects_duplicates(self) -> None:
         """A duplicate was silently collapsed by `set()`; it now errors, because a
@@ -6324,6 +6476,11 @@ class TestLODCarriesAuthoredAppearance:
         # future change ever starts defaulting it to 0.
         "layer_order": 20,
     }
+    DIMENSION_METADATA: ClassVar[list[dict[str, Any]]] = [
+        {"name": "z", "scale": 2.0},
+        {"name": "y", "scale": 0.75},
+        {"name": "x", "scale": 0.75},
+    ]
 
     #: Carried by the registry but not exercised here, each for a stated reason.
     #: Asserted against the registry below so a NEW key cannot slip through
@@ -6614,6 +6771,61 @@ class TestLODCarriesAuthoredAppearance:
         for key, want in self.AUTHORED.items():
             assert key in got, f"{label}: dropped {key!r} (had {want!r})"
             assert got[key] == want, f"{label}: {key} = {got[key]!r}, want {want!r}"
+
+    @pytest.mark.parametrize("label", sorted(set(REWRITERS) - {"merge", "transform"}))
+    def test_dimension_metadata_survives_structure_only_rebuilds(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        label: str,
+    ) -> None:
+        self._authored_input(
+            medium_gsplats, {"dimension_metadata": self.DIMENSION_METADATA}
+        )
+        out = tmp_path / f"dimension_{label.replace(':', '_')}.gsplats.zarr"
+        argv = self._resolve(self.REWRITERS[label], medium_gsplats, out, tmp_path)
+
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
+        assert self._root_attrs(out)["dimension_metadata"] == self.DIMENSION_METADATA
+
+    @pytest.mark.parametrize("partitioned", [False, True])
+    def test_transform_drops_dimension_metadata(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        partitioned: bool,
+    ) -> None:
+        self._authored_input(
+            medium_gsplats, {"dimension_metadata": self.DIMENSION_METADATA}
+        )
+        input_path = medium_gsplats
+        if partitioned:
+            input_path = tmp_path / "partitioned.gsplats.zarr"
+            partition_result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "partition",
+                    str(medium_gsplats),
+                    str(input_path),
+                    "--parts",
+                    "2",
+                ],
+            )
+            assert partition_result.exit_code == 0, partition_result.stdout
+        out = tmp_path / "transformed.gsplats.zarr"
+
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(input_path), str(out), "--scale", "2,1,1"],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert "dimension_metadata" not in self._root_attrs(out)
 
     # ── `gsplat merge`: N inputs, so the appearance has to be AGREED ──────────
     #
@@ -7543,6 +7755,139 @@ class TestLODCarriesAuthoredAppearance:
         assert got["kind"] == "lod"
         assert got["type"] == "group"
         assert got["blending_mode"] == "volumetric"
+
+
+class TestFitProvenanceRewriteAudit:
+    PROVENANCE: ClassVar[list[dict[str, Any]]] = [
+        {
+            "coordinate": 0.0,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [4, 8, 8, 8],
+                "source_dtype": "uint16",
+                "source_bytes": 4096,
+                "source_voxels": 2048,
+                "time_seconds": 2.5,
+                "psnr_db": 40.0,
+            },
+        },
+        {
+            "coordinate": 1.0,
+            "fit_reference": {"kind": "acquisition"},
+            "fitting": {
+                "source_shape": [4, 8, 8, 8],
+                "source_dtype": "uint16",
+                "source_bytes": 4096,
+                "source_voxels": 2048,
+                "time_seconds": 3.5,
+                "psnr_db": 42.0,
+            },
+        },
+    ]
+    REWRITERS: ClassVar[dict[str, list[str]]] = {
+        "slice": ["gsplat", "slice", "{in}", "{out}", "0:4, :, :"],
+        "reencode": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
+        "partition": TestLODCarriesAuthoredAppearance.REWRITERS["partition"],
+        "lod": TestLODCarriesAuthoredAppearance.REWRITERS["lod:stream"],
+        "flatten": TestLODCarriesAuthoredAppearance.REWRITERS["flatten"],
+        "decimate": TestLODCarriesAuthoredAppearance.REWRITERS["decimate"],
+        "merge": TestLODCarriesAuthoredAppearance.REWRITERS["merge"],
+    }
+
+    @staticmethod
+    def _stamp_provenance(path: Path) -> None:
+        root = zc_open_group(path, mode="r+")
+        root.require_group("fitting").attrs["part_provenance"] = (
+            TestFitProvenanceRewriteAudit.PROVENANCE
+        )
+        zc_consolidate(root)
+
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "slice",
+            "reencode",
+            "partition",
+            "lod",
+            "flatten",
+            "decimate",
+            "merge",
+        ],
+    )
+    def test_rewriter_keeps_fit_provenance(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        label: str,
+    ) -> None:
+        self._stamp_provenance(medium_gsplats)
+        input_path = medium_gsplats
+        if label == "flatten":
+            input_path = tmp_path / "partitioned-input.gsplats.zarr"
+            partition = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "partition",
+                    str(medium_gsplats),
+                    str(input_path),
+                    "--parts",
+                    "2",
+                ],
+            )
+            assert partition.exit_code == 0, partition.stdout
+
+        out = tmp_path / f"provenance-{label}.gsplats.zarr"
+        argv = TestLODCarriesAuthoredAppearance._resolve(
+            self.REWRITERS[label], input_path, out, tmp_path
+        )
+
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
+        output = zc_open_group(out, mode="r")
+        provenance = output["fitting"].attrs["part_provenance"]
+        if label in {"reencode", "partition", "lod"}:
+            assert provenance == self.PROVENANCE
+        elif label == "flatten":
+            assert provenance == [
+                {
+                    "part_count": 2,
+                    "fit_reference": {"kind": "acquisition"},
+                    "fitting": {
+                        "source_shape": [4, 8, 8, 8],
+                        "source_dtype": "uint16",
+                        "source_bytes": 4096,
+                        "source_voxels": 2048,
+                        "time_seconds": 6.0,
+                    },
+                }
+            ]
+        elif label == "decimate":
+            assert [record["fitting"] for record in provenance] == [
+                {
+                    key: value
+                    for key, value in record["fitting"].items()
+                    if key != "psnr_db"
+                }
+                for record in self.PROVENANCE
+            ]
+        elif label == "slice":
+            assert [record["coordinate"] for record in provenance] == [0.0, 1.0]
+            assert all(
+                "source_bytes" not in record["fitting"]
+                and "psnr_db" not in record["fitting"]
+                for record in provenance
+            )
+            assert [record["fitting"]["source_dtype"] for record in provenance] == [
+                "uint16",
+                "uint16",
+            ]
+            assert [record["fitting"]["time_seconds"] for record in provenance] == [
+                2.5,
+                3.5,
+            ]
 
 
 class TestAdditiveCommand:
@@ -9123,6 +9468,85 @@ class TestReencode:
         assert _diag_dtype(out) == "uint8"
         assert _diag_dtype(out) != src_dtype  # the encoding actually changed
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            ["lod", "--recipe", "stream", "--n-lods", "3"],
+            ["additive", "-b", "stream:8"],
+            ["partition", "--parts", "3"],
+            ["decimate", "-f", "0.5"],
+            ["transform", "--scale", "2,2,2"],
+            ["reencode", "-e", "auto"],
+            ["filter", "--amplitude-min", "0"],
+            ["slice", ":, :, :"],
+            [
+                "cull",
+                "--method",
+                "redundancy",
+                "--shape",
+                "16,16,16",
+                "--device",
+                "cpu",
+            ],
+        ],
+        ids=lambda command: command[0],
+    )
+    def test_rewrites_preserve_source_matched_amplitudes(
+        self,
+        runner: CliRunner,
+        source_matched_gsplats: Path,
+        tmp_path: Path,
+        command: list[str],
+    ) -> None:
+        out = tmp_path / f"{command[0]}.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", command[0], str(source_matched_gsplats), str(out), *command[1:]],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        _assert_source_matched_amplitudes(out)
+
+    def test_reencode_float_source_keeps_uint16_amplitudes(
+        self, runner: CliRunner, source_matched_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        data = GSplatData.load(source_matched_gsplats, include_stats=True)
+        data.stats["source_dtype"] = "float32"
+        source = tmp_path / "float-source.gsplats.zarr"
+        data.save(source, amplitude_bits="auto")
+        out = tmp_path / "float-reencoded.gsplats.zarr"
+
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(source), str(out), "-e", "auto"]
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        arrays = _amplitude_arrays(out)
+        assert arrays
+        assert all(np.dtype(array.dtype) == np.dtype(np.uint16) for array in arrays)
+
+    def test_merge_preserves_source_matched_amplitudes(
+        self, runner: CliRunner, source_matched_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "merged.gsplats.zarr"
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "merge",
+                str(source_matched_gsplats),
+                str(source_matched_gsplats),
+                "-o",
+                str(out),
+            ],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        _assert_source_matched_amplitudes(out)
+
     def test_precision_encoding_yields_float32(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -9673,6 +10097,26 @@ class TestInfoSourceGridReportedOnce:
         assert "Source volume:" not in out
         assert "voxels_per_splat: 20000" in out.replace(",", "")
         assert "occupancy: 0.01" in out
+
+    def test_short_numeric_metadata_lists_are_printed_inline(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Small numeric vectors remain readable in the catch-all metadata dump."""
+        path, _ = self._stamped(
+            tmp_path,
+            fit_init_marginal_sigma_diag_vox_median=[0.7, 0.9, 1.1],
+            sigma_min_diag_vox=[0.3, 0.3, 0.3],
+            long_numeric_list=list(range(9)),
+            nested_list=[[1.0, 2.0]],
+        )
+        result = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        output = _plain(result.stdout)
+
+        assert "fit_init_marginal_sigma_diag_vox_median: [0.7, 0.9, 1.1]" in output
+        assert "sigma_min_diag_vox: [0.3, 0.3, 0.3]" in output
+        assert "long_numeric_list: list with 9 items" in output
+        assert "nested_list: list with 1 items" in output
 
 
 class TestInfoPartitionSize:

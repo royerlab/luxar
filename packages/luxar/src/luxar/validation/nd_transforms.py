@@ -13,6 +13,10 @@ from __future__ import annotations
 import warnings
 from typing import Any, Dict, List
 
+from ..typing_utils._format_contract import (
+    ND_TRANSFORM_AFFINE_KEYS,
+    ND_TRANSFORM_PERMUTATION_KEY,
+)
 from ..typing_utils.aliases import NdTransform, NdTransformEntry
 
 
@@ -103,8 +107,8 @@ def validate_nd_transform(
 
 def _validate_entry_structure(entry: Dict[str, Any], dim_name: str) -> None:
     """Validate entry structure without dimension context."""
-    has_affine = "scale" in entry or "offset" in entry
-    has_permutation = "permutation" in entry
+    has_affine = any(key in entry for key in ND_TRANSFORM_AFFINE_KEYS)
+    has_permutation = ND_TRANSFORM_PERMUTATION_KEY in entry
 
     if has_affine and has_permutation:
         raise ValueError(
@@ -131,8 +135,8 @@ def _validate_entry_for_domain(
     dim: Any,
 ) -> None:
     """Validate entry against dimension domain."""
-    has_affine = "scale" in entry or "offset" in entry
-    has_permutation = "permutation" in entry
+    has_affine = any(key in entry for key in ND_TRANSFORM_AFFINE_KEYS)
+    has_permutation = ND_TRANSFORM_PERMUTATION_KEY in entry
 
     if has_affine and has_permutation:
         raise ValueError(
@@ -186,7 +190,7 @@ def _validate_affine_params(entry: Dict[str, Any], dim_name: str) -> None:
         )
 
     # Reject unknown keys
-    valid_keys = {"scale", "offset"}
+    valid_keys = set(ND_TRANSFORM_AFFINE_KEYS)
     unknown = set(entry.keys()) - valid_keys
     if unknown:
         raise ValueError(

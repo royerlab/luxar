@@ -48,6 +48,7 @@ class BaseEncoderMixin:
         compressor: Optional[Any] = None,
         deduplicate: bool = True,
         allow_lut: bool = True,
+        positive_scalar_bits: Optional[Literal[8, 16]] = None,
         _perchannel_bits: Optional[int] = None,
     ) -> None:
         raise NotImplementedError
@@ -61,6 +62,7 @@ class BaseEncoderMixin:
         mode: EncodingMode,
         bounds: Optional[tuple[float, float]],
         positive_scalar_encoding: str,
+        positive_scalar_bits: Optional[int],
         custom_encoder: Optional[str],
         color_mode: Optional[str],
         chunks: Optional[tuple],

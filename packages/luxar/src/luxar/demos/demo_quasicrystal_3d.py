@@ -110,7 +110,18 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
+
+#: Subtitle under the title. Concise on purpose: what the points are, how they
+#: were made, what the colours mean.
+QUASICRYSTAL_SUBTITLE = (
+    "A 3D quasicrystal: the vertices of a 6D cubic lattice cut and projected "
+    "onto 3D along golden-ratio directions. The result never repeats yet has "
+    "long-range icosahedral order — the sharp lines are its fivefold symmetry "
+    "planes. Colour encodes where each point sat in the perpendicular 3D space "
+    "that did the selecting."
+)
 
 
 def create_icosahedral_projection_matrices():  # type: ignore[no-untyped-def]
@@ -343,6 +354,7 @@ def generate_quasicrystal_3d(
                 opacity=0.9,
                 intensity=0.125,
                 layer=True,
+                additive_lod=stream_ladder(len(positions_3d)),
             )
 
             # Overlay annotations
@@ -353,6 +365,18 @@ def generate_quasicrystal_3d(
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
+            )
+            # One-paragraph context (2026-09-10 review: the title and the
+            # corner caption said nothing about what the blob IS). Word-wrapped
+            # by `width`; no `\n` in a non-hover overlay.
+            scene.add_text(
+                QUASICRYSTAL_SUBTITLE,
+                position=(0.02, 0.10),
+                font_size=0.02,
+                anchor="top-left",
+                color="rgba(255,255,255,0.45)",
+                width=0.58,
+                line_height=1.35,
             )
             add_demo_caption(
                 scene, "Icosahedral aperiodic tiling", DEMO_META.get("citation")

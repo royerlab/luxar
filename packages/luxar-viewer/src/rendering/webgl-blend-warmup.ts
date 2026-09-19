@@ -42,7 +42,7 @@ type WarmupMaterial = THREE.Material & {
 
 /**
  * What the session warms against. A null renderer/camera/scene, a WebGPU
- * surface, or `?no-blend-warmup` all resolve to a disabled manager.
+ * surface, or `?noBlendWarmup` all resolve to a disabled manager.
  */
 export interface WarmupConfig {
   enabled: boolean;
@@ -789,7 +789,7 @@ const defaultManager = new WebGLBlendWarmupManager();
 /**
  * Point the session's warm-up at a renderer, camera and scene, and drop
  * whatever the previous configuration had pinned. Called once per renderer
- * setup; `enabled: false` (WebGPU, or `?no-blend-warmup`) makes every other
+ * setup; `enabled: false` (WebGPU, or `?noBlendWarmup`) makes every other
  * entry point below a no-op.
  */
 export function configureBlendModeProgramWarmup(config: WarmupConfig): void {

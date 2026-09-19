@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_4d_fractals.py"
+_CHECKER_PATH = Path(__file__).resolve().parents[6] / "scripts/check_demo_ladders.py"
 
 
 def _load_demo_module():
@@ -35,7 +36,18 @@ def _load_demo_module():
     return module
 
 
+def _load_checker_module():
+    name = "_luxar_check_demo_ladders_for_fractal_tests"
+    spec = importlib.util.spec_from_file_location(name, _CHECKER_PATH)
+    if spec is None or spec.loader is None:
+        pytest.skip(f"Could not locate ladder auditor at {_CHECKER_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 _demo = _load_demo_module()
+_checker = _load_checker_module()
 axis_world_values = _demo.axis_world_values
 generate_4d_fractal = _demo.generate_4d_fractal
 materialised_w_planes = _demo.materialised_w_planes
@@ -49,6 +61,10 @@ N_FRACTALS = 6
 # Precision assertions below use the shipped slider's fetch reach so the
 # coarser test grid cannot mask a production regression.
 PRODUCTION_FETCH_REACH = 0.25 * (_demo.W_STRIDE * 2.0 / _demo.GRID_SIZE_DEFAULT)
+
+
+def test_per_plane_budget_stays_below_ladder_audit_threshold() -> None:
+    assert _demo.TARGET_MAX_POINTS_PER_PLANE < _checker.DEFAULT_MIN_ELEMENTS
 
 
 class TestAxisWorldValues:
@@ -392,12 +408,16 @@ class TestWrittenDatasetContract:
         assert wdim["range"] == [float(axis[0]), float(axis[-1])]
         assert len(planes) > 2, "test grid too small to exercise the slider"
 
-        attrs = zarr.open_group(out, mode="r")["Fractals4D"].attrs
+        root = zarr.open_group(out, mode="r")
+        leaf = root["Fractals4D"]
+        attrs = leaf.attrs
+        assert attrs["type"] == "points"
         assert attrs["blending_mode"] == "volumetric"
         assert attrs["opacity"] == pytest.approx(0.43)
         assert attrs["absorption"] == pytest.approx(1.23)
         assert attrs["intensity"] == pytest.approx(1.0 / _demo.DISPLAY_MAX)
 
+        assert not list(leaf.group_keys())
         pos = scene.get_points("Fractals4D")["positions"]
         w = pos[:, 1]
         fractal_ids = pos[:, 0]

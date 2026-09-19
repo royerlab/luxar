@@ -25,6 +25,13 @@ from luxar.gsplats.merged_quality import (
     QUALITY_WORKERS_PER_HOST_ENV,
 )
 
+
+@pytest.fixture(autouse=True)
+def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.setenv("MKL_NUM_THREADS", "1")
+
+
 # ---------------------------------------------------------------------------
 # Device assignment (weighted round-robin)
 # ---------------------------------------------------------------------------
@@ -49,9 +56,30 @@ def test_assignment_single_gpu() -> None:
     assert build_device_assignment([0, 1, 2], {3: 2}) == {0: 3, 1: 3, 2: 3}
 
 
-def test_gpu_worker_env_carries_same_device_concurrency() -> None:
-    assert _worker_env(3, {3: 4}, 7) == {
-        "CUDA_VISIBLE_DEVICES": "3",
+@pytest.mark.parametrize(
+    ("parent_visible", "gpu", "expected"),
+    [
+        (None, 3, "3"),
+        ("", 3, "3"),
+        ("1", 0, "1"),
+        ("3,1", 1, "1"),
+        ("GPU-abc123,MIG-def456", 1, "MIG-def456"),
+        ("0", 3, "3"),
+    ],
+)
+def test_gpu_worker_env_maps_visible_index_to_parent_token(
+    monkeypatch: pytest.MonkeyPatch,
+    parent_visible: str | None,
+    gpu: int,
+    expected: str,
+) -> None:
+    if parent_visible is None:
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    else:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", parent_visible)
+
+    assert _worker_env(gpu, {gpu: 4}, 7) == {
+        "CUDA_VISIBLE_DEVICES": expected,
         QUALITY_WORKERS_PER_DEVICE_ENV: "4",
         QUALITY_WORKERS_PER_HOST_ENV: "7",
     }
@@ -59,6 +87,7 @@ def test_gpu_worker_env_carries_same_device_concurrency() -> None:
 
 def test_cpu_worker_env_carries_same_host_concurrency() -> None:
     assert _worker_env(-1, {-1: 8}, 8) == {
+        "CUDA_VISIBLE_DEVICES": "",
         QUALITY_WORKERS_PER_DEVICE_ENV: "8",
         QUALITY_WORKERS_PER_HOST_ENV: "8",
     }
@@ -429,7 +458,7 @@ def test_finalize_real_promotion_clears_stale_empty_marker(tmp_path: Path) -> No
     assert not Path(str(out) + ".empty").exists()
 
 
-def _plan_single_tile_manifest(tmp_path: Path):  # type: ignore[no-untyped-def]
+def _plan_single_tile_manifest(tmp_path: Path, n_t: int = 1):  # type: ignore[no-untyped-def]
     from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
@@ -439,7 +468,7 @@ def _plan_single_tile_manifest(tmp_path: Path):  # type: ignore[no-untyped-def]
     )
 
     src = tmp_path / "vol.zarr"
-    _make_4d_zarr(src, n_t=1)
+    _make_4d_zarr(src, n_t=n_t)
     out_dir = tmp_path / "out"
     manifest = plan_batch(
         input_path=src,
@@ -458,6 +487,122 @@ def _plan_single_tile_manifest(tmp_path: Path):  # type: ignore[no-untyped-def]
         merge_recipe_args={},
     ).manifest
     return manifest, out_dir
+
+
+def test_run_batch_local_reports_auto_worker_limit(tmp_path: Path, monkeypatch) -> None:
+    """The resolved host-wide count and limiter are visible before launch."""
+    from contextlib import contextmanager
+
+    import luxar.gsplats.batch.local_runner as lr
+    import luxar.gsplats.utils.device as device_mod
+
+    manifest, out_dir = _plan_single_tile_manifest(tmp_path, n_t=10)
+    sections: list[str] = []
+
+    @contextmanager
+    def _capture_section(title: str):
+        sections.append(title)
+        yield
+
+    monkeypatch.setattr(lr, "asection", _capture_section)
+    monkeypatch.setattr(lr, "run_task_pool", lambda *a, **k: [])
+    monkeypatch.setattr(
+        lr,
+        "merge_batch_results",
+        lambda **kw: out_dir / "merged" / "final.gsplats.zarr",
+    )
+    monkeypatch.setattr(
+        device_mod, "available_host_memory_bytes", lambda: 125 * 1024**3
+    )
+    monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 32)
+
+    lr.run_batch_local(
+        manifest,
+        out_dir,
+        gpus="cpu",
+        jobs_per_gpu="auto",
+        resume=False,
+        verbose=False,
+    )
+
+    assert sections[0] == (
+        "Local batch fit: 10/10 tasks on CPU, 8 concurrent worker(s), "
+        "limited by hard cap"
+    )
+
+
+def test_run_batch_local_reports_resolved_gpu_mapping(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Startup output and the worker env expose the physical CUDA token."""
+    import luxar.gsplats.batch.local_runner as lr
+    from luxar.gsplats.batch.task_pool import TaskResult
+    from luxar.gsplats.utils.device import WorkerAllocation
+
+    manifest, out_dir = _plan_single_tile_manifest(tmp_path)
+    output: list[str] = []
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    monkeypatch.setattr(lr, "resolve_gpu_selection", lambda spec: [0])
+    monkeypatch.setattr(
+        lr,
+        "resolve_jobs_per_gpu",
+        lambda *args, **kwargs: WorkerAllocation({0: 1}, "requested count"),
+    )
+    monkeypatch.setattr(lr, "_gpu_device_name", lambda gpu: "NVIDIA RTX 3070")
+    monkeypatch.setattr(lr, "aprint", lambda message: output.append(str(message)))
+
+    def _fake_pool(task_ids, *, env_builder, **kwargs):  # type: ignore[no-untyped-def]
+        assert env_builder(task_ids[0])["CUDA_VISIBLE_DEVICES"] == "1"
+        return [TaskResult(key=task_ids[0], returncode=1, output="stop")]
+
+    monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
+
+    with pytest.raises(RuntimeError, match="fit tasks failed"):
+        lr.run_batch_local(
+            manifest,
+            out_dir,
+            gpus="all",
+            jobs_per_gpu=1,
+            resume=False,
+            verbose=False,
+        )
+
+    assert output == ["visible index 0 -> CUDA_VISIBLE_DEVICES=1 (NVIDIA RTX 3070)"]
+
+
+def test_run_batch_local_cpu_forces_device_and_reports_hidden_cuda(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """CPU workers cannot fall through to CUDA or MPS device auto-selection."""
+    import luxar.gsplats.batch.local_runner as lr
+    from luxar.gsplats.batch.task_pool import TaskResult
+
+    manifest, out_dir = _plan_single_tile_manifest(tmp_path)
+    output: list[str] = []
+    monkeypatch.setattr(lr, "aprint", lambda message: output.append(str(message)))
+
+    def _fake_pool(  # type: ignore[no-untyped-def]
+        task_ids, *, argv_builder, env_builder, **kwargs
+    ):
+        task_id = task_ids[0]
+        argv = argv_builder(task_id)
+        assert argv[-2:] == ["--device", "cpu"]
+        assert env_builder(task_id)["CUDA_VISIBLE_DEVICES"] == ""
+        return [TaskResult(key=task_id, returncode=1, output="stop")]
+
+    monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
+
+    with pytest.raises(RuntimeError, match="fit tasks failed"):
+        lr.run_batch_local(
+            manifest,
+            out_dir,
+            gpus="cpu",
+            jobs_per_gpu=1,
+            resume=False,
+            verbose=False,
+        )
+
+    assert output == ["CUDA hidden from workers; fit device forced to CPU"]
 
 
 def test_no_resume_replaces_stale_output_only_after_successful_refit(

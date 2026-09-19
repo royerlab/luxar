@@ -46,7 +46,7 @@ from .group import (
     resolve_additive_axis,
 )
 from .poisson_disk import poisson_disk_order
-from .reveal import radial_element_score, resolve_reveal_centre
+from .reveal import radial_element_score, resolve_reveal_center
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
@@ -58,6 +58,35 @@ LinesMethodName = Literal[
 # ``resolve_additive_axis_lines`` always agree.
 DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
 DEFAULT_METHOD: LinesMethodName = DEFAULT_ADDITIVE_METHOD
+
+
+def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float], str]:
+    """Pop and validate the Lines-only substitutive representation keys."""
+    from .group import resolve_same_type_representation
+
+    return resolve_same_type_representation(
+        kwargs,
+        geometry="Lines",
+        same_type="lines",
+        inapplicable_reasons={
+            "truncation_radius": (
+                "it controls stored Gaussian footprints; same-type line levels "
+                "store Lines and use a fixed lift only for quality measurement"
+            ),
+            "max_aspect": (
+                "it caps anisotropy on merged Gaussian levels, and same-type "
+                "line levels contain no Gaussians"
+            ),
+            "device": (
+                "it selects where Gaussian clustering runs; same-type line "
+                "levels use the CPU sampler and a CPU-pinned quality estimate"
+            ),
+            "coarsen_dims": (
+                "it selects Gaussian merge dimensions, and same-type line "
+                "levels preserve discrete hidden coordinates automatically"
+            ),
+        },
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -303,7 +332,7 @@ def _validate_indexed_ladder_edges(
 # ─────────────────────────────────────────────────────────────────────
 
 
-def polyline_bbox_centres(
+def polyline_bbox_centers(
     vertices: NDArray,
     polylines: List[NDArray[np.intp]],
     ncols: Optional[int] = None,
@@ -332,8 +361,9 @@ def compute_additive_order_lines(
     method: LinesMethodName = DEFAULT_METHOD,
     n_lods: int = DEFAULT_N_LODS,
     seed: Optional[int] = None,
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
+    indices: Optional[NDArray] = None,
 ) -> Tuple[NDArray[np.intp], List[int]]:
     """Compute an additive ordering permutation over **polylines** (not vertices).
 
@@ -346,7 +376,7 @@ def compute_additive_order_lines(
             ``poisson-disk`` / ``radial``.
         n_lods: Consulted only by ``spatial-uniform`` / ``poisson-disk``.
         seed: For ``random``.
-        reveal_centre: ``radial`` only — centre of the shells, defaulting to the
+        reveal_center: ``radial`` only — centre of the shells, defaulting to the
             spatial bounding-box centre of ``vertices`` (the node's own middle —
             NOT of the polyline representatives, whose bounding box weighs a
             long polyline and a short one equally).
@@ -354,6 +384,9 @@ def compute_additive_order_lines(
             defaulting to the columns with non-zero extent (which drops a
             *constant* time/channel column but not a *stacked* one — see
             :func:`~luxar.core.group.lod.reveal.radial_element_score`).
+        indices: Authored ``indexed`` edges. When provided, ``salience`` measures
+            component length over these edges instead of consecutive component
+            vertices.
 
     Returns:
         ``(polyline_permutation, per_level_polyline_counts)``. The
@@ -373,19 +406,27 @@ def compute_additive_order_lines(
     if method == "salience":
         if widths is None:
             raise ValueError("salience ordering requires per-vertex widths; got None")
-        score = np.empty(p, dtype=np.float64)
-        for i, members in enumerate(polylines):
-            if members.size < 2:
-                # Length-0 segment (degenerate): use width alone.
-                score[i] = float(widths[members].max()) if members.size else 0.0
-                continue
-            # Polyline length = sum of consecutive vertex distances. For
-            # segments-type pairs this is just the single segment length.
-            pts = vertices[members, :3].astype(np.float64)
-            seg_lens = np.linalg.norm(pts[1:] - pts[:-1], axis=1)
-            total_len = float(seg_lens.sum())
-            max_w = float(widths[members].max())
-            score[i] = total_len * max_w
+        starts, ends, owners = _polyline_segment_rows(
+            polylines, indices=indices, n_vertices=vertices.shape[0]
+        )
+        segment_lengths = np.linalg.norm(
+            vertices[ends, :3].astype(np.float64)
+            - vertices[starts, :3].astype(np.float64),
+            axis=1,
+        )
+        total_lengths = np.bincount(
+            owners, weights=segment_lengths, minlength=p
+        ).astype(np.float64, copy=False)
+        edge_counts = np.bincount(owners, minlength=p)
+        max_widths = np.array(
+            [
+                float(widths[members].max()) if members.size else 0.0
+                for members in polylines
+            ],
+            dtype=np.float64,
+        )
+        score = total_lengths * max_widths
+        score[edge_counts == 0] = max_widths[edge_counts == 0]
         perm = np.argsort(-score, kind="stable").astype(np.intp)
         return perm, []
 
@@ -395,7 +436,7 @@ def compute_additive_order_lines(
                 f"{method} ordering needs vertices with d >= 3; "
                 f"got shape {vertices.shape}"
             )
-        reps = polyline_bbox_centres(vertices, polylines, ncols=3)
+        reps = polyline_bbox_centers(vertices, polylines, ncols=3)
         if method == "poisson-disk":
             return poisson_disk_order(reps, n_lods, seed=seed or 0)
         return stratified_grid_order(reps, n_lods)
@@ -416,12 +457,12 @@ def compute_additive_order_lines(
         # The default centre comes from `vertices`, the NODE's own bbox — not
         # from the bbox of `reps`, in which a long polyline and a short one weigh
         # the same and pull the origin off the geometry's middle.
-        reps = polyline_bbox_centres(vertices, polylines)
+        reps = polyline_bbox_centers(vertices, polylines)
         return (
             np.argsort(
                 radial_element_score(
                     reps,
-                    resolve_reveal_centre(reveal_centre, vertices, reps, spatial_dims),
+                    resolve_reveal_center(reveal_center, vertices, reps, spatial_dims),
                     spatial_dims,
                 ),
                 kind="stable",
@@ -512,6 +553,118 @@ def compute_lines_energy(
     return out
 
 
+def _polyline_segment_rows(
+    polylines: List[NDArray[np.intp]],
+    *,
+    indices: Optional[NDArray],
+    n_vertices: int,
+) -> tuple[NDArray[np.intp], NDArray[np.intp], NDArray[np.intp]]:
+    """Return segment endpoint rows and their owning polyline ids."""
+    if indices is not None:
+        edges = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+        vertex_owners = np.full(n_vertices, -1, dtype=np.intp)
+        for owner, members in enumerate(polylines):
+            vertex_owners[members] = owner
+        owners = vertex_owners[edges[:, 0]]
+        included = owners >= 0
+        if not np.any(included):
+            empty = np.empty(0, dtype=np.intp)
+            return empty, empty, empty
+        selected_edges = edges[included]
+        selected_owners = owners[included]
+        if np.any(vertex_owners[selected_edges[:, 1]] != selected_owners):
+            raise ValueError("indexed edges must stay within one polyline component")
+        return selected_edges[:, 0], selected_edges[:, 1], selected_owners
+
+    lengths = np.fromiter((members.size for members in polylines), dtype=np.intp)
+    flat_members = np.concatenate(polylines).astype(np.intp, copy=False)
+    if flat_members.size < 2:
+        empty = np.empty(0, dtype=np.intp)
+        return empty, empty, empty
+    adjacent = np.ones(flat_members.size - 1, dtype=bool)
+    boundaries = np.cumsum(lengths, dtype=np.intp)[:-1] - 1
+    boundaries = boundaries[(boundaries >= 0) & (boundaries < adjacent.size)]
+    adjacent[boundaries] = False
+    starts = flat_members[:-1][adjacent]
+    ends = flat_members[1:][adjacent]
+    owners = np.repeat(
+        np.arange(len(polylines), dtype=np.intp), np.maximum(lengths - 1, 0)
+    )
+    return starts, ends, owners
+
+
+def compute_lines_light_integral(
+    vertices: NDArray,
+    polylines: List[NDArray[np.intp]],
+    widths: NDArray,
+    colors: Optional[NDArray],
+    indices: Optional[NDArray] = None,
+) -> NDArray[np.float64]:
+    """Per-polyline screen-light integral ``Σ(length × width × luminance)``.
+
+    ``indices`` supplies the authored edge multiset for indexed components;
+    otherwise consecutive polyline members define the segments.
+    """
+    if not polylines:
+        return np.empty(0, dtype=np.float64)
+    pts3 = vertices[:, :3].astype(np.float64, copy=False)
+    vertex_widths = np.asarray(widths, dtype=np.float64)
+    vertex_luminance = (
+        np.ones(vertices.shape[0], dtype=np.float64)
+        if colors is None
+        else np.asarray(colors, dtype=np.float64)[:, :3]
+        @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
+    )
+    starts, ends, owners = _polyline_segment_rows(
+        polylines, indices=indices, n_vertices=vertices.shape[0]
+    )
+    if starts.size == 0:
+        return np.zeros(len(polylines), dtype=np.float64)
+    segment_lengths = np.linalg.norm(pts3[ends] - pts3[starts], axis=1)
+    segment_widths = 0.5 * (vertex_widths[ends] + vertex_widths[starts])
+    segment_luminance = 0.5 * (vertex_luminance[ends] + vertex_luminance[starts])
+    return np.bincount(
+        owners,
+        weights=segment_lengths * segment_widths * segment_luminance,
+        minlength=len(polylines),
+    ).astype(np.float64, copy=False)
+
+
+def _energy_string_polyline_cuts(
+    counts: str,
+    energy: NDArray[np.float64],
+    perm: NDArray[np.intp],
+    polylines: List[NDArray[np.intp]],
+) -> List[int]:
+    """Polyline-count cuts for the two energy-based string specs.
+
+    ``energy:<fractions>`` → cumulative energy fractions (shared with Points);
+    ``equi-energy:<n>`` → equal shares of cumulative polyline energy along the
+    order, with the commit cap measured in VERTICES (the payload currency, as
+    for ``stream:``). Any other string is refused naming all three vocabularies.
+    """
+    if counts.startswith("equi-energy:"):
+        from ....utils.lod_breakpoints import equi_energy_cuts, parse_equi_energy_rungs
+
+        poly_lengths = [int(polylines[int(i)].shape[0]) for i in perm]
+        return equi_energy_cuts(
+            np.asarray(energy, dtype=np.float64)[perm],
+            parse_equi_energy_rungs(counts),
+            weights=poly_lengths,
+        )
+    if not counts.startswith("energy:"):
+        raise ValueError(
+            f"unrecognized breakpoints string {counts!r}; expected "
+            "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0'), "
+            "'equi-energy:<n>' (e.g. 'equi-energy:4') or "
+            "'stream:<c>' (e.g. 'stream:40000')"
+        )
+    from .points import _energy_breakpoints_to_counts  # shared helper
+
+    fracs = [float(s) for s in counts[len("energy:") :].split(",") if s.strip()]
+    return _energy_breakpoints_to_counts(energy, perm, fracs)
+
+
 def make_additive_lod_lines(
     vertices: NDArray,
     *,
@@ -525,7 +678,7 @@ def make_additive_lod_lines(
     colors: Optional[NDArray] = None,
     scalars: Optional[NDArray] = None,
     salience_kind: Literal["size", "energy"] = "size",
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> List[List[NDArray[np.intp]]]:
     """Compute per-LOD-level polyline groupings for Lines.
@@ -550,7 +703,7 @@ def make_additive_lod_lines(
           count (along the additive order) reaches it, so cuts stay on
           whole-polyline boundaries while honouring the vertex budget even when
           polyline lengths are highly skewed.
-        reveal_centre: For ``method='radial'`` — centre of the concentric
+        reveal_center: For ``method='radial'`` — centre of the concentric
             shells, defaulting to the node's own vertex bounding-box centre.
         spatial_dims: For ``method='radial'`` — the vertex columns the shell
             distance is measured over, defaulting to the columns with non-zero
@@ -602,7 +755,7 @@ def make_additive_lod_lines(
             method=method,
             n_lods=n_lods,
             seed=seed,
-            reveal_centre=reveal_centre,
+            reveal_center=reveal_center,
             spatial_dims=spatial_dims,
         )
 
@@ -621,7 +774,11 @@ def make_additive_lod_lines(
         return out
 
     # random / salience: slice the polyline permutation by breakpoints.
-    if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
+    if (
+        isinstance(counts, str)
+        and counts.startswith(("energy:", "equi-energy:"))
+        and energy is None
+    ):
         energy = compute_lines_energy(vertices, polylines, widths, colors, scalars)
 
     if isinstance(counts, str) and counts.startswith("stream:"):
@@ -650,19 +807,9 @@ def make_additive_lod_lines(
             if bp > (breakpoints[-1] if breakpoints else 0):
                 breakpoints.append(bp)
     elif isinstance(counts, str):
-        # Energy: fractions → cumulative counts (over polylines).
-        from .points import _energy_breakpoints_to_counts  # shared helper
-
-        if not counts.startswith("energy:"):
-            raise ValueError(
-                f"unrecognized breakpoints string {counts!r}; expected "
-                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0') or "
-                "'stream:<c>' (e.g. 'stream:40000')"
-            )
         if energy is None:
             energy = compute_lines_energy(vertices, polylines, widths, colors, scalars)
-        fracs = [float(s) for s in counts[len("energy:") :].split(",") if s.strip()]
-        breakpoints = _energy_breakpoints_to_counts(energy, perm, fracs)
+        breakpoints = _energy_string_polyline_cuts(counts, energy, perm, polylines)
     elif counts is not None:
         breakpoints = _validate_counts(counts, p)
     else:
@@ -729,11 +876,9 @@ LinesAdditiveSpec = Union[None, bool, dict]
 def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
     """Translate the ``substitutive_lod=`` kwarg value into a normalized dict.
 
-    The substitutive axis coarsens a line set by **synthesising gsplats**: each
-    segment is lifted to a string of isotropic "bead" Gaussians (view-independent,
-    summing to a smooth tube) and the gsplat substitutive pipeline builds
-    fewer-but-larger representative levels, which become the coarse levels of a
-    lines LOD ladder (the finest level stays the original Lines node).
+    The default coarsens by **synthesising gsplats**. ``coarse="lines"`` instead
+    writes seeded whole-polyline subsamples, with explicit blending-aware width
+    compensation, while keeping the finest level as the original Lines node.
 
     Thin wrapper over the shared
     :func:`luxar.core.group.lod.group.resolve_substitutive_axis` (one
@@ -742,4 +887,23 @@ def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
     """
     from .group import resolve_substitutive_axis
 
-    return resolve_substitutive_axis(spec, "Lines")
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        spec = {}
+    if not isinstance(spec, dict):
+        return resolve_substitutive_axis(spec, "Lines")
+
+    kwargs = dict(spec)
+    coarse, brightness, representation_method = _resolve_lines_representation(kwargs)
+    resolved = resolve_substitutive_axis(
+        kwargs,
+        "Lines",
+        extra_valid_keys=("coarse", "brightness_compensation"),
+    )
+    assert resolved is not None
+    resolved["coarse"] = coarse
+    resolved["brightness_compensation"] = brightness
+    if coarse == "lines":
+        resolved["method"] = representation_method
+    return resolved

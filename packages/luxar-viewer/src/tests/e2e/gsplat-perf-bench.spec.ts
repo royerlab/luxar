@@ -1109,11 +1109,11 @@ async function measureZarrLadderScenario(
     };
     requestAnimationFrame(tick);
   });
-  // `clear-cache` pins the ladder to a COLD load every run: OPFS/L2 cache
+  // `?clearCache` pins the ladder to a COLD load every run: OPFS/L2 cache
   // state otherwise swings the load pacing several-fold between runs
   // (measured 2.7s vs 14.4s wall on the same box), drowning any
   // before/after comparison of load-window frame stats.
-  await page.goto(`/?src=${scn.url}&renderer=${BACKEND}&debug&dpr=1&clear-cache`, {
+  await page.goto(`/?src=${scn.url}&renderer=${BACKEND}&debug&dpr=1&clearCache`, {
     timeout: 300_000,
   });
   await waitForLuxarReady(page, 120_000);

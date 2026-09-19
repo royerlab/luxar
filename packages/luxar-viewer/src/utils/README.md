@@ -198,7 +198,7 @@ Dependency-inverted UI notification surface so lower layers can surface user-vis
 
 ### input-capabilities.ts - Input / Device Capability Profile
 
-The single answer to "is this a touch-first device, is it an iPhone or an iPad, can its pointer hover?" for every JS-side touch adaptation (gesture routing, long-press menus, mobile rendering budgets, tap-oriented copy). Deliberately import-free so leaf modules such as `rendering/pixel-ratio-cap.ts` can depend on it without joining an import cycle. CSS adaptations do **not** go through here — they use the `(pointer: coarse)` / `(hover: none)` media features directly.
+The single answer to "is this a touch-first device, is it an iPhone or an iPad, can its pointer hover?" for every JS-side touch adaptation (gesture routing, long-press menus, mobile rendering budgets, tap-oriented copy). Deliberately import-free so leaf modules such as `rendering/pixel-ratio-cap.ts` can depend on it without joining an import cycle. CSS adaptations do **not** go through here — they use the `(pointer: coarse)` / `(any-hover: none)` media features directly.
 
 - `getInputProfile()` — memoised `InputProfile`: `coarsePointer` (primary pointer is a finger), `hoverCapable` (`(any-hover: hover)` OR a fine primary pointer — an iPad with a trackpad keeps hover tooltips), `touchPoints`, `isIPhone`, `isIPad` (real iPad UA OR `platform` starts `Mac` with `maxTouchPoints > 1` — iPadOS Safari reports a Macintosh UA by default), `isIOS`, `isAndroid`, `deviceClass` (`mobile | laptop | desktop`, the budget tier `cache/heap-budget.ts` sizes the cache pool from), `source`. Re-derived when the pointer media queries fire `change` (trackpad attach, DevTools emulation).
 - `setInputProfileOverride('touch' | 'mouse' | null)` — the `?input=` URL override, applied once in `core/bootstrap.ts` before anything reads the profile. `touch` = bare phone/tablet (coarse, no hover, `mobile` tier); `mouse` = fine, hover-capable profile while keeping the detected memory tier — the tier is the operative WebKit cache budget, and the override is pointer-only. Platform flags stay detected in both modes (they gate WebKit workarounds that remain true). JS-only: stylesheets and per-event gesture routing still follow the real media features and `PointerEvent.pointerType`.
@@ -234,6 +234,8 @@ Single source of truth for every `localStorage` key the viewer touches. Keys are
 - `StorageKeys.theme` — Active theme id (`'dark' | 'light' | 'frosted-glass' | 'liquid-glass'`)
 - `StorageKeys.debug` — Persisted debug-mode toggle (mirrors `?debug` URL param)
 - `StorageKeys.settings` — Global viewer preferences (`'luxar.settings'`, the Settings popover; see `config/user-settings.ts`)
+- `StorageKeys.audio` — Listener audio preferences (`'luxar.audio'`; see `audio/audio-prefs.ts`)
+- `StorageKeys.controlRailHintDismissed` / `StorageKeys.controlRailCollapsed` — Control-rail first-run hint + collapsed state (`'luxar.controlRail.*'`; see `ui/control-rail.ts`)
 - `StorageKeys.rendering(sceneId)` — Per-scene rendering settings; segment is sanitized to `[a-zA-Z0-9-_]`
 
 ### viewer-container.ts - Mount-Root Registry

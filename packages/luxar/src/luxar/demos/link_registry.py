@@ -77,6 +77,7 @@ CANONICAL_LINKS_BY_HOST = {
         {
             "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
             "https://www.uniprot.org/uniprotkb?query={hover_key}",
+            "https://www.uniprot.org/uniref?query={hover_key}",
         }
     ),
     "www.youtube.com": frozenset(

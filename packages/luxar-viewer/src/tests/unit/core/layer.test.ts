@@ -163,8 +163,10 @@ vi.mock('../../../rendering/renderer-capabilities', () => ({
   isWebGLRenderer: (renderer: { isWebGLRenderer?: boolean }) => renderer.isWebGLRenderer === true,
 }));
 const reduceGpuByteBudgetForContextLoss = vi.fn();
+const initializeGpuByteBudget = vi.fn();
 vi.mock('../../../rendering/gpu-byte-budget', () => ({
   getGpuByteBudget: () => 1024,
+  initializeGpuByteBudget: (...args: unknown[]) => initializeGpuByteBudget(...args),
   reduceGpuByteBudgetForContextLoss: () => reduceGpuByteBudgetForContextLoss(),
 }));
 
@@ -240,6 +242,24 @@ describe('LuxarLayer', () => {
   });
 
   describe('construction', () => {
+    it('uses the configured default when gpuPoolMaxBytes is omitted', () => {
+      new LuxarLayer(makeOptions());
+
+      expect(initializeGpuByteBudget).toHaveBeenCalledWith(undefined);
+    });
+
+    it.each([0, 640_000_000])(
+      'configures GPU byte budget %s before installing the LOD registry',
+      (gpuPoolMaxBytes) => {
+        new LuxarLayer(makeOptions({ gpuPoolMaxBytes }));
+
+        expect(initializeGpuByteBudget).toHaveBeenCalledWith(gpuPoolMaxBytes);
+        expect(initializeGpuByteBudget.mock.invocationCallOrder[0]).toBeLessThan(
+          setLODGroupRegistryFactory.mock.invocationCallOrder[0]
+        );
+      }
+    );
+
     it('pushes renderer capabilities into materials before any node can be built', () => {
       new LuxarLayer(makeOptions());
       expect(setCaps).toHaveBeenCalledTimes(1);
@@ -368,7 +388,9 @@ describe('LuxarLayer', () => {
           'getDisplayDims',
           'getEnergyCompEnabled',
           'getForceFinestLOD',
+          'getLodBias',
           'hasArchiveFault',
+          'hasNetworkFailureUnder',
           'isUpdateInProgress',
           'getResidentByteBudget',
           'getResidentBytes',
@@ -411,18 +433,22 @@ describe('LuxarLayer', () => {
     });
 
     it('threads the LOD flags through to the registry', () => {
-      new LuxarLayer(makeOptions({ lodFade: false, lodEnergyComp: false, lodFinest: true }));
+      new LuxarLayer(
+        makeOptions({ lodFade: false, lodEnergyComp: false, lodFinest: true, lodBias: 4 })
+      );
       const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
         deps: {
           getCrossFadeEnabled: () => boolean;
           getEnergyCompEnabled: () => boolean;
           getForceFinestLOD: () => boolean;
+          getLodBias: () => number;
         };
       };
       const { deps } = factory({ currentViewVersion: 1 });
       expect(deps.getCrossFadeEnabled()).toBe(false);
       expect(deps.getEnergyCompEnabled()).toBe(false);
       expect(deps.getForceFinestLOD()).toBe(true);
+      expect(deps.getLodBias()).toBe(4);
     });
   });
 

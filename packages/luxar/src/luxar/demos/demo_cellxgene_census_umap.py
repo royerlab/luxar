@@ -82,6 +82,7 @@ from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
     require_local_data,
+    stamp_input_digests,
 )
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._support._umap_utils import attribute_to_color
@@ -228,6 +229,7 @@ def build_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
+            stamp_input_digests(scene)
             scene.add_points(
                 "cells",
                 positions,
@@ -272,26 +274,30 @@ def build_scene(
                 # NB volumetric implies back-to-front depth sorting
                 # (`needsDepthSort`), which this level's ~1M drawn points now
                 # pay per camera move; `?depthSort=0` opts out.
-                # `intensity` here is the Layers panel's DISPLAY RANGE control,
+                # `intensity` here is the Layers panel's COLOUR RANGE control,
                 # which is STORED as intensity/offset (intensity = 1/(max-min),
-                # offset = -min/(max-min)) — so 4.52 is the window [0, 0.221].
-                # On this direct-colour node the shader then applies it as a
-                # plain colour gain; it only becomes a scalar-LUT window on
-                # colormapped nodes. The previous [0, 2.361] was BOTH an
-                # attenuation (a max above 1 cuts, here to 0.42x) and, even
-                # undone, still ~4.5x short of a readable cloud — so of the
-                # 10.7x total change only 2.36x undoes the cut (#1375).
-                opacity=0.39,
-                intensity=4.52,
-                # Was 6.5. That figure was chosen as "deliberately heavy
-                # because the screening is what gives the lobes depth", and it
-                # overshot: at kappa=6.5 a single cell absorbs 0.92 of what is
-                # behind it and its own self-screening S(tau)=0.36 eats most of
-                # its emission, so the cloud reads as a shell with its interior
-                # screened out rather than as depth-ordered structure. 2.12
-                # keeps the near-absorbs-far cue that made volumetric worth
-                # choosing while letting more of each cell's emission survive.
-                absorption=2.12,
+                # offset = -min/(max-min)) — so 1/0.213 is the window
+                # [0, 0.213]. On this direct-colour node the shader then
+                # applies it as a plain colour gain; it only becomes a
+                # scalar-LUT window on colormapped nodes. The original
+                # [0, 2.361] was BOTH an attenuation (a max above 1 cuts, here
+                # to 0.42x) and, even undone, still ~4.5x short of a readable
+                # cloud (#1375).
+                #
+                # Re-tuned by hand in the hosted viewer's Layers panel
+                # (2026-09-10), the four compositing knobs together: colour
+                # range 0 – 0.213, gamma 1.05, opacity 0.06, absorption 10.0.
+                # Absorption and opacity are a coupled pair under volumetric
+                # compositing — a high kappa is what makes the near lobes
+                # screen the far ones so the UMAP reads as a solid, and the
+                # low per-cell opacity is what stops that screening from
+                # turning the cloud into an opaque shell. The previous
+                # 0.39 / 2.12 pair rendered the cloud as a translucent haze
+                # with little depth ordering.
+                opacity=0.06,
+                intensity=1.0 / 0.213,
+                gamma=1.05,
+                absorption=10.0,
                 blending_mode="volumetric",
                 # Expose the single cells node in the viewer's Layers panel.
                 # This rides onto the multi-LOD wrapper (not the per-rung

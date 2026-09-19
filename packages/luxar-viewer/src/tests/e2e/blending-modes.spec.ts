@@ -89,11 +89,11 @@ test.describe('Blending Modes', () => {
   test.slow();
 
   test('should load dataset with initial blending modes from zarr metadata', async ({ page }) => {
-    // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
+    // `&noOpfs` on every load: this spec never asserts the L2 OPFS tier, and
     // automated Chromium's OPFS stalls systemically (10s per op — issue #1645),
     // starving scene readiness past the test budget. The circuit breaker only
     // helps un-flagged real sessions (it still pays ~3 timeouts per fresh page).
-    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
 
@@ -130,7 +130,7 @@ test.describe('Blending Modes', () => {
     // Deterministic fixture: test_points_blending_modes carries one layer
     // per mode, so BOTH additive and normal MUST exist (no silent
     // if-guards — a fixture regression fails loudly here).
-    await page.goto(`/?src=${POINTS_BLENDING_FIXTURE}&debug&no-opfs`);
+    await page.goto(`/?src=${POINTS_BLENDING_FIXTURE}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
 
@@ -150,7 +150,7 @@ test.describe('Blending Modes', () => {
   });
 
   test('should render without WebGL errors for all blending modes', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
 
@@ -170,7 +170,7 @@ test.describe('Blending Modes', () => {
   test('should handle multiple point clouds with different blending modes simultaneously', async ({
     page,
   }) => {
-    await page.goto(`/?src=${MULTI_DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${MULTI_DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
 
@@ -198,7 +198,7 @@ test.describe('Blending Modes', () => {
   });
 
   test('@visual visual regression: scene renders with blending applied', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${DATASET}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
     await waitForNextRender(page, 5);
@@ -238,7 +238,7 @@ test.describe('Points blending modes (per-mode material state)', () => {
   test('each points_<mode> layer carries the exact per-mode THREE blend state', async ({
     page,
   }) => {
-    await page.goto(`/?src=${POINTS_BLENDING_FIXTURE}&debug&no-opfs`);
+    await page.goto(`/?src=${POINTS_BLENDING_FIXTURE}&debug&noOpfs`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
 

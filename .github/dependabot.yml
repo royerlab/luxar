@@ -17,6 +17,17 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     target-branch: "dev"
+    # Keep this aligned with .nvmrc; check:node-types enforces the #2519 contract.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
+      # Dependabot cannot update the peer runtime; check:three-types enforces the
+      # THREE_VERSION_NOTES.md coupling while declaration patch updates stay automated.
+      - dependency-name: "@types/three"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
 
   # Rust / WASM acceleration crate
   - package-ecosystem: cargo

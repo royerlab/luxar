@@ -210,3 +210,20 @@ def test_the_dead_validation_module_alias_is_gone() -> None:
         "`luxar.validation` being bound to validation/base.py. Bind the "
         "subpackage itself instead."
     )
+
+
+def test_luxar_validation_is_the_package_and_resolves_validation_error() -> None:
+    """The two facts a caller relies on, stated directly.
+
+    ``luxar.validation`` must be the very module object ``importlib`` returns for
+    that dotted path (not a rebind of ``validation/base.py``), and the error
+    class users catch must be reachable through it — ``validation/__init__.py``
+    re-exports it, so this fails only if the binding regresses.
+    """
+    import importlib
+
+    assert luxar.validation is importlib.import_module("luxar.validation")
+    assert (
+        luxar.validation.ValidationError
+        is importlib.import_module("luxar.validation.base").ValidationError
+    )

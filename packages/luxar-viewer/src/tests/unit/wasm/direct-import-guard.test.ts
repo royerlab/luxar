@@ -27,9 +27,9 @@ const THIS_FILE = resolve(fileURLToPath(import.meta.url));
 /** `packages/luxar-viewer` — this file lives at src/tests/unit/wasm/. */
 const PACKAGE_ROOT = resolve(THIS_FILE, '../../../../..');
 /**
- * TypeScript roots of the viewer package. `src/` is not enough: `tools/` is in
- * `tsconfig.json`'s `include` alongside it and `scripts/` holds executable TS,
- * so a loader added in either would be invisible. A missing root is skipped.
+ * TypeScript roots of the viewer package. `src/` is not enough: `tools/` and
+ * `scripts/` hold executable TS covered by `tsconfig.tooling.json`, so a loader
+ * added in either would be invisible. A missing root is skipped.
  */
 const SCAN_ROOTS = ['src', 'tools', 'scripts'];
 

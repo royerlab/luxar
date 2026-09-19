@@ -91,7 +91,7 @@ export const OPFS_ENCODING_VERSION = 2;
  * Snapshot returned by `MultiLevelCachingStore.getStats()`. Aggregates
  * the L1 segmented-LRU stats, the L2 OPFS stats, network counters,
  * per-tier demand-hit counters, cache health (validation mode + OPFS
- * availability), and the `?clear-cache` invocation counter.
+ * availability), and the `?clearCache` invocation counter.
  *
  * Consumed by the data-loading monitor, the debug overlay, and the
  * cache E2E suite.
@@ -104,6 +104,10 @@ export interface MultiLevelCacheStats {
     reads: number;
     writes: number;
     misses: number;
+    /** Reads canceled before filesystem I/O; excluded from the hit-rate denominator. */
+    canceledReads: number;
+    activeReads: number;
+    queuedReads: number;
     /** Configured byte budget (fixed OPFS/disk cap). */
     maxSize?: number;
     oversizedWriteSkipped?: number;
@@ -178,7 +182,7 @@ export interface MultiLevelCacheStats {
     opfsAvailable: boolean;
   };
   /**
-   * S4: number of times `?clear-cache` triggered a clearAll on init
+   * S4: number of times `?clearCache` triggered a clearAll on init
    * for this store. Increments at most once per store lifetime today
    * but typed as a counter so future re-init paths stay observable.
    */

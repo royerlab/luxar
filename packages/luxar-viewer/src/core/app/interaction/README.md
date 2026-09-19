@@ -37,6 +37,15 @@ two-finger pinch as page zoom and the orbit controls' touch handlers never run. 
 standalone page declares the same in `styles/base/layout.css` (`#app`); a
 `LuxarLayer` host owns its canvas and sets `touch-action` itself.
 
+## Context-menu ownership
+
+`context-menu-ownership.ts` — `installContextMenuOwnership(canvas, events)`,
+also installed by `LuxarApp.init()`. A capture-phase listener suppresses the
+native menu on the canvas and viewer-mounted DOM, including overlays that
+WebKit targets instead of the canvas. Typing surfaces, and selected text or a
+link in an interactive overlay, retain their native menu, and universal
+ancestors do not claim an embedder's sibling DOM.
+
 ## File Structure
 
 ```
@@ -45,6 +54,7 @@ interaction/
 ├── element-actions.ts        # attrs → safe URL + copy string (pure)
 ├── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
 ├── canvas-gesture-ownership.ts # touch-action / callout stamp + Safari gesture cancel
+├── context-menu-ownership.ts # delegated native-menu suppression on viewer DOM
 └── double-tap-to-fit.ts      # touch double-tap → re-frame; app-lifetime, picking-free
 ```
 
@@ -140,7 +150,7 @@ without opening a real popup.
 The keyboard path arrives as a `luxar-open-element-menu` window event, because
 the Shift+F10 / ContextMenu binding is registered once for the app's lifetime
 while these listeners are rebuilt on every dataset load — the same decoupling
-`open-dataset-browser` uses.
+`luxar-open-dataset-browser` (`OPEN_DATASET_BROWSER_EVENT`) uses.
 
 ## Touch
 
@@ -175,7 +185,7 @@ so at 4 px every tap read as a camera drag), and three gestures:
 
 ## The kill switch
 
-`allowLinks: false` (option) / `?no-links` (URL) suppresses navigation, both
+`allowLinks: false` (option) / `?noLinks` (URL) suppresses navigation, both
 link menu items and the pointer cursor, while leaving `Copy` working — the
 clipboard is not navigation. The `element-click` / `element-contextmenu`
 embedder events still fire, with `link: null`, so a host can implement its own

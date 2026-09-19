@@ -142,6 +142,23 @@ describe('dispatchPredictivePrefetch', () => {
     expect(aArg.slicePosition[3]).toBe(7);
   });
 
+  it('lets chunk-aware loaders prefetch the whole current-to-predicted transition', () => {
+    const transition = vi.fn().mockResolvedValue(undefined);
+    const fallback = vi.fn().mockResolvedValue(undefined);
+    const prev = vs({ slicePosition: [0, 0, 0, 5] });
+    const current = vs({ slicePosition: [0, 0, 0, 6] });
+
+    const dispatched = dispatchPredictivePrefetch(prev, current, [
+      { prefetchChunks: fallback, prefetchChunkBoundary: transition },
+    ]);
+
+    expect(dispatched).toBe(true);
+    expect(transition).toHaveBeenCalledTimes(1);
+    expect(transition.mock.calls[0][0]).toBe(current);
+    expect(transition.mock.calls[0][1].slicePosition[3]).toBe(7);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
   it('skips loaders that do not expose prefetchChunks', () => {
     const spy = vi.fn().mockResolvedValue(undefined);
     const loaders: PrefetchableLoader[] = [{}, { prefetchChunks: spy }, {}];

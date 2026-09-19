@@ -8,7 +8,7 @@ CLI/Typer coupling. Previously lived in ``luxar.cli.gsplat_config``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from numbers import Real
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -184,6 +184,12 @@ class OMEZarrInfo:
     read these fields instead of re-classifying the labels.
     """
 
+    axis_units: List[Optional[str]] = field(default_factory=list)
+    """Physical unit for each source axis, position-for-position with ``axes``."""
+
+    axis_scales: Optional[Tuple[float, ...]] = None
+    """Composed NGFF scale for every source axis, or ``None`` when unavailable."""
+
     voxel_size: Optional[Tuple[float, ...]] = None
     """Physical spacing from coordinateTransformations (spatial axes only)."""
 
@@ -195,6 +201,13 @@ class OMEZarrInfo:
 
     path: Optional[Path] = None
     """Path to the zarr store."""
+
+    def __post_init__(self) -> None:
+        """Keep positional axis metadata aligned with the discovered axes."""
+        if not self.axis_units:
+            self.axis_units = [None] * len(self.axes)
+        elif len(self.axis_units) != len(self.axes):
+            raise ValueError("axis_units must align position-for-position with axes")
 
 
 # The one reason string for "the store declared `multiscales`, but there is no
@@ -321,7 +334,8 @@ def discover_ome_zarr_shape(
     Args:
         path: Path to the ``.zarr`` store or ``.zarr.zip`` archive.
         axes_override: Explicit axis labels (e.g. ``["time","channel","z","y","x"]``).
-            Overrides all auto-detection when provided.
+            Overrides axis classification and names while retaining positional
+            NGFF units/scales from the selected array when available.
         array_key: Key path to a specific array within the zarr store
             (e.g. ``"h2afva/fused"``).  When provided, skips auto-selection
             and navigates directly to this array (which may itself be a group —
@@ -335,7 +349,6 @@ def discover_ome_zarr_shape(
             The match is exact, but on the NORMALISED spellings, so a block
             writing its own levels explicitly relative (``"./0"`` for the array at
             ``"0"``) still names them; see :func:`_selected_dataset`.
-
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
 
@@ -375,14 +388,36 @@ def discover_ome_zarr_shape(
     shape = tuple(arr.shape)
     ndim = len(shape)
 
-    # User-supplied axes override: skip all auto-detection
+    ms, unusable, ngff_array_key = _usable_ngff_for_selection(
+        attrs, owner_ngff, owner_key, key_path or None, ndim
+    )
+
+    # User-supplied axes override controls classification and labels, but the
+    # selected array's positional NGFF units/scales remain valid metadata.
     if axes_override is not None:
         if len(axes_override) != ndim:
             raise ValueError(
                 f"--axes has {len(axes_override)} labels but array is {ndim}D "
                 f"(shape {shape}). Provide exactly {ndim} comma-separated axis names."
             )
-        return _parse_custom_axes_attr(axes_override, shape, path)
+        info = _parse_custom_axes_attr(axes_override, shape, path)
+        if ms is not None:
+            declared = _parse_ngff_metadata(ms, shape, path, ngff_array_key)
+            info.axis_units = declared.axis_units
+            info.axis_scales = declared.axis_scales
+            if declared.axis_scales is not None:
+                info.voxel_size = tuple(
+                    declared.axis_scales[index] for index in info.spatial_indices
+                )
+            elif info.spatial_indices == declared.spatial_indices:
+                info.voxel_size = declared.voxel_size
+            spatial_units = [
+                info.axis_units[index]
+                for index in info.spatial_indices
+                if info.axis_units[index]
+            ]
+            info.unit = spatial_units[0] if spatial_units else None
+        return info
 
     # Try NGFF multiscales metadata, in either OME-Zarr layout (0.4 top-level or
     # 0.5 nested under `ome`). The owning group's block wins when it is evidence
@@ -390,9 +425,6 @@ def discover_ome_zarr_shape(
     # relative to whichever group that is, not to the store root. `unusable`
     # records WHY a block that IS present could not be read, so the give-up notice
     # below can say so.
-    ms, unusable, ngff_array_key = _usable_ngff_for_selection(
-        attrs, owner_ngff, owner_key, key_path or None, ndim
-    )
     if ms is not None:
         return _parse_ngff_metadata(ms, shape, path, ngff_array_key)
     unusable = unusable or owner_problem
@@ -786,16 +818,23 @@ def _parse_ngff_metadata(
     spatial_shape = tuple(shape[i] for i in spatial_indices)
 
     datasets = ms.get("datasets", [])
+    selected = _selected_dataset(datasets, array_key)
+    axis_scale = _composed_scale(ms, selected) if selected is not None else None
+    axis_scales = (
+        tuple(float(value) for value in axis_scale)
+        if axis_scale is not None and len(axis_scale) == len(shape)
+        else None
+    )
     voxel_size = _ngff_voxel_size(ms, datasets, shape, spatial_indices, array_key)
 
-    # Extract unit from axes metadata
-    unit = None
-    for a in axes_raw:
-        if isinstance(a, dict) and a.get("type") == "space":
-            u = a.get("unit")
-            if u:
-                unit = u
-                break
+    axis_units = [
+        str(a["unit"]) if isinstance(a, dict) and a.get("unit") else None
+        for a in axes_raw
+    ]
+    spatial_units = [
+        axis_units[index] for index in spatial_indices if axis_units[index]
+    ]
+    unit = spatial_units[0] if spatial_units else None
 
     # Count resolution levels. Type-checked, not just truthiness-checked: a
     # `datasets` that is a number is a `len()` TypeError, and this module
@@ -814,6 +853,8 @@ def _parse_ngff_metadata(
         time_axis=t_idx,
         channel_indices=(c_idx,) if c_idx is not None else (),
         spatial_indices=tuple(spatial_indices),
+        axis_units=axis_units,
+        axis_scales=axis_scales,
         voxel_size=voxel_size,
         unit=unit,
         resolution_levels=n_levels,

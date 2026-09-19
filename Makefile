@@ -4,13 +4,13 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest sync-demo-counts \
+.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-control-contract gen-data-manifest sync-demo-counts \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity check-lint-ratchet check-native \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
-        test-e2e test-e2e-smoke test-perf-e2e \
+        test-e2e test-e2e-browsers test-e2e-mobile test-e2e-smoke test-e2e-smoke-strict test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-cold-fetch check-typescript check-rust check-knip check-gallery-staleness check-gallery-media check-wasm-deps setup-dev \
-        check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
+        check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-snapshots check-record-attribution check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
 	generate-gallery-datasets generate-gallery \
@@ -81,7 +81,7 @@ endif
 # `^22.22.2 || ^24.15.0 || >=26.0.0`; its undici 8 dependency destructures
 # `markAsUncloneable` from node:worker_threads (added in Node 22.16) and throws
 # on anything older, so the whole unit suite is unrunnable below that. Vite 8.x
-# only needs 20.19+, so jsdom is the binding constraint for development. This
+# supports `^20.19.0 || >=22.12.0`, so jsdom is the binding constraint for development. This
 # make check is deliberately a coarse too-old floor (major.minor only): every
 # version it accepts has the 22.16+ API the suite actually needs (verified:
 # the full unit suite passes on 22.22.0, below jsdom's ^22.22.2); enforcing
@@ -89,9 +89,9 @@ endif
 # (pnpm neither fails nor warns on a dependency's engines by default).
 # Deliberately NOT mirrored into `engines.node` in
 # packages/luxar-viewer/package.json: that manifest ships with the published
-# npm package, where it must state the LIBRARY's runtime floor (>=20.19.0,
-# Vite 8.x) — a dev-only jsdom constraint there would break installs for
-# consumers on supported Nodes (yarn enforces engines strictly).
+# npm package, where it mirrors Vite 8.x's LIBRARY runtime range
+# (^20.19.0 || >=22.12.0) — a dev-only jsdom constraint there would break
+# installs for consumers on supported Nodes (yarn enforces engines strictly).
 MIN_NODE_MAJOR := 22
 MIN_NODE_MINOR := 22
 # Mirrors `engines.pnpm` in packages/luxar-viewer/package.json. 10.6 is the
@@ -100,6 +100,12 @@ MIN_NODE_MINOR := 22
 # ("packages field missing or empty").
 MIN_PNPM_MAJOR := 10
 MIN_PNPM_MINOR := 6
+# Exact Go pin used by the Linux bootstrap and enforced before launcher builds.
+# Keep its major.minor in sync with the go-launcher setup-go version in
+# .github/workflows/ci.yml and the version table in
+# docs/guides/developer/BUILD_SYSTEM_SPEC.md;
+# test_go_version_declarations.py guards the relation.
+GO_VERSION ?= 1.27.1
 # Exact wasm-pack pin — `install-rust` installs this version and replaces any
 # other one it finds, so a local toolchain matches CI. Keep in sync with the
 # `jetli/wasm-pack-action` `version:` inputs in .github/workflows/ci.yml,
@@ -136,6 +142,32 @@ define check_node_version
 		fi; \
 	else \
 		echo "❌ Node.js not found"; \
+		exit 1; \
+	fi
+endef
+
+# Helper function to require the pinned Go version or newer
+define check_go_version
+	GO_INSTALLED_BIN=$$(command -v $(1) 2>/dev/null || printf '%s' "$(1)"); \
+	GO_INSTALLED_VERSION=$$($(1) version | awk '{print $$3}' | sed 's/^go//'); \
+	GO_INSTALLED_MAJOR=$$(echo "$$GO_INSTALLED_VERSION" | cut -d. -f1); \
+	GO_INSTALLED_MINOR=$$(echo "$$GO_INSTALLED_VERSION" | cut -d. -f2); \
+	GO_INSTALLED_PATCH=$$(echo "$$GO_INSTALLED_VERSION" | cut -d. -f3); \
+	GO_REQUIRED_MAJOR=$$(echo "$(GO_VERSION)" | cut -d. -f1); \
+	GO_REQUIRED_MINOR=$$(echo "$(GO_VERSION)" | cut -d. -f2); \
+	GO_REQUIRED_PATCH=$$(echo "$(GO_VERSION)" | cut -d. -f3); \
+	if [ "$$GO_INSTALLED_MAJOR" -lt "$$GO_REQUIRED_MAJOR" ] || \
+	   { [ "$$GO_INSTALLED_MAJOR" -eq "$$GO_REQUIRED_MAJOR" ] && [ "$$GO_INSTALLED_MINOR" -lt "$$GO_REQUIRED_MINOR" ]; } || \
+	   { [ "$$GO_INSTALLED_MAJOR" -eq "$$GO_REQUIRED_MAJOR" ] && [ "$$GO_INSTALLED_MINOR" -eq "$$GO_REQUIRED_MINOR" ] && [ "$$GO_INSTALLED_PATCH" -lt "$$GO_REQUIRED_PATCH" ]; }; then \
+		echo "❌ Installed Go $$GO_INSTALLED_VERSION is older than the pinned $(GO_VERSION)."; \
+		echo "   Go binary: $$GO_INSTALLED_BIN"; \
+		if [ "$(OS)" = "macos" ]; then \
+			echo "   Upgrade Homebrew Go: brew upgrade go"; \
+		elif [ "$$GO_INSTALLED_BIN" = "$$HOME/.local/go/bin/go" ]; then \
+			echo "   Reinstall the local toolchain: rm -rf ~/.local/go && make install-go"; \
+		else \
+			echo "   Upgrade or remove that Go binary from PATH, then run 'make install-go'."; \
+		fi; \
 		exit 1; \
 	fi
 endef
@@ -633,6 +665,9 @@ format-all:  ## Format all code (Python, TypeScript, Rust, Go, CUDA)
 	@echo ""
 	$(MAKE) format-cuda
 
+gen-control-contract:  ## Regenerate the Python + TS + Go control-contract projections
+	@hatch run gen-control-contract
+
 gen-contract:  ## Regenerate the Python + TS format-contract projections from contract.yaml
 	@echo "📄 Regenerating format-contract projections (Python + TypeScript)..."
 	$(HATCH) run gen-contract
@@ -653,7 +688,7 @@ check-complexity:  ## Ratchet cyclomatic complexity (ruff C901) against the base
 	@echo "📐 Checking cyclomatic complexity against the baseline..."
 	$(HATCH) run check-complexity
 
-check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + RUF012) against the baseline
+check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + blind-except + RUF012) against the baseline
 	@echo "🐛 Checking defect-bearing lint rules against the baseline..."
 	$(HATCH) run check-lint-ratchet
 
@@ -669,7 +704,7 @@ lint-typescript:  ## Run ESLint on TypeScript code
 	cd packages/luxar-viewer && pnpm run lint
 
 type-check-python:  ## Run mypy type checking on Python code
-	$(HATCH) run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py
+	$(HATCH) run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py
 
 type-check-typescript:  ## Run TypeScript type checking
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -746,6 +781,7 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 	@GO_BIN=$$(command -v go || echo "$(HOME)/.local/go/bin/go"); \
 	if [ -x "$$GO_BIN" ] || command -v go >/dev/null 2>&1; then \
 		echo "Running Go launcher unit tests..."; \
+		$(LAUNCHER_WEBKIT_ENV) \
 		(cd $(LAUNCHER_SRC_DIR) && "$$GO_BIN" test ./...) || exit $$?; \
 	else \
 		echo "⚠️  go not found - Go launcher tests skipped"; \
@@ -856,6 +892,7 @@ check-all:  ## All quality checks (Python/TS/Rust/Go), no tests — WARNING: ref
 	@echo "🐹 Running Go launcher checks (go vet)..."
 	@GO_BIN=$$(command -v go || echo "$(HOME)/.local/go/bin/go"); \
 	if [ -x "$$GO_BIN" ] || command -v go >/dev/null 2>&1; then \
+		$(LAUNCHER_WEBKIT_ENV) \
 		(cd $(LAUNCHER_SRC_DIR) && "$$GO_BIN" vet ./...) || exit $$?; \
 		echo "✅ Go launcher vet passed"; \
 	else \
@@ -902,10 +939,16 @@ check-cold-fetch:  ## Verify hosted demo datasets fetch from nothing and match t
 check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI gate)
 	python3 scripts/zenodo_migration_audit.py --live
 
+check-zenodo-snapshots:  ## Compare captured Zenodo record text with live records (opt-in)
+	$(HATCH) run python scripts/zenodo_record_text/capture.py --check
+
+check-record-attribution:  ## Compare captured Zenodo record text with manifest attribution (opt-in)
+	python3 scripts/check_record_attribution.py
+
 check-gallery-media:  ## Verify hosted root-README media against its manifest (opt-in)
 	$(HATCH) run python scripts/gallery/verify_media.py
 
-check-external-references:  ## Run all network-backed reference audits (report-only)
+check-external-references:  ## Run all external reference audits (report-only)
 	$(HATCH) run python scripts/run_external_reference_audits.py
 
 check-gallery-staleness:  ## Report README gallery staleness and manifest media sizes
@@ -1975,17 +2018,29 @@ clean-wasm:  ## Clean WASM build artifacts
 
 LAUNCHER_SRC_DIR := packages/luxar-launcher
 LAUNCHER_OUT_DIR := packages/luxar/src/luxar/cli/_launchers
+LAUNCHER_PKG_CONFIG_DIR := $(CURDIR)/$(LAUNCHER_SRC_DIR)/pkgconfig
+LAUNCHER_WEBKIT_ENV = \
+	if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists webkit2gtk-4.1 2>/dev/null; then \
+		echo "  • WebKitGTK 4.1 found; using the bundled webkit2gtk-4.0 → 4.1 compatibility module." >&2; \
+		export PKG_CONFIG_PATH="$(LAUNCHER_PKG_CONFIG_DIR)$${PKG_CONFIG_PATH:+:$$PKG_CONFIG_PATH}"; \
+	elif [ "$(OS)" = "linux" ]; then \
+		echo "⚠️  WebKitGTK 4.1 not found; falling back to system webkit2gtk-4.0. A resulting 4.0-linked binary will not start on 4.1-only distributions." >&2; \
+	fi;
 
 install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball on Linux)
 	@# Single shell command so PATH updates persist within the recipe.
 	@echo "🐹 Setting up Go toolchain..."; \
 	echo ""; \
 	if command -v go >/dev/null 2>&1; then \
-		echo "✅ Go is already installed: $$(go version)"; \
+		GO_BIN=go; \
+		$(call check_go_version,$$GO_BIN); \
+		echo "✅ Go is already installed: $$($$GO_BIN version)"; \
 		exit 0; \
 	fi; \
 	if [ -x "$$HOME/.local/go/bin/go" ]; then \
-		echo "✅ Go is already installed: $$($$HOME/.local/go/bin/go version) (in ~/.local/go)"; \
+		GO_BIN="$$HOME/.local/go/bin/go"; \
+		$(call check_go_version,$$GO_BIN); \
+		echo "✅ Go is already installed: $$($$GO_BIN version) (in ~/.local/go)"; \
 		echo "⚠️  Add ~/.local/go/bin to PATH: export PATH=\"$$HOME/.local/go/bin:$$PATH\""; \
 		exit 0; \
 	fi; \
@@ -1998,15 +2053,14 @@ install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball o
 		brew install go; \
 		echo "✅ Go installed: $$(go version)"; \
 	elif [ "$(OS)" = "linux" ]; then \
-		GO_VERSION=$${GO_VERSION:-1.22.10}; \
 		ARCH=$$(uname -m); \
 		case "$$ARCH" in \
 			x86_64|amd64) GOARCH=amd64 ;; \
 			aarch64|arm64) GOARCH=arm64 ;; \
 			*) echo "❌ Unsupported Linux architecture: $$ARCH"; exit 1 ;; \
 		esac; \
-		TARBALL="go$${GO_VERSION}.linux-$${GOARCH}.tar.gz"; \
-		echo "📥 Installing Go $$GO_VERSION for linux-$$GOARCH (no sudo, into ~/.local/go)..."; \
+		TARBALL="go$(GO_VERSION).linux-$${GOARCH}.tar.gz"; \
+		echo "📥 Installing Go $(GO_VERSION) for linux-$$GOARCH (no sudo, into ~/.local/go)..."; \
 		mkdir -p "$$HOME/.local"; \
 		rm -rf "$$HOME/.local/go"; \
 		TMPDIR_GO=$$(mktemp -d); \
@@ -2046,6 +2100,7 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 		echo "❌ Go not found. Run 'make install-go' first."; \
 		exit 1; \
 	fi; \
+	$(call check_go_version,$$GO_BIN); \
 	echo "🐹 Building native launcher with $$GO_BIN ($$($$GO_BIN version | sed 's/^go version //'))"; \
 	mkdir -p $(LAUNCHER_OUT_DIR); \
 	OUT_ABS="$(CURDIR)/$(LAUNCHER_OUT_DIR)"; \
@@ -2086,9 +2141,8 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 			*) echo "❌ Unsupported Linux architecture: $$ARCH"; exit 1 ;; \
 		esac; \
 		echo "  • linux/$$GOARCH (CGO=1, WebKitGTK)..."; \
-		echo "    Requires: libwebkit2gtk-4.0-dev + pkg-config"; \
-		echo "    (webview_go pins webkit2gtk-4.0 — this is why CI builds the"; \
-		echo "     launcher on ubuntu-22.04; 24.04 ships only the 4.1 package)"; \
+		echo "    Prefers: libwebkit2gtk-4.1-dev + pkg-config (falls back to installed 4.0)"; \
+		$(LAUNCHER_WEBKIT_ENV) \
 		GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o "$$OUT_ABS/linux-$$GOARCH" .; \
 		cd - >/dev/null; \
 	else \
@@ -2590,7 +2644,7 @@ test-cuda:  ## Run CUDA extension tests
 		echo ""; \
 	fi
 	@# Run tests
-	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v
+	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v -rs
 	@echo ""
 	@echo "✅ CUDA tests completed!"
 
@@ -2667,7 +2721,7 @@ test-nlm-cuda:  ## Run NLM CUDA extension tests
 		$(MAKE) build-nlm-cuda; \
 		echo ""; \
 	fi
-	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v
+	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v -rs
 	@echo ""
 	@echo "✅ NLM CUDA tests completed!"
 
@@ -2714,12 +2768,33 @@ test-e2e: run-examples ensure-viewer-fixtures  ## Run the full Playwright E2E su
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e
 
-test-e2e-smoke: run-examples  ## Run the E2E smoke subset (what CI would run)
+test-e2e-browsers: run-examples ensure-viewer-fixtures  ## Run the cross-browser Playwright subset
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:browsers
+
+test-e2e-mobile: run-examples ensure-viewer-fixtures  ## Run the mobile/touch Playwright suite used by PR CI
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:mobile
+
+test-e2e-smoke: run-examples  ## Run the E2E smoke subset
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e:smoke
+
+test-e2e-smoke-strict: run-examples  ## Run smoke with strict browser-console handling
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:smoke:strict
 
 test-perf-e2e: run-examples  ## Run the opt-in Playwright performance suite
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \

@@ -350,7 +350,7 @@ class TestRadialOrderLines:
     def test_orders_innermost_polyline_first(self) -> None:
         verts, polys = self._fan()
         perm, counts = compute_additive_order_lines(
-            verts, polys, method="radial", reveal_centre=[0.0]
+            verts, polys, method="radial", reveal_center=[0.0]
         )
 
         # Each polyline's representative is its own bbox centre; here that is
@@ -369,11 +369,11 @@ class TestRadialOrderLines:
         assert sorted(perm.tolist()) == list(range(5))
 
     def test_non_finite_vertices_are_refused_naming_the_vertices(self) -> None:
-        """The error must blame the VERTICES, not ``reveal_centre``.
+        """The error must blame the VERTICES, not ``reveal_center``.
 
         Lines derives its default origin from the vertices, so before the
         data-side guard a NaN vertex produced a NaN origin that then tripped the
-        scorer's ``reveal_centre must be finite`` check — an error naming a knob
+        scorer's ``reveal_center must be finite`` check — an error naming a knob
         the caller never passed. Points and GSplats meanwhile returned input order
         silently. One shared validator makes all three agree AND report the input
         the caller actually supplied.
@@ -551,7 +551,7 @@ class TestMakeAdditiveLodLines:
             line_type="segments",
             method="radial",
             n_lods=4,
-            reveal_centre=[0.0],
+            reveal_center=[0.0],
         )
         first_xs = [float(verts[p, 0].mean()) for p in pinned[0]]
         assert max(first_xs) < 10.0
@@ -575,7 +575,7 @@ class TestMakeAdditiveLodLines:
             line_type="segments",
             method="radial",
             n_lods=4,
-            reveal_centre=[0.0],
+            reveal_center=[0.0],
             spatial_dims=[0],
         )
         first_xs = [float(verts[p, 0].mean()) for p in restricted[0]]
@@ -638,6 +638,11 @@ class TestResolveAdditiveAxisLines:
             resolve_additive_axis_lines({"counts": "stream:0"})
         with pytest.raises(ValueError, match="stream"):
             resolve_additive_axis_lines({"counts": "stream:-5"})
+
+    def test_valid_equi_energy_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_lines({"counts": "equi-energy:3"})
+        assert spec is not None
+        assert spec["counts"] == "equi-energy:3"
 
     def test_valid_energy_counts_resolves(self) -> None:
         spec = resolve_additive_axis_lines({"counts": "energy:0.5,0.9,1.0"})
@@ -1372,7 +1377,7 @@ class TestRevealSpatialDimsFromSceneLines:
         )
 
     def test_derived_shell_axes_write_no_partial_group(self, tmp_path) -> None:
-        """A mismatched ``reveal_centre`` must not strand a partial LOD group.
+        """A mismatched ``reveal_center`` must not strand a partial LOD group.
 
         The resolver can only cross-check the centre against ``spatial_dims``
         when the caller names both; here the axes are DERIVED. A planar cloud
@@ -1403,7 +1408,7 @@ class TestRevealSpatialDimsFromSceneLines:
                     substitutive_lod={"levels": 2, "compression_factor": 4},
                     additive_lod={
                         "method": "radial",
-                        "reveal_centre": [0.0, 0.0, 7.0],
+                        "reveal_center": [0.0, 0.0, 7.0],
                     },
                 )
         assert not (output / "ln").exists()
@@ -1418,7 +1423,7 @@ class TestRevealSpatialDimsFromSceneLines:
                 widths=widths,
                 line_type="segments",
                 substitutive_lod={"levels": 2, "compression_factor": 4},
-                additive_lod={"method": "radial", "reveal_centre": [0.0, 0.0]},
+                additive_lod={"method": "radial", "reveal_center": [0.0, 0.0]},
             )
         assert (ok / "ln" / "child_2").exists()
 
@@ -1428,9 +1433,9 @@ class TestRevealSpatialDimsFromSceneLines:
         """The wrapper must not derive polyline representatives it will not use.
 
         The preflight only has something to cross-check when the caller named a
-        ``reveal_centre`` under a reveal ordering. Getting its ``coords`` argument
+        ``reveal_center`` under a reveal ordering. Getting its ``coords`` argument
         is the expensive part on Lines — ``identify_polylines`` plus
-        ``polyline_bbox_centres`` loop in Python over every polyline (~2.5 s for a
+        ``polyline_bbox_centers`` loop in Python over every polyline (~2.5 s for a
         400k-vertex ``segments`` node) — and the composed ladder is ON by default,
         so an unguarded call paid that on every ``add_lines(substitutive_lod=…)``.
 
@@ -1441,7 +1446,7 @@ class TestRevealSpatialDimsFromSceneLines:
         def _boom(*_args, **_kwargs):  # pragma: no cover - must not be called
             raise AssertionError("polyline representatives derived for a non-reveal")
 
-        monkeypatch.setattr(lines_lod, "polyline_bbox_centres", _boom)
+        monkeypatch.setattr(lines_lod, "polyline_bbox_centers", _boom)
 
         rng = np.random.RandomState(0)
         verts = rng.uniform(-50, 50, (200, 3)).astype(np.float32)
@@ -1473,7 +1478,7 @@ class TestRevealSpatialDimsFromSceneLines:
                     substitutive_lod={"levels": 2, "compression_factor": 4},
                     additive_lod={
                         "method": "radial",
-                        "reveal_centre": [0.0, 0.0, 0.0],
+                        "reveal_center": [0.0, 0.0, 0.0],
                     },
                 )
 
@@ -1520,3 +1525,58 @@ def test_no_sub_LOD_carries_the_private_skip_scene_bounds_flag(tmp_path) -> None
             "`group.attrs.update(attrs)` again"
         )
     assert "position_bounds" in parent.attrs
+
+
+class TestEquiEnergyLinesLadder:
+    def test_segments_rungs_carry_equal_energy(self) -> None:
+        from luxar.core.group.lod.lines import compute_lines_energy, identify_polylines
+
+        rng = np.random.RandomState(21)
+        n_seg = 2_000
+        verts = rng.rand(2 * n_seg, 3).astype(np.float32)
+        # Heavy-tailed widths -> heavy-tailed per-polyline energy (width**2).
+        widths = rng.lognormal(mean=0.0, sigma=0.8, size=2 * n_seg).astype(np.float32)
+        widths[1::2] = widths[0::2]
+
+        levels = make_additive_lod_lines(
+            verts,
+            line_type="segments",
+            widths=widths,
+            method="salience",
+            salience_kind="energy",
+            counts="equi-energy:4",
+        )
+        assert len(levels) == 4
+        sizes = [len(lvl) for lvl in levels]
+        assert sum(sizes) == n_seg
+        assert sizes[0] < sizes[-1], "few heavy segments first, fat dim tail last"
+
+        polylines = identify_polylines(len(verts), "segments", None)
+        energy = compute_lines_energy(verts, polylines, widths, None, None)
+        total = float(energy.sum())
+        # Map each level's polylines back to their energies via vertex identity.
+        start_to_idx = {int(pl[0]): i for i, pl in enumerate(polylines)}
+        cum = 0.0
+        for k, lvl in enumerate(levels, start=1):
+            cum += float(sum(energy[start_to_idx[int(pl[0])]] for pl in lvl))
+            assert cum >= total * k / 4 - 1e-9
+
+
+def test_lines_light_integral_handles_empty_and_singleton_polylines() -> None:
+    from luxar.core.group.lod.lines import compute_lines_light_integral
+
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    widths = np.array([1.0, 2.0, 4.0], dtype=np.float32)
+    colors = np.ones((3, 3), dtype=np.float32)
+    polylines = [
+        np.empty(0, dtype=np.intp),
+        np.array([0], dtype=np.intp),
+        np.array([0, 1, 2], dtype=np.intp),
+        np.empty(0, dtype=np.intp),
+    ]
+    light = compute_lines_light_integral(vertices, polylines, widths, colors)
+    np.testing.assert_allclose(light, [0.0, 0.0, 7.5, 0.0])
+    assert compute_lines_light_integral(vertices, [], widths, colors).shape == (0,)

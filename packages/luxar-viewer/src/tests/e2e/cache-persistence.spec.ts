@@ -75,7 +75,7 @@ test.describe('L2 persistence across page reload (R7)', () => {
     expect(after.l2.reads).toBeGreaterThan(0);
   });
 
-  test('?clear-cache invokes clearAll on init (S4)', async ({ page, browserName }) => {
+  test('?clearCache invokes clearAll on init (S4)', async ({ page, browserName }) => {
     test.skip(browserName !== 'chromium', 'Chromium-only');
 
     // Pass 1: warm the cache with a regular load.
@@ -89,11 +89,11 @@ test.describe('L2 persistence across page reload (R7)', () => {
     );
     expect(beforeClear.clearOnInitCount ?? 0).toBe(0);
 
-    // Pass 2: reload with ?clear-cache. The store's init path must
-    // increment `clearOnInitCount` exactly once when ?clear-cache
+    // Pass 2: reload with ?clearCache. The store's init path must
+    // increment `clearOnInitCount` exactly once when ?clearCache
     // is present. This is the real observable signal — previously
     // the test only asserted `l2.size >= 0`, which is trivially true.
-    await page.goto(`/?src=${DATASET}&debug&clear-cache`);
+    await page.goto(`/?src=${DATASET}&debug&clearCache`);
     await waitForLuxarReady(page);
 
     const afterClear = await page.evaluate(async () =>

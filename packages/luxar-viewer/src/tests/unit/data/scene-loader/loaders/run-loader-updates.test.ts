@@ -14,14 +14,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
-  filterPartitionVisibleLoaders,
-  isPartitionPathVisible,
+  resolveLoadEligibleLoaders,
+  isLoaderPathEligible,
   isUnderAny,
   runLoaderUpdates,
 } from '../../../../../data/scene-loader/loaders/run-loader-updates';
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
+import type { ChunkSource } from '../../../../../cache/chunk-source';
+import { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching-store';
 import { log } from '../../../../../utils/log';
 
 function makeCtx() {
@@ -98,6 +100,37 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it('records an exhausted chunk fetch as Network without staging a fresh commit', async () => {
+    const source: ChunkSource = {
+      identity: 'always-fails',
+      describe: 'always-fails',
+      get: vi.fn().mockResolvedValue({
+        kind: 'error',
+        cause: new Error('fetch exhausted retries for positions/0'),
+      }),
+      probeIdentityToken: vi.fn().mockResolvedValue(null),
+      dispose: vi.fn(),
+    };
+    const store = new MultiLevelCachingStore(source, { noCache: true });
+    const ctx = makeCtx();
+    const freshCommit = vi.fn();
+
+    const results = await runLoaderUpdates(
+      new Map<string, object>([['/scene/points', {}]]),
+      'Points',
+      async () => {
+        const bytes = await store.get('positions/0');
+        freshCommit(bytes ?? new Uint8Array(0));
+        return { count: 0 };
+      },
+      ctx
+    );
+
+    expect(results[0].staged).toBeNull();
+    expect(freshCommit).not.toHaveBeenCalled();
+    expect(ctx.failedLoaders.get('/scene/points')?.kind).toBe('Network');
   });
 
   it('keeps the original failure path when rollback itself throws', async () => {
@@ -305,9 +338,23 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     part.add(nestedLod);
     nestedLod.add(leaf);
 
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(true);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(true);
     part.userData.partitionFrustumVisible = false;
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(false);
+  });
+
+  it('finds a hidden layer marker without treating an undisplayed LOD leaf as hidden', () => {
+    const root = new THREE.Group();
+    const layer = new THREE.Group();
+    const leaf = new THREE.Group();
+    leaf.name = '/layer/level_2';
+    leaf.visible = false;
+    root.add(layer);
+    layer.add(leaf);
+
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(true);
+    layer.userData.layerVisible = false;
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(false);
   });
 
   it('removes culled partition loaders from progressive refinement maps', () => {
@@ -321,7 +368,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     const visibleLoader = {};
     const culledLoader = {};
 
-    const filtered = filterPartitionVisibleLoaders(
+    const getObjectByName = vi.spyOn(root, 'getObjectByName');
+    const resolved = resolveLoadEligibleLoaders(
       root,
       new Map([
         [visible.name, visibleLoader],
@@ -329,6 +377,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
       ])
     );
 
-    expect([...filtered]).toEqual([[visible.name, visibleLoader]]);
+    expect([...resolved.loaders]).toEqual([[visible.name, visibleLoader]]);
+    expect([...resolved.objects]).toEqual([[visible.name, visible]]);
+    expect(getObjectByName).toHaveBeenCalledTimes(2);
   });
 });

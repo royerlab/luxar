@@ -63,6 +63,32 @@ def test_runbook_section_three_headings_are_sequential() -> None:
     assert section_numbers == list(range(1, len(section_numbers) + 1))
 
 
+def test_runbook_audits_built_scenes_before_upload() -> None:
+    """Keep both artifact checks and their gate policy in the publishing wave."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    heading = "## 2. Publishing a wave"
+    assert heading in text, f"missing runbook heading: {heading}"
+    section_and_rest = text.split(heading, 1)[1]
+    assert "\n### " in section_and_rest, (
+        "publishing-wave introduction is no longer followed by a subsection"
+    )
+    section = section_and_rest.split("\n### ", 1)[0]
+
+    assert "hatch run check-demo-ladders --require-scenes" in section
+    assert "hatch run check-scene-credits --require-scenes" in section
+    assert "Both audits gate a newly generated store" in section
+    assert "Both direct full-inventory commands" in section
+    assert "--force" in section
+    assert "not re-gated" in section
+    assert "backstop" in section
+    assert "must exit zero" in section
+    audit_step = "audit the complete local scene inventory"
+    upload_step = "upload only what changed"
+    assert audit_step in section, "publishing wave no longer names the scene audit step"
+    assert upload_step in section, "publishing wave no longer names the upload step"
+    assert section.index(audit_step) < section.index(upload_step)
+
+
 def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
     """Runbook archive examples must name active record generations."""
     text = DEMO_SITE_RUNBOOK.read_text()

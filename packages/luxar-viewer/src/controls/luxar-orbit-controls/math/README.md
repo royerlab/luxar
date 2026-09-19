@@ -27,8 +27,8 @@ math/
   the view direction `-Z`) are rotated through the live `orientation`;
   world tokens (`'world-x'`/`'-y'`/`'-z'`) are world-space constants
   returned as-is. Rotation follows the right-hand rule about the named
-  direction uniformly across both families, `'view'` matches the vector
-  the Shift+scroll roll delta uses so both roll the same way, and
+  direction uniformly across both families, `'view'` matches the axis and
+  sign of a positive Shift+scroll roll delta, and
   `'world-y'` agrees with `'vertical'` exactly while the camera is level.
 - The direction table is a total `Record` over the union, so adding a
   token to `AutoRotateAxis` without a direction fails to compile.

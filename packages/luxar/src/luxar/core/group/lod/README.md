@@ -17,10 +17,10 @@ This package splits cleanly into two layers:
   Partition kind.
 - **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`,
   `mesh.py`) — one peer per leaf type, interpreting the `additive_lod=` /
-  `substitutive_lod=` (and, for gsplats, `lod_group=`) convenience kwargs that
-  `add_points` / `add_lines` / `add_gsplats_from_data` / `add_mesh` accept. All four
-  take both axes; mesh's vocabulary is the shortest — decimation rather than a lift,
-  and a **reveal-only** additive axis.
+  `substitutive_lod=` / `additive_lod=` convenience kwargs that the four geometry
+  adders accept. Gsplats also retain `lod_group=` as a backward-compatible alias
+  for `substitutive_lod=`. Mesh's vocabulary is the shortest — decimation rather
+  than a lift, and a **reveal-only** additive axis.
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are NumPy
 ordering primitives shared by the Points and Lines resolvers (`poisson_disk` also
@@ -192,6 +192,10 @@ Breakpoint vocabulary for `counts` / `breakpoints`:
 - `"energy:0.5,0.9,0.99,1.0"` → cumulative perceptual-energy fractions; element
   energy is `luminance_i × radius_i³`. Requires `colors` or `scalars` for the
   luminance term.
+- `"equi-energy:4"` → 4 rungs at equal shares of cumulative perceptual energy
+  along the ordering (same energy as `energy:`), commit-capped; with
+  `method="salience", salience_kind="energy"` the first rung is few heavy
+  elements and the late rungs fat. For Lines the cap is counted in vertices.
 - `"stream:40000"` → bandwidth-derived geometric ladder `[c, 2c, 4c, …, N]`, so
   first paint costs `c` elements and each refinement doubles. Resolved against
   the actual N, so one spec adapts to every level of a tree. For Lines, `c` is
@@ -205,17 +209,21 @@ levels still ends with an N/4-sized commit, which is not a progressive paint.
 
 `DEFAULT_METHOD` is `random`; `DEFAULT_N_LODS` is `4`.
 
-#### Points substitutive (lift to gsplats)
+#### Points substitutive (gsplat or points coarse levels)
 
 `resolve_substitutive_axis_points(spec)` normalizes the `substitutive_lod=`
 kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
-`method`, `truncation_radius`, `device`, `seed`, `coverage_fractions`
+`coarse`, `brightness_compensation`, `method`, `truncation_radius`, `device`,
+`seed`, `quality_stamps` (measure per-level quality, default `True`),
+`coverage_fractions`
 (explicit per-level viewport-relative thresholds, strict-ascending in
 `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`
 (per-splat anisotropy cap on the
 coarse levels, default 3.0; `None` disables)).
 `add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
+
+With the default `coarse="gsplats"`, it:
 
 1. **Lifts** each point to an isotropic Gaussian
    (`gsplats.lift.lift_points_to_gsplats`): `σ = 2R/T`, `a = opacity/(uRIF·σ)`
@@ -230,7 +238,9 @@ coarse levels, default 3.0; `None` disables)).
    isotropic lifted splats level over level, whose view-dependent ray integrals
    flare end-on and pop between levels), and **rescales** each coarse level's
    amplitudes to conserve render-light (`Σ a·σ³`) so the LOD seam does not dim
-   on zoom-out.
+   on zoom-out. Unless `quality_stamps=False`, each returned level carries
+   `level_stats.quality`, measured against the lifted finest on the spec's
+   `device`.
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
    the original Points node as the finest child; `display_type="points"`. With
    an explicit `partition=`, the finest child is instead a spatial partition and
@@ -239,11 +249,80 @@ coarse levels, default 3.0; `None` disables)).
    `adaptive` shape used by `demo_biodiversity_planetary_scale` remains
    hand-built; this composition is the global-coarse `overview` shape.
 
+With `coarse="points"`, `method="subsample"` takes exact `N/K^level` prefixes
+of a spatially stratified ordering and writes those rows as Points children.
+`method="merge"` instead writes light-weighted representatives whose isotropic
+radius matches the members' combined second moment (own radii plus centre
+spread), with the existing 3× coverage inflation applied to the spread term.
+Quantized RGB channels are soft Morton-ordering dimensions, normalized against
+the node's RGB maximum for HDR input, so nearby colours are preferred without
+turning each class into a mandatory representative. Merge bakes scalars through
+the authored colormap and drops sharpness, labels, and keys with a diagnostic.
+Numeric `brightness_compensation` is refused. Under additive/luminous blending,
+each representative conserves its bin's source light by reducing radius before
+increasing RGB, which keeps attenuated SDR colours representable. On a
+stacked node, each discrete hidden coordinate is spatially ordered independently
+and the orders are round-robin interleaved so a coarse level does not starve
+individual slices. Dimensions named by `extend_to_all` are excluded because the
+node is not sliced there. The coarsest level must have room for every remaining
+discrete hidden coordinate or authoring raises; continuous hidden axes are not
+treated as slices and emit a warning. Radii and all selected point channels stay
+attached to the original rows. Under the effective nearest-setter-wins `additive`
+or `luminous` mode,
+`brightness_compensation="auto"` scales RGB by the finest/subsampled
+`compute_points_energy` ratio, preserving summed light at the finest radius
+rather than inflating screen coverage; a non-identity gain widens colours to
+float32 HDR. Other blending modes default to a gain of 1 without widening the
+input colour dtype; a numeric compensation overrides the per-level gain through
+the same RGB path. The expected HDR warning is suppressed
+for these synthesized compensated children. The gain conserves the summed light
+over the whole node, not within each neighbourhood, so sparse and dense regions
+can shift relative brightness. `truncation_radius`, `max_aspect`, `device`, and
+`coarsen_dims` are refused because they do not affect the written
+same-type geometry. By default each child carries a `level_stats.quality` stamp
+measured from a fixed isotropic lift on CPU; for Points this scores the geometric
+subsample and radii, not RGB/alpha or the brightness-compensation gain. Set
+`quality_stamps=False` to skip that measurement.
+
+Lines keeps the lifted-GSplat default too. With `coarse="lines"`,
+`method="subsample"` takes exact `P/K^level` prefixes of a seeded salience
+ordering. `method="merge"` clusters whole, orientation-compatible polylines and
+writes their light-weighted centroid polyline with a scalar width from the
+bundle's transverse second moment. Merge currently requires equal vertex counts
+so corresponding vertices are defined; resample varying-length streamlines or
+use `method="subsample"`. Quantized orientation and RGB channels are soft
+Morton-ordering dimensions, so compatible polylines are preferred without
+making every class a mandatory representative; HDR RGB is normalized against
+the node maximum before quantization. These preference dimensions have co-equal
+Morton weight with position, so merge is intended for colour/orientation-coherent
+input; unrelated per-element classes can widen the representatives. Merge bakes scalars through the authored
+colormap and drops sharpness, labels, and keys with a diagnostic. Numeric
+`brightness_compensation` is refused. Under additive/luminous blending, per-bin
+light is conserved through width up to the transition's pixel-floor cap, then
+through residual HDR colour, materialising a colour channel when an uncoloured
+node needs one. Both write Lines children; no
+gsplat child or Cholesky array is materialised. Discrete hidden coordinates are ordered independently and
+round-robin interleaved; dimensions named by `extend_to_all` are excluded because
+the node is not sliced there. Authoring refuses a ladder whose coarsest polyline
+count cannot represent every remaining occupied slice, or a polyline that crosses
+one. Under the effective `additive` or `luminous` mode,
+`brightness_compensation="auto"` measures `Σ(length × width × luminance)` and
+conserves it at each level. Width growth is capped near the shader's pixel floor
+at the level transition and the residual gain is carried by float32 HDR color,
+keeping coarse fibers fiber-shaped; other modes keep unit gain, and a numeric
+override applies per reduction level through the same capped width/HDR-color
+split. The Gaussian lift controls (`truncation_radius`, `max_aspect`, `method`,
+`device`, and `coarsen_dims`) are refused because they do not affect the written
+same-type geometry. By default each child carries a `level_stats.quality` stamp
+measured from a fixed bead lift on CPU; it captures the subsample and width
+compensation, but not RGB/alpha or any residual HDR color gain. Set
+`quality_stamps=False` to skip that measurement.
+
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given
 a `stream:` ladder by default (`additive_lod=False` opts out), except that
-`image_labels` suppresses only the original finest Points child's ladder so its
-labels are preserved; synthesized coarse levels still stream — see "Composed
+`image_labels` are stored only on the original finest Points child and suppress
+only that child's ladder; synthesized coarse levels still stream — see "Composed
 axes" in `group.py`.
 The lift is strictly isotropic (brightness stays view-independent). Scalar +
 colormap points are supported by **baking** `scalars`→RGB through the colormap
@@ -318,6 +397,9 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    to Points. The cap matters most here: Morton bins chunk a 1D bead string,
    so uncapped representatives elongate ~K× more per level and flare when
    viewed end-on (the "haphazard brightness/hue pops between levels" bug).
+   Unless `quality_stamps=False`, each returned level carries
+   `level_stats.quality`, measured against the lifted finest on the spec's
+   `device`.
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
    the original Lines node as the finest child; `display_type="lines"`.
    Thresholds are auto-derived through `group.derive_coverage_fractions`
@@ -437,7 +519,7 @@ tried after reading the Points docs.
   (sharing one QEM collapse sequence for a multi-level ladder) and
   assembles a `kind=lod` group whose finest child is the original surface.
 - `resolve_additive_axis_mesh(spec)` — the `additive_lod=` axis. Keys: `method`,
-  `n_lods`, `counts` (alias `breakpoints`), `reveal_centre`, `spatial_dims`.
+  `n_lods`, `counts` (alias `breakpoints`), `reveal_center`, `spatial_dims`.
   `MESH_ADDITIVE_METHODS` is `{"radial"}` and that is the whole design: a prefix of
   an arbitrarily ordered index buffer is a surface with **holes**, not a coarser
   one, so `random` / `salience` and the two samplers are refused with that
@@ -518,21 +600,26 @@ points the finest pass rejected.
 ```python
 # Points: 4-level energy-weighted additive ladder
 scene.add_points(
-    "cloud", positions, colors=colors, radii=radii,
+    "cloud",
+    positions,
+    colors=colors,
+    radii=radii,
     additive_lod=dict(method="salience", salience_kind="energy", n_lods=4),
 )
 
 # Points: explicit cumulative-count breakpoints, spatial-uniform ordering
 scene.add_points(
-    "cloud", positions,
+    "cloud",
+    positions,
     additive_lod=dict(method="spatial-uniform", counts=[1500, 8000, 40000]),
 )
 
 # GSplats: keep the stored substitutive pyramid as a kind=lod Group,
 # and add a 4-level additive ladder per level
 scene.add_gsplats_from_data(
-    "splats", gsplat_data,
-    lod_group=True,            # require/use stored substitutive levels
+    "splats",
+    gsplat_data,
+    substitutive_lod=True,  # require/use stored substitutive levels
     additive_lod=dict(n_lods=4),
 )
 ```

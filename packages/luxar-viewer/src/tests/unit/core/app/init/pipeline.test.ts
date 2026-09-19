@@ -207,6 +207,12 @@ vi.mock('../../../../../utils/input-capabilities', () => ({
   getInputProfile: () => inputProfile,
 }));
 
+const initializeGpuByteBudget = vi.hoisted(() => vi.fn());
+vi.mock('../../../../../rendering/gpu-byte-budget', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../../rendering/gpu-byte-budget')>()),
+  initializeGpuByteBudget,
+}));
+
 import { InputHandler, KeyAction } from '../../../../../input';
 import { ControlRail } from '../../../../../ui/control-rail';
 import { getSceneLoader, SceneLoaderManager } from '../../../../../data/scene-loader-manager';
@@ -261,6 +267,45 @@ describe('runInitPipeline', () => {
     (InputHandler as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
       makeInputHandlerStub()
     );
+  });
+
+  it('configures the GPU byte budget for direct LuxarApp embeds', async () => {
+    const ports = makePorts();
+    const { factories } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+    ports.options.gpuPoolMaxBytes = 640_000_000;
+
+    await runInitPipeline(ports, {});
+
+    expect(initializeGpuByteBudget).toHaveBeenCalledWith(640_000_000);
+  });
+
+  it('uses the config default when a direct embed omits gpuPoolMaxBytes', async () => {
+    const ports = makePorts();
+    const { factories } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+
+    await runInitPipeline(ports, {});
+
+    expect(initializeGpuByteBudget).toHaveBeenCalledWith(undefined);
+  });
+
+  it('threads lodBias through the app registry factory', async () => {
+    const ports = makePorts();
+    const { factories } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+    ports.options.lodBias = 4;
+
+    await runInitPipeline(ports, {});
+
+    const manager = SceneLoaderManager.getInstance() as unknown as {
+      setLODGroupRegistryFactory: ReturnType<typeof vi.fn>;
+    };
+    const factory = manager.setLODGroupRegistryFactory.mock.calls[0][0] as (owner: unknown) => {
+      deps: { getLodBias: () => number };
+    };
+    const registry = factory({ currentViewVersion: 1 });
+    expect(registry.deps.getLodBias()).toBe(4);
   });
 
   describe('partial-accumulator contract (load-bearing)', () => {
@@ -674,9 +719,9 @@ describe('runInitPipeline', () => {
         expect(provider()).toBeNull();
 
         const isCaptureQuiescent = vi.fn(() => false);
-        const size = vi.fn(() => 0);
+        const captureSize = vi.fn(() => 0);
         vi.mocked(getSceneLoader).mockReturnValue({
-          lodGroupRegistry: { size, isCaptureQuiescent },
+          lodGroupRegistry: { captureSize, isCaptureQuiescent },
         } as never);
 
         // A registry with no lod_group registered — a plain points/lines scene
@@ -684,8 +729,9 @@ describe('runInitPipeline', () => {
         expect(provider()).toBeNull();
         expect(isCaptureQuiescent).not.toHaveBeenCalled();
 
-        // With entries registered the answer is the registry's own, both ways.
-        size.mockReturnValue(2);
+        // Partitions need the same catch-up tick and drain as lod_groups: their
+        // frustum rising edges launch asynchronous targeted resync passes.
+        captureSize.mockReturnValue(1);
         expect(provider()).toBe(false);
         isCaptureQuiescent.mockReturnValue(true);
         expect(provider()).toBe(true);

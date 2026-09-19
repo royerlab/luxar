@@ -49,6 +49,7 @@ from ._support.datasets.data_fetch import (
     DatasetNotFound,
     DatasetUnavailable,
     LocalComputeDataset,
+    ResolvedDataset,
     dataset_spec,
     declared_file_names,
     ensure_dataset,
@@ -72,18 +73,34 @@ from ._support.downloads.download import (
 from ._support.downloads.remote_zip import download_zip_member
 from ._support.runtime.cli import run_luxar_cli
 from ._support.runtime.device import detect_device, warn_if_no_cuda_gpu
-from ._support.runtime.flags import parse_demo_flags, parse_int_arg, parse_path_arg
+from ._support.runtime.flags import (
+    control_serve_args,
+    parse_demo_flags,
+    parse_int_arg,
+    parse_path_arg,
+    parse_str_arg,
+)
 from ._support.runtime.provenance import (
     BUILDER_FINGERPRINT_ATTR,
+    INPUT_DIGESTS_ATTR,
     demo_source_fingerprint,
     print_data_provenance,
     scene_is_current,
+    stamp_input_digests,
 )
 from ._support.runtime.viewer import launch_viewer
+
+
+def window_attrs(window: tuple[float, float]) -> dict[str, float]:
+    """Intensity and offset storing a Layers-panel display window."""
+    lo, hi = window
+    return {"intensity": 1.0 / (hi - lo), "offset": -lo / (hi - lo)}
+
 
 __all__ = [
     "BUILDER_FINGERPRINT_ATTR",
     "INSTALL_SPECS",
+    "INPUT_DIGESTS_ATTR",
     "LOCAL_FIT_DIRNAME",
     "BundleMemberNotFound",
     "DatasetNotFound",
@@ -94,6 +111,7 @@ __all__ = [
     "LocalComputeDataset",
     "MissingDependencyError",
     "QUARANTINE_SUFFIX",
+    "ResolvedDataset",
     "add_demo_caption",
     "add_reference_cube_to_scene",
     "cache_computed",
@@ -116,6 +134,7 @@ __all__ = [
     "hsv_to_rgb",
     "is_installed",
     "is_lfs_pointer",
+    "control_serve_args",
     "launch_viewer",
     "load_dataset_bundle",
     "load_dataset_gsplats",
@@ -128,6 +147,7 @@ __all__ = [
     "parse_demo_flags",
     "parse_int_arg",
     "parse_path_arg",
+    "parse_str_arg",
     "print_data_provenance",
     "quarantine_file",
     "require_local_data",
@@ -137,6 +157,7 @@ __all__ = [
     "run_luxar_cli",
     "scene_is_current",
     "stack_colorings",
+    "stamp_input_digests",
     "substitutive_lod_or_flat",
     "survey",
     "trilinear_vector",
@@ -144,4 +165,5 @@ __all__ = [
     "voxel_sampled_payload_agreement",
     "warn_if_no_cuda_gpu",
     "warn_if_quarantined",
+    "window_attrs",
 ]

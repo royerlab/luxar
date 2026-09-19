@@ -550,3 +550,29 @@ def test_camera_direction_is_offaxis_on_all_three_axes() -> None:
     d = _demo.CAMERA_DIRECTION
     assert d.shape == (3,)
     assert np.all(np.abs(d) > 0.1), "no component may be ~0 (that is an axis view)"
+
+
+# ---------------------------------------------------------------------------
+# Opening state (2026-09-10 review: open on 3pz, auto-rotating, side-on)
+# ---------------------------------------------------------------------------
+
+
+def test_opening_orbital_is_3pz() -> None:
+    """The scene opens on the largest dumbbell, looked up by label."""
+    assert _demo.OPENING_ORBITAL == "3pz"
+    idx = _demo.opening_orbital_index()
+    assert _demo.ORBITALS[idx][3] == "3pz"
+    assert idx == 4
+
+
+def test_opening_camera_is_nearly_side_on_to_z() -> None:
+    """z-aligned dumbbells must lie across the frame, not point at the camera."""
+    d = _demo.CAMERA_DIRECTION / np.linalg.norm(_demo.CAMERA_DIRECTION)
+    assert d[0] > 0.9, "the view direction is dominated by x (side-on to z)"
+    assert abs(d[2]) < 0.35, "a large z component would foreshorten the dumbbell"
+
+
+def test_auto_rotation_period_is_twelve_seconds() -> None:
+    """Matches the Orbit-panel values from the review (vertical axis, 12 s)."""
+    assert _demo.AUTO_ROTATE_PERIOD_S == 12.0
+    assert 60.0 / _demo.AUTO_ROTATE_PERIOD_S == pytest.approx(5.0)

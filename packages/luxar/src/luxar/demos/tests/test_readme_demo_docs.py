@@ -234,18 +234,23 @@ def test_gallery_tiles_match_registry_credits() -> None:
         )
 
 
-def test_published_demo_count_agrees_across_readmes() -> None:
+def test_published_demo_count_agrees_across_docs() -> None:
     root = get_project_root()
-    readmes = (
+    documents = (
         root / "README.md",
         root / "packages/luxar/README.md",
         root / "packages/luxar-viewer/README.md",
+        root / "docs/index.rst",
     )
     counts = {}
-    for readme in readmes:
-        matches = re.findall(r"— (\d+) (?:live )?demos", readme.read_text())
-        assert len(matches) == 1, f"expected one published demo count in {readme}"
-        counts[readme] = int(matches[0])
+    pattern = (
+        r"(?:—|hosts)\s+(\d+)\s+"
+        r"(?:(?:live\s+)?demos|of\s+the\s+bundled\s+demos)"
+    )
+    for document in documents:
+        matches = re.findall(pattern, document.read_text())
+        assert len(matches) == 1, f"expected one published demo count in {document}"
+        counts[document] = int(matches[0])
     assert len(set(counts.values())) == 1, f"published demo counts disagree: {counts}"
 
 

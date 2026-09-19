@@ -72,7 +72,8 @@ Adam-optimized against its fine input under the closed-form mixture L²
 the optimizer *seed*, and the refit takes over the exact calibration. The
 refit is never worse than the merge in its trusted metric, keeps total mass
 pinned to the fine mixture's (no brightness pop across levels), and freezes
-barrier dims under ``coarsen_dims`` grouping.
+barrier dims under ``coarsen_dims`` grouping. Exact ``label_ids`` are an
+additional categorical barrier: representatives never cross class ids.
 
 The returned value is a single :class:`GSplatData` with
 ``n_substitutive = levels + 1`` and ``M_i = 1`` per substitutive level
@@ -192,13 +193,29 @@ def _finest_content(data: GSplatData) -> GSplatData:
 
 
 def _refuse_categorical_coarsening(data: GSplatData) -> None:
-    if data.label_ids is not None:
+    """Reject a mixed-label set that bypassed barrier-aware grouping."""
+    if data.label_ids is not None and np.unique(data.label_ids).size > 1:
         raise ValueError(
-            "cannot coarsen: input carries categorical channel 'label_ids'; "
-            "merging would have to combine class ids, and there is no meaningful "
-            "combination of two class ids. Call without_label_ids() first if a "
-            "coarse level is what you want."
+            "cannot coarsen mixed categorical channel 'label_ids' in one merge "
+            "group; split the input by label so each representative has one "
+            "exact class id"
         )
+
+
+def _representative_label_channel(
+    data: GSplatData, n_splats: int
+) -> tuple[Optional[np.ndarray], Optional[dict[int, str]]]:
+    """Repeat one homogeneous group's label while retaining its vocabulary."""
+    if data.label_ids is None:
+        return None, None
+    _refuse_categorical_coarsening(data)
+    if n_splats == 0:
+        return np.empty(0, dtype=data.label_ids.dtype), data.label_vocabulary
+    label_id = data.label_ids[0]
+    return (
+        np.full(n_splats, label_id, dtype=data.label_ids.dtype),
+        data.label_vocabulary,
+    )
 
 
 def _resolve_reduction_device(
@@ -249,6 +266,10 @@ def _pack_level(
                 amplitudes=np.array(data.amplitudes, dtype=np.float32),
                 cholesky_factors=np.array(data.cholesky_factors, dtype=np.float32),
                 colors=(np.array(data.colors) if data.colors is not None else None),
+                label_ids=(
+                    np.array(data.label_ids) if data.label_ids is not None else None
+                ),
+                label_vocabulary=data.label_vocabulary,
                 stats={"lod_method": "none", "lod_level": 0},
                 truncation_radius=data.truncation_radius,
             )
@@ -261,7 +282,7 @@ def _pack_level(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Barrier-dim grouping (coarsen_dims)
+# Barrier grouping (coarsen_dims + label_ids)
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -369,11 +390,14 @@ def resolved_merge_coarsen_dims(
 def _subset_gsplatdata(data: GSplatData, mask: np.ndarray) -> GSplatData:
     """Boolean-index a flat ``GSplatData`` (preserves truncation_radius)."""
     colors = np.asarray(data.colors)[mask] if data.colors is not None else None
+    label_ids = np.asarray(data.label_ids)[mask] if data.label_ids is not None else None
     return GSplatData(
         centers=np.asarray(data.centers)[mask],
         amplitudes=np.asarray(data.amplitudes)[mask],
         cholesky_factors=np.asarray(data.cholesky_factors)[mask],
         colors=colors,
+        label_ids=label_ids,
+        label_vocabulary=data.label_vocabulary,
         truncation_radius=data.truncation_radius,
     )
 
@@ -391,6 +415,26 @@ def _drop_nonpositive(data: GSplatData) -> GSplatData:
 def _concat_gsplatdata(parts: list[GSplatData]) -> GSplatData:
     """Concatenate flat ``GSplatData`` parts (colors kept iff all present)."""
     keep_colors = all(p.colors is not None for p in parts)
+    label_presence = {p.label_ids is not None for p in parts}
+    if len(label_presence) > 1:
+        raise ValueError("cannot concatenate a mix of labeled and unlabeled groups")
+    label_ids = None
+    label_vocabulary = None
+    if label_presence == {True}:
+        label_ids = np.concatenate(
+            [np.asarray(p.label_ids) for p in parts if p.label_ids is not None]
+        )
+        combined_label_vocabulary: dict[int, str] = {}
+        for part in parts:
+            assert part.label_vocabulary is not None
+            for label_id, name in part.label_vocabulary.items():
+                previous = combined_label_vocabulary.setdefault(label_id, name)
+                if previous != name:
+                    raise ValueError(
+                        f"conflicting names for label id {label_id}: "
+                        f"{previous!r} and {name!r}"
+                    )
+        label_vocabulary = combined_label_vocabulary
     return GSplatData(
         centers=np.concatenate([np.asarray(p.centers) for p in parts], axis=0),
         amplitudes=np.concatenate([np.asarray(p.amplitudes) for p in parts], axis=0),
@@ -402,8 +446,35 @@ def _concat_gsplatdata(parts: list[GSplatData]) -> GSplatData:
             if keep_colors
             else None
         ),
+        label_ids=label_ids,
+        label_vocabulary=label_vocabulary,
         truncation_radius=parts[0].truncation_radius,
     )
+
+
+def _barrier_group_inverse(
+    data: GSplatData, barrier_dims: Sequence[int]
+) -> tuple[np.ndarray, int]:
+    """Return dense group ids for exact coordinate and categorical barriers."""
+    barrier = list(barrier_dims)
+    if data.label_ids is None:
+        keys = np.asarray(data.centers)[:, barrier]
+        _group_ids, inverse = np.unique(keys, axis=0, return_inverse=True)
+    elif barrier:
+        coordinate_keys = np.asarray(data.centers)[:, barrier]
+        _coordinate_groups, coordinate_inverse = np.unique(
+            coordinate_keys, axis=0, return_inverse=True
+        )
+        label_groups, label_inverse = np.unique(data.label_ids, return_inverse=True)
+        combined = np.asarray(coordinate_inverse, dtype=np.int64) * len(
+            label_groups
+        ) + np.asarray(label_inverse, dtype=np.int64)
+        _group_ids, inverse = np.unique(combined, return_inverse=True)
+    else:
+        _group_ids, inverse = np.unique(data.label_ids, return_inverse=True)
+    inverse = np.asarray(inverse).reshape(-1)
+    g_count = int(inverse.max()) + 1 if inverse.size else 0
+    return inverse, g_count
 
 
 def _allocate_group_M(sizes: np.ndarray, M_target: int) -> np.ndarray:
@@ -457,14 +528,15 @@ def _reduce_one_level_grouped(
     generator: "Optional[torch.Generator]" = None,
     refine_stats: Optional[dict] = None,
 ) -> GSplatData:
-    """One reduction level that never merges across the barrier dims.
+    """One reduction level that never merges across exact barrier groups.
 
     Splats are partitioned by their exact coordinate in the barrier dims (all
-    dims except ``coarsen_dims``); each group is reduced independently with the
-    **unchanged** :func:`_reduce_one_level` and a proportional share of
-    ``M_target``, then concatenated. Within a group every barrier coordinate is
-    identical, so the merged representatives stay on that value. When an L2
-    refine is configured, each per-group refit receives the barrier dims as
+    dims except ``coarsen_dims``) and by ``label_ids`` when present;
+    each group is reduced independently with the **unchanged**
+    :func:`_reduce_one_level` and a proportional share of ``M_target``, then
+    concatenated. Within a group every coordinate barrier and categorical id is
+    identical, so representatives preserve both. When an L2 refine is
+    configured, each per-group refit receives the coordinate barrier dims as
     ``frozen_dims`` so refined centers/covariances never move or widen across a
     barrier; kept-as-is small groups are not refined (nothing was merged).
 
@@ -478,7 +550,7 @@ def _reduce_one_level_grouped(
     d_total = data.ndim
     coarsen_set = set(coarsen_dims)
     barrier = [d for d in range(d_total) if d not in coarsen_set]
-    if not barrier:
+    if not barrier and data.label_ids is None:
         return _reduce_one_level(
             data,
             M_target=M_target,
@@ -494,10 +566,7 @@ def _reduce_one_level_grouped(
             generator=generator,
             refine_stats=refine_stats,
         )
-    keys = np.asarray(data.centers)[:, barrier]
-    _group_ids, inverse = np.unique(keys, axis=0, return_inverse=True)
-    inverse = np.asarray(inverse).reshape(-1)
-    g_count = int(inverse.max()) + 1 if inverse.size else 0
+    inverse, g_count = _barrier_group_inverse(data, barrier)
     if g_count <= 1:
         # A single group: every barrier coordinate is shared, so the refit
         # still freezes the barrier dims (centers/Σ must stay on the value).
@@ -510,7 +579,7 @@ def _reduce_one_level_grouped(
             coverage_inflation=coverage_inflation,
             device=device,
             conserve_mass=conserve_mass,
-            mass_dims=tuple(coarsen_dims),
+            mass_dims=tuple(coarsen_dims) if barrier else None,
             amplitude=amplitude,
             refine_config=refine_config,
             refine_frozen_dims=tuple(barrier),
@@ -549,7 +618,7 @@ def _reduce_one_level_grouped(
                     coverage_inflation=coverage_inflation,
                     device=device,
                     conserve_mass=conserve_mass,
-                    mass_dims=tuple(coarsen_dims),
+                    mass_dims=tuple(coarsen_dims) if barrier else None,
                     amplitude=amplitude,
                     refine_config=refine_config,
                     refine_frozen_dims=tuple(barrier),
@@ -626,18 +695,23 @@ def _volume_refine_level(
 ) -> tuple[GSplatData, dict]:
     """Volume re-fit one already-merged level, piecewise over its barrier groups.
 
-    Without barrier dims this is the historical single call. With them, the level
-    is split by barrier coordinate and each group is re-fitted against its OWN
-    slice of ``volume``, projected to the coarsened dims so the fit cannot move a
-    splat along a barrier axis (see :mod:`.volume_regions`); the barrier
-    coordinate and covariance rows come back verbatim from the seed.
+    Without coordinate or categorical barriers this is the historical single
+    call. Otherwise the level is split by exact barrier group and each group is
+    re-fitted against its OWN slice of ``volume``, projected to the coarsened
+    dims so the fit cannot move a splat along a barrier axis (see
+    :mod:`.volume_regions`); coordinate barriers, covariance rows, and label ids
+    come back verbatim from the seed.
 
     Runs at the same altitude as the historical call — on the concatenated level,
     after :func:`_reduce` — so no reduction signature changes. Mass is pinned per
     group by :func:`~.volume_refit.volume_refine_splats`, matching the merge's
     per-group ``mass_dims`` and keeping per-timepoint brightness intact.
 
-    ``box`` restricts the coarsened dims to one spatial tile, for the per-part
+    The source volume has no categorical channel. Label groups that share the
+    same coordinate-barrier values therefore receive the same volume crop and
+    each run a separate full re-fit against it; on multi-class data this can be
+    expensive, and the never-worse guard may retain every merge seed. ``box``
+    restricts the coarsened dims to one spatial tile, for the per-part
     (adaptive) caller; ``None`` spans the whole volume.
     """
     from luxar.gsplats.lod.volume_refit import volume_refine_splats
@@ -672,6 +746,11 @@ def _volume_refine_level(
         if shifted:
             refit = refit.translate(sub.origin.astype(np.float32))
         out = restore_dims(refit, piece, sub.dims)
+        if piece.label_ids is not None:
+            assert piece.label_vocabulary is not None
+            out = out.with_label_ids(
+                np.asarray(piece.label_ids), piece.label_vocabulary
+            )
         if box is not None and not _within_box(out, sub.dims, box):
             # A partition part's splats must stay inside their tile: the viewer
             # frustum-culls by part bounds, so a splat that wandered out would
@@ -688,14 +767,12 @@ def _volume_refine_level(
         st["tile_escape"] = False
         return out, _with_stored_mse(st), int(sub.array.size)
 
-    if not barrier:
+    if not barrier and level.label_ids is None:
         refined_all, st_all, _ = _one(level, ())
         return refined_all, st_all
 
-    keys = np.asarray(level.centers)[:, list(barrier)]
-    group_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
-    inverse = np.asarray(inverse).reshape(-1)
-    sizes = np.bincount(inverse, minlength=len(group_keys))
+    inverse, group_count = _barrier_group_inverse(level, barrier)
+    sizes = np.bincount(inverse, minlength=group_count)
     # One O(N log N) bucketing pass; stable so within-group order is preserved.
     order = np.argsort(inverse, kind="stable")
     ends = np.cumsum(sizes)
@@ -703,11 +780,16 @@ def _volume_refine_level(
 
     pieces: list[GSplatData] = []
     sink: dict = {}
-    for g in range(len(group_keys)):
+    for g in range(group_count):
         piece = _subset_gsplatdata(level, order[starts[g] : ends[g]])
         if piece.n_splats == 0:
             continue
-        refined, st, n_voxels = _one(piece, group_keys[g])
+        coords = (
+            tuple(float(value) for value in np.asarray(piece.centers)[0, list(barrier)])
+            if barrier
+            else ()
+        )
+        refined, st, n_voxels = _one(piece, coords)
         pieces.append(refined)
         merge_volume_refit_stats(sink, st, weight=n_voxels)
     if not pieces:
@@ -731,6 +813,18 @@ def _resolve_refit_image_min(
     if resolved is None and verbose:
         aprint(f"refine=volume: {MISSING_BASIS_HINT}")
     return resolved
+
+
+def _stamp_level_footprint(level_stats: dict, level_data: GSplatData) -> None:
+    """Stamp the median spatial scale of a nonempty substitutive level."""
+    if level_data.n_splats == 0:
+        return
+    footprint_dims = level_data._nondegenerate_axes()
+    sigma_geo = level_data.scale(footprint_dims.tolist())
+    finite = sigma_geo[np.isfinite(sigma_geo) & (sigma_geo > 0)]
+    if finite.size:
+        level_stats["median_footprint"] = float(np.median(finite))
+        level_stats["footprint_dims"] = footprint_dims.tolist()
 
 
 def make_substitutive_lod(
@@ -843,8 +937,11 @@ def make_substitutive_lod(
         coarsened dims only — see :mod:`.volume_regions` for why the barrier
         axis is sliced away rather than held still. Each level keeps
         whichever of {merge seed, re-fit} renders closer to the volume, so it
-        is never worse than the merge. ``"none"`` (default) keeps the merge
-        output.
+        is never worse than the merge. The volume has no label channel, so
+        categorical groups sharing the same coordinate barriers each run a
+        separate full re-fit against the same crop; this can multiply work by
+        the class count, and the guard may discard those re-fits. ``"none"``
+        (default) keeps the merge output.
     refine_iters
         Adam steps per refined level (``refine="l2"``) / fit iterations per
         re-fitted level (``refine="volume"``). ``None`` (default) resolves to
@@ -888,10 +985,11 @@ def make_substitutive_lod(
         are partitioned by their exact coordinate in those barrier dims and
         each group is reduced independently, so a coarse splat never blends
         across a barrier value (e.g. a categorical ``coloring`` axis, time, or
-        channel). ``None`` (default) coarsens over all dims (the historical
+        channel). ``label_ids`` are also exact barriers whenever present.
+        ``None`` (default) coarsens over all center dims (the historical
         behavior). Passing all dims is equivalent to ``None``. Because every
         non-empty group keeps >= 1 representative, the coarsest level has at
-        least as many splats as there are barrier groups.
+        least as many splats as there are combined barrier groups.
     verbose
         Per-level Arbol logging.
     quality_stamps
@@ -958,7 +1056,6 @@ def make_substitutive_lod(
     L_levels = int(levels)
 
     src = _finest_content(data)
-    _refuse_categorical_coarsening(src)
     target_device = _resolve_reduction_device(device, caller="make_substitutive_lod")
 
     # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
@@ -1010,7 +1107,7 @@ def make_substitutive_lod(
         cur: GSplatData, m_target: int, meth: MethodName, level_refine_stats: dict
     ) -> GSplatData:
         sink = level_refine_stats if refine_cfg is not None else None
-        if norm_coarsen is None:
+        if norm_coarsen is None and cur.label_ids is None:
             return _reduce_one_level(
                 cur,
                 M_target=m_target,
@@ -1026,10 +1123,13 @@ def make_substitutive_lod(
                 generator=refine_gen,
                 refine_stats=sink,
             )
+        grouped_coarsen = (
+            tuple(range(cur.ndim)) if norm_coarsen is None else norm_coarsen
+        )
         return _reduce_one_level_grouped(
             cur,
             M_target=m_target,
-            coarsen_dims=norm_coarsen,
+            coarsen_dims=grouped_coarsen,
             method=meth,
             lloyd_iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
@@ -1072,6 +1172,7 @@ def make_substitutive_lod(
 
     # Collect per-level outputs and pack them as SubstitutiveLevels.
     finest_stats: dict = {"n_splats_total": int(src.n_splats)}
+    _stamp_level_footprint(finest_stats, src)
     if quality_stamps:
         # The finest level IS the reference: quality 1.0 by construction.
         finest_stats["quality"] = 1.0
@@ -1097,6 +1198,7 @@ def make_substitutive_lod(
                 "stop_reason": "input_too_small",
             }
             _stamp_quality(stop_stats, current)
+            _stamp_level_footprint(stop_stats, current)
             sub_levels.append(
                 _pack_level(
                     current,
@@ -1166,6 +1268,7 @@ def make_substitutive_lod(
                     + f", {volume_refit_stats['wall_s']:.1f}s"
                 )
         level_stats: dict = {"n_splats_total": int(stored.n_splats)}
+        _stamp_level_footprint(level_stats, stored)
         if level_refine_stats:
             level_refine_stats.pop("_mass_n", None)
             level_stats["refine"] = "l2"
@@ -1248,7 +1351,8 @@ def merge_to_count(
             :func:`make_substitutive_lod`).
         device: Torch device (``"auto"`` resolves; MPS downgrades to CPU).
         coarsen_dims: Center-column indices merging may combine over; the rest
-            are hard barriers. Default: all dims.
+            are hard barriers. ``label_ids`` are also exact barriers whenever
+            present. Default: all center dims.
 
     Returns:
         A flat :class:`GSplatData` with at most ``n_target`` splats. It can land
@@ -1258,8 +1362,6 @@ def merge_to_count(
 
     Raises:
         ValueError: If ``n_target < 1`` or ``method`` is not recognised.
-            Also raised when the input carries categorical labels, because
-            merging has no defined label-combination rule.
     """
     if n_target < 1:
         raise ValueError(f"n_target must be >= 1, got {n_target}")
@@ -1270,11 +1372,10 @@ def merge_to_count(
     src = _finest_content(data)
     if src.n_splats <= n_target:
         return src
-    _refuse_categorical_coarsening(src)
     target_device = _resolve_reduction_device(device, caller="merge_to_count")
     norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
     level_method = _resolve_method(method, src.n_splats)
-    if norm_coarsen is None:
+    if norm_coarsen is None and src.label_ids is None:
         return _reduce_one_level(
             src,
             M_target=n_target,
@@ -1284,10 +1385,11 @@ def merge_to_count(
             coverage_inflation=coverage_inflation,
             device=target_device,
         )
+    grouped_coarsen = tuple(range(src.ndim)) if norm_coarsen is None else norm_coarsen
     return _reduce_one_level_grouped(
         src,
         M_target=n_target,
-        coarsen_dims=norm_coarsen,
+        coarsen_dims=grouped_coarsen,
         method=level_method,
         lloyd_iterations=lloyd_iterations,
         candidate_bins_k=candidate_bins_k,
@@ -1377,6 +1479,7 @@ def _reduce_one_level(
     The rescale is skipped when the factor leaves ``[1/_MASS_SCALE_BOUND,
     _MASS_SCALE_BOUND]`` — see the constant's rationale.
     """
+    _refuse_categorical_coarsening(data)
     D = data.ndim
     # np.array (copy) not np.asarray: ``data`` may be a flattened() view with
     # read-only arrays, which torch.from_numpy rejects (non-writable). The
@@ -1490,10 +1593,13 @@ def _reduce_one_level(
     amps_np = new_amps.detach().cpu().numpy().astype(np.float32)
     colors_np = new_colors.detach().cpu().numpy() if new_colors is not None else None
 
+    label_ids, label_vocabulary = _representative_label_channel(data, len(centres_np))
     return GSplatData(
         centers=centres_np,
         amplitudes=amps_np,
         cholesky_factors=chol_np,
         colors=colors_np,
+        label_ids=label_ids,
+        label_vocabulary=label_vocabulary,
         truncation_radius=data.truncation_radius,
     )

@@ -21,7 +21,7 @@ Three hostnames on the `luxarviewer.dev` zone, each serving a different thing:
 |---|---|---|
 | `luxarviewer.dev` | The viewer alone, at the root | Cloudflare Pages project `luxar-viewer` |
 | `demos.luxarviewer.dev` | The gallery page, its media, and its viewer | Cloudflare Pages project `luxar-demos` |
-| `data.luxarviewer.dev` | The `.luxar.zarr` stores and content-addressed root-README media | Cloudflare R2 bucket `luxar-demos`, **direct** |
+| `data.luxarviewer.dev` | The `.luxar.zarr` stores, content-addressed root-README media, and `inputs/<slug>/` source archives | Cloudflare R2 bucket `luxar-demos`, **direct** |
 
 **Neither Pages project has a `functions/` directory or an R2 binding.** Both
 are pure static assets. This is the single most important property of the
@@ -41,6 +41,8 @@ Instead:
 - **Root-README media** (`data.luxarviewer.dev/media/<sha256-prefix>.<ext>`) are
   direct R2 objects. Their content-addressed keys are immutable and are recorded
   in `scripts/gallery/media-manifest.json`.
+- **Source archives** (`data.luxarviewer.dev/inputs/<slug>/`) may be the only
+  copy of a demo's pinned inputs. They are not disposable scene-build outputs.
 - **Stable demo deep links** (`demos.luxarviewer.dev/d/<demo-key>`) redirect to
   that scene under the current dated data prefix. The root README's gallery
   titles depend on these routes, so every publish wave must preserve and update
@@ -81,8 +83,9 @@ A "wave" is: some demos changed on `dev`, rebuild them, and update the site.
 ```
 build the changed demos
   -> capture gallery media (stills + orbit videos)
-  -> luxar optimise --profile archive        # 1 MB chunk target
+  -> luxar optimize --profile archive        # 1 MB chunk target
   -> hash-compare against the LAST LOCAL BUILD
+  -> audit the complete local scene inventory
   -> upload only what changed, to a NEW dated prefix
   -> rebuild the page against that prefix, with an ABSOLUTE data host
   -> deploy (page + media as static assets)
@@ -95,6 +98,30 @@ object-storage `hosting` profile. On a representative live store it reduced
 the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
 exchange for far fewer stored objects. Re-measure browser traffic and request
 cost before changing that tradeoff.
+
+Read any playback warning after the `optimize` step. For an un-laddered played
+store, re-run at `hosting` and re-measure requests and per-step bytes before
+publishing; §3.21 records the current exception and measurement procedure.
+
+`make generate-gallery-datasets` automatically runs both built-scene auditors
+against only the stores it generated in that invocation, then reports on the
+complete local inventory. Both audits gate a newly generated store without
+letting an unrelated stale local store block it. Before uploading a wave, run
+the complete inventory commands directly as well. A store that fails either
+generated-store gate is not re-gated on a later idempotent run because it is
+then an already-present neighbour: fix the demo and regenerate with `--force`
+(or delete the store) before continuing.
+
+```bash
+hatch run check-demo-ladders --require-scenes
+hatch run check-scene-credits --require-scenes
+```
+
+Keep this immediately before upload, after the final local build and
+optimization. `--require-scenes` is load-bearing: an empty or wrongly located
+inventory must fail rather than produce a green "inspected nothing" result.
+Both direct full-inventory commands are the backstop and must exit zero before
+upload.
 
 Before rebuilding `earthquakes`, `ocean_currents_earth`,
 `global_rivers_earth`, or `biodiversity_planetary_scale`, put KTX-Software's
@@ -117,7 +144,7 @@ are absolute for exactly this reason.
 ### 2.1 Always publish to a new dated prefix
 
 Prefixes are dated (`data/2026-08-26a/`). Never overwrite a live prefix in
-place. `luxar optimise` assigns a **fresh `content_hash` by design**, and a
+place. `luxar optimize` assigns a **fresh `content_hash` by design**, and a
 warm viewer cache validating on an unchanged hash would serve stale chunks. A
 new prefix sidesteps the whole class of problem: new URL, no stale cache, and
 the old prefix stays intact as a rollback until the audit passes.
@@ -129,7 +156,7 @@ same bytes, no egress, and it keeps the wave cheap.
 
 To decide which stores actually changed, compare **this local build against the
 previous local build**. Do *not* compare a local build against the published
-store: `optimise` gives every output a new `content_hash`, so that pairing
+store: `optimize` gives every output a new `content_hash`, so that pairing
 reports "changed" for everything and is meaningless. This has already cost one
 near-miss 1.7 GB needless republish.
 
@@ -467,7 +494,7 @@ wrong number is most tempting: it collapses a tree into one node, and that node'
 **total** is what the compiler prints.
 
 Worked case. The pinned `h2afva_51tp` generation is the result of the 3.17
-rebuild (`flatten` → `lod --recipe stream` → `optimise`): one 4D leaf with a
+rebuild (`flatten` → `lod --recipe stream` → `optimize`): one 4D leaf with a
 twelve-step progressive ladder and 121,163,285 splats:
 
     node total, 51 timepoints   121,163,285   <- what ElementCapacityWarning prints
@@ -633,7 +660,7 @@ literal truth.
   **measured false**: the published store has **508 chunks** with a nominal
   **~1024 KB uncompressed chunk shape** (the `archive` profile's 1 MB target),
   against **50,316 chunks at 1.0–2.7 KB** in the upstream `.gsplats.zarr`
-  archives. `optimise --profile archive` does re-chunk
+  archives. `optimize --profile archive` does re-chunk
   grafted subtrees, so the archives' fragmentation never reaches a published tile.
   It does still hit whoever downloads those archives directly — a demo build pays
   38 MB in 16,852 pieces — which is an authoring-side fix worth making upstream.
@@ -663,18 +690,18 @@ literal truth.
 Removing substitutive levels is the right call for most single-object scenes, but
 it is **half an operation**. The recipe is three steps, in this order:
 
-    flatten  ->  lod --recipe stream  ->  optimise --profile archive
+    flatten  ->  lod --recipe stream  ->  optimize --profile archive
 
 The ordering cost is independently measured on the Drosophila 500-timepoint
 archive: requests per timepoint step fell from **173 to 2** after
-`optimise --profile archive`
+`optimize --profile archive`
 (`demo_gsplats_4d_drosophila_embryogenesis.py:163-165`).
 
 The reason is not inherited source chunking: `flatten` and `lod` rewrite every
 array at the 64 KB authoring target, discarding even an existing 1 MB layout.
-Running `optimise` before either command is therefore undone, and a timepoint
+Running `optimize` before either command is therefore undone, and a timepoint
 slice again spans many small chunks. **Additive-only and re-chunking are a
-package**, and `optimise` must run *last* so every rewritten array gets the 1 MB
+package**, and `optimize` must run *last* so every rewritten array gets the 1 MB
 layout.
 
 The `h2afva_51tp` rebuild exposed two further traps:
@@ -692,6 +719,19 @@ Result now pinned for `h2afva_51tp`: 1,873,559,527 → 1,115,714,088 bytes
 4D leaf with a twelve-step progressive ladder. The chunk count fell from
 125,751 to 2,316, with all 51 timepoints intact at uniform spacing and none
 blended.
+
+**Superseded at the SCENE level on 2026-09-10.** The pinned archive stays one
+laddered leaf, but `demo_gsplats_4d_h2afva_timelapse.py` now re-authors it at
+build time into a `kind=partition` of one part per TIMEPOINT (51 parts, each with
+eight equal-count rungs: 277,131 splats in rung 0 for the 2,217,045-splat
+reference frame, with every increment under the 900 K cap), cached beside the
+download. Measured cold with the former capped-stream recipe against the single
+leaf and against 44 spatial parts at identical chunking: the single leaf's
+global ladder re-streamed from its bottom on every slice (3-27% of the frame
+resident while a step loads); spatial parts paid ~30 MB per step; time parts
+fetch exactly one part per step and never starve a slice. The "a partition buys
+nothing on a time-stacked node" rule above is about SPATIAL parts; time parts
+are a different structure.
 
 ### 3.18 A probe must emit the evidence that its own window was valid
 
@@ -776,7 +816,7 @@ diagnostic is.
 
 Section 2's rule — hosted cost is **requests**, not bytes — is right, but "one
 request per node" is an *upper bound*, not a measurement. After
-`optimise --profile archive` (1 MB target) a big array spans many chunks while a
+`optimize --profile archive` (1 MB target) a big array spans many chunks while a
 small one spans exactly one, so cutting node count only cuts fetches in one of two
 regimes. The following counts come from the consolidated metadata at published
 prefix `2026-08-27b`; `arrays` excludes zero-shaped `array_ref` placeholders,
@@ -814,7 +854,7 @@ Two regimes, and the ratio tells you which one you are in:
   fetches 508 chunks from 60 arrays, while its first rung fetches 127 from 15;
   both have ratio 8.47, so halving its node count would barely move either.
 
-**The ratio is a property of a pipeline STAGE, not of a store.** `optimise` is
+**The ratio is a property of a pipeline STAGE, not of a store.** `optimize` is
 what moves these stores toward the node-bound regime. The same published roots
 record both pipeline stages in `chunk_layout`, so this comparison is reproducible
 from their `zarr.json` files without a separate local build:
@@ -827,20 +867,20 @@ from their `zarr.json` files without a separate local build:
 | `cosmicflows_laniakea_full` | 79 | 5004 | 63.34 | 224 | 2.84 |
 | `gsplats_2d_cmu1_pathology` | 60 | 7580 | 126.33 | 508 | 8.47 |
 
-`biodiversity_planetary_scale` therefore reads **19.27 before optimise against
+`biodiversity_planetary_scale` therefore reads **19.27 before optimize against
 1.73 after it** — same generation and structure, but a factor of 11 fewer chunks
-per physical array because optimise re-chunks to a 1 MB target. This is consistent
+per physical array because optimize re-chunks to a 1 MB target. This is consistent
 with 3.17's measurement in the other direction (173 requests as-built, 2 after
-optimise).
+optimize).
 
-So a node reduction's payoff is **contingent on the publish step**: optimisation
+So a node reduction's payoff is **contingent on the publish step**: optimization
 can move a small-array store into the node-bound regime, but it does not guarantee
 that outcome. Halving eager arrays is a direct total-load request win on a
 node-bound published artefact and close to meaningless on a byte-bound as-built
 one. The win belongs to the combination, not to the authoring change alone.
 
 Practical consequence: **before claiming a node reduction buys a faster load, check
-the chunks:arrays ratio of the artefact you will actually serve** — post-optimise,
+the chunks:arrays ratio of the artefact you will actually serve** — post-optimize,
 and of the generation you are publishing, not whichever one happens to be live. A
 store with many small nodes gains directly; a store with few large ones gains
 almost nothing and its lever is total bytes instead (3.17).
@@ -856,13 +896,13 @@ This was an ad hoc local full-data experiment on 2026-08-28, based on
 `demo_nuclear_pore_complex.py`; neither the probe nor its output was checked in.
 It is not the published `2026-08-27b` preview, which has 41,288 points in one
 unpartitioned node. The local experiment used 9,874,128 elements and a 32-part
-BSP, with both variants taken through `optimise --profile archive`:
+BSP, with both variants taken through `optimize --profile archive`:
 
     version        groups  arrays  chunks   first commit
     un-laddered        36     160     224    9,874,128 elements
     4 rungs/part      161     640     672    ~1,250,000 elements
 
-Post-optimise chunks:arrays is **1.40** un-laddered and **1.05** laddered, so both
+Post-optimize chunks:arrays is **1.40** un-laddered and **1.05** laddered, so both
 variants are node-bound and the 128 rung groups cost real fetches: **+448
 requests** to reach full detail, 3x the un-laddered total.
 
@@ -965,7 +1005,75 @@ failure rather than an ordinary `DatasetUnavailable` fallback. The live gallery
 tile is indifferent because it serves an already-derived scene and never
 consults the pin (3.10).
 
-### 3.21 Guard the artefact you ship, not only the inputs you fed it
+The 2026-09-18 v2.0.0 wave published records `22804363`, `22807312`, and
+`22804386`: cc-by gained the corrected neuromast pair, the h2afva 51-timepoint
+archive moved to a four-step ladder, and the Drosophila timelapse moved to the
+unculled 128-million-splat build. The manifest repin retires the temporary
+neuromast R2 override and makes existing Drosophila caches fetch the new 1.1 GB
+archive.
+
+### 3.21 Animated, un-laddered nodes need chunk-boundary-aware prefetch
+
+The 2026-09-02 wave re-chunked every store with `optimize --profile archive`.
+On `collision_animated` (a 4.66 M-vertex Lines node over 250 frames, no ladder)
+that made a 1 MB vertex chunk hold ~6 frames; every ~6 frames the playhead
+crossed into the next chunk of each of the four arrays and waited for a
+0.25-0.85 MB fetch (0.4-0.9 s on a 7 Mbps link, cold cache, 40 steps = 65
+requests / 21 MB). The old hidden-axis lookahead was one step deep, so it could
+not hide a boundary that far ahead. The viewer now uses each array's zarr chunk
+shape plus the index atom bounds to prefetch the next boundary in playback
+direction (#2686). Two things were NOT the cause, and the first diagnosis
+wrongly blamed one of them: the ordering is already slice-major (compound
+ordering, `vertex_ordering.slice_dims == [3]`, every atom inside one frame), and
+the old prefetcher did run — only one step ahead.
+For this node the mean added lead is about 2.9 frames with `archive`, 1.2
+frames with `hosting`, and 1.0 frame with `local`; the profile choice still
+governs how much time the prefetch has to hide each request.
+
+Rules that fall out, alongside 3.17 and the #2377 residency finding:
+
+- Compute **frames-per-chunk** before choosing a profile for an animated node:
+  group consecutive `chunk_bounds` atoms exactly as each planned zarr chunk
+  will group them, then measure the inclusive time span of each group.
+- Laddered + played (splat timelapses): 1 MB, so the coarse rung is one resident
+  chunk. Un-laddered + played (animated lines/points): `hosting` (~1.5 frames per
+  chunk) is the middle of the request/byte trade; `local` is 3,500 chunks
+  against the Functions request cap. Not animated: smaller is a pure win.
+- `optimize` keeps each array's byte-based chunk planner, then adds a warn-only
+  per-node check for the playback/cache policy it can verify. The check is gated
+  on `viewer_config.animation` (`playing: true`), not on "has a hidden axis" — a
+  keypress-navigated axis is the refine case. It warns when an un-laddered
+  spatial-index node would exceed two frames per chunk across multiple chunks;
+  a whole array in ONE chunk is benign because there is no boundary to cross.
+  Read the atom's hidden-axis span from `chunk_bounds` — a
+  store with one NODE per hidden coordinate (hilbert_curve_3d) misreads when
+  the scene range is divided by chunk count. Wave 2026-09-11:
+  `collision_animated` plays at 1.8 frames/chunk on `hosting`; `cloud` also
+  starts with playback enabled but has not yet been measured on its published
+  layout. Ocean's tentacles would be 28 frames/chunk on `archive` if that axis
+  were ever played.
+- For a TIME-PARTED store (h2afva) the profile rationale is request count, not
+  rung residency: each part is one frame loaded whole, so there is no
+  cross-timepoint rung to keep warm. Measured on the published `archive` layout
+  (2026-09-11, `chunk_layout` read first): 127,192 chunks at the writer default
+  -> 3,793 on `archive` (33.5x fewer); a coarsest-rung traverse of all 51 parts
+  is **255 requests** (5 chunks per part), the finest rung 1,020. The 30 B/splat
+  one-array-per-rung estimate (~1,400) was 5.5x pessimistic — a rung carries
+  five arrays and `archive` packs them far better than a per-array byte
+  calculation predicts — so treat that estimate as a safe go/no-go upper bound,
+  never as the expected cost. (A first "measurement" of 1,326 on this store was
+  the writer default, not `archive`.)
+- Read `chunk_layout` BEFORE measuring chunk cost, and check it on EVERY store
+  in a wave, not a sample: its absence is the only reliable sign that a scene
+  was never optimized, and stores built on another machine by another operator
+  are exactly the ones that slip through. A chunk-cost number without the
+  layout it was measured on is not a number.
+- Resolve demo ids versus store names through §8.1 before using any operator
+  list. Gallery capture selectors accept demo ids and only warn on unmatched
+  store names, so a mis-keyed pass can exit 0 with placeholder tiles and still
+  satisfy a tile-count guard.
+
+### 3.22 Guard the artefact you ship, not only the inputs you fed it
 
 A publish deployed a gallery page carrying **9 tiles instead of 85**, and every
 guard passed. They were all reasonable guards — and all of them checked *inputs*:
@@ -993,10 +1101,13 @@ Two guards, and the pairing is the point:
 - **Stage completeness, before the page is built.** Count store directories (or
   symlinks — `is_dir()` follows them) in the stage and require it to equal what
   the prefix serves. This one says *why*.
-- **Tile count, after the render.** Count `href="/viewer/index.html?src="`
-  occurrences and require one per store; separately require every tile to
-  reference the *new* prefix, since a stale-prefix tile passes a bare count. This
-  one says *that*, and is the last line before deploy.
+- **Tile count, after the render.** Count
+  `href="https://luxarviewer.dev/?src="` occurrences and require one per store;
+  also accept legacy `href="/viewer/index.html?src="` links while `/viewer/`
+  remains served. Separately require every tile to reference a prefix that is
+  still live — either the wave's new prefix or an earlier one still serving —
+  since a stale-prefix tile passes a bare count. This one says *that*, and is
+  the last line before deploy.
 
 Verify a new guard against the broken artefact, not only the fixed one. Both were
 run against the page that actually deployed: 9 vs 85, abort. A guard only tested
@@ -1286,45 +1397,95 @@ number, and never put both in one table.
 
 ## 8. Current state, and what a fresh operator needs
 
-Written 2026-09-02. Read this before touching the site; several items below
+Written 2026-09-13. Read this before touching the site; several items below
 change what the earlier sections tell you to do.
 
 ### 8.1 Where the site stands right now
 
-- Data prefix: **`data/2026-09-02`**, 86 stores. **This is the only prefix.**
+- Gallery data prefixes: **`data/2026-09-12`** backs 85 tiles;
+  **`data/2026-09-13`** backs `esm3_protein_stories`,
+  `esm_protein_universe`, and `gsplats_4d_h2afva_timelapse`, the three tiles
+  republished by an incremental wave.
 - **There is no rollback prefix.** `2026-09-01` was purged after verification.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
-- Gallery: 86 tiles, 91 stills, 89 videos. Two demos are deliberately
+- Gallery: 88 tiles, 88 stills, 86 videos. Two demos are deliberately
   still-only (§8.2).
-- 94 stable `/d/` routes (§8.1.1).
+- 95 stable `/d/` routes (§8.1.1).
+- **Tiles and `/d/` routes open the STANDALONE viewer**,
+  `https://luxarviewer.dev/?src=<data URL>`, in a new tab — not the gallery's
+  own copy. The gallery used to ship a second viewer build at `/viewer/`, so
+  every release had to be deployed to two Pages projects and they drifted (the
+  standalone once sat 3 days stale). `demos.luxarviewer.dev/viewer/` is STILL
+  SERVED for links already in the wild; retire it by replacing the deployed
+  copy with `/viewer/* https://luxarviewer.dev/:splat 302`, and only then drop
+  the viewer overlay from the deploy tree and collapse the stamp/asset checks
+  to one host. Verified before switching: the data host's CORS allow-list
+  already includes `luxarviewer.dev`, and a tile URL carries only `?src=` —
+  all per-demo framing lives in each store's baked `viewer_config`.
 
 #### 8.1.1 Stable per-demo routes — `/d/<demo-key>`
 
-`https://demos.luxarviewer.dev/d/<demo-key>` 302s to the viewer at the current
-prefix. Anything durable — the README, a paper, an issue, a chat message —
-should link to that, never to a dated `?src=` URL, which breaks on the next
-deploy and breaks *silently* (the origin answers a miss with `200 text/html`,
-so the reader gets a blank viewer and nothing goes red).
+`https://demos.luxarviewer.dev/d/<demo-key>` 302s to the viewer at that
+store's current prefix. Anything durable — the README, a paper, an issue, a
+chat message — should link to that, never to a dated `?src=` URL, which breaks
+on the next deploy and breaks *silently* (the origin answers a miss with
+`200 text/html`, so the reader gets a blank viewer and nothing goes red).
 
 Generated by **`scripts/gallery/gen_redirects.py`** (in this repo, with tests),
 which writes a static Pages `_redirects`. Regenerate it on **every** deploy or
 the routes rot exactly like the links they replace:
 
 ```bash
-rclone lsf r2:luxar-demos/data/<prefix> --dirs-only > /tmp/live_stores.txt
+rclone lsf r2:luxar-demos/data \
+    --recursive --max-depth 2 --dirs-only > /tmp/live_stores.txt
 python scripts/gallery/gen_redirects.py \
-    --prefix <prefix> --live-stores /tmp/live_stores.txt \
+    --prefix <newest-prefix> --live-stores /tmp/live_stores.txt \
     -o <deploy-tree>/_redirects --check-contract
 ```
 
+The recursive listing supplies `<prefix>/<store>` entries across every live
+prefix. `--max-depth 2` stops at the store directory instead of walking every
+group, array, and chunk directory inside each Zarr store. `--prefix` is the
+fallback only for bare store names in a hand-authored list. After an incremental
+publish, a store may appear under both its old and new dated prefixes; the
+lexicographically newest dated prefix wins, matching the deployment convention,
+and the older copy remains the rollback. Prefixes must be one path segment, so
+running the command from one level above `data/` fails rather than generating
+targets containing a doubled `data/` segment.
+
+Before publishing, verify that the generated `# prefixes:` header lists the live
+prefixes actually used by routes and spot-check every newly published demo's
+encoded target:
+
+```bash
+grep '^# prefixes:' <deploy-tree>/_redirects
+grep '^/d/<demo-key> ' <deploy-tree>/_redirects
+```
+
+The header intentionally uses `# prefixes:` (plural); update any deploy-side
+verification that still matches the former singular key. Do not hand-stitch
+fragments or replace this with a single-prefix union invocation.
+
 Two things it handles that a reimplementation gets wrong:
 
-- **A demo key is not always its store name** — 8 of 87 manifest entries differ
-  (`cosmicflows_laniakea` → `cosmicflows_laniakea_full`, `nd_transforms` →
-  `nd_transforms_bench`, and six more). Take the store from the entry's
-  `dataset`, never from its `id`. Routes are emitted for both spellings.
+- **A demo key is not always its store name** — 7 of 88 manifest entries differ:
+  `cosmicflows_laniakea` → `cosmicflows_laniakea_full`; `nd_transforms` →
+  `nd_transforms_bench`; `ppi_flow_field` → `ppi_flow_field_full`;
+  `particle_collision_animated` → `collision_animated`;
+  `zebrahub_velocity_streamlines` →
+  `zebrahub_velocity_streamlines_standard`; `gsplats_interop_observatory` →
+  `gsplats_interop_observatory_rubin`; and `gsplats_interop_spz_scaniverse` →
+  `gsplats_interop_spz_hornedlizard`. The two interop demos also emit
+  `gsplats_interop_observatory_gemini-south` and
+  `gsplats_interop_spz_racoonfamily`, respectively; those secondary outputs
+  have no manifest entry and therefore no stable route, but still belong in
+  operator upload/rebuild lists. The retired `network_performance` demo likewise
+  served `performance_test`. Gallery capture/generation selectors use demo ids;
+  served R2 directories and operator upload/rebuild lists use store names. This
+  generator takes the store from the manifest entry's `dataset` field, never
+  its `id`, and emits routes for both spellings.
 - **`--check-contract`** fails the build naming any README-linked key without a
   route. The root README links 29 tile titles at these routes, so a key rename
   is a **breaking change**. If a rename is genuinely needed, add an alias route
@@ -1339,8 +1500,11 @@ Also run, report-only, at deploy time:
 python scripts/gallery/audit_readme_demo_count.py --page <deploy-tree>/index.html
 ```
 
-The README states the live demo count in two places and nothing else watches it
-(`sync_demo_counts.py` owns the *bundled* count). It has drifted twice.
+The README states the live demo count in two places. `scripts/sync_demo_counts.py`
+owns those claims (and the matching `docs/index.rst` line), projecting the length
+of `scripts/gallery/manifest.json` onto them under the CI gate
+`hatch run check-demo-counts`; the deploy-time audit reads the same claim table
+and checks it against the tiles actually in the built page, which CI cannot see.
 
 ### 8.2 `noOrbitVideo` — two tiles are deliberately static
 
@@ -1362,9 +1526,12 @@ file. Their `.webm` objects were deleted from both the deploy tree and R2.
 
 ### 8.3 Build from the record archives — and distrust the cache
 
-The site must be built from the **Zenodo record generation**, held at
-`~/luxar-zenodo-archives/` (52 files, `MANIFEST.json`, `SHA256SUMS`). Verify
-before use — it takes seconds and the whole failure below came from not doing it:
+The site is normally built from the **Zenodo record generation**, held at
+`~/luxar-zenodo-archives/` (52 files, `MANIFEST.json`, `SHA256SUMS`). Datasets
+with a manifest `base_url` instead use their pinned mirror archives under
+`inputs/<slug>/`; preserve those objects because they may have no Zenodo or Git
+LFS copy. Verify the local record archive before use — it takes seconds and the
+whole failure below came from not doing it:
 
 ```bash
 cd ~/luxar-zenodo-archives && shasum -c SHA256SUMS    # expect: 52 OK, 0 failed
@@ -1449,8 +1616,8 @@ To change what the site serves:
 1. Verify the archives (§8.3), then verify `~/.cache/luxar` against them.
 2. Rebuild the affected demos; confirm the logs show hosted-digest reads and no
    stale warnings.
-3. Re-chunk each store with **its published profile**, read per store — 81 are
-   `archive` (1 MB), 5 are `local` (64 KB). Do not apply one profile to all.
+3. Re-chunk each store with **its published profile**, read per store — 86 are
+   `archive` (1 MB), 4 are `local` (64 KB). Do not apply one profile to all.
 4. Publish to a **new dated prefix**; server-side copy the unchanged stores from
    the current one rather than re-uploading them.
 5. Rebuild the page, **regenerate `_redirects`** (§8.1.1), deploy.

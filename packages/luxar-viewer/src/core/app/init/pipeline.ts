@@ -25,7 +25,7 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
-import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
+import { getGpuByteBudget, initializeGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { getMaxPixelRatio, setHighDPRAllowed } from '../../../rendering/pixel-ratio-cap';
 import {
   configureDepthSort,
@@ -111,6 +111,8 @@ export async function runInitPipeline(
   ports: InitPipelinePorts,
   partial: Partial<InitPipelineResult>
 ): Promise<InitPipelineResult> {
+  initializeGpuByteBudget(ports.options.gpuPoolMaxBytes);
+
   // Inform users about expected console messages. The browser logs a
   // `GET … 404` line (with a JS stack trace) for every failed network
   // request; these cannot be suppressed from JS — only avoided by not
@@ -212,15 +214,17 @@ export async function runInitPipeline(
   // only the DEFAULT loader's registry is evaluated per frame. The
   // registry DEPS below are per-owner already, so when per-loader
   // callbacks arrive no further wiring changes are needed.)
-  // LOD cross-fade is ON by default; ?no-lod-fade disables it. Streaming energy
-  // compensation is ON by default; ?no-lod-energy disables it. Both come in as
+  // LOD cross-fade is ON by default; ?noLodFade disables it. Streaming energy
+  // compensation is ON by default; ?noLodEnergy disables it. Both come in as
   // app OPTIONS (the standalone bootstrap threads them from the URL params;
   // embedders set them directly — the pipeline never reads window.location)
   // and are captured once at wiring time (a reload re-reads them).
   const lodCrossFadeEnabled = ports.options.lodFade ?? true;
   const lodEnergyCompEnabled = ports.options.lodEnergyComp ?? true;
-  // Opt-in: force the finest LOD for capture-quality output (?lod-finest).
+  // Opt-in: force the finest LOD for capture-quality output (?lodFinest).
   const lodFinestEnabled = ports.options.lodFinest ?? false;
+  // The registry owns the neutral default and validates the live value.
+  const lodBias = ports.options.lodBias;
   SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
@@ -238,6 +242,7 @@ export async function runInitPipeline(
       // skips evaluation in this state.
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
       hasArchiveFault: () => owner.archiveFault !== null,
+      hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
       requestReprocess: (paths) => owner.requestReprocess(paths),
       // A view PASS in flight or queued — not a refinement hold, which the
       // loader parks a resync through (see `LODGroupRegistryOwner`).
@@ -265,19 +270,21 @@ export async function runInitPipeline(
       // (it commits outside the per-slice sweep and can outlast the idle
       // timeout), so the swap-up to the fresh level fires when it lands.
       requestRender: () => animationController.startAnimation(),
-      // LOD cross-fade (ON by default; ?no-lod-fade disables): the registry
+      // LOD cross-fade (ON by default; ?noLodFade disables): the registry
       // blends adjacent LOD levels' opacity across a zoom transition instead of
       // a hard swap (blendable modes only: additive/luminous/volumetric).
       // Read once at wiring time.
       getCrossFadeEnabled: () => lodCrossFadeEnabled,
-      // Streaming brightness compensation (ON by default; ?no-lod-energy disables):
+      // Streaming brightness compensation (ON by default; ?noLodEnergy disables):
       // scale a streaming additive/luminous/volumetric leaf's opacity by 1/e(k) so its
       // partial ladder prefix renders at full-level brightness (no brightening
       // pop as chunks arrive). Read once at wiring time.
       getEnergyCompEnabled: () => lodEnergyCompEnabled,
-      // Force-finest capture override (?lod-finest via LuxarAppOptions.lodFinest):
+      // Force-finest capture override (?lodFinest via LuxarAppOptions.lodFinest):
       // always select the finest level and never coarsen off-screen.
       getForceFinestLOD: () => lodFinestEnabled,
+      // Area-unit threshold bias (?lodBias via LuxarAppOptions.lodBias).
+      getLodBias: () => lodBias,
       // Register a fade's clone-on-first-use material so it keeps receiving
       // per-frame camera-uniform updates (an unregistered gsplat clone would
       // project with stale camera params).
@@ -346,7 +353,7 @@ export async function runInitPipeline(
   animationController.addPerFrameCallback('depth-sort-scheduler', () => {
     evaluateDepthSortPerFrame();
   });
-  // Projected-density guard walker (config.densityGuard; `?no-density-guard`):
+  // Projected-density guard walker (config.densityGuard; `?noDensityGuard`):
   // measures elements per drawing-buffer pixel for every committed data mesh
   // once per frame. Consumers read it through getProjectedDensityTracker()
   // (shader keep fraction, refinement rung cap, getPerf().density).
@@ -411,11 +418,12 @@ export async function runInitPipeline(
   }
 
   // While the viewer is not SETTLED — an updateView sweep, any loader's load
-  // pass, a lazy LOD level load, or the post-load refinement drain (each
-  // rung is fetch + decode + commit with the lock released between passes)
-  // — frame jank reflects that work, not steady-state render cost, and the
-  // manager suppresses probe/estimator learning for those samples. Same
-  // predicate the perf probes read as `getPerf().isSettled`, inverted.
+  // pass, a lazy LOD level load, a held partition rising-edge resync, or the
+  // post-load refinement drain (each rung is fetch + decode + commit with the
+  // lock released between passes) — frame jank reflects that work, not
+  // steady-state render cost, and the manager suppresses probe/estimator
+  // learning for those samples. Same predicate the perf probes read as
+  // `getPerf().isSettled`, inverted.
   // TRUE while load activity is in flight (the adaptive-DPR manager's sense).
   const isLoadActive = buildLoadActivityPredicate({
     getDefaultLoader: () => getSceneLoader('default'),
@@ -425,7 +433,7 @@ export async function runInitPipeline(
 
   // The scene environment's live behaviour (re-capture on commit / slice /
   // appearance change once SETTLED — the same predicate, inverted) and the
-  // `?bake-env` one-shot.
+  // `?bakeEnv` one-shot.
   wireSceneEnvironment({
     sceneManager,
     animationController,
@@ -638,13 +646,13 @@ export async function runInitPipeline(
   // unconditionally, so on a plain points/lines scene the capture would
   // otherwise spend its mandatory selector-catch-up rAF on every exported
   // frame waiting for a selector that does not exist. `null` = "no lod_group
-  // to wait for" and skips the drain outright; only a scene with at least one
-  // registered lod_group gets the boolean. Narrow on purpose, and narrower
-  // than "nothing here can be mid-load" — a `--recipe stream` leaf has no
-  // lod_group but does have a progressive ladder still streaming.
+  // or partition to wait for" and skips the drain outright; partitions need
+  // the catch-up tick because a frustum rising edge starts a targeted resync.
+  // This remains narrower than "nothing here can be mid-load": a laddered leaf
+  // outside both group kinds still has no capture-visible registry entry.
   recordingPanel.setLODSettledProvider(() => {
     const registry = getSceneLoader('default')?.lodGroupRegistry;
-    if (!registry || registry.size() === 0) return null;
+    if (!registry || registry.captureSize() === 0) return null;
     return registry.isCaptureQuiescent();
   });
 
@@ -654,8 +662,8 @@ export async function runInitPipeline(
   inputHandler.setLayersPanel(layersPanel);
 
   // Left activity rail — the always-visible, discoverable entry point to the
-  // otherwise keyboard-only panels. Each button fires the SAME command as its
-  // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
+  // otherwise keyboard-only panels. Buttons dispatch through the same command
+  // surface as keyboard shortcuts (via inputHandler.getUiActions()).
   // The sound layer. Constructs no AudioContext until a scene with sound nodes
   // attaches; every viewer piece it needs arrives as a port so `audio/` stays
   // below `scene/` in the layer order (see src/audio/README.md).

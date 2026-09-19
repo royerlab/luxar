@@ -7,6 +7,11 @@ describe('StorageKeys', () => {
     expect(StorageKeys.debug).toBe('luxar.debug');
   });
 
+  it('exposes the control-rail keys under the luxar.controlRail namespace', () => {
+    expect(StorageKeys.controlRailHintDismissed).toBe('luxar.controlRail.hintDismissed');
+    expect(StorageKeys.controlRailCollapsed).toBe('luxar.controlRail.collapsed');
+  });
+
   it('builds rendering keys under the luxar.rendering namespace', () => {
     expect(StorageKeys.rendering('my-scene')).toBe('luxar.rendering.my-scene');
   });

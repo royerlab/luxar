@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { Fn, uniform, uv, vec2, vec3, vec4, texture, smoothstep, dot } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { bindLiveTexture } from '../../materials/_shared/live-texture-tsl';
 
 // Rec.709 relative luma weights (same as the GLSL `thresholdKnee`).
 const LUMA_REC709 = vec3(0.2126, 0.7152, 0.0722);
@@ -26,18 +27,15 @@ const LUMA_REC709 = vec3(0.2126, 0.7152, 0.0722);
 export function bloomThresholdWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>
 ): NodeMaterial {
-  // `texture()` captures the THREE.Texture passed to it at factory-
-  // build time. BloomChain mutates `uniforms.uInput.value` between
-  // renders (different mip source each pass), so we MUST re-resolve
-  // the texture on every render via `.onUpdate()`. Without this, the
-  // TextureNode samples the placeholder forever and bloom output is
-  // empty under WebGPU. The `fallback` identity is captured outside
-  // the closure so the TextureNode's initial binding has a stable
-  // reference; subsequent `.onUpdate()` calls swap in the live value.
+  // Live-bound texture node — see `bindLiveTexture` for why the swap
+  // lives in `updateBefore`. The `fallback` identity is captured
+  // outside the closure so the TextureNode's initial binding has a
+  // stable reference while `uniforms.uInput.value` is still null.
   const fallback = new THREE.Texture();
-  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback).onUpdate(
-    () => (uniforms.uInput.value as THREE.Texture | null) ?? fallback,
-    'render'
+  const uInput = bindLiveTexture(
+    texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback),
+    uniforms.uInput,
+    fallback
   );
   const uTexelSize = uniform(
     (uniforms.uTexelSize.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
@@ -47,9 +45,9 @@ export function bloomThresholdWebGPUFactory(
   // construction-time `uSmoothing` value) reach the GPU on the next
   // render. Without it, the TSL `uniform(number)` overload captures
   // the JS value at factory-build time and silently ignores
-  // subsequent `iuniform.value = …` writes. Vector2/Texture inputs
-  // are mutated in place (`.set(...)` / wrapper-driven graph rebuilds)
-  // so they don't need the same wiring.
+  // subsequent `iuniform.value = …` writes. The Vector2 input is
+  // mutated in place (`.set(...)`), which the node reads back through
+  // the same object reference, so it doesn't need the same wiring.
   const uThreshold = uniform((uniforms.uThreshold.value as number) ?? 0.0).onUpdate(
     () => (uniforms.uThreshold.value as number) ?? 0.0,
     'render'
@@ -94,14 +92,15 @@ export function bloomThresholdWebGPUFactory(
 export function bloomDownsampleWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>
 ): NodeMaterial {
-  // Live-bound texture node — see `bloomThresholdWebGPUFactory` for
-  // rationale. The downsample chain reads a different mip per pass,
-  // so the TextureNode must re-resolve `uniforms.uInput.value` each
-  // render rather than capture the placeholder at build time.
+  // Live-bound texture node — see `bindLiveTexture`. The downsample
+  // chain reads a different mip per pass, so the TextureNode must
+  // re-resolve `uniforms.uInput.value` each render rather than
+  // capture the placeholder at build time.
   const fallback = new THREE.Texture();
-  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback).onUpdate(
-    () => (uniforms.uInput.value as THREE.Texture | null) ?? fallback,
-    'render'
+  const uInput = bindLiveTexture(
+    texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback),
+    uniforms.uInput,
+    fallback
   );
   const uTexelSize = uniform(
     (uniforms.uTexelSize.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
@@ -135,12 +134,13 @@ export function bloomDownsampleWebGPUFactory(
  * returned material.
  */
 export function bloomUpsampleWebGPUFactory(uniforms: Record<string, THREE.IUniform>): NodeMaterial {
-  // Live-bound texture node — see `bloomThresholdWebGPUFactory` for
-  // rationale. The upsample chain reads a different mip per pass.
+  // Live-bound texture node — see `bindLiveTexture`. The upsample
+  // chain reads a different mip per pass.
   const fallback = new THREE.Texture();
-  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback).onUpdate(
-    () => (uniforms.uInput.value as THREE.Texture | null) ?? fallback,
-    'render'
+  const uInput = bindLiveTexture(
+    texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback),
+    uniforms.uInput,
+    fallback
   );
   const uTexelSize = uniform(
     (uniforms.uTexelSize.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)

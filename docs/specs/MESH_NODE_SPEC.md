@@ -1874,7 +1874,7 @@ assumes *prefix ≈ approximation* and that assumption is false for a surface.
 already a pluggable choice, so the method — named **`radial`** — is a single new member
 of each method registry plus a scorer. It has **shipped for GSplats, Points, Lines and
 Mesh** (`-m radial` on `gsplat lod`, `additive_lod={"method": "radial"}` on `add_points` /
-`add_lines` / `add_mesh`), with `reveal_centre` / `spatial_dims` overrides. Two properties are worth
+`add_lines` / `add_mesh`), with `reveal_center` / `spatial_dims` overrides. Two properties are worth
 stating because they are what make it read as a reveal:
 
 - the centre is the **node's own bbox centre, not the scene origin**, so a dataset far
@@ -1922,10 +1922,10 @@ second half landed with it — `createProgressiveMeshLoader` opens a mesh node d
 concatenating each revealed prefix into the buffers the node was sized for.
 
 The **CLI** reaches it through `luxar mesh lod --recipe reveal`, whose `-m/--add-method`,
-`--n-lods`, `--counts`, `--reveal-centre` and `--spatial-dims` map onto the `additive_lod=`
+`--n-lods`, `--counts`, `--reveal-center` and `--spatial-dims` map onto the `additive_lod=`
 keys above. `--recipe` selects rather than the knobs composing, because `add_mesh` refuses
 an additive ladder alongside a substitutive one — a mesh has no coarse prefix, so the two
-are different products rather than two axes of one. `--reveal-centre` / `--spatial-dims`
+are different products rather than two axes of one. `--reveal-center` / `--spatial-dims`
 share their parser with `gsplat lod` (`cli/reveal_options.py`), so the two commands cannot
 drift on what a centre or an axis order means.
 Labels are cleared on a laddered mesh — one source vertex maps into every level that touches

@@ -31,8 +31,8 @@ Localization: Cytoskeleton (microtubule network)
 
 Channels:
 ---------
-  0: MAP4-GFP       — Target protein (microtubule network, cyan)
-  1: Hoechst 33342  — Nuclear stain (blue)
+  0: Hoechst 33342  — Nuclear stain (cyan)
+  1: MAP4-GFP       — Target protein (microtubule network, blue)
 
 How to Cite:
 ------------
@@ -110,6 +110,7 @@ from luxar.demos import (
     local_fit_path,
     parse_demo_flags,
     require_module,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._lod_policy import save_with_lod
@@ -126,8 +127,11 @@ N_CHANNELS = 2
 
 # Channel configuration with colours
 CHANNELS = [
-    {"index": 0, "name": "MAP4-GFP (Microtubules)", "colormap": "cyan"},
-    {"index": 1, "name": "Hoechst (Nuclei)", "colormap": "blue"},
+    # OpenCell raw stacks carry the Hoechst channel first and the GFP channel
+    # second; the colormap stays with the index so the published record keeps
+    # its appearance.
+    {"index": 0, "name": "Hoechst (Nuclei)", "colormap": "cyan"},
+    {"index": 1, "name": "MAP4-GFP (Microtubules)", "colormap": "blue"},
 ]
 
 # Fit parameters (fixed-K, seeds=K*)
@@ -363,6 +367,7 @@ def create_luxar_scene(
                 citation=DEMO_META["citation"],
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
+            stamp_input_digests(scene)
 
             scene.attrs["title"] = "GSplats: OpenCell MAP4 (Microtubule Cytoskeleton)"
             scene.attrs["description"] = """
@@ -378,8 +383,8 @@ Data Source:
   - Spinning-disk confocal, 51 z-slices x 600 x 600
 
 Channels (each is a layer — press L):
-  - Cyan: MAP4-GFP (microtubule network)
-  - Blue: Hoechst 33342 (nuclei)
+  - Cyan: Hoechst 33342 (nuclei)
+  - Blue: MAP4-GFP (microtubule network)
 
 Citation:
   Cho et al. (2022). OpenCell. Science, 375(6585), eabi6983.

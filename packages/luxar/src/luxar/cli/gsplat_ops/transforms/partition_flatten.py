@@ -55,6 +55,20 @@ def _contains_partition_group(group: Any) -> bool:
     )
 
 
+def _replace_partition_provenance_with_summary(
+    stats: dict[str, Any], *, part_count: int
+) -> None:
+    provenance = stats.get("part_provenance")
+    if not isinstance(provenance, list) or len(provenance) != part_count:
+        return
+    from luxar.gsplats.merged_quality import summarize_part_provenance
+
+    summary = summarize_part_provenance(provenance, shared_source=True)
+    if summary is None:
+        return
+    stats["part_provenance"] = summary
+
+
 def _leaf_splat_groups(root: Any, leaf_path: str) -> list[Any]:
     leaf = root[leaf_path] if leaf_path else root
     count = int(leaf.attrs.get("n_additive_sublods", 1))
@@ -398,7 +412,7 @@ def run_partition_dataset(
 
         from luxar.cli.gsplat_ops.loading import load_matrix_gsplats
         from luxar.gsplats.gsplat_data import stats_after_structure_change
-        from luxar.gsplats.io.load_gsplats import read_authored_appearance
+        from luxar.gsplats.io.load_gsplats import read_rebuild_root_attrs
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.tree import iter_leaves
 
@@ -452,12 +466,14 @@ def run_partition_dataset(
                     output_path,
                     partition_node,
                     encoding_mode=encoding_mode_obj,
+                    amplitude_bits="auto",
+                    source_dtype=data.stats.get("source_dtype"),
                     compress=compress,
                     fitting_info=fitting,
                     fitting_config=config,
                     provenance_info=provenance,
                     pipeline_info=pipeline,
-                    root_attrs=read_authored_appearance(input_path),
+                    root_attrs=read_rebuild_root_attrs(input_path),
                 )
                 aprint(
                     f"  Saved kind=partition file: {output_path} "
@@ -487,8 +503,8 @@ def run_flatten_dataset(
         from luxar.gsplats.gsplat_data import stats_after_structure_change
         from luxar.gsplats.io._archive import resolve_store_path
         from luxar.gsplats.io.load_gsplats import (
-            read_authored_appearance,
             read_gsplat_root_stats,
+            read_rebuild_root_attrs,
         )
         from luxar.gsplats.io.save_gsplats import (
             split_fitting_info,
@@ -545,7 +561,9 @@ def run_flatten_dataset(
 
                 carried_stats = stats_after_structure_change(stats)
                 if _contains_partition_group(root):
-                    carried_stats.pop("part_provenance", None)
+                    _replace_partition_provenance_with_summary(
+                        carried_stats, part_count=len(leaf_paths)
+                    )
                 fitting, config, provenance, pipeline = split_fitting_info(
                     carried_stats, include_fitting_info=True
                 )
@@ -561,7 +579,7 @@ def run_flatten_dataset(
                         fitting_config=config,
                         provenance_info=provenance,
                         pipeline_info=pipeline,
-                        root_attrs=read_authored_appearance(input_path),
+                        root_attrs=read_rebuild_root_attrs(input_path),
                         barrier_dims=barrier_dims,
                     )
                     aprint(f"  Saved flat file: {output_path} ({n_splats:,} splats)")

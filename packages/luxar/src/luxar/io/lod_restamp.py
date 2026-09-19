@@ -18,13 +18,14 @@ total store size: a 100 GB scene reads 100 GB to change two attrs). A standalone
 cheap. A ``--dry-run``, and a run that finds nothing to change, hash nothing and
 so read nothing.
 
-**Why this is not part of ``luxar optimise``.** That pass documents "every
+**Why this is not part of ``luxar optimize``.** That pass documents "every
 attribute is preserved" and refuses same-path work outright; this one changes
 attributes and nothing else, in place. They are siblings, not one command with a
 flag.
 
 **Why it is never automatic.** An authored ``coverage_fractions=[...]`` list and
-a legacy derived one are INDISTINGUISHABLE on disk — the point
+a derived one are INDISTINGUISHABLE on disk, including a hand-authored ladder
+already stamped ``screen-area`` — the point
 ``io/_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors``
 makes normatively, which is why that check only ever warns. Running this command
 IS the opt-in: nothing else may trigger it, and it prints the old→new ladder for
@@ -84,6 +85,7 @@ The public entry point is :func:`restamp_lod_store`; the CLI wrapper is
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -99,7 +101,12 @@ from .._zarr_compat import (
     open_group,
     read_consolidated_attrs,
 )
-from ..core.group.lod.group import coverage_fractions, partitioned_coverage_fractions
+from ..core.group.lod.group import (
+    PARTITION_FINEST_AREA,
+    WHOLE_OBJECT_FINEST_ANCHOR,
+    coverage_fractions,
+    partitioned_coverage_fractions,
+)
 from ..typing_utils.constants import (
     DERIVED_LOD_SELECTOR,
     ENVIRONMENT_GROUP,
@@ -117,7 +124,7 @@ from ..typing_utils.constants import (
 # named `pipeline` would go uncounted. Negligible, and not worth forking the
 # helper; a dropped child that carries a `coverage_fraction` is refused below.)
 from ._compiler.finalize.amplitude_window import _child_nodes, _lod_children
-from .optimise import _is_luxar_store, _restamp_content_hash
+from .optimize import _is_luxar_store, _restamp_content_hash
 
 __all__ = [
     "HASH_RESTAMPED",
@@ -144,7 +151,7 @@ _ELEMENT_COUNT_ATTR: Dict[str, str] = {
 #: ``RestampReport.content_hash_status`` — what became of the store's
 #: ``content_hash``. ``None`` alone cannot say: a store that carries neither the
 #: scene ``type`` nor a ``.gsplats.zarr`` ``content_hash`` marker has no digest
-#: to move (``optimise._restamp_content_hash`` returns ``None`` for it), and that
+#: to move (``optimize._restamp_content_hash`` returns ``None`` for it), and that
 #: is a very different report from "nothing changed, so nothing was restamped" —
 #: the first means a warm viewer cache will NOT invalidate.
 HASH_UNCHANGED = "unchanged"
@@ -153,7 +160,7 @@ HASH_UNSTAMPABLE = "unstampable"
 
 
 def _carries_restampable_digest(root: zarr.Group) -> bool:
-    """Mirror :func:`~luxar.io.optimise._restamp_content_hash`'s marker gate."""
+    """Mirror :func:`~luxar.io.optimize._restamp_content_hash`'s marker gate."""
     attrs = dict(root.attrs)
     return attrs.get("type") == "scene" or "content_hash" in attrs
 
@@ -164,14 +171,15 @@ class RestampedGroup:
 
     path: str
     partition_bound: bool
+    anchor: float
     old_selector: Optional[str]
     old_thresholds: List[Optional[float]]
     new_thresholds: List[float]
     element_counts: List[Optional[int]]
 
     @property
-    def anchor(self) -> str:
-        """Human name of the anchor the re-derivation used."""
+    def anchor_name(self) -> str:
+        """Human name of the anchor binding the re-derivation used."""
         return "fills-screen (tile)" if self.partition_bound else "whole-object"
 
 
@@ -445,11 +453,46 @@ def _descending_ladder_refusal(
     )
 
 
+def _derive_thresholds(
+    counts: List[Optional[int]],
+    *,
+    partition_bound: bool,
+    finest_anchor: Optional[float],
+    path: str,
+) -> List[float]:
+    """Derive one ladder, applying an explicit whole-object anchor if requested."""
+    # Only the LENGTH and the finest entry are consumed (see the two derivation
+    # docstrings). The caller checks the finest, so a coarser level whose count
+    # the store never recorded is passed as 0 rather than blocking a
+    # re-derivation it cannot affect. The report keeps the honest `None`.
+    resolved_counts = [0 if count is None else count for count in counts]
+    if partition_bound:
+        return [
+            float(value) for value in partitioned_coverage_fractions(resolved_counts)
+        ]
+
+    thresholds = coverage_fractions(resolved_counts)
+    if finest_anchor is None:
+        return [float(value) for value in thresholds]
+
+    scale = finest_anchor / WHOLE_OBJECT_FINEST_ANCHOR
+    reanchored = [float(value * scale) for value in thresholds]
+    if any(
+        right <= left for left, right in zip(reanchored, reanchored[1:], strict=False)
+    ):
+        raise ValueError(
+            f"finest_anchor={finest_anchor!r} is too small to represent a "
+            f"strictly increasing {len(reanchored)}-level ladder at {path}"
+        )
+    return reanchored
+
+
 def _plan_lod(
     group: "zarr.Group",
     attrs: Dict[str, Any],
     *,
     partition_bound: bool,
+    finest_anchor: Optional[float],
     report: RestampReport,
 ) -> Optional[_PlannedRestamp]:
     """Classify one ``kind=lod`` group and, when it is legacy, plan its rewrite.
@@ -459,6 +502,8 @@ def _plan_lod(
         attrs: Its attrs, already read.
         partition_bound: The resolved anchor binding (see
             :func:`_is_partition_bound`).
+        finest_anchor: An explicit whole-object anchor, or ``None`` for the
+            default migration behavior.
         report: Collects the classification — restamped, or one of the three
             skip buckets.
 
@@ -468,7 +513,7 @@ def _plan_lod(
     path = group.path or "/"
     selector = attrs.get("selector")
 
-    if selector == DERIVED_LOD_SELECTOR:
+    if selector == DERIVED_LOD_SELECTOR and (finest_anchor is None or partition_bound):
         report.already_current.append(
             SkippedGroup(path, "already-current", f"selector={DERIVED_LOD_SELECTOR!r}")
         )
@@ -531,25 +576,41 @@ def _plan_lod(
         )
         return None
 
-    derive = partitioned_coverage_fractions if partition_bound else coverage_fractions
-    # Only the LENGTH and the finest entry are consumed (see the two derivation
-    # docstrings), and the finest is checked above — so a coarser level whose
-    # count the store never recorded is passed as 0 rather than blocking a
-    # re-derivation it cannot affect. The report keeps the honest `None`.
-    new = derive([0 if c is None else c for c in counts])
+    new_thresholds = _derive_thresholds(
+        counts,
+        partition_bound=partition_bound,
+        finest_anchor=finest_anchor,
+        path=path,
+    )
+    resolved_anchor = (
+        PARTITION_FINEST_AREA if partition_bound else WHOLE_OBJECT_FINEST_ANCHOR
+    )
+    if finest_anchor is not None and not partition_bound:
+        resolved_anchor = finest_anchor
+
+    if selector == DERIVED_LOD_SELECTOR and old == new_thresholds:
+        report.already_current.append(
+            SkippedGroup(
+                path,
+                "already-current",
+                f"stored ladder already matches anchor {resolved_anchor:g}",
+            )
+        )
+        return None
 
     entry = RestampedGroup(
         path=path,
         partition_bound=partition_bound,
+        anchor=resolved_anchor,
         old_selector=None if selector is None else str(selector),
         old_thresholds=old,
-        new_thresholds=[float(v) for v in new],
+        new_thresholds=new_thresholds,
         element_counts=counts,
     )
     report.restamped.append(entry)
 
     aprint(
-        f"  🪜 {path}: anchor {entry.anchor}, "
+        f"  🪜 {path}: anchor {entry.anchor_name} {entry.anchor:g}, "
         f"selector {entry.old_selector or '<absent>'} → {DERIVED_LOD_SELECTOR}"
     )
     aprint(
@@ -582,6 +643,7 @@ def _walk(
     *,
     under_partition: bool,
     selected: Optional[Set[str]],
+    finest_anchor: Optional[float],
     report: RestampReport,
     plans: List[_PlannedRestamp],
 ) -> None:
@@ -618,6 +680,7 @@ def _walk(
                 group,
                 attrs,
                 partition_bound=child_under,
+                finest_anchor=finest_anchor,
                 report=report,
             )
             if planned is not None:
@@ -629,6 +692,7 @@ def _walk(
             group[str(name)],
             under_partition=child_under,
             selected=selected,
+            finest_anchor=finest_anchor,
             report=report,
             plans=plans,
         )
@@ -752,7 +816,7 @@ def _snapshot_content_hashes(
     Restoring is also the cheap direction: one attr read per group here, against a
     full value walk over every array in the store on the failure path.
 
-    ``deep`` mirrors :func:`~luxar.io.optimise._restamp_content_hash`: a scene's
+    ``deep`` mirrors :func:`~luxar.io.optimize._restamp_content_hash`: a scene's
     value walk stamps every group, a ``.gsplats.zarr`` root stamp only the root.
     A store with neither marker is stamped nowhere, and the single recorded root
     entry then undoes to nothing.
@@ -816,7 +880,7 @@ def _roll_back(
     leaves one ladder restamped, the failing one TORN (a screen-area threshold
     under ``selector="coverage"`` — thresholds and selector disagreeing about
     their units, which nothing downstream can detect), and the consolidated index
-    describing neither. ``optimise`` is all-or-nothing for exactly this reason;
+    describing neither. ``optimize`` is all-or-nothing for exactly this reason;
     this sibling writes in place and so has to unwind rather than stage.
 
     The ``content_hash`` is RESTORED, not recomputed: the pre-run digests are in
@@ -1069,13 +1133,26 @@ def _summarise(report: RestampReport) -> None:
         aprint(f"  ❌ verify: {message}")
 
 
+def _validate_finest_anchor(finest_anchor: Optional[float]) -> None:
+    """Reject values that cannot be a finite screen-area fraction."""
+    if finest_anchor is None:
+        return
+    if math.isfinite(finest_anchor) and 0.0 < finest_anchor <= 1.0:
+        return
+    raise ValueError(
+        "--anchor must be finite and in the screen-area interval (0, 1]; "
+        f"got {finest_anchor!r}"
+    )
+
+
 def restamp_lod_store(
     path: "str | Path",
     *,
     dry_run: bool = False,
     groups: Optional[Sequence[str]] = None,
+    finest_anchor: Optional[float] = None,
 ) -> RestampReport:
-    """Re-derive every legacy ``kind=lod`` ladder in a store, in place.
+    """Re-derive ``kind=lod`` ladders in a store, in place.
 
     An attrs-only pass: for each ``kind=lod`` group still on the legacy
     ``"coverage"`` selector (or carrying none, which means the same thing), the
@@ -1085,8 +1162,11 @@ def restamp_lod_store(
     ``kind=partition`` among its own ladder children — the ``overview`` cap),
     :func:`~luxar.core.group.lod.group.coverage_fractions` otherwise — and the
     group is stamped :data:`~luxar.typing_utils.constants.DERIVED_LOD_SELECTOR`.
-    A group already on that selector is skipped, so a second run is a no-op down
-    to the ``content_hash``.
+    A group already on that selector is skipped unless ``finest_anchor`` is
+    supplied. That explicit override sets the requested screen-area fraction for
+    every whole-object ladder processed, both legacy and already current;
+    partition-bound ladders remain anchored at fills-screen ``1.0``. A requested
+    ladder that already matches is still a no-op down to the ``content_hash``.
 
     The ladder rewrite moves no chunk and opens no array. When anything changed,
     the store's ``content_hash`` is restamped and the metadata re-consolidated,
@@ -1126,6 +1206,10 @@ def restamp_lod_store(
         Restrict the pass to these group paths, in the store's own spelling
         (``"tiled/part_0"``; the root is ``"/"``). A path that matches no
         ``kind=lod`` group is an error, not a silent no-op.
+    finest_anchor
+        Optional whole-object finest-level screen-area fraction in ``(0, 1]``.
+        Supplying it explicitly re-derives already-``screen-area`` ladders as
+        well as legacy ones. Partition-bound ladders remain at ``1.0``.
 
     Returns
     -------
@@ -1148,9 +1232,10 @@ def restamp_lod_store(
             f"{store_path} (unpack a .zip/.tar.gz store first — an attrs rewrite "
             f"of a compressed archive cannot happen in place)"
         )
+    _validate_finest_anchor(finest_anchor)
 
     root = open_group(store_path, mode="r" if dry_run else "r+")
-    # `optimise.ensure_luxar_store` is the same gate but its message names
+    # `optimize.ensure_luxar_store` is the same gate but its message names
     # `--generic`, an escape hatch this command does not offer (there is no
     # kind=lod group in a foreign store to restamp), so the CLASSIFICATION is
     # reused and the wording is this command's own.
@@ -1191,6 +1276,7 @@ def restamp_lod_store(
                 root,
                 under_partition=False,
                 selected=selected,
+                finest_anchor=finest_anchor,
                 report=report,
                 plans=plans,
             )

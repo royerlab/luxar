@@ -15,13 +15,15 @@
 
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
-import { buildDefine } from './tools/build-identity.ts';
+import { buildDefine, viewerVersionDefine } from './tools/build-identity.ts';
 
 export default defineConfig({
   // Same stamp as the application build: a consumer of the npm package
   // reports bugs against a revision too, and this bundle is cut at a
-  // different time from `dist/`.
-  define: buildDefine(),
+  // different time from `dist/`. `VIEWER_VERSION` (src/version.ts) is the
+  // public constant consumers compare against; `check-lib-exports.mjs` asserts
+  // the built bundle's value equals package.json.
+  define: { ...buildDefine(), ...viewerVersionDefine() },
   // Library consumers control their own deployment path; emit relative URLs
   // so workers/assets resolve via `import.meta.url` rather than from the
   // document root.

@@ -20,10 +20,14 @@ from ....validation.writing import (
 )
 from ..compositing import (
     ABSENT_WHEN_NONE_RENDER_ATTRS,
+    funnel_add_error,
     preflight_extend_to_all,
+    reject_layer_order_inside_specialized_group,
+    reject_lines_only_join,
     reject_mesh_only_appearance,
     strip_absent_attr_kwargs,
 )
+from ..partition import reject_mismatched_partition_parent
 from .amplitude_norm import (
     NormalizeSpec,
     normalize_gsplat_data,
@@ -61,7 +65,7 @@ GRAFT_STRUCTURE = (
 )
 GRAFT_REMEDY = (
     "Label a single-leaf file instead ('gsplat flatten' collapses this one to "
-    "one leaf)."
+    "one leaf), or pass flatten=True when adding the file."
 )
 
 
@@ -80,8 +84,24 @@ LADDER_REMEDY = (
 STORED_LADDER_STRUCTURE = "the additive ladder this .gsplats.zarr already carries"
 STORED_LADDER_REMEDY = (
     "Collapse the ladder first ('gsplat flatten' rewrites the file as a single "
-    "unladdered leaf, which partitions normally)."
+    "unladdered leaf, which partitions normally), or pass flatten=True when "
+    "adding the file."
 )
+
+
+def reject_invalid_gsplat_compositing_attrs(
+    group: "Group", name: str, parent: Optional["Node"], attrs: Dict[str, Any]
+) -> None:
+    """Apply the flat gsplat adder's compositing gates with its error prefix."""
+    try:
+        reject_mismatched_partition_parent(parent or group, "gsplats", name)
+        reject_layer_order_inside_specialized_group(
+            "gsplats", name, attrs, parent or group
+        )
+        reject_lines_only_join("gsplats", name, attrs)
+        reject_mesh_only_appearance("gsplats", name, attrs)
+    except ValueError as error:
+        raise ValueError(funnel_add_error("gsplats", name, error)) from error
 
 
 def partition_beside_a_ladder_reason(structure: str, remedy: str) -> str:
@@ -726,6 +746,14 @@ def _reject_before_wrapper(
         raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
 
+def _resolved_source_dtype(result: Any, override: Optional[str]) -> Optional[str]:
+    """Prefer an explicit source dtype, else use recorded fitting provenance."""
+    if override is not None:
+        return override
+    value = result.stats.get("source_dtype")
+    return value if isinstance(value, str) else None
+
+
 def add_gsplats_from_data_impl(
     group: "Group",
     *,
@@ -739,6 +767,7 @@ def add_gsplats_from_data_impl(
     lod_group: Any = None,
     additive_lod: Any = None,
     normalize_amplitudes: NormalizeSpec = True,
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -768,7 +797,7 @@ def add_gsplats_from_data_impl(
     # the call it is about to make, so it is the more fundamental fault of the two
     # and there is nothing below it worth reporting first.
     reject_data_owned_channels(name, attrs)
-    reject_mesh_only_appearance("gsplats", name, attrs)
+    reject_invalid_gsplat_compositing_attrs(group, name, parent, attrs)
 
     # Propagate truncation_radius through attrs (unless caller overrode it — and
     # an explicit ``truncation_radius=None`` is NOT an override, having just been
@@ -796,8 +825,15 @@ def add_gsplats_from_data_impl(
             from ..lod.group import _validate_coarsen_dims_spec, resolve_coarsen_dims
 
             raw = _validate_coarsen_dims_spec(lod_group.get("coarsen_dims"))
-            resolved = resolve_coarsen_dims(group._find_scene(), int(result.ndim), raw)
+            resolved = resolve_coarsen_dims(
+                group._find_scene(),
+                int(result.ndim),
+                raw,
+                dim_order=dim_order,
+            )
             lod_group = {**lod_group, "coarsen_dims": resolved}
+
+    _source_dtype = _resolved_source_dtype(result, _source_dtype)
 
     # Resolve the two LOD axes. Substitutive first (it can produce a
     # multi-level result), then additive (uniform across levels).
@@ -827,7 +863,7 @@ def add_gsplats_from_data_impl(
                 f"Could not add gsplats '{name}': coverage_fraction must not be "
                 "passed when the resolved result is multi-substitutive: "
                 "thresholds are derived per-child (or set via "
-                "lod_group=dict(coverage_fractions=[...]))."
+                "substitutive_lod=dict(coverage_fractions=[...]))."
             )
         _reject_before_wrapper(
             group,
@@ -869,6 +905,7 @@ def add_gsplats_from_data_impl(
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
+            _source_dtype=_source_dtype,
             **attrs,
         )
 
@@ -887,8 +924,16 @@ def add_gsplats_from_data_impl(
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
+            _source_dtype=_source_dtype,
             **attrs,
         )
+
+    for kwarg in ("labels", "image_labels", "keys"):
+        if attrs.get(kwarg) is not None:
+            raise ValueError(
+                f"Could not add gsplats '{name}': "
+                + labels_on_a_laddered_leaf_reason(kwarg)
+            )
 
     return add_gsplats_multi_lod_impl(
         group,
@@ -899,5 +944,6 @@ def add_gsplats_from_data_impl(
         dim_order=dim_order,
         fill=fill,
         fill_sigma=fill_sigma,
+        _source_dtype=_source_dtype,
         **attrs,
     )

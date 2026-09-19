@@ -363,7 +363,7 @@ The package supports three loss functions, each optimized for different data cha
 ### **L1 (Mean Absolute Error)** - Default
 - **Best for**: Microscopy and most image-reconstruction tasks where the held-out (signal-recovery) metric matters
 - **Characteristics**: Robust to outliers, preserves edges, encourages sparse residuals
-- **Use when**: General-purpose default — verified empirically (Supp. Doc. 5) to reach equal-or-higher held-out PSNR than MSE on every microscopy dataset tested
+- **Use when**: General-purpose default — in the loss-comparison study (Supp. Doc. 5), L1 beats MSE on held-out PSNR on 11 of 17 microscopy volumes and never trails it by more than 0.28 dB
 - **Special synergy**: L1 + asymmetric penalty provides exceptional stability
 
 ### **Poisson (Deviance)**
@@ -699,7 +699,7 @@ After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.za
 ### Functions
 
 - `cv_mask(shape, fraction=0.05, seed=42)` — deterministic Bernoulli held-out mask.
-- `donut_median_fill(V, mask, radius=1)` — replace masked voxels with median of `(2r+1)^D` donut neighbourhood (centre excluded). Operates on arrays of any dimensionality.
+- `donut_median_fill(V, mask, radius=1)` — replace masked voxels with the median of their *unmasked* `(2r+1)^D` donut neighbours (centre and other held-out voxels excluded), expanding the radius when a clustered mask hides every local donor. The filled volume depends on unmasked voxels only; an all-`True` mask raises `ValueError`. Operates on arrays of any dimensionality.
 - `held_out_psnr(V_hat, V_original, mask, data_range=None)` — PSNR at masked positions against the *original* (pre-fill) values.
 - `estimate_noise_floor(V) -> NoiseFloor` — ensemble of Laplacian MAD (Immerkaer 1996), Haar HH-subband MAD (Donoho & Johnstone 1994), and background-region MAD; the median across estimators is robust to one outlier on the low side (typical when the dark tail is quantised).
 - `build_k_grid(explicit=None, n_points=10, k_min=1_000, k_max=512_000, progression="exp", power=2)` — exponential (geometric/log-spaced) or polynomial K grid; `explicit` takes precedence when given.

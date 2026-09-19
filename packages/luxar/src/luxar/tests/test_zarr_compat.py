@@ -483,6 +483,11 @@ def test_a_filter_with_no_format_3_twin_is_refused(tmp_path: Path) -> None:
         zc.set_zarr_format(original)
 
 
+def test_unknown_codec_errors_are_resolved_at_import() -> None:
+    expected = getattr(zarr.errors, "UnknownCodecError", KeyError)
+    assert zc._UNKNOWN_CODEC_ERRORS == (KeyError, expected)
+
+
 # ---------------------------------------------------------------------------
 # create_array's zarr-2 argument tolerance
 # ---------------------------------------------------------------------------
@@ -591,7 +596,7 @@ def test_list_raw_keys_answers_case_exactly(tmp_path: Path) -> None:
     """The question :func:`read_raw_bytes` cannot answer: is a key spelled
     EXACTLY this one there? An open-by-name goes through the filesystem, and on
     a case-insensitive one ``Zarr.json`` resolves to the node's own
-    ``zarr.json`` — so ``luxar.io.optimise`` cannot tell a dangling payload attr
+    ``zarr.json`` — so ``luxar.io.optimize`` cannot tell a dangling payload attr
     from a real file that would clobber that document. A listing compared in
     Python is folded by nothing."""
     root = zc.open_group(tmp_path / "s.zarr", mode="w", zarr_format=3)

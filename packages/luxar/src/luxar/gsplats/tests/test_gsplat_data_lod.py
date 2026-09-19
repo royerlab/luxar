@@ -29,8 +29,8 @@ _LABEL_COUNT = 3
 _LABEL_VOCABULARY = {i: f"class-{i}" for i in range(_LABEL_COUNT)}
 
 
-def _label_operation(operation, *, id: str, refuses: bool = False):
-    return pytest.param(operation, refuses, id=id)
+def _label_operation(operation, *, id: str, labels_follow_centers: bool = True):
+    return pytest.param(operation, labels_follow_centers, id=id)
 
 
 _LABEL_CHANNEL_OPERATIONS = (
@@ -132,7 +132,7 @@ _LABEL_CHANNEL_OPERATIONS = (
             verbose=False,
         ),
         id="decimate-merge",
-        refuses=True,
+        labels_follow_centers=False,
     ),
     _label_operation(
         lambda data: make_substitutive_lod(
@@ -144,7 +144,7 @@ _LABEL_CHANNEL_OPERATIONS = (
             verbose=False,
         ),
         id="make-substitutive-lod",
-        refuses=True,
+        labels_follow_centers=False,
     ),
 )
 
@@ -375,11 +375,17 @@ class TestGSplatDataLOD:
                     assert int(label_id) == int(center[0])
                 assert sublod.label_vocabulary == vocabulary
 
-    @pytest.mark.parametrize("operation,refuses", _LABEL_CHANNEL_OPERATIONS)
+    @pytest.mark.parametrize(
+        "operation,labels_follow_centers", _LABEL_CHANNEL_OPERATIONS
+    )
     @pytest.mark.parametrize("laddered", [False, True], ids=["flat", "laddered"])
     @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
     def test_operations_carry_or_refuse_categorical_channel(
-        self, operation, refuses: bool, laddered: bool, labeled: bool
+        self,
+        operation,
+        labels_follow_centers: bool,
+        laddered: bool,
+        labeled: bool,
     ) -> None:
         centers = np.column_stack(
             [np.arange(12, dtype=np.float32), np.zeros((12, 2), dtype=np.float32)]
@@ -401,14 +407,6 @@ class TestGSplatDataLOD:
         if laddered:
             data = make_additive_lod(data, n_lods=3, method="radial")
 
-        if labeled and refuses:
-            with pytest.raises(
-                ValueError,
-                match="cannot coarsen: input carries categorical channel 'label_ids'",
-            ):
-                operation(data)
-            return
-
         result = operation(data)
 
         node = result.tree if isinstance(result, GSplatData) else result
@@ -424,8 +422,13 @@ class TestGSplatDataLOD:
         for sublod in sublods:
             assert sublod.label_ids is not None
             assert sublod.label_vocabulary == _LABEL_VOCABULARY
-            expected = np.rint(sublod.centers[:, 0]).astype(np.int64) % _LABEL_COUNT
-            np.testing.assert_array_equal(sublod.label_ids, expected)
+            if labels_follow_centers:
+                expected = np.rint(sublod.centers[:, 0]).astype(np.int64) % _LABEL_COUNT
+                np.testing.assert_array_equal(sublod.label_ids, expected)
+            else:
+                assert set(np.asarray(sublod.label_ids).tolist()) == set(
+                    _LABEL_VOCABULARY
+                )
 
     def test_with_label_ids_accepts_integer_sequence(self) -> None:
         source = _make_3d_gsplat(6)
@@ -746,6 +749,19 @@ class TestSubstitutivePreservation:
 
     def test_transform_preserves_pyramid(self):
         data = self._make_pyramid()
+        data = GSplatData.from_substitutive_levels(
+            [
+                replace(
+                    level,
+                    stats={
+                        **level.stats,
+                        "median_footprint": float(index + 1),
+                        "footprint_dims": [0, 1, 2],
+                    },
+                )
+                for index, level in enumerate(data.substitutive_levels)
+            ]
+        )
         out = data.transform(np.eye(3) * 2.0)
         assert out.n_substitutive == 3
         for s in range(3):
@@ -754,6 +770,9 @@ class TestSubstitutivePreservation:
                 data.at_substitutive(s).centers * 2.0,
                 atol=1e-4,
             )
+            assert out.substitutive_levels[s].stats[
+                "median_footprint"
+            ] == pytest.approx(2.0 * (s + 1))
 
     def test_without_label_ids_preserves_pyramid(self) -> None:
         data = self._make_pyramid(counts=(12, 5))
@@ -908,6 +927,37 @@ class TestSubstitutivePreservation:
             np.testing.assert_allclose(
                 lvl.colors[n1:], [[0.0, 1.0, 0.0]] * (lvl.n_splats - n1)
             )
+
+    @pytest.mark.parametrize("merge", ["concatenate", "channel_colors"])
+    def test_pyramid_merge_drops_stale_footprint_stats(self, merge):
+        def stamped(data, footprint):
+            return GSplatData.from_substitutive_levels(
+                [
+                    replace(
+                        level,
+                        stats={
+                            **level.stats,
+                            "median_footprint": footprint,
+                            "footprint_dims": [0, 1, 2],
+                        },
+                    )
+                    for level in data.substitutive_levels
+                ]
+            )
+
+        left = stamped(self._make_pyramid(seed=1), 1.0)
+        right = stamped(self._make_pyramid(seed=2), 8.0)
+        if merge == "concatenate":
+            out = GSplatData.concatenate([left, right])
+        else:
+            out = GSplatData.merge_with_channel_colors(
+                [left, right],
+                channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            )
+
+        for level in out.substitutive_levels:
+            assert "median_footprint" not in level.stats
+            assert "footprint_dims" not in level.stats
 
 
 class TestDegenerateInputs:

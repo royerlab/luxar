@@ -42,11 +42,13 @@ function writeBundle(root, stamp, { escaped = false } = {}) {
   writeFileSync(join(root, 'dist', 'index-abc.js'), `const s=JSON.parse(${literal});`);
 }
 
-function writeIndexHtml(root, stamp) {
+function writeHtml(root, name, stamp) {
   const content = stamp ? `${stamp.version} ${stamp.commit} ${stamp.buildTime}` : null;
   const meta = content ? `<meta name="luxar-build" content="${content}" />` : '';
-  writeFileSync(join(root, 'dist', 'index.html'), `<html><head>${meta}</head><body></body></html>`);
+  writeFileSync(join(root, 'dist', name), `<html><head>${meta}</head><body></body></html>`);
 }
+
+const writeIndexHtml = (root, stamp) => writeHtml(root, 'index.html', stamp);
 
 let root;
 beforeEach(() => {
@@ -92,6 +94,13 @@ describe('check', () => {
   it('passes a correctly stamped application build', () => {
     writeBundle(root, STAMP);
     writeIndexHtml(root, STAMP);
+    expect(run()).toEqual([]);
+  });
+
+  it('passes when every application page carries the bundle stamp', () => {
+    writeBundle(root, STAMP);
+    writeIndexHtml(root, STAMP);
+    writeHtml(root, 'control.html', STAMP);
     expect(run()).toEqual([]);
   });
 
@@ -144,6 +153,13 @@ describe('check', () => {
     writeBundle(root, STAMP);
     writeIndexHtml(root, null);
     expect(run()[0]).toMatch(/carries no <meta name="luxar-build">/);
+  });
+
+  it('FAILS and names a secondary page that lost its meta tag', () => {
+    writeBundle(root, STAMP);
+    writeIndexHtml(root, STAMP);
+    writeHtml(root, 'control.html', null);
+    expect(run()[0]).toMatch(/control\.html carries no <meta name="luxar-build">/);
   });
 
   it('FAILS when the meta tag and bundle carry different build identities', () => {

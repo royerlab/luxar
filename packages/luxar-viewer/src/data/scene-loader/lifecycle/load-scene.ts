@@ -37,7 +37,7 @@ import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-poo
 import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
 import type { RefinementHoldReason } from '../../../types/data-monitor-types';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
-import { SUPPORTED_GSPLATS_FORMAT_VERSIONS } from '../../../types/format-contract';
+import { enforceFormatVersion } from '../../format-version';
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
 import type { DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
@@ -349,28 +349,22 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     ctx.setIdentityWatchdog(watchdog);
   }
 
-  // A stale standalone .gsplats.zarr opened directly won't render correctly —
-  // surface a migrate hint rather than failing silently. v3.0–v3.4 are all
-  // readable (v3.1 splits the Cholesky factors into diag + offdiag; v3.2
+  // Format-version policy, shared with the Python reader (data/format-version.ts
+  // mirrors typing_utils/format_version.py): a supported version loads
+  // silently, a same-major NEWER minor loads with a warning toast, and
+  // anything else THROWS here — the error propagates to the `dataset-error`
+  // path and the overlay names the version and the remedy. A scene root
+  // carrying only the 0.1 legacy `luxar_version` key is a supported arm; a
+  // detached .gsplats.zarr is dispatched on `format_type` to the gsplats set
+  // (v3.0–v3.4 are all
+  // readable: v3.1 splits the Cholesky factors into diag + offdiag; v3.2
   // renames the lod selector attrs to coverage_fraction — v3.0/3.1 stores with
   // the legacy attrs are auto-adapted by load-lod-group-node; v3.3 adds the
   // optional luxar_delta_v1 filter, undone transparently by the codec that
   // data/zarr.ts registers; v3.4 adds the screen-area lod selector while legacy
-  // coverage stores read unchanged). The supported set is single-sourced from
-  // format-contract/contract.yaml.
-  const fmtType = (sceneAttrs as Record<string, unknown>)?.format_type;
-  const fmtVersion = (sceneAttrs as Record<string, unknown>)?.format_version;
-  if (
-    fmtType === 'gsplats_zarr' &&
-    !SUPPORTED_GSPLATS_FORMAT_VERSIONS.includes(String(fmtVersion))
-  ) {
-    notifier.toast(
-      `This .gsplats.zarr is format ${String(fmtVersion)} (expected one of ` +
-        `${SUPPORTED_GSPLATS_FORMAT_VERSIONS.join(', ')}). ` +
-        'Convert it with `luxar gsplat migrate-format <in> <out>`.',
-      6000
-    );
-  }
+  // coverage stores read unchanged). Both supported sets are single-sourced
+  // from format-contract/contract.yaml.
+  enforceFormatVersion(sceneAttrs as Record<string, unknown>);
 
   // Initialize scene dimensions - CRITICAL for extend_to_all feature.
   // A standalone bare node carries no scene_dimensions; synthesize a default

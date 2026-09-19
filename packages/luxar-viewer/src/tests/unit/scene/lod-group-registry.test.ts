@@ -34,12 +34,15 @@ import {
 import {
   computeEntryWorldBox,
   DEGENERATE_RECT_HALF_EXTENT,
+  pickChildByFootprintWithHysteresis,
+  projectWorldRadiusPx,
 } from '../../../scene/lod-selector-math';
 import {
   calculateCameraDistance,
   type BoundingBox,
 } from '../../../scene/scene-manager/clipping/bounds-math';
 import { updateCameraAspect } from '../../../utils/camera-utils';
+import { log } from '../../../utils/log';
 
 describe('computeEntryWorldBox', () => {
   it('reuses the caller-owned world box', () => {
@@ -1139,16 +1142,61 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     groupObject.position.x = -2.5; // part_0 re-enters
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
+    groupObject.position.x = 0; // part_0 re-exits before the pending flush
+    reg.evaluatePerFrame();
+    expect(first.visible).toBe(false);
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     groupObject.position.x = -4.5; // part_1 re-enters
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     expect(requestReprocess).not.toHaveBeenCalled();
 
     updateInProgress = false;
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledOnce();
     const paths = requestReprocess.mock.calls[0][0] as string[];
     expect([...paths].sort()).toEqual(['/partition/part_0', '/partition/part_1']);
+  });
+
+  it('does not report pending resync activity without a dispatch hook', () => {
+    let updateInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => updateInProgress
+    );
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5;
+    reg.evaluatePerFrame();
+
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
+    updateInProgress = false;
+    reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
   });
 
   it('falls back to the whole wrapper when a re-entering part has no path', () => {
@@ -1370,10 +1418,12 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     updateInProgress = false;
     requestRender.mockClear();
     expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     expect(requestReprocess).not.toHaveBeenCalled();
     expect(requestRender).not.toHaveBeenCalled();
 
     groupObject.visible = true;
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(requestReprocess).toHaveBeenCalledOnce();
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
@@ -1515,6 +1565,202 @@ describe('LODGroupRegistry — selector mode', () => {
 });
 
 describe('LODGroupRegistry — auto evaluation', () => {
+  it('selects the coarsest level whose median footprint is at most 1.5 CSS pixels', () => {
+    expect(pickChildByFootprintWithHysteresis([6, 1.4, 0.4], 0)).toBe(1);
+    expect(pickChildByFootprintWithHysteresis([1.3, 0.4], 1)).toBe(0);
+    expect(pickChildByFootprintWithHysteresis([1.4, 0.4], 1)).toBe(1);
+  });
+
+  it('projects footprints in logical viewport pixels for both camera projections', () => {
+    const center = new THREE.Vector3(0, 0, -10);
+    const perspective = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 100);
+    perspective.updateMatrixWorld(true);
+    const at600 = projectWorldRadiusPx(1, center, perspective, 600);
+    const at1200 = projectWorldRadiusPx(1, center, perspective, 1200);
+    expect(at1200).toBeCloseTo(at600! * 2);
+
+    const ortho = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
+    expect(projectWorldRadiusPx(1, center, ortho, 600)).toBeCloseTo(30);
+  });
+
+  it('uses complete footprint stamps before occupancy and keeps lod bias in area units', () => {
+    function selectedAtBias(lodBias: number, completeStamps = true): number {
+      const camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 100);
+      camera.updateMatrixWorld(true);
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getLodBias: () => lodBias,
+      });
+      const bounds = { min: [-0.1, -0.1, -10.1], max: [0.1, 0.1, -9.9] };
+      const children = [0.1, 0.02, 0.005].map((medianFootprint, index) => ({
+        ...makeChild([0, 0.25, 0.5][index]),
+        positionBounds: bounds,
+        ...(completeStamps || index !== 1 ? { medianFootprint, footprintDims: [0, 1, 2] } : {}),
+      }));
+      const entry = makeEntry(children, 0, `/footprint-${lodBias}-${completeStamps}`);
+      entry.selector = 'screen-area';
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      return entry.activeChildIndex;
+    }
+
+    expect(selectedAtBias(1)).toBe(1);
+    expect(selectedAtBias(4)).toBe(2);
+    expect(selectedAtBias(1, false)).toBe(0);
+  });
+
+  it('keeps authored coverage ladders and mismatched dimensions on occupancy', () => {
+    function selected(selector: 'coverage' | 'screen-area', displayDims: number[]): number {
+      const camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 100);
+      camera.updateMatrixWorld(true);
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => displayDims,
+      });
+      const bounds = { min: [-0.1, -0.1, -10.1], max: [0.1, 0.1, -9.9] };
+      const children = [0.1, 0.02, 0.005].map((medianFootprint, index) => ({
+        ...makeChild([0, 0.25, 0.5][index]),
+        positionBounds: bounds,
+        medianFootprint,
+        footprintDims: [0, 1, 2],
+      }));
+      const entry = makeEntry(children, 0, `/footprint-fallback-${selector}-${displayDims}`);
+      entry.selector = selector;
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      return entry.activeChildIndex;
+    }
+
+    expect(selected('coverage', [0, 1, 2])).toBe(0);
+    expect(selected('screen-area', [0, 1, 3])).toBe(0);
+  });
+
+  it("applies lod bias in area units to selector='screen-area'", () => {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getLodBias: () => 2,
+    });
+    const bounds = { min: [-0.5, -0.25, -0.1], max: [0.5, 0.25, 0.1] };
+    const children = [0, 0.25].map((threshold) => ({
+      ...makeChild(threshold),
+      positionBounds: bounds,
+    }));
+    const entry = makeEntry(children, 0, '/biased-area');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(children[1].object.visible).toBe(true);
+  });
+
+  it("selector='screen-area': sub-neutral bias cannot reach thresholds above its finite metric ceiling", () => {
+    function evaluateThreshold(threshold: number, lodBias: number): boolean {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getLodBias: () => lodBias,
+      });
+      const bounds = { min: [-2, -2, -0.1], max: [2, 2, 0.1] };
+      const children = [0, threshold].map((coverageFraction) => ({
+        ...makeChild(coverageFraction),
+        positionBounds: bounds,
+      }));
+      const entry = makeEntry(children, 0, `/biased-ceiling-${threshold}-${lodBias}`);
+      entry.selector = 'screen-area';
+      reg.register(entry);
+
+      reg.evaluatePerFrame();
+
+      return children[1].object.visible;
+    }
+
+    expect(evaluateThreshold(1, 1)).toBe(true);
+    expect(evaluateThreshold(1, 0.99)).toBe(false);
+    expect(evaluateThreshold(0.5, 0.5)).toBe(true);
+    expect(evaluateThreshold(0.5, 0.49)).toBe(false);
+  });
+
+  it('defines lod bias in area units for legacy coverage by applying its square root', () => {
+    function evaluateAtBias(lodBias: number): boolean {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getLodBias: () => lodBias,
+      });
+      const bounds = { min: [-0.1, -0.1, -0.1], max: [0.1, 0.1, 0.1] };
+      const children = [0, 0.6].map((threshold) => ({
+        ...makeChild(threshold),
+        positionBounds: bounds,
+      }));
+      reg.register(makeEntry(children, 0, `/legacy-bias-${lodBias}`));
+      reg.evaluatePerFrame();
+      return children[1].object.visible;
+    }
+
+    expect(evaluateAtBias(2), 'sqrt(2) keeps the 0.333 metric below 0.6').toBe(false);
+    expect(evaluateAtBias(4), 'sqrt(4) raises the 0.333 metric above 0.6').toBe(true);
+  });
+
+  it('treats invalid programmatic lod bias values as neutral', () => {
+    for (const lodBias of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getLodBias: () => lodBias,
+      });
+      const bounds = { min: [-0.5, -0.25, -0.1], max: [0.5, 0.25, 0.1] };
+      const children = [0, 0.125].map((threshold) => ({
+        ...makeChild(threshold),
+        positionBounds: bounds,
+      }));
+      const entry = makeEntry(children, 0, `/invalid-bias-${lodBias}`);
+      entry.selector = 'screen-area';
+      reg.register(entry);
+
+      reg.evaluatePerFrame();
+
+      expect(children[1].object.visible, `neutral fallback for ${lodBias}`).toBe(true);
+
+      const ceilingChildren = [0, 0.5].map((threshold) => ({
+        ...makeChild(threshold),
+        positionBounds: bounds,
+      }));
+      const ceilingEntry = makeEntry(ceilingChildren, 0, `/invalid-bias-ceiling-${lodBias}`);
+      ceilingEntry.selector = 'screen-area';
+      reg.register(ceilingEntry);
+
+      reg.evaluatePerFrame();
+
+      expect(ceilingChildren[0].object.visible, `neutral ceiling fallback for ${lodBias}`).toBe(
+        true
+      );
+      expect(ceilingChildren[1].object.visible, `neutral ceiling fallback for ${lodBias}`).toBe(
+        false
+      );
+    }
+  });
+
   it('picks the finest child whose coverage_fraction is satisfied by the projected diagonal', () => {
     // bbox spans the full NDC cube → identity camera projects to a 1000 px
     // diagonal on an 800x600 viewport, whose fitted axis is min(800,600)=600
@@ -1822,6 +2068,33 @@ describe('LODGroupRegistry — auto evaluation', () => {
     expect(children[2].object.visible, 'second-finest at 25% occupancy').toBe(true);
     expect(children[3].object.visible, 'finest requires ≥ half-screen occupancy').toBe(false);
     expect(children[0].object.visible, 'NOT pinned to the coarsest').toBe(false);
+  });
+
+  it('keeps the elongated-content anchor unchanged unless lod bias is explicitly requested', () => {
+    const rodBox = { min: [-1, -0.25, -0.1], max: [1, 0.25, 0.1] };
+    const activeLevel = (lodBias?: number): number => {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        ...(lodBias == null ? {} : { getLodBias: () => lodBias }),
+      });
+      const children = [0, 0.125, 0.25, 0.5].map((threshold) => ({
+        ...makeChild(threshold),
+        positionBounds: rodBox,
+      }));
+      const entry = makeEntry(children, 0, `/rod-bias-${lodBias ?? 1}`);
+      entry.selector = 'screen-area';
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      return entry.activeChildIndex;
+    };
+
+    expect(activeLevel()).toBe(2);
+    expect(activeLevel(2)).toBe(3);
   });
 
   it("selector='screen-area': a two-level ladder holds the coarsest for a fitted 25%-occupancy object (the documented degenerate-config case)", () => {
@@ -2962,8 +3235,8 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
 
 // ────────────────────────────────────────────────────────────────────────
 // Fresh-but-empty display guard — a fresh level that committed 0 elements
-// while another fresh level has visible geometry signals inconsistent data;
-// the registry must show the populated level instead of blanking the group.
+// while a coarser fresh level has visible geometry signals inconsistent data;
+// the registry must show the populated coarser level instead of blanking the group.
 // ────────────────────────────────────────────────────────────────────────
 
 /** A gsplats child stamped fresh with an explicit committed splat count. */
@@ -3061,16 +3334,115 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
 });
 
 describe('LODGroupRegistry — fresh-but-empty display guard', () => {
+  it('uses populated intermediate geometry after a stale hold expires', () => {
+    const state = { version: 1, clock: 0 };
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const reg = makeRegistry(
+        [0, 1, 2],
+        undefined,
+        undefined,
+        () => state.version,
+        undefined,
+        () => state.clock
+      );
+      const children = [
+        makeCountedChild(0, 1, 100),
+        makeCountedChild(0.5, 1, 500),
+        makeCountedChild(1, 1, 1000),
+      ];
+      reg.register(makeEntry(children, 2, '/g'));
+      reg.evaluatePerFrame();
+      expect(reg.get('/g')!.activeChildIndex).toBe(2);
+
+      state.version = 2;
+      Object.assign(children[0].object.userData!, {
+        loadedViewVersion: 2,
+        visibleSplatCount: 0,
+      });
+      Object.assign(children[1].object.userData!, {
+        loadedViewVersion: 2,
+        visibleSplatCount: 50,
+      });
+      reg.evaluatePerFrame();
+      expect(children[2].object.visible).toBe(true);
+
+      state.clock += 260;
+      reg.evaluatePerFrame();
+
+      expect(reg.get('/g')!.activeChildIndex).toBe(2);
+      expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+      expect(children[0].object.visible).toBe(false);
+      expect(children[1].object.visible).toBe(true);
+      expect(children[2].object.visible).toBe(false);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('keeps an empty coarse aspiration when only a finer fresh level is populated', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+      const children = [makeCountedChild(0, 2, 0), makeCountedChild(0.5, 2, 50)];
+      for (const child of children) {
+        child.positionBounds = { min: [0, 0, 0], max: [0.001, 0.001, 0.001] };
+      }
+      reg.register(makeEntry(children, 0, '/g'));
+
+      reg.evaluatePerFrame();
+
+      expect(reg.list()[0].activeChildIndex).toBe(0);
+      expect(children[0].object.visible).toBe(true);
+      expect(children[1].object.visible).toBe(false);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it('redirects display to the coarsest fresh NON-empty level when the chosen level is empty', () => {
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
-    // Identity camera → aspiration is the finest level; it is FRESH but
-    // committed 0 splats (the stale-cache / corrupt-data scenario), while the
-    // coarse level holds 100 fresh splats.
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+      // Identity camera → aspiration is the finest level; it is FRESH but
+      // committed 0 splats (the stale-cache / corrupt-data scenario), while the
+      // coarse level holds 100 fresh splats.
+      const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.evaluatePerFrame();
+      expect(children[0].object.visible).toBe(true); // populated coarse shown
+      expect(children[1].object.visible).toBe(false); // empty fine hidden
+      expect(warning).toHaveBeenCalledOnce();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('directs network-backed empty levels to Retry instead of ?clearCache', () => {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      hasNetworkFailureUnder: (path) => path === '/g',
+    });
     const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
     reg.register(makeEntry(children, 0, '/g'));
+
     reg.evaluatePerFrame();
-    expect(children[0].object.visible).toBe(true); // populated coarse shown
-    expect(children[1].object.visible).toBe(false); // empty fine hidden
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('use the monitor Retry action')
+    );
+    expect(warning.mock.calls[0]?.[1]).not.toContain('?clearCache');
+    warning.mockRestore();
   });
 
   it('leaves a genuinely empty slice unchanged (every fresh level empty)', () => {
@@ -3919,7 +4291,7 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// Coverage-band cross-fade (on by default; ?no-lod-fade disables) — two adjacent
+// Coverage-band cross-fade (on by default; ?noLodFade disables) — two adjacent
 // blendable (additive/luminous/volumetric) levels
 // render with complementary opacity as the DISTANCE (coverage metric) crosses
 // their boundary. Distance-driven, independent of streaming. Off / non-blendable
@@ -4229,7 +4601,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   });
 });
 
-// Streaming energy compensation (ON by default; ?no-lod-energy disables) — as a
+// Streaming energy compensation (ON by default; ?noLodEnergy disables) — as a
 // blendable (additive/luminous/volumetric) leaf's additive ladder streams in,
 // its committed prefix carries only
 // e(k) of the leaf's full energy, so it renders at e·E and brightens toward E as
@@ -4391,7 +4763,7 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
   });
 });
 
-describe('LODGroupRegistry — force-finest capture override (?lod-finest / LuxarAppOptions.lodFinest)', () => {
+describe('LODGroupRegistry — force-finest capture override (?lodFinest / LuxarAppOptions.lodFinest)', () => {
   function makeForceFinestRegistry(force: boolean): LODGroupRegistry {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();
@@ -4515,6 +4887,297 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
 
   it('reports quiescent for an empty registry (nothing to wait for)', () => {
     expect(makeRegistry().isCaptureQuiescent()).toBe(true);
+  });
+
+  it('counts both lod groups and partitions as capture work', () => {
+    const reg = makeRegistry();
+    expect(reg.captureSize()).toBe(0);
+
+    reg.register(makeEntry([makeChild(0)], 0, '/lod'));
+    expect(reg.captureSize()).toBe(1);
+
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [0, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    expect(reg.captureSize()).toBe(2);
+  });
+
+  it('waits across a partition rising edge until its targeted resync commits', () => {
+    let loadPassInProgress = true;
+    const requestReprocess = vi.fn(() => {
+      loadPassInProgress = true;
+    });
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => 2,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess,
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    part.userData = {
+      nodeType: 'points',
+      visiblePointCount: 10,
+      loadedViewVersion: 1,
+      committedLadderComplete: true,
+    };
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(true);
+    expect(requestReprocess).not.toHaveBeenCalled();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
+
+    part.userData.loadedViewVersion = 2;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a pending resync without a dispatch hook', () => {
+    let loadPassInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not block forever on a pending partition resync after an archive fault', () => {
+    let loadPassInProgress = true;
+    let archiveFault = false;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => archiveFault,
+      vi.fn(),
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    archiveFault = true;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a pending partition resync while its wrapper is hidden', () => {
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      () => true
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    partition.visible = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a pending resync after its partition is removed', () => {
+    let loadPassInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    reg.unregister('/partition');
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('waits for a visible bare partition leaf to finish its progressive ladder', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 1);
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    part.userData = {
+      nodeType: 'gsplats',
+      visibleSplatCount: 100,
+      loadedViewVersion: 1,
+      committedLadderComplete: false,
+    };
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [0, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    part.userData.committedLadderComplete = true;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a stale partition leaf while its wrapper is hidden', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    part.userData = {
+      nodeType: 'points',
+      visiblePointCount: 10,
+      loadedViewVersion: 1,
+      committedLadderComplete: true,
+    };
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [0, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    partition.visible = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
   });
 
   it('reports quiescent for a settled single-level group', () => {

@@ -110,6 +110,73 @@ def _stamp_planned_normalization(
     target.update(agreed_normalization_stats([region.stats for region in regions]))
 
 
+def _content_fit_frame(
+    fit_kwargs: dict[str, Any], content_physical: bool
+) -> "tuple[Optional[Sequence[float] | float], str]":
+    """Resolve one content fit's output frame, stripping implicit physical config."""
+    voxel_size = fit_kwargs.get("voxel_size")
+    output_space = fit_kwargs.get("output_space", "real")
+    if not content_physical:
+        ignored_voxel_size = fit_kwargs.pop("voxel_size", None)
+        ignored_output_space = fit_kwargs.pop("output_space", None)
+        if ignored_voxel_size is not None and ignored_output_space != "voxel":
+            import warnings
+
+            warnings.warn(
+                "voxel_size/output_space='real' are not supported with content-"
+                "planned fitting unless the caller explicitly enables physical "
+                "content geometry; fitting in voxel space (voxel_size ignored).",
+                UserWarning,
+                stacklevel=3,
+            )
+        voxel_size = None
+        output_space = "voxel"
+    return voxel_size, output_space
+
+
+def _resolve_content_frame(
+    fit_kwargs: dict[str, Any], ndim: int
+) -> "tuple[bool, Optional[tuple[float, ...]]]":
+    """Preserve legacy voxel output unless physical content was explicit."""
+    content_physical = bool(fit_kwargs.pop("_content_physical", False))
+    voxel_size, output_space = _content_fit_frame(fit_kwargs, content_physical)
+    from luxar.gsplats.tiling import resolve_grid_scale
+
+    return (
+        content_physical,
+        resolve_grid_scale(
+            ndim,
+            voxel_size=voxel_size,
+            output_space=output_space,
+        ),
+    )
+
+
+def _scaled_plan_bsp_tree(
+    bsp_tree: "Optional[dict[str, Any]]",
+    grid_scale: "Optional[tuple[float, ...]]",
+) -> "Optional[dict[str, Any]]":
+    """Return the content partition tree in the fitted coordinate frame."""
+    if bsp_tree is None or grid_scale is None:
+        return bsp_tree
+    scale = np.asarray(grid_scale, dtype=float)
+    # Keep gsplats independent of core; resolve_grid_scale guarantees the valid
+    # positive diagonal for this simpler counterpart to map_serialized_bsp_tree.
+
+    def walk(node: dict[str, Any]) -> dict[str, Any]:
+        if "part" in node:
+            return {"part": int(node["part"])}
+        axis = int(node["axis"])
+        return {
+            "axis": axis,
+            "split": float(node["split"]) * float(scale[axis]),
+            "left": walk(node["left"]),
+            "right": walk(node["right"]),
+        }
+
+    return walk(bsp_tree)
+
+
 def _score_planned_merge(
     merged: "GSplatData | Sequence[GSplatData]",
     volume: Any,
@@ -118,6 +185,7 @@ def _score_planned_merge(
     device: Optional[str],
     verbose: bool,
     image_min: Optional[float],
+    grid_scale: "Optional[Sequence[float]]" = None,
     stats: "dict[str, Any] | None" = None,
 ) -> None:
     """Score a planned merge, or explain why no score can be recorded."""
@@ -139,7 +207,7 @@ def _score_planned_merge(
         merged,
         reference,
         volume_shape=plan_shape,
-        grid_scale=None,
+        grid_scale=grid_scale,
         device=device,
         verbose=verbose,
         image_min=image_min,
@@ -234,6 +302,7 @@ def _fit_one_box(
     box: PlanBox,
     overlap: int,
     cap: int,
+    content_physical: bool = False,
     **fit_kwargs: Any,
 ) -> GSplatData:
     """Fit a single plan box and return its core-kept splats in GLOBAL coords.
@@ -266,23 +335,7 @@ def _fit_one_box(
     from luxar.gsplats.utils.trils import tril_size
     from luxar.typing_utils.json_safe import json_safe_value
 
-    # The content pipeline is voxel-space end to end: plan boxes, padded
-    # bounds, and the keep-core mask below are all voxel coordinates. A
-    # voxel_size/output_space pair leaking in from a YAML config would make
-    # the inner fit return PHYSICAL centers, which would then get voxel-space
-    # origin offsets added and be mis-filtered by the core mask — so strip
-    # them here and warn (the default warning filter dedups per process).
-    vs = fit_kwargs.pop("voxel_size", None)
-    out_space = fit_kwargs.pop("output_space", None)
-    if vs is not None and out_space != "voxel":
-        import warnings
-
-        warnings.warn(
-            "voxel_size/output_space='real' are not supported with content-"
-            "planned fitting; fitting in voxel space (voxel_size ignored).",
-            UserWarning,
-            stacklevel=2,
-        )
+    voxel_size, output_space = _content_fit_frame(fit_kwargs, content_physical)
 
     V = np.asarray(volume, dtype=np.float32)
     ndim = V.ndim
@@ -305,16 +358,24 @@ def _fit_one_box(
 
     sub = V[pz0:pz1, py0:py1, px0:px1]
     gd = fit_gaussian_splats(sub, seeds=budget, **fit_kwargs)
-    c = np.asarray(gd.centers, dtype=np.float32) + np.array([pz0, py0, px0], np.float32)
+    origin = np.array([pz0, py0, px0], np.float32)
+    core_lo = np.array([z0, y0, x0], np.float32)
+    core_hi = np.array([z1, y1, x1], np.float32)
+    if output_space == "real" and voxel_size is not None:
+        spacing = np.broadcast_to(np.asarray(voxel_size, dtype=np.float32), (ndim,))
+        origin = origin * spacing
+        core_lo = core_lo * spacing
+        core_hi = core_hi * spacing
+    c = np.asarray(gd.centers, dtype=np.float32) + origin
     a = np.asarray(gd.amplitudes, dtype=np.float32)
     k = np.asarray(gd.cholesky_factors, dtype=np.float32)
     keep = (
-        (c[:, 0] >= z0)
-        & (c[:, 0] < z1)
-        & (c[:, 1] >= y0)
-        & (c[:, 1] < y1)
-        & (c[:, 2] >= x0)
-        & (c[:, 2] < x1)
+        (c[:, 0] >= core_lo[0])
+        & (c[:, 0] < core_hi[0])
+        & (c[:, 1] >= core_lo[1])
+        & (c[:, 1] < core_hi[1])
+        & (c[:, 2] >= core_lo[2])
+        & (c[:, 2] < core_hi[2])
     )
     # Slice FIRST, then drop `gd`: keeping the whole inner result alive just to
     # read slices out of it would defeat the per-box memory release below.
@@ -441,6 +502,7 @@ def fit_planned(
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
     _ensure_planned_norm_range(V, fit_kwargs, verbose)
+    content_physical, grid_scale = _resolve_content_frame(fit_kwargs, V.ndim)
 
     # Per-box saturation cap (from the calibration): the halo inflation must not
     # push the fit past the K the calibration measured as over-saturated.
@@ -462,7 +524,9 @@ def fit_planned(
             continue
         if progress_callback is not None:
             progress_callback(i, n, f"box {i + 1}/{n} budget={budget}")
-        region = _fit_one_box(V, b, pad, cap, **fit_kwargs)
+        region = _fit_one_box(
+            V, b, pad, cap, content_physical=content_physical, **fit_kwargs
+        )
         n_fit += 1
         n_kept = int(region.n_splats)
         if n_kept > 0:
@@ -489,7 +553,7 @@ def fit_planned(
             recipe_params=recipe_params,
             # The planner's own split planes: core-disjoint boxes have an EXACT
             # back-to-front order, and this is what carries it to the viewer.
-            bsp_tree=plan.bsp_tree,
+            bsp_tree=_scaled_plan_bsp_tree(plan.bsp_tree, grid_scale),
             region_labels=region_boxes,
         )
         from luxar.gsplats.tree import GSplatPartition, total_splats
@@ -513,6 +577,7 @@ def fit_planned(
             device=device,
             verbose=verbose,
             image_min=fit_image_min(result.meta),
+            grid_scale=grid_scale,
             stats=fit_stats,
         )
         result.meta["fit_stats"] = fit_stats
@@ -541,6 +606,7 @@ def fit_planned(
         device=device,
         verbose=verbose,
         image_min=fit_image_min(merged.stats),
+        grid_scale=grid_scale,
     )
     return merged
 

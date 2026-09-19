@@ -69,7 +69,7 @@ make build-launchers   # builds the host-platform binary into cli/_launchers/
 
 CGO blocks pure cross-compilation, so **each platform's binary must be built on that
 platform** (macOS produces a universal arm64+amd64 binary via `lipo`; Linux builds the
-host arch and needs `libwebkit2gtk-4.0-dev`). In CI, each runner builds its own; the
+host arch and needs `libwebkit2gtk-4.1-dev`). In CI, each runner builds its own; the
 binaries also ride along into wheel builds when present. So locally you can typically
 only produce the `--native` bundle for the OS you're on.
 
@@ -80,7 +80,7 @@ LUXAR_LAUNCHER_NO_WEBVIEW=1 ./luxar-launcher
 ```
 Opens the system default browser instead of the embedded WebView — useful for headless
 smoke tests. It does not let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit
-is linked at build time, so the `webkit2gtk-4.0` runtime must be present to start.
+is linked at build time, so the `webkit2gtk-4.1` runtime must be present to start.
 
 ## Export vs. serve
 

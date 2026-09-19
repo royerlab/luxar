@@ -20,9 +20,10 @@
  *    compositing sums energy; the ladder commits highest-energy splats first),
  *    which reads as a brightening pop. Scaling opacity by `1/e(k)` — opacity is a
  *    linear multiplier on summed energy in additive/luminous, and on optical
- *    depth `τ` in volumetric — holds the total at `E` throughout, the temporal
- *    twin of mechanism 1's build-time mass conservation (same conservation law,
- *    time axis instead of scale axis).
+ *    depth `τ` in volumetric — holds the total near `E` throughout. This is a
+ *    self-energy heuristic rather than the exact conservation law used by
+ *    mechanism 1: `e(k)` is quadratic in amplitude while additive brightness is
+ *    linear, and the approximation becomes exact only when the leaf is complete.
  *
  * Both mechanisms apply to the modes in `BLENDABLE_MODES`
  * (`scene/lod-fade.ts`) — additive / luminous / volumetric; see that set's doc
@@ -138,9 +139,11 @@ export function coverageBlendPlan(
  * (∈ (0, 1]) of the leaf's full self-energy `E`, so it renders at `e·E` and
  * brightens toward `E` as chunks arrive — a pop. Because opacity linearly scales
  * summed energy in additive/luminous compositing (and per-ray optical depth τ
- * in volumetric), multiplying opacity by `1/e` renders the partial prefix at
- * the full `E` at every step: brightness stays constant and converges to the
- * authored value (factor → 1) as `e → 1`.
+ * in volumetric), multiplying opacity by `1/e` holds the partial prefix near
+ * the full `E` at every step. This is a heuristic, not an exact compensation:
+ * e(k) is a squared-amplitude (self-energy) fraction while additive brightness
+ * is linear in amplitude, so a 2:1 disjoint pair at k = 1 renders at mass 2.5
+ * of 3. The factor converges to 1 as `e → 1`, so the final frame is exact.
  *
  * `floor` caps the boost at `1/floor` so a tiny early prefix can't over-brighten
  * its (energy-descending, hence core-heavy) splats into tone-map clipping.

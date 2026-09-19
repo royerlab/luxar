@@ -55,6 +55,7 @@
  */
 
 import { test as base } from '@playwright/test';
+import { StorageKeys } from '../../utils/storage-keys';
 import { EXAMPLE_DATASETS_STALE_ENV } from '../../../tools/example-fixture-freshness';
 
 /** Annotation type that opts a spec out of the auto console-error check. */
@@ -174,9 +175,9 @@ export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
     // Element screenshots include DOM painted over the canvas. Keep the
     // first-run rail hint out of every pixel measurement and visual baseline.
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
+    await page.addInitScript((hintKey) => {
+      localStorage.setItem(hintKey, '1');
+    }, StorageKeys.controlRailHintDismissed);
 
     // Capture Playwright-native console errors + uncaught exceptions
     // for the duration of the test.

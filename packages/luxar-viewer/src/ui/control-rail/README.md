@@ -29,9 +29,9 @@ The main orchestrator. Owns:
 - **Button construction** — one button per `ControlRailItem` (passed at construction)
 - **Active-state refresh** — event-driven (click/routed keydown/luxar-layers-changed/luxar-control-mode-changed), rAF-debounced, reads each item's `isActive()` or `openSelector` to highlight open panels
 - **Idle-dim behavior** — wakes on pointer movement (expanded) or hover (collapsed/fullscreen); schedules sleep after `IDLE_MS` (2600ms) unless `:hover` or `:focus-within`
-- **Collapse/expand** — chevron handle at the bottom; persisted to localStorage
+- **Collapse/expand** — chevron handle at the bottom; persisted to localStorage under `StorageKeys.controlRailCollapsed` (`luxar.controlRail.collapsed`)
 - **Fullscreen sync** — hides the rail (hover-to-reveal) when `document.fullscreenElement` exists
-- **First-run hint** — localStorage-gated one-time nudge ("New here? Hover these controls..."), auto-fades after 10s, dismisses on any click or handled routed keypress
+- **First-run hint** — localStorage-gated (`StorageKeys.controlRailHintDismissed`, `luxar.controlRail.hintDismissed`) one-time nudge that says "Hover these controls" when hover is available and "Tap these controls (hold for options)" otherwise; auto-fades after 10s and dismisses on any click or handled routed keypress
 - **Docked footer** — optional element (e.g. the performance readout) inserted above the collapse handle
 - **Overlay delegation** — opens flyouts/popovers via `RailOverlay` and re-syncs active-state when the overlay changes
 - **Routed-keydown reception** — `InputHandler` calls `handleRoutedKeyDown()` after it handles a key; dismisses the hint and schedules a refresh
@@ -56,7 +56,7 @@ The main orchestrator. Owns:
 The flyout + panel-popover lifecycle coordinator. Owns:
 
 - **One-open-at-a-time enforcement** — `this.current` holds the open overlay (flyout OR popover) + its DOM; opening a new one closes the previous
-- **Flyout construction** — horizontal row of `ControlRailToggle` chips (e.g. View options: scale bar, legend, overlays, cinematic, fullscreen)
+- **Flyout construction** — horizontal row of `ControlRailToggle` chips (e.g. View options: scale bar, legend, overlays, cinematic, and fullscreen when the Fullscreen API is available)
 - **Popover construction** — vertical panel hosting arbitrary rich controls built by `item.popover.build(host)` (lazy, rebuilt on each open; teardown callback run on close)
 - **Positioning** — flyouts align vertically with their button; popovers anchor near their button and clamp inside the viewport
 - **Focus return** — when `PanelCoordinator` closes the overlay for Escape (focus inside it), returns focus to the opener button
@@ -83,7 +83,7 @@ The flyout + panel-popover lifecycle coordinator. Owns:
    - `trigger: 'click'` — primary click opens the popover; `activate()` is unused
    - `trigger: 'context'` — right-click opens the popover; primary click still fires `activate()` (e.g. Performance: left-click = toggle readout, right-click = open DPR settings)
 
-**`ControlRailToggle`** — a compact icon toggle inside a flyout (e.g. fullscreen, cinematic mode, overlays). Each has its own `activate()`, `isActive()`, and optional `excludeFromParentActive` (e.g. fullscreen is ambient, not a signal).
+**`ControlRailToggle`** — a compact icon toggle inside a flyout (e.g. cinematic mode, overlays, and fullscreen when the Fullscreen API is available). Each has its own `activate()`, `isActive()`, and optional `excludeFromParentActive` (e.g. fullscreen is ambient, not a signal).
 
 **`ControlRailPopover`** — a lazily-built rich panel. `build(host: HTMLElement)` populates the host each time the popover opens (fresh state) and may return a teardown callback (e.g. dispose a GUI, clear intervals).
 
@@ -101,7 +101,7 @@ The flyout + panel-popover lifecycle coordinator. Owns:
 - `aria-hidden="true"` (decorative)
 - No fill, no transform (simplicity)
 
-Icons are keyed by id (help, home, dims, render, layers, perf, data, monitor, recording, logs, view, settings, plus navigation modes: navOrbit, navFly, navOrtho; view-flyout actions: scalebar, legend, overlays, cinematic, fullscreen; and Home-popover actions: fit, origin). The map also carries a `screenshot` icon that no current rail item uses.
+Icons are keyed by id (help, home, dims, render, layers, perf, data, monitor, recording, logs, view, settings, hidePanels, plus navigation modes: navOrbit, navFly, navOrtho; view-flyout actions: scalebar, legend, overlays, cinematic, fullscreen; and Home-popover actions: fit, origin). The map also carries a `screenshot` icon that no current rail item uses.
 
 ## Lifecycle & Invariants
 
@@ -177,7 +177,7 @@ const rail = new ControlRail(items: ControlRailItem[], footer?: HTMLElement);
 
 ### First-Run Hint
 
-- One-time localStorage-gated hint ("New here? Hover these controls, or press H...")
+- One-time localStorage-gated hint that names hover when available and tap/hold otherwise
 - Auto-fades after 10 seconds (`HINT_AUTO_HIDE_MS`)
 - Dismisses immediately on any click/keypress
 - Never shown when starting collapsed or when already dismissed

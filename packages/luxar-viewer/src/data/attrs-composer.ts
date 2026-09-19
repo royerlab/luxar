@@ -36,6 +36,7 @@ import { clamp } from '../utils/clamp';
 import { normalizeBlendingMode } from '../rendering/blending-state';
 import type { BlendingMode } from '../types/blending';
 import { isGeometryType } from '../types/geometry-capabilities';
+import type { RenderAttrKey } from '../types/format-contract';
 
 export interface ComposableAttrs {
   opacity?: number;
@@ -78,6 +79,19 @@ export interface ComposableAttrs {
    */
   layer_order?: number;
 }
+
+/**
+ * Lock (B10): every on-disk key `ComposableAttrs` reads is one of the contract's
+ * `render_attr_keys` — the Python writer's typo allowlist — so the composer can
+ * never read a key the writer would refuse. `customLutBytes` is loader-side
+ * state, not an attr, and is excluded.
+ */
+export const COMPOSABLE_ATTRS_ARE_RENDER_ATTRS: Exclude<
+  keyof ComposableAttrs,
+  'customLutBytes'
+> extends RenderAttrKey
+  ? true
+  : false = true;
 
 export interface EffectiveAttrs {
   opacity: number;

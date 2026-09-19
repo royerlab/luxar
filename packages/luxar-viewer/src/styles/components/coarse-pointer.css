@@ -3,7 +3,7 @@
  *
  * CONTRACT (enforced by tests/unit/styles/coarse-pointer-css.test.ts):
  *   - The top level of this file contains ONLY `@media` blocks keyed on the
- *     pointer / hover media features (`(pointer: coarse)`, `(hover: none)`,
+ *     pointer / hover media features (`(pointer: coarse)`, `(any-hover: none)`,
  *     `(any-hover: hover)`), so a mouse-and-keyboard machine receives byte-
  *     identical styling with or without this file.
  *   - Every touch adaptation in the stylesheet tree lives HERE, not scattered
@@ -15,7 +15,7 @@
  *
  * Why two features. `(pointer: coarse)` = the primary pointer is a finger:
  * targets grow, panels clamp to the viewport, safe areas are honoured.
- * `(hover: none)` = no pointer can hover: hover-revealed affordances are dead,
+ * `(any-hover: none)` = no pointer can hover: hover-revealed affordances are dead,
  * so the rail must not idle-dim and tooltips need another route. An iPad with
  * a Magic Keyboard trackpad matches the first but NOT the second, and keeps
  * hover-driven rail visibility. Rail labels are handled separately below
@@ -40,6 +40,11 @@
    Coarse primary pointer: viewport clamps, safe areas, tap targets.
    ========================================================================= */
 @media (pointer: coarse) {
+  :root {
+    /* 12px rail inset + 58px coarse rail box + the desktop 9px gap. */
+    --luxar-rail-gutter: 79px;
+  }
+
   /* ---- Control rail: honour the left safe area (landscape notch). ---- */
   .luxar-control-rail {
     left: calc(12px + env(safe-area-inset-left, 0px));
@@ -83,7 +88,10 @@
     display: none;
   }
   .luxar-control-rail__popover-body {
-    width: min(264px, calc(100vw - 73px - 12px - env(safe-area-inset-left, 0px)));
+    width: min(
+      264px,
+      calc(100vw - var(--luxar-rail-gutter) - 12px - env(safe-area-inset-left, 0px))
+    );
   }
 
   /* ---- Fixed-width panels never wider than the viewport. ---- */
@@ -128,9 +136,13 @@
     bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
   }
   .luxar-debug-console {
-    width: min(600px, calc(100vw - 73px - var(--luxar-spacing-10, 20px)));
+    width: min(600px, calc(100vw - var(--luxar-rail-gutter) - var(--luxar-spacing-10, 20px)));
     height: min(400px, 60vh);
     bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
+  }
+  .luxar-dimension-slider__context-menu {
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
   }
 
   /* ---- Rail gutter + safe area for the docked panels (the docking rule in
@@ -138,13 +150,47 @@
      this restates it with the inset). ---- */
   .luxar-has-control-rail .luxar-gui,
   .luxar-has-control-rail .luxar-layers-panel {
-    left: calc(73px + env(safe-area-inset-left, 0px)) !important;
+    left: calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px)) !important;
   }
   .luxar-has-control-rail .luxar-debug-console {
-    left: calc(73px + env(safe-area-inset-left, 0px));
+    left: calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px));
   }
   .luxar-control-rail-hint {
-    left: calc(73px + env(safe-area-inset-left, 0px));
+    left: calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px));
+    /* Beside the rail, never across the canvas centre: on a phone the hint
+       covered the middle of the canvas and swallowed the first touch. */
+    max-width: calc(
+      100vw - var(--luxar-rail-gutter) - 2 * 12px - env(safe-area-inset-left, 0px) -
+        env(safe-area-inset-right, 0px)
+    );
+  }
+
+  /* Only edge-anchored overlays can be clamped by their positioning origin.
+     Centre anchors paint half their width left of it via translate(-50%). */
+  .luxar-has-control-rail
+    .luxar-overlay:not(.luxar-overlay--right-anchored, .luxar-overlay--center-anchored) {
+    --luxar-overlay-x-clamped: max(
+      var(--luxar-overlay-x),
+      calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px))
+    );
+    left: var(--luxar-overlay-x-clamped);
+  }
+
+  .luxar-has-control-rail
+    .luxar-overlay--text.luxar-overlay--explicit-width:not(
+      .luxar-overlay--right-anchored,
+      .luxar-overlay--center-anchored
+    ) {
+    --luxar-overlay-x-clamped: clamp(
+      calc(var(--luxar-rail-gutter) + env(safe-area-inset-left, 0px)),
+      var(--luxar-overlay-x),
+      calc(100vw - 18ch - 12px - env(safe-area-inset-right, 0px))
+    );
+    --luxar-overlay-available-width: calc(
+      100vw - var(--luxar-overlay-x-clamped) - 12px - env(safe-area-inset-right, 0px)
+    );
+    min-width: min(18ch, var(--luxar-overlay-available-width));
+    max-width: var(--luxar-overlay-available-width);
   }
 
   /* ---- Bottom strip: clear the home indicator. ---- */
@@ -175,9 +221,147 @@
   .luxar-panel-close,
   .luxar-gui__button,
   .luxar-dimension-slider__play-btn,
+  .luxar-dimension-slider__step,
+  .luxar-dimension-slider__context-item,
   .luxar-layer-row,
   .luxar-data-monitor__tab {
     touch-action: manipulation;
+  }
+
+  /* ---- Tap targets: 44 px minimum for the primary controls (Apple HIG,
+     WCAG 2.5.8), 36 px for the dense secondary ones, 24 px slider thumbs.
+     `--luxar-hit-min` is a LOCAL property (UI Design Guide §11.5): the theme
+     tokens are TS-generated across four theme files and a touch-only size is
+     not a theme decision. ---- */
+  .luxar-control-rail,
+  .luxar-gui,
+  .luxar-layers-panel,
+  .luxar-dimension-sliders,
+  .luxar-help-overlay,
+  .luxar-data-monitor,
+  .luxar-recording-panel,
+  .luxar-dataset-browser {
+    --luxar-hit-min: 44px;
+  }
+  .luxar-control-rail__btn,
+  .luxar-control-rail__chip {
+    width: var(--luxar-hit-min, 44px);
+    height: var(--luxar-hit-min, 44px);
+  }
+  .luxar-panel-close {
+    width: var(--luxar-hit-min, 44px);
+    height: var(--luxar-hit-min, 44px);
+  }
+  .luxar-layer-row__eye,
+  .luxar-dimension-slider__play-btn,
+  .luxar-dimension-slider__step,
+  .luxar-dimension-slider__context-item {
+    min-width: 36px;
+    min-height: 36px;
+  }
+  .luxar-gui__checkbox,
+  .luxar-layers-panel__toggle {
+    width: 24px;
+    height: 24px;
+  }
+  /* Range inputs: the input itself grows to a 24 px hit band while the drawn
+     track stays thin (the track pseudo-elements keep their own height), and
+     the thumbs grow to a fingertip. The dimension slider's real input is an
+     invisible overlay on a 20 px custom track, so its track grows instead. */
+  .luxar-gui__slider,
+  .luxar-layers-panel__slider,
+  [data-theme='light'] .luxar-gui__slider,
+  [data-theme='liquid-glass'] .luxar-layers-panel__slider,
+  [data-theme='liquid-glass'] .luxar-gui__slider {
+    height: 24px;
+    background: transparent;
+  }
+  .luxar-gui__slider::-webkit-slider-runnable-track,
+  .luxar-layers-panel__slider::-webkit-slider-runnable-track {
+    height: 3px;
+    background: var(--luxar-interactive-default);
+    border-radius: var(--luxar-radius-full);
+  }
+  .luxar-gui__slider::-moz-range-track,
+  .luxar-layers-panel__slider::-moz-range-track {
+    height: 3px;
+    background: var(--luxar-interactive-default);
+    border-radius: var(--luxar-radius-full);
+  }
+  .luxar-gui__slider::-webkit-slider-thumb,
+  .luxar-layers-panel__slider::-webkit-slider-thumb {
+    width: 24px;
+    height: 24px;
+    margin-top: -10.5px; /* centre a 24 px thumb on the 3 px track */
+  }
+  .luxar-gui__slider::-moz-range-thumb,
+  .luxar-layers-panel__slider::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+  }
+  .luxar-range-slider__input::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+  }
+  .luxar-range-slider__input::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+  }
+  .luxar-range-slider__track-container {
+    height: 28px;
+  }
+  .luxar-range-slider__input {
+    height: 28px;
+  }
+  .luxar-range-slider__track {
+    top: 12px;
+    left: 14px;
+    right: 14px;
+  }
+  .luxar-dimension-slider__track {
+    height: 28px;
+    border-radius: 14px;
+  }
+  /* ‹ › step buttons and the name chip exist only under a coarse pointer
+     (dimension-sliders.ts creates them there), so their base look lives here. */
+  .luxar-dimension-slider__step {
+    flex: 0 0 auto;
+    padding: 0;
+    border: 1px solid var(--luxar-border-default);
+    border-radius: var(--luxar-radius-md);
+    background: var(--luxar-interactive-default);
+    color: var(--luxar-text-secondary);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .luxar-dimension-slider__name--chip {
+    padding: 2px 8px;
+    border: 1px solid var(--luxar-border-default);
+    border-radius: var(--luxar-radius-full);
+    cursor: pointer;
+  }
+  .luxar-dimension-slider__thumb {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* ---- 16 px inputs: below that iOS Safari zooms the page into a focused
+     field, and the viewer never zooms back out. ---- */
+  .luxar-gui input,
+  .luxar-gui select,
+  .luxar-layers-panel input,
+  .luxar-layers-panel select,
+  .luxar-dimension-sliders input:not([type='range']),
+  .luxar-dimension-sliders select,
+  .luxar-dimension-slider__context-menu input,
+  .luxar-dimension-slider__context-menu select,
+  .luxar-debug-console__filter,
+  .luxar-help-overlay input,
+  .luxar-dataset-browser input,
+  .luxar-recording-panel input,
+  .luxar-recording-panel select {
+    font-size: 16px;
   }
 }
 
@@ -211,6 +395,9 @@
     .luxar-debug-console {
       height: min(400px, 60dvh);
     }
+    .luxar-dimension-slider__context-menu {
+      max-height: calc(100dvh - 20px);
+    }
     .luxar-dimension-sliders {
       max-height: min(360px, 45dvh);
     }
@@ -228,7 +415,7 @@
    (A touch-only device never emits ambient `pointermove`, so the idle-dim
    would otherwise be permanent and the collapsed grip near-invisible.)
    ========================================================================= */
-@media (hover: none) {
+@media (any-hover: none) {
   .luxar-control-rail,
   .luxar-control-rail.is-collapsed {
     opacity: 1;
@@ -240,6 +427,56 @@
     opacity: 0.35;
   }
   .luxar-control-rail.is-fullscreen.is-awake {
+    opacity: 1;
+  }
+
+  /* ---- Press feedback replaces hover feedback. A tap leaves the element in a
+     STICKY :hover on iOS (until the next tap elsewhere), so the hover styling is
+     put back to the rest state and :active carries the response instead. ---- */
+  .luxar-control-rail__btn:hover:not(:active):not(.is-active) {
+    background: none;
+    color: var(--luxar-text-muted);
+  }
+  .luxar-control-rail__collapse:hover:not(:active):not(.is-active) {
+    color: var(--luxar-text-secondary);
+  }
+  .luxar-control-rail__chip:hover:not(:active):not(.is-active) {
+    background: none;
+    color: var(--luxar-text-muted);
+  }
+  .luxar-layer-row:hover:not(:active):not(.luxar-layer-row--selected) {
+    background: none;
+  }
+  .luxar-dimension-slider__play-btn:hover:not(:active) {
+    background: var(--luxar-highlight);
+    transform: none;
+  }
+  .luxar-dimension-slider__play-btn--playing:hover:not(:active) {
+    background: var(--luxar-warning);
+  }
+  .luxar-control-rail__btn:active,
+  .luxar-control-rail__chip:active,
+  .luxar-gui__button:active,
+  .luxar-panel-close:active,
+  .luxar-layer-row:active,
+  .luxar-dimension-slider__play-btn:active,
+  .luxar-dimension-slider__step:active {
+    background: color-mix(in srgb, var(--luxar-highlight) 22%, transparent);
+  }
+  /* Tooltips need a hover to appear; with no hover they show for keyboard
+     focus only, so a finger never sees a stuck tooltip. */
+  .luxar-control-rail__btn:hover .luxar-control-rail__tip {
+    opacity: 0;
+    visibility: hidden;
+  }
+  .luxar-control-rail__btn:focus-visible .luxar-control-rail__tip {
+    opacity: 1;
+    visibility: visible;
+  }
+  .luxar-control-rail__chip:hover .luxar-control-rail__chip-tip {
+    opacity: 0;
+  }
+  .luxar-control-rail__chip:focus-visible .luxar-control-rail__chip-tip {
     opacity: 1;
   }
 }

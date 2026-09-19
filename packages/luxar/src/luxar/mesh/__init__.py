@@ -14,6 +14,14 @@ distinct modules, and pulling the node class up here would make this package imp
 already reaches a great deal of the package.
 """
 
+from .decimate import (
+    DECIMATION_METHODS,
+    DecimatedMesh,
+    decimate,
+    decimate_cluster,
+    decimate_ladder,
+    resolve_decimation_method,
+)
 from .interop import (
     TriangleMesh,
     detect_mesh_format,
@@ -23,9 +31,15 @@ from .interop import (
 from .primitives import icosphere
 
 __all__ = [
+    "DECIMATION_METHODS",
+    "DecimatedMesh",
     "TriangleMesh",
+    "decimate",
+    "decimate_cluster",
+    "decimate_ladder",
     "detect_mesh_format",
     "icosphere",
     "import_mesh",
     "import_mesh_directory",
+    "resolve_decimation_method",
 ]

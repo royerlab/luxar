@@ -367,17 +367,39 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    approach. Under an ORTHOGRAPHIC projection nothing degenerates (`w`
    stays 1), so neither function ever saturates and each metric's plain
    value is used directly.
-5. Pick the finest child whose `coverageFraction` threshold (the
+   A session-wide replacement-LOD bias (`?lodBias` / `LuxarAppOptions.lodBias`)
+   is applied between measurement and selection: `b` multiplies `screen-area`,
+   while `sqrt(b)` multiplies legacy diagonal `coverage`, so both move by the
+   same area factor. The neutral default is `b = 1`.
+5. For a derived `selector="screen-area"` ladder where every child carries
+   `level_stats.median_footprint` and matching `footprint_dims`, project those
+   node-local scene-unit medians through the node transform and camera using
+   logical CSS pixels. Pick the coarsest level whose typical footprint is at
+   most 1.5 px, with a 10% downgrade deadband. This avoids an adaptive-DPR
+   feedback loop. `lodBias` keeps its area-unit meaning, so the footprint
+   limit is divided by `sqrt(b)`. Missing, invalid, or display-dimension-
+   mismatched stamps fall through to the occupancy path, as do explicit
+   `coverage_fractions` ladders. Per-tile `adaptive` ladders are stamped, so
+   footprint selection supersedes their partition-bound occupancy anchor;
+   `overview` ladders are intentionally incomplete and remain on occupancy.
+   Footprint-selected switches are hard swaps even when `lodFade` is enabled;
+   occupancy cross-fade bands are not reused with mismatched units.
+   The #2685 corpus sweep retained both the 1.5 px limit and bias on this path:
+   for bias ≥ 1 it is inert when a stamped ladder is already finest, but it still
+   advances a non-saturated stamped ladder. Bias below 1 can coarsen the selected
+   level. It therefore remains an explicit quality override rather than a
+   fallback-store-only compatibility knob.
+6. Otherwise, pick the finest child whose `coverageFraction` threshold (the
    per-child value read from the zarr attr `coverage_fraction`, in
    whichever units step 4's `selector` names) is satisfied by that
    metric, with 10% asymmetric, spacing-aware hysteresis on the
    downgrade direction to suppress threshold-edge flicker
    (`pickChildWithHysteresis`).
-6. Swap visibility atomically when the desired child differs; lazy
+7. Swap visibility atomically when the desired child differs; lazy
    targets that are not yet committed kick `ensureLoaded()` and swap
    on a later frame once `ready` flips true — unless the
    **hidden-layer load gate** vetoes it (below).
-7. **Hidden-layer load gate**: no deferred load (initial, settled
+8. **Hidden-layer load gate**: no deferred load (initial, settled
    reload, or cross-fade partner pre-load) is _started_ while the
    group is not effectively visible — its own `visible` flag or any
    ancestor's is `false` (`isEffectivelyVisible` in
@@ -399,7 +421,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    path beside the anonymous placeholder, so the loading monitor can show the
    missing branch and Retry can re-kick that exact child without assigning a
    duplicate name/kind to the placeholder.
-8. **Never-downgrade display gate**: a lazy level flips `ready` after
+9. **Never-downgrade display gate**: a lazy level flips `ready` after
    its _first_ additive chunk commits, so an ungated swap to a
    fresh-but-still-streaming aspiration would pop displayed quality
    down to chunk-1 (on zoom in, zoom out, or after a scrub settles)
@@ -446,8 +468,8 @@ registry.setSelectorMode(path, { lockLevel: 2 });
 ```
 
 **Capture quiescence:** `registry.isCaptureQuiescent()` answers "is
-every lod_group that contributes pixels to the current view already
-showing its own selected level at final quality?" — i.e. would one more
+every lod_group and partition part that contributes pixels to the current
+view already showing final committed quality?" — i.e. would one more
 frame of waiting improve what is on screen. The offline turntable
 capture drains on it (bounded) before exporting each frame, because the
 rAF loop — and therefore this frustum-aware selector — runs for the
@@ -477,6 +499,15 @@ cleared) the swap has not happened yet — a predicate reading only
 ready/loading/displayed would call that window settled. A `desired`
 level that has `failed` does not block, since it can never become ready
 this frame.
+
+Visible partition parts additionally block while a frustum rising edge is
+pending, while any load pass is queued or committing and any part is visible,
+while their stamped leaves describe an older view version, or while a committed
+progressive ladder is incomplete. Hidden/re-culled parts do not block, and an
+archive fault skips waits that cannot make progress. A per-part loader failure
+without an archive fault can leave a stale stamp, so the bounded capture timeout
+and consecutive-timeout latch provide the escape instead of reporting the part
+quiescent.
 
 "Still streaming additive LODs" takes **both** available signals, and
 either one alone leaves a hole. A lazy child's live `hasMoreLODs()` thunk
@@ -524,7 +555,8 @@ so a cold part preloads just before it enters). A part outside it is
 hidden and stamped `userData.partitionFrustumVisible = false` — on
 EVERY object the part emitted, since one part node may produce several,
 and a part counts as re-entering when any of them was culled; the
-scene loader's sweep (`isPartitionPathVisible`) and refinement skip its
+scene loader's sweep, refinement, and predictive slice prefetch
+(`isLoaderPathEligible`) skip its
 loaders, dropping their predictive-prefetch baseline. Because a culled
 part misses slice updates, its RE-ENTRY requests a resync of exactly
 that part's loaders — `deps.requestReprocess(partPaths)` with the
@@ -539,6 +571,22 @@ levels never join the sweep and are never re-stamped by it, so a bump on
 an unchanged view read every resident fine level scene-wide as stale and
 dropped ALL groups to coarse on camera motion (the #2366 regression on
 the 44-part h2afva scene).
+
+The Layers panel separately stamps `userData.layerVisible` on the
+toggled node. The same load-eligibility check walks that node's ancestor
+chain, so hidden layers stop foreground sweeps and background work; the
+false→true edge requests a targeted reprocess because hidden loaders may
+have missed slice changes. This cannot use `object.visible`: the LOD
+registry also clears that Three.js flag on resident levels that are not
+currently selected, and those levels must remain eligible to refine.
+Only the Layers panel's `LayerApplyEngine.applyVisibility` writes the stamp;
+calling `LuxarLayer.setVisible` directly changes only `object.visible` and does
+not cull background loading.
+
+`hasVisiblePendingPartitionResync()` publishes the held set to the wide
+load-activity and perf-settle predicates: a pending edge blocks settling only
+while its wrapper is effectively visible; hidden wrappers remain pending but
+do not block, and the signal is inert when no resync dispatcher is wired.
 
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the
@@ -576,7 +624,7 @@ thinned, and `applyLodFade` multiplies the node's opacity by `1/keep`
 (`densityCompensation`) so the composited brightness stays at the unthinned
 aggregate; `max` / `normal` / `opaque` nodes are never thinned. The pick pass
 mirrors the visual material's drop per node so a thinned-away element cannot
-be picked. `?no-density-guard` disables both the walker and the ladder for a
+be picked. `?noDensityGuard` disables both the walker and the ladder for a
 session.
 
 ---
@@ -1168,8 +1216,11 @@ _For implementation details, see the source files in this directory._
   objects in the scene (exported as both class `SceneDimsManager`
   and lazy-Proxy singleton `sceneDimsManager`).
 - `dimension-loading.ts` — Applies the current scene-dimension selection,
-  propagates animation frame budgets, warms the projected next slice during
-  playback, and releases shadow-loader resources after playback stops.
+  propagates the animation frame budget and the pinned playback ladder depth
+  (`getPlaybackLadderDepth` while playing, `getScrubLadderDepth` for a slice
+  change while paused, the "Detail" setting), warms the projected next slice
+  during playback with the same directives, schedules the unpinned settle pass
+  after a pinned scrub, and releases shadow-loader resources after playback stops.
 - `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
   child selector (pick on the group's screen-area or legacy diagonal
   metric + frustum off-screen gate

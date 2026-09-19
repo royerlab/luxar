@@ -77,8 +77,9 @@ browser** (`src/ui/dataset-browser.ts` + `styles/components/dataset-browser.css`
 Two CSS entry points (see `src/styles/README.md`):
 
 - `index.css` — **embed-safe library entry**. Every rule is scoped to a
-  `.luxar-*` class or `[data-theme=…]`. Imports utilities, all component CSS,
-  the GUI library styles, and the glass theme overrides.
+  `.luxar-*` class or `[data-theme=…]`, except `:root` blocks that declare only
+  `--luxar-*` custom properties. Imports utilities, all component CSS, the GUI
+  library styles, and the glass theme overrides.
 - `standalone.css` — global host-page chrome (reset, typography, layout).
   Only the standalone app imports it; embedders never get their `body`
   clobbered. **Consequence:** the global `:focus-visible` ring lives in
@@ -92,10 +93,10 @@ Two CSS entry points (see `src/styles/README.md`):
 All colors, spacing, and effects are CSS custom properties with the
 `--luxar-` prefix, injected at runtime by `ThemeManager` as **inline styles on
 `document.documentElement`** (not a `:root {}` stylesheet rule — they carry
-inline-style specificity) — with one sanctioned exception registered in
-§15.6: `--luxar-glass-tint` is the only `--luxar-` property declared in a
-stylesheet rather than by `ThemeManager` (a separate, unregistered case,
-`--luxar-overlay-transition-duration`, is a per-element runtime value
+inline-style specificity) — with two sanctioned exceptions registered in
+§15.6: `--luxar-glass-tint` and `--luxar-rail-gutter` are declared in
+stylesheets rather than by `ThemeManager` (a separate, unregistered case,
+`--luxar-overlay-transition-duration`, is a per-element runtime value that
 `overlay-manager.ts` sets directly on an element, not a theme token at all).
 Component CSS must reference tokens, never hardcoded values (sanctioned
 exceptions are registered in §15.6).
@@ -615,11 +616,13 @@ The rail is the canonical interactive surface; its patterns generalize:
   chip-tips upward.
 - **Popover/flyout arrows are real children** (§5.1.1): 12×12 rotated square
   painted `--luxar-bg-secondary` with two hairline borders.
-- **One rail gutter: `left: 73px`.** Docked panels, popovers/flyouts and the
-  first-run hint all share it — it is the popovers' own computed left edge (the
-  rail box including its border, plus their 10px gap), so whichever surface is
-  open its left edge lands in exactly the same place. Docked panels get it as
-  an `!important` override of inline positioning (`control-rail.css:547`,
+- **One rail gutter: `--luxar-rail-gutter`.** Docked panels, popovers/flyouts
+  and the first-run hint all share its 73px default; `(pointer: coarse)` raises
+  it to 79px for the wider touch rail. It is the popovers' own computed left
+  edge (the rail box including its border, plus their gap), so whichever
+  surface is open its left edge lands in exactly the same place. Docked panels
+  get it as an `!important` override of inline positioning
+  (`control-rail.css:558`,
   sanctioned by §13 and registered in §15.6); the draggable debug console gets
   the same default *without* `!important` so dragging still wins.
   **The rule is a hardcoded selector pair** — only `.luxar-gui` and
@@ -913,8 +916,8 @@ Every animation and transition a component introduces must be disabled under
 | Surface | Placement |
 | --- | --- |
 | Control rail | Left edge, vertically centered, `left: 12px` |
-| Left-docked panels (GUI, rendering/recording, layers, debug console) | `left: 73px` beside the rail, one at a time (§7.5); debug console draggable |
-| Rail popovers/flyouts | `left: calc(100% + 10px)` off the rail (= the same 73px gutter), arrow pointing back |
+| Left-docked panels (GUI, rendering/recording, layers, debug console) | `left: var(--luxar-rail-gutter)` beside the rail, one at a time (§7.5); 73px normally, 79px on coarse pointers; debug console draggable |
+| Rail popovers/flyouts | `left: calc(100% + 10px)` off the rail (= `--luxar-rail-gutter`), arrow pointing back |
 | Dimension sliders | Bottom-center, 80% width, max 800px |
 | Toast | Bottom-center, transient |
 | Scene-identity banner | Top-center, `top: 12px`, standing (not transient) |
@@ -936,14 +939,14 @@ The viewer is used on phones and tablets (iPhone and iPad included) as well as
 desktops. The rule that keeps the two from fighting: **touch adaptation is
 keyed on the pointer, never on viewport width**, and it lives in **one file** —
 `styles/components/coarse-pointer.css`, whose top level contains only `@media`
-blocks on `(pointer: coarse)`, `(hover: none)` and `(any-hover: hover)`. A
+blocks on `(pointer: coarse)`, `(any-hover: none)` and `(any-hover: hover)`. A
 narrow desktop window is not a touch device and a landscape tablet is not
 narrow. `tests/unit/styles/coarse-pointer-css.test.ts` enforces the contract:
 nothing outside media blocks, pointer-feature preludes only, no pointer/hover
 media features in any other stylesheet, and the load-bearing clamps present.
 
 - **Two features, two meanings.** `(pointer: coarse)` = the primary pointer is a
-  finger: viewport clamps, safe areas, tap-friendly targets. `(hover: none)` =
+  finger: viewport clamps, safe areas, tap-friendly targets. `(any-hover: none)` =
   no pointer can hover: hover-revealed affordances are dead, so the rail does
   not idle-dim (`opacity: 1`) and fullscreen keeps it findable (`0.35`). An
   iPad with a trackpad matches the first and not the second and keeps its
@@ -965,16 +968,44 @@ media features in any other stylesheet, and the load-bearing clamps present.
   landscape phone without horizontal panning. Its children and the root's
   collapse/footer controls do not shrink. Item tooltips are suppressed there
   because they cannot escape the scroll clip; the collapse handle remains
-  outside the wrapper and keeps its label. D2 supplies the coarse-pointer item
-  label route. `RailOverlay` anchors popovers with a root-relative rect, not
+  outside the wrapper and keeps its label. Under `(any-hover: none)` a tip shows on
+  keyboard focus only (`:focus-visible`), and the first-run hint names the tap
+  and the press-and-hold instead of "Hover". `RailOverlay` anchors popovers with a root-relative rect, not
   `offsetTop`, so a scrolled wrapper still points the arrow at its button; the
   unit test stubs both rects to guard that distinction.
 - **Buttons are `touch-action: manipulation`** (no 300 ms double-tap delay,
   no page zoom on a double-tap over UI). Canvas `touch-action: none` and gesture
   ownership are planned separately.
-- **Hit sizes, input sizes and press states** for coarse pointers (44px
-  targets, 16px inputs against iOS focus-zoom, `:active` fills where `:hover`
-  cannot fire) follow the same media gates and belong in the same file.
+- **Local layout properties.** `--luxar-rail-gutter` is 73px at `:root` and
+  becomes 79px under `(pointer: coarse)` so docked surfaces clear the wider
+  touch rail. Primary controls (rail buttons, chips, panel close) are 44px
+  through a LOCAL `--luxar-hit-min` custom property set on the component roots
+  — not a theme token, because the tokens are TS-generated across four theme
+  files and a touch-only size is not a theme decision. Dense secondary controls
+  (layer eye, play and step buttons) are 36px; range thumbs use a matching hit
+  band (24px normally, 28px for the two-thumb range slider) while the drawn
+  track stays thin; checkboxes 24px.
+- **16px inputs.** Every text/number/select inside a panel is `font-size: 16px`
+  under a coarse pointer: below that iOS Safari zooms the page into a focused
+  field and never zooms back. Numeric inputs use `inputmode="decimal"` only when
+  their minimum is non-negative; a signed or unbounded range carries no
+  `inputmode`, so the platform number keyboard keeps its minus key. Filter fields
+  use `inputmode="search"` (inert on desktop, so ungated in JS).
+- **Press, not hover.** Under `(any-hover: none)` a tap leaves an element in a
+  sticky `:hover` until the next tap elsewhere, so the hover styling is put
+  back to the rest state and `:active` carries the response (a translucent
+  highlight fill). The reset covers rail buttons, collapse/chips, layer rows
+  and dimension play buttons. Each rule must restate the element's own rest
+  state, so keep this list short and exact.
+- **Coarse-only affordances are gated in JS on `getInputProfile()`**, never on
+  width: a momentary **Hide panels** rail item that always closes open surfaces, the help
+  and monitor joining the docked panels' one-surface exclusivity, `‹ ›` step
+  buttons and a tappable name chip on each dimension slider (the finger's `[ ]`
+  and `1–9` keys), and the Home popover captioning on `pointerdown` for
+  touch-like pointers. Elements that only exist on coarse pointers may take
+  their base styling in `coarse-pointer.css`. The Fullscreen chip is gated on
+  the real capability (`document.fullscreenEnabled`, absent on iPhone Safari),
+  not on the device.
 
 ---
 
@@ -1362,11 +1393,12 @@ migrated.
   every other reduced-motion block in the tree spells a plain
   `animation: none` / `transition: none` and needs no override, so `!important`
   is not automatic there. Also sanctioned: the rail-docking gutter
-  `left: 73px !important` (`control-rail.css:547`, §7.5) — restated with the
-  safe-area inset under `(pointer: coarse)` in `coarse-pointer.css` (§11.5) — and the
+  `left: var(--luxar-rail-gutter) !important` (`control-rail.css:558`, §7.5) —
+  restated with the safe-area inset under `(pointer: coarse)` in
+  `coarse-pointer.css` (§11.5) — and the
   popover-nesting overrides that unpin a GUI mounted inside a popover
   (`control-rail.css:388-391`); and the state-forcing rules in
-  `overlay-layer.css:33-34` that must beat inline styles.
+  `overlay-layer.css:38-39` that must beat inline styles.
 - Off-tier z-indexes via `calc()` (§3.5): the modal scrim at
   `calc(var(--luxar-z-modal) - 1)` (`dataset-browser.css:18`), the debug
   console at `calc(var(--luxar-z-base) + 50)` (`debug-console.css:31`), the
@@ -1376,7 +1408,7 @@ migrated.
   to beat unknown third-party host UI (documented in that file's header). Small
   local stacking indexes (`1/2/10` inside a positioned parent) are not layer
   values at all and need no entry.
-- **A stylesheet-declared custom property, not a `ThemeManager` token** (§3):
+- **Stylesheet-declared custom properties, not `ThemeManager` tokens** (§3):
   `--luxar-glass-tint` (`styles/themes/liquid-glass.css`, under the
   `[data-theme='liquid-glass']` selector) is the dark tint painted by
   `.luxar-glass-surface::after` — liquid-glass's own internal implementation
@@ -1396,7 +1428,11 @@ migrated.
   than moving into `ThemeManager`'s `themeToCSSVariables()` because it is
   this one theme's CSS-layer implementation detail — a tint painted by a
   pseudo-element — not a member of the `Theme` interface, so it does not
-  belong in the token vocabulary.
+  belong in the token vocabulary. `--luxar-rail-gutter`
+  (`styles/components/control-rail.css`, with the coarse-pointer override in
+  `styles/components/coarse-pointer.css`) is likewise a stylesheet layout
+  property: its `:root` declaration keeps unscoped consumers valid, while the
+  media query updates the shared rail geometry without runtime profile state.
 
 ---
 

@@ -298,6 +298,17 @@ def test_a_dormant_record_skips_rather_than_failing(harness: ModuleType) -> None
     assert detail.startswith("SKIP")
 
 
+def test_a_dataset_mirror_keeps_a_dormant_record_reachable(
+    harness: ModuleType,
+) -> None:
+    manifest = _manifest(None, sha=_digest(PAYLOAD))
+    manifest["datasets"]["thing"]["base_url"] = "https://example.org/mirror/"
+
+    assert harness.is_reachable(manifest, "thing")
+    assert harness._listing_state(manifest, "thing", None) == "reachable"
+    assert manifest["records"]["test-record"] == {"published": False}
+
+
 def test_the_record_digest_is_the_primary_contract(harness: ModuleType) -> None:
     """The collapsed sha256 pin describes what the record serves."""
     entry = {"name": "x", "sha256": "record-digest"}

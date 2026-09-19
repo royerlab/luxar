@@ -23,6 +23,13 @@ def test_counts_tiles_by_viewer_link():
     assert audit_mod.count_tiles("<p>no tiles here</p>") == 0
 
 
+def test_counts_tiles_by_standalone_viewer_link():
+    page = "\n".join(
+        f'<a href="https://luxarviewer.dev/?src=x{i}">t</a>' for i in range(86)
+    )
+    assert audit_mod.count_tiles(page) == 86
+
+
 def test_matching_counts_report_no_staleness():
     tiles, claims, stale = audit_mod.audit(PAGE, README_OK)
     assert tiles == 86
@@ -45,6 +52,17 @@ def test_claims_found_by_wording_not_line_number():
     _, claims, stale = audit_mod.audit(PAGE, reorganised)
     assert {where for _, where in claims} == {"intro banner", "docs table row"}
     assert stale == []
+
+
+def test_claim_sites_are_the_ones_sync_demo_counts_owns():
+    """One table, two readers: the audit must not carry its own copy."""
+    sync_mod = audit_mod._load_sync_demo_counts()
+    assert not hasattr(audit_mod, "CLAIM_PATTERNS")
+    assert audit_mod.find_claims(README_OK) == sync_mod.find_hosted_claims(README_OK)
+    assert {where for _, where in sync_mod.HOSTED_README_CLAIMS} == {
+        "intro banner",
+        "docs table row",
+    }
 
 
 def test_real_readme_contains_both_claim_sites():

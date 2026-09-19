@@ -106,9 +106,11 @@ and per-node residency state but never appear in `ladderDepthHistogram`.
 
 The same traversal also summarises specialized-group containers by their
 `userData.kind`: `kind=lod` groups become `lodGroups[]` (level count + the
-index of the visible child as `activeLevel`, `-1` when none), and
-`kind=partition` groups become `partitions[]` (part count + visible-part
-count).
+index of the visible child as `activeLevel`, `-1` when none, the normalized
+`selector`, and whether every level carries a footprint stamp), and
+`kind=partition` groups become `partitions[]` (part count + visible-part count).
+`selector` falls back to `coverage` when the group has no recognized selector
+stamp.
 
 For lines, the `hasColormap` flag is read structurally from
 `material.defines.USE_COLORMAP` so the result is identical whether the line mesh
@@ -272,7 +274,7 @@ Single function `openCacheStatsView(): void`. Resolves
 no monitor exists (embedded contexts that disable the monitor).
 
 Triggered from two places: `LuxarApp.init()` when `options.openCacheStats` is
-set, and `loadDataset` when the `?cache-stats` URL flag is present
+set, and `loadDataset` when the `?cacheStats` URL flag is present
 (`core/app.ts` wires its private `openCacheStatsView()` wrapper into the
 load-dataset ports, and `core/app/dataset/load-dataset.ts` calls
 `ports.openCacheStatsView()` after the monitor exists).
@@ -285,7 +287,7 @@ Available once `installDebugInterface` runs (after `LuxarApp.init()`):
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `app`                                                                                          | bootstrap stub, preserved                                            | `LuxarApp` instance                                                                                                                                                                                                                                                                                   |
 | `consoleInterceptor`                                                                           | bootstrap stub, preserved                                            | Captured console buffer                                                                                                                                                                                                                                                                               |
-| `version`                                                                                      | bootstrap stub, preserved                                            | `buildInfo().version`                                                                                                                                                                                                                                                                                 |
+| `version`                                                                                      | bootstrap stub, preserved                                            | `VIEWER_VERSION` (`src/version.ts`) — the `package.json` version                                                                                                                                                                                                                                      |
 | `scene` / `camera` / `renderer` / `controls` / `postProcessing`                                | `sceneManager.*`                                                     | Live THREE.js refs                                                                                                                                                                                                                                                                                    |
 | `animationController` / `inputHandler` / `renderingControls` / `recordingPanel`                | ports                                                                | Subsystem handles                                                                                                                                                                                                                                                                                     |
 | `sceneDimsManager`                                                                             | singleton                                                            | nD dimension state                                                                                                                                                                                                                                                                                    |

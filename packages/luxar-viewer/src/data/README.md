@@ -36,6 +36,13 @@ data/
 │   ├── range-reader.ts            # Strict 206/Content-Range reader; retains + stitches the directory read
 │   └── store.ts                   # Lazily opens the archive; memoizes the directory only on success
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
+├── format-version.ts              # On-disk format-version POLICY (mirrors Python's
+│                                  #   typing_utils/format_version.py; same case table in
+│                                  #   both test suites): supported → silent, same-major
+│                                  #   newer minor → warn + toast, else THROW (error overlay).
+│                                  #   Dispatches scene vs detached .gsplats.zarr on
+│                                  #   `format_type`; reads the 0.1 legacy `luxar_version`.
+│                                  #   Called by load-scene.ts right after the root attrs.
 ├── scene-identity-watchdog.ts     # Conditionally re-probes root attrs (zarr.json/.zattrs)
 │                                  #   every 15 s locally / 120 s remotely, plus tab focus,
 │                                  #   and raises the scene-identity banner when the ?src=
@@ -318,7 +325,7 @@ export async function updateSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId?: string,
-  opts?: { frameBudgetMs?: number }
+  opts?: { frameBudgetMs?: number; ladderDepth?: number | 'auto' }
 ): Promise<void>;
 ```
 
@@ -1033,7 +1040,7 @@ location /data/ {
 **Problem: Memory usage too high**
 
 ```typescript
-// Pass ?no-cache or { noCache: true } to disable caching entirely.
+// Pass ?noCache or { noCache: true } to disable caching entirely.
 const scene = await loadScene(url, { noCache: true });
 
 // Or inspect the live cache stats via SceneLoaderManager and clear

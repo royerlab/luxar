@@ -130,7 +130,7 @@ export interface SceneLoaderMonitorPort {
    * Push the cache telemetry state resolved by `cache-setup.ts` so the
    * UI shows the right disabled-reason. Without this, the aggregator
    * falls back to "not-wired" whenever a `CacheStatsProvider` isn't
-   * registered, which conflates `?no-cache` with mid-scene transitions.
+   * registered, which conflates `?noCache` with mid-scene transitions.
    */
   setCacheTelemetryState(state: CacheTelemetryState): void;
 

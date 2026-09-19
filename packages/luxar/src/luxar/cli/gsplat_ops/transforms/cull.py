@@ -163,14 +163,15 @@ def run_cull_dataset(
                     if amp_ret is not None:
                         aprint(f"  Amplitude retention: {100 * amp_ret:.2f}%")
 
-            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+            from luxar.gsplats.io.load_gsplats import read_rebuild_root_attrs
 
             with asection("Saving"):
                 culled_data.save(
                     output_path,
+                    amplitude_bits="auto",
                     encoding_mode=encoding_mode_obj,
                     compress=compress,
-                    root_attrs=read_authored_appearance(input_path),
+                    root_attrs=read_rebuild_root_attrs(input_path),
                 )
                 aprint(f"Saved to {output_path}")
 

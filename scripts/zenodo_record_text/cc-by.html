@@ -1,148 +1,361 @@
-<p>Precomputed demo datasets for
-<a href="https://github.com/royerlab/luxar">Luxar</a>, a system for compiling and
-visualising arbitrary-sized nD scientific scenes in the browser. These files are
-expensive to compute (GPU fitting, in some cases hours) and are hosted here so
-the software repository stays small and installable.</p>
-
-<p>Every file is a <i>derived</i> product: a Gaussian-splat fit, a decimated
-level-of-detail structure, or an extracted point catalog. None of them is the raw
-source imagery. The upstream sources are cited per dataset below, and users of
-this record should cite the upstream source in addition to this record.</p>
-
+<p>Precomputed demo datasets for <a href="https://github.com/royerlab/luxar">Luxar</a>, a system for compiling and visualising arbitrary-sized nD scientific scenes in the browser. These files are expensive to compute (GPU fitting, in some cases hours) and are hosted here so the software repository stays small and installable.</p>
+<p>Every file is a <em>derived</em> product: a Gaussian-splat fit, a decimated level-of-detail structure, or an extracted point catalog. None of them is the raw source imagery. The upstream sources are cited per dataset below, and users of this record should cite the upstream source in addition to this record.</p>
 <h3>Licensing</h3>
-<p>This record groups datasets whose upstream licences permit redistribution with
-attribution: CC BY 4.0, CC0 1.0, and United States federal public domain. The
-record carries a single CC BY 4.0 stamp because Zenodo permits one licence per
-record, and CC BY is the most restrictive of that set; the effective licence of an
-individual file is the one listed against it below. Datasets under ShareAlike
-terms are kept in a separate record, because ShareAlike survives derivation and
-would otherwise contaminate this one.</p>
-
+<p>This record groups datasets whose upstream licences permit redistribution with attribution: CC BY 4.0, CC0 1.0, and United States federal public domain. The record carries a single CC BY 4.0 stamp because Zenodo permits one licence per record, and CC BY is the most restrictive of that set; the effective licence of an individual file is the one listed against it below. Datasets under ShareAlike terms are kept in a separate record, because ShareAlike survives derivation and would otherwise contaminate this one.</p>
 <h3>How to use these files</h3>
-<p>Each file is a <code>.gsplats.zarr.zip</code> or <code>.zarr.zip</code> archive
-that the Luxar demo suite fetches on first run and caches under
-<code>~/.cache/luxar/&lt;dataset&gt;/</code>. To fetch one directly:</p>
+<p>Each file is a <code>.gsplats.zarr.zip</code> or <code>.zarr.zip</code> archive that the Luxar demo suite fetches on first run and caches under <code>~/.cache/luxar/&lt;dataset&gt;/</code>. To fetch one directly:</p>
 <pre>from luxar.demos import ensure_dataset
 paths = ensure_dataset("gsplats_kidney") # downloads, verifies, returns paths</pre>
 <p>To open one in the viewer without writing code:</p>
 <pre>luxar gsplat view &lt;file&gt;.gsplats.zarr.zip
 luxar demo # browse every demo that uses these files</pre>
-<p>Every file is pinned by SHA-256 in
-<a href="https://github.com/royerlab/luxar/blob/main/packages/luxar/src/luxar/demos/data_manifest.json"><code>data_manifest.json</code></a>,
-and the fetch helper verifies the checksum before use; a mismatched download is
-quarantined rather than returned.</p>
-
+<p>Every file is pinned by SHA-256 in <a href="https://github.com/royerlab/luxar/blob/main/packages/luxar/src/luxar/demos/data_manifest.json"><code>data_manifest.json</code></a>, and the fetch helper verifies the checksum before use; a mismatched download is quarantined rather than returned.</p>
 <h3>How the Gaussian-splat files were produced</h3>
-<p>Each source volume was fitted with the Luxar gsplat pipeline
-(<code>luxar gsplat fit</code>) on a GPU. These are lossy representations built
-for visualisation and interactive exploration; they are not a substitute for the
-source imagery in quantitative analysis.</p>
-<p><b>Choosing the splat count.</b> The number of Gaussians K was calibrated per
-dataset by Noise2Self blind-spot cross-validation (<code>luxar gsplat cal</code>),
-and then checked by refitting at the candidate count and scoring the
-reconstruction against the whole source volume. The second step is not a
-formality. The cross-validated estimate is computed over a five percent mask of
-held-out voxels, and on these datasets it disagreed with the direct measurement
-in both directions: for one dataset it favoured half the splat budget that
-measurement showed to be better, and for another it predicted a gain of about
-1.5 dB where refitting delivered under 0.3 dB. Where two candidate budgets fell
-within roughly a decibel of each other, the choice was made from renders of both
-at matched magnification, because at that margin the metric and the eye disagree.
-Additional Gaussians capture real structure and photon noise alike, and peak
-signal-to-noise ratio rewards the two equally.</p>
-
+<p>Each source volume was fitted with the Luxar gsplat pipeline (<code>luxar gsplat fit</code>) on a GPU. These are lossy representations built for visualisation and interactive exploration; they are not a substitute for the source imagery in quantitative analysis.</p>
+<p><strong>Choosing the splat count.</strong> The number of Gaussians K was calibrated per dataset by Noise2Self blind-spot cross-validation (<code>luxar gsplat cal</code>), and then checked by refitting at the candidate count and scoring the reconstruction against the whole source volume. The second step is not a formality. The cross-validated estimate is computed over a five percent mask of held-out voxels, and on these datasets it disagreed with the direct measurement in both directions: for one dataset it favoured half the splat budget that measurement showed to be better, and for another it predicted a gain of about 1.5 dB where refitting delivered under 0.3 dB. Where two candidate budgets fell within roughly a decibel of each other, the choice was made from renders of both at matched magnification, because at that margin the metric and the eye disagree. Additional Gaussians capture real structure and photon noise alike, and peak signal-to-noise ratio rewards the two equally.</p>
 <h3>Level of detail</h3>
-<p>These files carry level-of-detail structure so a viewer can show something
-immediately and refine it as the camera approaches, instead of waiting for a
-whole fit to arrive. Two independent mechanisms are used, and a file may carry
-both:</p>
+<p>These files carry level-of-detail structure so a viewer can show something immediately and refine it as the camera approaches, instead of waiting for a whole fit to arrive. Two independent mechanisms are used, and a file may carry both:</p>
 <ul>
-<li><b>Progressive (additive) ladders.</b> A leaf is stored as an ordered series
-of chunks whose union is the complete fit, so any prefix is a valid, dimmer
-rendering of the whole object. Every file in this record carries one.</li>
-<li><b>Substitutive levels.</b> The Milky Way dust volume and the seven
-cell-tracking timelapses additionally carry coarse levels of merged
-representative Gaussians, at one quarter, one sixteenth and one sixty-fourth
-of the full count, each of which <i>replaces</i> the level below rather than
-adding to it. The viewer selects a level from the fraction of
-the screen the object occupies, so the choice is independent of display
-resolution.</li>
+<li><strong>Progressive (additive) ladders.</strong> A leaf is stored as an ordered series of chunks whose union is the complete fit, so any prefix is a valid, dimmer rendering of the whole object. Every file in this record carries one.</li>
+<li><strong>Substitutive levels.</strong> The Milky Way dust volume and the seven cell-tracking timelapses additionally carry coarse levels of merged representative Gaussians, at one quarter, one sixteenth and one sixty-fourth of the full count, each of which <em>replaces</em> the level below rather than adding to it. The viewer selects a level from the fraction of the screen the object occupies, so the choice is independent of display resolution.</li>
 </ul>
-<p>The whole-slide pathology images use a third arrangement: spatial tiles, each
-carrying its own coarse and fine levels, so that panning and zooming over a
-gigapixel slide loads only the tiles in view at only the detail required.</p>
-
+<p>The whole-slide pathology images use a third arrangement: spatial tiles, each carrying its own coarse and fine levels, so that panning and zooming over a gigapixel slide loads only the tiles in view at only the detail required.</p>
 <h3>Reconstruction quality</h3>
-<p>Two figures are reported per file, and both are stamped inside the archive
-itself rather than only quoted here:</p>
+<p>Two figures are reported per file, and both are stamped inside the archive itself rather than only quoted here:</p>
 <ul>
-<li><b>PSNR</b> over the whole volume, in decibels.</li>
-<li><b>Foreground PSNR</b>, over only those voxels above an Otsu threshold of the
-source volume, with the fraction of voxels that threshold selects.</li>
+<li><strong>PSNR</strong> over the whole volume, in decibels.</li>
+<li><strong>Foreground PSNR</strong>, over only those voxels above an Otsu threshold of the source volume, with the fraction of voxels that threshold selects.</li>
 </ul>
-<p>The foreground figure is the honest one for sparse microscopy and astronomy
-data. Where a volume is mostly empty, a global PSNR is dominated by correctly
-reconstructed emptiness and can look excellent while the structure of interest is
-poorly represented. A low foreground figure is also not automatically a defect:
-on a noisy channel it partly measures photon noise that a sum of Gaussians
-declines to reproduce, which is desirable behaviour that this metric charges for.
-Where that applies it is noted against the dataset.</p>
-<p>To read the stamps from a downloaded file, so that nothing here has to be
-taken on trust:</p>
+<p>The foreground figure is the honest one for sparse microscopy and astronomy data. Where a volume is mostly empty, a global PSNR is dominated by correctly reconstructed emptiness and can look excellent while the structure of interest is poorly represented. A low foreground figure is also not automatically a defect: on a noisy channel it partly measures photon noise that a sum of Gaussians declines to reproduce, which is desirable behaviour that this metric charges for. Where that applies it is noted against the dataset.</p>
+<p>To read the stamps from a downloaded file, so that nothing here has to be taken on trust:</p>
 <pre>luxar gsplat info &lt;file&gt;.gsplats.zarr.zip</pre>
-<p>Each archive also records the grid and element type of the volume it was
-fitted from, which is what makes the compression ratio quoted against it
-reproducible rather than asserted.</p>
-
+<p>Each archive also records the grid and element type of the volume it was fitted from, which is what makes the compression ratio quoted against it reproducible rather than asserted.</p>
 <h3>Contents</h3>
 <table>
-<tbody><tr><th>file</th><th>size</th><th>elements</th><th>level of detail</th><th>PSNR / foreground (dB)</th></tr>
-<tr><td><code>3d_umap_coords_human.parquet</code></td><td>35.5 MB</td><td>1,041,455</td><td>table</td><td>n/a (coordinates)</td></tr>
-<tr><td><code>3d_umap_coords_mouse.parquet</code></td><td>7.3 MB</td><td>192,251</td><td>table</td><td>n/a (coordinates)</td></tr>
-<tr><td><code>6bba_09961292.gsplats.zarr.zip</code></td><td>91.9 MB</td><td>4,054,345</td><td>4 coarse-to-fine levels, 100 timepoints</td><td>24.7&ndash;26.5 / 18.3&ndash;20.2 (per frame)</td></tr>
-<tr><td><code>6bba_09961292_tracks.npz</code></td><td>0.03 MB</td><td>1,950</td><td>lineage tracks (points + polylines)</td><td>n/a (sidecar)</td></tr>
-<tr><td><code>6bba_57b7cc1e.gsplats.zarr.zip</code></td><td>51.0 MB</td><td>2,178,516</td><td>4 coarse-to-fine levels, 100 timepoints</td><td>not scored</td></tr>
-<tr><td><code>6bba_57b7cc1e_tracks.npz</code></td><td>0.03 MB</td><td>1,659</td><td>lineage tracks (points + polylines)</td><td>n/a (sidecar)</td></tr>
-<tr><td><code>6bba_5dfe9ad1.gsplats.zarr.zip</code></td><td>105.0 MB</td><td>4,649,701</td><td>4 coarse-to-fine levels, 100 timepoints</td><td>not scored</td></tr>
-<tr><td><code>6bba_5dfe9ad1_tracks.npz</code></td><td>0.03 MB</td><td>1,542</td><td>lineage tracks (points + polylines)</td><td>n/a (sidecar)</td></tr>
-<tr><td><code>6bba_784a78c9.gsplats.zarr.zip</code></td><td>101.6 MB</td><td>4,520,586</td><td>4 coarse-to-fine levels, 100 timepoints</td><td>not scored</td></tr>
-<tr><td><code>6bba_784a78c9_tracks.npz</code></td><td>0.03 MB</td><td>1,788</td><td>lineage tracks (points + polylines)</td><td>n/a (sidecar)</td></tr>
-<tr><td><code>6bba_ae82a791.gsplats.zarr.zip</code></td><td>93.6 MB</td><td>4,197,409</td><td>4 coarse-to-fine levels, 100 timepoints</td><td>not scored</td></tr>
-<tr><td><code>6bba_ae82a791_tracks.npz</code></td><td>0.02 MB</td><td>1,495</td><td>lineage tracks (points + polylines)</td><td>n/a (sidecar)</td></tr>
-<tr><td><code>6bba_bb9f20c3.gsplats.zarr.zip</code></td><td>96.3 MB</td><td>4,283,665</td><td>4 coarse-to-fine levels, 100 timepoints</td><td>not scored</td></tr>
-<tr><td><code>6bba_bb9f20c3_tracks.npz</code></td><td>0.03 MB</td><td>1,925</td><td>lineage tracks (points + polylines)</td><td>n/a (sidecar)</td></tr>
-<tr><td><code>6bba_cff5865f.gsplats.zarr.zip</code></td><td>92.8 MB</td><td>4,101,691</td><td>4 coarse-to-fine levels, 100 timepoints</td><td>not scored</td></tr>
-<tr><td><code>6bba_cff5865f_tracks.npz</code></td><td>0.03 MB</td><td>1,571</td><td>lineage tracks (points + polylines)</td><td>n/a (sidecar)</td></tr>
-<tr><td><code>celegans_s1.gsplats.zarr.zip</code></td><td>80.8 MB</td><td>5,640,070</td><td>400 per-frame stores</td><td>29.5&ndash;39.8 / 21.8&ndash;38.1 (per frame)</td></tr>
-<tr><td><code>cells3d_ch0.gsplats.zarr.zip</code></td><td>0.5 MB</td><td>41,975</td><td>4 ladder rungs</td><td>32.8 / 32.0</td></tr>
-<tr><td><code>cells3d_ch1.gsplats.zarr.zip</code></td><td>0.8 MB</td><td>57,946</td><td>4 ladder rungs</td><td>22.4 / 21.7</td></tr>
-<tr><td><code>census_umap_1m.npz</code></td><td>13.1 MB</td><td>1,000,000</td><td>table</td><td>n/a (coordinates)</td></tr>
-<tr><td><code>cmu1_ch0.gsplats.zarr.zip</code></td><td>45.7 MB</td><td>8,823,953</td><td>4 parts, 16 ladder rungs</td><td>23.5 / 16.6</td></tr>
-<tr><td><code>cmu1_ch1.gsplats.zarr.zip</code></td><td>50.7 MB</td><td>9,924,486</td><td>4 parts, 16 ladder rungs</td><td>24.3 / 18.7</td></tr>
-<tr><td><code>cmu1_ch2.gsplats.zarr.zip</code></td><td>53.7 MB</td><td>10,830,790</td><td>4 parts, 16 ladder rungs</td><td>26.1 / 22.3</td></tr>
-<tr><td><code>cryoem_virus.gsplats.zarr.zip</code></td><td>10.6 MB</td><td>1,016,482</td><td>flat, 5 ladder rungs</td><td>28.2 / 19.2</td></tr>
-<tr><td><code>ct_atlas.gsplats.zarr.zip</code></td><td>7.0 MB</td><td>647,083</td><td>flat, 4 ladder rungs</td><td>43.0 / 30.6</td></tr>
-<tr><td><code>ct_atlas_labels.npz</code></td><td>0.1 MB</td><td>647,083</td><td>per-splat organ ids, also carried inside the fit</td><td>n/a (sidecar)</td></tr>
-<tr><td><code>dapi.gsplats.zarr.zip</code></td><td>0.1 MB</td><td>7,740</td><td>4 ladder rungs</td><td>43.8 / 34.8</td></tr>
-<tr><td><code>desi_dr1_cosmic_web.luxar.zarr.zip</code></td><td>76.8 MB</td><td>9,751,955</td><td>2 layers x 4 levels</td><td>n/a (not a fit)</td></tr>
-<tr><td><code>droso_gastrulation.gsplats.zarr.zip</code></td><td>2.2 MB</td><td>200,023</td><td>3 ladder rungs</td><td>41.6 / 37.1</td></tr>
-<tr><td><code>flylight_mcfo_63x.gsplats.zarr.zip</code></td><td>7.7 MB</td><td>660,035</td><td>5 ladder rungs</td><td>60.9 / 38.9</td></tr>
-<tr><td><code>h2afva_full.gsplats.zarr.zip</code></td><td>17.8 MB</td><td>1,653,405</td><td>single leaf</td><td>63.7 / 48.9</td></tr>
-<tr><td><code>h2afva_quarter.gsplats.zarr.zip</code></td><td>4.6 MB</td><td>411,180</td><td>single leaf</td><td>57.1 / 41.7</td></tr>
-<tr><td><code>h2afva_tenth.gsplats.zarr.zip</code></td><td>1.9 MB</td><td>165,276</td><td>single leaf</td><td>53.8 / 38.3</td></tr>
-<tr><td><code>h2afva_tp234.gsplats.zarr.zip</code></td><td>20.8 MB</td><td>1,653,405</td><td>41 parts, 246 ladder rungs</td><td>63.7 / 48.9</td></tr>
-<tr><td><code>h2afva_twentieth.gsplats.zarr.zip</code></td><td>1.0 MB</td><td>82,660</td><td>single leaf</td><td>51.7 / 36.2</td></tr>
-<tr><td><code>kidney_ch0.gsplats.zarr.zip</code></td><td>0.7 MB</td><td>51,015</td><td>4 ladder rungs</td><td>25.8 / 24.1</td></tr>
-<tr><td><code>kidney_ch1.gsplats.zarr.zip</code></td><td>0.7 MB</td><td>52,278</td><td>4 ladder rungs</td><td>35.6 / 30.6</td></tr>
-<tr><td><code>kidney_ch2.gsplats.zarr.zip</code></td><td>0.7 MB</td><td>53,827</td><td>4 ladder rungs</td><td>32.0 / 26.3</td></tr>
-<tr><td><code>milkyway_dust.gsplats.zarr.zip</code></td><td>10.6 MB</td><td>677,741</td><td>4 coarse-to-fine levels, each progressively streamed</td><td>34.8 / 21.1</td></tr>
-<tr><td><code>neuromast_membranes.gsplats.zarr.zip</code></td><td>71.1 MB</td><td>5,864,440</td><td>8 ladder rungs</td><td>45.9&ndash;50.9 / 45.9&ndash;50.7 (per frame)</td></tr>
-<tr><td><code>neuromast_nuclei.gsplats.zarr.zip</code></td><td>65.3 MB</td><td>5,530,300</td><td>8 ladder rungs</td><td>53.6&ndash;58.0 / 50.9&ndash;55.8 (per frame)</td></tr>
-<tr><td><code>nexrad_supercell.gsplats.zarr.zip</code></td><td>12.9 MB</td><td>817,989</td><td>82 per-frame stores</td><td>43.3&ndash;56.8 / 32.0&ndash;39.7 (per frame)</td></tr>
-<tr><td><code>blastocyst_ch0.gsplats.zarr.zip</code></td><td>0.2 MB</td><td>12,916</td><td>4 ladder rungs</td><td>38.6 / 27.0</td></tr>
-<tr><td><code>blastocyst_ch1.gsplats.zarr.zip</code></td><td>0.2 MB</td><td>13,941</td><td>4 ladder rungs</td><td>38.6 / 28.9</td></tr>
-<tr><td><code>vh_head.gsplats.zarr.zip</code></td><td>25.1 MB</td><td>1,908,888</td><td>flat, 4 ladder rungs</td><td>38.2 / 32.6</td></tr>
-<tr><td><code>vh_head_colors.npz</code></td><td>5.1 MB</td><td>1,908,888</td><td>per-splat RGB, also carried inside the fit</td><td>n/a (sidecar)</td></tr>
+<tbody>
+<tr>
+<th>file</th>
+<th>size</th>
+<th>elements</th>
+<th>level of detail</th>
+<th>PSNR / foreground (dB)</th>
+</tr>
+<tr>
+<td><code>3d_umap_coords_human.parquet</code></td>
+<td>35.5 MB</td>
+<td>1,041,455</td>
+<td>table</td>
+<td>n/a (coordinates)</td>
+</tr>
+<tr>
+<td><code>3d_umap_coords_mouse.parquet</code></td>
+<td>7.3 MB</td>
+<td>192,251</td>
+<td>table</td>
+<td>n/a (coordinates)</td>
+</tr>
+<tr>
+<td><code>6bba_09961292.gsplats.zarr.zip</code></td>
+<td>91.9 MB</td>
+<td>4,054,345</td>
+<td>4 coarse-to-fine levels, 100 timepoints</td>
+<td>24.7&ndash;26.5 / 18.3&ndash;20.2 (per frame)</td>
+</tr>
+<tr>
+<td><code>6bba_09961292_tracks.npz</code></td>
+<td>0.03 MB</td>
+<td>1,950</td>
+<td>lineage tracks (points + polylines)</td>
+<td>n/a (sidecar)</td>
+</tr>
+<tr>
+<td><code>6bba_57b7cc1e.gsplats.zarr.zip</code></td>
+<td>51.0 MB</td>
+<td>2,178,516</td>
+<td>4 coarse-to-fine levels, 100 timepoints</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>6bba_57b7cc1e_tracks.npz</code></td>
+<td>0.03 MB</td>
+<td>1,659</td>
+<td>lineage tracks (points + polylines)</td>
+<td>n/a (sidecar)</td>
+</tr>
+<tr>
+<td><code>6bba_5dfe9ad1.gsplats.zarr.zip</code></td>
+<td>105.0 MB</td>
+<td>4,649,701</td>
+<td>4 coarse-to-fine levels, 100 timepoints</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>6bba_5dfe9ad1_tracks.npz</code></td>
+<td>0.03 MB</td>
+<td>1,542</td>
+<td>lineage tracks (points + polylines)</td>
+<td>n/a (sidecar)</td>
+</tr>
+<tr>
+<td><code>6bba_784a78c9.gsplats.zarr.zip</code></td>
+<td>101.6 MB</td>
+<td>4,520,586</td>
+<td>4 coarse-to-fine levels, 100 timepoints</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>6bba_784a78c9_tracks.npz</code></td>
+<td>0.03 MB</td>
+<td>1,788</td>
+<td>lineage tracks (points + polylines)</td>
+<td>n/a (sidecar)</td>
+</tr>
+<tr>
+<td><code>6bba_ae82a791.gsplats.zarr.zip</code></td>
+<td>93.6 MB</td>
+<td>4,197,409</td>
+<td>4 coarse-to-fine levels, 100 timepoints</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>6bba_ae82a791_tracks.npz</code></td>
+<td>0.02 MB</td>
+<td>1,495</td>
+<td>lineage tracks (points + polylines)</td>
+<td>n/a (sidecar)</td>
+</tr>
+<tr>
+<td><code>6bba_bb9f20c3.gsplats.zarr.zip</code></td>
+<td>96.3 MB</td>
+<td>4,283,665</td>
+<td>4 coarse-to-fine levels, 100 timepoints</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>6bba_bb9f20c3_tracks.npz</code></td>
+<td>0.03 MB</td>
+<td>1,925</td>
+<td>lineage tracks (points + polylines)</td>
+<td>n/a (sidecar)</td>
+</tr>
+<tr>
+<td><code>6bba_cff5865f.gsplats.zarr.zip</code></td>
+<td>92.8 MB</td>
+<td>4,101,691</td>
+<td>4 coarse-to-fine levels, 100 timepoints</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>6bba_cff5865f_tracks.npz</code></td>
+<td>0.03 MB</td>
+<td>1,571</td>
+<td>lineage tracks (points + polylines)</td>
+<td>n/a (sidecar)</td>
+</tr>
+<tr>
+<td><code>celegans_s1.gsplats.zarr.zip</code></td>
+<td>80.8 MB</td>
+<td>5,640,070</td>
+<td>400 per-frame stores</td>
+<td>29.5&ndash;39.8 / 21.8&ndash;38.1 (per frame)</td>
+</tr>
+<tr>
+<td><code>cells3d_ch0.gsplats.zarr.zip</code></td>
+<td>0.5 MB</td>
+<td>41,975</td>
+<td>4 ladder rungs</td>
+<td>32.8 / 32.0</td>
+</tr>
+<tr>
+<td><code>cells3d_ch1.gsplats.zarr.zip</code></td>
+<td>0.8 MB</td>
+<td>57,946</td>
+<td>4 ladder rungs</td>
+<td>22.4 / 21.7</td>
+</tr>
+<tr>
+<td><code>census_umap_1m.npz</code></td>
+<td>13.1 MB</td>
+<td>1,000,000</td>
+<td>table</td>
+<td>n/a (coordinates)</td>
+</tr>
+<tr>
+<td><code>cmu1_ch0.gsplats.zarr.zip</code></td>
+<td>45.7 MB</td>
+<td>8,823,953</td>
+<td>4 parts, 16 ladder rungs</td>
+<td>23.5 / 16.6</td>
+</tr>
+<tr>
+<td><code>cmu1_ch1.gsplats.zarr.zip</code></td>
+<td>50.7 MB</td>
+<td>9,924,486</td>
+<td>4 parts, 16 ladder rungs</td>
+<td>24.3 / 18.7</td>
+</tr>
+<tr>
+<td><code>cmu1_ch2.gsplats.zarr.zip</code></td>
+<td>53.7 MB</td>
+<td>10,830,790</td>
+<td>4 parts, 16 ladder rungs</td>
+<td>26.1 / 22.3</td>
+</tr>
+<tr>
+<td><code>cryoem_virus.gsplats.zarr.zip</code></td>
+<td>10.6 MB</td>
+<td>1,016,482</td>
+<td>flat, 5 ladder rungs</td>
+<td>28.2 / 19.2</td>
+</tr>
+<tr>
+<td><code>ct_atlas.gsplats.zarr.zip</code></td>
+<td>7.0 MB</td>
+<td>647,083</td>
+<td>flat, 4 ladder rungs</td>
+<td>43.0 / 30.6</td>
+</tr>
+<tr>
+<td><code>ct_atlas_labels.npz</code></td>
+<td>0.1 MB</td>
+<td>647,083</td>
+<td>per-splat organ ids, also carried inside the fit</td>
+<td>n/a (sidecar)</td>
+</tr>
+<tr>
+<td><code>dapi.gsplats.zarr.zip</code></td>
+<td>0.1 MB</td>
+<td>7,740</td>
+<td>4 ladder rungs</td>
+<td>43.8 / 34.8</td>
+</tr>
+<tr>
+<td><code>desi_dr1_cosmic_web.luxar.zarr.zip</code></td>
+<td>76.8 MB</td>
+<td>9,751,955</td>
+<td>2 layers x 4 levels</td>
+<td>n/a (not a fit)</td>
+</tr>
+<tr>
+<td><code>droso_gastrulation.gsplats.zarr.zip</code></td>
+<td>2.2 MB</td>
+<td>200,023</td>
+<td>3 ladder rungs</td>
+<td>41.6 / 37.1</td>
+</tr>
+<tr>
+<td><code>flylight_mcfo_63x.gsplats.zarr.zip</code></td>
+<td>7.7 MB</td>
+<td>660,035</td>
+<td>5 ladder rungs</td>
+<td>60.9 / 38.9</td>
+</tr>
+<tr>
+<td><code>h2afva_full.gsplats.zarr.zip</code></td>
+<td>17.8 MB</td>
+<td>1,653,405</td>
+<td>single leaf</td>
+<td>63.7 / 48.9</td>
+</tr>
+<tr>
+<td><code>h2afva_quarter.gsplats.zarr.zip</code></td>
+<td>4.6 MB</td>
+<td>411,180</td>
+<td>single leaf</td>
+<td>57.1 / 41.7</td>
+</tr>
+<tr>
+<td><code>h2afva_tenth.gsplats.zarr.zip</code></td>
+<td>1.9 MB</td>
+<td>165,276</td>
+<td>single leaf</td>
+<td>53.8 / 38.3</td>
+</tr>
+<tr>
+<td><code>h2afva_tp234.gsplats.zarr.zip</code></td>
+<td>20.8 MB</td>
+<td>1,653,405</td>
+<td>41 parts, 246 ladder rungs</td>
+<td>63.7 / 48.9</td>
+</tr>
+<tr>
+<td><code>h2afva_twentieth.gsplats.zarr.zip</code></td>
+<td>1.0 MB</td>
+<td>82,660</td>
+<td>single leaf</td>
+<td>51.7 / 36.2</td>
+</tr>
+<tr>
+<td><code>kidney_ch0.gsplats.zarr.zip</code></td>
+<td>0.7 MB</td>
+<td>51,015</td>
+<td>4 ladder rungs</td>
+<td>25.8 / 24.1</td>
+</tr>
+<tr>
+<td><code>kidney_ch1.gsplats.zarr.zip</code></td>
+<td>0.7 MB</td>
+<td>52,278</td>
+<td>4 ladder rungs</td>
+<td>35.6 / 30.6</td>
+</tr>
+<tr>
+<td><code>kidney_ch2.gsplats.zarr.zip</code></td>
+<td>0.7 MB</td>
+<td>53,827</td>
+<td>4 ladder rungs</td>
+<td>32.0 / 26.3</td>
+</tr>
+<tr>
+<td><code>milkyway_dust.gsplats.zarr.zip</code></td>
+<td>10.6 MB</td>
+<td>677,741</td>
+<td>4 coarse-to-fine levels, each progressively streamed</td>
+<td>34.8 / 21.1</td>
+</tr>
+<tr>
+<td><code>neuromast_membranes.gsplats.zarr.zip</code></td>
+<td>72.4 MB</td> <td>6,400,000</td> <td>8 ladder rungs</td> <td>not scored</td>
+</tr>
+<tr>
+<td><code>neuromast_nuclei.gsplats.zarr.zip</code></td>
+<td>70.4 MB</td> <td>6,400,000</td> <td>8 ladder rungs</td> <td>not scored</td>
+</tr>
+<tr>
+<td><code>nexrad_supercell.gsplats.zarr.zip</code></td>
+<td>12.9 MB</td>
+<td>817,989</td>
+<td>82 per-frame stores</td>
+<td>43.3&ndash;56.8 / 32.0&ndash;39.7 (per frame)</td>
+</tr>
+<tr>
+<td><code>blastocyst_ch0.gsplats.zarr.zip</code></td>
+<td>0.2 MB</td>
+<td>12,916</td>
+<td>4 ladder rungs</td>
+<td>38.6 / 27.0</td>
+</tr>
+<tr>
+<td><code>blastocyst_ch1.gsplats.zarr.zip</code></td>
+<td>0.2 MB</td>
+<td>13,941</td>
+<td>4 ladder rungs</td>
+<td>38.6 / 28.9</td>
+</tr>
+<tr>
+<td><code>vh_head.gsplats.zarr.zip</code></td>
+<td>25.1 MB</td>
+<td>1,908,888</td>
+<td>flat, 4 ladder rungs</td>
+<td>38.2 / 32.6</td>
+</tr>
+<tr>
+<td><code>vh_head_colors.npz</code></td>
+<td>5.1 MB</td>
+<td>1,908,888</td>
+<td>per-splat RGB, also carried inside the fit</td>
+<td>n/a (sidecar)</td>
+</tr>
 </tbody>
 </table>
 <p>Every figure above was measured from the file this record holds. &ldquo;Elements&rdquo; is what a viewer draws at full detail: splats summed over the finest level of each part, or rows for a coordinate table. Foreground PSNR is restricted to signal voxels and is the number to judge a fit by &mdash; a global PSNR on a mostly-empty volume largely measures how well the fit reproduces empty space. A timelapse bundle is scored per frame and quoted as the RANGE across frames rather than as one number for the whole series, because quality genuinely varies over a recording &mdash; a fixed per-frame splat budget covers a subject that grows. For the per-frame bundles that range spans every frame in the archive; for the stacked cell-tracking archive it spans five evenly sampled frames (0, 25, 50, 75, 99). &ldquo;Not scored&rdquo; means no quality figure was recorded at fit time and none is claimed here. The stacked cell-tracking archives are a special case: <code>6bba_09961292</code> scores about 13 dB below its own underlying fit (37.9&ndash;39.6 whole-volume, 41.3&ndash;43.1 foreground) because stacking deliberately discards the largest 5% of splats by scale &mdash; under volumetric blending that diffuse tail renders as opaque discs that bury the nuclei beneath it, so the archive trades reconstruction fidelity for a legible render. The other six crops come from the same pipeline but were not measured.</p>
@@ -151,10 +364,10 @@ reproducible rather than asserted.</p>
 <li><code>3d_umap_coords_mouse</code> (7.3 MB, cc-by-4.0). Source: mouse embryo single-cell multi-omic peaks from Argelaguet et al. 2022, re-embedded for the Zebrahub-Multiome project. Attribution: 3D UMAP embedding computed by Yang-Joon Kim (Chan Zuckerberg Biohub San Francisco). The Zebrahub-Multiome paper reports zebrafish and applies the same analysis to published mouse data, so both the data and the analysis are cited. Underlying data: Argelaguet, R., Lohoff, T., Li, J. G., Nakhuda, A. et al. Decoding gene regulation in the mouse embryo using single-cell multi-omics. bioRxiv (2022). doi:10.1101/2022.06.15.496239. Analysis: Kim, Y.-J. et al. Zebrahub-Multiome: Uncovering Gene Regulatory Network Dynamics During Zebrafish Embryogenesis. bioRxiv (2024). doi:10.1101/2024.10.18.618987. CC BY 4.0.</li>
 <li><code>census_umap_1m</code> (13.1 MB, cc-by-4.0). Source: CZ CELLxGENE Discover Census (3D UMAP computed by the Luxar demo script). Attribution: 3D UMAP coordinates generated by the Luxar demo script over the CZ CELLxGENE Discover Census; shipped precomputed because the embedding is expensive to recompute. Underlying resource: CZI Cell Science Program et al. CZ CELLxGENE Discover: a single-cell data platform for scalable exploration, analysis and modeling of aggregated data. Nucleic Acids Research 53, D886&ndash;D900 (2025). doi:10.1093/nar/gkae1142. The Census aggregates many independently published studies, whose individual citations travel with the per-cell metadata in CELLxGENE Discover. CC BY 4.0.</li>
 <li><code>desi_galaxies</code> (76.8 MB, cc-by-4.0). Source: DESI DR1 large-scale-structure (LSS) catalogs. Attribution: DESI Collaboration. Data Release 1 of the Dark Energy Spectroscopic Instrument. The Astronomical Journal (2026, accepted); arXiv:2503.14745. The LSS catalogs used here are defined and characterised in DESI Collaboration. DESI 2024 II: sample definitions, characteristics, and two-point clustering statistics. Journal of Cosmology and Astroparticle Physics 2025(07), 017. doi:10.1088/1475-7516/2025/07/017. CC BY 4.0; use requires the DESI citation and acknowledgment text given on the DESI data-license page.</li>
-<li><code>gsplats_3d_drosophila_gastrulation</code> (2.2 MB, cc-by-4.0). Source: Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller). Attribution: Royer lab and Keller lab. Imaging method: Royer, L. A., Lemon, W. C., Chhetri, R. K., Wan, Y., Coleman, M., Myers, E. W., Keller, P. J. Adaptive light-sheet microscopy for long-term, high-resolution imaging in living organisms. Nature Biotechnology 34, 1267-1278 (2016). This is a single frame (150) of a longer recording, fitted independently; the full 500-timepoint timelapse has its own record, doi:10.5281/zenodo.22118695, released on its own timeline.</li>
+<li><code>gsplats_3d_drosophila_gastrulation</code> (2.2 MB, cc-by-4.0). Source: Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Keller lab, HHMI Janelia Research Campus). Attribution: Acquired in the laboratory of Philipp J. Keller at HHMI Janelia Research Campus, where L. A. Royer was then a postdoctoral fellow; the Gaussian-splat fit was computed later at Chan Zuckerberg Biohub San Francisco. Imaging method: Royer, L. A., Lemon, W. C., Chhetri, R. K., Wan, Y., Coleman, M., Myers, E. W., Keller, P. J. Adaptive light-sheet microscopy for long-term, high-resolution imaging in living organisms. Nature Biotechnology 34, 1267-1278 (2016). This is a single frame (150) of a longer recording, fitted independently; the full 500-timepoint timelapse has its own record, doi:10.5281/zenodo.22118695, released on its own timeline.</li>
 <li><code>gsplats_3d_h2afva_decimation</code> (25.4 MB, cc-by-4.0). Source: h2afva single stack at four decimation levels (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco. Acquired for Zebrahub: Lange, M. et al. A multimodal zebrafish developmental atlas reveals the state-transition dynamics of late-vertebrate pluripotent axial progenitors. Cell 187, 6742-6759.e17 (2024). CC BY 4.0.</li>
 <li><code>gsplats_3d_h2afva_stack</code> (20.8 MB, cc-by-4.0). Source: h2afva zebrafish histone light-sheet, single stack (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco. Acquired for Zebrahub: Lange, M. et al. A multimodal zebrafish developmental atlas reveals the state-transition dynamics of late-vertebrate pluripotent axial progenitors. Cell 187, 6742-6759.e17 (2024). CC BY 4.0.</li>
-<li><code>gsplats_4d_neuromast_2ch</code> (136.4 MB, cc-by-4.0). Source: Neuromast 2-channel light-sheet timelapse (iSIM). Attribution: Adrian Jacobo (Chan Zuckerberg Biohub San Francisco); used with permission (CC BY 4.0). This imaging is unpublished; for the biology of the organ it shows, see the data author's work on lateral-line sensory organs: Erzberger, A., Jacobo, A., Dasgupta, A. &amp; Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949&ndash;957 (2020). doi:10.1038/s41567-020-0894-9.</li>
+<li><code>gsplats_4d_neuromast_2ch</code> (142.8 MB, cc-by-4.0). Source: Neuromast 2-channel light-sheet timelapse (iSIM). This version 2 pair is refitted with the axial voxel scale corrected to 0.25/0.1083 = 2.308 (version 1 used 2.5, stretching z by 8.3&nbsp;%), on the raw intensity basis with no post-fit cull, giving 64,000 splats per frame across 100 frames. The per-timepoint PSNR ranges published in version 1 were measured on the superseded redundancy-culled build and are deliberately not carried over to these files. The table above therefore reads &ldquo;not scored&rdquo; for this pair, meaning no quality figure is stamped in the archives themselves; per-timepoint PSNR measured against the Z-corrected sources by an external scoring run is reported in Supplementary Document 14 of the accompanying manuscript. Attribution: Adrian Jacobo (Chan Zuckerberg Biohub San Francisco); used with permission (CC BY 4.0). This imaging is unpublished; for the biology of the organ it shows, see the data author's work on lateral-line sensory organs: Erzberger, A., Jacobo, A., Dasgupta, A. &amp; Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949&ndash;957 (2020). doi:10.1038/s41567-020-0894-9.</li>
 <li><code>gsplats_celegans</code> (80.8 MB, cc-by-4.0). Source: Zenodo 6460303 (mskcc_confocal C. elegans). Attribution: Santella, A., Kovacevic, I., Bao, Z., Hirsch, P. 3D+time nuclei tracking dataset of confocal fluorescence microscopy time series of C. elegans embryo. Zenodo (2022). CC BY 4.0.</li>
 <li><code>gsplats_cell_tracking</code> (632.4 MB, cc0-1.0). Source: Kaggle competition &ldquo;Biohub - Cell Tracking During Development&rdquo; (zebrafish light-sheet crops + GEFF ground-truth lineages). Attribution: Biohub cell-tracking challenge data (CC0); imaging by the Royer group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat fits with substitutive LOD, seven of the nine annotated crops.</li>
 <li><code>gsplats_cells3d</code> (1.3 MB, cc0-1.0). Source: scikit-image (data.cells3d) - Allen Institute for Cell Science. Attribution: scikit-image sample data.</li>

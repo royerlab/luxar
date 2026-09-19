@@ -19,6 +19,7 @@
  * @module data/point-loader/chunk-index-loader
  */
 
+import type { OrderingMethodName } from '../../types/format-contract';
 import * as zarr from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { fetchChunkBoundsArray } from '../loaders';
@@ -26,7 +27,7 @@ import type { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
 /** Subset of points-node attributes the chunk-index probe needs. */
 export interface PointsNodeAttrsForIndex {
-  ordering?: 'morton' | 'hilbert' | 'none';
+  ordering?: OrderingMethodName;
   ordering_dims?: number[];
   slice_dims?: number[];
   ordering_bits_per_dim?: number;
@@ -45,7 +46,7 @@ export interface PointsChunkIndex {
   chunkBounds: Float32Array;
   chunkCount: number;
   metadata: {
-    ordering: 'morton' | 'hilbert';
+    ordering: Exclude<OrderingMethodName, 'none'>;
     ordering_dims: number[];
     slice_dims: number[];
     ordering_bits_per_dim: number;

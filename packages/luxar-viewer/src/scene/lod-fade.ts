@@ -46,7 +46,10 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
  * are physically sound:
  *
  * - `additive` / `luminous`: order-independent compositing sums energy
- *   linearly in opacity ⇒ both mechanisms are brightness-exact.
+ *   linearly in opacity. The cross-fade is brightness-exact because its two
+ *   levels conserve mass; streaming `1/e(k)` compensation is only a heuristic
+ *   because e(k) is a squared-amplitude fraction while brightness is linear in
+ *   amplitude.
  * - `volumetric`: order-dependent emission–absorption, but opacity linearly
  *   scales the optical depth `τ = κ·opacity·intensity`
  *   (VOLUMETRIC_BLENDING_SPEC.md §3.1), which is what makes an opacity fade
@@ -75,7 +78,7 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
  *   (`κ·splat-mass ≳ 1`) the per-splat self-screening `S(τ)` saturates
  *   emission, so a boosted splat deepens occlusion rather than brightening.
  *   Bounded by the shared `ENERGY_FLOOR` cap (≤ 10×), transient (decays as
- *   `e → 1`), and `?no-lod-energy` is the escape hatch; a volumetric-specific
+ *   `e → 1`), and `?noLodEnergy` is the escape hatch; a volumetric-specific
  *   floor is the obvious knob if a thick-splat scene ever shows transient
  *   dark blobs while streaming.
  *

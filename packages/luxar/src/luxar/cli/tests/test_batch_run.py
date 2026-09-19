@@ -16,6 +16,137 @@ from luxar.cli.tests._testing import normalized_cli_output
 runner = CliRunner()
 
 
+def test_local_cpu_profile_preserves_auto_sizing(monkeypatch) -> None:
+    """CPU execution still uses the legacy default profile for tile sizing."""
+    import luxar.gsplats.gpu_profile as gpu_profile
+    import luxar.gsplats.utils.device as device
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _resolve_local_gpu_profile,
+    )
+
+    summary = {"oom_boundaries": {"3d": {"max_successful_shape": [192, 192, 192]}}}
+    throughput = [{"voxels": 192**3, "throughput": 1.0}]
+    monkeypatch.setattr(device, "resolve_gpu_selection", lambda spec: [])
+    monkeypatch.setattr(gpu_profile, "get_gpu_summary", lambda: summary)
+    monkeypatch.setattr(gpu_profile, "get_gpu_throughput_table", lambda: throughput)
+
+    selected, manifest_name, max_shape, table = _resolve_local_gpu_profile("cpu")
+
+    assert selected == []
+    assert manifest_name == "CPU"
+    assert max_shape == [192, 192, 192]
+    assert table == throughput
+
+
+def test_local_profile_rejects_invalid_gpu_spec_cleanly(monkeypatch) -> None:
+    """Invalid local GPU selections surface as CLI parameter errors."""
+    import luxar.gsplats.utils.device as device
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _resolve_local_gpu_profile,
+    )
+
+    def _reject(spec: str) -> list[int]:
+        raise ValueError(f"invalid GPU selection: {spec}")
+
+    monkeypatch.setattr(device, "resolve_gpu_selection", _reject)
+
+    with pytest.raises(typer.BadParameter, match="invalid GPU selection: bogus"):
+        _resolve_local_gpu_profile("bogus")
+
+
+def test_local_profile_uses_selected_devices(monkeypatch) -> None:
+    """Local planning records and profiles the GPUs that will run the tasks."""
+    import torch
+
+    import luxar.gsplats.gpu_profile as gpu_profile
+    import luxar.gsplats.utils.device as device
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _resolve_local_gpu_profile,
+    )
+
+    class _Properties:
+        def __init__(self, name: str, total_memory: int) -> None:
+            self.name = name
+            self.total_memory = total_memory
+
+    properties = {
+        0: _Properties("Large GPU", 48 * 1024**3),
+        1: _Properties("Small GPU", 8 * 1024**3),
+    }
+    summaries = {
+        "Large GPU": {
+            "recommendations": {"peak_throughput_3d": {"shape": [512, 512, 512]}}
+        },
+        "Small GPU": {
+            "oom_boundaries": {"3d": {"max_successful_shape": [256, 256, 256]}}
+        },
+    }
+    tables = {"Large GPU": [{"voxels": 2}], "Small GPU": [{"voxels": 1}]}
+
+    monkeypatch.setattr(device, "resolve_gpu_selection", lambda spec: [0, 1])
+    monkeypatch.setattr(torch.cuda, "get_device_properties", properties.__getitem__)
+    monkeypatch.setattr(
+        gpu_profile, "get_gpu_summary", lambda gpu_name: summaries.get(gpu_name)
+    )
+    monkeypatch.setattr(
+        gpu_profile,
+        "get_gpu_throughput_table",
+        lambda gpu_name: tables.get(gpu_name),
+    )
+
+    selected, manifest_name, max_shape, throughput = _resolve_local_gpu_profile("0,1")
+
+    assert selected == [0, 1]
+    assert manifest_name == "Large GPU, Small GPU"
+    assert max_shape == [256, 256, 256]
+    assert throughput == [{"voxels": 1}]
+
+
+def test_local_profile_does_not_size_from_only_part_of_selected_set(
+    monkeypatch,
+) -> None:
+    """An unprofiled selected model prevents unsafe heterogeneous auto-sizing."""
+    import torch
+
+    import luxar.cli.gsplat_ops.batch.run_orchestration as orchestration
+    import luxar.gsplats.gpu_profile as gpu_profile
+    import luxar.gsplats.utils.device as device
+
+    class _Properties:
+        def __init__(self, name: str, total_memory: int) -> None:
+            self.name = name
+            self.total_memory = total_memory
+
+    properties = {
+        0: _Properties("Profiled GPU", 48 * 1024**3),
+        1: _Properties("Unprofiled GPU", 8 * 1024**3),
+    }
+    output: list[str] = []
+    monkeypatch.setattr(device, "resolve_gpu_selection", lambda spec: [0, 1])
+    monkeypatch.setattr(torch.cuda, "get_device_properties", properties.__getitem__)
+    monkeypatch.setattr(
+        gpu_profile,
+        "get_gpu_summary",
+        lambda gpu_name: (
+            {"recommendations": {}} if gpu_name == "Profiled GPU" else None
+        ),
+    )
+    monkeypatch.setattr(orchestration, "aprint", lambda message: output.append(message))
+
+    selected, manifest_name, max_shape, throughput = (
+        orchestration._resolve_local_gpu_profile("0,1")
+    )
+
+    assert selected == [0, 1]
+    assert manifest_name == "Profiled GPU, Unprofiled GPU"
+    assert max_shape is None
+    assert throughput is None
+    assert output == [
+        "no benchmark profile for Unprofiled GPU — tile auto-sizing off; "
+        "pass --tile-size or run 'luxar gsplat benchmark'"
+    ]
+
+
 def _make_zarr(path: Path) -> None:
     import zarr
 
@@ -303,6 +434,127 @@ def _plan(
         content=ContentKnobs(),
         merge=MergeConfig(),
     )
+
+
+def test_batch_plan_records_ngff_dimension_metadata_with_axes_override(
+    tmp_path: Path,
+) -> None:
+    import zarr
+
+    src = tmp_path / "recording.ome.zarr"
+    root = zarr.open_group(str(src), mode="w", zarr_format=2)
+    root.create_array(
+        "0",
+        data=np.zeros((4, 16, 24, 24), dtype=np.float32),
+        chunks=(1, 16, 24, 24),
+    )
+    root.attrs["multiscales"] = [
+        {
+            "axes": [
+                {"name": "t", "type": "time", "unit": "second"},
+                {"name": "z", "type": "space", "unit": "micrometer"},
+                {"name": "y", "type": "space", "unit": "micrometer"},
+                {"name": "x", "type": "space", "unit": "micrometer"},
+            ],
+            "datasets": [
+                {
+                    "path": "0",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [0.5, 2.0, 0.75, 0.75]}
+                    ],
+                }
+            ],
+        }
+    ]
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+    ).manifest
+
+    assert manifest.dimension_metadata == [
+        {"name": "z", "scale": 2.0},
+        {"name": "y", "scale": 0.75},
+        {"name": "x", "scale": 0.75},
+        {"name": "time", "scale": 0.5},
+    ]
+
+    physical_manifest = _plan(
+        src,
+        tmp_path / "physical-out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+        physical=True,
+    ).manifest
+
+    assert physical_manifest.dimension_metadata == [
+        {"name": "z", "scale": 1.0, "unit": "um"},
+        {"name": "y", "scale": 1.0, "unit": "um"},
+        {"name": "x", "scale": 1.0, "unit": "um"},
+        {"name": "time", "scale": 0.5},
+    ]
+
+    config = tmp_path / "fit.yaml"
+    config.write_text("voxel_size: [3.0, 1.0, 1.0]\n")
+    configured_manifest = _plan(
+        src,
+        tmp_path / "configured-out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+        physical=True,
+        config=config,
+    ).manifest
+
+    assert configured_manifest.dimension_metadata == [
+        {"name": "z", "scale": 1.0},
+        {"name": "y", "scale": 1.0},
+        {"name": "x", "scale": 1.0},
+        {"name": "time", "scale": 0.5},
+    ]
+
+    configured_default_manifest = _plan(
+        src,
+        tmp_path / "configured-default-out",
+        axes_list=["time", "z", "y", "x"],
+        floor="none",
+        config=config,
+    ).manifest
+
+    assert configured_default_manifest.dimension_metadata == [
+        {"name": "z", "scale": 1.0},
+        {"name": "y", "scale": 1.0},
+        {"name": "x", "scale": 1.0},
+        {"name": "time", "scale": 0.5},
+    ]
+
+
+def test_batch_dimension_metadata_normalizes_unit_scale_units() -> None:
+    from luxar.cli.gsplat_ops.batch.planning import _batch_dimension_metadata
+    from luxar.io.ome_zarr import OMEZarrInfo
+
+    info = OMEZarrInfo(
+        axes=["time", "z", "y", "x"],
+        shape=(2, 3, 4, 5),
+        n_timepoints=2,
+        n_channels=1,
+        channel_axes=[],
+        channel_shape=(),
+        spatial_shape=(3, 4, 5),
+        spatial_axes=["z", "y", "x"],
+        time_axis=0,
+        spatial_indices=(1, 2, 3),
+        axis_units=["second", "micrometer", "fortnight", None],
+        axis_scales=(1.0, 1.0, 1.0, 1.0),
+    )
+
+    assert _batch_dimension_metadata(info, ["time", "z", "y", "x"], 2) == [
+        {"name": "z", "scale": 1.0, "unit": "um"},
+        {"name": "y", "scale": 1.0, "unit": "fortnight"},
+        {"name": "x", "scale": 1.0},
+        {"name": "time", "scale": 1.0, "unit": "s"},
+    ]
 
 
 @pytest.mark.parametrize(

@@ -129,7 +129,7 @@ The authoritative list is the directory itself — run
 | **transform-hierarchy.spec.ts** | ⭐ Transform correctness |
 | **tsl-codegen-snapshot.spec.ts** | TSL-generated GLSL/WGSL pinned to checked-in snapshots (bloat regression alarm) |
 | **tsl-shader-parity.spec.ts** | GLSL vs TSL shader parity |
-| **url-parameters.spec.ts** | URL parameters control initial state (`?theme=`, `?no-cache`, `?debug`, invalid params) |
+| **url-parameters.spec.ts** | URL parameters control initial state (`?theme=`, `?noCache`, `?debug`, invalid params) |
 | **viewer-initialization.spec.ts** | Viewer startup without data |
 | **visual-regression.spec.ts** | Screenshot comparison |
 | **webgl-errors.spec.ts** | WebGL error detection |
@@ -384,10 +384,10 @@ Tracks:
 3. Every passing run unconditionally rewrites the baseline, so it tracks
    the current machine's hardware
 
-**CI Integration**: E2E tests are intentionally disabled in CI — the
-`e2e-tests` job in `.github/workflows/ci.yml` sits behind `if: false`, with a
-ready-to-go smoke subset (`pnpm test:e2e:smoke`) prepared for when it is
-re-enabled. Run the full suite locally before PR/merge. The perf-bench specs
+**CI Integration**: PR CI runs the Chromium mobile/touch suite for TypeScript
+changes. The full rendering-heavy desktop corpus remains on the GPU promotion
+runner because hosted software WebGL is too slow and unreliable for it. Run the
+full suite locally before PR/merge. The perf-bench specs
 are opt-in even locally (`pnpm test:perf:e2e`), and
 `performance-baselines.json` is per-machine and gitignored — it is never
 committed or uploaded anywhere.

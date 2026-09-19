@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 import { config } from '../../../config';
 import { log } from '../../../utils/log';
 
@@ -105,24 +106,14 @@ describe('OPFSStore circuit breaker', () => {
 
   beforeEach(() => {
     fs = createSwitchableFS();
-    vi.stubGlobal('navigator', {
-      storage: {
-        async getDirectory() {
-          return {
-            async getDirectoryHandle() {
-              return fs.mockDirHandle;
-            },
-            async removeEntry() {
-              fs.files.clear();
-              fs.metaFiles.clear();
-            },
-          };
-        },
-        async estimate() {
-          return { quota: 10e9, usage: 1e9 };
-        },
+    // Origin root → `luxar/` → the switchable dataset dir (see opfs.mock.ts).
+    createFakeOpfsRoot({
+      datasetDir: fs.mockDirHandle,
+      onRemoveDataset: () => {
+        fs.files.clear();
+        fs.metaFiles.clear();
       },
-    });
+    }).install();
     vi.stubGlobal('crypto', {
       subtle: {
         async digest() {

@@ -896,7 +896,7 @@ is its current backing store for an explicit finalize-in-place. An
 archive-backed scene is finalized at its selected archive path, replacing an
 existing archive there. A directory-backed scene cannot be copied directly to
 a `.zip` destination; create the archive with `LuxarZarrCompiler` or use
-`luxar optimise`. Because finalization closes the writer, do not add more nodes
+`luxar optimize`. Because finalization closes the writer, do not add more nodes
 to a scene after calling `to_zarr()`; use a new compiler for additional writes.
 
 ### Scene Graph Structure

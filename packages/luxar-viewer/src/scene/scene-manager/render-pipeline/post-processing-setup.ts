@@ -1,8 +1,8 @@
 /**
  * Post-processing-pipeline construction extracted from
  * SceneManager. Thin factory over `PostProcessingManager`'s
- * constructor that wires the resize callback through to the
- * caller's material-update hook.
+ * constructor that restores the camera projection from the logical
+ * display size before invoking the caller's material-update hook.
  *
  * @module scene/scene-manager/render-pipeline/post-processing-setup
  */
@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { PostProcessingManager } from '../../../rendering';
 import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
-import type { LuxarCamera } from '../../../utils/camera-utils';
+import { type LuxarCamera, updateCameraAspect } from '../../../utils/camera-utils';
 import { log, Modules } from '../../../utils/log';
 
 /** Options for `createPostProcessing`. */
@@ -22,8 +22,10 @@ export interface CreatePostProcessingOptions {
   /**
    * Callback fired whenever the manager reallocates its
    * render-target pyramid (window resize, SSAA toggle, MSAA
-   * toggle, DPR change). Hosts use this to refresh material
-   * uniforms that cache `renderer.getDrawingBufferSize()`.
+   * toggle, DPR change). The factory restores the camera projection
+   * from the logical display size before invoking this hook; hosts use
+   * it to refresh material uniforms that cache
+   * `renderer.getDrawingBufferSize()`.
    */
   onResize: () => void;
 }
@@ -46,7 +48,10 @@ export function createPostProcessing(options: CreatePostProcessingOptions): Post
     options.scene,
     options.camera,
     { width, height },
-    options.onResize
+    (displaySize, camera) => {
+      updateCameraAspect(camera, displaySize.width, displaySize.height);
+      options.onResize();
+    }
   );
 
   log.success(Modules.POST_PROCESSING, 'HDR pipeline initialized');

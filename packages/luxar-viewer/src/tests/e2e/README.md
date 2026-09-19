@@ -32,20 +32,23 @@ directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 ### Mobile / touch suite
 
 ```bash
-pnpm test:e2e:mobile          # playwright.mobile.config.ts
+make test-e2e-mobile          # from the repository root; refreshes fixtures
+pnpm test:e2e:mobile          # direct playwright.mobile.config.ts invocation
 ```
 
 `src/tests/e2e/mobile/` runs under real device emulation (iPhone 14 portrait +
-landscape, iPad Pro 11 and Pixel 7), all on **Chromium**: the GPU box runs
-Chromium only, and the gestures are synthesised through CDP
+landscape, iPad Pro 11 and Pixel 7), all on **Chromium**: both the GPU promotion
+runner and the hosted PR job use Chromium, and the gestures are synthesised through CDP
 `Input.dispatchTouchEvent` (`mobile/touch-helpers.ts`: pinch, twist, one-finger
 drag, 2→1 release, long-press, double-tap), which WebKit does not expose. The
-main config ignores this folder; the mobile config only matches it. What it
-covers: the media queries actually match under emulation, pinch dollies the
-camera while `visualViewport.scale` stays 1, twist rolls, a finger lifting out of
-a pinch continues as a rotate, double-tap re-frames, tap picks + shows the
-tooltip, long-press opens the element / rail menus, fly mode looks and flies by
-touch, the rail / help / monitor / layers geometry stays inside a phone
+main config ignores this folder; the mobile config only matches it. The suite
+runs in PR CI for TypeScript changes.
+
+What it covers: the media queries actually match under emulation, pinch dollies
+the camera while `visualViewport.scale` stays 1, twist rolls, a finger lifting
+out of a pinch continues as a rotate, double-tap re-frames, tap picks + shows
+the tooltip, long-press opens the element / rail menus, fly mode looks and flies
+by touch, the rail / help / monitor / layers geometry stays inside a phone
 viewport, and the DPR cap and GPU budget resolve to the mobile values. Real iOS
 Safari behaviour (no `contextmenu` on long-press, no Fullscreen on iPhone,
 dynamic toolbar) is the manual device checklist's job, not this suite's.
@@ -134,25 +137,26 @@ unconditionally serial.
 
 ### Which script runs which specs
 
-| Script                 | Selection                                                                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm test:e2e`        | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` and `src/tests/e2e/mobile/` (`testIgnore`)                                        |
-| `pnpm test:e2e:ci`     | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
-| `pnpm test:e2e:visual` | Local run of tests tagged `@visual`; snapshot assertions are active on Linux                                                                     |
-| `pnpm test:e2e:smoke`  | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
-| `pnpm test:e2e:mobile` | Only `src/tests/e2e/mobile/`, under `playwright.mobile.config.ts`                                                                                |
-| `pnpm test:perf:e2e`   | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
+| Script                       | Selection                                                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm test:e2e`              | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` and `src/tests/e2e/mobile/` (`testIgnore`)                                        |
+| `pnpm test:e2e:ci`           | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
+| `pnpm test:e2e:visual`       | Local run of tests tagged `@visual`; snapshot assertions are active on Linux                                                                     |
+| `pnpm test:e2e:smoke`        | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
+| `pnpm test:e2e:smoke:strict` | The smoke allowlist with strict browser-console handling                                                                                         |
+| `pnpm test:e2e:browsers`     | Three fixture-backed specs under Chromium, Firefox and WebKit                                                                                    |
+| `pnpm test:e2e:mobile`       | Only `src/tests/e2e/mobile/`, under `playwright.mobile.config.ts`                                                                                |
+| `pnpm test:perf:e2e`         | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
 
-The smoke subset is deliberately narrow: its CI job generates datasets at
-runtime via `make run-examples` and pulls no Git LFS. **Do not add a spec that
+The smoke subset is deliberately narrow and pulls no Git LFS. **Do not add a spec that
 reads `tests/fixtures/` to it** — that would make the job depend on the Python
 fixture generator, and would newly expose `test:e2e:smoke:strict` (which drops
 the 4xx/5xx allow-list) to fixture-server 404s.
 
 `mesh-rendering.spec.ts` is therefore in `test:e2e` / `test:e2e:ci` but **not**
-in smoke. Note that the GitHub `e2e-tests` job is `if: false` by standing
-decision — software WebGL on standard runners is too slow for rendering specs —
-so E2E runs locally (`make test-e2e`) or on the GPU box.
+in smoke. The GitHub `e2e-tests` job runs only the mobile suite; software WebGL
+on standard runners remains too slow for the full rendering-heavy corpus, which
+runs locally (`make test-e2e`) or on the GPU promotion runner.
 
 ### Generated zarr fixtures are a hard dependency
 
@@ -168,7 +172,7 @@ through
 `LUXAR_E2E_NO_FIXTURES=1` to skip the check:
 
 - **smoke** — its five specs are chosen precisely so none of them touches
-  `tests/fixtures/`, and its CI job generates datasets at runtime with no LFS;
+  `tests/fixtures/`;
 - **perf** (`pnpm test:perf:e2e`) — a different config, but the same global
   setup, and none of its `*perf-bench.spec.ts` files reads `tests/fixtures/`.
 
@@ -471,9 +475,10 @@ then runs five preflight checks:
    runnable while one example producer is stale or unavailable.
    This warning path is for package-level Playwright commands run directly,
    including `pnpm test:e2e`. The repository `make test-e2e`,
-   `make test-e2e-smoke`, and `make test-perf-e2e` targets regenerate examples
-   first, and the CI E2E job also runs `make run-examples`, so CI coverage is
-   not weakened by the warning behavior.
+   `make test-e2e-browsers`, `make test-e2e-mobile`, `make test-e2e-smoke`,
+   `make test-e2e-smoke-strict`, and `make test-perf-e2e` targets regenerate
+   examples first. The CI mobile job also runs `make run-examples`, so CI
+   coverage is not weakened by the warning behavior.
 
 3. **Required datasets** — checks for the eight required `*.zarr`
    directories and then issues an HTTP `HEAD` request for each one
@@ -535,11 +540,11 @@ window.__tslHarness = {
     vertexShader: string;
     fragmentShader: string;
   }>,
-  renderBloomChainGLSL: () => Promise<{
+  renderBloomChainGLSL: (fixture?: 'radial' | 'ramp-y') => Promise<{
     pixels: Uint8Array;
     mipCount: number;
   }>,
-  renderBloomChainTSL: () => Promise<{
+  renderBloomChainTSL: (fixture?: 'radial' | 'ramp-y') => Promise<{
     pixels: Uint8Array;
     mipCount: number;
   }>,
@@ -549,6 +554,13 @@ window.__tslHarness = {
 
 The bloom methods render the production multi-pass pyramid rather than a
 shader-registry entry, including additive upsample accumulation onto existing mips.
+The `fixture` argument picks the input pattern: `radial` (default) is a centred
+Gaussian, and `ramp-y` a monotone vertical ramp. Both cases run — the radial one
+is mirror-invariant and so cannot see a Y-orientation fault, which is how #2584's
+per-tap flip stayed hidden. Either way the fixture is staged into a render target
+first, because that is the only input for which the two backends agree on Y
+(three's `TextureNode` normalises render-target sampling but not a raw
+`DataTexture`), so the two readbacks compare directly with no row flipping.
 
 `renderTSL` patches the renderer's internal
 `NodeManager._createNodeBuilderState` once per call to capture the
@@ -606,10 +618,10 @@ centre so FXAA's edge-detection path actually triggers.
 
 Folders named `<spec>.spec.ts-snapshots/` hold per-spec PNG
 baselines used by `expect(...).toHaveScreenshot(...)`. They are a
-**local developer aid, not a CI contract**: GitHub CI does not run
-Playwright, and `test:e2e:ci` deliberately excludes every `@visual`
-test. A green pull request therefore says nothing about whether these
-pixels still match.
+**local developer aid, not a CI contract**: GitHub CI runs only non-visual
+Playwright subsets, and `test:e2e:ci` deliberately excludes every `@visual`
+test. A green pull request therefore says nothing about whether these pixels
+still match.
 
 The checked-in corpus is Linux Chromium only. This is the one platform
 the project can reproduce consistently; do not add Darwin or Windows
@@ -628,7 +640,7 @@ examples are rebuilt, refresh and inspect the affected baselines too.
 
 Keeping one reproducible Linux corpus leaves room for a future CI job
 covering the DOM/CSS-only `@visual` specs without the WebGL rasterizer
-variability that currently keeps the full E2E job disabled.
+variability that keeps the full desktop E2E corpus on the GPU promotion runner.
 
 ## Conventions for New Specs
 

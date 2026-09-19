@@ -301,29 +301,63 @@ class TestServeScript:
         assert "my_custom_data" in content
 
     def test_uses_stdlib_only(self) -> None:
-        """Verify the serve script only imports from Python stdlib."""
+        """Verify the serve script only imports from Python stdlib.
+
+        Checked against `sys.stdlib_module_names` rather than a hand-written
+        whitelist, which is what this test used to be: a whitelist has to be
+        EXTENDED for every legitimate new import, so the pressure is always to
+        add the name and move on -- and an import of `luxar` or `websockets`
+        would have been one edit away from passing. The real requirement is
+        that the exported folder needs no `pip install` from someone who was
+        emailed a zip, and this asserts exactly that.
+        """
+        import ast
+
         content = _get_serve_script_content("data")
-        stdlib_modules = {
-            "argparse",
-            "http",
-            "socket",
-            "sys",
-            "threading",
-            "webbrowser",
-            "functools",
-            "pathlib",
-        }
-        import_lines = [
-            line.strip()
-            for line in content.split("\n")
-            if line.strip().startswith("import ") or line.strip().startswith("from ")
-        ]
-        for line in import_lines:
-            if line.startswith("from "):
-                module = line.split()[1].split(".")[0]
-            else:
-                module = line.split()[1].split(".")[0]
-            assert module in stdlib_modules, f"Non-stdlib import found: {line}"
+        imported: set[str] = set()
+        for node in ast.walk(ast.parse(content)):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                imported.add((node.module or "").split(".")[0])
+
+        assert imported, "parsed no imports at all -- the check would be vacuous"
+        foreign = imported - sys.stdlib_module_names - {"__future__"}
+        assert not foreign, f"Non-stdlib imports found: {sorted(foreign)}"
+
+    def test_relay_rides_along_off_by_default(self) -> None:
+        """The generated script can host the relay, and does not by default.
+
+        The feature is the point of stage 6 -- an exported folder used to carry
+        `control.html` while being unable to serve it -- but a folder you
+        double-click must not start listening for anything that wants to drive
+        the display.
+        """
+        content = _get_serve_script_content("data")
+        assert "--control" in content
+        assert "--control-token" in content
+        assert (
+            'parser.add_argument(\n        "--control",\n        action="store_true"'
+            in (content)
+        ), "--control must be a flag, so control is off unless asked for"
+
+    def test_substitution_failure_is_loud(self, tmp_path: Path) -> None:
+        """A template that stopped carrying a substituted line must not export.
+
+        Silently passing the template's own default through would produce a
+        folder whose serve.py points at a data directory that is not there --
+        which looks like a broken scene, not a broken export.
+        """
+        from luxar.cli import export as export_module
+
+        original = export_module.SERVE_TEMPLATE
+        try:
+            export_module.SERVE_TEMPLATE = tmp_path / "_export_serve_template.py"
+            export_module.SERVE_TEMPLATE.write_text("TITLE_QUERY = ''\n")
+            with pytest.raises(RuntimeError, match="DATA_DIR_NAME"):
+                _get_serve_script_content("data")
+        finally:
+            export_module.SERVE_TEMPLATE = original
 
     def test_has_shebang(self) -> None:
         """Verify the script starts with a proper shebang line."""
@@ -477,7 +511,7 @@ class TestCopyZarrData:
 
         root = zarr.open_group(dest, mode="r")
         assert root.attrs["type"] == "scene"
-        assert "luxar_version" in root.attrs
+        assert "format_version" in root.attrs
 
     def test_complex_hierarchy(self, tmp_path: Path) -> None:
         """Verify a scene with nested groups is copied correctly."""
@@ -574,6 +608,34 @@ class TestReadme:
         _generate_readme(tmp_path, "my_data")
         content = (tmp_path / "README.txt").read_text()
         assert "my_data" in content
+
+    def test_names_both_pages_not_just_index(self, tmp_path: Path) -> None:
+        """The file:// warning must cover the touch panel too.
+
+        The folder now carries TWO pages, and the second one is the more
+        tempting to double-click: it is small, it is called control.html, and
+        it fails in exactly the same way.
+        """
+        _generate_readme(tmp_path, "data")
+        content = (tmp_path / "README.txt").read_text()
+        assert "viewer/index.html" in content
+        assert "viewer/control.html" in content
+        assert "file://" in content
+
+    def test_documents_kiosk_mode_and_its_token(self, tmp_path: Path) -> None:
+        """A reader must be able to run the kiosk, and know the token's limits.
+
+        The token travels in the URL, so it is visible in the tablet's address
+        bar -- that is fine for a LAN exhibit and worth saying out loud, since
+        a reader who mistook it for a password would deploy it as one.
+        """
+        _generate_readme(tmp_path, "data")
+        content = (tmp_path / "README.txt").read_text()
+        assert "--control" in content
+        assert "--control-token" in content
+        assert "--host 0.0.0.0" in content
+        assert "off by default" in content.lower()
+        assert "address bar" in content
 
 
 # ─── TestCLIExportCommand ────────────────────────────────────────────────────

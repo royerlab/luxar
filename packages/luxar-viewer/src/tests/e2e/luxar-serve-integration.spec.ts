@@ -205,6 +205,7 @@ test.describe('Luxar Serve Integration', () => {
 
     expect(served, `server served neither ${candidates.join(' nor ')}`).toBeDefined();
     expect(attrs).toBeDefined();
-    expect(attrs!.luxar_version).toBeDefined();
+    expect(attrs!.format_version).toBeDefined();
+    expect(attrs!.format_type).toBe('luxar_zarr');
   });
 });

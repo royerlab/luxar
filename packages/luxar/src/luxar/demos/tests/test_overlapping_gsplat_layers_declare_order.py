@@ -162,11 +162,11 @@ def test_overlapping_layers_declare_their_order(demo: str) -> None:
 def test_the_demonstrator_demos_state_a_level(demo: str) -> None:
     """The two demos updated to demonstrate the feature must keep stating one.
 
-    The Acto3D heart exercises option 2 above directly; the neuromast ships
-    ``volumetric`` (it composited ``additive`` until 2026-09, when option 1
-    would have let it drop the levels and still pass), and its two co-located
-    volumes only read correctly with the authored order. Both are deliberate
-    demonstrations of authored order.
+    The Acto3D heart exercises option 2 above directly; the neuromast keeps its
+    authored levels even though it composites ``additive`` again since the
+    2026-09-10 re-tune (it was ``volumetric`` for a while in 2026-09), so that
+    switching a layer back to a depth-sorted mode in the Layers panel still
+    draws membranes first. Both are deliberate demonstrations of authored order.
     """
     path = _DEMOS / demo
     calls = len(_add_gsplats_calls(path))

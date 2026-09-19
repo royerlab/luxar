@@ -1,6 +1,6 @@
 # Luxar Project Statistics
 
-_Generated 2026-07-26 09:40 &middot; For the styled report with progress bars and per-language detail, open [`project_stats.html`](./project_stats.html) locally._
+_Generated 2026-09-13 04:16 &middot; For the styled report with progress bars and per-language detail, open [`project_stats.html`](./project_stats.html) locally._
 
 _To refresh both this file and the HTML report, run `make stats` from the project root._
 
@@ -8,122 +8,127 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 
 | Metric | Value |
 | --- | ---: |
-| Total files | 2,501 |
-| Lines of code (executable) | 481,561 |
-| Total lines | 719,025 |
+| Total files | 3,952 |
+| Lines of code (executable) | 825,133 |
+| Total lines | 1,270,286 |
 | Active languages | 14 |
-| Test files | 805 |
-| Tests collected | 15,255 |
-| Coverage (Py/TS weighted) | 86.2% |
-| Total commits | 2,267 |
-| Commits in last 30 days | 262 |
-| Project size | 666.3 MB |
-| CI workflows | 4 |
+| Test files | 1,311 |
+| Tests collected | 33,492 |
+| Coverage (Py/TS weighted) | 90.9% |
+| Total commits | 3,363 |
+| Commits in last 30 days | 658 |
+| Project size | 128.5 MB |
+| CI workflows | 8 |
 
 ## Language Breakdown
 
 | Language | Files | Code | Total | Comments | Share |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Python | 793 | 165,521 | 264,838 | 57,383 | 34.4% |
-| TypeScript | 1,190 | 206,604 | 315,866 | 75,290 | 42.9% |
-| Rust | 8 | 2,598 | 3,982 | 966 | 0.5% |
-| CUDA | 9 | 1,364 | 2,366 | 719 | 0.3% |
-| Go | 2 | 259 | 362 | 70 | 0.1% |
-| CSS | 27 | 5,026 | 7,026 | 938 | 1.0% |
-| JavaScript | 6 | 755 | 1,002 | 167 | 0.2% |
-| Shell | 6 | 450 | 649 | 122 | 0.1% |
-| JSON | 71 | 10,973 | 10,973 | 0 | 2.3% |
-| TOML | 4 | 440 | 643 | 150 | 0.1% |
-| YAML | 9 | 3,348 | 4,498 | 238 | 0.7% |
-| Markdown | 370 | 81,040 | 103,363 | 0 | 16.8% |
-| HTML | 5 | 910 | 994 | 13 | 0.2% |
-| Makefile | 1 | 2,273 | 2,463 | 82 | 0.5% |
+| Python | 1,231 | 354,108 | 581,587 | 142,003 | 42.9% |
+| TypeScript | 1,630 | 334,674 | 521,494 | 136,701 | 40.6% |
+| Rust | 9 | 3,487 | 5,500 | 1,526 | 0.4% |
+| CUDA | 9 | 1,375 | 2,385 | 723 | 0.2% |
+| Go | 2 | 308 | 425 | 81 | 0.0% |
+| CSS | 30 | 6,192 | 8,816 | 1,424 | 0.8% |
+| JavaScript | 28 | 3,979 | 5,976 | 1,489 | 0.5% |
+| Shell | 6 | 520 | 735 | 136 | 0.1% |
+| JSON | 83 | 16,685 | 16,685 | 0 | 2.0% |
+| TOML | 4 | 608 | 1,234 | 556 | 0.1% |
+| YAML | 16 | 4,435 | 6,355 | 896 | 0.5% |
+| Markdown | 893 | 94,599 | 114,510 | 0 | 11.5% |
+| HTML | 10 | 1,536 | 1,626 | 13 | 0.2% |
+| Makefile | 1 | 2,627 | 2,958 | 196 | 0.3% |
 
 ## Primary Languages
 
-- **Python** &mdash; 793 files, 165,521 LOC, 1,122 classes, 3,373 functions, 5,147 methods (coverage 88.0%, tests 5,917).
-- **TypeScript** &mdash; 1,190 files, 206,604 LOC, 168 classes, 2,054 functions, 671 interfaces, 192 types (coverage 84.8%, tests 9,267).
-- **Rust (WASM)** &mdash; 8 files, 2,598 LOC, 123 functions (tests 71).
-- **CUDA** &mdash; 9 files, 1,364 LOC, 2 kernels.
-- **Go (launchers)** &mdash; 2 files, 259 LOC.
+- **Python** &mdash; 1,231 files, 354,108 LOC, 1,995 classes, 11,436 functions, 9,352 methods (coverage 93.0%, tests 18,051).
+- **TypeScript** &mdash; 1,630 files, 334,674 LOC, 239 classes, 3,727 functions, 1,025 interfaces, 346 types (coverage 88.8%, tests 15,323).
+- **Rust (WASM)** &mdash; 9 files, 3,487 LOC, 166 functions (tests 118).
+- **CUDA** &mdash; 9 files, 1,375 LOC, 2 kernels.
+- **Go (launchers)** &mdash; 2 files, 308 LOC.
 
 ## Python subpackages (`packages/luxar/src/luxar/`)
 
 | Subpackage | Files | Code Lines | Comments |
 | --- | ---: | ---: | ---: |
-| `gsplats` | 288 | 61,689 | 22,243 |
-| `demos` | 98 | 30,085 | 11,739 |
-| `cli` | 66 | 19,318 | 3,978 |
-| `core` | 84 | 14,515 | 5,592 |
-| `io` | 70 | 9,741 | 3,663 |
-| `encoding` | 31 | 5,311 | 1,959 |
-| `utils` | 24 | 3,935 | 1,639 |
-| `validation` | 17 | 3,717 | 1,360 |
-| `typing_utils` | 11 | 1,092 | 455 |
-| `colormaps` | 7 | 473 | 189 |
-| `<root>` | 6 | 134 | 86 |
-| `tests` | 3 | 51 | 14 |
+| `gsplats` | 342 | 86,792 | 34,164 |
+| `demos` | 247 | 85,926 | 39,165 |
+| `cli` | 118 | 41,501 | 12,024 |
+| `core` | 112 | 37,078 | 18,568 |
+| `io` | 96 | 29,670 | 13,421 |
+| `tests` | 21 | 7,878 | 1,877 |
+| `validation` | 22 | 7,474 | 3,494 |
+| `encoding` | 34 | 7,448 | 2,850 |
+| `mesh` | 20 | 6,274 | 2,239 |
+| `utils` | 25 | 3,490 | 1,522 |
+| `typing_utils` | 13 | 1,377 | 900 |
+| `shading` | 4 | 1,071 | 620 |
+| `<root>` | 5 | 740 | 1,060 |
+| `control` | 4 | 502 | 214 |
+| `colormaps` | 8 | 429 | 215 |
+| `environment` | 5 | 423 | 125 |
 
 ## TypeScript subpackages (`packages/luxar-viewer/src/`)
 
 | Subpackage | Files | Code Lines | Comments |
 | --- | ---: | ---: | ---: |
-| `tests` | 586 | 137,207 | 28,760 |
-| `ui` | 97 | 16,283 | 6,850 |
-| `data` | 121 | 15,082 | 9,776 |
-| `rendering` | 107 | 15,001 | 11,697 |
-| `scene` | 26 | 3,815 | 4,074 |
-| `core` | 33 | 2,683 | 1,873 |
-| `cache` | 19 | 2,393 | 2,032 |
-| `config` | 57 | 2,080 | 1,022 |
-| `workers` | 34 | 1,940 | 1,337 |
-| `controls` | 22 | 1,870 | 897 |
-| `input` | 22 | 1,849 | 1,900 |
-| `wasm` | 9 | 1,465 | 908 |
-| `types` | 16 | 1,449 | 1,840 |
-| `themes` | 8 | 1,130 | 534 |
-| `utils` | 18 | 937 | 882 |
-| `profiling` | 1 | 425 | 398 |
-| `<root>` | 2 | 25 | 61 |
+| `tests` | 849 | 230,611 | 55,092 |
+| `rendering` | 153 | 25,616 | 22,487 |
+| `data` | 153 | 22,361 | 17,170 |
+| `ui` | 128 | 21,109 | 11,096 |
+| `core` | 52 | 6,761 | 4,980 |
+| `scene` | 32 | 5,497 | 6,409 |
+| `cache` | 22 | 3,181 | 2,814 |
+| `config` | 63 | 2,704 | 1,859 |
+| `controls` | 25 | 2,392 | 1,834 |
+| `input` | 18 | 2,112 | 1,730 |
+| `workers` | 34 | 2,105 | 1,665 |
+| `types` | 23 | 1,961 | 3,591 |
+| `wasm` | 13 | 1,778 | 1,662 |
+| `utils` | 26 | 1,499 | 1,519 |
+| `audio` | 8 | 1,337 | 428 |
+| `themes` | 7 | 1,124 | 568 |
+| `profiling` | 2 | 602 | 563 |
+| `<root>` | 2 | 48 | 97 |
 
 ## Tests & Coverage
 
 | Metric | Python | TypeScript | Rust | E2E | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Test files | 246 | 488 | 6 | 65 | 805 |
-| Tests collected | 5,917 | 9,267 | 71 | &mdash; | 15,255 |
-| Tests passed | 5,695 | 9,261 | 71 | &mdash; | 15,027 |
-| Coverage | 88.0% | 84.8% | &mdash; | &mdash; | 86.2% |
+| Test files | 513 | 707 | 7 | 84 | 1,311 |
+| Tests collected | 18,051 | 15,323 | 118 | &mdash; | 33,492 |
+| Tests passed | 17,759 | 15,322 | 118 | &mdash; | 33,199 |
+| Coverage | 93.0% | 88.8% | &mdash; | &mdash; | 90.9% |
 
 ## Git Activity
 
 | Metric | Value |
 | --- | ---: |
-| Total commits | 2,267 |
-| Contributors (all-time) | 5 |
-| Tags | 2 |
-| Commits (last 30 days) | 262 |
-| Files changed (last 30 days) | 1,549 |
+| Total commits | 3,363 |
+| Contributors (all-time) | 6 |
+| Tags | 0 |
+| Commits (last 30 days) | 658 |
+| Files changed (last 30 days) | 3,179 |
 | First commit | 2025-08-04 |
-| Last commit | 2026-07-25 |
+| Last commit | 2026-09-13 |
 
 ### Top contributors
 
 | Name | Commits |
 | --- | ---: |
+| Loic A. Royer | 1,643 |
 | royer | 1,376 |
-| Loic A. Royer | 595 |
-| Loic A. Royer (obsidian) | 210 |
-| dependabot[bot] | 44 |
-| Loic Royer | 42 |
+| Loic A. Royer (obsidian) | 209 |
+| dependabot[bot] | 84 |
+| Loic Royer | 49 |
 
 ## Dependencies
 
 | Ecosystem | Production | Development | Total | Notes |
 | --- | ---: | ---: | ---: | --- |
-| Python | 13 | 38 | 51 | groups: demos=18, dev=7, docs=3, gsplats=2, io=2, test=4, tracksdata=2 |
-| Node.js | 4 | 21 | 25 | `packages/luxar-viewer/package.json` |
-| Rust | 1 | 1 | 2 | `packages/luxar-viewer/src/wasm/rust/Cargo.toml` |
+| Python | 16 | 48 | 64 | groups: demos=24, dev=8, docs=3, gsplats=2, io=2, test=7, tracksdata=2 |
+| Node.js | 5 | 21 | 26 | `packages/luxar-viewer/package.json` |
+| Rust | 1 | 0 | 1 | `packages/luxar-viewer/src/wasm/rust/Cargo.toml` |
 
 ## Largest Source Files
 
@@ -131,32 +136,32 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 
 | Path | Code Lines |
 | --- | ---: |
-| `packages/luxar/src/luxar/cli/tests/test_gsplat_cli_extended.py` | 4,124 |
-| `packages/luxar-viewer/tests/fixtures/generate_test_data.py` | 2,112 |
-| `packages/luxar/src/luxar/gsplats/tests/test_batch.py` | 1,787 |
-| `stats/generate_stats.py` | 1,766 |
-| `packages/luxar/src/luxar/demos/demo_ppi_flow_field.py` | 1,386 |
-| `packages/luxar/src/luxar/gsplats/lod/tests/test_substitutive.py` | 1,328 |
-| `packages/luxar/src/luxar/gsplats/io/tests/test_save_load.py` | 1,251 |
-| `packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/test_cuda_nd.py` | 1,100 |
-| `packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py` | 1,019 |
-| `packages/luxar/src/luxar/gsplats/gsplat_data.py` | 952 |
+| `packages/luxar/src/luxar/cli/tests/test_gsplat_cli_extended.py` | 7,679 |
+| `packages/luxar-viewer/tests/fixtures/generate_test_data.py` | 3,246 |
+| `packages/luxar/src/luxar/core/tests/group/lod/test_source_validation.py` | 3,056 |
+| `packages/luxar/src/luxar/demos/tests/test_zenodo_record_text.py` | 2,998 |
+| `packages/luxar/src/luxar/gsplats/tests/test_batch.py` | 2,870 |
+| `packages/luxar/src/luxar/gsplats/io/tests/test_save_load.py` | 2,716 |
+| `packages/luxar/src/luxar/tests/test_ci_diff_classifier.py` | 2,595 |
+| `packages/luxar/src/luxar/core/tests/test_mesh.py` | 2,172 |
+| `packages/luxar/src/luxar/demos/tests/test_data_fetch.py` | 1,986 |
+| `packages/luxar/src/luxar/io/tests/test_optimise.py` | 1,936 |
 
 ### TypeScript
 
 | Path | Code Lines |
 | --- | ---: |
-| `packages/luxar-viewer/src/tests/unit/scene/lod-group-registry.test.ts` | 1,722 |
-| `packages/luxar-viewer/src/tests/unit/cache/multi-level-caching-store.test.ts` | 1,536 |
-| `packages/luxar-viewer/src/ui/data-loading-monitor.ts` | 1,527 |
-| `packages/luxar-viewer/src/tests/unit/data/scene-loader.test.ts` | 1,481 |
-| `packages/luxar-viewer/src/ui/data-loading-monitor/templates.ts` | 1,472 |
-| `packages/luxar-viewer/src/tests/mocks/three.mock.ts` | 1,379 |
-| `packages/luxar-viewer/src/tests/benchmarks/wasm-benchmark.ts` | 1,339 |
-| `packages/luxar-viewer/src/tests/unit/rendering/depth-sort-coordinator.test.ts` | 1,294 |
-| `packages/luxar-viewer/src/tests/unit/ui/data-loading-monitor.test.ts` | 1,272 |
-| `packages/luxar-viewer/src/tests/unit/data/array-decoder/decoder.test.ts` | 1,211 |
+| `packages/luxar-viewer/src/tests/unit/scene/lod-group-registry.test.ts` | 4,350 |
+| `packages/luxar-viewer/src/tests/unit/rendering/depth-sort-coordinator.test.ts` | 4,035 |
+| `packages/luxar-viewer/src/tests/unit/ui/layers/layers-panel.test.ts` | 3,659 |
+| `packages/luxar-viewer/src/tests/unit/data/scene-loader.test.ts` | 2,674 |
+| `packages/luxar-viewer/src/tests/unit/wasm/wasm-vs-typescript.test.ts` | 2,572 |
+| `packages/luxar-viewer/src/tests/e2e/tsl-shader-parity.spec.ts` | 2,009 |
+| `packages/luxar-viewer/src/tests/unit/cache/multi-level-caching-store.test.ts` | 1,939 |
+| `packages/luxar-viewer/src/tests/unit/rendering/adaptive-dpr-manager.test.ts` | 1,783 |
+| `packages/luxar-viewer/src/tests/unit/data/points-progressive-loader.test.ts` | 1,573 |
+| `packages/luxar-viewer/src/tests/unit/data/gsplats/spatial-index-loader.test.ts` | 1,561 |
 
 ---
 
-_Excludes: `node_modules`, `__pycache__`, `coverage`, `dist`, `build`, `target`, `_build`, `playwright-report`, `datasets`, `delme`, `.venv`. Source: `stats/generate_stats.py`._
+_Excludes: `node_modules`, `__pycache__`, `coverage`, `dist`, `build`, `target`, `_build`, `playwright-report`, `datasets`, `delme`, `.venv`, array stores (`*.zarr/`). Source: `stats/generate_stats.py`._

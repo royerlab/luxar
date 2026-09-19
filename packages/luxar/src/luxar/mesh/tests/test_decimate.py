@@ -9,6 +9,7 @@ stand-in for anything).
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 import numpy as np
@@ -394,7 +395,9 @@ class TestDecimateCluster:
         vertices permits a window of 2), so before the bracket-convergence exit this
         ran all 24 iterations and returned exactly the same mesh as 12.
         """
-        from .. import decimate as module
+        # ``luxar.mesh.decimate`` the ATTRIBUTE is the re-exported function; the
+        # module object is only reachable through ``sys.modules``.
+        module = importlib.import_module("luxar.mesh.decimate")
 
         calls = {"n": 0}
         original = module._cluster_once

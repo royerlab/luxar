@@ -1,0 +1,423 @@
+/**
+ * Control panel styles — the touch-panel page, and nothing else.
+ *
+ * Deliberately self-contained. It does NOT import `styles/index.css`: that
+ * pulls twenty component stylesheets plus the GUI library, none of which this
+ * page has any use for, and the page's whole value is being light enough to
+ * live on a tablet that also has to stay responsive to touch.
+ *
+ * Every colour reads a `--luxar-*` theme token **with a fallback**, so the page
+ * looks right with no `ThemeManager` running (which is how it ships: the
+ * manager persists its choice to `localStorage`, and the panel shares an origin
+ * with the display, so a panel theme would re-theme the big screen on its next
+ * reload). If a future version opts into theming, the tokens get set and the
+ * fallbacks simply stop being used.
+ *
+ * ## The look
+ *
+ * Glass. Translucent tiles floating over a slow aurora, each with a specular
+ * rim and a sheen across its top-left corner — this panel is handed to an
+ * audience, so it has to look like a finished object rather than a form.
+ *
+ * Two things that make glass work, and are easy to get wrong:
+ *
+ * 1. **Glass needs something behind it.** `backdrop-filter` blurs whatever it
+ *    covers, so over a flat dark fill it produces a flat dark fill. The
+ *    aurora on the root is not decoration for its own sake — it is the thing
+ *    the tiles refract, and without it the effect vanishes entirely.
+ * 2. **It has to degrade without a branch.** `backdrop-filter` is absent or
+ *    disabled on some browsers and under some accessibility settings. Rather
+ *    than gate the glass behind `@supports` — which the bundler's minifier
+ *    mangles, see the note above the `-webkit-` rule — each tile carries a
+ *    semi-opaque dark base UNDER its translucent sheet. White text is legible
+ *    over any part of the aurora either way; the blur only makes it prettier.
+ *    There is therefore no fallback path that can rot unnoticed.
+ *
+ * ## Styling contract
+ *
+ * The *documented* surface an author styles against, and the reason there is no
+ * `layout` enum in the authored block: CSS is the general answer, and an enum
+ * would accrete `font_size`, `aspect`, `padding` forever.
+ *
+ * The class, custom-property, and state-attribute names here are that contract:
+ * `data-active`, `data-authored-label`, `data-chapter-index`,
+ * `data-chapter-value`, `data-chapter-count`, and `data-grid-columns`. See
+ * `ui/control-panel/render-panel.ts`, and the lock test that pins them.
+ */
+
+.luxar-control-panel {
+  /* `--luxar-control-columns` is deliberately NOT given a value here. The grid
+     multiplies it, so a missing value would break the whole track list; the
+     `4` in the grid rule is a no-JS fallback, and the renderer always sets a
+     real count measured from the container. */
+  --luxar-control-gap: clamp(0.5rem, 1.2vmin, 1rem);
+  --luxar-control-radius: clamp(14px, 2.4vmin, 28px);
+  /* The glass itself, in one place so a theme can retint it. */
+  --luxar-control-glass-fill-top: rgb(255 255 255 / 13%);
+  --luxar-control-glass-fill-bottom: rgb(255 255 255 / 4%);
+  --luxar-control-glass-rim: rgb(255 255 255 / 16%);
+  --luxar-control-glass-specular: rgb(255 255 255 / 34%);
+  --luxar-control-glass-blur: clamp(12px, 2.5vmin, 28px);
+  /* The opacity floor that keeps a tile legible with the blur absent. */
+  --luxar-control-glass-base: rgb(14 14 20 / 55%);
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-control-gap);
+  /* EXACTLY one viewport, and hidden overflow to prove it. A kiosk visitor
+     gets one glance: a chapter below the fold is a chapter nobody will find,
+     and the scroll gesture is disabled on a plinth tablet anyway. `height`
+     rather than `min-height` is the whole point — the grid divides this box
+     up instead of growing past it. */
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  margin: 0;
+  /* Safe areas: a tablet in a case, or an iPad with a home indicator. */
+  padding: max(1.25rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right))
+    max(1.25rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+  background: var(--luxar-bg-primary, #08080c);
+  color: var(--luxar-text-primary, #f4f4f5);
+  font-family: var(--luxar-font-family, system-ui, -apple-system, 'Segoe UI', sans-serif);
+  /* The panel never scrolls-to-zoom or rubber-bands: it is a fixed menu, and
+     an accidental pinch on a plinth tablet is pure confusion. */
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+
+/*
+ * The aurora the tiles refract.
+ *
+ * A pseudo-element rather than a background on the root, for two reasons: it
+ * can be scaled past the viewport so the drift never exposes an edge, and it
+ * sits in its own layer so animating it does not repaint the tiles.
+ */
+.luxar-control-panel::before {
+  content: '';
+  position: fixed;
+  /* Oversized and centred, so a 120s drift of a few percent never reveals a
+     corner. */
+  inset: -25%;
+  /* `0`, NOT `-1`. A negative z-index paints the pseudo-element behind its own
+     host's background, and this host has an opaque one — which hid the aurora
+     completely and left the glass with nothing to refract. At 0 it sits above
+     that background, and the header and grid are lifted to 1 to stay above
+     it. */
+  z-index: 0;
+  background:
+    radial-gradient(at 25% 20%, oklch(55% 0.15 255 / 32%) 0, transparent 48%),
+    radial-gradient(at 75% 15%, oklch(52% 0.15 305 / 26%) 0, transparent 45%),
+    radial-gradient(at 70% 78%, oklch(58% 0.13 205 / 26%) 0, transparent 48%),
+    radial-gradient(at 22% 75%, oklch(50% 0.14 340 / 20%) 0, transparent 45%);
+  /* Muted on purpose. Turned up, four saturated blobs read as a gaming
+     backlight rather than as an exhibit; this is dialled to where the tiles
+     visibly pick up a tint from whatever sits behind them — which is the
+     whole point of the glass — without the background becoming the subject.
+
+     Slow enough to be felt rather than watched. A kiosk runs for hours in
+     front of people, and anything faster becomes an irritant. */
+  animation: luxar-control-drift 120s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes luxar-control-drift {
+  from {
+    transform: translate3d(-1.5%, -1%, 0) scale(1.02);
+  }
+
+  to {
+    transform: translate3d(1.5%, 1.5%, 0) scale(1.08);
+  }
+}
+
+.luxar-control-panel * {
+  box-sizing: inherit;
+}
+
+/* One line, not two: the scene's name at the left, the touch hint at the
+   right. Every vertical pixel spent here is a pixel taken off the tiles. */
+.luxar-control-header {
+  /* Above the aurora layer — see the z-index note on `::before`. */
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+}
+
+/* Deliberately understated. The tiles are what a visitor is here for, and on
+   an exhibit panel a big heading only steals area from the touch targets. */
+.luxar-control-title {
+  margin: 0;
+  font-size: clamp(0.95rem, 1.7vmin, 1.35rem);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--luxar-text-secondary, #d4d4d8);
+}
+
+.luxar-control-subtitle {
+  margin: 0;
+  font-size: clamp(0.85rem, 1.6vmin, 1.1rem);
+  color: var(--luxar-text-tertiary, #a1a1aa);
+}
+
+.luxar-control-grid {
+  /* Above the aurora layer — see the z-index note on `::before`. */
+  position: relative;
+  z-index: 1;
+  display: grid;
+  /* `min-height: 0` is load-bearing: a grid flex child defaults to
+     `min-height: auto`, which refuses to shrink below its content and is the
+     usual reason a "100vh, no scroll" layout still overflows. */
+  flex: 1;
+  min-height: 0;
+  gap: var(--luxar-control-gap);
+  /* HALF-tile tracks: twice the columns, every tile spanning two. Centring a
+     partial final row needs a half-tile shift (eleven tiles in four columns
+     leave one hole, so the short row must move half a tile to sit symmetric),
+     and whole columns cannot express that. The renderer sets `grid-column` on
+     the first tile of that row; everything else flows.
+
+     `minmax(0, 1fr)`, not a minimum tile WIDTH: a min-width track cannot
+     shrink past its floor, so the row overflows as soon as the chapters
+     outgrow the viewport — exactly the scrolling this page must not do. */
+  grid-template-columns: repeat(calc(var(--luxar-control-columns, 4) * 2), minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+.luxar-control-grid > .luxar-control-tile {
+  grid-column: span 2;
+}
+
+.luxar-control-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* Centred rather than bottom-aligned: the tile is a cell of a matrix whose
+     height the grid decides, so its text belongs in the middle of it. */
+  justify-content: center;
+  align-items: center;
+  gap: 0.3em;
+  /* No `min-height`. The grid hands each tile an equal share of the viewport,
+     and a floor here would reintroduce overflow on a short screen or a scene
+     with many chapters. Touch-target size is guaranteed by the row count
+     instead, which is derived from the container. */
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: clamp(0.5rem, 1.5vmin, 1.25rem);
+  border: 1px solid var(--luxar-control-glass-rim);
+  border-radius: var(--luxar-control-radius);
+  /* Two layers: a translucent white sheet for the glass, over a semi-opaque
+     dark base. The base is what makes this safe to apply UNCONDITIONALLY —
+     white text stays legible over any part of the aurora whether or not
+     `backdrop-filter` runs, so there is no `@supports` branch to get wrong
+     and no browser that ends up with unreadable tiles. Where the blur does
+     run it simply looks better. */
+  background:
+    linear-gradient(
+      160deg,
+      var(--luxar-control-glass-fill-top) 0%,
+      var(--luxar-control-glass-fill-bottom) 100%
+    ),
+    var(--luxar-control-glass-base);
+  backdrop-filter: blur(var(--luxar-control-glass-blur)) saturate(170%);
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  /* A size container, so the label can be sized in `cqmin` — a share of THIS
+     TILE rather than of the viewport. Viewport units cannot do this job: the
+     cell shrinks as chapters are added while `vw` does not, so a 20-chapter
+     scene would overflow its own tiles. */
+  container-type: size;
+  /* Three shadows, three jobs: a bright inset hairline along the top edge is
+     the lit rim of a glass slab, a fainter one along the bottom is the light
+     that came through it, and the drop shadow lifts the tile off the page.
+     Any one of them alone reads as a flat panel. */
+  box-shadow:
+    inset 0 1px 0 var(--luxar-control-glass-specular),
+    inset 0 -1px 0 rgb(255 255 255 / 6%),
+    0 14px 40px -16px rgb(0 0 0 / 65%);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/*
+ * The `-webkit-` alias, in a rule of its own.
+ *
+ * Safari only dropped the prefix in 18, and this panel's target device is an
+ * iPad. It cannot share a declaration block with the standard property: the
+ * bundler's minifier folds the pair into one and emits only ONE of them, so
+ * written together the blur silently stopped working in the built page while
+ * looking perfect in dev. A single-condition `@supports` also survives where
+ * an `or` condition does not — the minifier simplified
+ * `((backdrop-filter: ...) or (-webkit-backdrop-filter: ...))` down to just
+ * the standard half, which would have dropped the glass on iPadOS 17
+ * altogether.
+ */
+@supports (-webkit-backdrop-filter: blur(1px)) {
+  .luxar-control-tile {
+    -webkit-backdrop-filter: blur(var(--luxar-control-glass-blur)) saturate(170%);
+  }
+}
+
+/*
+ * The sheen: a soft diagonal highlight over the top-left corner, as if one
+ * light source were above and to the left of every tile. Consistent across
+ * the matrix on purpose — varying it per tile reads as an accident.
+ */
+.luxar-control-tile::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    140deg,
+    rgb(255 255 255 / 16%) 0%,
+    rgb(255 255 255 / 3%) 30%,
+    rgb(255 255 255 / 0%) 55%
+  );
+  opacity: 0.9;
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+
+.luxar-control-tile:hover {
+  border-color: rgb(255 255 255 / 26%);
+  background-color: var(--luxar-interactive-hover, rgb(255 255 255 / 6%));
+}
+
+.luxar-control-tile:hover::after {
+  opacity: 1;
+}
+
+/* A press state that survives a touch: :hover is unreliable on touch, and a
+   tile that gives no feedback gets tapped three times. */
+.luxar-control-tile:active {
+  transform: scale(0.97);
+  /* Drops to the page under a finger: the lift is what made it an object, so
+     losing the lift is what makes the press feel like a press. */
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 12%),
+    0 2px 8px -6px rgb(0 0 0 / 70%);
+}
+
+.luxar-control-tile:focus-visible {
+  outline: 2px solid var(--luxar-interactive-focus, #6ea8fe);
+  outline-offset: 3px;
+}
+
+/* The active tile has to be obvious from standing distance, so it changes
+   several things at once — rim, tint and an outer glow. One of them alone is
+   too quiet on a bright exhibit floor with a tablet at an angle. */
+.luxar-control-tile[data-active='true'] {
+  border-color: color-mix(in srgb, var(--luxar-highlight, #6ea8fe) 70%, transparent);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--luxar-highlight, #6ea8fe) 30%, transparent) 0%,
+    color-mix(in srgb, var(--luxar-highlight, #6ea8fe) 10%, transparent) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 var(--luxar-control-glass-specular),
+    0 0 0 1px color-mix(in srgb, var(--luxar-highlight, #6ea8fe) 35%, transparent),
+    0 0 36px -6px color-mix(in srgb, var(--luxar-highlight, #6ea8fe) 45%, transparent),
+    0 14px 40px -16px rgb(0 0 0 / 65%);
+}
+
+/* Small, faint, and out of the way: it tells a visitor where they are in the
+   tour without competing with the name of the thing. Absolutely positioned so
+   it never shifts the centred label. */
+.luxar-control-tile-index {
+  position: absolute;
+  top: clamp(0.4rem, 1.2vmin, 0.9rem);
+  left: clamp(0.5rem, 1.4vmin, 1.1rem);
+  z-index: 1;
+  font-size: clamp(0.65rem, 5cqmin, 1rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: rgb(255 255 255 / 45%);
+}
+
+.luxar-control-tile[data-active='true'] .luxar-control-tile-index {
+  color: color-mix(in srgb, var(--luxar-highlight, #6ea8fe) 85%, white);
+}
+
+.luxar-control-tile-label {
+  position: relative;
+  /* Above the sheen, which is absolutely positioned over the whole tile. */
+  z-index: 1;
+  /* Two declarations, and the order matters: the first is the fallback for a
+     browser without container-query units, the second wins wherever `cqmin`
+     parses. No `@supports` needed — an unparsable value is simply dropped. */
+  font-size: clamp(1rem, 1.6vw, 1.25rem);
+  /* Bounds measured against real screens, not picked: the 3.2rem ceiling is
+     for a wall display (at 4K a tile is ~940px and 11cqmin wants 76px, so a
+     2.4rem cap left the labels looking timid), and the 0.75rem floor is for
+     320x480 with a full tour, where a larger floor pushed a two-word label
+     past the tile's clipped edge. */
+  font-size: clamp(0.75rem, 11cqmin, 3.2rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  /* Glass is a busy background. A soft shadow keeps the label readable over
+     whichever part of the aurora happens to sit behind this tile. */
+  text-shadow: 0 1px 8px rgb(0 0 0 / 45%);
+  /* A long chapter name wraps rather than escaping a tile that cannot grow. */
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.luxar-control-tile-sublabel {
+  position: relative;
+  z-index: 1;
+  font-size: clamp(0.8rem, 1.1vw, 0.95rem);
+  font-size: clamp(0.65rem, 7cqmin, 1.35rem);
+  font-weight: 400;
+  line-height: 1.3;
+  color: rgb(255 255 255 / 68%);
+  text-shadow: 0 1px 6px rgb(0 0 0 / 45%);
+  overflow-wrap: anywhere;
+}
+
+/* A generated label is still a label, but it should not shout like a title
+   somebody wrote. */
+.luxar-control-tile[data-authored-label='false'] .luxar-control-tile-label {
+  font-weight: 500;
+  color: rgb(255 255 255 / 72%);
+}
+
+.luxar-control-message {
+  position: relative;
+  z-index: 1;
+  max-width: 42rem;
+  color: var(--luxar-text-secondary, #a1a1aa);
+  font-size: clamp(0.95rem, 1.4vw, 1.1rem);
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxar-control-tile {
+    transition: none;
+  }
+
+  .luxar-control-tile:active {
+    transform: none;
+  }
+
+  /* The drift is the one piece of ambient motion on the page, so it is also
+     the one a motion-sensitive visitor most needs gone. The aurora stays —
+     only its movement stops, and the glass still has something to refract. */
+  .luxar-control-panel::before {
+    animation: none;
+  }
+}

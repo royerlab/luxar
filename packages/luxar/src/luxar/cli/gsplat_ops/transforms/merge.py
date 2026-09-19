@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -11,6 +11,73 @@ from arbol import aprint, asection
 from ..._traceback import exit_with_error
 from ..encoding import _resolve_encoding_mode
 from ..recipe_shared import carried_appearance_from_inputs
+
+if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import GSplatData
+
+
+def _input_provenance(
+    datasets: list[GSplatData], values: list[float]
+) -> list[dict[str, Any]]:
+    """Collect the fit metadata associated with each merge input."""
+    from luxar.gsplats.merged_quality import collect_part_provenance
+
+    return collect_part_provenance(
+        datasets,
+        values=values,
+        fit_reference=None,
+    )
+
+
+def _provenance_summary_fields(value: Any) -> set[str]:
+    """Source/timing fields present anywhere in component provenance."""
+    from luxar.gsplats.merged_quality import PART_PROVENANCE_SUMMARY_FIELDS
+
+    if not isinstance(value, list):
+        return set()
+    fields: set[str] = set()
+    for record in value:
+        if not isinstance(record, dict):
+            continue
+        fitting = record.get("fitting")
+        if not isinstance(fitting, dict):
+            continue
+        fields.update(key for key in PART_PROVENANCE_SUMMARY_FIELDS if key in fitting)
+        fields.update(_provenance_summary_fields(fitting.get("part_provenance")))
+    return fields
+
+
+def _summarized_input_provenance(
+    provenance: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse input fit metadata into one coordinate-free summary."""
+    from luxar.gsplats.merged_quality import summarize_part_provenance
+
+    summary = summarize_part_provenance(provenance)
+    assert summary is not None
+    fitting = summary[0]["fitting"]
+    carried = sorted(fitting)
+    dropped = sorted(_provenance_summary_fields(provenance).difference(fitting))
+    carried_text = ", ".join(carried) if carried else "none"
+    dropped_text = ", ".join(dropped) if dropped else "none"
+    aprint(
+        f"Collapsed fit provenance for {summary[0]['part_count']} parts; "
+        f"carried: {carried_text}; dropped as disputed/incomplete: {dropped_text}"
+    )
+    return summary
+
+
+def _resolve_dimension_values(
+    *, as_dimension: bool, values: Optional[str], dataset_count: int
+) -> list[float]:
+    """Resolve authored stack coordinates, or positional merge placeholders."""
+    if not as_dimension or values is None:
+        return [float(index) for index in range(dataset_count)]
+    dim_values = [float(value.strip()) for value in values.split(",")]
+    if len(dim_values) != dataset_count:
+        aprint(f"Error: {len(dim_values)} values but {dataset_count} datasets")
+        raise typer.Exit(1)
+    return dim_values
 
 
 def _mode_invalidated_appearance(
@@ -99,13 +166,20 @@ def run_merge_datasets(
                 with asection(f"Loading {inp.name}"):
                     ds = load_matrix_gsplats(
                         inp,
-                        include_stats=False,
+                        include_stats=True,
                         command="merge",
                     )
                     aprint(f"{ds.n_splats:,} splats ({ds.ndim}D)")
                     datasets.append(ds)
                     total_splats += ds.n_splats
             aprint(f"Total input splats: {total_splats:,}")
+
+            dim_values = _resolve_dimension_values(
+                as_dimension=as_dimension,
+                values=values,
+                dataset_count=len(datasets),
+            )
+            input_provenance = _input_provenance(datasets, dim_values)
 
             if channel_colors:
                 color_strs = [c.strip() for c in channel_colors.split(",")]
@@ -119,28 +193,24 @@ def run_merge_datasets(
                     merged = GSplatData.merge_with_channel_colors(datasets, colors)
 
             elif as_dimension:
-                if values is not None:
-                    dim_values: list[float] = [
-                        float(v.strip()) for v in values.split(",")
-                    ]
-                    if len(dim_values) != len(datasets):
-                        aprint(
-                            f"Error: {len(dim_values)} values but "
-                            f"{len(datasets)} datasets"
-                        )
-                        raise typer.Exit(1)
-                else:
-                    dim_values = [float(i) for i in range(len(datasets))]
                 with asection(f"Stacking along new dimension (sigma={sigma})"):
                     aprint(f"  Values: {dim_values}")
                     merged = GSplatData.combine_as_new_dimension(
-                        datasets, values=dim_values, sigma=sigma
+                        datasets,
+                        values=dim_values,
+                        sigma=sigma,
+                        part_provenance=input_provenance,
                     )
                     aprint(f"  Result: {merged.ndim}D ({merged.n_splats:,} splats)")
 
             else:
                 with asection("Concatenating"):
                     merged = GSplatData.concatenate(datasets)
+
+            if not as_dimension:
+                summary = _summarized_input_provenance(input_provenance)
+                if summary[0]["fitting"]:
+                    merged.stats["part_provenance"] = summary
 
             # The merge owns the STRUCTURE, not the look: without this the
             # writer's own defaults take over and every authored value on every
@@ -169,6 +239,7 @@ def run_merge_datasets(
                 # Color SDR/HDR is auto-detected by the writer.
                 merged.save(
                     output_path,
+                    amplitude_bits="auto",
                     encoding_mode=_resolve_encoding_mode(encoding),
                     compress=compress,
                     root_attrs=root_attrs,

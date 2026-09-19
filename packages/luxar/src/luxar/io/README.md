@@ -146,6 +146,13 @@ print(points["colors"].shape)  # (N, 3) or None
 print(points["radii"].shape)  # (N,) or None
 print(points["metadata"]["transform"])  # 4x4 numpy array (if present)
 
+# Reconstruct the finest cloud from substitutive LOD, partition, and additive
+# increments. Structured wrapper names come from list_groups(), filtered to
+# kind="lod" or kind="partition". Read one field when a large array_ref should
+# not be materialized.
+finest = scene.get_points("structured_cloud", flatten=True)
+colors = scene.get_point_array("structured_cloud", "colors", flatten=True)
+
 # Similarly for GSplats and Lines
 splats = scene.get_gsplats("splats1")
 print(splats["centers"].shape)  # (N, 3)
@@ -233,11 +240,11 @@ real store per declared input dtype (float16 positions, uint8/uint16 colors,
 float16/uint8 scalar attributes) so the aliases are pinned to what the write
 path accepts rather than to what either signature claims.
 
-### Re-chunking an existing store (`optimise.py`)
+### Re-chunking an existing store (`optimize.py`)
 
-`luxar.io.optimise` re-chunks a store that is **already on disk**, in one
+`luxar.io.optimize` re-chunks a store that is **already on disk**, in one
 structure-preserving pass — no refit, no source volume, no GPU. It backs the
-`luxar optimise` CLI command and the `luxar info --stats` chunk diagnostic.
+`luxar optimize` CLI command and the `luxar info --stats` chunk diagnostic.
 
 Everything but the zarr chunk grid survives verbatim: values bit-for-bit, dtype,
 codecs, filters, serializer, `fill_value`, memory order, the on-disk zarr format,
@@ -248,26 +255,26 @@ which is restamped, and the `chunk_layout` summary written beside it (see *Cache
 invalidation* below).
 
 ```python
-from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
+from luxar.io.optimize import optimize_store, plan_optimization, summarize_chunk_layout
 
-plan = optimise_store(
+plan = optimize_store(
     "scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536, verify=True
 )
 print(plan.source_n_chunks, "→", plan.target_n_chunks)
 ```
 
-- `plan_optimisation(root, target_bytes=…)` → `OptimisePlan` — what would change,
+- `plan_optimization(root, target_bytes=…)` → `OptimizePlan` — what would change,
   per array, without writing. Each `ArrayPlan` carries the source/target chunk
   shape, the resolved spatial atom, and a `skip_reason` when the array is left
   alone.
-- `optimise_store(src, dst, …)` — does it. `verify=True` re-reads the output and
+- `optimize_store(src, dst, …)` — does it. `verify=True` re-reads the output and
   compares every array — and every payload file it copied — byte for byte,
   reporting both counts.
-- `summarise_chunk_layout(root)` → `ChunkLayoutSummary` — average chunk bytes,
+- `summarize_chunk_layout(root)` → `ChunkLayoutSummary` — average chunk bytes,
   arrays under the 16 KB floor, and the chunk-file count a full load fetches.
   Counts objects, so a shard is one file and a `(0, D)` placeholder is none —
   and an array that fetches nothing is left out of the floor share entirely.
-  `summarise_plan(plan)` is the same diagnostic off a plan already walked, which
+  `summarize_plan(plan)` is the same diagnostic off a plan already walked, which
   is how `luxar info --stats` reports both from a single pass.
 - `resolve_target_bytes(target_bytes=…, target_kb=…, profile=…)` — the three
   mutually exclusive size flags, and `CHUNK_PROFILES` (`hosting` 256 KB,
@@ -329,16 +336,23 @@ that would peak at twice a 629 MB array's size.
 
 `luxar.io.lod_restamp` rewrites the LOD switch thresholds of a store that is
 **already on disk**, in place. It backs the `luxar restamp-lod` CLI command. The
-sibling of `optimise.py`, deliberately not a flag on it: that pass preserves
+sibling of `optimize.py`, deliberately not a flag on it: that pass preserves
 every attribute and refuses same-path work, this one changes **only** attributes
 and moves no chunk.
 
 ```python
 from luxar.io.lod_restamp import restamp_lod_store
 
-report = restamp_lod_store("scene.luxar.zarr", dry_run=True)
+report = restamp_lod_store("scene.luxar.zarr", dry_run=True, finest_anchor=0.25)
 for group in report.restamped:
-    print(group.path, group.anchor, group.old_thresholds, "→", group.new_thresholds)
+    print(
+        group.path,
+        group.anchor_name,
+        group.anchor,
+        group.old_thresholds,
+        "→",
+        group.new_thresholds,
+    )
 ```
 
 Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
@@ -347,7 +361,12 @@ carrying no `selector` at all, which means the same) has its per-child
 `partitioned_coverage_fractions` when the group is TILE-BOUND,
 `coverage_fractions` otherwise — and its group stamped `screen-area`. Children
 are ordered coarsest→finest by `child_index`, and a group already on
-`screen-area` is skipped, so a second run is a no-op down to the `content_hash`.
+`screen-area` is skipped by default, so a second run is a no-op down to the
+`content_hash`. Supplying `finest_anchor=` sets that anchor for every
+whole-object ladder processed, both legacy ladders being migrated and ladders
+already on `screen-area` re-derived from their stored level count;
+partition-bound ladders remain pinned to fills-screen `1.0`. A ladder that
+already matches the requested anchor is still a no-op.
 
 Tile-binding is both gsplat tree writers' full rule, `under_partition or
 any(isinstance(c, GSplatPartition) for c in on_disk)`, read off the store — and
@@ -365,7 +384,8 @@ it has two clauses, not one:
 The binding a lod group resolves is threaded down to its own descendants, as the
 writers thread `under_partition=partition_bound`.
 
-- `restamp_lod_store(path, *, dry_run=False, groups=None)` → `RestampReport` —
+- `restamp_lod_store(path, *, dry_run=False, groups=None, finest_anchor=None)` →
+  `RestampReport` —
   the groups restamped, skipped-as-current, skipped-as-unsupported and
   skipped-as-unresolved, plus the new `content_hash` (with a
   `content_hash_status` of `unchanged` / `restamped` / `unstampable`, since a

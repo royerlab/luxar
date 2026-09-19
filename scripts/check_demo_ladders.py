@@ -9,11 +9,20 @@ viewer folds completed rungs into one cumulative payload, avoiding the former
 second retained copy. This walks built scenes and reports, per laddered leaf,
 whether the ladder is actually *useful*.
 
+An unladdered sliced leaf is judged by its busiest resident coordinate fetch,
+not by its declared all-slices total; leaves without usable slice metadata keep
+the declared-total fallback.
+
 A ladder can exist and still be worthless. For example,
 ``global_rivers_earth/terrain`` once shipped levels of 8 / 56 / 272 / 1174 /
 7,998,490 over 8M points: 99.98% of the data remained in one commit. A large
 leaf therefore fails when any level exceeds either ``--max-share`` of the total
-or the absolute ``--max-level-elements`` commit budget.
+or the absolute ``--max-level-elements`` commit budget. On a barrier-ordered
+sliced leaf, that absolute arm measures the conservative largest per-coordinate
+fetch from the level's chunk bounds; unsliced, unindexed, malformed or
+mixed-metadata, and ``extend_to_all`` leaves retain the node-level cap. This
+bounds-based commit arm is independent of the coordinate-decoding histogram
+used by the share arm below, so their reports can differ at chunk boundaries.
 
 A SECOND arm audits nodes the viewer SLICES (any non-displayed dimension). A
 ladder's rungs are sized against the whole node, but only one slice is ever on
@@ -23,7 +32,7 @@ converging past it. ``gsplats_4d_drosophila_embryogenesis`` shipped with a
 median of 45 splats per timepoint at rung 0 and played as an empty screen
 (#2374/#2376). Each sliced node therefore fails on either a per-coordinate
 ABSOLUTE floor (measured at its SPARSEST slices, not its busiest) or a SHARE
-floor on rung 0's fraction of the node.
+floor on rung 0's fraction of the node, or of the worst part for a partition.
 
 Usage:
     hatch run check-demo-ladders                              # all built demos
@@ -36,8 +45,8 @@ check``; on a checkout without built demos it remains a read-only no-op, since
 the output directory is gitignored and an empty inventory is the normal state
 of a fresh clone and of CI. That run now reports INSPECTED NOTHING instead of
 wording that reads like a pass (audit A9-04), and ``--require-scenes`` makes it
-a failure for callers that know scenes should be there — release prep, or a
-demo-build pipeline running this after the build.
+a failure for callers that know scenes should be there — the gallery generator
+or the pre-upload inventory audit.
 
 A SECOND, independent pass lives behind ``--screen`` (``--screen-only`` to skip
 the ladder gate above): the LOD **opening-shot screen** from
@@ -60,9 +69,11 @@ import argparse
 import sys
 from collections import Counter
 from collections.abc import Iterator, Sequence
+from itertools import product
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import zarr
 from arbol import aprint, asection
 
@@ -82,8 +93,9 @@ DEFAULT_SCREEN_ASPECT_SPEC = ",".join(
     f"{label}={value!r}" for label, value in DEFAULT_ASPECTS
 )
 
-#: Leaves at or below this element count are reported but never failed — a small
-#: leaf commits fast enough that an all-at-once load is invisible.
+#: Unsliced leaves at or below this total, and sliced leaves whose busiest
+#: resident coordinate fetch is at or below it, are reported but never failed.
+#: Such a commit is small enough that an all-at-once load is invisible.
 DEFAULT_MIN_ELEMENTS = 200_000
 
 #: A ladder whose largest level exceeds this share of the total is not a
@@ -126,12 +138,12 @@ DEFAULT_MIN_SUBLODS = 3
 #: celegans both fail despite playing acceptably.
 DEFAULT_MIN_SLICE_FIRST_RUNG = 250
 
-#: A sliced node's rung 0 must also be a usable SHARE of the node, because
-#: playback re-pays rung 0 on every tick and never converges past it. This is
-#: the gate form of the authoring contract in ``demos/_lod_policy`` (rung 0 >=
-#: ``n / SLICED_LADDER_MAX_DEPTH``, i.e. 12.5%); the 0.10 here leaves that a
-#: margin rather than tracking it exactly, so a small rounding change in the
-#: ladder builder does not turn the corpus red.
+#: A sliced node's rung 0 must also be a usable SHARE of the node (or every
+#: drawable part), because playback re-pays rung 0 on every tick and never
+#: converges past it. This is the gate form of the authoring contract in
+#: ``demos/_lod_policy`` (rung 0 >= ``n / SLICED_LADDER_MAX_DEPTH``, i.e. 12.5%);
+#: the 0.10 here leaves that a margin rather than tracking it exactly, so a small
+#: rounding change in the ladder builder does not turn the corpus red.
 DEFAULT_MIN_SLICE_RUNG_SHARE = 0.10
 
 #: Nodes exempt from the share arm, each keyed to the REASON it is allowed —
@@ -176,6 +188,25 @@ SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
     ),
 }
 
+#: Exact leaf exemptions are bounded by the structural/absolute arm's commit
+#: measurement. A numeric value must be the exact measured largest commit: the
+#: exemption applies only while the
+#: current measurement is ``<=`` that ceiling, so rounding down breaks the
+#: pinned store and rounding up weakens the degradation guard. ``None`` is
+#: reserved for controls that are intentionally unladdered by design, never for
+#: an archive whose commit size has not been measured.
+LEAF_EXEMPT: dict[str, tuple[int | None, str]] = {
+    "gsplats_4d_drosophila_embryogenesis.luxar.zarr/drosophila_nuclei": (
+        37_930_613,
+        "pinned 2026-08 archive has a measured 37,930,613-element level; remove "
+        "this exemption when #2716 republishes the archive with a ladder",
+    ),
+    "gsplats_recipes_tribolium.luxar.zarr/recipe_flat/flat": (
+        None,
+        "control: the flat leaf of the six-recipe LOD comparison, unladdered by design",
+    ),
+}
+
 #: Which order statistic of the per-coordinate histogram decides starvation.
 #: A ladder starves at its SPARSEST slice, not its densest, so this reduction
 #: must be a low percentile. It replaced ``max()``, which asked whether the
@@ -194,6 +225,149 @@ def _element_count(attrs: dict[str, Any]) -> int:
     return 0
 
 
+def _slice_ordering(level: Any) -> tuple[list[int], int, str] | None:
+    """Return barrier dims, row atom, and bounds array for one level.
+
+    Hidden barrier dimensions are discrete and non-spatial, so the viewer's
+    quarter-cell query targets one coordinate. Coordinates closer than the
+    stored bounds epsilon are the residual exception handled conservatively by
+    :func:`_busiest_slice_elements`.
+    """
+    attrs = dict(level.attrs)
+    if attrs.get("extend_to_all"):
+        return None
+    if attrs.get("type") == "lines":
+        ordering = attrs.get("vertex_ordering")
+        if not isinstance(ordering, dict):
+            return None
+        bounds_name = "vertex_chunk_bounds"
+    else:
+        ordering = attrs
+        bounds_name = "chunk_bounds"
+    try:
+        dims = [int(dim) for dim in ordering.get("slice_dims", [])]
+        chunk_size = int(ordering.get("chunk_size", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if not dims or chunk_size < 1 or bounds_name not in level:
+        return None
+    return dims, chunk_size, bounds_name
+
+
+def _busiest_slice_elements(level: Any) -> int | None:
+    """Conservative largest one-coordinate fetch from chunk bounds.
+
+    Whole chunks are the viewer's fetch atom, so a chunk whose bounds touch two
+    coordinates counts toward both. Distinct coordinates must be separated by
+    more than the producer's bounds epsilon or their intervals merge here,
+    conservatively inflating the result toward the whole-level count.
+    """
+    ordering = _slice_ordering(level)
+    if ordering is None:
+        return None
+    dims, chunk_size, bounds_name = ordering
+    total = _element_count(dict(level.attrs))
+    bounds = np.asarray(level[bounds_name][:])
+    expected_chunks = (total + chunk_size - 1) // chunk_size
+    if (
+        total < 1
+        or bounds.ndim != 3
+        or bounds.shape[0] != expected_chunks
+        or bounds.shape[2] < 2
+        or len(set(dims)) != len(dims)
+        or any(dim < 0 or dim >= bounds.shape[1] for dim in dims)
+    ):
+        return None
+    slice_bounds = bounds[:, dims, :2].astype(np.float64, copy=False)
+    if not np.isfinite(slice_bounds).all() or np.any(
+        slice_bounds[:, :, 0] > slice_bounds[:, :, 1]
+    ):
+        return None
+    rows = np.minimum(
+        chunk_size,
+        total - np.arange(expected_chunks, dtype=np.int64) * chunk_size,
+    )
+    candidates = [np.unique(slice_bounds[:, axis, :]) for axis in range(len(dims))]
+    busiest = 0
+    for coordinate in product(*candidates):
+        point = np.asarray(coordinate, dtype=np.float64)
+        contains = np.all(
+            (slice_bounds[:, :, 0] <= point) & (point <= slice_bounds[:, :, 1]),
+            axis=1,
+        )
+        busiest = max(busiest, int(rows[contains].sum()))
+    return busiest
+
+
+def _largest_commit_elements(
+    leaf: Any, n_sub: int, node_biggest: int
+) -> tuple[int, int | None]:
+    """Return the cap measurement and optional coordinate-fetch upper bound."""
+    if leaf.attrs.get("extend_to_all"):
+        return node_biggest, None
+    sliced_sizes = [
+        _busiest_slice_elements(leaf[f"additive_{i}"]) for i in range(n_sub)
+    ]
+    if not sliced_sizes or any(size is None for size in sliced_sizes):
+        return node_biggest, None
+    sliced_biggest = max(int(size) for size in sliced_sizes if size is not None)
+    return sliced_biggest, sliced_biggest
+
+
+def _commit_cap_result(
+    leaf: Any,
+    n_sub: int,
+    node_biggest: int,
+    detail: str,
+    max_level_elements: int,
+) -> tuple[str, tuple[str, str] | None]:
+    """Return a detail suffix and absolute-cap failure when present."""
+    commit_biggest, sliced_biggest = _largest_commit_elements(leaf, n_sub, node_biggest)
+    detail_suffix = ""
+    if sliced_biggest is not None:
+        detail_suffix = f", largest coordinate fetch {sliced_biggest:,} elements"
+    if commit_biggest <= max_level_elements:
+        return detail_suffix, None
+    measured = (
+        f"largest coordinate fetch is {commit_biggest:,} elements"
+        if sliced_biggest is not None
+        else f"largest level has {commit_biggest:,} elements"
+    )
+    return (
+        detail_suffix,
+        (
+            "fail",
+            f"{detail}{detail_suffix} — {measured}, above the "
+            f"{max_level_elements:,} absolute commit cap",
+        ),
+    )
+
+
+def _unladdered_result(leaf: Any, total: int, min_elements: int) -> tuple[str, str]:
+    """Judge one flat leaf by its resident coordinate fetch when available."""
+    sliced_total = None
+    if not leaf.attrs.get("extend_to_all"):
+        sliced_total = _busiest_slice_elements(leaf)
+    measured_total = sliced_total if sliced_total is not None else total
+    if measured_total > min_elements:
+        measured = (
+            f"{measured_total:,} elements in one coordinate fetch"
+            if sliced_total is not None
+            else f"{measured_total:,} elements in ONE commit"
+        )
+        return (
+            "fail",
+            f"{measured} (no ladder) — will block the main thread on load",
+        )
+    if sliced_total is not None:
+        return (
+            "skip",
+            f"{total:,} elements, largest coordinate fetch "
+            f"{sliced_total:,} elements, no ladder (below threshold)",
+        )
+    return ("skip", f"{total:,} elements, no ladder (below threshold)")
+
+
 def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
     """Yield ``(path, group)`` for every points/lines/gsplats leaf in the tree."""
     attrs = dict(group.attrs)
@@ -203,6 +377,46 @@ def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
         return  # additive_<i> subgroups are internal to the leaf
     for name in group.group_keys():
         yield from walk_leaves(group[name], f"{path}/{name}")
+
+
+def _leaf_commit_measurement(leaf: Any) -> int | None:
+    """Return the element measurement a leaf exemption bounds."""
+    attrs = dict(leaf.attrs)
+    total = _element_count(attrs)
+    n_sub = int(attrs.get("n_additive_sublods", 1) or 1)
+    if n_sub <= 1:
+        sliced_total = None
+        if not leaf.attrs.get("extend_to_all"):
+            sliced_total = _busiest_slice_elements(leaf)
+        return total if sliced_total is None else sliced_total
+    sizes: list[int] = []
+    for index in range(n_sub):
+        try:
+            sizes.append(_element_count(dict(leaf[f"additive_{index}"].attrs)))
+        except KeyError:
+            return None
+    if total and sum(sizes) != total:
+        return None
+    node_biggest = max(sizes, default=0)
+    return _largest_commit_elements(leaf, n_sub, node_biggest)[0]
+
+
+def _leaf_exemption_reason(group: Any, exemption_key: str) -> str | None:
+    """Return a matching exemption reason only within its measured ceiling."""
+    exemption = LEAF_EXEMPT.get(exemption_key)
+    if exemption is None:
+        return None
+    ceiling, reason = exemption
+    if ceiling is None:
+        return reason
+    measurements = [
+        measurement
+        for _, leaf in walk_leaves(group)
+        if (measurement := _leaf_commit_measurement(leaf)) is not None
+    ]
+    if measurements and max(measurements) <= ceiling:
+        return reason
+    return None
 
 
 def _first_rung_histogram(
@@ -216,7 +430,12 @@ def _first_rung_histogram(
         rung = leaf["additive_0"]
     except KeyError:
         return Counter()
-    dims = [int(dim) for dim in rung.attrs.get("slice_dims", [])]
+    ordering = (
+        rung.attrs.get("vertex_ordering", {})
+        if attrs["type"] == "lines"
+        else rung.attrs
+    )
+    dims = [int(dim) for dim in ordering.get("slice_dims", [])]
     if not dims:
         return None
     coordinate_array = {
@@ -234,31 +453,46 @@ def _first_rung_histogram(
 
 def _node_slice_measurement(
     group: Any, zarr_root: Any
-) -> tuple[Counter[tuple[object, ...]], int] | None:
-    """Return one sliced rung histogram and its matching subtree total."""
+) -> tuple[Counter[tuple[object, ...]], int, float, bool, str | None] | None:
+    """Return a sliced histogram, total, worst share, partition flag, and part."""
     attrs = dict(group.attrs)
     if attrs.get("type") in ("points", "lines", "gsplats"):
         histogram = _first_rung_histogram(group, zarr_root)
         if histogram is None:
             return None
-        return histogram, _element_count(attrs)
+        total = _element_count(attrs)
+        share = sum(histogram.values()) / total if total else 0.0
+        return histogram, total, share, False, None
 
-    children = [group[name] for name in group.group_keys()]
+    child_names = list(group.group_keys())
     if attrs.get("kind") == "partition":
         combined: Counter[tuple[object, ...]] = Counter()
         total = 0
-        for child in children:
+        shares: list[tuple[float, str]] = []
+        for child_name in child_names:
+            child = group[child_name]
             measurement = _node_slice_measurement(child, zarr_root)
             if measurement is not None:
-                child_histogram, child_total = measurement
+                child_histogram, child_total, child_share, _, child_worst = measurement
                 combined += child_histogram
                 total += child_total
-        return (combined, total) if combined else None
+                if child_histogram and child_total > 0:
+                    worst_name = (
+                        child_name
+                        if child_worst is None
+                        else f"{child_name}/{child_worst}"
+                    )
+                    shares.append((child_share, worst_name))
+        if not combined or not shares:
+            return None
+        worst_share, worst_name = min(shares, key=lambda item: item[0])
+        return combined, total, worst_share, True, worst_name
     if attrs.get("kind") == "lod":
         alternatives = [
             measurement
-            for child in children
-            if (measurement := _node_slice_measurement(child, zarr_root)) is not None
+            for child_name in child_names
+            if (measurement := _node_slice_measurement(group[child_name], zarr_root))
+            is not None
         ]
         if not alternatives:
             return None
@@ -306,19 +540,21 @@ def sliced_rung_histograms(
     zarr_root = root if zarr_root is None else zarr_root
     return [
         (node_path, histogram)
-        for node_path, histogram, _ in sliced_rung_measurements(root, path, zarr_root)
+        for node_path, histogram, _, _, _, _ in sliced_rung_measurements(
+            root, path, zarr_root
+        )
     ]
 
 
 def sliced_rung_measurements(
     root: Any, path: str = "", zarr_root: Any = None
-) -> list[tuple[str, Counter[tuple[object, ...]], int]]:
-    """Yield sliced rung histograms with their matching subtree totals."""
+) -> list[tuple[str, Counter[tuple[object, ...]], int, float, bool, str | None]]:
+    """Yield sliced histograms with totals and worst drawable-part shares/names."""
     zarr_root = root if zarr_root is None else zarr_root
     measurement = _node_slice_measurement(root, zarr_root)
     if measurement is not None:
-        histogram, total = measurement
-        return [(path or "/", histogram, total)]
+        histogram, total, share, partitioned, worst_part = measurement
+        return [(path or "/", histogram, total, share, partitioned, worst_part)]
     return [
         result
         for name in root.group_keys()
@@ -343,6 +579,7 @@ def _record_sliced_verdicts(
     results: list[tuple[str, str, str]],
     counts: dict[str, int],
     failures: list[str],
+    matched_exemptions: set[str],
     min_rung_share: float = DEFAULT_MIN_SLICE_RUNG_SHARE,
 ) -> None:
     """Append scene-level sliced-rung failures without inflating ``run_gate``.
@@ -354,17 +591,25 @@ def _record_sliced_verdicts(
       be worth drawing, and catches a node whose share looks healthy only
       because the node is small;
     * the SHARE arm asks whether rung 0 is a usable fraction of the node at all,
-      and catches a ladder that is simply too deep — the authoring defect in
-      #2376, where a rung sized against a download budget is divided by the
-      slice count. Its denominator adds only attr reads to the histogram pass,
-      and it is the reason a uniformly thin ladder cannot slip through on
-      absolute counts alone.
+      or of every drawable partition part. It catches a ladder that is simply
+      too deep — the authoring defect in #2376, where a rung sized against a
+      download budget is divided by the slice count. Its denominators add only
+      attr reads to the histogram pass, and the worst-part reduction prevents a
+      large healthy part from hiding a thin played frame.
     """
-    for path, histogram, node_total in sliced_rung_measurements(root):
+    for (
+        path,
+        histogram,
+        node_total,
+        share,
+        partitioned,
+        worst_part,
+    ) in sliced_rung_measurements(root):
+        exemption_key = f"{scene_name}{path}"
+        if exemption_key in LEAF_EXEMPT:
+            matched_exemptions.add(exemption_key)
         count = sparsest_slice_elements(histogram)
         coverage = len(histogram)
-        rung_total = sum(histogram.values())
-        share = rung_total / node_total if node_total else 0.0
         where = (
             f" (rung 0 covers {coverage:,} coordinate{'s' if coverage != 1 else ''})"
         )
@@ -377,8 +622,11 @@ def _record_sliced_verdicts(
                 f"{min_first_rung:,} absolute first-paint floor{where}"
             )
         elif node_total and share < min_rung_share:
+            share_scope = (
+                f"worst part ({worst_part})" if partitioned and worst_part else "node"
+            )
             thin = (
-                f"rung 0 is {share:.2%} of the node, below the "
+                f"rung 0 is {share:.2%} of the {share_scope}, below the "
                 f"{min_rung_share:.0%} share floor — the ladder is too deep for a "
                 f"sliced node, so playback re-pays a thin rung 0 every tick{where}"
             )
@@ -390,6 +638,11 @@ def _record_sliced_verdicts(
                 continue
             message = thin
         else:
+            continue
+        exemption_reason = _leaf_exemption_reason(root[path], exemption_key)
+        if exemption_reason is not None:
+            results.append((path, "warn", f"{message} [exempt: {exemption_reason}]"))
+            counts["warn"] += 1
             continue
         results.append((path, "fail", message))
         counts["fail"] += 1
@@ -410,13 +663,7 @@ def check_leaf(
     n_sub = int(attrs.get("n_additive_sublods", 1) or 1)
 
     if n_sub <= 1:
-        if total > min_elements:
-            return (
-                "fail",
-                f"{total:,} elements in ONE commit (no ladder) — will block the "
-                "main thread on load",
-            )
-        return ("skip", f"{total:,} elements, no ladder (below threshold)")
+        return _unladdered_result(leaf, total, min_elements)
 
     sizes: list[int] = []
     for i in range(n_sub):
@@ -437,12 +684,12 @@ def check_leaf(
     detail = f"{n_sub} levels {sizes}, largest {share:.1%} of {summed:,}"
 
     if summed > min_elements:
-        if biggest > max_level_elements:
-            return (
-                "fail",
-                f"{detail} — largest level has {biggest:,} elements, above the "
-                f"{max_level_elements:,} absolute commit cap",
-            )
+        cap_detail, cap_failure = _commit_cap_result(
+            leaf, n_sub, biggest, detail, max_level_elements
+        )
+        detail += cap_detail
+        if cap_failure is not None:
+            return cap_failure
         if share > max_share:
             return (
                 "fail",
@@ -452,6 +699,27 @@ def check_leaf(
         if n_sub < min_sublods:
             return ("warn", f"{detail} — only {n_sub} levels")
     return ("ok", detail)
+
+
+def _leaf_verdict_with_exemption(
+    leaf: Any,
+    exemption_key: str,
+    args: argparse.Namespace,
+) -> tuple[str, str]:
+    """Return one leaf verdict, applying only a bounded matching exemption."""
+    status, message = check_leaf(
+        leaf,
+        min_elements=args.min_elements,
+        max_share=args.max_share,
+        max_level_elements=args.max_level_elements,
+        min_sublods=args.min_sublods,
+    )
+    if status != "fail":
+        return status, message
+    exemption_reason = _leaf_exemption_reason(leaf, exemption_key)
+    if exemption_reason is None:
+        return status, message
+    return "warn", f"{message} [exempt: {exemption_reason}]"
 
 
 def scene_paths(args_paths: Sequence[str]) -> list[Path]:
@@ -532,7 +800,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "fail instead of passing when no scene was inspected (use wherever "
-            "demos ARE expected to be built: release prep, a demo-build pipeline)"
+            "demos ARE expected: gallery generation, the pre-upload audit)"
         ),
     )
     parser.add_argument("--min-elements", type=int, default=DEFAULT_MIN_ELEMENTS)
@@ -626,11 +894,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _record_stale_leaf_exemptions(
+    inspected_scenes: set[str],
+    matched_exemptions: set[str],
+) -> list[str]:
+    """Fail exact exemptions whose scene exists but whose leaf no longer does."""
+    stale_exemptions = sorted(
+        key
+        for key in LEAF_EXEMPT
+        if key.split("/", 1)[0] in inspected_scenes and key not in matched_exemptions
+    )
+    for key in stale_exemptions:
+        aprint(f"❌ stale leaf exemption matched no leaf: {key}")
+    return stale_exemptions
+
+
 def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
     """Run the streaming-ladder and sliced-first-rung audits."""
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
     icons = {"ok": "✅", "warn": "⚠️ ", "fail": "❌", "skip": "· "}
     failures: list[str] = []
+    matched_exemptions: set[str] = set()
+    inspected_scenes: set[str] = set()
 
     for scene in paths:
         try:
@@ -640,16 +925,14 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             counts["fail"] += 1
             failures.append(scene.name)
             continue
+        inspected_scenes.add(scene.name)
 
         results: list[tuple[str, str, str]] = []
         for leaf_path, leaf in walk_leaves(root):
-            status, message = check_leaf(
-                leaf,
-                min_elements=args.min_elements,
-                max_share=args.max_share,
-                max_level_elements=args.max_level_elements,
-                min_sublods=args.min_sublods,
-            )
+            exemption_key = f"{scene.name}{leaf_path}"
+            if exemption_key in LEAF_EXEMPT:
+                matched_exemptions.add(exemption_key)
+            status, message = _leaf_verdict_with_exemption(leaf, exemption_key, args)
             results.append((leaf_path, status, message))
             counts[status] += 1
             if status == "fail":
@@ -662,6 +945,7 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             results,
             counts,
             failures,
+            matched_exemptions,
             args.min_slice_rung_share,
         )
 
@@ -675,16 +959,21 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
                 for leaf_path, status, message in visible_results:
                     aprint(f"{icons[status]} {leaf_path}: {message}")
 
+    stale_exemptions = _record_stale_leaf_exemptions(
+        inspected_scenes, matched_exemptions
+    )
+
     aprint(
         f"{counts['ok']} ok, {counts['warn']} warned, {counts['fail']} failed, "
-        f"{counts['skip']} below threshold"
+        f"{counts['skip']} below threshold, "
+        f"{len(stale_exemptions)} stale exemption"
+        f"{'s' if len(stale_exemptions) != 1 else ''}"
     )
     if failures:
         with asection("Failed leaves"):
             for name in failures:
                 aprint(name)
-        return 1
-    return 0
+    return int(bool(failures or stale_exemptions))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -86,16 +86,23 @@ only when all contributing leaves have identical presence and vocabularies;
 mixed presence or different vocabularies is an error. Per-leaf rewrites such as
 re-encoding, migration, restriding, optimisation, and batch merge carry each
 leaf's vocabulary unchanged without comparing leaves, so vocabularies may differ
-between leaves in one store. Merge-based coarsening (`lod levels`, `overview`,
-`adaptive`, and merge decimation) is refused because there is no defined class id
-for a splat synthesized from differently labeled inputs. Prefix/additive LOD is
-safe because it only reorders or subsets existing splats. Exporters without a
-vocabulary-bearing categorical field must refuse the channel rather than drop it.
+between leaves in one store. Label-aware merge-based coarsening (`lod levels`,
+`overview`, `adaptive`, and explicit merge decimation) treats `label_ids` as an
+exact barrier: every representative is synthesized from one class, carries that
+class id, and each non-empty class group keeps at least one representative.
+The low-level single-group reducer still refuses mixed ids as a fail-closed
+backstop, and attaching one finest-level label array to an already-built
+multi-substitutive pyramid is refused because it cannot define the existing
+coarse rows. Prefix/additive LOD is safe because it only reorders or subsets
+existing splats. Points and Lines do not inherit this barrier when lifted to
+GSplats because their lift currently carries no label channel. Exporters without
+a vocabulary-bearing categorical field must refuse the channel rather than drop it.
 The vocabulary is duplicated on every leaf and additive rung and therefore lands
-in consolidated metadata; keep it to the small id set actually in use. If that
-cost becomes material, the format should add a shared subtree-level vocabulary.
-This refusal is a writer-side rule, not an on-disk capability stamp, and does not
-bump the format version. Older Luxar versions therefore cannot distinguish a
+in consolidated metadata; keep the authored vocabulary compact, but do not prune
+it independently while deriving related leaves or LOD levels. If that cost becomes
+material, the format should add a shared subtree-level vocabulary.
+These restrictions are writer-side rules, not on-disk capability stamps, and do
+not bump the format version. Older Luxar versions therefore cannot distinguish a
 labeled store before rewriting it and may silently drop the channel in operations
 such as flattening or LOD construction; use a label-aware version for all edits.
 
@@ -205,6 +212,15 @@ per save because the per-save `timestamp` folds in — the web viewer's persiste
 cache compares it to invalidate when a file is regenerated in place. The
 historical `[N, M_i]` matrix is just the "full pyramid" shape expressed as a node
 tree.
+
+A producer may also attach root `dimension_metadata`, an ordered list aligned
+with the columns of `centers`. Each entry carries a dimension `name`, `unit`, and
+positive physical `scale`; `unit` is optional. The batch-fit merger uses it to
+retain source OME-Zarr axis semantics; `luxar gsplat convert` overlays those
+descriptors onto the dimensions it derives from the fitted bounds. `scale` is
+recorded for provenance but is not applied by current consumers; producers
+therefore omit a unit when the stored center coordinates are not already in that
+unit. Consumers that do not know the attribute ignore it.
 
 ---
 
@@ -705,11 +721,14 @@ as a legacy store. Both use the RAW amplitudes, the same units
 
 ### Quality Stamps (`lod_stats` / `level_stats`, format-additive)
 
-Builds stamp measured approximation quality alongside the LOD structure so the
-viewer can make principled display decisions (raw element counts compare
-apples to oranges across substitutive levels). All keys live inside the
-existing `lod_stats` / `level_stats` attr dicts — additive, no version bump;
-readers treat absence as "unstamped" and fall back to counts.
+Builds stamp a **heuristic** approximation-quality estimate alongside the LOD
+structure so the viewer has something better than raw element counts to
+schedule display against (counts compare apples to oranges across substitutive
+levels). The stamps are a monotone proxy — an energy fraction times a sampled
+per-level mixture-L² score — not a certified or bounded fidelity measure. All
+keys live inside the existing `lod_stats` / `level_stats` attr dicts —
+additive, no version bump; readers treat absence as "unstamped" and fall back
+to counts.
 
 - **`lod_stats.energy_fraction_cum`** (per additive sub-LOD, `additive_<i>`
   group or single-set leaf): cumulative self-energy fraction *e(k)* ∈ (0, 1]
@@ -731,19 +750,50 @@ readers treat absence as "unstamped" and fall back to counts.
   quality *Q* = `1 − ‖level − finest‖²/‖finest‖²` ∈ [0, 1] of the COMPLETE
   level vs its group's finest content (constant-cost sampled estimator, see
   `luxar.gsplats.lod.quality`). The finest side is 1.0 by definition
-  (including each part leaf of an `overview` fine partition).
+  (including each part leaf of an `overview` fine partition). Synthesised-GSplat
+  levels measure the final float32 level immediately before serialization, so
+  amplitude encoding/quantization is not included. Same-type Points and Lines
+  levels measure a fixed isotropic point/bead lift of the geometry that is
+  written: Points score the geometric subsample and radii, while Lines also
+  capture width compensation. Neither same-type arm scores RGB/alpha or residual
+  HDR color gain.
+- **`level_stats.median_footprint`** (per GSplat `kind=lod` child): median
+  geometric-mean marginal sigma across the columns named by sibling key
+  **`level_stats.footprint_dims`**, in node-local scene units. Those indices
+  name the node's stored columns (after any scene `dim_order` mapping). The
+  viewer uses it only for a derived `selector="screen-area"` ladder whose
+  displayed columns match those dimensions, projects it in logical CSS pixels,
+  and selects the coarsest level at or below the viewer's current 1.5 px policy.
+  This holds the finest level much longer than occupancy selection and can
+  multiply resident geometry (up to 16.7x in the representative #2685
+  measurement). The viewer retained that policy after the #2685 sweep.
+  Missing, invalid, or mismatched stamps keep the occupancy selector unchanged;
+  explicit legacy `coverage_fractions` are therefore never overridden.
+  Points/Lines `kind=lod` children carry `quality` but no `median_footprint`, so
+  they remain occupancy-selected.
+  `lodBias` remains an area factor, so the accepted footprint scales by
+  `1/sqrt(b)`; for bias ≥ 1 it is inert once the finest stamped level is
+  selected, while bias below 1 can select a coarser level.
+  Content-changing GSplat rewrites drop both measured keys rather than carrying
+  stale values; rebuilding or running `gsplat annotate-quality` restores them.
 
-The viewer's recursive quality algebra: a leaf currently shows quality
+The viewer's recursive quality algebra: a leaf currently shows the estimate
 `q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its
-visible child's `q`. The LOD display gate releases an upgrade swap once the
-candidate's committed energy reaches a threshold (0.6) instead of waiting for
-the count crossover; `Q` feeds the layers-panel / data-monitor readouts.
+visible child's `q`. `q` is a heuristic proxy for rendered fidelity — `e(k)`
+is exact for the loaded prefix's self-energy but says nothing about spatial
+error, and `Q` is a sampled estimate of a mixture-L² distance — so it orders
+candidates sensibly but does not bound the visual error of what is on screen.
+The LOD display gate uses it that way: an upgrade swap is released once the
+candidate's loaded energy fraction `e(k)` reaches a threshold (0.6) instead of
+waiting for the count crossover; `Q` feeds the layers-panel / data-monitor
+readouts.
 
-Stamps are written by every recipe build (`RecipeParams.quality_stamps`,
-default on; `Q` measurement can be disabled with `--no-quality-stamps`) and
-can be retrofitted onto existing stores in place — no refit, no re-ladder —
-with `luxar gsplat annotate-quality <store> [--with-quality]` (re-stamps the
-root `content_hash`, so viewer caches invalidate automatically).
+Stamps are written by every recipe build (`RecipeParams.quality_stamps`, default
+on; `Q` measurement can be disabled with `--no-quality-stamps`) and by Points /
+Lines scene substitutive ladders unless their spec sets `quality_stamps=False`.
+GSplat stamps can be retrofitted onto existing stores in place — no refit, no
+re-ladder — with `luxar gsplat annotate-quality <store> [--with-quality]`
+(re-stamps the root `content_hash`, so viewer caches invalidate automatically).
 
 Related build-side geometry: `stream:<C>` ladders inside a lod group are
 **sibling-aware** — every level with a coarser sibling starts its ladder at
@@ -784,6 +834,24 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 `fitter_name` and custom config. Readers should:
 1. Always read common fields from `fitting/.zattrs`
 2. Only interpret `fitting/config/.zattrs` if they recognize the `fitter_name`
+
+Luxar fits also store relocation and scale diagnostics in `fitting/.zattrs`:
+the configured iteration and dynamic-ops cadence, relocation event and distinct-
+splat counts, the relocation and sigma-floor candidates, and final best-state
+populations within `scale_diagnostic_tolerance_vox` of those candidates. These
+sigmas are in optimization-space voxels before output transforms. Fresh seeds
+record their resolved explicit, physical-derived, or automatic scale as
+`fit_init_sigma_diag_vox`; a uniform precomputed seed covariance records its
+resolved scale there too. Genuinely per-splat covariances record that key and the
+near-count/fraction as `null`, plus per-axis min/median/max summaries under
+`fit_init_marginal_sigma_diag_vox_{min,median,max}`. `fit_init_sigma_vox` is
+`null` whenever precomputed covariances made that fallback config value unused.
+Relocation counts cover the full run, while scale populations describe the
+selected best iteration before any optional closing amplitude trim. If that trim
+changes the splat set, the fit drops those population counts and fractions rather
+than attaching pre-trim values to the delivered artifact. Later content-changing
+rewrites do the same, while retaining the run configuration, candidate scales,
+and initial-covariance summaries.
 
 **Source grid** (fitting/.zattrs, optional) — what the splats are a
 representation *of*, so that "how much did this compress?" is answerable from
@@ -915,9 +983,31 @@ coordinate, so a later rewrite can scrub stale fitting/source fields but cannot
 generically remove records for coordinates eliminated wholesale. After such a
 rewrite, the list length is provenance cardinality from stack time, not a
 surviving-frame count; re-stack the rewritten components to refresh it.
-Flattening a partition discards its slot-keyed record because those spatial part
-coordinates no longer exist in the resulting leaf, even when only one part
-survives.
+Flattening a partition replaces its slot-keyed records with one summary entry
+when the record count matches the number of collapsed spatial leaves, because
+those spatial coordinates no longer exist in the resulting leaf. A list with a
+different cardinality describes an inherited component axis and is preserved
+verbatim. Merging independent inputs without creating a new dimension likewise
+replaces their now-meaningless coordinates with one summary entry; stacking via
+`gsplat merge --as-dimension` keeps the per-input records keyed to the authored
+dimension values. The summary entry records `part_count`; carries unanimous
+`source_bytes`, `source_voxels`, and `source_stored_bytes` once or sums them when
+the parts describe distinct sources; sums complete `time_seconds` figures; and
+carries `source_shape`, `source_declared`, and `source_dtype` only when every
+part agrees. Partition flatten also carries unanimous `fit_reference`; merge
+does not claim a root reference kind because the merged result has no root
+quality score. An independent-input merge prepends the input count to each
+common `source_shape` at every collapse level so the shape remains consistent
+with summed source totals; partition flatten keeps the common parent shape
+unchanged. `source_declared` is carried only with its qualifying `source_shape`.
+A unanimous `source_dtype` is carried even when the part shapes cannot be
+aggregated.
+A malformed or incompletely stamped matched partition still records the part
+count but omits any aggregate that would otherwise be partial. An
+independent-input merge omits the record entirely when no source fact survives
+the collapse. The summary has no `coordinate`, and nested `part_provenance`
+records are deliberately collapsed with their parent spatial-part records
+rather than retained as a second level.
 
 Composition may nest the same record recursively in an entry's `fitting` block.
 `batch-fit merge` uses this for its multi-level fan-in: root entries are spatial
@@ -1527,6 +1617,18 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 | `cholesky_factors_diag` | CHOLESKY_DIAG | `log_perchannel_u8` (per-column log) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | `signed_log_perchannel_u8` (per-column signed-log; absent if d==1) |
 
+Standalone gsplat writers accept `amplitude_bits="auto"`. When
+`fitting/source_dtype` is an 8-bit integer dtype, AUTO selects
+`geolog_scalar_uint8` regardless of the encoder's linear/log choice; missing,
+invalid, floating-point, and wider integer source dtypes retain the existing
+AUTO selection. The option defaults to 16, so existing direct-save behavior is
+unchanged.
+
+For scene compilation, `LuxarZarrCompiler(gsplat_amplitude_bits="auto")`
+resolves that policy independently for each GSplatData/file node from its
+recorded `fitting/source_dtype`; explicit `8` or `16` remains a compiler-wide
+override. Point radii and line widths are unaffected.
+
 **Centers** are uint16 per-axis fixed-point (`linear_perchannel_u16`) in AUTO and
 MEMORY — each axis quantized over its own [min, max] to 65536 levels, decoded back to
 float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relative
@@ -1962,11 +2064,15 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats_from_data("nuclei", result)
 
-# Progressive fitting → multi-LOD gsplats node (per-LOD subgroups)
+# Progressive fitting → still ONE flat gsplats node: the passes are an
+# optimization schedule, and the result is flattened before it is returned
 result = fit_progressive_gaussian_splats(image, max_splats=50000)
 with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
-    scene.add_gsplats_from_data("nuclei", result)  # auto-detects multi-LOD
+    scene.add_gsplats_from_data("nuclei", result)
+
+# A streaming (additive) ladder is a separate step on the fitted data:
+# luxar gsplat lod fitted.gsplats.zarr streamed.gsplats.zarr --recipe stream
 
 # From saved .gsplats.zarr file (preserves LOD structure)
 with LuxarZarrCompiler("scene.luxar.zarr") as compiler:

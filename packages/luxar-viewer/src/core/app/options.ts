@@ -36,6 +36,13 @@ export interface LuxarAppOptions {
   /** Cache and prefetch flags forwarded to the data loader. */
   loaderConfig?: LoaderConfig;
   /**
+   * Session-wide GPU geometry budget in bytes. `null` auto-sizes from device
+   * memory, measured heap, and device class; `0` disables byte-budget eviction,
+   * and a positive value pins the budget. Defaults to
+   * `config.dataLoading.performance.gpuPoolMaxBytes`.
+   */
+  gpuPoolMaxBytes?: number | null;
+  /**
    * Reflect the loaded dataset URL in the browser address bar via
    * `history.replaceState` so the page can be reloaded or shared.
    *
@@ -73,7 +80,7 @@ export interface LuxarAppOptions {
   /**
    * Open the data-loading monitor in expanded mode on the Cache tab as
    * soon as the scene is wired up. Set by the standalone bootstrap when
-   * `?cache-stats` is in the URL; embedders can pass it explicitly when
+   * `?cacheStats` is in the URL; embedders can pass it explicitly when
    * profiling cache behaviour.
    */
   openCacheStats?: boolean;
@@ -109,7 +116,7 @@ export interface LuxarAppOptions {
    * `WebGPURenderer({ forceWebGL: true })` so Three.js still uses the
    * WebGPURenderer API surface and TSL `NodeMaterial` shaders, but routes
    * rendering through its internal WebGL2 backend. Mirrors the
-   * `?webgpu-force-webgl` URL flag.
+   * `?webgpuForceWebgl` URL flag.
    */
   webgpuForceWebGL?: boolean;
 
@@ -119,7 +126,7 @@ export interface LuxarAppOptions {
    * read per-frame GPU duration via
    * `renderer.resolveTimestampsAsync('render')`. Tiny runtime cost
    * (~1-2% per Three.js docs); intended only for the perf-bench spec
-   * (`?perf-timestamp` URL flag). Ignored under `WebGLRenderer`.
+   * (`?perfTimestamp` URL flag). Ignored under `WebGLRenderer`.
    */
   perfTimestamp?: boolean;
 
@@ -137,7 +144,7 @@ export interface LuxarAppOptions {
   /**
    * Substitutive-LOD cross-fade (blend adjacent LOD levels' opacity across
    * a zoom transition instead of a hard swap). Default: true. Mirrors
-   * `UrlParams.lodFade` (`?no-lod-fade` disables) — the standalone
+   * `UrlParams.lodFade` (`?noLodFade` disables) — the standalone
    * bootstrap threads it here; embedders set it directly.
    */
   lodFade?: boolean;
@@ -146,7 +153,7 @@ export interface LuxarAppOptions {
    * Streaming brightness compensation (scale a streaming blendable
    * additive/luminous/volumetric LOD leaf's opacity by 1/e(k) so partial
    * ladders render at full-level brightness). Default: true. Mirrors
-   * `UrlParams.lodEnergyComp` (`?no-lod-energy` disables).
+   * `UrlParams.lodEnergyComp` (`?noLodEnergy` disables).
    */
   lodEnergyComp?: boolean;
 
@@ -154,15 +161,25 @@ export interface LuxarAppOptions {
    * Force the finest LOD level regardless of projected screen coverage
    * (never coarsen, even off-screen). For high-quality still/video capture
    * where a coarse level looks blurry despite the subject being small in
-   * frame. Default: false. Mirrors `UrlParams.lodFinest` (`?lod-finest`).
+   * frame. Default: false. Mirrors `UrlParams.lodFinest` (`?lodFinest`).
    */
   lodFinest?: boolean;
+
+  /**
+   * Replacement-LOD selection bias in screen-area units. `2` selects one
+   * occupancy-halved level finer and `4` selects two. Because finite screen-area
+   * coverage tops out at `1`, values below `1` make partition-anchored finest
+   * levels unreachable and values below `0.5` do the same for whole-object
+   * finest levels. Non-finite or non-positive values are treated as the neutral
+   * `1`. Default: 1. Mirrors `UrlParams.lodBias` (`?lodBias=<N>`).
+   */
+  lodBias?: number;
 
   /**
    * Bake the scene-derived environment once the load settles and hand the
    * container to `luxar env bake` (`__luxarDebug.environment.lastBake` + a
    * download). Mirrors `UrlParams.bakeEnv` / `probe` / `envResolution`
-   * (`?bake-env&probe=…&env-resolution=…`). Undefined = normal viewing.
+   * (`?bakeEnv&probe=…&envResolution=…`). Undefined = normal viewing.
    */
   bakeEnvironment?: { probe?: string; resolution?: number };
 
@@ -170,7 +187,7 @@ export interface LuxarAppOptions {
    * WebGL-only blend warm-up (pre-compile each DISTINCT reachable
    * blend-mode program variant, one compile per macrotask). Default:
    * true on laptops/desktops and false on phones/tablets. Mirrors
-   * `UrlParams.blendWarmup` (`?no-blend-warmup` disables) — the
+   * `UrlParams.blendWarmup` (`?noBlendWarmup` disables) — the
    * standalone bootstrap threads it here; embedders can disable it directly.
    */
   blendWarmup?: boolean;
@@ -187,7 +204,7 @@ export interface LuxarAppOptions {
    * Projected-density guard: per-node keep-fraction thinning (blendable
    * modes, brightness-compensated) and a refinement rung cap on nodes whose
    * elements-per-pixel exceed `config.densityGuard.capElementsPerPixel`.
-   * Default: true. Mirrors `UrlParams.densityGuard` (`?no-density-guard`).
+   * Default: true. Mirrors `UrlParams.densityGuard` (`?noDensityGuard`).
    */
   densityGuard?: boolean;
 
@@ -195,7 +212,7 @@ export interface LuxarAppOptions {
    * Session-only override of the density guard's blendable cap (elements per
    * drawing-buffer pixel), applied to both the thinning ladder and the
    * refinement rung gate. Undefined ⇒ `config.densityGuard.capElementsPerPixel`.
-   * Mirrors `UrlParams.densityCap` (`?density-cap=8`). Not persisted.
+   * Mirrors `UrlParams.densityCap` (`?densityCap=8`). Not persisted.
    */
   densityCap?: number;
 
@@ -203,7 +220,7 @@ export interface LuxarAppOptions {
    * Allow a picked element's authored `link` to be opened on left-click
    * (issue #1917). Defaults to true.
    *
-   * Set false — or load with `?no-links` — when embedding scenes you did not
+   * Set false — or load with `?noLinks` — when embedding scenes you did not
    * author: `.zattrs` is untrusted input, and this is the switch that
    * guarantees no navigation can originate in data. It suppresses the
    * navigation, the two link items in the right-click menu, and the pointer
@@ -212,4 +229,32 @@ export interface LuxarAppOptions {
    * still fire, so a host can implement its own behaviour instead.
    */
   allowLinks?: boolean;
+
+  /**
+   * Attach to a remote-control hub at this WebSocket URL, letting an external
+   * controller (a kiosk touch panel, a script, an agent) drive this viewer
+   * through the embedder API. Undefined or null ⇒ no channel is opened.
+   *
+   * Mirrors `UrlParams.control` (`?control`), which the standalone bootstrap
+   * threads here already validated — an embedder passing this directly is
+   * responsible for the URL it supplies. See
+   * `core/app/control/control-client.ts` for what a controller may call.
+   */
+  control?: string | null;
+
+  /**
+   * Shared secret presented to the hub as `?token=` (`luxar serve
+   * --control-token`). Mirrors `UrlParams.controlToken`.
+   */
+  controlToken?: string | null;
+
+  /**
+   * Lock the display down for unattended public use (`?kiosk`).
+   *
+   * A HARD override over the scene's authored `ui.kiosk` block: this is the
+   * operator's channel, so a store that predates the block — or one borrowed
+   * for an exhibit it was never authored for — is still lockable from the
+   * launch command. See `config/kiosk.ts`.
+   */
+  kiosk?: boolean;
 }

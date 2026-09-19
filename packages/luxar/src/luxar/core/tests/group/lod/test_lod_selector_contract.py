@@ -598,6 +598,20 @@ _EXEMPT_LOD_GROUP_CALLERS = {
         "hand-built demo ladder; thresholds are always derived and its anchor "
         "depends on the realized BSP part count"
     ),
+    # One whole-object ladder per tract of subsampled STREAMLINES (the interim
+    # form of #2679's `coarse="lines"`); thresholds always derived through
+    # `coverage_fractions`, no user-supplied explicit-threshold branch.
+    "demos/demo_dmri_tractography.py": (
+        "hand-built demo ladder of subsampled streamlines; thresholds are "
+        "always derived (whole-object anchor) via coverage_fractions"
+    ),
+    # Same shape for the protein-universe backdrop: 64 BSP tiles, each a
+    # two-level POINTS ladder whose thresholds always come from
+    # ``partitioned_coverage_fractions`` (no explicit-threshold branch exists).
+    "demos/demo_esm_protein_universe.py": (
+        "hand-built demo ladder (per-tile two-level points ladder); thresholds "
+        "are always derived from partitioned_coverage_fractions"
+    ),
 }
 
 #: The full expected set of production ``add_lod_group(...)`` call sites.
@@ -606,9 +620,14 @@ _LOD_GROUP_CALLERS = frozenset(_LADDER_PRODUCERS) | frozenset(_EXEMPT_LOD_GROUP_
 #: How many ``add_lod_group(...)`` CALLS each of those modules makes. Asserted as
 #: well as the key set, because a SECOND call added inside an already-listed
 #: module changes no key and would otherwise slip past every structural guard
-#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Every listed
-#: module has exactly one call today.
-_EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {rel: 1 for rel in _LOD_GROUP_CALLERS}
+#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Most listed
+#: modules have exactly one call today; exceptions stay explicit.
+_EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {
+    rel: 2
+    if rel in {"core/group/adders/points.py", "core/group/adders/lines.py"}
+    else 1
+    for rel in _LOD_GROUP_CALLERS
+}
 
 
 def _luxar_root() -> Path:

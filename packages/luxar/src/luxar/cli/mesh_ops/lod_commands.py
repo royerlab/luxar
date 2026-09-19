@@ -512,7 +512,7 @@ def _reject_cross_recipe_flags(
     add_method: Optional[str],
     n_lods: Optional[int],
     counts: Optional[str],
-    reveal_centre: Optional[str],
+    reveal_center: Optional[str],
     spatial_dims: Optional[str],
     levels_given: bool,
     compression_given: bool,
@@ -546,7 +546,7 @@ def _reject_cross_recipe_flags(
             ("--add-method", add_method is not None, "-m/--add-method"),
             ("--n-lods", n_lods is not None, "--n-lods"),
             ("--counts", counts is not None, "--counts/--breakpoints"),
-            ("--reveal-centre", reveal_centre is not None, "--reveal-centre"),
+            ("--reveal-center", reveal_center is not None, "--reveal-center"),
             ("--spatial-dims", spatial_dims is not None, "--spatial-dims"),
         ]
         substitutive_equivalent = {
@@ -634,7 +634,7 @@ def _build_reveal_spec(
     add_method: Optional[str],
     n_lods: Optional[int],
     counts: Optional[str],
-    reveal_centre: Optional[str],
+    reveal_center: Optional[str],
     spatial_dims: Optional[str],
     ndim: int,
 ) -> Dict[str, Any]:
@@ -667,10 +667,10 @@ def _build_reveal_spec(
         )
 
     # The same parser `gsplat lod` uses, so the two commands cannot disagree about
-    # what `--reveal-centre 1,2,3 --spatial-dims 2,0,1` means — including that the
+    # what `--reveal-center 1,2,3 --spatial-dims 2,0,1` means — including that the
     # dims order is load-bearing because it pairs with the centre's coordinates.
     parsed_centre, parsed_dims = parse_reveal_knobs(
-        reveal_centre, spatial_dims, method, ndim
+        reveal_center, spatial_dims, method, ndim
     )
 
     spec: Dict[str, Any] = {"method": method}
@@ -679,7 +679,7 @@ def _build_reveal_spec(
     if counts is not None:
         spec["counts"] = _parse_counts_spec(counts)
     if parsed_centre is not None:
-        spec["reveal_centre"] = parsed_centre
+        spec["reveal_center"] = parsed_centre
     if parsed_dims is not None:
         spec["spatial_dims"] = parsed_dims
     return spec
@@ -707,7 +707,7 @@ def _build_ladder_specs(
     add_method: Optional[str],
     n_lods: Optional[int],
     counts: Optional[str],
-    reveal_centre: Optional[str],
+    reveal_center: Optional[str],
     spatial_dims: Optional[str],
     ndim: int,
     n_vertices: int,
@@ -738,7 +738,7 @@ def _build_ladder_specs(
             add_method=add_method,
             n_lods=n_lods,
             counts=counts,
-            reveal_centre=reveal_centre,
+            reveal_center=reveal_center,
             spatial_dims=spatial_dims,
             ndim=ndim,
         )
@@ -780,7 +780,7 @@ def run_lod(
     add_method: Optional[str] = None,
     n_lods: Optional[int] = None,
     counts: Optional[str] = None,
-    reveal_centre: Optional[str] = None,
+    reveal_center: Optional[str] = None,
     spatial_dims: Optional[str] = None,
 ) -> List[int]:
     """Write ``input_path``'s mesh as a ladder of ``recipe``. Returns the counts.
@@ -812,7 +812,7 @@ def run_lod(
         add_method=add_method,
         n_lods=n_lods,
         counts=counts,
-        reveal_centre=reveal_centre,
+        reveal_center=reveal_center,
         spatial_dims=spatial_dims,
         # The substitutive knobs are plain arguments here, not `Optional` ones, so
         # "did the caller pass -L?" is unanswerable — left off rather than guessed
@@ -894,7 +894,7 @@ def run_lod(
             add_method=add_method,
             n_lods=n_lods,
             counts=counts,
-            reveal_centre=reveal_centre,
+            reveal_center=reveal_center,
             spatial_dims=spatial_dims,
             ndim=int(data.vertices.shape[1]),
             n_vertices=int(data.vertices.shape[0]),
@@ -1161,12 +1161,12 @@ def lod_command(
             "exclusive with --n-lods."
         ),
     ),
-    reveal_centre: Optional[str] = typer.Option(
+    reveal_center: Optional[str] = typer.Option(
         None,
-        "--reveal-centre",
+        "--reveal-center",
         help=(
-            "[--recipe reveal] Comma-separated centre the shells grow from. "
-            "Defaults to the mesh's own bounding-box centre, so a surface far from "
+            "[--recipe reveal] Comma-separated center the shells grow from. "
+            "Defaults to the mesh's own bounding-box center, so a surface far from "
             "the origin still grows from its middle."
         ),
     ),
@@ -1175,7 +1175,7 @@ def lod_command(
         "--spatial-dims",
         help=(
             "[--recipe reveal] Comma-separated columns the shell distance spans. "
-            "ORDER IS SIGNIFICANT — it pairs with --reveal-centre's coordinates. "
+            "ORDER IS SIGNIFICANT — it pairs with --reveal-center's coordinates. "
             "Use it to keep a stacked time/channel column out of the distance."
         ),
     ),
@@ -1243,7 +1243,7 @@ def lod_command(
         add_method=add_method,
         n_lods=n_lods,
         counts=counts,
-        reveal_centre=reveal_centre,
+        reveal_center=reveal_center,
         spatial_dims=spatial_dims,
         levels_given=_was_supplied(ctx, "levels"),
         compression_given=_was_supplied(ctx, "compression_factor"),
@@ -1262,7 +1262,7 @@ def lod_command(
             add_method=add_method,
             n_lods=n_lods,
             counts=counts,
-            reveal_centre=reveal_centre,
+            reveal_center=reveal_center,
             spatial_dims=spatial_dims,
         )
     except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:

@@ -17,7 +17,11 @@
 
 import * as THREE from 'three';
 import type { SimpleDims } from '../../../types/dims';
-import { LOADER_TYPES, type LoaderTypeName } from '../../../types/format-contract';
+import {
+  LOADER_TYPES,
+  type LoaderTypeName,
+  type LodSelectorName,
+} from '../../../types/format-contract';
 import { readVisibleElementCount } from '../../../data/scene-loader/monitor/visible-counts';
 import type { RefinementResidencyStop } from '../../../data/scene-loader/progressive/residency-budget';
 
@@ -134,6 +138,8 @@ export interface LODGroupDebugInfo {
   name: string;
   levelCount: number;
   activeLevel: number;
+  selector: LodSelectorName;
+  footprintStamped: boolean;
 }
 
 /** `kind=partition` BSP group summary. */
@@ -347,10 +353,16 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     const kind = (object.userData as { kind?: string })?.kind;
     if (kind === 'lod') {
       const children = object.children;
+      const metadata = object.userData as {
+        lodSelector?: LodSelectorName;
+        footprintStamped?: boolean;
+      };
       lodGroups.push({
         name: object.name || 'unnamed',
         levelCount: children.length,
         activeLevel: children.findIndex((c) => c.visible),
+        selector: metadata.lodSelector ?? 'coverage',
+        footprintStamped: metadata.footprintStamped ?? false,
       });
     } else if (kind === 'partition') {
       const children = object.children;

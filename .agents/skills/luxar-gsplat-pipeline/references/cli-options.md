@@ -43,7 +43,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--tile-size` | 256 | tile edge in voxels |
 | `--overlap` | 32 | inter-tile overlap voxels (Hann-stitched) |
 | `--tile` | none | fit a single tile `N/M` (e.g. `3/16`) — Slurm-ready |
-| `--jobs` / `-j` | 1 | concurrent tiles on one GPU; `auto` sizes from free VRAM |
+| `--jobs` / `-j` | 1 | concurrent tiles on one GPU; `auto` accounts for GPU memory plus shared host RAM/CPU limits |
 | `--keep-tiles` | false | keep per-tile temp outputs after merge |
 
 ### Content-adaptive tiling (`--tiling content`) — needs a density
@@ -205,8 +205,8 @@ recipe instead — see "First paint cost" in SKILL.md.
 | `--bytes-per-splat` | measured/estimated | override the on-wire bytes/splat for `--target-ms` sizing |
 | `--truncation-sigmas` | the dataset's own truncation radius | Mahalanobis cutoff for greedy |
 | `--max-n-dense` | 2000 | greedy dense-Gram threshold |
-| `--reveal-centre` | dataset bbox centre | `-m radial` only: comma-separated shell centre, one coordinate per measured axis. On a partitioned recipe the default centres each part on itself — pass this to grow the whole object from one point |
-| `--spatial-dims` | non-degenerate axes | `-m radial` only: comma-separated centre-column indices the shell distance spans (order pairs with `--reveal-centre`); the default keeps a stacked time/channel axis out of the shells |
+| `--reveal-center` | dataset bbox centre | `-m radial` only: comma-separated shell centre, one coordinate per measured axis. On a partitioned recipe the default centres each part on itself — pass this to grow the whole object from one point |
+| `--spatial-dims` | non-degenerate axes | `-m radial` only: comma-separated centre-column indices the shell distance spans (order pairs with `--reveal-center`); the default keeps a stacked time/channel axis out of the shells |
 
 ### `luxar gsplat additive <in> <out>` — ladder every leaf of an existing tree
 Structure-preserving per-leaf additive laddering: substitutive `kind=lod`

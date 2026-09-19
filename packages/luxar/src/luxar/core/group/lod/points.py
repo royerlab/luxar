@@ -25,6 +25,10 @@ the gsplats-only ``energy:`` variant:
 * ``n_lods: int`` — equal-count split into this many LODs.
 * ``counts: list[int]`` — cumulative element-count breakpoints (sized for
   HTTP-range-streaming the coarsest levels first).
+* ``counts: "equi-energy:<n>"`` — ``n`` rungs at equal shares of cumulative
+  perceptual energy (``luminance × radius³``) along the ordering, commit-capped;
+  pair with ``method="salience", salience_kind="energy"`` for a heaviest-first
+  ladder whose first rung is small and whose late rungs are fat.
 
 If both are passed, ``counts`` wins. If the dataset has fewer elements
 than the requested ``n_lods``, the writer emits ``min(n_lods, n)``
@@ -60,30 +64,74 @@ PointsMethodName = Literal[
 DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
 DEFAULT_METHOD: PointsMethodName = DEFAULT_ADDITIVE_METHOD
 
-# Defaults for ``substitutive_lod=True`` / ``substitutive_lod=dict()`` — the
-# coarse levels are synthesised gsplats (each point lifted to an isotropic
-# Gaussian, then reduced by the gsplat substitutive pipeline). The substitutive
-# vocabulary/defaults are shared with Lines — see
-# :func:`luxar.core.group.lod.group.resolve_substitutive_axis`.
+# Defaults for ``substitutive_lod=True`` / ``substitutive_lod=dict()`` keep the
+# legacy synthesised-gsplat path. Points owns the optional ``coarse="points"``
+# vocabulary; Lines deliberately still delegates only to the shared lift
+# resolver until its same-type arm lands.
+
+
+def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float], str]:
+    """Pop and validate the Points-only substitutive representation keys."""
+    from .group import resolve_same_type_representation
+
+    return resolve_same_type_representation(
+        kwargs,
+        geometry="Points",
+        same_type="points",
+        inapplicable_reasons={
+            "truncation_radius": (
+                "it controls stored Gaussian footprints; same-type point levels "
+                "store Points and use a fixed lift only for quality measurement"
+            ),
+            "max_aspect": (
+                "it caps anisotropy on merged Gaussian levels, and same-type "
+                "point levels contain no Gaussians"
+            ),
+            "device": (
+                "it selects where Gaussian clustering runs; same-type point "
+                "levels use the CPU sampler and a CPU-pinned quality estimate"
+            ),
+            "coarsen_dims": (
+                "it selects Gaussian merge dimensions, and same-type point "
+                "levels preserve discrete hidden coordinates automatically"
+            ),
+        },
+    )
 
 
 def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
     """Translate the ``substitutive_lod=`` kwarg value into a normalized dict.
 
-    The substitutive axis coarsens a point cloud by **synthesising gsplats**:
-    each point is lifted to an isotropic Gaussian and the gsplat substitutive
-    pipeline builds fewer-but-larger representative levels (mass-preserving),
-    which become the coarse levels of a points LOD ladder (the finest level
-    stays the original Points node).
+    The default coarsens by **synthesising gsplats**. ``coarse="points"`` instead
+    writes spatially stratified point subsamples, with explicit blending-aware brightness
+    compensation, while keeping the finest level as the original Points node.
 
-    Thin wrapper over the shared
-    :func:`luxar.core.group.lod.group.resolve_substitutive_axis` (one
-    implementation shared with Lines so the two can't drift). See it for the
-    full value vocabulary.
+    The lift vocabulary remains delegated to the shared Points/Lines resolver;
+    the same-type representation keys are parsed here so they do not become
+    accidentally valid for Lines.
     """
     from .group import resolve_substitutive_axis
 
-    return resolve_substitutive_axis(spec, "Points")
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        spec = {}
+    if not isinstance(spec, dict):
+        return resolve_substitutive_axis(spec, "Points")
+
+    kwargs = dict(spec)
+    coarse, brightness, representation_method = _resolve_points_representation(kwargs)
+    resolved = resolve_substitutive_axis(
+        kwargs,
+        "Points",
+        extra_valid_keys=("coarse", "brightness_compensation"),
+    )
+    assert resolved is not None
+    resolved["coarse"] = coarse
+    resolved["brightness_compensation"] = brightness
+    if coarse == "points":
+        resolved["method"] = representation_method
+    return resolved
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -97,7 +145,7 @@ def compute_additive_order_points(
     method: PointsMethodName = DEFAULT_METHOD,
     n_lods: int = DEFAULT_N_LODS,
     seed: Optional[int] = None,
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> Tuple[NDArray[np.intp], List[int]]:
     """Compute an additive ordering permutation over Points.
@@ -113,7 +161,7 @@ def compute_additive_order_points(
             and ``radial`` return a single permutation; the slicing into LOD
             levels happens later in :func:`make_additive_lod_points`.
         seed: For ``random``; ignored by others.
-        reveal_centre: ``radial`` only — centre of the shells, defaulting to the
+        reveal_center: ``radial`` only — centre of the shells, defaulting to the
             spatial bounding-box centre (NOT the scene origin, so a dataset far
             from the origin still grows from its own middle). One coordinate per
             spatial axis.
@@ -176,7 +224,7 @@ def compute_additive_order_points(
         # those, so the caller does the slicing.
         return (
             np.argsort(
-                radial_element_score(positions, reveal_centre, spatial_dims),
+                radial_element_score(positions, reveal_center, spatial_dims),
                 kind="stable",
             ).astype(np.intp),
             [],
@@ -300,6 +348,10 @@ def _parse_breakpoints_spec(
     - ``List[int]`` → cumulative counts (legacy ``counts=`` shape).
     - ``"energy:0.5,0.9,0.99,1.0"`` → cumulative energy fractions. Needs
       both ``energy`` and ``perm`` to be supplied by the caller.
+    - ``"equi-energy:4"`` → 4 rungs at EQUAL shares of cumulative energy along
+      ``perm`` (few heavy elements first, fatter rungs later), commit-capped
+      (:func:`luxar.utils.lod_breakpoints.equi_energy_cuts`). Needs ``energy``
+      and ``perm`` too.
     - ``"stream:40000"`` → bandwidth-derived geometric ladder
       ``[c, 2c, 4c, …, total]``, resolved against THIS ``total`` so one spec
       adapts to every level/part. Identical cut geometry to the GSplats ladder
@@ -315,10 +367,26 @@ def _parse_breakpoints_spec(
             from ....utils.lod_breakpoints import parse_stream_chunk, stream_cuts
 
             return stream_cuts(total, parse_stream_chunk(spec))
+        if spec.startswith("equi-energy:"):
+            from ....utils.lod_breakpoints import (
+                equi_energy_cuts,
+                parse_equi_energy_rungs,
+            )
+
+            if energy is None or perm is None:
+                raise ValueError(
+                    "equi-energy: breakpoints require both energy and perm; "
+                    "internal error"
+                )
+            return equi_energy_cuts(
+                np.asarray(energy, dtype=np.float64)[perm],
+                parse_equi_energy_rungs(spec),
+            )
         if not spec.startswith("energy:"):
             raise ValueError(
                 f"unrecognized breakpoints string {spec!r}; expected "
-                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0') or "
+                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0'), "
+                "'equi-energy:<n>' (e.g. 'equi-energy:4') or "
                 "'stream:<c>' (e.g. 'stream:40000')"
             )
         if energy is None or perm is None:
@@ -341,7 +409,7 @@ def make_additive_lod_points(
     colors: Optional[NDArray] = None,
     scalars: Optional[NDArray] = None,
     salience_kind: Literal["size", "energy"] = "size",
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> List[NDArray[np.intp]]:
     """Compute per-LOD-level index arrays for Points.
@@ -375,6 +443,12 @@ def make_additive_lod_points(
               the shape that makes a large leaf paint progressively —
               prefer it over ``n_lods`` on anything big, since an
               equal-count split still ends in an N/n_lods-sized commit.
+            * ``"equi-energy:4"`` → 4 rungs at EQUAL shares of cumulative
+              perceptual energy along the ordering, any increment above
+              the shared commit cap split into capped steps. Under an
+              energy-first ordering the first rung is few heavy elements
+              and the late rungs fat — fast first paint, slow rungs that
+              matter least. Uses the same energy as ``energy:``.
         seed: For ``random``; ignored otherwise.
         colors: Optional ``(N, 3)`` or ``(N, 4)`` per-point colors —
             used for the luminance term of ``salience_kind='energy'``
@@ -386,7 +460,7 @@ def make_additive_lod_points(
             sorts by radius alone (legacy). ``'energy'`` sorts by
             ``luminance × radius**3`` — the same per-element score the
             ``energy:`` breakpoints accumulate against.
-        reveal_centre: For ``method='radial'`` — centre of the concentric
+        reveal_center: For ``method='radial'`` — centre of the concentric
             shells, defaulting to the spatial bounding-box centre.
         spatial_dims: For ``method='radial'`` — the position columns the
             shell distance is measured over, defaulting to the columns with
@@ -418,7 +492,7 @@ def make_additive_lod_points(
             method=method,
             n_lods=n_lods,
             seed=seed,
-            reveal_centre=reveal_centre,
+            reveal_center=reveal_center,
             spatial_dims=spatial_dims,
         )
 
@@ -436,8 +510,12 @@ def make_additive_lod_points(
         return out
 
     # For random / salience, slice the permutation by breakpoints.
-    if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
-        # Compute energy on demand for energy: breakpoints under any
+    if (
+        isinstance(counts, str)
+        and counts.startswith(("energy:", "equi-energy:"))
+        and energy is None
+    ):
+        # Compute energy on demand for energy-based breakpoints under any
         # ordering method.
         energy = compute_points_energy(n, radii, colors, scalars)
 

@@ -65,6 +65,114 @@ def _healthy_stats() -> dict[str, Any]:
     }
 
 
+def _report_stats() -> dict[str, Any]:
+    languages = {name: gs.LanguageStats().as_dict() for name in gs.LANGUAGE_CONFIG}
+    languages["python"]["code_lines"] = 1
+    languages["typescript"]["code_lines"] = 1
+    tests = _healthy_stats()
+    tests["python"]["test_files"] = 1_001
+    tests["typescript"]["test_files"] = 2_002
+    tests["rust"]["test_files"] = 3_003
+    tests["e2e"]["test_files"] = 4_004
+    return {
+        "languages": languages,
+        "tests": tests,
+        "git": {
+            "total_commits": 0,
+            "contributors": 0,
+            "tags": 0,
+            "commits_last_30_days": 0,
+            "files_changed_last_30_days": 0,
+            "first_commit_date": None,
+            "last_commit_date": None,
+            "top_contributors": [],
+        },
+        "dependencies": {
+            ecosystem: {"production": 0, "dev": 0, "groups": {}, "packages": []}
+            for ecosystem in ("python", "node", "rust")
+        },
+        "extras": {
+            "project_size_bytes": 0,
+            "ci_workflows": 0,
+            "changelog_versions": 0,
+        },
+        "package_breakdown": {"python": [], "typescript": []},
+    }
+
+
+# ---------------------------------------------------------------------------
+# File scanning
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_language_skips_zarr_store_contents(tmp_path: Path) -> None:
+    source_file = tmp_path / "config.json"
+    source_file.write_text('{"tracked": true}\n')
+    generated_file = tmp_path / "fixtures" / "scene.luxar.zarr" / ".zattrs.json"
+    generated_file.parent.mkdir(parents=True)
+    generated_file.write_text('{"generated": true}\n')
+
+    stats = gs.analyze_language(tmp_path, "json")
+
+    assert stats.files == 1
+    assert stats.total_lines == 1
+    assert stats.largest_files == [("config.json", 1)]
+
+
+def test_reports_format_test_file_counts_with_thousands_separators(
+    tmp_path: Path,
+) -> None:
+    html_file = tmp_path / "stats.html"
+    markdown_file = tmp_path / "stats.md"
+
+    gs.generate_html_report(_report_stats(), html_file)
+    gs.generate_markdown_report(_report_stats(), markdown_file)
+
+    html_report = html_file.read_text()
+    markdown_report = markdown_file.read_text()
+    for count in ("1,001", "2,002", "3,003", "4,004", "10,010"):
+        assert count in html_report
+        assert count in markdown_report
+
+
+def test_html_report_formats_markdown_file_counts_with_thousands_separators(
+    tmp_path: Path,
+) -> None:
+    report_stats = _report_stats()
+    report_stats["languages"]["markdown"]["files"] = 1_001
+    html_file = tmp_path / "stats.html"
+
+    gs.generate_html_report(report_stats, html_file)
+
+    html_report = html_file.read_text()
+    assert '<td>Markdown (.md)</td><td class="number">1,001</td>' in html_report
+    assert "1,001 markdown files" in html_report
+
+
+def test_report_footers_list_excluded_zarr_stores(tmp_path: Path) -> None:
+    html_file = tmp_path / "stats.html"
+    markdown_file = tmp_path / "stats.md"
+
+    gs.generate_html_report(_report_stats(), html_file)
+    gs.generate_markdown_report(_report_stats(), markdown_file)
+
+    assert "array stores (*.zarr/)" in html_file.read_text()
+    assert "array stores (`*.zarr/`)" in markdown_file.read_text()
+
+
+def test_html_report_does_not_treat_skipped_tests_as_failures(tmp_path: Path) -> None:
+    report_stats = _report_stats()
+    report_stats["tests"]["python"]["test_count"] = 101
+    report_stats["tests"]["python"]["test_passed"] = 100
+    html_file = tmp_path / "stats.html"
+
+    gs.generate_html_report(report_stats, html_file)
+
+    html_report = html_file.read_text()
+    assert "All Passing" in html_report
+    assert "Some Failures" not in html_report
+
+
 # ---------------------------------------------------------------------------
 # validate_measurements
 # ---------------------------------------------------------------------------

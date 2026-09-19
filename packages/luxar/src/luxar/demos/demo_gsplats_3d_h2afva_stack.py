@@ -116,6 +116,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import GSplatPartition, center_bounds, iter_leaves
@@ -224,6 +225,36 @@ def _corners(bmin: np.ndarray, bmax: np.ndarray) -> np.ndarray:
         ],
         dtype=np.float32,
     )
+
+
+#: The explainer under the title: (y, text, colour). Kept to three short
+#: paragraphs; the LOD/tiling one exists because the tiles are visible while a
+#: scene is still streaming — neighbouring parts at different ladder rungs read
+#: as rectangular patches until the rest arrives.
+EXPLAINER_LINES: tuple[tuple[float, str, str], ...] = (
+    (
+        0.10,
+        "A zebrafish embryo at timepoint 234 of 253 — every nucleus carries a "
+        "histone-H2A label — as 1.65 million Gaussian splats fitted to one "
+        "light-sheet stack. Anisotropic voxels were rescaled, so the "
+        "proportions are real.",
+        "rgba(255,255,255,0.72)",
+    ),
+    (
+        0.175,
+        "The stack is cut into 41 content-adaptive tiles that stream "
+        "independently and are culled when off screen. While tiles are still "
+        "arriving, neighbours can sit at different detail and read as "
+        "rectangular patches; they converge as the rest loads.",
+        "rgba(255,255,255,0.55)",
+    ),
+    (
+        0.26,
+        "Press L for the Layers panel: the partition_boxes layer outlines the "
+        "41 tiles, and the nuclei layer holds the display controls.",
+        "rgba(255,255,255,0.42)",
+    ),
+)
 
 
 def partition_box_lines(node: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -536,6 +567,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: Zebrafish Embryo (h2afva stack)"
             scene.attrs["description"] = (
                 "Zebrafish embryo nuclei (histone H2A variant label), one stack from "
@@ -620,6 +652,20 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
+            # What the frame is, and why it can look tiled (2026-09-10 review:
+            # "no explanation of what we are looking at and why there are
+            # boxes"). Word-wrapped paragraphs, one per call: a `\n` inside a
+            # non-hover overlay collapses to a space.
+            for y, text, colour in EXPLAINER_LINES:
+                scene.add_text(
+                    text,
+                    position=(0.02, y),
+                    font_size=0.019,
+                    anchor="top-left",
+                    color=colour,
+                    width=0.52,
+                    line_height=1.35,
+                )
             add_demo_caption(
                 scene,
                 "Light-sheet • histone-labelled nuclei",

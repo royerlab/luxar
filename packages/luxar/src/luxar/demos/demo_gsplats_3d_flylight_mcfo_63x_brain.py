@@ -188,6 +188,7 @@ from luxar.demos import (
     launch_viewer,
     local_fit_path,
     parse_demo_flags,
+    stamp_input_digests,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._h5j import (
@@ -939,6 +940,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 ),
                 citation=DEMO_META["citation"],
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: Drosophila Whole Brain (FlyLight MCFO)"
             scene.attrs["description"] = (
                 "A whole female Drosophila central brain and optic lobes labelled by "

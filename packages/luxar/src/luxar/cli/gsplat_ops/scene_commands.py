@@ -118,6 +118,7 @@ def convert_to_scene(
         from luxar.core.viewer_config import VALID_TONE_MAPPINGS, ViewerConfig
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import resolve_amplitude_bits
         from luxar.gsplats.tree import center_bounds, is_matrix_shaped
 
         # Validate + assemble appearance attrs (only forward what was set).
@@ -163,8 +164,11 @@ def convert_to_scene(
                 # ladder / kind=lod of leaves) round-trips through GSplatData and
                 # supports --center / --scale-intensity. A partition / nested tree
                 # has no flat GSplatData equivalent: it is grafted node-for-node.
-                node, _ = load_gsplat_node(input_path)
+                node, stats = load_gsplat_node(input_path, include_stats=True)
                 matrix = is_matrix_shaped(node)
+                amplitude_bits = resolve_amplitude_bits(
+                    "auto", source_dtype=stats.get("source_dtype")
+                )
 
             if matrix:
                 data = GSplatData.from_tree(node)
@@ -178,9 +182,13 @@ def convert_to_scene(
                     data = data.scale_intensity(scale_intensity)
 
                 with asection("Creating Luxar scene"):
-                    dims = build_dimensions_from_data(data.centers)
+                    dims = build_dimensions_from_data(
+                        data.centers, node.meta.get("dimension_metadata")
+                    )
                     with LuxarZarrCompiler(
-                        output_path, encoding_mode=_resolve_encoding_mode(encoding)
+                        output_path,
+                        encoding_mode=_resolve_encoding_mode(encoding),
+                        gsplat_amplitude_bits=amplitude_bits,
                     ) as compiler:
                         scene = compiler.create_scene(
                             dimensions=dims, viewer_config=viewer_config
@@ -223,9 +231,13 @@ def convert_to_scene(
                 box = np.array([bmin, bmax], dtype=np.float32)
 
                 with asection("Creating Luxar scene"):
-                    dims = build_dimensions_from_data(box)
+                    dims = build_dimensions_from_data(
+                        box, node.meta.get("dimension_metadata")
+                    )
                     with LuxarZarrCompiler(
-                        output_path, encoding_mode=_resolve_encoding_mode(encoding)
+                        output_path,
+                        encoding_mode=_resolve_encoding_mode(encoding),
+                        gsplat_amplitude_bits=amplitude_bits,
                     ) as compiler:
                         scene = compiler.create_scene(
                             dimensions=dims, viewer_config=viewer_config
@@ -403,7 +415,7 @@ def reencode_command(
         from luxar.gsplats.tree import total_splats
 
         with asection(f"Re-encoding {input_path.name} → {encoding}"):
-            node, _ = load_gsplat_node(input_path)
+            node, stats = load_gsplat_node(input_path, include_stats=True)
 
             # Preserve the aux provenance groups verbatim (write_gsplats_tree
             # drops them unless re-supplied). Read from the on-disk root; for
@@ -422,18 +434,20 @@ def reencode_command(
                 if "provenance" in root:
                     provenance_info = dict(root["provenance"].attrs)
 
-            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+            from luxar.gsplats.io.load_gsplats import read_rebuild_root_attrs
 
             write_gsplats_tree(
                 output_path,
                 node,
                 ordering=ordering,
                 encoding_mode=_resolve_encoding_mode(encoding),
+                amplitude_bits="auto",
+                source_dtype=stats.get("source_dtype"),
                 pipeline_info=pipeline_info,
                 fitting_info=fitting_info,
                 fitting_config=fitting_config,
                 provenance_info=provenance_info,
-                root_attrs=read_authored_appearance(input_path),
+                root_attrs=read_rebuild_root_attrs(input_path),
             )
 
             # Read-back verify — a loadable current-format file, not blind success.

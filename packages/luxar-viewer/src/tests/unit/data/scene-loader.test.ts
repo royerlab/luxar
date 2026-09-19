@@ -370,6 +370,18 @@ describe('SceneLoader', () => {
       expect(sceneLoader.isAtViewState(stored)).toBe(true);
     });
 
+    it('does not report a pinned-depth pass as the settled view either', async () => {
+      const committed = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.5],
+      } satisfies ViewState;
+
+      await sceneLoader.updateView({ ...committed, ladderDepth: 2 });
+      const stored = (sceneLoader as unknown as { viewState: ViewState }).viewState;
+      expect(sceneLoader.isAtViewState(stored)).toBe(false);
+    });
+
     beforeEach(async () => {
       // Load a scene first
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
@@ -1297,6 +1309,23 @@ describe('SceneLoader', () => {
       const vs = (sceneLoader as unknown as { viewState: { prefetch?: boolean } }).viewState;
       expect(vs.prefetch).toBeUndefined();
     });
+
+    it('does NOT persist the transient `ladderDepth` directive into the view state', async () => {
+      // A pinned playback depth is a per-pass directive like `frameBudgetMs`:
+      // leaking it would keep every later foreground pass pinned (and idle the
+      // refinement scheduler) after playback ends.
+      await sceneLoader.updateView({ slicePosition: [0, 0, 0, 4], ladderDepth: 3 });
+      const vs = (sceneLoader as unknown as { viewState: { ladderDepth?: number } }).viewState;
+      expect(vs.ladderDepth).toBeUndefined();
+    });
+
+    it('prefetchSlice strips an incoming ladderDepth rider and passes the explicit one through', () => {
+      const before = JSON.stringify((sceneLoader as unknown as { viewState: unknown }).viewState);
+      sceneLoader.prefetchSlice({ slicePosition: [9, 9, 9, 9], ladderDepth: 99 }, 10, 4);
+      expect(JSON.stringify((sceneLoader as unknown as { viewState: unknown }).viewState)).toBe(
+        before
+      );
+    });
   });
 
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
@@ -1795,6 +1824,39 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('format-version policy (shared with the Python reader)', () => {
+    // The policy itself is pinned by format-version.test.ts (same case table
+    // as typing_utils/tests/test_format_version.py). These assert the SEAM:
+    // that loadScene actually routes the root attrs through it, so a refused
+    // version reaches the dataset-error overlay and a newer minor only toasts.
+    it('refuses a newer-major scene (9.9) naming the version', async () => {
+      mockZarrGroup.attrs = { ...mockZarrGroup.attrs, type: 'scene', format_version: '9.9' };
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).rejects.toThrow(
+        /9\.9/
+      );
+    });
+
+    it('refuses an unparsable scene version (abc)', async () => {
+      mockZarrGroup.attrs = { ...mockZarrGroup.attrs, type: 'scene', format_version: 'abc' };
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).rejects.toThrow(/abc/);
+    });
+
+    it('loads a newer-minor scene (0.3) with a toast instead of refusing', async () => {
+      mockZarrGroup.attrs = { ...mockZarrGroup.attrs, type: 'scene', format_version: '0.3' };
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).resolves.toBeDefined();
+      expect(notifierMocks.toast).toHaveBeenCalledWith(expect.stringContaining('0.3'), 6000);
+    });
+
+    it('loads a legacy 0.1 root (luxar_version only) silently', async () => {
+      mockZarrGroup.attrs = { ...mockZarrGroup.attrs, type: 'scene', luxar_version: '0.1' };
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).resolves.toBeDefined();
+      expect(notifierMocks.toast).not.toHaveBeenCalledWith(
+        expect.stringContaining('format'),
+        expect.anything()
+      );
+    });
+  });
+
   describe('retryAllFailedLoaders — deferred vs failed', () => {
     it('flags a lock-refused batch as deferred:true (nothing was retried)', async () => {
       // Regression: the deferred branch returned {succeeded:[], failed:<all>}
@@ -1936,6 +1998,19 @@ describe('SceneLoader', () => {
       internals.registry.recordFailure('/points/a', undefined as unknown as Error);
 
       expect(internals.makeLoadSceneCtx().getFailedLoaderReasons()).toEqual(['Unexpected']);
+    });
+
+    it('finds only network failures under the requested path boundary', () => {
+      const internals = sceneLoader as unknown as FailInternals;
+      internals.registry.recordFailure('/g/level_0', new Error('HTTP 503 fetching chunk'));
+      internals.registry.recordFailure('/g2/level_0', new Error('HTTP 503 fetching chunk'));
+      internals.registry.recordFailure('/g/level_1', new Error('invalid chunk'), 'Decode');
+
+      expect(sceneLoader.hasNetworkFailureUnder('/g')).toBe(true);
+      expect(sceneLoader.hasNetworkFailureUnder('/g2')).toBe(true);
+      expect(sceneLoader.hasNetworkFailureUnder('/')).toBe(true);
+      expect(sceneLoader.hasNetworkFailureUnder('/missing')).toBe(false);
+      expect(sceneLoader.hasNetworkFailureUnder('/g/level_1')).toBe(false);
     });
 
     it('surfaces and retries an archive fault with no recorded node failure', async () => {
@@ -2545,7 +2620,7 @@ describe('SceneLoader', () => {
       );
       expect(getLoadTimeline().refinement.complete).toBe(true);
       expect(getLoadTimeline().milestones.refinementComplete).toBeUndefined();
-    }, 15000);
+    });
 
     it('should handle enumeration failures gracefully', async () => {
       // [data.md/W6][P2] Strengthen: pin the fallback contract explicitly.

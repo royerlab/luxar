@@ -36,6 +36,10 @@ content-box worker at that store.
 every preset, `standard` included, sets 0.999; 0 keeps all). The older "0.95 for
 uniform tiles, 0.999 for content boxes" split never existed in the batch path.
 
+Output coordinates remain in index space by default. `--physical` opts both
+`batch-fit run` and `batch-fit submit` into the selected OME-Zarr NGFF spatial
+scale; a config-supplied `voxel_size` takes precedence over discovered spacing.
+
 Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 (t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
 volume's M non-empty tiles (`ceil(K/M)`, floored at 1) instead of fitting K per
@@ -146,13 +150,13 @@ Every subcommand: `--dry-run` shows the plan without submitting/fitting.
 | `--preemptible-concurrent` | =max-concurrent | concurrency on preemptible partition |
 | `--account` / `-A`, `--qos` | none | Slurm account / QoS |
 | `--gpus-per-task` | 1 | GPU COUNT per task (distinct from local `run --gpus`, which selects devices) |
-| `--cpus` | 4 | CPUs per task |
-| `--mem` | 32 | GB per task |
+| `--cpus` | 4 | CPUs per fit task; parallel requests multiply this by resolved packing |
+| `--mem` | 32 | GB per fit task; parallel requests multiply this by resolved packing |
 | `--time` | auto | wall time per task (HH:MM:SS); auto-estimated otherwise |
 | `--gpu` | auto | GPU name from profile |
 | `--gpu-mem` | none | target GPU memory GB (picks closest profile) |
 | `--tasks-per-job` | auto | fit tasks packed per Slurm job |
-| `--parallel` / `--sequential` | sequential | run packed tasks concurrently on one GPU |
+| `--parallel` / `--sequential` | sequential | run packed tasks concurrently, pinned round-robin across allocated GPUs |
 | `--preprocess` / `--no-preprocess` | off | write denoised volumes to zarr before fitting |
 
 ## `batch-fit run INPUT OUTPUT` — local-only flags
@@ -160,7 +164,7 @@ Every subcommand: `--dry-run` shows the plan without submitting/fitting.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--gpus` | auto | `auto` (cards above a free-VRAM floor) / `all` / `cpu` / `0,1,3` |
-| `--jobs-per-gpu` | auto | concurrent workers per GPU (auto sizes from free VRAM) |
+| `--jobs-per-gpu` | auto | concurrent workers per GPU (auto accounts for GPU memory plus shared host RAM/CPU limits) |
 | `--no-resume` | off | re-fit every task even if its output exists (default: resume) |
 
 Local runner always denoises on-the-fly per tile (no `--preprocess`).

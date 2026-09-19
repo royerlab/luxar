@@ -13,24 +13,41 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    One leaf of 121,163,285 splats carrying a 12-rung progressive (stream)
-    ladder. The viewer paints the first rung immediately and refines as the rest
-    arrive; the stacked time axis is a hard coarsening barrier, so no splat ever
-    blends two timepoints together.
+    The pinned archive is one leaf of 121,163,285 splats with a four-rung
+    progressive ladder. The SCENE does not graft that leaf as-is: at build time
+    it is re-authored (no refit — the splats are untouched) into a
+    ``kind=partition`` of **one part per timepoint**, 51 parts, each carrying
+    its own eight-rung equal-count ladder: a first rung of at least 1/8 of that
+    timepoint, with every per-part increment below 900,000. No substitutive
+    levels anywhere. On the 2,217,045-splat reference frame, rung 0 grows from
+    the former 20,833 splats (0.63 MB) to 277,131 splats (8.31 MB at 30 B/splat),
+    about 2.7 seconds on a cold part at 25 Mbps.
 
-    This archive USED to be a ``kind=partition`` of 44 parts, each an LOD group
-    of four substitutive levels. Both structures were removed deliberately:
+    Why time parts (measured 2026-09-10 with the former capped-stream recipe
+    against the single sliced leaf and 44 spatial parts, all at the same
+    chunking):
 
-      - A partition has no viewer-side selector — ``load-partition-group-node``
-        keeps every child visible — so 44 parts cost 44+ requests per view and
-        bought culling the viewer never performed. Parts are load-bearing only
-        against the per-node element cap, and this node is sliced on the hidden
-        time axis, so only one timepoint's ~2.4M splats are ever resident.
-      - The substitutive levels were the same splats at coarser merges, i.e.
-        pure download weight for a node that is never seen whole.
+      - A time step is exactly one part. Nothing from other timepoints is
+        fetched, the part's first rung paints at once, and its ladder is sized
+        against that timepoint alone — so no slice is ever starved. The single
+        leaf's global ladder re-streamed from its bottom on every slice and left
+        3-27% of the frame resident while a step loaded; spatial parts kept
+        more on screen but paid ~30 MB per step because each part was still
+        sliced by time.
+      - The parts double as the frustum-independent grouping the viewer's
+        per-node element cap wants; only one of them is ever resident.
 
-    Dropping both and re-chunking took the archive from 1.87 GB to 1.12 GB and
-    from 173 requests per timepoint step to 2, at identical finest-level content.
+    The re-authored partition is cached next to the download
+    (``~/.cache/luxar/h2afva/51tp_timeparts_v<N>_<digest>/``) and rebuilt when
+    the archive or the recipe changes. Building it peaks around 30 GB RSS at
+    121M splats and takes about 30 minutes of CPU.
+
+    HISTORY: this archive USED to be a ``kind=partition`` of 44 SPATIAL parts,
+    each an LOD group of four substitutive levels; both were dropped
+    (2026-08) because a partition has no viewer-side selector and the
+    substitutive levels were pure download weight for a node never seen
+    whole. Time parts are a different thing: each is a complete frame, and the
+    viewer's hidden-axis slice selects exactly one.
 
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). Raw acquisition:
@@ -75,9 +92,17 @@ PIPELINE — reproducible with ``--recompute``:
        shape. Not ``gsplat slice``: that takes ranges, not a stride, and refuses
        a partition.
     3. ``gsplat flatten`` — collapse to one leaf, keeping the finest level.
-    4. ``gsplat lod --recipe stream --target-ms 200`` — put the progressive
-       ladder back (flatten drops it), sized for a ~200 ms first paint.
-    5. ``luxar optimise --profile archive`` — re-chunk. LAST, because step 4
+    4. ``gsplat lod --recipe stream --n-lods 4`` — put the progressive ladder
+       back (flatten drops it): four equal-count rungs, so rung 0 is a quarter
+       of the node. The 2026-08 archive used ``--target-ms 200`` (12 rungs,
+       sized against the whole node); on a node the viewer slices per timepoint
+       a target-ms ladder starves rung 0 (whole-node sizing) or, sized per
+       slice as the CLI now does, leaves rung 0 under 1 % of the node, and
+       ``check-demo-ladders`` refuses both (10 % share floor on a sliced node).
+       Four rungs satisfy that floor, but the current gate still rejects the
+       ladder under its slice-unaware 1,000,000-element commit cap; #2699 tracks
+       that auditor defect.
+    5. ``luxar optimize --profile archive`` — re-chunk. LAST, because step 4
        adds arrays that also want the 1 MB layout.
 
     Steps 2 and 3 are in that order for a memory reason, not a stylistic one:
@@ -101,13 +126,12 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei, 121M splats streamed progressively over a "
-        "12-rung ladder."
+        "of histone-labelled nuclei, 121M splats streamed frame by frame."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 1064,
+        "download_mb": 1061,
         "compute": "light",
         "gpu": "none",
         "local_data": None,
@@ -122,6 +146,7 @@ DEMO_META = {
     },
 }
 
+import hashlib
 import shutil
 from pathlib import Path
 from typing import Any
@@ -131,6 +156,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import read_node_attrs
+from luxar.core.group.lod.group import DEFAULT_LADDER_TARGET_MS
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
@@ -139,11 +165,30 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
+    window_attrs,
 )
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io._archive import read_archive_root_attrs
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
+from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+from luxar.gsplats.lod.additive import make_additive_lod
 from luxar.gsplats.restride import restride_stacked_axis
-from luxar.gsplats.tree import center_bounds, iter_leaves
+from luxar.gsplats.tree import (
+    GSplatLeaf,
+    GSplatLodGroup,
+    GSplatPartition,
+    center_bounds,
+    iter_leaves,
+)
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_MAX_ADDITIVE_COMMIT,
+    DEFAULT_SLICED_LADDER_MAX_DEPTH,
+    capped_stream_cuts,
+    estimate_bytes_per_splat,
+    streaming_chunk_splats,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -186,11 +231,10 @@ PARENT_FINEST_SPLATS = 602_580_152
 #: ladder built by a fixed rule), so unlike a refit this admits no drift
 #: tolerance. A mismatch means the parent or the stride changed.
 EXPECTED_SPLATS = 121_163_285
-#: Progressive rungs recorded on the shipped one-leaf archive.
-EXPECTED_RUNGS = 12
-#: Progressive-ladder budget: the first rung is sized to roughly this many
-#: milliseconds of download at the CLI's default assumed bandwidth.
-LADDER_TARGET_MS = 200
+#: Progressive rungs of the one-leaf archive (equal-count ladder, step 4).
+EXPECTED_RUNGS = 4
+#: Equal-count progressive ladder; see step 4 for why not a target-ms budget.
+LADDER_N_LODS = 4
 #: Chunk profile. `archive` (1 MB) rather than `hosting` (256 KB) because this
 #: node is read a whole timepoint at a time, and the measured cost of the
 #: as-built layout was 173 requests per timepoint step against 2 after.
@@ -202,9 +246,36 @@ CHUNK_PROFILE = "archive"
 ARCHIVE_BLENDING_MODE = "volumetric"
 ARCHIVE_ABSORPTION = 1.34
 
+# ---- Scene-time re-authoring into time parts (variant B, 2026-09-10) --------
+#: Bump when the time-part recipe changes (ladder rule, encoding, part layout);
+#: the cache directory name carries it, so an old build is never reused.
+TIME_PARTS_VERSION = 2
+#: Lower bound for a part's first rung before the played-part share floor.
+FIRST_RUNG_SPLATS = streaming_chunk_splats(
+    DEFAULT_LADDER_TARGET_MS,
+    DEFAULT_BANDWIDTH_MBPS,
+    estimate_bytes_per_splat(ndim=4, has_colors=False),
+)
+#: Maximum equal-count depth for a partition stepped one part per played tick.
+TIME_PART_LADDER_MAX_DEPTH = DEFAULT_SLICED_LADDER_MAX_DEPTH
+#: Contribution ordering inside each part's ladder: the brightest nuclei first,
+#: so the 1/e(k) brightening of an incomplete ladder shows a dimmer version of
+#: the SAME frame rather than a random subset of it.
+LADDER_METHOD = "self_energy"
+
+# ---- Layer appearance (Loic's Layers-panel values, 2026-09-10, on variant B) --
+#: DISPLAY RANGE 0.001 - 0.025 on a colormapped node is the LUT window, stored
+#: as intensity = 1/(hi-lo) and offset = -lo/(hi-lo).
+DISPLAY_WINDOW = (0.001, 0.025)
+LAYER_GAMMA = 2.2
+LAYER_OPACITY = 0.55
+LAYER_ABSORPTION = 1.09
+LAYER_BLENDING = "volumetric"
+LAYER_COLORMAP = "plasma"
+
 
 def _validate_rebuilt_archive(node: Any) -> int:
-    """Require the recorded one-leaf, twelve-rung archive shape."""
+    """Require the recorded one-leaf, four-rung archive shape."""
     leaves = list(iter_leaves(node))
     if len(leaves) != 1:
         raise RuntimeError(f"rebuild produced {len(leaves)} leaves, expected one")
@@ -335,13 +406,13 @@ def recompute_archive(work_dir: Path) -> Path:
             str(laddered),
             "--recipe",
             "stream",
-            "--target-ms",
-            str(LADDER_TARGET_MS),
+            "--n-lods",
+            str(LADDER_N_LODS),
         )
         # Re-chunk LAST: the ladder above adds arrays that also want the archive
         # layout, and leaving them as-built is the 173-requests-per-step case.
         run_luxar_cli(
-            "optimise",
+            "optimize",
             str(laddered),
             str(final),
             "--profile",
@@ -372,8 +443,174 @@ def resolve_data() -> Path:
         return paths[0]
 
 
+def _finest_data(node: Any) -> list[GSplatData]:
+    """Finest-level content of every matrix-shaped subtree, as flat data.
+
+    A leaf or a ``kind=lod`` group yields one entry (the group's finest level);
+    a partition recurses. The pinned archive is a single leaf, the historical
+    44-part archive a partition of lod groups — both are accepted.
+    """
+    if isinstance(node, (GSplatLeaf, GSplatLodGroup)):
+        return [GSplatData.from_tree(node)]
+    if isinstance(node, GSplatPartition):
+        out: list[GSplatData] = []
+        for child in node.children:
+            out.extend(_finest_data(child))
+        return out
+    raise TypeError(f"unsupported gsplat node {type(node).__name__}")
+
+
+def time_part_ladders(n_per_part: list[int], *, part_count: int) -> list[list[int]]:
+    """Cumulative equal-count cuts per played part, under the commit cap."""
+    if part_count <= 1:
+        return [
+            capped_stream_cuts(n, FIRST_RUNG_SPLATS, DEFAULT_MAX_ADDITIVE_COMMIT)
+            for n in n_per_part
+        ]
+
+    ladders: list[list[int]] = []
+    for part_elements in n_per_part:
+        raw = sorted(
+            {
+                -(-(index + 1) * part_elements // TIME_PART_LADDER_MAX_DEPTH)
+                for index in range(TIME_PART_LADDER_MAX_DEPTH)
+            }
+        )
+        cuts = [cut for cut in raw if 0 < cut < part_elements]
+        cuts.append(part_elements)
+        increments = [
+            cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts, strict=True)
+        ]
+        largest = max(increments, default=0)
+        if largest > DEFAULT_MAX_ADDITIVE_COMMIT:
+            raise ValueError(
+                f"Time part with {part_elements:,} splats cannot carry an equal-count "
+                f"1/{TIME_PART_LADDER_MAX_DEPTH} first rung within the "
+                f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-splat per-part commit cap; use "
+                "fewer rungs (TIME_PART_LADDER_MAX_DEPTH) or split the frame "
+                "spatially"
+            )
+        ladders.append(cuts)
+    return ladders
+
+
+def time_parts_cache_dir(data_path: Path) -> Path:
+    """Where the re-authored partition lives, keyed on source metadata and recipe."""
+    stat = data_path.stat()
+    key = hashlib.sha1(
+        f"{data_path.name}|{stat.st_size}|{int(stat.st_mtime)}|"
+        f"{TIME_PARTS_VERSION}|{FIRST_RUNG_SPLATS}|"
+        f"{TIME_PART_LADDER_MAX_DEPTH}|{LADDER_METHOD}".encode()
+    ).hexdigest()[:10]
+    return data_path.parent / f"51tp_timeparts_v{TIME_PARTS_VERSION}_{key}"
+
+
+def build_time_parts(data_path: Path, out_path: Path) -> Path:
+    """Re-author the archive as one laddered part per timepoint (no refit).
+
+    Reads the finest content, splits it on the stacked time column, gives every
+    part its own capped equal-count ladder and writes a ``kind=partition``
+    archive. Splat count is preserved exactly; only the grouping and the
+    ladders change.
+    """
+    with asection("Re-authoring into time parts"):
+        node, _ = load_gsplat_node(str(data_path))
+        finest = _finest_data(node)
+        if len(finest) == 1:
+            centers = np.asarray(finest[0].centers)
+            amplitudes = np.asarray(finest[0].amplitudes)
+            cholesky = np.asarray(finest[0].cholesky_factors)
+        else:
+            centers = np.concatenate([np.asarray(d.centers) for d in finest], axis=0)
+            amplitudes = np.concatenate([np.asarray(d.amplitudes) for d in finest])
+            cholesky = np.concatenate(
+                [np.asarray(d.cholesky_factors) for d in finest], axis=0
+            )
+        has_colors = all(d.colors is not None for d in finest)
+        if not has_colors:
+            colors = None
+        elif len(finest) == 1:
+            colors = np.asarray(finest[0].colors)
+        else:
+            colors = np.concatenate([np.asarray(d.colors) for d in finest], axis=0)
+        truncation = float(finest[0].truncation_radius)
+        total = int(centers.shape[0])
+        del finest
+        times, part_counts = np.unique(centers[:, TIME_COL], return_counts=True)
+        aprint(f"{total:,} splats over {times.size} timepoints")
+
+        parts: list[Any] = []
+        counts = [int(count) for count in part_counts]
+        ladders = time_part_ladders(counts, part_count=len(counts))
+        for t, expected_count, breakpoints in zip(times, counts, ladders, strict=True):
+            mask = centers[:, TIME_COL] == t
+            part = GSplatData(
+                centers=centers[mask],
+                amplitudes=amplitudes[mask],
+                cholesky_factors=cholesky[mask],
+                colors=None if colors is None else colors[mask],
+                truncation_radius=truncation,
+            )
+            if part.n_splats != expected_count:
+                raise RuntimeError(
+                    f"time part {t:g} holds {part.n_splats:,} splats, "
+                    f"counted {expected_count:,}"
+                )
+            laddered = make_additive_lod(
+                part,
+                method=LADDER_METHOD,
+                breakpoints=breakpoints,
+            )
+            parts.append(laddered.tree)
+        del centers, amplitudes, cholesky, colors
+        if sum(counts) != total:
+            raise RuntimeError(
+                f"time parts hold {sum(counts):,} splats, source {total:,}"
+            )
+        root_attrs = _read_source_attrs(data_path)
+        keep = ("source_stride", "source_timepoints", "stacked_axis_renumbered")
+        meta = {k: root_attrs[k] for k in keep if k in root_attrs}
+        if out_path.exists():
+            shutil.rmtree(out_path)
+        write_gsplats_tree(
+            out_path,
+            GSplatPartition(children=parts, max_elements=max(counts), meta=meta),
+            barrier_dims=[TIME_COL],
+            pipeline_info={
+                "recipe": "time_parts_equal_count",
+                "source": data_path.name,
+                "n_lods": TIME_PART_LADDER_MAX_DEPTH,
+                "max_commit": DEFAULT_MAX_ADDITIVE_COMMIT,
+                "ladder_method": LADDER_METHOD,
+                "parts": len(parts),
+            },
+            root_attrs={
+                **meta,
+                "blending_mode": ARCHIVE_BLENDING_MODE,
+                "absorption": ARCHIVE_ABSORPTION,
+            },
+        )
+        aprint(f"{len(parts)} time parts, largest {max(counts):,} splats -> {out_path}")
+        return out_path
+
+
+def resolve_time_parts(data_path: Path, cache_dir: Path | None = None) -> Path:
+    """Return the cached time-part partition for ``data_path``, building it once."""
+    cache = time_parts_cache_dir(data_path) if cache_dir is None else cache_dir
+    if cache_dir is None:
+        for stale in data_path.parent.glob("51tp_timeparts_v*_*"):
+            if stale != cache and stale.is_dir():
+                shutil.rmtree(stale, ignore_errors=True)
+    out = cache / "h2afva_51tp_timeparts.gsplats.zarr"
+    if out.exists() and not RECOMPUTE:
+        aprint(f"time parts cached: {out}")
+        return out
+    cache.mkdir(parents=True, exist_ok=True)
+    return build_time_parts(data_path, out)
+
+
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
-    """Build the 4D scene by grafting the progressively-laddered leaf."""
+    """Build the 4D scene: re-author into time parts, then graft the partition."""
     with asection("Creating h2afva timelapse scene"):
         node, _ = load_gsplat_node(str(data_path))
         bmin, bmax = center_bounds(node)
@@ -439,54 +676,40 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: Zebrafish Embryogenesis (h2afva timelapse)"
             scene.attrs["description"] = (
                 f"Zebrafish embryo nuclei (histone H2A variant label) across "
                 f"{n_frames} timepoints of the zebrahub h2afva light-sheet "
                 f"recording — every {SOURCE_STRIDE}th frame of 253 — fitted as "
-                "121M Gaussian splats streamed over a 12-rung progressive "
-                "ladder, so the first frame paints immediately and refines. The "
-                "time axis is a coarsening barrier, so no splat blends two "
-                "timepoints. Step Time to watch the body axis form. Press L for "
-                "the Layers panel."
+                "121M Gaussian splats authored as one part per timepoint, each "
+                "with its own progressive ladder, so every frame paints its "
+                "brightest nuclei immediately and refines. Step Time to watch "
+                "the body axis form. Press L for the Layers panel."
             )
 
-            with asection(f"Adding gsplats (streamed leaf, {n_frames} frames)"):
-                # Keep the additive mode used for the validated gallery build.
-                # It mattered more when this was a 44-part partition with no BSP
-                # split planes (parts could only be centroid-ordered, and
-                # volumetric compositing popped at their seams); on one leaf the
-                # reason is simply that the gallery stills were approved on it.
+            parts_path = resolve_time_parts(data_path)
+            with asection(f"Adding gsplats ({n_frames} time parts, laddered)"):
+                window = window_attrs(DISPLAY_WINDOW)
                 scene.add_gsplats_from_file(
                     name="zebrafish_nuclei_4d",
-                    path=str(data_path),
-                    blending_mode="additive",
-                    # `plasma`, as on the single-stack companion: its
-                    # yellow-to-magenta ramp keeps the bright nuclei distinct
-                    # from the dimmer body signal behind them.
-                    colormap="plasma",
+                    path=str(parts_path),
+                    # Loic's Layers-panel values on the time-part build
+                    # (2026-09-10): volumetric compositing with a moderate
+                    # absorption so the near half of the embryo reads in front of
+                    # the far half, `plasma` as on the single-stack companion.
+                    blending_mode=LAYER_BLENDING,
+                    absorption=LAYER_ABSORPTION,
+                    opacity=LAYER_OPACITY,
+                    colormap=LAYER_COLORMAP,
                     # On a COLORMAPPED node `intensity`/`offset` ARE the scalar
                     # window feeding the LUT (`intensity = 1/(hi-lo)`,
-                    # `offset = -lo/(hi-lo)`), not a colour gain.
-                    #
-                    # Measured on this fit's DECODED amplitudes, not copied from
-                    # the companion: p50 0.00050, p90 0.0036, p99 0.032,
-                    # p99.9 0.057, peak 0.200. Far more skewed than the
-                    # companion's data, so reusing its relative window
-                    # (0.001-0.111 of a 0.146 peak) put p99.9 in the bottom
-                    # third of the LUT and the embryo rendered near-black.
-                    #
-                    # Window = p50 .. p99.9, chosen by rendering both.
-                    #
-                    # A p90 floor was tried on the theory that the dim 90% was
-                    # haze flattening the silhouette at tile size. It rendered
-                    # WORSE — dimmer and bluer, with less structure. The dim
-                    # splats are body signal, not a veil to remove. Measured
-                    # amplitudes: p50 0.00050, p90 0.0036, p99 0.032,
-                    # p99.9 0.057, peak 0.200.
-                    intensity=17.57,
-                    offset=-0.00879,
-                    gamma=2.2,
+                    # `offset = -lo/(hi-lo)`), not a colour gain. The window is
+                    # DISPLAY_WINDOW = 0.001 .. 0.025 of the decoded amplitudes
+                    # (p50 0.00050, p90 0.0036, p99 0.032, p99.9 0.057).
+                    intensity=window["intensity"],
+                    offset=window["offset"],
+                    gamma=LAYER_GAMMA,
                     # Grafting carries none of the archive's root attrs, so the
                     # layer flag must be authored here. `test_demo_layers` also
                     # reads the module source to enforce that contract.
@@ -516,7 +739,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: Zebrafish Embryogenesis (h2afva timelapse)")
     aprint("=" * 70)
-    aprint("51 timepoints • 121M splats • 12-rung progressive ladder")
+    aprint("51 timepoints • 121M splats • one laddered part per timepoint")
     aprint("")
 
     output_path = get_demos_output_dir() / SCENE_NAME

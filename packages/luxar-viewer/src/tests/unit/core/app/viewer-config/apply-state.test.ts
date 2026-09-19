@@ -29,6 +29,7 @@ interface PortStubs {
   setDimensionValue: ReturnType<typeof vi.fn>;
   setDocumentTitle: ReturnType<typeof vi.fn>;
   startDimensionAnimation?: ReturnType<typeof vi.fn>;
+  setDefaultLadderDepth?: ReturnType<typeof vi.fn>;
 }
 
 function makePorts(
@@ -52,6 +53,7 @@ function makePorts(
     setDimensionValue: vi.fn(),
     setDocumentTitle: vi.fn(),
     startDimensionAnimation: overrides.startDimensionAnimation === false ? undefined : vi.fn(),
+    setDefaultLadderDepth: vi.fn(),
   };
 }
 
@@ -304,6 +306,41 @@ describe('applyViewerConfigState', () => {
       expect(() => applyViewerConfigState(config, asPorts(ports))).not.toThrow();
       expect(ports.setDocumentTitle).not.toHaveBeenCalled();
       expect(ports.setTheme).toHaveBeenCalledWith('dark');
+    });
+  });
+
+  describe('playback_lod_depth (authored playback detail)', () => {
+    it.each([
+      [4, 4],
+      [2.9, 2],
+      ['all', Infinity],
+      ['auto', 'auto'],
+      ['fast', null],
+    ] as Array<[unknown, number | 'auto' | null]>)('maps %j to %j', (raw, expected) => {
+      const ports = makePorts();
+      applyViewerConfigState({ playback_lod_depth: raw } as never, asPorts(ports));
+      expect(ports.setDefaultLadderDepth).toHaveBeenCalledWith(expected);
+    });
+
+    it.each([[undefined], [0], [-1], ['deep'], [{}]])(
+      'leaves the viewer default alone for %j',
+      (raw) => {
+        const ports = makePorts();
+        applyViewerConfigState({ playback_lod_depth: raw } as never, asPorts(ports));
+        expect(ports.setDefaultLadderDepth).not.toHaveBeenCalled();
+      }
+    );
+
+    it('is applied before the animation block so an opening play runs at the authored detail', () => {
+      const ports = makePorts();
+      const order: string[] = [];
+      ports.setDefaultLadderDepth!.mockImplementation(() => order.push('detail'));
+      ports.startDimensionAnimation!.mockImplementation(() => order.push('play'));
+      applyViewerConfigState(
+        { playback_lod_depth: 3, animation: [{}, {}, {}, { playing: true }] },
+        asPorts(ports)
+      );
+      expect(order).toEqual(['detail', 'play']);
     });
   });
 

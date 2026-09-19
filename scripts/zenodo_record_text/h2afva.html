@@ -4,7 +4,7 @@
 <h3>What is in this record</h3>
 <p>Two fits of the same acquisition are included. Neither carries substitutive detail levels any more: both hold their full-resolution splats with a progressive (streaming) ladder, so a viewer paints a coarse pass immediately and refines it as the rest arrives. The longer fit is additionally tiled in space, which lets a viewer fetch tiles independently.</p>
 <ul>
-<li><strong>51 timepoints</strong>, about 1.1 GB, as a single flat node. It holds 121,163,285 splats, roughly 2.38 million per timepoint, with a 12-rung progressive ladder for fast first paint. The substitutive levels the earlier build carried were removed: only the resident timepoint is ever committed, so coarser whole-object levels were never selected and cost 40% of the download for nothing. This is the lighter download and the one the Luxar demo fetches by default.</li>
+<li><strong>51 timepoints</strong>, about 1.1 GB, as a single flat node. It holds 121,163,285 splats, roughly 2.38 million per timepoint, with a 4-rung progressive ladder for fast first paint. The substitutive levels the earlier build carried were removed: only the resident timepoint is ever committed, so coarser whole-object levels were never selected and cost 40% of the download for nothing. This is the lighter download and the one the Luxar demo fetches by default.</li>
 <li><strong>253 timepoints</strong>, the complete acquisition, about 5.9 GB, in 44 spatial tiles, each with its own progressive ladder. It holds 602,580,152 splats, roughly 2.38 million per timepoint. The four substitutive levels an earlier build carried (149.4M, 37.0M and 9.2M splats above the finest) were removed for the same reason as in the shorter fit, taking the download from 9.3 GB to 5.9 GB with the full-resolution content unchanged splat for splat.</li>
 </ul>
 <p>The shorter fit covers every fifth timepoint of the same acquisition, frames 0, 5, ... 250, so it follows the whole developmental period at one fifth of the temporal sampling. Its time axis is renumbered 0 to 50, while the full fit keeps the acquisition numbering 0 to 252, so frame 7 of the short fit corresponds to frame 35 of the long one. The shorter fit is a strided slice of the longer one rather than an independent fit, so on the frames they share the two agree splat for splat. An earlier pair of independent fits did differ, by about 2.50 million against 2.38 million splats per timepoint at the finest level; slicing also puts the shorter fit's time axis back on a regular grid, which the encoder stores exactly.</p>
@@ -40,7 +40,7 @@ luxar demo # browse every demo that uses these files</pre>
 <td><code>h2afva_51tp.gsplats.zarr.zip</code></td>
 <td>1.1 GB</td>
 <td>121,163,285</td>
-<td>flat, 12 ladder rungs</td>
+<td>flat, 4 ladder rungs</td>
 </tr>
 </tbody>
 </table>

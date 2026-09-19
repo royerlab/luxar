@@ -1,4 +1,10 @@
-"""Auto-detect and capture the current execution environment for Slurm jobs."""
+"""Auto-detect and capture the current execution environment for Slurm jobs.
+
+Absent optional probes stay quiet; available probes that break emit one
+``RuntimeWarning`` and keep their fallback. Warnings are the intended channel
+because ``cli/main.py`` installs ``install_arbol_warnings()`` to render them as
+arbol lines.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +12,13 @@ import json
 import os
 import shlex
 import subprocess
+import sys
+import warnings
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
+from importlib.util import find_spec
 from pathlib import Path
+from types import FrameType
 from typing import Dict, List, Optional
 
 # Environment variables known to matter for CUDA/PyTorch workloads.
@@ -22,6 +33,25 @@ CURATED_ENV_VARS = [
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
 ]
+
+_warned_probe_failures: set[str] = set()
+
+
+def _warn_probe_failure_once(probe: str, exc: Exception) -> None:
+    """Report one unexpected probe failure while preserving its fallback."""
+    if probe in _warned_probe_failures:
+        return
+    _warned_probe_failures.add(probe)
+    stacklevel = 2
+    frame: FrameType | None = sys._getframe(1)
+    while frame is not None and frame.f_globals.get("__name__") == __name__:
+        stacklevel += 1
+        frame = frame.f_back
+    warnings.warn(
+        f"{probe} failed with {type(exc).__name__}: {exc}; using fallback.",
+        RuntimeWarning,
+        stacklevel=stacklevel,
+    )
 
 
 @dataclass
@@ -86,8 +116,12 @@ def get_slurm_scheduler_info() -> Dict:
                     info["max_array_size"] = int(stripped.split("=", 1)[1].strip())
                 except ValueError:
                     pass
-    except Exception:
-        pass
+    except FileNotFoundError:
+        pass  # Slurm is optional on local workstations and login environments.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
+    except Exception as exc:
+        _warn_probe_failure_once("get_slurm_scheduler_info", exc)
 
     # Note: we intentionally do NOT try to parse per-QOS job limits here.
     # Users may have multiple QOS (interactive, normal, etc.) with different
@@ -117,8 +151,31 @@ def is_slurm_mps_available() -> bool:
             if line.strip().startswith("GresTypes"):
                 gres_types = line.split("=", 1)[1].strip().lower()
                 return "mps" in [g.strip() for g in gres_types.split(",")]
-    except Exception:
-        pass
+    except FileNotFoundError:
+        pass  # No Slurm installation means MPS is simply unavailable.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
+    except Exception as exc:
+        _warn_probe_failure_once("is_slurm_mps_available", exc)
+    return False
+
+
+def _partition_has_gpu(partition: str) -> bool:
+    """Return whether ``sinfo`` reports GPU resources for a partition."""
+    try:
+        result = subprocess.run(
+            ["sinfo", "-p", partition, "--format=%G", "--noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return any("gpu:" in line.lower() for line in result.stdout.splitlines())
+    except FileNotFoundError:
+        pass  # A partial Slurm client install may omit sinfo.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
+    except Exception as exc:
+        _warn_probe_failure_once("_partition_has_gpu", exc)
     return False
 
 
@@ -180,21 +237,15 @@ def detect_preemptible_gpu_partition() -> Optional[str]:
 
         # Filter to partitions with GPU GRES
         for partition in candidates:
-            try:
-                sinfo = subprocess.run(
-                    ["sinfo", "-p", partition, "--format=%G", "--noheader"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                for gres_line in sinfo.stdout.splitlines():
-                    if "gpu:" in gres_line.lower():
-                        return partition
-            except Exception:
-                continue
+            if _partition_has_gpu(partition):
+                return partition
 
-    except Exception:
-        pass
+    except FileNotFoundError:
+        pass  # Slurm is optional; no scheduler means no preemptible partition.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
+    except Exception as exc:
+        _warn_probe_failure_once("detect_preemptible_gpu_partition", exc)
     return None
 
 
@@ -217,25 +268,91 @@ def validate_partition_access(partition: str) -> bool:
             if line.strip().lower() == "up":
                 return True
         return False
-    except Exception:
-        return False
+    except FileNotFoundError:
+        pass  # A partial Slurm client install may omit sinfo.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
+    except Exception as exc:
+        _warn_probe_failure_once("validate_partition_access", exc)
+    return False
+
+
+def get_partition_node_resources(partition: str) -> list[tuple[int, int]]:
+    """Return ``(cores, memory_mb)`` classes advertised by a partition."""
+    try:
+        result = subprocess.run(
+            [
+                "sinfo",
+                "--exact",
+                "-p",
+                partition,
+                "--states=idle,alloc,mix",
+                "--format=%c %m",
+                "--noheader",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        resources: list[tuple[int, int]] = []
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if len(fields) < 2:
+                continue
+            try:
+                cores = int(fields[0].removesuffix("+"))
+                memory_mb = int(fields[1].removesuffix("+"))
+            except ValueError:
+                continue
+            if cores > 0 and memory_mb > 0:
+                resources.append((cores, memory_mb))
+        return resources
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    except (OSError, RuntimeError, ValueError) as exc:
+        _warn_probe_failure_once("get_partition_node_resources", exc)
+        return []
+
+
+def _cuda_build_info_path() -> Optional[Path]:
+    """Return the optional CUDA build metadata path."""
+    try:
+        cuda_spec = find_spec("luxar.gsplats.models.gsplats.cuda")
+        if cuda_spec is None or cuda_spec.origin is None:
+            return None
+        return Path(cuda_spec.origin).parent / "cuda_build_info.json"
+    except ImportError:
+        return None  # The optional CUDA package or one of its dependencies is absent.
+    except Exception as exc:
+        _warn_probe_failure_once("_cuda_build_info_path", exc)
+        return None
 
 
 def read_cuda_build_info() -> Dict:
     """Return the CUDA build metadata written by build.py, or an empty dict."""
-    try:
-        import luxar.gsplats.models.gsplats.cuda as cuda_pkg
-
-        info_path = Path(cuda_pkg.__file__).parent / "cuda_build_info.json"
-    except Exception:
+    info_path = _cuda_build_info_path()
+    if info_path is None:
         return {}
     if info_path.exists():
         try:
             with open(info_path) as f:
                 return dict(json.load(f))
-        except Exception:
-            pass
+        except Exception as exc:
+            _warn_probe_failure_once("read_cuda_build_info", exc)
     return {}
+
+
+def _luxar_version() -> str:
+    """Return the installed Luxar version, or ``unknown`` when unavailable."""
+    try:
+        return version("luxar")
+    except PackageNotFoundError:
+        return "unknown"
+    except Exception as exc:
+        _warn_probe_failure_once("_luxar_version", exc)
+        return "unknown"
 
 
 def capture_environment() -> CapturedEnv:
@@ -293,12 +410,7 @@ def capture_environment() -> CapturedEnv:
             env.env_vars[var] = val
 
     # 6. Luxar version
-    try:
-        from importlib.metadata import version
-
-        env.luxar_version = version("luxar")
-    except Exception:
-        env.luxar_version = "unknown"
+    env.luxar_version = _luxar_version()
 
     return env
 

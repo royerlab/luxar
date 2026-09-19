@@ -89,23 +89,50 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Union,
 )
 
+import numpy as np
 from arbol import aprint
 
 from ....typing_utils.constants import (
+    DEFAULT_BLENDING_MODE_BY_GEOMETRY,
     DERIVED_LOD_SELECTOR,
     LEGACY_LOD_SELECTOR,
     LOD_SELECTORS,
 )
 from ....typing_utils.geometry_capabilities import require_lod_display_type
+from ....typing_utils.json_safe import json_safe_value
 from ....validation.types import validate_truncation_radius
+from ..compositing import is_broadcast_color, slice_optional_array
 from .reveal import is_reveal_additive_method, pop_reveal_knobs
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from ...node import Node
+
+
+def level_attrs_with_quality(attrs: Dict[str, Any], quality: float) -> Dict[str, Any]:
+    """Return child attrs with a finite measured substitutive quality stamp."""
+    result = dict(attrs)
+    raw_stats = result.get("level_stats")
+    stats_ok, safe_stats = json_safe_value({} if raw_stats is None else raw_stats)
+    if not stats_ok or not isinstance(safe_stats, dict):
+        raise TypeError("level_stats must be a JSON-safe mapping")
+    quality_ok, safe_quality = json_safe_value(float(quality))
+    if not quality_ok or not isinstance(safe_quality, (int, float)):
+        raise ValueError("quality must be finite")
+    result["level_stats"] = {**safe_stats, "quality": float(safe_quality)}
+    return result
+
+
+def _resolve_quality_stamps(kwargs: Dict[str, Any]) -> bool:
+    quality_stamps = kwargs.pop("quality_stamps", True)
+    if not isinstance(quality_stamps, bool):
+        raise TypeError(
+            "substitutive_lod quality_stamps must be bool; "
+            f"got {type(quality_stamps).__name__}"
+        )
+    return quality_stamps
 
 
 #: Upper bound on any ``coverage_fraction`` — the LEGACY ``selector="coverage"``
@@ -975,24 +1002,126 @@ def _validate_coarsen_dims_spec(value: Any) -> Any:
     )
 
 
-def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
+def _coarsen_data_to_scene(
+    dims: Any, n_cols: int, dim_order: Optional[Sequence[str]]
+) -> Optional[list[int]]:
+    """Return the scene-dimension index named by each input data column."""
+    if dim_order is not None:
+        # Decline malformed specs so their established errors remain owned by
+        # from_data._reject_before_wrapper and the adders' apply_dim_order_positions.
+        if (
+            dims is None
+            or len(dim_order) != n_cols
+            or len(set(dim_order)) != len(dim_order)
+        ):
+            return None
+        data_to_scene = []
+        for name in dim_order:
+            try:
+                data_to_scene.append(int(dims.get_index(name)))
+            except (KeyError, ValueError):
+                return None
+        return data_to_scene
+    return None
+
+
+def _displayed_data_columns(
+    dims: Any,
+    n_cols: int,
+    data_to_scene: Optional[list[int]],
+) -> Optional[list[int]]:
+    """Resolve displayed scene dimensions to the input columns being reduced."""
+    if data_to_scene is not None:
+        displayed_scene = set(dims.displayed)
+        return [
+            data_col
+            for data_col, scene_dim in enumerate(data_to_scene)
+            if scene_dim in displayed_scene
+        ]
+    if dims is not None and int(dims.ndim) == int(n_cols):
+        return [d for d in dims.displayed if 0 <= d < n_cols]
+    return None
+
+
+def _resolve_displayed_coarsen_dims(
+    dims: Any,
+    n_cols: int,
+    raw: Any,
+    data_to_scene: Optional[list[int]],
+) -> Optional[list[int]]:
+    """Resolve Auto/display specs, returning ``None`` for all-dims fallback."""
+    displayed = _displayed_data_columns(dims, n_cols, data_to_scene)
+    if displayed is None:
+        if raw == "display":
+            raise ValueError(
+                "coarsen_dims='display' requires positions aligned with the "
+                f"scene dims (got {n_cols} columns, scene ndim "
+                f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
+            )
+        return None
+    if not displayed and data_to_scene is not None:
+        if raw == "display":
+            raise ValueError(
+                "coarsen_dims='display': dim_order maps no displayed dimension"
+            )
+        return None
+    non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
+    return displayed if non_displayed else None
+
+
+def _coarsen_name_to_data_column(
+    dims: Any,
+    n_cols: int,
+    name: str,
+    data_to_scene: Optional[list[int]],
+) -> int:
+    """Resolve one scene dimension name to an input data-column index."""
+    if data_to_scene is not None:
+        scene_idx = int(dims.get_index(name))
+        try:
+            return data_to_scene.index(scene_idx)
+        except ValueError as exc:
+            raise ValueError(
+                f"coarsen_dims name {name!r} is not mapped by dim_order"
+            ) from exc
+    if dims is None or int(dims.ndim) != int(n_cols):
+        raise ValueError(
+            "coarsen_dims by name requires positions aligned with the "
+            f"scene dims (got {n_cols} columns, scene ndim "
+            f"{getattr(dims, 'ndim', '?')}). Pass explicit column indices."
+        )
+    return int(dims.get_index(name))
+
+
+def resolve_coarsen_dims(
+    scene: Any,
+    n_cols: int,
+    raw: Any,
+    *,
+    dim_order: Optional[Sequence[str]] = None,
+) -> Optional[tuple]:
     """Resolve a raw ``coarsen_dims`` spec into concrete center-column indices.
 
     ``scene`` supplies the dimension metadata; ``n_cols`` is the lifted gsplat
-    dimensionality (== the position columns being coarsened). Returns a sorted
-    tuple of allowed-coarsen column indices, or ``None`` meaning "coarsen over
-    all dims" (no barrier — the historical behavior).
+    dimensionality (== the position columns being coarsened). ``dim_order``,
+    when supplied, names those input columns in scene-dimension terms. Returns a
+    sorted tuple of allowed-coarsen column indices, or ``None`` meaning "coarsen
+    over all dims" (no barrier — the historical behavior).
 
     Default (``raw is None``) is **Auto**: coarsen over the scene's *displayed*
-    dims and group by the *non-displayed* dims. This only applies when the
-    positions are aligned with the scene (``n_cols == scene.ndim``); otherwise
-    (dim_order / extend_to_all reshaped the columns) Auto safely falls back to
-    all-dims. ``"display"`` is the explicit form of Auto and errors if unaligned;
-    ``"all"`` forces all-dims; a list resolves names via ``Dimensions.get_index``
-    and ints as direct column indices.
+    dims and group by the *non-displayed* dims. With ``dim_order``, scene names
+    are mapped back to the input columns being coarsened; without it, positions
+    must already be aligned 1:1 with the scene. ``"display"`` is the explicit
+    form of Auto and errors if alignment is unknown; ``"all"`` forces all-dims;
+    a list resolves names through the same mapping and ints as direct input
+    column indices. The mapping only changes the result when a non-displayed
+    dimension occupies a different input and scene column; permutations solely
+    among displayed dimensions resolve to the same set. Internally, ``None``
+    also means a malformed mapping was declined and left to
+    ``validate_dim_order_spec`` at the downstream write boundary.
     """
     dims = getattr(scene, "_dimensions", None) if scene is not None else None
-    aligned = dims is not None and int(dims.ndim) == int(n_cols)
+    data_to_scene = _coarsen_data_to_scene(dims, n_cols, dim_order)
 
     def _finalize(idxs: Any) -> Optional[tuple]:
         norm = sorted({int(i) for i in idxs})
@@ -1008,40 +1137,26 @@ def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
     if raw == "all":
         return None
     if raw is None or raw == "display":
-        if not aligned:
-            if raw == "display":
-                raise ValueError(
-                    "coarsen_dims='display' requires positions aligned with the "
-                    f"scene dims (got {n_cols} columns, scene ndim "
-                    f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
-                )
-            return None  # Auto, unaligned -> safe all-dims fallback
-        assert dims is not None  # implied by `aligned`
-        displayed = [d for d in dims.displayed if 0 <= d < n_cols]
-        non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
-        if not non_displayed:
-            return None  # nothing to group by -> coarsen everything (no-op barrier)
+        displayed = _resolve_displayed_coarsen_dims(dims, n_cols, raw, data_to_scene)
+        if displayed is None:
+            return None
         return _finalize(displayed)
     # Explicit list of names / indices.
     idxs: list[int] = []
     for x in raw:
         if isinstance(x, str):
-            if not aligned:
-                # Names resolve to scene-dim indices, which only equal center
-                # columns when positions span the scene 1:1. Refuse rather than
-                # silently mapping a name to the wrong column.
-                raise ValueError(
-                    "coarsen_dims by name requires positions aligned with the "
-                    f"scene dims (got {n_cols} columns, scene ndim "
-                    f"{getattr(dims, 'ndim', '?')}). Pass explicit column indices."
-                )
-            idxs.append(int(dims.get_index(x)))  # type: ignore[union-attr]
+            idxs.append(_coarsen_name_to_data_column(dims, n_cols, x, data_to_scene))
         else:
             idxs.append(int(x))
     return _finalize(idxs)
 
 
-def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, Any]]:
+def resolve_substitutive_axis(
+    spec: Any,
+    geometry: str,
+    *,
+    extra_valid_keys: Sequence[str] = (),
+) -> Optional[Dict[str, Any]]:
     """Normalize the ``substitutive_lod=`` kwarg into a spec dict (or ``None``).
 
     Geometry-agnostic — ``geometry`` ("Points"/"Lines") only flavours the error
@@ -1057,7 +1172,8 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
       keeps that selector, so authored values keep meaning what they always
       did), ``coarsen_dims``,
       ``max_aspect`` (per-splat anisotropy cap on the coarse levels, default 3.0;
-      ``None`` disables — see :func:`luxar.gsplats.lift._cap_aspect`).
+      ``None`` disables — see :func:`luxar.gsplats.lift._cap_aspect`), and
+      ``quality_stamps`` (measure per-level mixture quality, default ``True``).
       Unrecognized keys raise. LOD switch thresholds are otherwise auto-derived by
       :func:`derive_coverage_fractions` (screen-occupancy halving, re-anchored at
       fills-screen when the insertion point is partition-bound) — no method
@@ -1150,12 +1266,25 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
                 f"max_aspect must be >= 1 (or None to disable), got {max_aspect}"
             )
 
+    quality_stamps = _resolve_quality_stamps(kwargs)
+
     if kwargs:
+        valid_keys = [
+            "compression_factor (K)",
+            "levels (n_lods)",
+            "method",
+            "truncation_radius",
+            "device",
+            "seed",
+            "coverage_fractions",
+            "coarsen_dims",
+            "max_aspect",
+            "quality_stamps",
+            *extra_valid_keys,
+        ]
         raise ValueError(
             f"substitutive_lod for {geometry}: unrecognized keys {sorted(kwargs)}. "
-            "Valid keys: compression_factor (K), levels (n_lods), method, "
-            "truncation_radius, device, seed, coverage_fractions, coarsen_dims, "
-            "max_aspect."
+            f"Valid keys: {', '.join(valid_keys)}."
         )
 
     return {
@@ -1168,7 +1297,234 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
         "coverage_fractions": explicit_coverage,
         "coarsen_dims": coarsen_dims,
         "max_aspect": max_aspect,
+        "quality_stamps": quality_stamps,
     }
+
+
+def _resolve_brightness_compensation(value: Any) -> Union[str, float]:
+    """Normalize the same-type brightness control."""
+    if value == "auto":
+        return "auto"
+    try:
+        brightness = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "brightness_compensation must be 'auto' or a finite value >= 0; "
+            f"got {value!r}"
+        ) from exc
+    if not math.isfinite(brightness) or brightness < 0.0:
+        raise ValueError(
+            "brightness_compensation must be 'auto' or a finite value >= 0; "
+            f"got {value!r}"
+        )
+    return brightness
+
+
+def resolve_same_type_representation(
+    kwargs: Dict[str, Any],
+    *,
+    geometry: str,
+    same_type: str,
+    inapplicable_reasons: Dict[str, str],
+) -> tuple[str, Union[str, float], str]:
+    """Resolve the shared ``coarse=`` and compensation vocabulary."""
+    coarse = str(kwargs.pop("coarse", "gsplats")).replace("-", "_")
+    allowed = ["gsplats", same_type]
+    if coarse not in allowed:
+        raise ValueError(
+            f"substitutive_lod for {geometry}: coarse must be one of "
+            f"{allowed}; got {coarse!r}"
+        )
+
+    brightness = _resolve_brightness_compensation(
+        kwargs.pop("brightness_compensation", "auto")
+    )
+    representation_method = "subsample"
+    if coarse == same_type:
+        representation_method = str(kwargs.pop("method", "subsample")).replace("-", "_")
+        if representation_method not in {"subsample", "merge"}:
+            raise ValueError(
+                f"substitutive_lod for {geometry}: method must be 'subsample' or "
+                f"'merge' when coarse={same_type!r}; got {representation_method!r}"
+            )
+    if coarse == same_type:
+        if representation_method == "merge" and brightness != "auto":
+            raise ValueError(
+                f"substitutive_lod for {geometry}: numeric "
+                "'brightness_compensation' does not apply to method='merge' — "
+                "merged representatives already conserve their source light."
+            )
+        for key, reason in inapplicable_reasons.items():
+            if key in kwargs:
+                raise ValueError(
+                    f"substitutive_lod for {geometry}: {key!r} does not apply when "
+                    f"coarse={same_type!r} — {reason}."
+                )
+    elif brightness != "auto":
+        raise ValueError(
+            f"substitutive_lod for {geometry}: 'brightness_compensation' applies "
+            f"only when coarse={same_type!r}"
+        )
+    return coarse, brightness, representation_method
+
+
+def effective_blending_mode(
+    parent: "Node", attrs: Dict[str, Any], geometry: str
+) -> str:
+    """Resolve nearest-setter-wins blending mode for a new geometry child."""
+    if "blending_mode" in attrs:
+        return str(attrs["blending_mode"])
+    current: Optional["Node"] = parent
+    while current is not None:
+        if "blending_mode" in current.attrs:
+            return str(current.attrs["blending_mode"])
+        current = current.parent
+    return DEFAULT_BLENDING_MODE_BY_GEOMETRY[geometry]
+
+
+def assert_same_type_slice_capacity(
+    *,
+    same_type: str,
+    element_name: str,
+    elements: int,
+    resident_slices: int,
+    compression_factor: int,
+    levels: int,
+) -> None:
+    """Refuse a ladder whose coarsest prefix cannot represent every slice."""
+    coarsest_count = max(1, elements // (compression_factor**levels))
+    if resident_slices > coarsest_count:
+        raise ValueError(
+            f"substitutive_lod with coarse={same_type!r} cannot preserve every "
+            f"hidden coordinate: the coarsest level has {coarsest_count} "
+            f"{element_name} for {resident_slices} hidden slices. Reduce "
+            f"levels/compression_factor or use coarse='gsplats'."
+        )
+
+
+def resolve_same_type_axes(
+    scene: Any,
+    coordinates: np.ndarray,
+    extend_to_all: Optional[Union[List[str], str]],
+    geometry: str,
+) -> tuple[List[int], List[int], List[int]]:
+    """Resolve displayed and resident hidden columns for same-type LOD."""
+    dims = getattr(scene, "dimensions", None) if scene is not None else None
+    aligned = (
+        dims is not None and int(getattr(dims, "ndim", -1)) == coordinates.shape[1]
+    )
+    if not aligned or dims is None:
+        return list(range(min(3, coordinates.shape[1]))), [], []
+    extended = (
+        set(scene._resolve_extend_to_all(extend_to_all, coordinates, geometry))
+        if extend_to_all is not None
+        else set()
+    )
+    displayed = list(dims.displayed)
+    discrete_hidden = [
+        column
+        for column in dims.non_displayed
+        if bool(dims.dimensions[column].discrete)
+        and dims.dimensions[column].name not in extended
+    ]
+    continuous_hidden = [
+        column
+        for column in dims.non_displayed
+        if not bool(dims.dimensions[column].discrete)
+        and dims.dimensions[column].name not in extended
+    ]
+    return displayed, discrete_hidden, continuous_hidden
+
+
+def same_type_colors_for_energy(colors: Any, n_elements: int) -> Any:
+    """Broadcast a uniform color without materializing a writable copy."""
+    if colors is None:
+        return None
+    if is_broadcast_color(colors):
+        return np.broadcast_to(np.asarray(colors), (n_elements, len(colors)))
+    array = np.asarray(colors)
+    if array.ndim == 2 and array.shape[0] == 1:
+        return np.broadcast_to(array, (n_elements, array.shape[1]))
+    return array
+
+
+def normalized_same_type_colors(
+    colors: Any, n_elements: int, *, integer_storage: bool
+) -> Any:
+    """Broadcast colours and convert encoded integer storage to display values."""
+    array = same_type_colors_for_energy(colors, n_elements)
+    if array is None:
+        return None
+    result = np.asarray(array, dtype=np.float32)
+    if integer_storage and np.issubdtype(np.asarray(array).dtype, np.integer):
+        result = result / float(np.iinfo(np.asarray(array).dtype).max)
+    return result
+
+
+def same_type_color_classes(colors: Any) -> Any:
+    """Quantize RGB into soft merge-ordering dimensions."""
+    if colors is None:
+        return None
+    rgb = np.clip(np.asarray(colors, dtype=np.float32)[:, :3], 0.0, None)
+    scale = max(1.0, float(np.max(rgb, initial=0.0)))
+    return np.rint(np.clip(rgb / scale, 0.0, 1.0) * 7.0).astype(np.int64)
+
+
+def materialize_same_type_colors(
+    colors: Any,
+    n_elements: int,
+    indices: np.ndarray,
+    *,
+    normalize_integer_storage: bool,
+) -> np.ndarray:
+    """Materialize selected RGB(A) colors as float32 display values."""
+    if colors is None:
+        return np.ones((indices.size, 3), dtype=np.float32)
+    array = np.asarray(colors)
+    if is_broadcast_color(colors):
+        array = np.broadcast_to(array, (indices.size, len(colors)))
+    elif array.ndim == 2 and array.shape[0] == 1:
+        array = np.broadcast_to(array, (indices.size, array.shape[1]))
+    elif array.shape[0] == n_elements:
+        array = array[indices]
+    result = np.asarray(array, dtype=np.float32).copy()
+    if normalize_integer_storage and np.issubdtype(array.dtype, np.integer):
+        result /= float(np.iinfo(array.dtype).max)
+    return result
+
+
+def subsampled_same_type_level_channels(
+    *,
+    colors: Any,
+    colors_for_energy: Any,
+    scalars: Any,
+    indices: np.ndarray,
+    n_elements: int,
+    gain: float,
+    child_attrs: Dict[str, Any],
+) -> tuple[Any, Any, Dict[str, Any]]:
+    """Prepare one same-type coarse level's color/scalar representation."""
+    level_attrs = dict(child_attrs)
+    if gain == 1.0 and scalars is not None and colors is None:
+        return None, slice_optional_array(scalars, indices, n_elements), level_attrs
+    if gain == 1.0 and colors_for_energy is None:
+        return None, None, level_attrs
+    if gain == 1.0 and colors is not None:
+        level_colors = (
+            colors
+            if is_broadcast_color(colors)
+            else slice_optional_array(colors, indices, n_elements)
+        )
+        return level_colors, None, level_attrs
+    level_colors = materialize_same_type_colors(
+        colors_for_energy,
+        n_elements,
+        indices,
+        normalize_integer_storage=not is_broadcast_color(colors),
+    )
+    level_colors[:, :3] *= np.float32(gain)
+    level_attrs.pop("colormap", None)
+    return level_colors, None, level_attrs
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1213,14 +1569,14 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
         return None
     if spec is True:
         # Same KEY SET as the dict branch below — a consumer reading
-        # spec["reveal_centre"] must not depend on which branch produced it.
+        # spec["reveal_center"] must not depend on which branch produced it.
         return {
             "method": DEFAULT_ADDITIVE_METHOD,
             "n_lods": DEFAULT_ADDITIVE_N_LODS,
             "counts": None,
             "seed": None,
             "salience_kind": "size",
-            "reveal_centre": None,
+            "reveal_center": None,
             "spatial_dims": None,
         }
     if not isinstance(spec, dict):
@@ -1273,13 +1629,13 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
             f"salience_kind must be 'size' or 'energy'; got {salience_kind!r}"
         )
 
-    reveal_centre, spatial_dims = pop_reveal_knobs(kwargs, method)
+    reveal_center, spatial_dims = pop_reveal_knobs(kwargs, method)
 
     if kwargs:
         raise ValueError(
             f"additive_lod for {geometry}: unrecognized keys "
             f"{sorted(kwargs)}. Valid keys: method, n_lods, counts, "
-            f"breakpoints, seed, salience_kind, reveal_centre, spatial_dims, "
+            f"breakpoints, seed, salience_kind, reveal_center, spatial_dims, "
             f"recompute."
         )
 
@@ -1289,7 +1645,7 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
         "counts": counts,
         "seed": seed,
         "salience_kind": salience_kind,
-        "reveal_centre": reveal_centre,
+        "reveal_center": reveal_center,
         "spatial_dims": spatial_dims,
     }
 
@@ -1326,6 +1682,8 @@ def breakpoints_kind_of(counts: Any) -> str:
     if isinstance(counts, str):
         if counts.startswith("stream:"):
             return "stream"
+        if counts.startswith("equi-energy:"):
+            return "equi-energy"
         if counts.startswith("energy:"):
             return "energy-fractions"
         return counts
@@ -1685,11 +2043,14 @@ def level_additive_lod(
             (cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts)),
             default=0,
         )
-        if largest_commit > DEFAULT_MAX_ADDITIVE_COMMIT:
+        commit_ceiling = DEFAULT_MAX_ADDITIVE_COMMIT * slices
+        if largest_commit > commit_ceiling:
             raise ValueError(
                 f"Sliced node with {level_n:,} elements resolves a "
                 f"{largest_commit:,}-element additive increment, above the "
-                f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. "
+                f"{commit_ceiling:,}-element whole-node commit ceiling for "
+                f"{slices:,} slices ({DEFAULT_MAX_ADDITIVE_COMMIT:,} per slice "
+                "under uniform mixing). "
                 "Reduce the leaf size (Points: partition=) or supply an explicit "
                 "additive_lod ladder."
             )

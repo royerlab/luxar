@@ -54,7 +54,7 @@ move those. The ladders are still written and the run says so plainly, but it
 exits non-zero: the store has to be republished under a new URL prefix or the
 migration is invisible to every client that already has it.
 
-It is a sibling of `luxar optimise`, not a flag on it: that pass documents that
+It is a sibling of `luxar optimize`, not a flag on it: that pass documents that
 every attribute is preserved and refuses same-path work, while this one changes
 only attributes and works in place. A group already on `screen-area` is skipped,
 so a second run changes nothing at all — including the `content_hash`, which is

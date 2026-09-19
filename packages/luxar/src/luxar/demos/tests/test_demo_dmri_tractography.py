@@ -216,6 +216,28 @@ class TestSubsampleIndices:
         assert not np.array_equal(a, c)
 
 
+class TestLodStreamlineCounts:
+    def test_default_ladder_is_geometric_and_ends_at_n(self) -> None:
+        assert _demo.lod_streamline_counts(6_000) == [375, 1_500, 6_000]
+        assert _demo.lod_streamline_counts(32) == [2, 8, 32]
+
+    def test_small_bundles_drop_repeated_levels(self) -> None:
+        # 4 // 16 -> 1 and 4 // 4 -> 1 would repeat; only one coarse level.
+        assert _demo.lod_streamline_counts(4) == [1, 4]
+        assert _demo.lod_streamline_counts(1) == [1]
+        assert _demo.lod_streamline_counts(2) == [1, 2]
+
+    def test_strictly_increasing_for_every_size(self) -> None:
+        for n in range(1, 200):
+            counts = _demo.lod_streamline_counts(n)
+            assert counts[-1] == n
+            assert all(a < b for a, b in zip(counts, counts[1:], strict=False))
+
+    def test_rejects_an_empty_bundle(self) -> None:
+        with pytest.raises(ValueError, match="positive"):
+            _demo.lod_streamline_counts(0)
+
+
 class TestCheckSizing:
     def test_defaults_pass_without_a_warning(self) -> None:
         assert (
@@ -537,14 +559,17 @@ class TestBuildScene:
 
     Everything above tests the helpers in isolation; this is the only check
     that what they feed ``add_lines`` actually survives the compiler: a
-    ``kind=lod`` group per tract whose finest child is the indexed Lines node
-    (edges in range, one colour per vertex, no orphans), with the tuned
-    compositing on the group where the Layers panel and attribute composition
-    expect it.
+    ``kind=lod`` group per tract of three indexed Lines levels — subsampled
+    streamlines, coarsest first, widths scaled to conserve the additive
+    integral (edges in range, one colour per vertex, no orphans) — with the
+    tuned compositing on the group where the Layers panel and attribute
+    composition expect it.
     """
 
     POINTS = 6
-    PER_BUNDLE = 4
+    #: 32 streamlines ladder to 2 / 8 / 32 at LOD_COMPRESSION=4; anything below
+    #: 16 collapses a level (see ``lod_streamline_counts``).
+    PER_BUNDLE = 32
 
     #: One REAL atlas code per division, in DIVISIONS order — synthetic names
     #: would silently take ``tract_label``'s unknown-code fallback.
@@ -563,9 +588,21 @@ class TestBuildScene:
             bundles["colors"].append(_demo.direction_colors(paths).reshape(-1, 3))
         return bundles
 
-    def test_every_bundle_becomes_an_indexed_node(self, tmp_path: Path) -> None:
+    @staticmethod
+    def _levels(tract: zarr.Group) -> list:
+        return sorted(
+            (child for _, child in tract.groups()),
+            key=lambda c: int(c.attrs["child_index"]),
+        )
+
+    def test_every_bundle_becomes_a_ladder_of_indexed_nodes(
+        self, tmp_path: Path
+    ) -> None:
         output = tmp_path / "tractography.luxar.zarr"
         _demo.build_scene(self._bundles(), output, points=self.POINTS)
+
+        expected_counts = _demo.lod_streamline_counts(self.PER_BUNDLE)
+        assert expected_counts == [2, 8, 32]
 
         root = zarr.open_group(output, mode="r")
         for name, division in zip(self.NAMES, _demo.DIVISIONS, strict=True):
@@ -579,47 +616,104 @@ class TestBuildScene:
             assert tract.attrs["kind"] == "lod"
             assert tract.attrs["layer"] is True
             assert tract.attrs["blending_mode"] == "additive"
-            finest = tract[
-                sorted(k for k in tract.keys() if k.startswith("child_"))[-1]
-            ]
-            assert int(finest.attrs.get("n_additive_sublods", 1)) == 1
             assert tract.attrs["opacity"] == _demo.LINE_OPACITY
             assert tract.attrs["intensity"] == _demo.LINE_INTENSITY
 
-            leaves = [
-                child
-                for _, child in tract.groups()
-                if "original_line_type" in child.attrs
-            ]
-            assert len(leaves) == 1, "expected exactly one Lines level"
-            node = leaves[0]
-            n_vertices = int(node.attrs["n_vertices"])
-            assert node.attrs["original_line_type"] == "indexed"
-            assert n_vertices == self.PER_BUNDLE * self.POINTS
-            assert node["vertices"].shape[0] == n_vertices
-            assert node["colors"].shape[0] == n_vertices
+            levels = self._levels(tract)
+            assert len(levels) == len(expected_counts)
+            for node, n_paths in zip(levels, expected_counts, strict=True):
+                # EVERY level is a real indexed Lines node — no lifted splats.
+                assert node.attrs["original_line_type"] == "indexed"
+                assert int(node.attrs.get("n_additive_sublods", 1)) == 1
+                n_vertices = int(node.attrs["n_vertices"])
+                assert n_vertices == n_paths * self.POINTS
+                assert node["vertices"].shape[0] == n_vertices
+                assert node["colors"].shape[0] == n_vertices
 
-            edges = np.asarray(node["segments"][:])
-            assert edges.ndim == 2 and edges.shape[1] == 2
-            assert len(edges) == self.PER_BUNDLE * (self.POINTS - 1)
-            assert int(edges.min()) >= 0
-            assert int(edges.max()) < n_vertices
-            degree = np.bincount(edges.reshape(-1), minlength=n_vertices)
-            assert np.all(degree > 0), "orphaned vertex"
-            # Interior joints share an index; only the two ends have degree 1.
-            assert int((degree == 1).sum()) == 2 * self.PER_BUNDLE
+                edges = np.asarray(node["segments"][:])
+                assert edges.ndim == 2 and edges.shape[1] == 2
+                assert len(edges) == n_paths * (self.POINTS - 1)
+                assert int(edges.min()) >= 0
+                assert int(edges.max()) < n_vertices
+                degree = np.bincount(edges.reshape(-1), minlength=n_vertices)
+                assert np.all(degree > 0), "orphaned vertex"
+                # Interior joints share an index; only the two ends have degree 1.
+                assert int((degree == 1).sum()) == 2 * n_paths
 
-    def test_the_labelled_level_is_gated_at_half_screen_occupancy(
-        self, tmp_path: Path
-    ) -> None:
-        # The premise the whole "get close before hover says anything" note
-        # rests on. The derived ladder uses selector="screen-area" with the
-        # finest (labelled Lines) level anchored at half the screen AREA
-        # (WHOLE_OBJECT_FINEST_ANCHOR) — no individual bundle occupies that
-        # much at the whole-brain opening pose. If a future default made the
-        # Lines level selectable well below it, hover would start working at
-        # the opening pose and the docstring's headline caveat would silently
-        # become wrong.
+    def test_coarse_levels_conserve_the_additive_integral(self, tmp_path: Path) -> None:
+        # A coarse level keeps 1-in-K streamlines with width x K, so the summed
+        # width — what additive blending integrates along a ray — is the same
+        # on every level. Judge a change to this on the seam, not on the
+        # coarse level's brightness alone.
+        output = tmp_path / "tractography.luxar.zarr"
+        _demo.build_scene(self._bundles(), output, points=self.POINTS)
+
+        root = zarr.open_group(output, mode="r")
+        tract = root[f"{_demo.DIVISIONS[0].replace(' ', '_')}/{self.NAMES[0]}"]
+        levels = self._levels(tract)
+        totals = []
+        for node in levels:
+            # A uniform width is stored as a single broadcast value.
+            widths = np.asarray(node["widths"][:], dtype=np.float64)
+            n_paths = int(node.attrs["n_vertices"]) // self.POINTS
+            assert widths.size in (1, n_paths * self.POINTS)
+            totals.append(float(widths.mean()) * n_paths)
+        assert totals == pytest.approx(
+            [_demo.LINE_WIDTH * self.PER_BUNDLE] * len(levels), rel=1e-5
+        )
+        # The finest level is the bundle at its authored width.
+        assert float(np.asarray(levels[-1]["widths"][:]).max()) == pytest.approx(
+            _demo.LINE_WIDTH
+        )
+
+    def test_coarse_levels_are_subsets_of_the_bundle(self, tmp_path: Path) -> None:
+        # Whole streamlines, drawn without replacement: every coarse vertex is
+        # one of the finest level's vertices, no vertex is duplicated, and the
+        # level holds complete streamlines (a multiple of POINTS vertices). The
+        # writer spatially re-sorts each node's vertices, so compare as row
+        # SETS rather than by reshaping into streamlines.
+        bundles = self._bundles()
+        output = tmp_path / "tractography.luxar.zarr"
+        _demo.build_scene(bundles, output, points=self.POINTS)
+
+        root = zarr.open_group(output, mode="r")
+        tract = root[f"{_demo.DIVISIONS[0].replace(' ', '_')}/{self.NAMES[0]}"]
+        levels = self._levels(tract)
+
+        def rows(node: zarr.Group) -> set:
+            arr = np.asarray(node["vertices"][:], dtype=np.float32)
+            return {tuple(np.round(r, 4)) for r in arr}
+
+        finest = rows(levels[-1])
+        assert len(finest) == self.PER_BUNDLE * self.POINTS
+        level_rows = [rows(node) for node in levels]
+        for node, coarse in zip(levels[:-1], level_rows[:-1], strict=True):
+            assert len(coarse) == int(node.attrs["n_vertices"]), "duplicate vertex"
+            assert len(coarse) % self.POINTS == 0, "partial streamline"
+            assert coarse <= finest, "coarse vertex not in the bundle"
+        for coarse, finer in zip(level_rows, level_rows[1:], strict=False):
+            assert coarse <= finer, "a finer level replaced rather than added fibres"
+
+        source_paths = np.asarray(bundles["positions"][0]).reshape(
+            self.PER_BUNDLE, self.POINTS, 3
+        )
+        source_rows = [
+            {tuple(np.round(row, 4)) for row in path} for path in source_paths
+        ]
+        coarsest_ids = [
+            path_id
+            for path_id, path_rows in enumerate(source_rows)
+            if path_rows <= level_rows[0]
+        ]
+        assert len(coarsest_ids) == 2
+        assert coarsest_ids != list(range(len(coarsest_ids)))
+        assert max(coarsest_ids) >= 4 * len(coarsest_ids)
+
+    def test_the_ladder_is_screen_area_halving(self, tmp_path: Path) -> None:
+        # The derived ladder uses selector="screen-area" with the finest level
+        # anchored at half the screen AREA (WHOLE_OBJECT_FINEST_ANCHOR) and one
+        # halving per level below it — at the whole-brain opening pose every
+        # bundle sits on its coarsest level, which is the whole point.
         from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
 
         output = tmp_path / "tractography.luxar.zarr"
@@ -629,65 +723,63 @@ class TestBuildScene:
         for name, division in zip(self.NAMES, _demo.DIVISIONS, strict=True):
             tract = root[f"{division.replace(' ', '_')}/{name}"]
             assert tract.attrs["selector"] == "screen-area"
+            fractions = [
+                float(c.attrs["coverage_fraction"]) for c in self._levels(tract)
+            ]
+            assert fractions == [
+                0.0,
+                WHOLE_OBJECT_FINEST_ANCHOR / 2,
+                WHOLE_OBJECT_FINEST_ANCHOR,
+            ]
 
-            children = sorted(
-                (child for _, child in tract.groups()),
-                key=lambda c: int(c.attrs["child_index"]),
-            )
-            fractions = [float(c.attrs["coverage_fraction"]) for c in children]
-            # Coarsest to finest, ascending, with the finest anchored at the
-            # half-screen area — a bundle must occupy at least half the screen
-            # before its labelled level selects.
-            assert fractions == sorted(fractions)
-            assert fractions[-1] == WHOLE_OBJECT_FINEST_ANCHOR
-            assert "original_line_type" in children[-1].attrs, (
-                "the half-screen-gated level must be the labelled Lines level"
-            )
-
-    def test_hover_labels_reach_the_finest_lines_level(self, tmp_path: Path) -> None:
+    def test_hover_labels_reach_every_level(self, tmp_path: Path) -> None:
+        # THE user-facing consequence of subsampled-streamline coarse levels:
+        # a coarse fibre is still a fibre of the tract, so it carries the label
+        # and hover works at the opening pose. The lifted-splat ladder this
+        # replaced could never label its coarse levels.
         output = tmp_path / "tractography.luxar.zarr"
         _demo.build_scene(self._bundles(), output, points=self.POINTS)
 
         root = zarr.open_group(output, mode="r")
         for name, division in zip(self.NAMES, _demo.DIVISIONS, strict=True):
             tract = root[f"{division.replace(' ', '_')}/{name}"]
-            leaves = [
-                child
-                for _, child in tract.groups()
-                if "original_line_type" in child.attrs
-            ]
-            # The ladder shape itself: two synthesised coarse gsplat levels
-            # plus the one real Lines level.
-            children = [child for _, child in tract.groups()]
-            assert len(children) == 3
-            assert len(leaves) == 1
-
-            # THE headline caveat, pinned: the coarse levels carry NO labels.
-            # If a core change ever propagated labels down the gsplat lift, the
-            # docstring's "zoom in before hover says anything" would silently
-            # become false with every other assertion still green.
-            for child in children:
-                if "original_line_type" not in child.attrs:
-                    assert child.attrs.get("has_labels") is not True
-
-            node = leaves[0]
-            n_vertices = int(node.attrs["n_vertices"])
-
-            assert node.attrs["has_labels"] is True
-            offsets = np.asarray(node["label_offsets"][:])
-            assert len(offsets) == n_vertices + 1
-
-            # Labels are per-vertex CSR: label i is the byte slice
-            # [offsets[i]:offsets[i + 1]] of label_bytes, UTF-8 decoded.
-            raw = np.asarray(node["label_bytes"][:]).tobytes()
             expected = _demo.tract_label(name, division)
-            decoded = {
-                raw[int(offsets[i]) : int(offsets[i + 1])].decode("utf-8")
-                for i in range(n_vertices)
-            }
-            assert decoded == {expected}, (
-                "every vertex of a bundle must carry the same tract label"
-            )
+            for node in self._levels(tract):
+                n_vertices = int(node.attrs["n_vertices"])
+                assert node.attrs["has_labels"] is True
+                assert node.attrs["has_keys"] is True
+                offsets = np.asarray(node["label_offsets"][:])
+                assert len(offsets) == n_vertices + 1
+
+                # Labels are per-vertex CSR: label i is the byte slice
+                # [offsets[i]:offsets[i + 1]] of label_bytes, UTF-8 decoded.
+                raw = np.asarray(node["label_bytes"][:]).tobytes()
+                decoded = {
+                    raw[int(offsets[i]) : int(offsets[i + 1])].decode("utf-8")
+                    for i in range(n_vertices)
+                }
+                assert decoded == {expected}, (
+                    "every vertex of a bundle must carry the same tract label"
+                )
+
+    def test_a_bundle_too_small_to_ladder_is_written_flat(self, tmp_path: Path) -> None:
+        bundles = self._bundles()
+        # One streamline: lod_streamline_counts gives [1] -> a flat Lines node
+        # carrying the same compositing, so the Layers panel still shows it.
+        bundles["positions"][0] = bundles["positions"][0][: self.POINTS]
+        bundles["colors"][0] = bundles["colors"][0][: self.POINTS]
+        assert _demo.lod_streamline_counts(1) == [1]
+
+        output = tmp_path / "tractography.luxar.zarr"
+        _demo.build_scene(bundles, output, points=self.POINTS)
+        node = zarr.open_group(output, mode="r")[
+            f"{_demo.DIVISIONS[0].replace(' ', '_')}/{self.NAMES[0]}"
+        ]
+        assert node.attrs.get("kind") != "lod"
+        assert node.attrs["original_line_type"] == "indexed"
+        assert node.attrs["layer"] is True
+        assert node.attrs["blending_mode"] == "additive"
+        assert node.attrs["has_labels"] is True
 
     def test_labels_trigger_the_auto_injected_hover_overlay(
         self, tmp_path: Path

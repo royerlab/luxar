@@ -93,7 +93,7 @@ post-processing/
 ├── hdr/                            # HDR readback + EXR-log
 │   ├── pixel-utils.ts              #   unified WebGL2/WebGPU readPixelsCompactAsync
 │   └── capture.ts                  #   formatHDRExrLogLine
-└── render-target-sizing.ts         # SSAA-upscale arithmetic (computeEffectiveRenderSize)
+└── render-target-sizing.ts         # SSAA/DPR allocation and framebuffer-limit clamping
 ```
 
 The orchestrator lives at `post-processing/post-processing-manager.ts`
@@ -122,11 +122,15 @@ pp.setMSAAEnabled(true);
 pp.setMSAASamples(4);
 ```
 
+SSAA multipliers above 1x suspend the configured MSAA samples to avoid
+allocating redundant multisample renderbuffers at the supersampled size.
+
 The optional `onResize` callback runs after every render-target
-reallocation (resize, SSAA toggle, MSAA toggle, DPR change). The host
-wires it to `SceneManager.updateMaterialsForCurrentCamera()` so the
-scene materials' cached `pointSizeFactor` / `uResolution` uniforms
-follow the new drawing-buffer dimensions.
+reallocation (resize, SSAA toggle, MSAA toggle, DPR change) and receives
+the logical display size and current camera. The SceneManager factory
+reasserts the camera projection from that size before refreshing the scene
+materials' cached `pointSizeFactor` / `uResolution` uniforms after the new
+allocation is applied.
 
 ### Capture paths
 
@@ -205,9 +209,9 @@ effects.
   injected `<tonemapping_pars_fragment>` on top of our explicit
   include. Every PP material must set `toneMapped: false`.
 - **Brightness changes with DPR** — render targets allocated in
-  logical pixels instead of physical. They MUST be sized as
-  `effectiveSize × renderer.getPixelRatio()` (see `getPhysicalSize`)
-  so they match what materials read from `getDrawingBufferSize`.
+  logical pixels instead of the shared physical allocation. They MUST use
+  `getPhysicalSize`, which applies DPR rounding and framebuffer-limit clamping,
+  so they match the canvas and what materials read from `getDrawingBufferSize`.
 - **Point/line sizes feel off after toggling SSAA/MSAA** — the
   `onResize` callback isn't wired or the manager's caller forgot to
   pass it. Re-check the constructor call site.

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import builtins
 import os
 import shutil
+import subprocess
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -236,6 +240,28 @@ class TestManifest:
 
 
 class TestEnvCapture:
+    def test_partition_node_resources_parse_scheduler_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="16+ 128000+\n64 512000\n", stderr=""
+        )
+        calls: list[list[str]] = []
+
+        def fake_run(args, **_kwargs):
+            calls.append(args)
+            return result
+
+        monkeypatch.setattr(env_capture.subprocess, "run", fake_run)
+
+        assert env_capture.get_partition_node_resources("gpu") == [
+            (16, 128000),
+            (64, 512000),
+        ]
+        assert "--exact" in calls[0]
+
     def test_capture_conda(self) -> None:
         from luxar.gsplats.batch.env_capture import capture_environment
 
@@ -254,6 +280,265 @@ class TestEnvCapture:
             env = capture_environment()
             assert env.env_vars.get("CUDA_HOME") == "/usr/local/cuda"
             assert env.env_vars.get("TORCH_HOME") == "/tmp/torch"
+
+    @pytest.mark.parametrize(
+        ("probe_name", "args", "expected"),
+        [
+            ("get_slurm_scheduler_info", (), "unknown"),
+            ("is_slurm_mps_available", (), False),
+            ("_partition_has_gpu", ("gpu",), False),
+            ("detect_preemptible_gpu_partition", (), None),
+            ("validate_partition_access", ("gpu",), False),
+            ("get_partition_node_resources", ("gpu",), []),
+        ],
+    )
+    def test_broken_slurm_probe_warns_once_and_keeps_fallback(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        probe_name: str,
+        args: tuple[str, ...],
+        expected: object,
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture.subprocess,
+            "run",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+        probe = getattr(env_capture, probe_name)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            first = probe(*args)
+            second = probe(*args)
+
+        if probe_name == "get_slurm_scheduler_info":
+            assert first["scheduler_type"] == expected
+            assert second["scheduler_type"] == expected
+        else:
+            assert first == expected
+            assert second == expected
+        assert len(caught) == 1
+        assert probe_name in str(caught[0].message)
+        assert "RuntimeError: boom" in str(caught[0].message)
+
+    @pytest.mark.parametrize(
+        ("probe_name", "args", "expected"),
+        [
+            ("get_slurm_scheduler_info", (), "unknown"),
+            ("is_slurm_mps_available", (), False),
+            ("_partition_has_gpu", ("gpu",), False),
+            ("detect_preemptible_gpu_partition", (), None),
+            ("validate_partition_access", ("gpu",), False),
+            ("get_partition_node_resources", ("gpu",), []),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "probe_error",
+        [
+            FileNotFoundError("missing Slurm command"),
+            subprocess.TimeoutExpired("Slurm command", 5),
+        ],
+        ids=["missing", "timeout"],
+    )
+    def test_unavailable_slurm_probe_stays_quiet(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        probe_name: str,
+        args: tuple[str, ...],
+        expected: object,
+        probe_error: Exception,
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture.subprocess,
+            "run",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(probe_error),
+        )
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+        probe = getattr(env_capture, probe_name)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = probe(*args)
+
+        if probe_name == "get_slurm_scheduler_info":
+            assert result["scheduler_type"] == expected
+        else:
+            assert result == expected
+        assert not caught
+
+    def test_preemptible_partition_warns_when_sinfo_probe_breaks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        partition_listing = SimpleNamespace(
+            returncode=0,
+            stdout="PartitionName=preempt-gpu State=UP\n",
+        )
+
+        def run(command: list[str], **_kwargs: object) -> object:
+            if command[0] == "scontrol":
+                return partition_listing
+            raise RuntimeError("sinfo broke")
+
+        monkeypatch.setattr(env_capture.subprocess, "run", run)
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(
+            RuntimeWarning, match="_partition_has_gpu.*RuntimeError: sinfo broke"
+        ) as caught:
+            assert env_capture.detect_preemptible_gpu_partition() is None
+        assert Path(caught[0].filename) == Path(__file__)
+
+    def test_malformed_cuda_build_info_warns_and_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        info_path = tmp_path / "cuda_build_info.json"
+        info_path.write_text("{not json")
+        monkeypatch.setattr(env_capture, "_cuda_build_info_path", lambda: info_path)
+        monkeypatch.setattr(env_capture, "_detect_loaded_modules", lambda: [])
+        monkeypatch.setattr(env_capture, "version", lambda _name: "test")
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(
+            RuntimeWarning, match="read_cuda_build_info.*JSONDecodeError"
+        ) as caught:
+            env = env_capture.capture_environment()
+
+        assert env.loaded_modules == []
+        assert Path(caught[0].filename) == Path(__file__)
+
+    def test_missing_cuda_package_stays_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(env_capture, "find_spec", lambda _name: None)
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert env_capture._cuda_build_info_path() is None
+
+        assert not caught
+
+    def test_cuda_spec_import_failure_stays_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture,
+            "find_spec",
+            lambda _name: (_ for _ in ()).throw(ImportError("optional dependency")),
+        )
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert env_capture._cuda_build_info_path() is None
+
+        assert not caught
+
+    def test_cuda_metadata_lookup_does_not_import_backend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        real_import = builtins.__import__
+
+        def import_module(
+            name: str,
+            globals: object = None,
+            locals: object = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
+            if name == "luxar.gsplats.models.gsplats.cuda":
+                raise AssertionError("metadata lookup imported the CUDA backend")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", import_module)
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            info_path = env_capture._cuda_build_info_path()
+
+        assert info_path is not None
+        assert info_path.name == "cuda_build_info.json"
+        assert not caught
+
+    def test_broken_cuda_package_warns_at_external_caller(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture,
+            "find_spec",
+            lambda _name: (_ for _ in ()).throw(RuntimeError("CUDA package broke")),
+        )
+        monkeypatch.setattr(env_capture, "_detect_loaded_modules", lambda: [])
+        monkeypatch.setattr(env_capture, "version", lambda _name: "test")
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(
+            RuntimeWarning,
+            match="_cuda_build_info_path.*RuntimeError: CUDA package broke",
+        ) as caught:
+            env = env_capture.capture_environment()
+
+        assert env.loaded_modules == []
+        assert Path(caught[0].filename) == Path(__file__)
+
+    def test_version_probe_failure_warns_and_uses_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(env_capture, "_detect_loaded_modules", lambda: [])
+        monkeypatch.setattr(env_capture, "read_cuda_build_info", lambda: {})
+        monkeypatch.setattr(
+            env_capture,
+            "version",
+            lambda _name: (_ for _ in ()).throw(RuntimeError("metadata broke")),
+        )
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(
+            RuntimeWarning, match="_luxar_version.*RuntimeError"
+        ) as caught:
+            env = env_capture.capture_environment()
+
+        assert env.luxar_version == "unknown"
+        assert Path(caught[0].filename) == Path(__file__)
+
+    def test_missing_version_metadata_stays_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture,
+            "version",
+            lambda _name: (_ for _ in ()).throw(
+                env_capture.PackageNotFoundError("luxar")
+            ),
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert env_capture._luxar_version() == "unknown"
+
+        assert not caught
 
     def test_generate_preamble_conda(self) -> None:
         from luxar.gsplats.batch.env_capture import CapturedEnv, generate_env_preamble
@@ -1053,6 +1338,23 @@ class TestBatchPlanRegression:
         d = asdict(m)
         json.dumps(d)  # should not raise
 
+    def test_dimension_metadata_round_trips_through_manifest_json(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.batch.manifest import (
+            BatchManifest,
+            load_manifest,
+            save_manifest,
+        )
+
+        metadata = [
+            {"name": "z", "unit": "micrometer", "scale": 2.0},
+            {"name": "time", "unit": "second", "scale": 0.5},
+        ]
+        save_manifest(BatchManifest(dimension_metadata=metadata), tmp_path)
+
+        assert load_manifest(tmp_path).dimension_metadata == metadata
+
     def test_env_capture_ld_library_path_prepend(self) -> None:
         """LD_LIBRARY_PATH should be prepended, not replaced, in preamble."""
         from luxar.gsplats.batch.env_capture import CapturedEnv, generate_env_preamble
@@ -1241,6 +1543,130 @@ class TestMergeOrchestrator:
         assert detect_barrier_dims(centers) == []  # auto-detect misses the sparse axis
         assert list(root.attrs["slice_dims"]) == [3]  # authoritative barrier applied
 
+    @pytest.mark.parametrize("flat", [False, True])
+    def test_merge_preserves_dimension_metadata(
+        self, tmp_path: Path, flat: bool
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for t in range(2):
+            for k in range(2):
+                self._tile(3, seed=t * 2 + k).save(
+                    tiles_dir / output_filename(t, 0, k, 2, 1, 2)
+                )
+        metadata = [
+            {"name": "z", "unit": "micrometer", "scale": 2.0},
+            {"name": "y", "unit": "micrometer", "scale": 0.75},
+            {"name": "x", "unit": "micrometer", "scale": 0.75},
+            {"name": "time", "unit": "second", "scale": 0.5},
+        ]
+        manifest = BatchManifest(
+            n_timepoints=2,
+            n_channels=1,
+            n_tiles=2,
+            spatial_shape=(8, 8, 8),
+            dimension_metadata=metadata,
+        )
+
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe=None, flat=flat
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert root.attrs["dimension_metadata"] == metadata
+
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        node, _ = load_gsplat_node(final)
+        assert node.meta["dimension_metadata"] == metadata
+
+    def test_single_flat_tile_preserves_metadata_and_pipeline(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        tile = self._tile(1, seed=0)
+        tile.stats.update(
+            {
+                "final_loss": 0.25,
+                "n_iters": 999,
+                "image_min": 7.0,
+                "floor": 3.25,
+            }
+        )
+        tile.save(tiles_dir / output_filename(0, 0, 0, 1, 1, 1))
+        metadata = [
+            {"name": "z", "scale": 1.0},
+            {"name": "y", "scale": 1.0},
+            {"name": "x", "scale": 1.0},
+        ]
+        manifest = BatchManifest(
+            n_timepoints=1,
+            n_channels=1,
+            n_tiles=1,
+            spatial_shape=(8, 8, 8),
+            dimension_metadata=metadata,
+        )
+
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe=None, flat=True
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert root.attrs["dimension_metadata"] == metadata
+        assert root["fitting"].attrs["final_loss"] == pytest.approx(0.25)
+        assert root["pipeline"].attrs["n_iters"] == 999
+        assert root["pipeline"].attrs["image_min"] == pytest.approx(7.0)
+        assert root["pipeline"].attrs["floor"] == pytest.approx(3.25)
+        stored_hash = root.attrs["content_hash"]
+
+        from luxar._zarr_compat import open_group as zc_open_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        assert _stamp_content_hash(zc_open_group(final, mode="r+")) == stored_hash
+
+    @pytest.mark.parametrize("flat", [False, True])
+    def test_merge_omits_dimension_metadata_with_wrong_width(
+        self, tmp_path: Path, flat: bool, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for k in range(2):
+            self._tile(2, seed=k).save(tiles_dir / output_filename(0, 0, k, 1, 1, 2))
+        manifest = BatchManifest(
+            n_timepoints=1,
+            n_channels=1,
+            n_tiles=2,
+            spatial_shape=(8, 8, 8),
+            dimension_metadata=[{"name": "z"}, {"name": "y"}],
+        )
+
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe=None, flat=flat
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert "dimension_metadata" not in root.attrs
+        assert "omitting it" in capsys.readouterr().out
+
     def test_merge_channels_with_colors_round_trips(self, tmp_path: Path) -> None:
         """T=1, C=2, K=2 (--flat): Level-1 concat then Level-3 color merge."""
         from luxar.gsplats.batch.manifest import BatchManifest
@@ -1311,6 +1737,146 @@ class TestMergeOrchestrator:
         assert node.n_children == n_k
         # Total splat count conserved vs the flat-concat path.
         assert total_splats(node) == total
+
+    @pytest.mark.parametrize(
+        ("n_tiles", "n_t", "n_c", "flat", "channel_colors"),
+        [
+            (1, 1, 1, False, None),
+            (3, 1, 1, False, None),
+            (1, 1, 2, False, None),
+            (1, 1, 2, False, [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]),
+            (2, 1, 1, True, None),
+            (2, 2, 1, True, None),
+            (2, 1, 2, True, None),
+            (2, 1, 2, True, [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]),
+        ],
+    )
+    def test_merge_preserves_source_matched_amplitudes(
+        self,
+        tmp_path: Path,
+        n_tiles: int,
+        n_t: int,
+        n_c: int,
+        flat: bool,
+        channel_colors,
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import iter_leaves
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        expected_parts = []
+        source_values = np.geomspace(
+            1e-3, 1.0, n_t * n_c * n_tiles * 32, dtype=np.float32
+        )
+        offset = 0
+        for timepoint in range(n_t):
+            for channel in range(n_c):
+                for tile_index in range(n_tiles):
+                    path = tiles_dir / output_filename(
+                        timepoint, channel, tile_index, n_t, n_c, n_tiles
+                    )
+                    tile = self._tile(32, offset)
+                    tile.amplitudes[:] = source_values[offset : offset + tile.n_splats]
+                    offset += tile.n_splats
+                    tile.stats["source_dtype"] = "uint8"
+                    tile.save(path, amplitude_bits="auto")
+                    expected_parts.append(tile.amplitudes)
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=n_t, n_channels=n_c, n_tiles=n_tiles),
+            out_dir,
+            channel_colors=channel_colors,
+            verbose=False,
+            flat=flat,
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        amplitude_arrays = []
+
+        def collect(group) -> None:
+            if "amplitudes" in group.array_keys():
+                amplitude_arrays.append(group["amplitudes"])
+            for name in group.group_keys():
+                collect(group[name])
+
+        collect(root)
+        assert amplitude_arrays
+        assert root["fitting"].attrs["source_dtype"] == "uint8"
+        for array in amplitude_arrays:
+            encoding = array.attrs["encoding"]
+            if encoding["name"] == "array_ref":
+                assert np.dtype(root[encoding["target"]].dtype) == np.dtype(np.uint8)
+            else:
+                assert np.dtype(array.dtype) == np.dtype(np.uint8)
+                assert encoding["name"] == "geolog_scalar_uint8"
+        node, _ = self._read_tree(final)
+        actual = np.concatenate(
+            [
+                sublod.amplitudes
+                for leaf in iter_leaves(node)
+                for sublod in leaf.additive_sublods
+            ]
+        )
+        expected = np.concatenate(expected_parts)
+        np.testing.assert_allclose(
+            np.sort(actual), np.sort(expected), rtol=0.04, atol=1e-7
+        )
+
+    @pytest.mark.parametrize("rebuild_final", [False, True])
+    def test_flat_merge_resume_does_not_require_deleted_tiles(
+        self, tmp_path: Path, rebuild_final: bool
+    ) -> None:
+        import shutil
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        n_timepoints = 2 if rebuild_final else 1
+        self._write_tiles(out_dir / "tiles", n_t=n_timepoints, n_c=1, n_k=2)
+        manifest = BatchManifest(n_timepoints=n_timepoints, n_channels=1, n_tiles=2)
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
+
+        shutil.rmtree(out_dir / "tiles")
+        if rebuild_final:
+            shutil.rmtree(final)
+
+        assert merge_batch_results(manifest, out_dir, verbose=False, flat=True) == final
+
+    @pytest.mark.parametrize("n_tiles", [1, 2])
+    def test_merge_recipe_records_source_dtype(
+        self, tmp_path: Path, n_tiles: int
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for tile_index in range(n_tiles):
+            tile = self._tile(8, tile_index)
+            tile.stats["source_dtype"] = "uint8"
+            tile.save(
+                tiles_dir / output_filename(0, 0, tile_index, 1, 1, n_tiles),
+                amplitude_bits="auto",
+            )
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_tiles),
+            out_dir,
+            verbose=False,
+            recipe="stream",
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        assert root["fitting"].attrs["source_dtype"] == "uint8"
 
     def test_partition_matches_flat_total_and_has_tight_bounds(
         self, tmp_path: Path
@@ -2477,7 +3043,7 @@ class TestContentMerge:
             cholesky_factors=chol,
         )
 
-    def _content_manifest(self, out: Path, n_boxes: int) -> "object":
+    def _content_manifest(self, out: Path, n_boxes: int, **kwargs: Any) -> "object":
         from luxar.gsplats.batch.manifest import (
             BatchJob,
             BatchManifest,
@@ -2506,9 +3072,50 @@ class TestContentMerge:
             plan_path=str(out / "plan.json"),
             total_tasks=n_boxes,
             slurm_partition="gpu",
+            **kwargs,
         )
         m.jobs = jobs
         return m
+
+    def test_content_split_planes_follow_physical_grid_scale(
+        self, tmp_path: Path
+    ) -> None:
+        """The content plan stays voxel-authored while its merge tree is physical."""
+        from luxar.gsplats.batch.merge_orchestrator import _slot_bsp_tree
+        from luxar.gsplats.planner.spec import FitPlan, PlanBox
+
+        out = tmp_path / "batch"
+        out.mkdir()
+        FitPlan(
+            volume_shape=[20, 20, 20],
+            boxes=[
+                PlanBox(box=[0, 10, 0, 20, 0, 20], n_features=1, budget=1),
+                PlanBox(box=[10, 20, 0, 20, 0, 20], n_features=1, budget=1),
+            ],
+            overlap=0,
+            feature_method="peaks",
+            min_leaf=4,
+            max_leaf=16,
+            bsp_tree={
+                "axis": 0,
+                "split": 10.0,
+                "left": {"part": 0},
+                "right": {"part": 1},
+            },
+        ).to_json(out / "plan.json")
+
+        tree = _slot_bsp_tree(
+            self._content_manifest(out, 2, grid_scale=[5.0, 2.0, 1.0]),
+            out,
+            False,
+        )
+
+        assert tree == {
+            "axis": 0,
+            "split": 50.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        }
 
     def test_content_merge_finds_box_outputs_and_skips_empty(
         self, tmp_path: Path

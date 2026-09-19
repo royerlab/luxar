@@ -360,7 +360,7 @@ def resolve_additive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
     * ``None`` / ``False`` → no-op (the caller writes a plain mesh leaf).
     * ``True`` / ``dict()`` → defaults (``method="radial"``, 4 levels).
     * ``dict(...)`` → keys ``method``, ``n_lods``, ``counts`` (alias
-      ``breakpoints``), ``reveal_centre``, ``spatial_dims``.
+      ``breakpoints``), ``reveal_center``, ``spatial_dims``.
 
     ``method`` accepts only :data:`MESH_ADDITIVE_METHODS` — see its docstring for
     why that is one name and not an omission.
@@ -413,12 +413,12 @@ def resolve_additive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
 
     counts = _pop_mesh_breakpoints(kwargs)
 
-    reveal_centre, spatial_dims = pop_reveal_knobs(kwargs, method)
+    reveal_center, spatial_dims = pop_reveal_knobs(kwargs, method)
 
     if kwargs:
         raise ValueError(
             f"additive_lod for Mesh: unrecognized keys {sorted(kwargs)}. "
-            "Valid keys: method, n_lods, counts, breakpoints, reveal_centre, "
+            "Valid keys: method, n_lods, counts, breakpoints, reveal_center, "
             "spatial_dims. (A mesh's vocabulary is SHORTER than Points/Lines — "
             "see MESH_ADDITIVE_METHODS for why only a reveal applies to a "
             "surface.)"
@@ -428,7 +428,7 @@ def resolve_additive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
         "method": method,
         "n_lods": n_lods,
         "counts": counts,
-        "reveal_centre": reveal_centre,
+        "reveal_center": reveal_center,
         "spatial_dims": spatial_dims,
     }
 
@@ -504,7 +504,7 @@ def _face_adjacency(faces: "NDArray", n_faces: int) -> tuple:
 def _component_seeds(
     offsets: "NDArray", nbrs: "NDArray", scores: "NDArray", n_faces: int
 ) -> List[int]:
-    """One seed per edge-connected component: its face NEAREST the reveal centre.
+    """One seed per edge-connected component: its face NEAREST the reveal center.
 
     Labels the components once off the adjacency CSR
     :func:`_face_adjacency` already built, so the reveal can seed every component
@@ -543,7 +543,7 @@ def compute_additive_order_mesh(
     faces: "NDArray",
     *,
     method: str = DEFAULT_MESH_ADDITIVE_METHOD,
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> "NDArray":
     """Order a mesh's FACES for a reveal, returning a permutation of face indices.
@@ -556,7 +556,7 @@ def compute_additive_order_mesh(
     Follows the LINES call pattern rather than the Points one: centroids are
     DERIVED representatives whose bounding box is not the vertex bounding box (it
     is strictly inside it), so the centre has to be resolved against the vertices
-    up front via :func:`~luxar.core.group.lod.reveal.resolve_reveal_centre`. Left
+    up front via :func:`~luxar.core.group.lod.reveal.resolve_reveal_center`. Left
     to the scorer's own default, a reveal would grow from the centre of the
     centroid cloud instead of the centre of the surface — close on a symmetric
     mesh and visibly off on an asymmetric one.
@@ -565,7 +565,7 @@ def compute_additive_order_mesh(
         vertices: ``(V, D)`` vertex coordinates.
         faces: ``(F, 3)`` triangle indices.
         method: Must be in :data:`MESH_ADDITIVE_METHODS`.
-        reveal_centre: Explicit centre, ``D`` values (or the scored subset).
+        reveal_center: Explicit centre, ``D`` values (or the scored subset).
         spatial_dims: Which columns the distance is measured over.
 
     Returns:
@@ -574,7 +574,7 @@ def compute_additive_order_mesh(
     import numpy as np
 
     from ....mesh.split import face_centroids
-    from .reveal import radial_element_score, resolve_reveal_centre
+    from .reveal import radial_element_score, resolve_reveal_center
 
     if method not in MESH_ADDITIVE_METHODS:
         raise ValueError(
@@ -587,8 +587,8 @@ def compute_additive_order_mesh(
         return np.empty(0, dtype=np.intp)
 
     centroids = face_centroids(np.asarray(vertices), faces_arr.astype(np.uint32))
-    centre = resolve_reveal_centre(
-        reveal_centre, np.asarray(vertices), centroids, spatial_dims
+    centre = resolve_reveal_center(
+        reveal_center, np.asarray(vertices), centroids, spatial_dims
     )
     scores = radial_element_score(centroids, centre, spatial_dims)
     n_faces = int(faces_arr.shape[0])
@@ -665,7 +665,7 @@ def make_additive_lod_mesh(
     method: str = DEFAULT_MESH_ADDITIVE_METHOD,
     n_lods: int = 4,
     counts: Any = None,
-    reveal_centre: Optional[List[float]] = None,
+    reveal_center: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
 ) -> "List[NDArray]":
     """Split a mesh's faces into additive levels — a reveal ladder.
@@ -700,7 +700,7 @@ def make_additive_lod_mesh(
         vertices,
         faces_arr,
         method=method,
-        reveal_centre=reveal_centre,
+        reveal_center=reveal_center,
         spatial_dims=spatial_dims,
     )
 

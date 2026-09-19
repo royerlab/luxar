@@ -1,9 +1,22 @@
 """Tests for shared demo command-line flag parsers."""
 
+import re
 import sys
 from pathlib import Path
 
 from luxar.demos._support.runtime import flags as flag_utils
+
+
+def _plain(captured: str) -> str:
+    """Captured arbol output with ANSI colour and line wrapping removed.
+
+    Both matter. Arbol writes SGR escapes around every line, and it wraps long
+    ones — so a phrase can be split across a newline mid-sentence. A raw
+    `in` check is therefore unreliable in the positive direction and, worse,
+    passes VACUOUSLY in the negative direction.
+    """
+    without_colour = re.sub(r"\x1b\[[0-9;]*m", "", captured)
+    return " ".join(without_colour.split())
 
 
 def test_parse_int_arg_equals_space_and_default():
@@ -79,3 +92,72 @@ def test_parse_path_arg_reads_sys_argv_by_default(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["prog", "--data=/tmp/bar"])
     assert flag_utils.parse_path_arg("data") == Path("/tmp/bar")
     assert flag_utils.parse_path_arg("cache-dir") is None
+
+
+def test_parse_str_arg_equals_space_and_default(capsys):
+    assert (
+        flag_utils.parse_str_arg("control-token", ["--control-token=s3cret"])
+        == "s3cret"
+    )
+    assert (
+        flag_utils.parse_str_arg("control-token", ["--control-token", "s3cret"])
+        == "s3cret"
+    )
+    assert flag_utils.parse_str_arg("control-token", ["--other=1"]) is None
+    # An empty value is not a hit, so a later real one still wins.
+    assert (
+        flag_utils.parse_str_arg("host", ["--host=", "--host", "0.0.0.0"]) == "0.0.0.0"
+    )
+    # In the space form the next token must not itself look like an option.
+    assert (
+        flag_utils.parse_str_arg("control-token", ["--control-token", "--host"]) is None
+    )
+    assert "not a value" in capsys.readouterr().out
+
+
+class TestControlServeArgs:
+    """Remote control is OPT-IN. That is the property worth a test."""
+
+    def test_off_without_the_flag(self):
+        # The default must add nothing: no demo should ever start listening for
+        # remote control because a user ran it the ordinary way.
+        assert flag_utils.control_serve_args([]) == []
+        assert flag_utils.control_serve_args(["--no-audio", "--no-turntables"]) == []
+
+    def test_a_token_alone_does_not_enable_it(self):
+        # `--control-token` is a modifier, not a switch. Treating it as one
+        # would turn a half-typed command into an exposed display.
+        assert flag_utils.control_serve_args(["--control-token", "s3cret"]) == []
+
+    def test_the_flag_enables_it(self):
+        assert flag_utils.control_serve_args(["--control"]) == ["--control"]
+
+    def test_token_and_host_are_forwarded(self):
+        assert flag_utils.control_serve_args(
+            ["--control", "--control-token=s3cret", "--host=0.0.0.0"]
+        ) == ["--control", "--control-token", "s3cret", "--host", "0.0.0.0"]
+
+    def test_a_network_bind_without_a_token_warns(self, capsys):
+        # The one dangerous combination: reachable from the network, with
+        # nothing asked of whoever connects.
+        args = flag_utils.control_serve_args(["--control", "--host", "0.0.0.0"])
+        assert args == ["--control", "--host", "0.0.0.0"]
+        warning = _plain(capsys.readouterr().out)
+        assert "can drive the display" in warning
+        assert "Pass --control-token to restrict it" in warning
+
+    def test_a_network_bind_with_a_token_is_quiet(self, capsys):
+        flag_utils.control_serve_args(
+            ["--control", "--host", "0.0.0.0", "--control-token", "s3cret"]
+        )
+        assert "can drive the display" not in _plain(capsys.readouterr().out)
+
+    def test_loopback_is_not_warned_about(self, capsys):
+        flag_utils.control_serve_args(["--control", "--host", "127.0.0.1"])
+        assert "can drive the display" not in _plain(capsys.readouterr().out)
+
+    def test_it_reads_sys_argv_by_default(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["prog", "--control"])
+        assert flag_utils.control_serve_args() == ["--control"]
+        monkeypatch.setattr(sys, "argv", ["prog"])
+        assert flag_utils.control_serve_args() == []

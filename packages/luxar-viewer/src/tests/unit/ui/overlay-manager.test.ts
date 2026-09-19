@@ -225,7 +225,8 @@ describe('OverlayManager.loadOverlays', () => {
   it('positions overlays using percentage left/top', async () => {
     await manager.loadOverlays([makeTextOverlay({ position: [0.25, 0.75] })], 'http://example.com');
     const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
-    expect(el.style.left).toBe('25%');
+    expect(el.style.getPropertyValue('--luxar-overlay-x')).toBe('25%');
+    expect(el.style.left).toBe('');
     expect(el.style.top).toBe('75%');
   });
 
@@ -720,6 +721,8 @@ describe('OverlayManager — anchoring (issue #773)', () => {
     // left/top percentages are produced without rounding).
     expect(el.style.right.endsWith('%')).toBe(true);
     expect(parseFloat(el.style.right)).toBeCloseTo(2);
+    expect(el.classList.contains('luxar-overlay--right-anchored')).toBe(true);
+    expect(el.style.getPropertyValue('--luxar-overlay-x')).toBe('');
     expect(el.style.left).toBe('');
     expect(parseFloat(el.style.top)).toBeCloseTo(2);
     // Transform keeps its vertical part but drops the horizontal -100%.
@@ -765,13 +768,17 @@ describe('OverlayManager — anchoring (issue #773)', () => {
     const center = document.querySelector('[data-overlay-name="center"]') as HTMLDivElement;
     const cleft = document.querySelector('[data-overlay-name="cleft"]') as HTMLDivElement;
 
-    expect(left.style.left).toBe('25%');
+    expect(left.style.getPropertyValue('--luxar-overlay-x')).toBe('25%');
+    expect(left.style.left).toBe('');
     expect(left.style.right).toBe('');
     // Center keeps its -50%/-50% transform and left positioning.
-    expect(center.style.left).toBe('25%');
+    expect(center.style.getPropertyValue('--luxar-overlay-x')).toBe('25%');
+    expect(center.style.left).toBe('');
     expect(center.style.right).toBe('');
+    expect(center.classList.contains('luxar-overlay--center-anchored')).toBe(true);
     expect(center.style.transform).toBe('translate(-50%, -50%)');
-    expect(cleft.style.left).toBe('10%');
+    expect(cleft.style.getPropertyValue('--luxar-overlay-x')).toBe('10%');
+    expect(cleft.style.left).toBe('');
     expect(cleft.style.right).toBe('');
   });
 
@@ -808,6 +815,7 @@ describe('OverlayManager — anchoring (issue #773)', () => {
     );
     const el = document.querySelector('[data-overlay-name="wide"]') as HTMLDivElement;
     // Explicit width stays the primary sizing.
+    expect(el.classList.contains('luxar-overlay--explicit-width')).toBe(true);
     expect(el.style.width).toBe('50vw');
     // The clamp is only applied on the no-explicit-width path.
     expect(el.style.maxWidth).toBe('');
@@ -829,6 +837,7 @@ describe('OverlayManager — anchoring (issue #773)', () => {
     (manager as unknown as { createTextContent(e: HTMLDivElement, c: OverlayConfig): void })[
       'createTextContent'
     ](el, makeTextOverlay({ name: 'morph', width: 0.5 }));
+    expect(el.classList.contains('luxar-overlay--explicit-width')).toBe(true);
     expect(el.style.width).toBe('50vw');
     expect(el.style.maxWidth).toBe('');
 
@@ -836,6 +845,7 @@ describe('OverlayManager — anchoring (issue #773)', () => {
     (manager as unknown as { createTextContent(e: HTMLDivElement, c: OverlayConfig): void })[
       'createTextContent'
     ](el, makeTextOverlay({ name: 'morph' }));
+    expect(el.classList.contains('luxar-overlay--explicit-width')).toBe(false);
     expect(el.style.width).toBe('');
     expect(el.style.maxWidth).toBe('');
     expect(el.style.whiteSpace).toBe('nowrap');

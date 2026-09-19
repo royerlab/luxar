@@ -130,6 +130,12 @@ def run_batch_submit(
     # Fit params
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
+    physical: bool = typer.Option(
+        False,
+        "--physical",
+        help="Fit centers and covariance in physical coordinates using the selected "
+        "OME-Zarr coordinateTransformations scale. A voxel_size in --config wins.",
+    ),
     floor: Optional[str] = typer.Option(
         None,
         "--floor",
@@ -283,10 +289,16 @@ def run_batch_submit(
         rich_help_panel="Slurm resources",
     ),
     cpus: int = typer.Option(
-        4, "--cpus", help="CPUs per task", rich_help_panel="Slurm resources"
+        4,
+        "--cpus",
+        help="CPUs per fit task; --parallel multiplies the Slurm request by resolved packing",
+        rich_help_panel="Slurm resources",
     ),
     mem: int = typer.Option(
-        32, "--mem", help="Memory per task (GB)", rich_help_panel="Slurm resources"
+        32,
+        "--mem",
+        help="Memory per fit task (GB); --parallel multiplies the Slurm request by resolved packing",
+        rich_help_panel="Slurm resources",
     ),
     time_limit: Optional[str] = typer.Option(
         None,
@@ -456,8 +468,8 @@ def run_batch_submit(
         help=(
             "Run packed tasks concurrently (--parallel) or one by one "
             "(--sequential, default). Parallel mode launches multiple fit "
-            "processes sharing the same GPU — higher throughput but uses "
-            "more GPU memory."
+            "processes with per-worker GPU/thread/quality-budget isolation and "
+            "scales the CPU/RAM allocation by the resolved packing."
         ),
     ),
     # Array selection
@@ -526,6 +538,7 @@ def run_batch_submit(
             iters=iters,
             config=config,
             floor=floor,
+            physical=physical,
             batch_progressive=batch_progressive,
             batch_splats_per_pass=batch_splats_per_pass,
             batch_psnr_patience=batch_psnr_patience,
@@ -619,6 +632,10 @@ def run_batch_submit(
             est_seconds=est_seconds,
             total_tasks=total_tasks,
             time_limit=time_limit,
+            partition=partition,
+            gpus_per_task=gpus_per_task,
+            cpus=cpus,
+            mem=mem,
         )
         tasks_per_job = packing.tasks_per_job
         uses_backfill = packing.uses_backfill
@@ -639,8 +656,6 @@ def run_batch_submit(
             account=account,
             qos=qos,
             gpus_per_task=gpus_per_task,
-            cpus=cpus,
-            mem=mem,
             parallel=parallel,
             max_concurrent=max_concurrent,
             preemptible=preemptible,
@@ -674,6 +689,7 @@ def run_batch_submit(
             auto_tile=auto_tile,
             total_tasks=total_tasks,
             tasks_per_job=tasks_per_job,
+            packing_limit=packing.limiting_resource,
             parallel=parallel,
             n_slurm_jobs=n_slurm_jobs,
             mps_available_fn=is_slurm_mps_available,
@@ -687,8 +703,10 @@ def run_batch_submit(
             slurm_time=slurm_time,
             partition=partition,
             gpus_per_task=gpus_per_task,
-            cpus=cpus,
-            mem=mem,
+            cpus_per_task=packing.slurm_cpus,
+            mem_gb_per_task=packing.slurm_mem_gb,
+            cpus_total=packing.slurm_cpus_total,
+            mem_gb_total=packing.slurm_mem_gb_total,
             output_dir=output_dir,
         )
 

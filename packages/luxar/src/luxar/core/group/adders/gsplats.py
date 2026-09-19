@@ -76,6 +76,7 @@ def add_gsplats_impl(
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
     partition: Any = None,
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> Union[GSplats, "Group"]:
     try:
@@ -170,9 +171,9 @@ def add_gsplats_impl(
         scene._validate_dimension_count(ctr_arr, name, data_type="centers")
 
         # Node-attrs gate (#1534) — the GSplats peer of the Points/Lines hoist
-        # (#1529). ``partition=`` is this adder's only split path (this module
-        # has no substitutive_lod=/additive_lod=/lod_group= door — those live
-        # on ``add_gsplats_from_data``, a different adder), and it forwards the
+        # (#1529). ``partition=`` is this leaf implementation's only split path;
+        # the public array adder resolves its LOD controls before reaching here.
+        # This function forwards the
         # non-compositing remainder of ``**attrs`` to each synthesised
         # ``part_i`` — so a bad attr used to be refused only from inside the
         # first part, by which point the wrapper's childless ``kind=partition``
@@ -243,6 +244,7 @@ def add_gsplats_impl(
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
                     bsp_tree=tree.to_serializable(),
+                    _source_dtype=_source_dtype,
                     **attrs,
                 )
             # 1 part → fall through to single-leaf write.
@@ -273,6 +275,7 @@ def add_gsplats_impl(
             labels=labels,
             keys=keys,
             image_labels=image_labels,
+            _source_dtype=_source_dtype,
             **attrs,
         )
 
@@ -325,6 +328,7 @@ def add_gsplats_partition_wrapper_impl(
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
     bsp_tree: Dict[str, Any],
+    _source_dtype: Optional[str] = None,
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one GSplats child per BSP part."""
@@ -399,6 +403,7 @@ def add_gsplats_partition_wrapper_impl(
             # ``partition=False`` bypasses compiler auto-partition (see
             # add_points_partition_wrapper_impl for rationale).
             partition=False,
+            _source_dtype=_source_dtype,
             **leaf_attrs,
         )
     from ..partition import persist_pruned_bsp_tree

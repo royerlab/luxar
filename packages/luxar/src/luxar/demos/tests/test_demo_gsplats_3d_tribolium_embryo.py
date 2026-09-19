@@ -46,9 +46,12 @@ def test_scene_bakes_volumetric_appearance(tmp_path) -> None:
     attrs = dict(node.attrs)
 
     assert attrs["blending_mode"] == "volumetric"
-    assert attrs["absorption"] == pytest.approx(3.13)
-    assert attrs["opacity"] == pytest.approx(0.06)
-    assert attrs["intensity"] == pytest.approx(1.0 / 1.085)
+    # Hand-tuned in the hosted viewer's Layers panel on 2026-09-10 (colour
+    # range 0 - 0.533, opacity 1.0, absorption 2.53) with exposure back at the
+    # 0-stop identity.
+    assert attrs["absorption"] == pytest.approx(2.53)
+    assert attrs["opacity"] == pytest.approx(1.0)
+    assert attrs["intensity"] == pytest.approx(1.0 / 0.533)
 
 
 def test_fit_normalises_counts_and_floor_without_mutating_input(

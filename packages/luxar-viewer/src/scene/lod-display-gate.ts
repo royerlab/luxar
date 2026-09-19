@@ -94,10 +94,10 @@ export interface SubtreeDisplayProgress {
   /**
    * Displayed-quality estimate q = Q·e aggregated like {@link energy}, where
    * Q is each leaf's measured `level_stats.quality` (its COMPLETE quality vs
-   * its lod group's finest content; defaults to 1 when not measured — e.g.
-   * datasets annotated without `--with-quality`). Purely informational (the
-   * layers-panel / data-monitor readouts); the gate's release rule uses
-   * {@link energy} alone.
+   * its lod group's finest content). `null` when any contributing leaf has no
+   * measured Q — never blend measured quality with a guessed perfect level.
+   * Purely informational for the layers-panel / data-monitor readouts; the
+   * gate's release rule uses {@link energy} alone.
    */
   quality: number | null;
 }
@@ -112,12 +112,14 @@ interface ProgressAccumulator {
   any: boolean;
   /** Σ wᵢ·eᵢ over visible non-empty stamped leaves (w = reference_energy). */
   weightedEnergy: number;
-  /** Σ wᵢ·Qᵢ·eᵢ over the same leaves (Q defaults to 1 when unmeasured). */
+  /** Σ wᵢ·Qᵢ·eᵢ over the same leaves. */
   weightedQuality: number;
   /** Σ wᵢ over the same leaves. */
   weight: number;
   /** False once any contributing leaf lacks its e stamp or w weight. */
   energyKnown: boolean;
+  /** False once any contributing leaf lacks its measured Q stamp. */
+  qualityKnown: boolean;
 }
 
 function foldProgress(
@@ -155,7 +157,8 @@ function foldProgress(
       if (typeof e === 'number' && typeof w === 'number' && w > 0) {
         acc.weightedEnergy += w * e;
         const q = ud.attrs?.level_stats?.quality;
-        acc.weightedQuality += w * e * (typeof q === 'number' ? q : 1);
+        if (typeof q === 'number') acc.weightedQuality += w * e * q;
+        else acc.qualityKnown = false;
         acc.weight += w;
       } else {
         acc.energyKnown = false;
@@ -196,6 +199,7 @@ export function subtreeDisplayProgress(
     weightedQuality: 0,
     weight: 0,
     energyKnown: true,
+    qualityKnown: true,
   };
   foldProgress(root, true, version, acc);
   if (!acc.any) return null;
@@ -205,7 +209,10 @@ export function subtreeDisplayProgress(
     fresh: acc.fresh,
     nodeType: acc.mixed ? 'mixed' : acc.nodeType,
     energy: acc.energyKnown && acc.weight > 0 ? acc.weightedEnergy / acc.weight : null,
-    quality: acc.energyKnown && acc.weight > 0 ? acc.weightedQuality / acc.weight : null,
+    quality:
+      acc.energyKnown && acc.qualityKnown && acc.weight > 0
+        ? acc.weightedQuality / acc.weight
+        : null,
   };
 }
 
@@ -213,7 +220,7 @@ export function subtreeDisplayProgress(
  * Displayed-quality estimate q = Q·e of one registry child (leaf or whole
  * subtree), for the layers-panel / data-monitor readouts — `null` when the
  * dataset carries no quality stamps (or nothing is committed yet). Q is the
- * static measured level quality (`level_stats.quality`, default 1), e the
+ * static measured level quality (`level_stats.quality`), e the
  * commit-time energy fraction; groups aggregate w-weighted over visible
  * non-empty leaves. Display-only: the gate's hold rule reads `energy`, not
  * this.

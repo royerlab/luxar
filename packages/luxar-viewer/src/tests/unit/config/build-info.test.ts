@@ -43,8 +43,8 @@ describe('build-info (runtime side)', () => {
   });
 
   it('reports unstamped rather than throwing when no define was injected', () => {
-    // vitest uses vitest.config.ts, which carries no `define:` — so this run IS
-    // the unstamped case. A bare `__LUXAR_BUILD__` reference here would be a
+    // vitest uses vitest.config.ts, which defines `__LUXAR_VIEWER_VERSION__`
+    // but NOT `__LUXAR_BUILD__` — so this run IS the unstamped case. A bare `__LUXAR_BUILD__` reference here would be a
     // ReferenceError, and the guard in build-info.ts is the only thing
     // preventing that from taking the whole viewer down in every embedder.
     const info = buildInfo();

@@ -26,7 +26,7 @@ hatch run test              # Run tests
 hatch run test-cov          # Tests with coverage
 hatch run python script.py  # Run script
 hatch run python -m ruff check .  # Lint
-hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py  # Type check
+hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py  # Type check
 ```
 
 The hatch env pins `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (see the note in
@@ -57,7 +57,7 @@ pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
                   # violation or an over-declared count fails, including an
                   # increase inside a suppressed file (the suppression is a
                   # COUNT, not a file exemption). After reducing a count, run
-                  # `pnpm lint --prune-suppressions` and commit the baseline.
+                  # `pnpm lint:prune` and commit the baseline.
                   # Moved/renamed a baselined file? Re-key with `pnpm exec
                   # eslint . --suppress-rule <rule>`, then
                   # prune; verify the suppressions diff only moves that path.
@@ -89,7 +89,10 @@ make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go l
 make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
 make test-e2e     # Full Playwright E2E suite (~17 min)
-make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
+make test-e2e-browsers  # Cross-browser Playwright subset
+make test-e2e-mobile  # Mobile/touch Playwright suite used by PR CI
+make test-e2e-smoke  # E2E smoke subset
+make test-e2e-smoke-strict  # Smoke subset with strict console handling
 make test-perf-e2e   # Opt-in Playwright performance suite
 # check-all is NOT read-only: `check-static` begins with `format`, so it
 # REWRITES packages/luxar/src and scripts. When other agents/people are editing
@@ -100,7 +103,7 @@ make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
                   # CI enforces this both through `hatch run lint` and the
                   # live-tree `test_repository_has_no_complexity_regressions`.
-make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+make check-lint-ratchet # read-only: ruff's DEFECT rules (bugbear + blind-except + RUF012)
                   # ratcheted against scripts/lint_baseline.json. Existing debt is
                   # tolerated; a file that newly breaks one of these rules — or
                   # gains another violation of one it already breaks — fails.
@@ -121,6 +124,15 @@ make check-docs   # REQUIRED gate mirror: completeness + TypeDoc ratchets +
 make check-docs-external-links  # opt-in external HTTP link audit (not a gate)
 make check-demo-links  # opt-in demo click-through audit (reports only; not a gate)
 make check-zenodo-live          # opt-in live Zenodo manifest-pin audit (not a gate)
+make check-record-attribution   # opt-in OFFLINE audit: does the captured Zenodo
+                  # record text still agree with the manifest's `attribution`?
+                  # Flags only a publication describing THE IMAGING — one describing
+                  # the INSTRUMENT or METHOD is the correct framing. Report-only BY
+                  # DESIGN: the wording is authored on Zenodo, so a finding is fixed
+                  # there and re-captured, never by regenerating the snapshot. Its
+                  # live-repo test is DELIBERATELY WEAK and must stay so — scripts/
+                  # tests runs in the REQUIRED python-tests job, so asserting what
+                  # the audit FINDS would gate on prose only Zenodo can change.
 make check-cold-fetch           # opt-in hosted demo cold-fetch gate before payload removal
 make check-external-references  # aggregate external audits (report-only, non-gating)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
@@ -153,15 +165,14 @@ make clean-launchers  # Clean built launcher binaries
 #   Opens the system default browser instead of the embedded WebView —
 #   useful for headless smoke tests. NOT a rescue for a missing
 #   libwebkit2gtk: cgo links WebKit at build time, so the binary has a hard
-#   DT_NEEDED on libwebkit2gtk-4.0.so and the loader aborts before main()
-#   ever reads this variable. A 4.1-only distro (Ubuntu 24.04+) needs the
-#   4.0 runtime installed, or a separate browser-only build. See #998.
+#   DT_NEEDED on libwebkit2gtk-4.1.so and the loader aborts before main()
+#   ever reads this variable. Install the 4.1 runtime first. See #998.
 # Runtime override: LUXAR_CACHE_BUDGET_MB=<N> ./luxar-launcher
 #   Total in-memory cache pool (L0+L1+S-cache) the launcher passes to the
-#   viewer via ?cacheBudgetMB=. One third also becomes the auto GPU-geometry
-#   residency signal. WKWebView has neither performance.memory nor deviceMemory,
-#   so the launcher default (2048) raises that budget from 512 to 716 MB; lower
-#   it on a constrained machine.
+#   viewer via ?cacheBudgetMB=. Its implied non-cache remainder also becomes the
+#   auto GPU-geometry residency signal. WKWebView has neither performance.memory
+#   nor deviceMemory, so the launcher default (2048) raises that budget from 512
+#   to 1432 MB; lower it on a constrained machine.
 
 # CUDA (Gaussian Splatting)
 make setup-cuda       # Install CUDA deps + build extension (may need sudo)
@@ -192,7 +203,7 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 - **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
 **What `make setup-dev` installs (no sudo needed):**
-- **Node.js 22.22+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). The floor is jsdom 30 (dev/test only), whose undici 8 dependency crashes on Node older than 22.16; Vite 8 alone only needs 20.19. `engines.node` in `packages/luxar-viewer/package.json` deliberately stays at the library's runtime floor (`>=20.19.0`) — that manifest is published to npm, and a dev-only jsdom constraint there would break installs for consumers.
+- **Node.js 22.22+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). The floor is jsdom 30 (dev/test only), whose undici 8 dependency crashes on Node older than 22.16; Vite 8 alone supports `^20.19.0 || >=22.12.0`. `engines.node` in `packages/luxar-viewer/package.json` deliberately mirrors that library runtime range, excluding unsupported Node 22.0–22.11 without imposing the higher contributor-only jsdom floor on npm consumers.
 - **pnpm**: TypeScript package manager (via npm global or `--prefix ~/.local` fallback on HPC)
 - **Hatch**: Python environment manager (via pipx, or venv fallback on HPC)
 - **Pre-commit hooks**: ruff (lint + format), bandit, and mypy — see `.pre-commit-config.yaml`
@@ -290,7 +301,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 91 bundled demos (table)
+luxar demo                       # List the 90 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -318,25 +329,37 @@ luxar profiles                   # Network simulation profiles
 # `--profile hosting` (256 KB) trades PARTIAL-QUERY bytes for full-load
 # requests: a Points/GSplats node the viewer SLICES into pays 4.5x the bytes per
 # partial hit vs `local`. Size up only when the access pattern is "load whole".
-luxar optimise scene.luxar.zarr out.luxar.zarr             # 64 KB default
-luxar optimise scene.luxar.zarr --dry-run                  # report the plan, write nothing
-luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB
-luxar optimise scene.luxar.zarr out.luxar.zarr --verify    # re-read the output, compare every array
-luxar optimise arbitrary.zarr out.zarr --generic           # a plain (non-Luxar) zarr store
+# On an ANIMATED node judge the profile by FRAMES PER CHUNK (group consecutive
+# bounds atoms as planned zarr chunks, then measure each group's axis span):
+# a 1 MB chunk of a 250-frame un-laddered
+# Lines node holds ~6 frames; boundary prefetch now starts the next chunk while
+# preceding frames play, though its average lead is only about half a chunk (#2686);
+# a LADDERED played splat node wants 1 MB so its coarse rung stays resident
+# (#2377). The pass warns when enabled playback on an un-laddered node would
+# exceed two frames per chunk across multiple chunks; decide the final trade per node.
+luxar optimize scene.luxar.zarr out.luxar.zarr             # 64 KB default
+luxar optimize scene.luxar.zarr --dry-run                  # report the plan, write nothing
+luxar optimize scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB
+luxar optimize scene.luxar.zarr out.luxar.zarr --verify    # re-read the output, compare every array
+luxar optimize arbitrary.zarr out.zarr --generic           # a plain (non-Luxar) zarr store
 # Re-derive a store's LOD switch thresholds IN PLACE — attrs only, no chunk data
 # moves. Every `kind=lod` group still on the legacy `coverage` diagonal metric
 # (or carrying no `selector`) gets screen-occupancy-halved thresholds and a
 # `screen-area` stamp; the fills-screen anchor only under a REAL (>1 part)
 # partition. An EXPLICIT opt-in and nothing else may trigger it: an authored
-# `coverage_fractions=[...]` list and a legacy derived one are indistinguishable
-# on disk, so this may override a deliberate choice — hence the printed old→new
-# audit line, `--dry-run`, and `--group`. A group already on `screen-area` is
-# skipped, so a second run changes nothing, `content_hash` included. Exits 1 when
-# a ladder was left alone (unsupported selector → `gsplat migrate-format` first;
+# `coverage_fractions=[...]` list and a derived one are indistinguishable on
+# disk, including a hand-authored ladder already stamped `screen-area`, so this
+# may override a deliberate choice — hence the printed old→new audit line,
+# `--dry-run`, and `--group`. A group already on `screen-area` is
+# skipped by default, so a second run changes nothing, `content_hash` included;
+# `--anchor` explicitly re-derives whole-object ladders, including legacy ones
+# being migrated, while partition-bound ladders stay at `1.0`. Exits 1 when a
+# ladder was left alone (unsupported selector → `gsplat migrate-format` first;
 # unresolvable finest element count).
 luxar restamp-lod scene.luxar.zarr                         # every legacy ladder
 luxar restamp-lod scene.luxar.zarr --dry-run               # report the old→new ladders
 luxar restamp-lod scene.luxar.zarr --group tiled/part_0    # one ladder (repeatable)
+luxar restamp-lod scene.luxar.zarr --anchor 0.25           # re-anchor whole-object ladders
 luxar export scene.luxar.zarr -o my_export/             # Export scene + viewer as standalone offline folder
 luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in browser
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export
@@ -466,7 +489,8 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32  # Single tile (Slurm-ready)
 # Parallel tiles on ONE GPU (no Slurm): spawn N `fit --tile` worker subprocesses,
-# then merge. Default -j 1 = sequential. `-j auto` sizes N from free VRAM.
+# then merge. Default -j 1 = sequential. `-j auto` sizes N from GPU memory plus
+# shared host RAM/CPU limits; override its hard cap with LUXAR_AUTO_WORKER_HARD_CAP.
 # Saturates the GPU when a single tile under-utilizes it (the local counterpart
 # of `batch-fit submit --parallel`). --keep-tiles keeps the per-tile temp outputs.
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32 -j 4
@@ -503,8 +527,9 @@ luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --rec
 # LOCAL multi-GPU whole-timelapse fit (no Slurm; the local sibling of submit).
 # --gpus auto = every visible CUDA card above a free-VRAM floor (skips small
 # cards; override LUXAR_GPU_VRAM_FLOOR_GB); 'all' forces every card; 'cpu' = CPU;
-# '0,1,3' = explicit. Per-GPU concurrency from --jobs-per-gpu (auto sizes from
-# each card's free VRAM). Resumable: re-running skips tiles already on disk.
+# '0,1,3' = explicit. Per-GPU concurrency from --jobs-per-gpu (auto accounts for
+# GPU memory plus shared host RAM/CPU limits; LUXAR_AUTO_WORKER_HARD_CAP overrides
+# the host-wide cap). Resumable: re-running skips tiles already on disk.
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256            # uniform, all GPUs
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto   # content plan
 luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --merge-n-lods 4  # per-part LOD at merge
@@ -519,6 +544,9 @@ luxar gsplat batch-fit run vol.zarr out/ --gpus auto --axes time,z,y,x \
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10   # subset, 2 workers/GPU
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                            # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run  # plan only
+# Batch output stays in index space by default; --physical opts run/submit into
+# the selected NGFF spatial scale (a config voxel_size still takes precedence).
+luxar gsplat batch-fit run vol.zarr out/ --gpus auto --physical
 
 # HPC Slurm fitting (plans + submits Slurm array jobs). `batch-fit submit`
 # submits by default; pass --dry-run to plan without submitting.
@@ -526,6 +554,7 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu                    # 
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tile-size 256    # Manual tile size (skips GPU profile)
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --physical         # Emit physical coordinates from NGFF spacing
 # Content-aware cluster fan-out: build ONE content-balanced box plan and reuse it
 # for every (t,c) — the cluster sibling of `fit --tiling content`. By default the
 # plan is scanned from a temporal MAX-PROJECTION over up to --plan-samples
@@ -539,7 +568,7 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tile-size 256    # 
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tiling content --cal cal.json
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tiling content \
     --k-star-ref 60000 --n-features-ref 5000 --plan-samples 24   # density knobs + 24-timepoint max-proj plan
-luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --parallel         # Concurrent tasks per GPU
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --parallel         # Packed workers; scales per-task CPU/RAM and pins worker resources
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tasks-per-job 5  # Manual packing
 # `--gpus-per-task` is a COUNT (emitted verbatim as `#SBATCH --gpus-per-task`).
 # NOT the same flag as `batch-fit run --gpus`, which SELECTS local devices --
@@ -661,6 +690,12 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     --breakpoints energy:0.5,0.9,0.99,1.0                                    # cumulative energy fractions
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
+    -m self_energy -b equi-energy:4        # EQUAL-ENERGY rungs: few heavy splats first, fat dim rungs last
+# `equi-energy:<n>` cuts at equal shares of cumulative self-energy along the
+# ordering (commit-capped at 900K), so first paint is the perceptually heaviest
+# handful and the slow late rungs are the ones whose absence shows least. Also a
+# Points/Lines `counts=` value (pair with `method="salience", salience_kind="energy"`).
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     -m mass -b counts:500,2000,10000                                         # mass order, explicit counts
 # additive default method `auto`: greedy (provably (1-1/e)-optimal at every
 # prefix) at N <= 5000, else `self_energy` (cheap O(N log N)); override with -m.
@@ -672,7 +707,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --add-method s
 # every prefix keeps valid segment topology). A radial ladder deliberately carries
 # NO energy stamps: the viewer brightens an incomplete ladder by 1/e(k), which is
 # backwards for a reveal (a partial object at FULL brightness, not a dim whole).
-# Knobs: reveal_centre / spatial_dims (Python), --reveal-centre / --spatial-dims.
+# Knobs: reveal_center / spatial_dims (Python), --reveal-center / --spatial-dims.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -m radial --n-lods 6
 # STREAMING breakpoints: `-b stream:C` = geometric ladder (first chunk C splats,
 # then doubling), sized per part/level. Or derive C from a download budget with
@@ -711,9 +746,10 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:1400
 # below the floor — it measures the 5th percentile, since a ladder starves at its
 # sparsest slice and one busy coordinate masks hundreds of starved ones.
 # It is intentionally not a checkout-only CI step: generated demo stores are
-# gitignored and absent there, so that would audit nothing. Demo-build/release
-# callers must run it with `--require-scenes`; `check-scene-credits` has the same
-# artifact-only contract.
+# gitignored and absent there, so that would audit nothing. The gallery generator
+# runs both auditors with `--require-scenes` as gates against newly built stores;
+# the pre-upload inventory audit checks the whole corpus, and
+# `check-scene-credits` has the same artifact-only contract.
 
 # Give every leaf of an EXISTING tree an additive ladder, structure-preservingly
 # (substitutive kind=lod levels, partition parts, adaptive groups all keep their
@@ -1486,7 +1522,7 @@ import { PointMaterial } from '../rendering/point-material';
 ## Luxar Conventions
 
 ### Physical Units
-Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
+Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au, s
 
 ### Geometry Types & Attributes
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)

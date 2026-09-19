@@ -14,8 +14,9 @@ extent comes from its own vertices.
    :no-members:
 
 Everything in ``luxar.mesh``'s ``__all__`` is re-exported from
-:mod:`luxar.mesh.interop`, so the members are documented once, below, rather
-than twice under two names.
+:mod:`luxar.mesh.interop`, :mod:`luxar.mesh.decimate` or
+:mod:`luxar.mesh.primitives`, so the members are documented once, under their
+home module below, rather than twice under two names.
 
 Importing Classical Mesh Files
 ------------------------------

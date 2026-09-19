@@ -96,8 +96,8 @@ RECORDS = {
     "cc-by": {
         "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
         "license": "cc-by-4.0",
-        "zenodo_doi": "10.5281/zenodo.21912280",
-        "zenodo_record": "21912280",
+        "zenodo_doi": "10.5281/zenodo.22804363",
+        "zenodo_record": "22804363",
         "zenodo_conceptdoi": "10.5281/zenodo.21912279",
         "base_url": None,
         "published": True,
@@ -118,8 +118,8 @@ RECORDS = {
             "51-timepoint fit)"
         ),
         "license": "cc-by-4.0",
-        "zenodo_doi": "10.5281/zenodo.21912284",
-        "zenodo_record": "21912284",
+        "zenodo_doi": "10.5281/zenodo.22807312",
+        "zenodo_record": "22807312",
         "zenodo_conceptdoi": "10.5281/zenodo.21912283",
         "base_url": None,
         "published": True,
@@ -159,8 +159,8 @@ RECORDS = {
             "light-sheet timelapse as Gaussian splats"
         ),
         "license": "cc-by-4.0",
-        "zenodo_doi": "10.5281/zenodo.22118695",
-        "zenodo_record": "22118695",
+        "zenodo_doi": "10.5281/zenodo.22804386",
+        "zenodo_record": "22804386",
         "zenodo_conceptdoi": "10.5281/zenodo.22118694",
         "base_url": None,
         "published": True,
@@ -462,6 +462,12 @@ DATASETS: dict[str, dict] = {
     "gsplats_4d_neuromast_2ch": dict(
         bucket="zenodo",
         record="cc-by",
+        # The Z-corrected pair is now published in the cc-by v2.0.0 deposition
+        # (record 22804363), so this dataset fetches from Zenodo like every
+        # other cc-by dataset. The former R2 mirror override
+        # (inputs/neuromast-z-2713/) was the interim bridge until the corrected
+        # bytes were archival; retired 2026-09-18, verified byte-identical
+        # (sha256 pins unchanged).
         license="cc-by-4.0",
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
         attribution=(
@@ -480,8 +486,9 @@ DATASETS: dict[str, dict] = {
         # first-author role. It is his data, so it is his call.
         #
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
-        # the cc-by record and pinned below (md5 verified against Zenodo). Those
-        # pins became the active fetch contract when the record was published.
+        # the cc-by record (md5 verified against Zenodo). Their digests are retained
+        # as superseded pins; the active pins now resolve to the cc-by v2.0.0
+        # Zenodo deposition (R2 override retired 2026-09-18).
     ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",
@@ -569,7 +576,7 @@ DATASETS: dict[str, dict] = {
         variants={
             "51tp": dict(
                 default=True,
-                approx_bytes=1_115_714_088,
+                approx_bytes=1_112_445_452,
                 note="51-timepoint fit (every 5th frame) — lighter default for the demo.",
             ),
             "253tp": dict(

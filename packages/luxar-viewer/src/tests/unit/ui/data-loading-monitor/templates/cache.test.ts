@@ -282,7 +282,7 @@ describe('getCacheHitRateColorClassWithGuard (S3)', () => {
 });
 
 describe('renderCacheContent status rows in non-full cache views', () => {
-  it('renders the no-cache badge in the disabled ?no-cache view', () => {
+  it('renders the no-cache badge in the disabled ?noCache view', () => {
     const html = renderCacheContent(
       makeGlobalStats(),
       makeCacheMetrics({
@@ -292,7 +292,7 @@ describe('renderCacheContent status rows in non-full cache views', () => {
       })
     );
 
-    expect(html).toContain('Caching disabled by ?no-cache');
+    expect(html).toContain('Caching disabled by ?noCache');
     expect(html).toContain('data-field="cache-status-row"');
     expect(html).toContain('data-badge="no-cache"');
   });
@@ -467,6 +467,27 @@ describe('renderCacheContent layout guards (full L0/L1/L2 view)', () => {
     // And the raw HTML must carry the escaped quote, never a bare one
     // inside the attribute value.
     expect(html).toContain('&quot;—&quot; = nothing has fallen through to L2 yet');
+  });
+
+  it('surfaces OPFS read gate activity and cancellations', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeFullCacheMetrics({
+        l2: {
+          size: 1,
+          count: 1,
+          reads: 2,
+          writes: 3,
+          misses: 4,
+          canceledReads: 5,
+          activeReads: 6,
+          queuedReads: 7,
+        },
+      })
+    );
+
+    expect(html).toContain('5 canceled');
+    expect(html).toContain('6 active · 7 queued');
   });
 
   // Collapsible sections: each cache section can collapse to a compact

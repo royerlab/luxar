@@ -10,6 +10,7 @@ import pytest
 
 from luxar.gsplats.batch.manifest import BatchManifest
 from luxar.gsplats.batch.slurm_gen import (
+    _parallel_worker_env_lines,
     generate_calibrate_sbatch,
     generate_denoise_sbatch,
     generate_fit_sbatch,
@@ -29,6 +30,92 @@ def _packed_manifest(total_tasks: int) -> BatchManifest:
         slurm_partition="gpu",
         slurm_time_limit="01:00:00",
     )
+
+
+def test_parallel_fit_scales_allocation_and_isolates_workers() -> None:
+    manifest = _packed_manifest(3)
+    manifest.parallel_tasks_per_job = True
+    manifest.slurm_gpus = 2
+    manifest.slurm_cpus = 4
+    manifest.slurm_mem_gb = 32
+    manifest.slurm_cpus_total = 12
+    manifest.slurm_mem_gb_total = 96
+
+    script = generate_fit_sbatch(manifest, "")
+
+    assert "#SBATCH --cpus-per-task=12" in script
+    assert "#SBATCH --mem=96G" in script
+    assert "export OMP_NUM_THREADS=4" in script
+    assert "export MKL_NUM_THREADS=4" in script
+    assert "export LUXAR_QUALITY_WORKERS_PER_HOST=3" in script
+    assert "export LUXAR_QUALITY_WORKERS_PER_DEVICE=2" in script
+    assert "local WORKER_GPU_INDEX=$((WORKER_OFFSET % 2))" in script
+    assert (
+        'export CUDA_VISIBLE_DEVICES="${ALLOCATED_GPUS[$WORKER_GPU_INDEX]}"' in script
+    )
+    assert 'export CUDA_VISIBLE_DEVICES="$WORKER_GPU_INDEX"' not in script
+
+    merge_script = generate_merge_sbatch(manifest, "")
+    calibrate_script = generate_calibrate_sbatch(manifest, "")
+    assert "#SBATCH --mem=64G" in merge_script
+    assert "#SBATCH --mem=32G" in calibrate_script
+
+
+def test_parallel_worker_selects_from_slurm_allocated_gpu_ids() -> None:
+    manifest = _packed_manifest(3)
+    manifest.parallel_tasks_per_job = True
+    manifest.slurm_gpus = 2
+    manifest.slurm_cpus = 4
+    lines = _parallel_worker_env_lines(manifest, 3)
+    harness = "\n".join(
+        [
+            "CUDA_VISIBLE_DEVICES=3,5",
+            "IFS=',' read -r -a ALLOCATED_GPUS <<< \"$CUDA_VISIBLE_DEVICES\"",
+            "BASE_TASK=0",
+            "worker() {",
+            "    local TASK_ID=1",
+            *lines,
+            '    printf "%s %s %s %s\\n" "$CUDA_VISIBLE_DEVICES" '
+            '"$OMP_NUM_THREADS" "$LUXAR_QUALITY_WORKERS_PER_HOST" '
+            '"$LUXAR_QUALITY_WORKERS_PER_DEVICE"',
+            "}",
+            "worker",
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash"], input=harness, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "5 4 3 2"
+
+
+def test_parallel_worker_keeps_parent_gpu_list_when_token_is_missing() -> None:
+    manifest = _packed_manifest(3)
+    manifest.parallel_tasks_per_job = True
+    manifest.slurm_gpus = 2
+    lines = _parallel_worker_env_lines(manifest, 3)
+    harness = "\n".join(
+        [
+            "CUDA_VISIBLE_DEVICES=0",
+            "IFS=',' read -r -a ALLOCATED_GPUS <<< \"$CUDA_VISIBLE_DEVICES\"",
+            "BASE_TASK=0",
+            "worker() {",
+            "    local TASK_ID=1",
+            *lines,
+            '    printf "%s\\n" "$CUDA_VISIBLE_DEVICES"',
+            "}",
+            "worker",
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash"], input=harness, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "0"
 
 
 def _directive_value(script: str, option: str) -> str:

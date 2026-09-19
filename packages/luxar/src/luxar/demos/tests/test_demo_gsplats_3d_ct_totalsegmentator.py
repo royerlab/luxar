@@ -66,8 +66,8 @@ def _gsplat_layers(scene_path: Path) -> list:
     """Attr dicts of the scene's top-level gsplats layer nodes."""
     root = zarr.open_group(str(scene_path), mode="r")
     return [
-        dict(group.attrs)
-        for _name, group in root.groups()
+        {"_node_name": name, **dict(group.attrs)}
+        for name, group in root.groups()
         if dict(group.attrs).get("type") == "gsplats"
     ]
 
@@ -95,6 +95,12 @@ class TestSceneBlending:
         assert len(layers) == len(SUPERGROUPS)
         for attrs in layers:
             assert attrs.get("blending_mode") == "additive"
+        # The hand-tuned colour windows reach the store as reciprocal gains
+        # (2026-09-10 re-tune; every layer was too dim at the identity window).
+        by_name = {attrs["_node_name"]: attrs for attrs in layers}
+        for name, _groups, opacity, _boost, range_max in SUPERGROUPS:
+            assert by_name[name]["opacity"] == pytest.approx(opacity)
+            assert by_name[name]["intensity"] == pytest.approx(1.0 / range_max)
 
 
 class TestTissueGroup:
@@ -196,10 +202,19 @@ class TestLayerSplit:
         assert muscle[3] >= 2.0  # amplitude boost so low-HU muscle is visible
 
     def test_layer_tuple_shape(self) -> None:
-        # (name, tissue groups, opacity, amplitude boost)
-        for name, groups, opacity, boost in SUPERGROUPS:
+        # (name, tissue groups, opacity, amplitude boost, colour-range max)
+        for name, groups, opacity, boost, range_max in SUPERGROUPS:
             assert isinstance(name, str) and len(groups) >= 1
             assert 0.0 < opacity <= 1.0 and boost >= 1.0
+            # The window's reciprocal must be a gain the writer accepts.
+            assert 0.01 <= range_max <= 1.0
+
+    def test_nervous_system_gain_is_split_across_boost_and_window(self) -> None:
+        # Dialled to a 0 - 0.002 window (x500); the colour gain caps at 100, so
+        # the remainder rides on the build-time amplitude boost.
+        nervous = next(g for g in SUPERGROUPS if g[0] == "Nervous system")
+        _name, _groups, _opacity, boost, range_max = nervous
+        assert boost * (1.0 / range_max) == pytest.approx(500.0)
 
 
 class TestOrganLabelText:

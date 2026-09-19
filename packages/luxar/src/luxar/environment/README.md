@@ -40,7 +40,7 @@ faces.view("float16")                     # (6, H, W, 4) radiance, px nx py ny p
 - **Excluded from the scene `content_hash`.** The map is derived from the scene
   and records the digest it was baked against (`scene_content_hash`). That guard
   is only exact if attaching the map leaves the root digest alone, so both
-  hashing walks (compile-time and `luxar optimise`'s streaming twin) stamp the
+  hashing walks (compile-time and `luxar optimize`'s streaming twin) stamp the
   group's own `content_hash` but do not fold it into the root's. A bake never
   invalidates a visitor's warm cache.
 - **Array `environment/faces-<xxh64[:8]>`**, shape `(6, H, W, 4)`, dtype
@@ -79,5 +79,5 @@ Playwright), then attaches through this package.
 digest-named array, the unchanged scene digest under BOTH hashing walks,
 idempotency and replacement, the stale-bake refusal and `--force`, and that the
 group is invisible to `LuxarScene.nodes`, `luxar info` and refused as a node name
-by the compiler; `luxar optimise` copies it verbatim and restamps it to the output
+by the compiler; `luxar optimize` copies it verbatim and restamps it to the output
 scene digest, while `luxar restamp-lod` updates the stamp after changing that digest.

@@ -51,6 +51,18 @@ def _parse_norm_range(value: Optional[str]) -> "Optional[tuple[float, float]]":
     return norm_range
 
 
+def _parse_voxel_size(value: Optional[str]) -> "Optional[tuple[float, ...]]":
+    """Parse the internal ``--voxel-size`` worker handoff."""
+    if value is None:
+        return None
+    try:
+        return tuple(float(part.strip()) for part in value.split(","))
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "--voxel-size must be comma-separated numbers"
+        ) from exc
+
+
 def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
     """Carry the loader-observed source dtype into the fit config.
 
@@ -196,6 +208,18 @@ def run_fit_volume(
         hidden=True,
         help="Internal worker handoff: raw-input normalization range LO,HI.",
     ),
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        hidden=True,
+        help="Internal worker handoff: comma-separated physical voxel spacing.",
+    ),
+    physical_coordinates: bool = typer.Option(
+        False,
+        "--physical-coordinates",
+        hidden=True,
+        help="Internal batch worker handoff: enable physical content-box geometry.",
+    ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
     ),
@@ -213,7 +237,8 @@ def run_fit_volume(
         "auto",
         "--tiling",
         help="Decomposition: auto | none | uniform | content. auto = whole "
-        "volume if it fits one tile, else uniform (or content when a density "
+        "volume unless BOTH some dimension exceeds --tile-size AND the volume "
+        "has more than 64 M voxels; then uniform (or content when a density "
         "--cal/--k-star-ref is given). Replaces the old --tiled.",
         rich_help_panel="Tiling",
     ),
@@ -251,7 +276,8 @@ def run_fit_volume(
         "-j",
         help="With --tiling uniform/content: number of tiles/boxes to fit "
         "concurrently as subprocesses "
-        "on one GPU (int, or 'auto' to size from free VRAM). Default 1 = "
+        "on one GPU (int, or 'auto' to size from GPU memory, host RAM, and "
+        "available CPU threads). Default 1 = "
         "sequential. Ignored with --tiling none or --tile.",
         rich_help_panel="Tiling",
     ),
@@ -297,7 +323,7 @@ def run_fit_volume(
         "--add-method",
         help=f"[--recipe stream] {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
         "greedy ((1-1/e)-optimal) at small N, self_energy (cheap O(N log N)) "
-        "for large parts. radial reveals outward from the bbox centre.",
+        "for large parts. radial reveals outward from the bbox center.",
         rich_help_panel="Per-part LOD",
     ),
     recipe_breakpoints: Optional[str] = typer.Option(
@@ -306,7 +332,7 @@ def run_fit_volume(
         "--breakpoints",
         help="[--recipe stream] additive ladder breakpoints: 'equal-count' "
         "(default), 'stream:C' (geometric streaming ladder, sized per part), "
-        "'counts:500,2000,...' or 'energy:0.5,0.9,...'.",
+        "'counts:500,2000,...', 'equi-energy:<n>' or 'energy:0.5,0.9,...'.",
         rich_help_panel="Per-part LOD",
     ),
     recipe_compression_factor: Optional[int] = typer.Option(
@@ -449,8 +475,11 @@ def run_fit_volume(
     progressive: bool = typer.Option(
         False,
         "--progressive",
-        help="Enable progressive fitting: fit in multiple passes on residuals, "
-        "producing a multi-LOD result. Each pass adds detail to the previous. "
+        help="Enable progressive fitting: optimize in several passes, each pass "
+        "fitting new splats to the residual of the previous ones. The passes are "
+        "an optimization schedule, not a level-of-detail structure: the result is "
+        "ONE flat splat set (build a streaming ladder afterwards with "
+        "`luxar gsplat lod --recipe stream`). "
         "Tip: for tiled batch jobs, combine with --parallel to improve GPU utilization.",
         rich_help_panel="Progressive fitting",
     ),
@@ -574,6 +603,7 @@ def run_fit_volume(
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
     parsed_norm_range = _parse_norm_range(norm_range)
+    parsed_voxel_size = _parse_voxel_size(voxel_size)
 
     try:
         from luxar.gsplats import fit_gaussian_splats
@@ -643,6 +673,7 @@ def run_fit_volume(
                 lr=lr,
                 floor=floor,
                 norm_range=parsed_norm_range,
+                voxel_size=parsed_voxel_size,
                 seed_method=seed_method,
                 verbose=verbose,
                 downscale=downscale,
@@ -743,6 +774,8 @@ def run_fit_volume(
                     lr=lr,
                     floor=floor,
                     norm_range=parsed_norm_range,
+                    voxel_size=parsed_voxel_size,
+                    physical_coordinates=physical_coordinates,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,

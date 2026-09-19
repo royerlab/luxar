@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), note (free-text human annotation; the capture code never reads it).",
+  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for an nD override applied relative to the baked opening step), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), note (free-text human annotation; the capture code never reads it).",
   "demos": [
     {
       "id": "lorenz",
@@ -45,16 +45,13 @@
       "category": "synthetic",
       "script": "demo_quantum_orbitals.py",
       "dataset": "datasets/demos/quantum_orbitals.luxar.zarr",
-      "dimensionNav": {
-        "key": "1",
-        "steps": 2
-      },
       "viewAngle": {
         "azimuth": 90,
         "elevation": 8
       },
-      "distance": 32,
-      "exposure": 1.2
+      "fillTarget": 0.75,
+      "exposure": 1.2,
+      "note": "No dimensionNav: the demo bakes OPENING_ORBITAL=`3pz` (current_step=[0,0,0,4] of 8 categories), and after #2733 the capture waits for that authoritative opening slice. No absolute distance: the substantially larger orbital uses fillTarget 0.75 instead of distance 60 from the old `2pz` tile. Measured across the published store's full 120-frame orbit on 2026-09-14: final coverage 69.0%, final lit 50.2%, border-lit 0/4316 (0.0%)."
     },
     {
       "id": "desi_galaxies",
@@ -182,7 +179,9 @@
       "viewAngle": {
         "azimuth": 90,
         "elevation": 0
-      }
+      },
+      "fillTarget": 0.45,
+      "note": "fillTarget 0.95 -> 0.45: 77.3% border-lit at 0.95; became an unrecognisable close-up. Framing only \u2014 viewAngle and fillTarget deliberately override the live store's baked camera for gallery capture; manifest keys and position_bounds are unchanged. The live still predates the harness default settling at 0.95. | The intermediate 0.65 moved border-lit 77.3% -> 41.1%, right direction but not far enough for a subject this diffuse. The under-fill warning at 0.45 is expected and deliberate; raising the target restores the worse crop."
     },
     {
       "id": "gsplats_4d_celegans_tracking",
@@ -323,11 +322,7 @@
         "azimuth": 20,
         "elevation": 25
       },
-      "dimensionNav": {
-        "key": "1",
-        "steps": 3
-      },
-      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, dimensionNav steps the 10-category taxon slider"
+      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, and the tile keeps the demo's authored Birds opening slice"
     },
     {
       "id": "nuclear_pore_complex",
@@ -387,7 +382,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_bioluminescent_ocean.py",
-      "dataset": "datasets/demos/ocean.luxar.zarr"
+      "dataset": "datasets/demos/ocean.luxar.zarr",
+      "fillTarget": 0.7,
+      "note": "fillTarget 0.7 (was default 0.95): 81.8% border-lit at 0.95; jellyfish tentacles cut off at the edges. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "caida_as_topology",
@@ -519,10 +516,6 @@
       "category": "synthetic",
       "script": "demo_hilbert_curve_3d.py",
       "dataset": "datasets/demos/hilbert_curve_3d.luxar.zarr",
-      "dimensionNav": {
-        "key": "1",
-        "steps": 3
-      },
       "viewAngle": {
         "azimuth": 32,
         "elevation": 24
@@ -629,7 +622,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_volumetric_cloud.py",
-      "dataset": "datasets/demos/cloud.luxar.zarr"
+      "dataset": "datasets/demos/cloud.luxar.zarr",
+      "fillTarget": 0.7,
+      "note": "fillTarget 0.7 (was default 0.95): 83.4% border-lit at 0.95; cloud filled the frame edge to edge. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "zebrahub_multiome",
@@ -671,14 +666,6 @@
       "dataset": "datasets/demos/collision_animated.luxar.zarr"
     },
     {
-      "id": "network_performance",
-      "title": "Network Performance Test (4D)",
-      "geometry": "points",
-      "category": "synthetic",
-      "script": "demo_network_performance.py",
-      "dataset": "datasets/demos/performance_test.luxar.zarr"
-    },
-    {
       "id": "ocean_currents_earth",
       "title": "Ocean Currents of Earth",
       "geometry": "mixed",
@@ -697,7 +684,9 @@
       "category": "embeddings",
       "script": "demo_zebrahub_velocity_streamlines.py",
       "dataset": "datasets/demos/zebrahub_velocity_streamlines_standard.luxar.zarr",
-      "citation": "Lange et al. 2024 (Zebrahub)"
+      "citation": "Lange et al. 2024 (Zebrahub)",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65 (was default 0.95): 73.2% border-lit at 0.95; streamlines overflowed the frame. Framing only \u2014 manifest keys, baked camera and position_bounds are unchanged from the live store; the live still predates the harness default settling at 0.95."
     },
     {
       "id": "gsplats_2d_cmu1_pathology",
@@ -795,14 +784,6 @@
       "lodFinest": false
     },
     {
-      "id": "sharpness_showcase",
-      "title": "Point Sharpness Showcase",
-      "geometry": "points",
-      "category": "synthetic",
-      "script": "demo_sharpness_showcase.py",
-      "dataset": "datasets/demos/sharpness_showcase.luxar.zarr"
-    },
-    {
       "id": "nd_transforms",
       "title": "nD Transforms Test Bench",
       "geometry": "points+lines",
@@ -874,7 +855,8 @@
         "framePoint": 0.9
       },
       "citation": "Lange et al. 2024 (Zebrahub)",
-      "fillTarget": 0.9
+      "fillTarget": 0.6,
+      "note": "fillTarget 0.9 -> 0.60: the 51-time-part rebuild frames late in the series (framePoint 0.9), where the embryo is large; at 0.90 it filled the frame with 88.1% border-lit and read as blown out. 0.60 brings it to 7.7%."
     },
     {
       "id": "gsplats_3d_decimation_study",
@@ -924,6 +906,28 @@
       },
       "fillTarget": 0.8,
       "note": "TIMELAPSE, not dimensionNav: the hidden axis is UV chroma (10 deciles), and timelapse resolves the FIRST non-displayed dim, which here is unambiguously it. The traverse IS the finding - decile 1 is a yellow/orange carotenoid spray, decile 10 is almost entirely structural blues and violets. framePoint 0.95 frames the still on decile 10, chosen by measurement rather than taste: per-decile chroma-weighted hue-sector occupancy and mean chroma are 3 sectors / 28.8 at decile 1, falling to 5 sectors / 5.2 at decile 9, then rising to 6 sectors / 10.0 at decile 10. So the conventional 0.85 would land on decile 9 - the SHORTEST spikes of all ten and a stubby frame - while decile 10 has both the widest hue coverage and long spikes, because that bin spans 24.2-74.8% UV and catches the strongly structural colours. THE CROP WARNING ON THIS TILE IS EXPECTED OUTPUT, NOT A DEFECT: chroma is violently right-skewed (median 8.4, p99 63.8, max 117.9), so framing the true extent puts the whole corpus in the middle fifth of the frame. fillTarget 0.8 frames the p99.5 chroma quantile (70.8) and roughly 1,800 spikes overshoot the frame edge BY DESIGN. Do not tighten fillTarget to drive border-lit pixels to zero - border contact here is composition. No viewAngle: the baked pose (distance 267.7 CIELAB units, 16.3 deg elevation, 24.2 deg off the L* axis) is deliberate - looking straight down L* collapses the hedgehog into a flat rainbow star and hides the third axis, tilting further stops the hue circle reading as a circle. Judge exposure on whether the SHORT central spikes keep their hue, not on overall brightness: additive blending over 360,432 readings makes the neutral core bright on purpose, and opacity 0.33 / intensity 0.40 were tuned against exactly that after 0.55/0.55 turned the core into a flat white wedge"
+    },
+    {
+      "id": "esm3_protein_stories",
+      "title": "ESM Protein Stories \u2014 ten guided tours of the Swiss-Prot landscape",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_esm3_protein_stories.py",
+      "dataset": "datasets/demos/esm3_protein_stories.luxar.zarr",
+      "citation": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
+      "fillTarget": 0.85,
+      "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=82.8%, final lit=50.3%, dropped=0. Border-lit fell from 54.1% to 8.1%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85. The follow-on advisory suggested 0.75; that is the standing over-suggestion for residual border contact and was not followed."
+    },
+    {
+      "id": "esm_protein_universe",
+      "title": "ESM Protein Universe \u2014 twelve stories across 7.7 million protein clusters",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_esm_protein_universe.py",
+      "dataset": "datasets/demos/esm_protein_universe.luxar.zarr",
+      "citation": "ESM Atlas cluster map (Candido et al. 2026)",
+      "fillTarget": 0.85,
+      "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=88.5%, final lit=69.4%, dropped=0. Border-lit fell from 36.6% to 14.9%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85. The follow-on advisory suggested 0.75; that is the standing over-suggestion for residual border contact and was not followed."
     }
   ]
 }

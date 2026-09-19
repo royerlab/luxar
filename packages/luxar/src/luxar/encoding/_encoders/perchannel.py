@@ -365,6 +365,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         mode: EncodingMode,
         *,
         positive_scalar_encoding: Literal["linear", "log"] = "linear",
+        positive_scalar_bits: Optional[Literal[8, 16]] = None,
         allow_lut: bool = True,
     ) -> Optional[float]:
         """How far can encoding ``data`` as POSITIVE_SCALAR enlarge a value?
@@ -402,6 +403,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             data: The positive-scalar array exactly as it will be encoded.
             mode: The encoding mode it will be encoded under.
             positive_scalar_encoding: The matching write's linear/log choice.
+            positive_scalar_bits: The matching write's AUTO quantization tier.
+                An 8-bit tier selects geometric-log uint8 regardless of the
+                linear/log choice.
             allow_lut: Whether the matching write permits exact LUT storage.
 
         Returns:
@@ -445,7 +449,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             return _float32_cast_slack(np.unique(arr), check_values=True)
 
         return self._positive_scalar_quantization_slack(
-            arr, mode, positive_scalar_encoding
+            arr, mode, positive_scalar_encoding, positive_scalar_bits
         )
 
     def _positive_scalar_quantization_slack(
@@ -453,6 +457,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         arr: np.ndarray,
         mode: EncodingMode,
         positive_scalar_encoding: Literal["linear", "log"],
+        positive_scalar_bits: Optional[Literal[8, 16]],
     ) -> Optional[float]:
         """Return a pad for quantization and the Python/viewer decode paths."""
 
@@ -461,13 +466,19 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             return None
 
         bits = self._compute_quantization_bits(arr)
-        use_geolog = positive_scalar_encoding == "log" or bits == 0
+        use_geolog = (
+            positive_scalar_encoding == "log"
+            or bits == 0
+            or (mode == EncodingMode.AUTO and positive_scalar_bits == 8)
+        )
         viewer_rounding_slack = 0.0
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
             min_log = float(np.log(nonzero.min()))
             max_log = float(np.log(nonzero.max()))
-            quant_bits = 16 if mode == EncodingMode.AUTO else 8
+            quant_bits = (
+                8 if mode == EncodingMode.MEMORY or positive_scalar_bits == 8 else 16
+            )
             intervals = (1 << quant_bits) - 2
             # The grid is anchored at max_log, so no code decodes above max_val.
             half_step = min(
@@ -866,6 +877,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         data: np.ndarray,
         mode: EncodingMode,
         encoding_type: str,
+        bits: Optional[int] = None,
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
     ) -> None:
@@ -877,11 +889,14 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             data: Array data
             mode: Encoding mode
             encoding_type: "linear" or "log" encoding
+            bits: Optional AUTO quantization tier. An 8-bit tier selects
+                geometric-log uint8 regardless of ``encoding_type``.
             chunks: Optional chunk shape
             compressor: Optional compressor
         """
         original_dtype = str(data.dtype)
         metadata: dict[str, Any]
+        auto_bits = bits if bits is not None else 16
 
         if mode == EncodingMode.PRECISION:
             # No quantization
@@ -892,6 +907,16 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             # Analyze range
             max_val = float(np.max(data))
 
+            if mode == EncodingMode.AUTO and bits == 8 and max_val > 0:
+                self._encode_geolog_scalar(
+                    zarr_group,
+                    name,
+                    data,
+                    8,
+                    chunks,
+                    compressor,
+                )
+                return
             if encoding_type == "log" and max_val > 0:
                 # Geometric-log encoding (min/max-anchored, reserved zero
                 # level): uniform RELATIVE precision across the whole range,
@@ -900,7 +925,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                     zarr_group,
                     name,
                     data,
-                    16 if mode == EncodingMode.AUTO else 8,
+                    auto_bits if mode == EncodingMode.AUTO else 8,
                     chunks,
                     compressor,
                 )
@@ -918,7 +943,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 }
             else:
                 # Linear encoding - choose dtype based on dynamic range
-                bits = self._compute_quantization_bits(data)
+                quantization_bits = self._compute_quantization_bits(data)
 
                 if max_val == 0:
                     # All zeros - use uint8
@@ -931,7 +956,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                         "bits": 8,
                         "original_dtype": original_dtype,
                     }
-                elif bits in (8, 16):
+                elif quantization_bits in (8, 16):
                     # Rescale-first: anchor the grid at the array's OWN
                     # [min, max] rather than [0, max] — data far from zero
                     # (e.g. radii in [10, 11]) no longer wastes code space
@@ -939,10 +964,11 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                     # contains zeros, so zero handling is unchanged.
                     min_val = float(np.min(data))
                     span = max(max_val - min_val, 0.0)
-                    levels = 255 if bits == 8 else 65535
+                    levels = 255 if quantization_bits == 8 else 65535
                     if span == 0.0:
                         encoded_data = np.zeros_like(
-                            data, dtype=np.uint8 if bits == 8 else np.uint16
+                            data,
+                            dtype=np.uint8 if quantization_bits == 8 else np.uint16,
                         )
                     else:
                         encoded_data = self._quantize_normalized_clip(
@@ -950,14 +976,14 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                             min_val,
                             span,
                             levels,
-                            np.dtype(np.uint8 if bits == 8 else np.uint16),
+                            np.dtype(np.uint8 if quantization_bits == 8 else np.uint16),
                         )
-                    encoder_name = f"bounded_scalar_uint{bits}"
+                    encoder_name = f"bounded_scalar_uint{quantization_bits}"
                     metadata = {
                         "name": encoder_name,
                         "min": min_val,
                         "max": max_val,
-                        "bits": bits,
+                        "bits": quantization_bits,
                         "original_dtype": original_dtype,
                     }
                 else:
@@ -970,7 +996,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                         zarr_group,
                         name,
                         data,
-                        16 if mode == EncodingMode.AUTO else 8,
+                        auto_bits if mode == EncodingMode.AUTO else 8,
                         chunks,
                         compressor,
                     )

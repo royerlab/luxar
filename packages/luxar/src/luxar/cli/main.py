@@ -42,11 +42,12 @@ from .network_simulation import (
     has_network_simulation,
     print_network_params,
 )
-from .optimise_command import register_optimise_command
+from .optimize_command import register_optimize_command
 from .restamp_lod_command import register_restamp_lod_command
 from .serving import (
     DirectoryListingStaticFiles,
     _add_cors,
+    _build_viewer_url,
     _is_sensitive_serve_path,
     _serve_data,
     _serve_viewer,
@@ -56,6 +57,7 @@ from .serving import (
 )
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
+    advertised_host,
     append_title_param,
     check_viewer_built,
     dataset_title,
@@ -139,8 +141,8 @@ app.add_typer(app_env, name="env")
 # Register the `info` inspection command (defined in info_command.py).
 register_info_command(app)
 
-# Register the `optimise` re-chunking command (defined in optimise_command.py).
-register_optimise_command(app)
+# Register the `optimize` re-chunking command (defined in optimize_command.py).
+register_optimize_command(app)
 
 # Register the `restamp-lod` LOD-threshold re-derivation command (defined in
 # restamp_lod_command.py).
@@ -193,6 +195,16 @@ def _start_data_server_thread(
     return thread
 
 
+def _warn_control_flag_misuse(
+    *, control: bool, control_token: Optional[str], viewer: bool, viewer_only: bool
+) -> None:
+    """Explain control options that cannot affect the selected serve mode."""
+    if control and not (viewer or viewer_only):
+        aprint("⚠️  --control requires --viewer or --viewer-only. Ignoring --control.")
+    if control_token and not control:
+        aprint("⚠️  --control-token requires --control. Ignoring --control-token.")
+
+
 # ────────────────────────────── serve ────────────────────────────────────────
 @app.command()
 def serve(
@@ -213,6 +225,16 @@ def serve(
     packet_loss: PacketLossOption = None,
     cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
     allow_sensitive_path: AllowSensitivePathOption = False,
+    control: bool = typer.Option(
+        False,
+        "--control",
+        help="Expose the remote-control hub at /control (kiosk touch panels, agents)",
+    ),
+    control_token: Optional[str] = typer.Option(
+        None,
+        "--control-token",
+        help="Require this shared secret as ?token= on every control socket",
+    ),
 ) -> None:
     """Serve a directory, Zarr dataset, or viewer via HTTP.
 
@@ -246,6 +268,12 @@ def serve(
             aprint(
                 "⚠️  --viewer-only already includes the viewer; --viewer is redundant"
             )
+        _warn_control_flag_misuse(
+            control=control,
+            control_token=control_token,
+            viewer=viewer,
+            viewer_only=viewer_only,
+        )
         _warn_if_lan_exposed(host, cors_origin)
 
         # Handle viewer-only mode
@@ -257,7 +285,15 @@ def serve(
             if actual_viewer_port is None:
                 raise typer.Exit(1)
 
-            _serve_viewer(host, actual_viewer_port, None, open_browser, cors_origin)
+            _serve_viewer(
+                host,
+                actual_viewer_port,
+                None,
+                open_browser,
+                cors_origin,
+                control=control,
+                control_token=control_token,
+            )
             return
 
         # Require path for data serving
@@ -309,12 +345,17 @@ def serve(
             )
 
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
-        _add_cors(api, cors_origin)
+        _add_cors(api, cors_origin, bind_host=host)
+
+        # `host` may be a wildcard bind, which is not a destination. Everything
+        # that goes into a URL — printed, opened, or handed to the viewer as
+        # ?src= — uses the resolved address instead.
+        reachable = advertised_host(host)
 
         # Mount the static files handler with directory listing
         api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
 
-        aprint(f"🛰️  Serving {serve_path} at http://{host}:{actual_port}")
+        aprint(f"🛰️  Serving {serve_path} at http://{reachable}:{actual_port}")
 
         # Also serve viewer if requested
         if viewer:
@@ -322,11 +363,15 @@ def serve(
                 aprint("⚠️  Skipping viewer serving.")
             else:
                 # Start viewer in a separate thread
-                data_url = f"http://{host}:{actual_port}"  # No trailing slash
+                data_url = f"http://{reachable}:{actual_port}"  # No trailing slash
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
                     args=(host, actual_viewer_port, data_url, False, cors_origin),
-                    kwargs={"title": dataset_title(serve_path)},
+                    kwargs={
+                        "title": dataset_title(serve_path),
+                        "control": control,
+                        "control_token": control_token,
+                    },
                     daemon=True,
                 )
                 viewer_thread.start()
@@ -336,7 +381,7 @@ def serve(
                     aprint("⚠️  Viewer server did not become ready.")
         else:
             hint_url = append_title_param(
-                f"http://localhost:{viewer_port}/?src=http://{host}:{actual_port}",
+                f"http://localhost:{viewer_port}/?src=http://{reachable}:{actual_port}",
                 dataset_title(serve_path),
             )
             aprint(f"📊 Viewer URL: {hint_url}")
@@ -348,10 +393,14 @@ def serve(
             elif not viewer_served:
                 aprint("⚠️  Viewer not served; skipping --open.")
             else:
-                data_url = f"http://{host}:{actual_port}"
-                viewer_url = append_title_param(
-                    f"http://{host}:{actual_viewer_port}/?src={data_url}",
-                    dataset_title(serve_path),
+                data_url = f"http://{reachable}:{actual_port}"
+                viewer_url = _build_viewer_url(
+                    host,
+                    actual_viewer_port,
+                    data_url,
+                    title=dataset_title(serve_path),
+                    control=control,
+                    control_token=control_token,
                 )
                 open_browser_func(viewer_url)
 
@@ -477,7 +526,8 @@ def viewer(
 
             # The data server mounts the dataset itself at its root, so the
             # URL carries no store-name suffix. No trailing slash!
-            data_url = f"http://{host}:{actual_data_port}"
+            # `advertised_host` because a wildcard bind is not dialable.
+            data_url = f"http://{advertised_host(host)}:{actual_data_port}"
 
         # Find available port for viewer
         actual_viewer_port = pick_port(port, host, label="viewer")

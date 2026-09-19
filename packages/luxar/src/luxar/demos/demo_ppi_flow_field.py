@@ -91,6 +91,7 @@ from luxar.demos._graph_common import (
     load_hgnc,
     load_huri_edges,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -1199,6 +1200,22 @@ def write_scene(
                     blending_mode="additive",
                     opacity=0.35,
                     intensity=0.92 * NODE_INTENSITY_SCALE,
+                    # 7% of headroom before this RAISES, so read the cliff before
+                    # raising `--streamline-steps`. A Lines ladder is the
+                    # `stream:<c>` STRING form (the unit that matches a vertex
+                    # count), which is a plain doubling ladder rather than a capped
+                    # one, so its last increment grows with n: `stream_ladder`
+                    # refuses the node once that increment passes 900,000, which
+                    # is at 2,149,985 vertices (measured — 2,149,984 is the last
+                    # value it accepts). The `full` preset measures 1,999,215 here,
+                    # about 7,689 vertices per RK4 step, so the cliff is near
+                    # `--streamline-steps 280`. Its own docstring names the remedy:
+                    # supply capped cuts expressed in POLYLINES, since an explicit
+                    # `counts` list on `add_lines` is in polylines while the string
+                    # form is in vertices.
+                    additive_lod=stream_ladder(
+                        len(streamline_data.vertices), geometry="lines"
+                    ),
                     layer=True,
                 )
 

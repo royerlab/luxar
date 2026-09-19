@@ -1190,11 +1190,11 @@ def validate_finite_reveal_coords(coords: Any, what: str) -> None:
     the ladder is emitted in INPUT order — a streaming node that fills in at
     random instead of growing outward, with nothing to say why.
 
-    This is the DATA-side twin of the ``reveal_centre`` finite check. That one
+    This is the DATA-side twin of the ``reveal_center`` finite check. That one
     guards a value the user typed; this one guards the array, and it is needed
     separately because the three geometries were measured to disagree without it:
     Points and GSplats returned input order silently, while Lines raised a
-    ``reveal_centre must be finite`` error naming a knob the caller never passed
+    ``reveal_center must be finite`` error naming a knob the caller never passed
     (its default centre is DERIVED from the vertices, so bad data reached the
     knob's validator wearing the knob's name). One shared validator, called by
     both scorers, is what makes the three agree — hence its home here rather than
@@ -1230,7 +1230,7 @@ def validate_integral_axis_indices(values: Any, name: str = "spatial_dims") -> N
 
     ``int(1.9)`` and ``np.asarray([1.9], dtype=np.intp)`` both give ``1`` without
     a word, so a fractional entry measures the reveal over a DIFFERENT column than
-    the caller named — and, when ``reveal_centre`` is given too, pairs that centre
+    the caller named — and, when ``reveal_center`` is given too, pairs that centre
     coordinate with the wrong axis. Every other malformed ``spatial_dims``
     (empty, negative, repeated, nested, out of range) is already rejected; this
     was the one that got through wearing a plausible answer.

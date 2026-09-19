@@ -59,6 +59,7 @@ from luxar.io.reader import DEFAULT_COMP
 from luxar.typing_utils._format_contract import (
     GSPLATS_FORMAT_VERSION,
     SUPPORTED_GSPLATS_VERSIONS,
+    OrderingMethodName,
 )
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.typing_utils.json_safe import json_safe_value
@@ -66,6 +67,27 @@ from luxar.utils.arbol_warnings import arbol_warnings
 from luxar.utils.paths import normalize_zarr_path
 
 _MAX_STREAMING_BARRIER_RUNS = 1_000_000
+
+
+def resolve_amplitude_bits(
+    amplitude_bits: Literal["auto", 8, 16],
+    fitting_info: Optional[Dict[str, Any]] = None,
+    *,
+    source_dtype: Optional[str] = None,
+) -> Literal[8, 16]:
+    """Resolve the AUTO amplitude tier from source dtype metadata."""
+    if amplitude_bits in (8, 16):
+        return amplitude_bits
+    if amplitude_bits != "auto":
+        raise ValueError("amplitude_bits must be 'auto', 8, or 16")
+
+    if source_dtype is None and fitting_info:
+        source_dtype = fitting_info.get("source_dtype")
+    try:
+        dtype = np.dtype(source_dtype)
+    except (TypeError, ValueError):
+        return 16
+    return 8 if dtype.kind in "iu" and dtype.itemsize == 1 else 16
 
 
 @dataclass(frozen=True)
@@ -214,6 +236,26 @@ _FITTING_INFO_KEYS = (
     "foreground_psnr_db",
     "foreground_threshold",
     "foreground_fraction",
+    "configured_iterations",
+    "dynamic_ops_enabled",
+    "dynamic_ops_step_every",
+    "dynamic_ops_k_max_residuals",
+    "dynamic_ops_relocation_events",
+    "dynamic_ops_unique_splats_relocated",
+    "scale_diagnostic_tolerance_vox",
+    "fit_init_sigma_vox",
+    "fit_init_sigma_diag_vox",
+    "fit_init_marginal_sigma_diag_vox_min",
+    "fit_init_marginal_sigma_diag_vox_median",
+    "fit_init_marginal_sigma_diag_vox_max",
+    "relocation_init_sigma_vox",
+    "sigma_min_diag_vox",
+    "splats_near_fit_init_sigma_count",
+    "splats_near_fit_init_sigma_fraction",
+    "splats_near_relocation_init_sigma_count",
+    "splats_near_relocation_init_sigma_fraction",
+    "splats_near_sigma_min_count",
+    "splats_near_sigma_min_fraction",
     # What the splats represent. These describe the fit's INPUT, so they belong
     # beside the fit's other statistics rather than in the pipeline bucket that
     # catches everything else. Without them a stored dataset cannot say how much
@@ -488,9 +530,10 @@ def _stamp_content_hash(root: zarr.Group) -> str:
     identity for the same reasons the compiler-side hash folds them in — see
     :func:`luxar.io._compiler.finalize.hashing._storage_identity`, which is where
     that argument lives. Both digests should agree on what a store's identity IS,
-    and this one carries an extra obligation: it is what the three IN-PLACE
-    re-stampers (``gsplat annotate-quality``, ``gsplat doctor --fix``, and
-    ``luxar restamp-lod``) write, and they leave the per-save ``timestamp``
+    and this one carries an extra obligation: it is what the four IN-PLACE
+    re-stampers (single-tile batch merge, ``gsplat annotate-quality``,
+    ``gsplat doctor --fix``, and ``luxar restamp-lod``) write, and they leave
+    the per-save ``timestamp``
     untouched. None of them can change layout today — every mutation on those
     paths is attrs-only — so what moves their digest is the changed attrs, as it
     already did. The fold is here so
@@ -604,8 +647,10 @@ def write_gsplats_tree(
     path: str | Path,
     node: Any,  # luxar.gsplats.tree.GSplatNode
     *,
-    ordering: Literal["morton", "hilbert", "none"] = "hilbert",
+    ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
+    amplitude_bits: Literal["auto", 8, 16] = 16,
+    source_dtype: Optional[str] = None,
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
@@ -643,6 +688,10 @@ def write_gsplats_tree(
     the :data:`NORMALIZATION_STATS_KEYS` block rides on the ROOT node's ``meta``
     and is promoted here into ``pipeline/`` — the one location the format spec
     names for it (#1175). An explicit ``pipeline_info`` entry wins.
+
+    ``amplitude_bits="auto"`` resolves from the explicit ``source_dtype`` when
+    provided, otherwise from ``fitting_info["source_dtype"]``. The explicit
+    argument keeps encoding independent of whether fitting metadata is persisted.
     """
     path = Path(path)
     pipeline_info = _with_root_normalization(pipeline_info, node)
@@ -665,7 +714,13 @@ def write_gsplats_tree(
         if barrier_dims is None:
             barrier_dims = _barrier_from_coarsen_dims(pipeline_info, node)
 
-        dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+        dataset_ctx = make_dataset_ctx(
+            encoding_mode,
+            compressor=compressor,
+            positive_scalar_bits=resolve_amplitude_bits(
+                amplitude_bits, fitting_info, source_dtype=source_dtype
+            ),
+        )
         ordering_ctx = make_ordering_ctx(ordering)
         write_gsplat_node(
             root,
@@ -1061,8 +1116,10 @@ def write_partition_streaming(
     part_nodes: Callable[[], Iterator["GSplatNode"]],
     *,
     max_elements: int = 0,
-    ordering: Literal["morton", "hilbert", "none"] = "hilbert",
+    ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
+    amplitude_bits: Literal["auto", 8, 16] = 16,
+    source_dtype: Optional[str] = None,
     fitting_info: Optional[
         Dict[str, Any] | Callable[[], Optional[Dict[str, Any]]]
     ] = None,
@@ -1073,6 +1130,7 @@ def write_partition_streaming(
     compressor: Optional[Any] = DEFAULT_COMP,
     barrier_dims: Optional[Sequence[int]] = None,
     bsp_tree: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
+    root_attrs: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Write a ``kind=partition`` file part-by-part, holding ≤1 part in memory.
 
@@ -1092,6 +1150,9 @@ def write_partition_streaming(
     :func:`~luxar.io._compiler.gsplat_tree.write_gsplat_node`'s partition branch.
     ``fitting_info`` may be a value or a provider; a provider is called once after
     the part loop, allowing metadata to describe the parts that actually survived.
+    ``amplitude_bits="auto"`` resolves from ``source_dtype`` before writing; when
+    fitting metadata is a provider, the explicit dtype is required because the
+    provider is intentionally not called until all parts have been written.
     ``bsp_tree`` is likewise a provider, and whatever it returns is written as the
     root's optional split-plane attr (the same one the standalone branch writes).
     A callable is needed because the
@@ -1100,6 +1161,9 @@ def write_partition_streaming(
     so the caller prunes inside the provider. Omit it, or return ``None``, and the
     viewer falls back to a per-part centroid order, which is not a valid painter's
     order and pops at the seams under order-dependent blending (#1555).
+
+    ``root_attrs`` seeds optional root metadata before the structural partition
+    attrs are stamped, so caller metadata cannot override the node kind.
 
     The producer is responsible for skipping empty tile-regions (it must yield
     only non-empty subtrees). Compression is intentionally not supported here
@@ -1116,6 +1180,15 @@ def write_partition_streaming(
     )
 
     path = Path(path)
+    if amplitude_bits == "auto" and callable(fitting_info) and source_dtype is None:
+        raise ValueError(
+            "source_dtype is required when amplitude_bits='auto' and "
+            "fitting_info is callable"
+        )
+    static_fitting_info = fitting_info if isinstance(fitting_info, dict) else None
+    resolved_amplitude_bits = resolve_amplitude_bits(
+        amplitude_bits, static_fitting_info, source_dtype=source_dtype
+    )
     # Crash-safety: stream into a hidden temp sibling and atomically swap into
     # place after the final consolidate. This writer can run for a long time
     # (one part per tile of a whole timelapse); the old in-place
@@ -1126,7 +1199,11 @@ def write_partition_streaming(
     store = open_store(tmp, mode="w")
     root = create_root_group(store, overwrite=True)
     try:
-        dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+        dataset_ctx = make_dataset_ctx(
+            encoding_mode,
+            compressor=compressor,
+            positive_scalar_bits=resolved_amplitude_bits,
+        )
         ordering_ctx = make_ordering_ctx(ordering)
 
         child_bounds: List[Dict[str, List[float]]] = []
@@ -1169,6 +1246,8 @@ def write_partition_streaming(
         # Root partition attrs — same set the GSplatPartition branch of
         # write_gsplat_node emits (type/kind/display_type/max_elements/position_bounds
         # + the optional bsp_tree).
+        if root_attrs:
+            root.attrs.update(root_attrs)
         root.attrs["type"] = "group"
         root.attrs["kind"] = "partition"
         root.attrs["display_type"] = "gsplats"
@@ -1418,7 +1497,7 @@ def save_gsplats(
     colors: Optional[np.ndarray] = None,
     label_ids: Optional[np.ndarray] = None,
     label_vocabulary: Optional[Dict[int, str]] = None,
-    ordering: Literal["morton", "hilbert", "none"] = "hilbert",
+    ordering: OrderingMethodName = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
@@ -1428,6 +1507,7 @@ def save_gsplats(
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
     truncation_radius: float = DEFAULT_TRUNCATION_RADIUS,
+    amplitude_bits: Literal["auto", 8, 16] = 16,
 ) -> None:
     """Save a single Gaussian-splat set to ``.gsplats.zarr`` (a leaf node).
 
@@ -1460,6 +1540,7 @@ def save_gsplats(
         leaf,
         ordering=ordering,
         encoding_mode=encoding_mode,
+        amplitude_bits=amplitude_bits,
         fitting_info=fitting_info,
         fitting_config=fitting_config,
         provenance_info=provenance_info,

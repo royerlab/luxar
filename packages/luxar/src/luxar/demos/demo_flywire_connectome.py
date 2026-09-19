@@ -118,6 +118,7 @@ from luxar.demos import (
     parse_int_arg,
     parse_path_arg,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -738,14 +739,28 @@ def build_scene(
                     # 0.79 the gallery still blows 78% of its lit pixels
                     # against 1.9% here, and even handing the harness 2.5 extra
                     # stops of headroom leaves 17% blown and the super-class
-                    # palette gone. 0.24 already pales the optic lobes. So the
-                    # connections stay a subtle connective glow and the neurons
-                    # dominate the view; a brighter one needs fewer edges or a
-                    # per-layer intensity rebalance, not an exposure knob.
+                    # palette gone. So the connections stay a subtle connective
+                    # glow and the neurons dominate the view; a brighter one
+                    # needs fewer edges or a per-layer intensity rebalance, not
+                    # an exposure knob.
+                    #
+                    # Re-measured on the hosted demo 2026-09-10: at
+                    # opacity 0.08 / intensity 0.08 the whole brain rendered as
+                    # one blown-out white blob with the neuron layers hidden
+                    # underneath (toggling the connection layers off brought
+                    # the coloured somas straight back). Sweeping the lines'
+                    # gain live: 0.008 still left a milky wash over every
+                    # super-class colour, 0.004 began to pale the optic lobes,
+                    # 0.002 was clean but nearly invisible. 0.003 keeps a faint
+                    # warm glow through the central brain with the palette
+                    # intact. The gain multiplies the line colour before the
+                    # luminous accumulation, so this is the exposure knob for
+                    # this layer alone.
                     opacity=0.08,
-                    intensity=0.08,
+                    intensity=0.003,
                     labels=nt_labels,
                     layer=True,
+                    additive_lod=stream_ladder(len(nt_verts), geometry="lines"),
                 )
 
             # Title

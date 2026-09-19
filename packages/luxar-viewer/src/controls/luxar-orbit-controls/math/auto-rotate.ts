@@ -30,10 +30,10 @@ interface AxisSpec {
  * basis. Rotation then follows the right-hand rule about that direction,
  * uniformly across both families: sighting back down the axis from its far
  * end, the scene turns counter-clockwise. Two consequences worth knowing:
- * `view` matching -Z is what makes a positive auto-rotation roll the same way
- * as a positive Shift+scroll roll delta (same vector), and `world-y` agrees
- * with `vertical` exactly while the camera is level — the two only diverge
- * once the camera has elevation, which is the whole reason to offer both.
+ * `view` matching -Z gives a positive auto-rotation the same axis and
+ * right-hand sign as a positive Shift+scroll roll delta, and `world-y` agrees
+ * with `vertical` exactly while the camera is level — the two only diverge once
+ * the camera has elevation, which is the whole reason to offer both.
  *
  * Typed as a total `Record` over the union so adding a token to
  * {@link AutoRotateAxis} without a direction here fails to compile.

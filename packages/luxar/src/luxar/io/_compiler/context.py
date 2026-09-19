@@ -24,11 +24,18 @@ class DatasetCtx:
 
     Read-set of every ``datasets/`` serializer and the gsplat array writer:
     the encoder, the active encoding mode, and the scene compressor.
+    ``positive_scalar_bits`` applies to every POSITIVE_SCALAR write in the
+    context. The scene compiler sets it only on its GSplats context, so Points
+    radii and Lines widths retain their independent adaptive policy.
+    ``deduplicate_positive_scalar`` is disabled when a per-node tier could make
+    byte-identical source arrays encode differently; the registry keys on bytes.
     """
 
     encoder: ArrayEncoder
     encoding_mode: EncodingMode
     compressor: "CompressorLike"
+    positive_scalar_bits: Optional[Literal[8, 16]] = None
+    deduplicate_positive_scalar: bool = True
 
 
 @dataclass(frozen=True)

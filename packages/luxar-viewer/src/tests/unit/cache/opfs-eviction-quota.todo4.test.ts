@@ -22,6 +22,7 @@
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 
 const META = '_cache_meta.json';
 
@@ -86,24 +87,15 @@ function mockOPFS(quota: number, opts?: { failDelete?: boolean }) {
     return total;
   };
 
-  vi.stubGlobal('navigator', {
-    storage: {
-      async getDirectory() {
-        return {
-          async getDirectoryHandle() {
-            return dirHandle;
-          },
-          async removeEntry() {
-            files.clear();
-            metaFiles.clear();
-          },
-        };
-      },
-      async estimate() {
-        return { quota, usage: usageBytes() };
-      },
+  // Origin root → `luxar/` → this quota-aware dataset dir (see opfs.mock.ts).
+  createFakeOpfsRoot({
+    datasetDir: dirHandle,
+    onRemoveDataset: () => {
+      files.clear();
+      metaFiles.clear();
     },
-  });
+    estimate: async () => ({ quota, usage: usageBytes() }),
+  }).install();
 
   return { files, metaFiles };
 }

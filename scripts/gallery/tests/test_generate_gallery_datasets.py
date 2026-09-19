@@ -90,9 +90,16 @@ class _Recorder(list):
     def __init__(self) -> None:
         super().__init__()
         self.invocations: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        self.audit_invocations: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        self.audit_events: list[str] = []
 
 
-def _fake_run(repo: Path, calls: _Recorder, outcomes: dict[str, str]):
+def _fake_run(
+    repo: Path,
+    calls: _Recorder,
+    outcomes: dict[str, str],
+    audit_outcomes: dict[str, int | str],
+):
     """A ``subprocess.run`` that records the call and plays a scripted outcome.
 
     ``fail`` = the real "input not on this machine" shape (exit 1 with the demo's
@@ -109,6 +116,13 @@ def _fake_run(repo: Path, calls: _Recorder, outcomes: dict[str, str]):
 
     def run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         script = Path(cmd[1]).name
+        if script in audit_outcomes:
+            calls.audit_events.append("run")
+            calls.audit_invocations.append((tuple(cmd), dict(kwargs)))
+            outcome = audit_outcomes[script]
+            if outcome == "timeout":
+                raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+            return SimpleNamespace(returncode=outcome)
         calls.append(script)
         calls.invocations.append((tuple(cmd), dict(kwargs)))
         outcome = outcomes[script]
@@ -148,6 +162,7 @@ def _setup(
     missing_script: tuple[str, ...] = (),
     capture_only: tuple[str, ...] = (),
     lfs_states: Optional[dict[str, str]] = None,
+    audit_outcomes: Optional[dict[str, int | str]] = None,
 ) -> _Recorder:
     """Point the harness at a synthetic tree; return the recorded-calls list.
 
@@ -167,6 +182,10 @@ def _setup(
     manifest: list[dict[str, Any]] = []
     data_datasets: dict[str, Any] = {}
     outcomes: dict[str, str] = {}
+    audit_outcomes = audit_outcomes or {
+        "check_demo_ladders.py": 0,
+        "check_scene_credits.py": 0,
+    }
     lfs_states = lfs_states or {}
     for demo_id, local_data, outcome in specs:
         script: Optional[str]
@@ -207,7 +226,11 @@ def _setup(
     monkeypatch.setattr(gen, "load_manifest", lambda: manifest)
     data_manifest.write_text(json.dumps({"datasets": data_datasets}))
     calls = _Recorder()
-    monkeypatch.setattr(gen.subprocess, "run", _fake_run(tmp_path, calls, outcomes))
+    monkeypatch.setattr(
+        gen.subprocess,
+        "run",
+        _fake_run(tmp_path, calls, outcomes, audit_outcomes),
+    )
     return calls
 
 
@@ -254,6 +277,7 @@ def test_a_git_lfs_demo_with_payload_still_fails_hard(
     assert code == 1
     assert "failed" in out
     assert "manual-data" not in out
+    assert "Next: cd packages/luxar-viewer && pnpm gallery" not in out
 
 
 @pytest.mark.parametrize("state", ["missing", "pointer"])
@@ -407,6 +431,170 @@ def test_the_child_command_contract(tmp_path, monkeypatch) -> None:
     assert kwargs["text"] is True
 
 
+def test_newly_generated_stores_are_audited_by_explicit_path(
+    tmp_path, monkeypatch
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok"), ("stale", None, "ok")],
+        present=("stale",),
+    )
+
+    code = _run_main(monkeypatch)
+
+    assert code == 0
+    assert calls == ["demo_fresh.py"]
+    assert len(calls.audit_invocations) == 4
+    expected_store = str(tmp_path / "datasets/demos/fresh.luxar.zarr")
+    for cmd, kwargs in calls.audit_invocations[:2]:
+        assert cmd[0] == sys.executable
+        assert Path(cmd[1]) in {
+            tmp_path / "scripts/check_demo_ladders.py",
+            tmp_path / "scripts/check_scene_credits.py",
+        }
+        assert list(cmd[2:]) == ["--require-scenes", expected_store]
+        assert kwargs == {"cwd": tmp_path, "timeout": gen.AUDIT_TIMEOUT_S}
+    for cmd, kwargs in calls.audit_invocations[2:]:
+        assert list(cmd[2:]) == ["--require-scenes"]
+        assert kwargs == {"cwd": tmp_path, "timeout": gen.AUDIT_TIMEOUT_S}
+
+
+@pytest.mark.parametrize(
+    ("failed_auditor", "expected_code"),
+    [("check_demo_ladders.py", 1), ("check_scene_credits.py", 1)],
+)
+def test_only_gating_generated_store_audits_fail_the_gallery_build(
+    tmp_path, monkeypatch, capsys, failed_auditor, expected_code
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok")],
+        audit_outcomes={
+            "check_demo_ladders.py": int(failed_auditor == "check_demo_ladders.py"),
+            "check_scene_credits.py": int(failed_auditor == "check_scene_credits.py"),
+        },
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == expected_code
+    assert len(calls.audit_invocations) == 4
+    assert failed_auditor.removesuffix(".py") in out
+    next_step = "Next: cd packages/luxar-viewer && pnpm gallery"
+    assert (next_step in out) is (expected_code == 0)
+
+
+def test_configured_non_gating_generated_store_audit_is_report_only(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        gen,
+        "SCENE_AUDITOR_NAMES",
+        (("synthetic_auditor.py", False),),
+    )
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok")],
+        audit_outcomes={"synthetic_auditor.py": 1},
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert len(calls.audit_invocations) == 2
+    assert "synthetic_auditor failed with exit 1 (report-only)" in out
+    assert "Next: cd packages/luxar-viewer && pnpm gallery" in out
+
+
+def test_an_idempotent_run_reports_on_the_complete_local_inventory(
+    tmp_path, monkeypatch
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("stale", None, "ok")],
+        present=("stale",),
+    )
+
+    code = _run_main(monkeypatch)
+
+    assert code == 0
+    assert not calls
+    assert len(calls.audit_invocations) == 2
+    for cmd, kwargs in calls.audit_invocations:
+        assert list(cmd[2:]) == ["--require-scenes"]
+        assert kwargs == {"cwd": tmp_path, "timeout": gen.AUDIT_TIMEOUT_S}
+
+
+def test_a_failing_neighbour_is_report_only_on_an_idempotent_run(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("stale", None, "ok")],
+        present=("stale",),
+        audit_outcomes={
+            "check_demo_ladders.py": 0,
+            "check_scene_credits.py": 1,
+        },
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert not calls
+    assert "check_scene_credits failed with exit 1 (report-only)" in out
+
+
+def test_a_gating_auditor_timeout_fails_the_gallery_build(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok")],
+        audit_outcomes={
+            "check_demo_ladders.py": 0,
+            "check_scene_credits.py": "timeout",
+        },
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "check_scene_credits timed out" in out
+
+
+def test_parent_output_is_flushed_before_each_auditor(tmp_path, monkeypatch) -> None:
+    calls = _setup(tmp_path, monkeypatch, [("fresh", None, "ok")])
+    real_stdout = sys.stdout
+
+    class FlushSpy:
+        def write(self, text):  # type: ignore[no-untyped-def]
+            return real_stdout.write(text)
+
+        def flush(self) -> None:
+            calls.audit_events.append("flush")
+            real_stdout.flush()
+
+        def __getattr__(self, name):  # type: ignore[no-untyped-def]
+            return getattr(real_stdout, name)
+
+    monkeypatch.setattr(sys, "stdout", FlushSpy())
+
+    _run_main(monkeypatch)
+
+    assert calls.audit_events == ["flush", "run"] * 4
+
+
 def test_a_local_input_demo_that_succeeds_is_generated(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -480,6 +668,23 @@ def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
                 f"{entry['id']}: manifest says capture-only, but "
                 f"{on_disk[entry['id']]} is on disk and can generate the dataset"
             )
+
+
+def test_manifest_dataset_stems_resolve_through_the_demo_registry() -> None:
+    """Explicit credit audits require manifest stores to match demo outputs."""
+    from luxar.demos.registry import iter_demos
+
+    registered_outputs = {output for demo in iter_demos() for output in demo.outputs}
+    unresolved = {
+        entry["id"]: Path(entry["dataset"]).name.removesuffix(".luxar.zarr")
+        for entry in gen.load_manifest()
+        if Path(entry["dataset"]).name.removesuffix(".luxar.zarr")
+        not in registered_outputs
+    }
+
+    assert not unresolved, (
+        f"gallery dataset stems missing from DEMO_META outputs: {unresolved}"
+    )
 
 
 def test_manifest_carries_no_undeclared_fields() -> None:

@@ -146,7 +146,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import AnimationConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._particle_collision_tracks import generate_helix_points
 
@@ -171,6 +171,8 @@ from luxar.demos.demo_particle_collision import (
 from luxar.utils.paths import get_demos_output_dir
 
 ANIMATED_TRACK_TRANSVERSE_STEP = 0.01
+#: One turntable revolution, in seconds (Navigation popover value, 2026-09-10).
+AUTO_ROTATE_PERIOD_S = 240.0
 
 
 def generate_helix_track_with_times(
@@ -643,6 +645,21 @@ def generate_animated_detector_scene(
                 # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
                 allow_high_dpr=True,
                 cinematic_mode=True,
+                # Opens turning and playing (2026-09-10 review). A four-minute
+                # turntable (60/240 rpm) about the vertical keeps the barrel
+                # slowly revealing its end caps while the event plays; the time
+                # axis (dimension 3 of x, y, z, time) loops so the collision
+                # replays rather than freezing on its last frame.
+                auto_rotate=True,
+                auto_rotate_speed=60.0 / AUTO_ROTATE_PERIOD_S,
+                auto_rotate_axis="vertical",
+                natural_drag=True,
+                animation=[
+                    AnimationConfig(),
+                    AnimationConfig(),
+                    AnimationConfig(),
+                    AnimationConfig(playing=True, loop="loop", direction="forward"),
+                ],
             ),
         )
 

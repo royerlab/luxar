@@ -23,6 +23,129 @@ import { parseLineJoinStyle, type LineJoinStyle } from '../types/line-join';
 import { parseLinePrimitive, type LinePrimitive } from '../types/line-primitive';
 import { ENVIRONMENT_RESOLUTION_MAX, ENVIRONMENT_RESOLUTION_MIN } from '../types/environment';
 import type { InputProfileOverride } from '../utils/input-capabilities';
+import { log, Modules } from '../utils/log';
+
+/**
+ * Wire spellings of every query parameter the viewer recognizes.
+ *
+ * This is the URL contract in one place: `readUrlParams` consults it for every
+ * key, the README-parity unit test checks each value is documented, and
+ * embedders that assemble a viewer URL read the spelling from here instead of
+ * hardcoding it. Multi-word parameters are camelCase (`noCache`, `lodFinest`);
+ * single-word parameters are unchanged. The table key and the wire value are
+ * identical on purpose — `URL_PARAM_KEYS.noCache` reads as the flag it names,
+ * and the identity keeps the type {@link UrlParamKey} equal to the set of wire
+ * spellings.
+ */
+export const URL_PARAM_KEYS = {
+  src: 'src',
+  theme: 'theme',
+  title: 'title',
+  control: 'control',
+  controlToken: 'controlToken',
+  controlAllowCrossOrigin: 'controlAllowCrossOrigin',
+  panel: 'panel',
+  debug: 'debug',
+  kiosk: 'kiosk',
+  noCache: 'noCache',
+  noSliceCache: 'noSliceCache',
+  noOpfs: 'noOpfs',
+  opfsReadConcurrency: 'opfsReadConcurrency',
+  cacheDebug: 'cacheDebug',
+  clearCache: 'clearCache',
+  noLodFade: 'noLodFade',
+  noLinks: 'noLinks',
+  noLodEnergy: 'noLodEnergy',
+  lodFinest: 'lodFinest',
+  lodBias: 'lodBias',
+  noBlendWarmup: 'noBlendWarmup',
+  depthSort: 'depthSort',
+  noDensityGuard: 'noDensityGuard',
+  densityCap: 'densityCap',
+  noPrefetch: 'noPrefetch',
+  prefetchDebug: 'prefetchDebug',
+  cacheStats: 'cacheStats',
+  renderer: 'renderer',
+  webgpuForceWebgl: 'webgpuForceWebgl',
+  perfTimestamp: 'perfTimestamp',
+  gpuBudgetMB: 'gpuBudgetMB',
+  cacheBudgetMB: 'cacheBudgetMB',
+  dpr: 'dpr',
+  input: 'input',
+  lineJoin: 'lineJoin',
+  linePrimitive: 'linePrimitive',
+  bakeEnv: 'bakeEnv',
+  probe: 'probe',
+  envResolution: 'envResolution',
+} as const;
+
+/** A recognized URL query parameter, spelled as it appears on the wire. */
+export type UrlParamKey = (typeof URL_PARAM_KEYS)[keyof typeof URL_PARAM_KEYS];
+
+/**
+ * Deprecated spellings still accepted for a parameter, mapped to the current
+ * key. Empty today: the 2026-09 camelCase rename was a pre-release hard cut.
+ * This table is the mechanism a POST-release rename uses — add
+ * `'old-spelling': URL_PARAM_KEYS.newSpelling`, and {@link readUrlParams}
+ * keeps honoring the old URL while warning once per page load, for the
+ * deprecation window the compatibility policy sets (two releases or six
+ * months, whichever is longer).
+ */
+export const URL_PARAM_ALIASES: Readonly<Record<string, UrlParamKey>> = {};
+
+/** Aliases already warned about in this page load, so each warns once. */
+const warnedAliases = new Set<string>();
+
+/**
+ * Resolve the spelling under which `key` is present in `params`: the key
+ * itself, else a deprecated alias of it (warning once per alias), else null.
+ * `aliases` is injectable so the mechanism stays testable while the shipped
+ * table is empty.
+ */
+function resolveParamKey(
+  params: URLSearchParams,
+  key: UrlParamKey,
+  aliases: Readonly<Record<string, UrlParamKey>>
+): string | null {
+  if (params.has(key)) return key;
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (canonical !== key || !params.has(alias)) continue;
+    if (!warnedAliases.has(alias)) {
+      warnedAliases.add(alias);
+      log.warning(
+        Modules.CONFIG,
+        `URL parameter "${alias}" is deprecated; use "${canonical}" instead.`
+      );
+    }
+    return alias;
+  }
+  return null;
+}
+
+/**
+ * Whether flag `key` (or a deprecated alias of it) is present in `params`.
+ * The alias-aware replacement for `params.has(key)`.
+ */
+export function hasParam(
+  params: URLSearchParams,
+  key: UrlParamKey,
+  aliases: Readonly<Record<string, UrlParamKey>> = URL_PARAM_ALIASES
+): boolean {
+  return resolveParamKey(params, key, aliases) !== null;
+}
+
+/**
+ * The value of `key` (or of a deprecated alias of it) in `params`, or null
+ * when absent. The alias-aware replacement for `params.get(key)`.
+ */
+export function getParam(
+  params: URLSearchParams,
+  key: UrlParamKey,
+  aliases: Readonly<Record<string, UrlParamKey>> = URL_PARAM_ALIASES
+): string | null {
+  const present = resolveParamKey(params, key, aliases);
+  return present === null ? null : params.get(present);
+}
 
 const MAX_SRC_LENGTH = 4096;
 const URL_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
@@ -86,6 +209,164 @@ export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
   return trimmed;
 }
 
+const MAX_CONTROL_URL_LENGTH = 2048;
+
+/** The path the hub is served at, relative to the page's own origin. */
+export const CONTROL_SOCKET_PATH = '/control';
+
+/** The subset of `window.location` the control-URL validator needs. */
+export interface ControlSocketOrigin {
+  protocol: string;
+  host: string;
+}
+
+/**
+ * Resolve the remote-control socket URL.
+ *
+ * `?control` is a **bare flag** in the ordinary case: the hub is served by the
+ * same app that served this page (`luxar serve --control` puts it on the viewer
+ * app), so the socket address is derivable and there is nothing to validate.
+ * That also means it keeps working behind an origin-rooted reverse proxy, under
+ * `luxar export` and inside the native launcher, none of which know their own
+ * address at authoring time. A path-prefixed proxy uses an explicit same-origin
+ * path such as `?control=/exhibit/control`.
+ *
+ * `?control=<url>` is the split-origin override, and it is **same-origin only**
+ * unless `allowCrossOrigin` is also set. The threat is concrete: a crafted
+ * `?src=<real>&control=ws://attacker/` link turns the display into something an
+ * attacker drives, and hands them `getViewerState()` — the dataset URL, the
+ * layer list and the camera. The host comparison blocks the direct cross-origin
+ * case, and an exhibit that genuinely splits the origins says so explicitly.
+ *
+ * @param raw The parameter value. `''` (a bare `?control`) derives the
+ *   same-origin address; `null` means the flag was absent.
+ * @param origin The page's own protocol and host.
+ * @param allowCrossOrigin Whether `?controlAllowCrossOrigin` was present.
+ * @returns The socket URL, or `null` when control is off or the value is refused.
+ */
+export function normalizeControlSocketUrl(
+  raw: string | null,
+  origin: ControlSocketOrigin,
+  allowCrossOrigin = false
+): string | null {
+  if (raw === null) return null;
+  const secure = origin.protocol === 'https:';
+  const derived = `${secure ? 'wss:' : 'ws:'}//${origin.host}${CONTROL_SOCKET_PATH}`;
+
+  const value = raw.trim();
+  if (value.length === 0) return derived;
+  const url = parseControlSocketUrl(value, derived);
+  if (url === null) return null;
+  return acceptControlSocketUrl(url, origin, secure, allowCrossOrigin) ? url.href : null;
+}
+
+/**
+ * String-level checks, then a parse. `null` for anything not worth inspecting.
+ *
+ * Shared by the two control-related validators — the socket URL and the
+ * `?panel=` module — because the string-level hazards are identical (length,
+ * control characters, a protocol-relative address that would silently inherit
+ * our origin). Only the per-scheme rules afterwards differ.
+ */
+function parseControlSocketUrl(value: string, base: string): URL | null {
+  if (value.length > MAX_CONTROL_URL_LENGTH) return null;
+  if (hasUnsafeSrcCharacter(value)) return null;
+  // Protocol-relative: `new URL` would happily inherit our scheme and host,
+  // which is exactly the cross-origin smuggle this validator exists to stop.
+  if (value.startsWith('//')) return null;
+  try {
+    // A bare path (`/control`) resolves against our own origin; anything with a
+    // scheme is parsed as absolute and checked by the caller.
+    return new URL(value, base);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a parsed socket URL is one this page may dial. */
+function acceptControlSocketUrl(
+  url: URL,
+  origin: ControlSocketOrigin,
+  secure: boolean,
+  allowCrossOrigin: boolean
+): boolean {
+  if (url.protocol !== 'ws:' && url.protocol !== 'wss:') return false;
+  // An insecure socket from a secure page is blocked by the browser anyway;
+  // failing here produces a message instead of a bare SecurityError.
+  if (secure && url.protocol === 'ws:') return false;
+  if (controlSocketUrlCarriesNoise(url)) return false;
+  return url.host === origin.host || allowCrossOrigin;
+}
+
+/**
+ * Credentials, a fragment, or any query key but `token`.
+ *
+ * Credentials in the URL would sit in the address bar of a tablet on a plinth,
+ * and in its history; the token has its own parameter. A fragment and stray
+ * query keys are simply not part of this contract, and accepting them would
+ * mean accepting whatever a crafted link put there.
+ */
+function controlSocketUrlCarriesNoise(url: URL): boolean {
+  if (url.username.length > 0 || url.password.length > 0) return true;
+  if (url.hash.length > 0) return true;
+  // `forEach` rather than `keys()`: this package's lib config has DOM but not
+  // DOM.Iterable, so the iterator helpers are not in the type surface.
+  let foreignQueryKey = false;
+  new URLSearchParams(url.search).forEach((_value, key) => {
+    if (key !== 'token') foreignQueryKey = true;
+  });
+  return foreignQueryKey;
+}
+
+/**
+ * The page's own origin, for the control-socket validator.
+ *
+ * Falls back to a loopback placeholder when there is no `window` at all (a
+ * node-environment unit test), so the validator's same-origin rule still has
+ * something concrete to compare against instead of throwing.
+ */
+function resolvePageOrigin(origin?: ControlSocketOrigin): ControlSocketOrigin {
+  if (origin !== undefined) return origin;
+  const location = typeof window !== 'undefined' ? window.location : undefined;
+  if (!location) return { protocol: 'http:', host: 'localhost' };
+  return { protocol: location.protocol, host: location.host };
+}
+
+/**
+ * Resolve `?panel=<url>` — an alternative control-panel module.
+ *
+ * The documented escape hatch, so the first exhibit that outgrows CSS has a
+ * supported path instead of forking `control.html` out of the viewer package.
+ * The module is `import()`ed and handed the already-connected socket, so it is
+ * **executable code**: hence same-origin only, with no opt-out. A cross-origin
+ * module would be arbitrary remote code running on a kiosk, which is a
+ * different feature and not one anybody asked for. Within our own origin it is
+ * no more trusted than the page that loads it.
+ */
+export function normalizePanelModuleUrl(
+  raw: string | null,
+  origin: ControlSocketOrigin
+): string | null {
+  if (raw === null) return null;
+  const value = raw.trim();
+  // Empty must be refused explicitly: `new URL('', base)` resolves to the base
+  // itself, so a blank `?panel=` would otherwise import the origin root.
+  if (value.length === 0) return null;
+  const url = parseControlSocketUrl(value, `${origin.protocol}//${origin.host}/`);
+  if (url === null) return null;
+  if (url.protocol !== origin.protocol || url.host !== origin.host) return null;
+  if (url.username.length > 0 || url.password.length > 0) return null;
+  return url.href;
+}
+
+/** A trimmed query value, or null when absent or blank. */
+function trimmedParam(params: URLSearchParams, key: UrlParamKey): string | null {
+  const raw = getParam(params, key);
+  if (raw === null) return null;
+  const value = raw.trim();
+  return value.length === 0 ? null : value;
+}
+
 /**
  * All URL parameters recognized by the viewer, as a typed snapshot.
  *
@@ -106,34 +387,75 @@ export interface UrlParams {
    * a scene's authored `viewer_config.title` overrides it at load.
    */
   title: string | null;
+  /**
+   * Remote-control socket URL, already resolved and validated
+   * (`?control`, or `?control=ws://host/control` to split the origin).
+   * Null when control is off — which is the default — or when the supplied
+   * value was refused. See {@link normalizeControlSocketUrl}.
+   */
+  control: string | null;
+  /**
+   * Shared secret presented to the hub as `?token=` (`?controlToken=...`),
+   * matching `luxar serve --control-token`. Null when the hub is open.
+   *
+   * A token in a query string lands in browser history and in the address bar
+   * of whatever tablet is driving the display. That is acceptable for a LAN
+   * kiosk and is not a substitute for not exposing the hub to a network you
+   * do not trust.
+   */
+  controlToken: string | null;
+  /**
+   * Permit a cross-origin control socket (`?controlAllowCrossOrigin`). Off by
+   * default so a crafted link cannot point the display at someone else's hub.
+   */
+  controlAllowCrossOrigin: boolean;
+  /**
+   * Alternative control-panel module (`?panel=/my-panel.js`), resolved and
+   * validated same-origin. Null when absent or refused.
+   *
+   * Read only by `control.html`; the viewer itself ignores it. See
+   * {@link normalizePanelModuleUrl}.
+   */
+  panel: string | null;
   /** Enable the `window.__luxarDebug` interface (`?debug`). */
   debug: boolean;
-  /** Disable all cache layers (`?no-cache`). */
+  /**
+   * `?kiosk` — lock this display down for unattended public use.
+   *
+   * A hard override over the scene's authored `ui.kiosk` block, because this
+   * is the OPERATOR's channel: a store that predates the block, or one
+   * borrowed for an exhibit it was never authored for, still has to be
+   * lockable from the launch command. See `config/kiosk.ts`.
+   */
+  kiosk: boolean;
+  /** Disable all cache layers (`?noCache`). */
   noCache: boolean;
-  /** Disable only the SliceCache / S-cache (`?no-slice-cache`). */
+  /** Disable only the SliceCache / S-cache (`?noSliceCache`). */
   noSliceCache: boolean;
   /**
-   * Disable only the L2 OPFS persistent tier (`?no-opfs`); L0/L1/S-cache
+   * Disable only the L2 OPFS persistent tier (`?noOpfs`); L0/L1/S-cache
    * stay on. The deterministic sibling of the OPFS circuit breaker — use
    * it in environments whose OPFS is known to stall (automated Chromium).
    */
   noOpfs: boolean;
-  /** Verbose cache logging (`?cache-debug`). */
+  /** Override the page-wide OPFS read cap (`?opfsReadConcurrency=N`). */
+  opfsReadConcurrency: number | null;
+  /** Verbose cache logging (`?cacheDebug`). */
   cacheDebug: boolean;
-  /** Clear caches on init (`?clear-cache`). */
+  /** Clear caches on init (`?clearCache`). */
   clearCache: boolean;
   /**
    * Whether the substitutive-LOD cross-fade is enabled: blend adjacent LOD
    * levels' opacity as the camera zooms across their boundary instead of a hard
    * visibility swap, for blendable (additive/luminous/volumetric) layers
    * (anti-popping). **On by
-   * default**; pass `?no-lod-fade` to disable it (e.g. to compare against the
+   * default**; pass `?noLodFade` to disable it (e.g. to compare against the
    * hard swap or isolate a rendering issue).
    */
   lodFade: boolean;
   /**
    * Whether a picked element's authored `link` may be opened on left-click
-   * (issue #1917). **On by default**; pass `?no-links` to disable it.
+   * (issue #1917). **On by default**; pass `?noLinks` to disable it.
    *
    * The switch an embedder showing third-party scenes wants: `.zattrs` is
    * untrusted, so this guarantees no navigation can originate in the data. It
@@ -148,20 +470,26 @@ export interface UrlParams {
    * LOD leaf's additive ladder streams in, scale its opacity by `1/e(k)` so the
    * partial prefix renders at full-level brightness instead of brightening up as
    * chunks arrive (anti-popping on the time axis, orthogonal to `lodFade`'s
-   * distance axis). **On by default**; pass `?no-lod-energy` to disable it (e.g.
+   * distance axis). **On by default**; pass `?noLodEnergy` to disable it (e.g.
    * to compare against the uncompensated brightening ramp).
    */
   lodEnergyComp: boolean;
   /**
    * Force the finest LOD level regardless of projected screen coverage
-   * (`?lod-finest`). For high-quality still/video capture — the gallery
+   * (`?lodFinest`). For high-quality still/video capture — the gallery
    * harness appends it — where a coarse level would look blurry even though
    * the subject is small in frame. **Off by default** (opt-in, unlike the
    * three on-by-default flags above).
    */
   lodFinest: boolean;
   /**
-   * WebGL-only blend warm-up. **On by default**; pass `?no-blend-warmup`
+   * Session-wide replacement-LOD bias (`?lodBias=<positive number>`), in
+   * screen-area units. `2` advances an occupancy-halved ladder by one level;
+   * `4` by two. Null keeps the neutral `1` default.
+   */
+  lodBias: number | null;
+  /**
+   * WebGL-only blend warm-up. **On by default**; pass `?noBlendWarmup`
    * to disable the off-interaction-path pre-linking of reachable
    * blend-mode program variants.
    */
@@ -179,13 +507,13 @@ export interface UrlParams {
   /**
    * Projected-density guard (per-node keep-fraction thinning + refinement
    * rung cap on over-drawn nodes; `config.densityGuard`). On by default;
-   * `?no-density-guard` disables it for the session — the A/B lever for
+   * `?noDensityGuard` disables it for the session — the A/B lever for
    * the audit bench and for reproducing an overdraw report.
    */
   densityGuard: boolean;
   /**
    * Session-only override of the density guard's blendable cap
-   * (`?density-cap=8`, elements per drawing-buffer pixel;
+   * (`?densityCap=8`, elements per drawing-buffer pixel;
    * `config.densityGuard.capElementsPerPixel` is 4). Both consumers follow
    * it — the shader keep-fraction ladder and the refinement rung gate — so
    * a threshold sweep is one URL edit per arm, no rebuild and nothing
@@ -194,13 +522,13 @@ export interface UrlParams {
    * configured cap.
    */
   densityCap: number | null;
-  /** Disable adjacent-chunk prefetching (`?no-prefetch`). */
+  /** Disable adjacent-chunk prefetching (`?noPrefetch`). */
   noPrefetch: boolean;
-  /** Verbose prefetch logging (`?prefetch-debug`). */
+  /** Verbose prefetch logging (`?prefetchDebug`). */
   prefetchDebug: boolean;
   /**
    * Auto-open the data-loading monitor in expanded mode on the Cache tab
-   * (`?cache-stats`). Useful for measuring L0/L1/L2 hit rates without
+   * (`?cacheStats`). Useful for measuring L0/L1/L2 hit rates without
    * having to find the monitor's keyboard shortcut first.
    */
   cacheStats: boolean;
@@ -223,14 +551,14 @@ export interface UrlParams {
    */
   renderer: 'webgl' | 'webgpu' | null;
   /**
-   * Diagnostic flag (`?webgpu-force-webgl`) that keeps the
+   * Diagnostic flag (`?webgpuForceWebgl`) that keeps the
    * `WebGPURenderer` / TSL `NodeMaterial` pipeline selected but asks
    * Three.js to back it with its internal WebGL2 backend instead of a
    * native WebGPU adapter. Ignored when `renderer` resolves to `webgl`.
    */
   webgpuForceWebGL: boolean;
   /**
-   * Opt-in to GPU timestamp queries (`?perf-timestamp`). Only honored
+   * Opt-in to GPU timestamp queries (`?perfTimestamp`). Only honored
    * under WebGPURenderer with a backend that exposes the
    * `timestamp-query` feature. When set, the renderer is constructed
    * with `{ trackTimestamp: true }` and the perf bench reads
@@ -254,9 +582,10 @@ export interface UrlParams {
    * (`?cacheBudgetMB=1536`). Used where `performance.memory` is unavailable —
    * WKWebView (the native app) and Safari — so heap-aware sizing has a real
    * budget to split instead of the tiny fixed fallback. The native launcher
-   * injects it automatically. One third also replaces the no-signal GPU-
-   * geometry fallback, in either direction. Null/invalid ⇒ fall back to the
-   * measured heap, then to the fixed config sizes. See `cache/heap-budget.ts`.
+   * injects it automatically. Its implied non-cache remainder also replaces
+   * the heap-derived GPU-geometry signal in either direction. Null/invalid ⇒
+   * fall back to the measured heap, then to the fixed config sizes. See
+   * `cache/heap-budget.ts`.
    */
   cacheBudgetMB: number | null;
   /**
@@ -315,7 +644,7 @@ export interface UrlParams {
   linePrimitive: LinePrimitive | null;
 
   /**
-   * Bake the scene environment (`?bake-env`, driven by `luxar env bake`): once
+   * Bake the scene environment (`?bakeEnv`, driven by `luxar env bake`): once
    * the load settles, capture the scene-derived cube map at `probe` /
    * `envResolution`, expose the container on `__luxarDebug.environment.lastBake`
    * and download it. See `rendering/environment/bake.ts`.
@@ -323,7 +652,7 @@ export interface UrlParams {
   bakeEnv: boolean;
   /** Probe for the bake (`?probe=auto|node:<path>|x,y,z`). Null → the scene's config or `auto`. */
   probe: string | null;
-  /** Cube face size for the bake (`?env-resolution=128`). Null → the scene's config or 128. */
+  /** Cube face size for the bake (`?envResolution=128`). Null → the scene's config or 128. */
   envResolution: number | null;
 }
 
@@ -334,43 +663,62 @@ export interface UrlParams {
  * Pass an explicit `search` string in tests; in production main.ts calls this
  * once with no argument and threads the result through the rest of the app.
  */
-export function readUrlParams(search?: string): UrlParams {
+export function readUrlParams(search?: string, origin?: ControlSocketOrigin): UrlParams {
   const raw = search ?? (typeof window !== 'undefined' ? window.location?.search : '') ?? '';
   const params = new URLSearchParams(raw);
+  // The control socket's address is derived from the page's own origin, so the
+  // validator needs it. Injectable for the same reason `search` is: a test (and
+  // an embedder) must be able to parse without touching window.location.
+  const pageOrigin = resolvePageOrigin(origin);
+  // Every key goes through the alias-aware accessors, never `params.has`/`get`
+  // directly, so a deprecated spelling added to `URL_PARAM_ALIASES` is honored
+  // uniformly. `K` is the wire-spelling table; a field's TS name and its wire
+  // key differ for the on-by-default flags (`lodFade` ⇐ `noLodFade`).
+  const K = URL_PARAM_KEYS;
+  const has = (key: UrlParamKey): boolean => hasParam(params, key);
+  const get = (key: UrlParamKey): string | null => getParam(params, key);
+  const allowCrossOriginControl = has(K.controlAllowCrossOrigin);
 
   return {
-    src: normalizeDataSourceUrl(params.get('src')),
-    theme: params.get('theme'),
-    title: params.get('title')?.trim() || null,
-    debug: params.has('debug'),
-    noCache: params.has('no-cache'),
-    noSliceCache: params.has('no-slice-cache'),
-    noOpfs: params.has('no-opfs'),
-    cacheDebug: params.has('cache-debug'),
-    clearCache: params.has('clear-cache'),
-    lodFade: !params.has('no-lod-fade'),
-    allowLinks: !params.has('no-links'),
-    lodEnergyComp: !params.has('no-lod-energy'),
-    lodFinest: params.has('lod-finest'),
-    blendWarmup: !params.has('no-blend-warmup'),
-    depthSort: parseEnabledFlag(params.get('depthSort')),
-    densityGuard: !params.has('no-density-guard'),
-    densityCap: parsePositiveFloat(params.get('density-cap')),
-    noPrefetch: params.has('no-prefetch'),
-    prefetchDebug: params.has('prefetch-debug'),
-    cacheStats: params.has('cache-stats'),
-    renderer: normalizeRendererParam(params.get('renderer')),
-    webgpuForceWebGL: params.has('webgpu-force-webgl'),
-    perfTimestamp: params.has('perf-timestamp'),
-    gpuBudgetMB: parseNonNegativeInt(params.get('gpuBudgetMB')),
-    cacheBudgetMB: parseNonNegativeInt(params.get('cacheBudgetMB')),
-    dpr: parsePositiveFloat(params.get('dpr')),
-    input: normalizeInputParam(params.get('input')),
-    lineJoin: parseLineJoinStyle(params.get('lineJoin')),
-    linePrimitive: parseLinePrimitive(params.get('linePrimitive')),
-    bakeEnv: params.has('bake-env'),
-    probe: params.get('probe')?.trim() || null,
-    envResolution: clampEnvironmentResolution(parseNonNegativeInt(params.get('env-resolution'))),
+    src: normalizeDataSourceUrl(get(K.src)),
+    theme: get(K.theme),
+    title: trimmedParam(params, K.title),
+    control: normalizeControlSocketUrl(get(K.control), pageOrigin, allowCrossOriginControl),
+    controlToken: trimmedParam(params, K.controlToken),
+    controlAllowCrossOrigin: allowCrossOriginControl,
+    panel: normalizePanelModuleUrl(get(K.panel), pageOrigin),
+    debug: has(K.debug),
+    kiosk: has(K.kiosk),
+    noCache: has(K.noCache),
+    noSliceCache: has(K.noSliceCache),
+    noOpfs: has(K.noOpfs),
+    opfsReadConcurrency: parsePositiveInt(get(K.opfsReadConcurrency)),
+    cacheDebug: has(K.cacheDebug),
+    clearCache: has(K.clearCache),
+    lodFade: !has(K.noLodFade),
+    allowLinks: !has(K.noLinks),
+    lodEnergyComp: !has(K.noLodEnergy),
+    lodFinest: has(K.lodFinest),
+    lodBias: parsePositiveFloat(get(K.lodBias)),
+    blendWarmup: !has(K.noBlendWarmup),
+    depthSort: parseEnabledFlag(get(K.depthSort)),
+    densityGuard: !has(K.noDensityGuard),
+    densityCap: parsePositiveFloat(get(K.densityCap)),
+    noPrefetch: has(K.noPrefetch),
+    prefetchDebug: has(K.prefetchDebug),
+    cacheStats: has(K.cacheStats),
+    renderer: normalizeRendererParam(get(K.renderer)),
+    webgpuForceWebGL: has(K.webgpuForceWebgl),
+    perfTimestamp: has(K.perfTimestamp),
+    gpuBudgetMB: parseNonNegativeInt(get(K.gpuBudgetMB)),
+    cacheBudgetMB: parseNonNegativeInt(get(K.cacheBudgetMB)),
+    dpr: parsePositiveFloat(get(K.dpr)),
+    input: normalizeInputParam(get(K.input)),
+    lineJoin: parseLineJoinStyle(get(K.lineJoin)),
+    linePrimitive: parseLinePrimitive(get(K.linePrimitive)),
+    bakeEnv: has(K.bakeEnv),
+    probe: trimmedParam(params, K.probe),
+    envResolution: clampEnvironmentResolution(parseNonNegativeInt(get(K.envResolution))),
   };
 }
 
@@ -410,6 +758,12 @@ function parseNonNegativeInt(raw: string | null): number | null {
   if (raw === null) return null;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function parsePositiveInt(raw: string | null): number | null {
+  if (raw === null) return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : null;
 }
 
 /**
@@ -492,8 +846,8 @@ function normalizeSrcForUrl(src: string): string {
  */
 export function buildDataSourceBrowserUrl(src: string, location: BrowserUrlLocation): string {
   const params = new URLSearchParams(location.search);
-  params.set('src', normalizeSrcForUrl(src));
-  params.delete('title');
+  params.set(URL_PARAM_KEYS.src, normalizeSrcForUrl(src));
+  params.delete(URL_PARAM_KEYS.title);
   const query = params.toString();
   const hash = location.hash ?? '';
   return `${location.pathname}${query ? `?${query}` : ''}${hash}`;

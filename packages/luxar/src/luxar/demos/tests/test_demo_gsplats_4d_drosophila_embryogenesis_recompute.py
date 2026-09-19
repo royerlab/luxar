@@ -57,13 +57,19 @@ def test_recorded_recipe_constants_match_the_source_and_published_run() -> None:
     assert demo.SOURCE_AXES == "time,z,y,x"
     assert demo.TILE_SIZE >= max(demo.SOURCE_SHAPE[1:])
     assert demo.NOMINAL_FITTED_SPLATS == 128_000_000
-    assert demo.AMPLITUDE_MIN == pytest.approx(33.40462112)
-    assert demo.EXPECTED_SPLATS == 83_221_420
-    assert demo.EXPECTED_RUNGS == 14
+    # The 2026-08 archive's amplitude cutoff (33.40462112 -> 83,221,420 splats)
+    # is gone: the unculled merge is the recipe.
+    assert not hasattr(demo, "AMPLITUDE_MIN")
+    assert not hasattr(demo, "EXPECTED_SPLATS")
+    assert (
+        demo.EXPECTED_RUNGS == 4
+    )  # equal-count --merge-n-lods 4 (check-demo-ladders floor)
 
 
 def test_docstring_records_the_measured_streaming_tradeoffs() -> None:
     doc = demo.__doc__ or ""
+    assert "prior 2026-08 14-rung, 83M-splat store" in doc
+    assert "not been re-measured" in doc
     assert "47 MB in 115 requests" in doc
     assert "0-2.3 MB in 0-4 requests" in doc
     assert "18 MB / 68 requests" in doc
@@ -166,23 +172,34 @@ def test_validate_source_rejects_multiscale_group_at_array_key(tmp_path: Path) -
 
 def test_rebuilt_archive_requires_one_leaf_and_the_recorded_rungs(monkeypatch) -> None:
     valid = SimpleNamespace(
-        n_splats=demo.EXPECTED_SPLATS,
+        n_splats=demo.NOMINAL_FITTED_SPLATS,
         n_additive_sublods=demo.EXPECTED_RUNGS,
     )
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [valid])
-    assert demo._validate_rebuilt_archive(object()) == demo.EXPECTED_SPLATS
+    assert (
+        demo._validate_rebuilt_archive(object(), demo.NOMINAL_FITTED_SPLATS)
+        == demo.NOMINAL_FITTED_SPLATS
+    )
 
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [valid, valid])
     with pytest.raises(RuntimeError, match="2 leaves, expected one"):
-        demo._validate_rebuilt_archive(object())
+        demo._validate_rebuilt_archive(object(), demo.NOMINAL_FITTED_SPLATS)
 
     invalid_rungs = SimpleNamespace(
-        n_splats=demo.EXPECTED_SPLATS,
+        n_splats=demo.NOMINAL_FITTED_SPLATS,
         n_additive_sublods=demo.EXPECTED_RUNGS - 1,
     )
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [invalid_rungs])
     with pytest.raises(RuntimeError, match="progressive rungs"):
-        demo._validate_rebuilt_archive(object())
+        demo._validate_rebuilt_archive(object(), demo.NOMINAL_FITTED_SPLATS)
+
+    changed_count = SimpleNamespace(
+        n_splats=demo.NOMINAL_FITTED_SPLATS - 1,
+        n_additive_sublods=demo.EXPECTED_RUNGS,
+    )
+    monkeypatch.setattr(demo, "iter_leaves", lambda _node: [changed_count])
+    with pytest.raises(RuntimeError, match="changed the fitted splat count"):
+        demo._validate_rebuilt_archive(object(), demo.NOMINAL_FITTED_SPLATS)
 
 
 def test_fitted_archive_requires_one_leaf_and_uses_a_one_percent_tolerance(
@@ -192,7 +209,7 @@ def test_fitted_archive_requires_one_leaf_and_uses_a_one_percent_tolerance(
         n_splats=round(demo.NOMINAL_FITTED_SPLATS * 0.991)
     )
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [within_tolerance])
-    demo._validate_fitted_splat_count(object())
+    assert demo._validate_fitted_splat_count(object()) == within_tolerance.n_splats
 
     monkeypatch.setattr(
         demo,
@@ -208,13 +225,6 @@ def test_fitted_archive_requires_one_leaf_and_uses_a_one_percent_tolerance(
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [outside_tolerance])
     with pytest.raises(RuntimeError, match="Over 1% means the fit recipe changed"):
         demo._validate_fitted_splat_count(object())
-
-
-def test_splat_count_uses_a_one_percent_tolerance() -> None:
-    demo._validate_splat_count(round(demo.EXPECTED_SPLATS * 0.991))
-
-    with pytest.raises(RuntimeError, match="Over 1% means the recipe changed"):
-        demo._validate_splat_count(round(demo.EXPECTED_SPLATS * 0.989))
 
 
 def test_recompute_requires_source_and_invokes_exact_cli_paths(
@@ -250,7 +260,8 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
             self.n_splats = n_splats
 
     def run(*args: str) -> None:
-        if args[:2] == ("gsplat", "filter"):
+        if args[:2] == ("gsplat", "transform"):
+            # The 128M-splat merged node must be released before the next step.
             gc.collect()
             assert fitted_ref is not None
             assert fitted_ref() is None
@@ -258,7 +269,7 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
 
     def load(path: Path):
         nonlocal fitted_ref
-        count = demo.NOMINAL_FITTED_SPLATS if path == merged else demo.EXPECTED_SPLATS
+        count = demo.NOMINAL_FITTED_SPLATS
         node = LoadedNode(count)
         if path == merged:
             fitted_ref = weakref.ref(node)
@@ -319,27 +330,19 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
             "2",
             "--merge-recipe",
             "stream",
-            "--merge-target-ms",
-            "200",
-        ),
-        (
-            "gsplat",
-            "filter",
-            str(fit / "merged" / "final.gsplats.zarr"),
-            str(culled),
-            "--amplitude-min",
-            "33.40462112",
+            "--merge-n-lods",
+            "4",
         ),
         (
             "gsplat",
             "transform",
-            str(culled),
+            str(fit / "merged" / "final.gsplats.zarr"),
             str(scaled),
             "--scale",
             "1.93,0.40625,0.40625,1",
         ),
         (
-            "optimise",
+            "optimize",
             str(scaled),
             str(final),
             "--profile",
@@ -348,7 +351,6 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
     ]
 
     merged.mkdir(parents=True, exist_ok=True)
-    culled.mkdir()
     scaled.mkdir()
     root_command = get_command(app)
     for argv in calls:
@@ -361,7 +363,7 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
         command.make_context(command.name or "luxar", remaining)
 
 
-def test_recompute_rejects_wrong_fitted_count_before_filtering(
+def test_recompute_rejects_wrong_fitted_count_before_transforming(
     monkeypatch, tmp_path: Path
 ) -> None:
     source = tmp_path / demo.SOURCE_FILENAME

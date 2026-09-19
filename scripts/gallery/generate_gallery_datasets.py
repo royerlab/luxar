@@ -4,7 +4,15 @@
 Reads the single-source-of-truth manifest (``scripts/gallery/manifest.json``)
 and, for every entry that declares a generator ``script``, runs that demo with
 ``--no-serve`` to produce its ``.luxar.zarr`` under ``datasets/demos/`` — unless
-the dataset already exists (idempotent / resumable).
+the dataset already exists (idempotent / resumable). Every store produced by
+this run is then checked for LOD-ladder quality and embedded scene credits before
+the gallery capture can proceed. Both audits gate newly generated stores. A
+second report-only pass covers the complete local inventory, so already-present
+neighbours remain visible without deciding whether a newly generated store may
+proceed. A store that fails a generated-store gate is not re-gated on a later
+idempotent run; fix the demo and regenerate it with ``--force`` (or delete the
+store first). The direct full-inventory audits before upload are the backstop
+and must exit zero.
 
 Entries with ``script: null`` live only on a feature branch; their dataset must
 already be present (typically generated once, then committed/kept locally). Such
@@ -69,6 +77,9 @@ DATA_MANIFEST = DEMOS_DIR / "data_manifest.json"
 # Gaussian splats; give them room but don't hang the whole run forever.
 GEN_TIMEOUT_S = 3600
 
+# Built-scene audits are metadata-heavy but should never hang a gallery build.
+AUDIT_TIMEOUT_S = 600
+
 # Provisioning modes that may make a positive demo exit mean "this machine does
 # not have the input". Git LFS is checked against the observed payload state;
 # unlike `luxar demo run-all`, the gallery still attempts every runnable entry.
@@ -82,6 +93,11 @@ LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 # This is a temporary list, not a policy. DELETE an entry the moment its cause is
 # gone — the demo is then generated like any other.
 UNBUILDABLE_IDS: dict[str, str] = {}
+
+SCENE_AUDITOR_NAMES = (
+    ("check_demo_ladders.py", True),
+    ("check_scene_credits.py", True),
+)
 
 
 def load_manifest() -> list[dict[str, Any]]:
@@ -252,6 +268,65 @@ def print_plan(demos: list[dict[str, Any]]) -> None:
             aprint(f"[{present:>7}] {d['id']:<34} {gen}")
 
 
+def _run_scene_auditors(
+    paths: list[Path], *, title: str, enforce_configured_gates: bool
+) -> list[str]:
+    """Run every built-scene auditor and return only enforced failures."""
+    failures = []
+    with asection(title):
+        for auditor_name, gates in SCENE_AUDITOR_NAMES:
+            auditor = REPO_ROOT / "scripts" / auditor_name
+            # Generated-path calls are non-empty by construction, so
+            # --require-scenes is defense-in-depth there. On the report-only
+            # inventory pass it makes an empty build box explicit in the output.
+            cmd = [
+                sys.executable,
+                str(auditor),
+                "--require-scenes",
+                *(str(path) for path in paths),
+            ]
+            aprint(" ".join(cmd))
+            sys.stdout.flush()
+            failure: str | None
+            try:
+                result = subprocess.run(cmd, cwd=REPO_ROOT, timeout=AUDIT_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                failure = f"timed out after {AUDIT_TIMEOUT_S}s"
+            else:
+                failure = (
+                    f"failed with exit {result.returncode}"
+                    if result.returncode != 0
+                    else None
+                )
+            if failure is not None:
+                enforced = enforce_configured_gates and gates
+                if enforced:
+                    failures.append(auditor.stem)
+                suffix = "" if enforced else " (report-only)"
+                aprint(f"❌ {auditor.stem} {failure}{suffix}")
+    return failures
+
+
+def audit_generated_stores(paths: list[Path]) -> list[str]:
+    """Audit exactly the stores made here, enforcing configured gates."""
+    if not paths:
+        return []
+    return _run_scene_auditors(
+        paths,
+        title=f"Auditing {len(paths)} newly generated scene(s)",
+        enforce_configured_gates=True,
+    )
+
+
+def report_local_scene_inventory() -> None:
+    """Report every built scene without making neighbouring stores a gate."""
+    _run_scene_auditors(
+        [],
+        title="Reporting the complete local scene inventory",
+        enforce_configured_gates=False,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -294,6 +369,7 @@ def main() -> int:
         "no-output": [],
         "missing-script": [],
     }
+    generated_paths: list[Path] = []
 
     with asection(f"Generating {len(demos)} gallery datasets"):
         for entry in demos:
@@ -303,6 +379,8 @@ def main() -> int:
                 continue
             status, detail = generate_one(entry)
             results.setdefault(status, []).append(entry["id"])
+            if status == "generated":
+                generated_paths.append(REPO_ROOT / entry["dataset"])
             symbol = {"generated": "✅"}.get(status, "⚠️ ")
             aprint(f"{symbol} {entry['id']} — {status}: {detail}")
 
@@ -313,14 +391,17 @@ def main() -> int:
 
     ready = [d for d in demos if dataset_exists(d)]
     aprint(f"\n{len(ready)}/{len(demos)} datasets ready for capture.")
-    aprint("Next: cd packages/luxar-viewer && pnpm gallery")
+    audit_failures = audit_generated_stores(generated_paths)
+    report_local_scene_inventory()
 
-    # Non-zero only on hard generation failures. capture-only, manual-data and
-    # unbuildable are expected states, not errors: manual-data is a demo whose
-    # machine-local input this machine does not have, unbuildable one that cannot
-    # be built anywhere yet (see `generate_one`).
+    # Non-zero on hard generation failures or an enforced audit failure.
+    # capture-only, manual-data and unbuildable are expected states, not errors:
+    # manual-data is a demo whose machine-local input this machine does not have,
+    # unbuildable one that cannot be built anywhere yet (see `generate_one`).
     hard_failures = results["failed"] + results["timeout"] + results["no-output"]
-    return 1 if hard_failures else 0
+    if not (hard_failures or audit_failures):
+        aprint("Next: cd packages/luxar-viewer && pnpm gallery")
+    return 1 if hard_failures or audit_failures else 0
 
 
 if __name__ == "__main__":

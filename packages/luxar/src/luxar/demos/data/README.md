@@ -7,8 +7,9 @@ demo payloads are fetched from the records pinned by the manifest.
 > **The manifest, not this README, is the source of truth.**
 > [`../data_manifest.json`](../data_manifest.json) records how *every* demo
 > dataset is obtained, plus its true per-dataset license and, for each hosted
-> file, a `sha256` and `bytes` pinning what the Zenodo record serves. Legacy manifests
-> may also carry `hosted_sha256` / `hosted_bytes` when an in-repo copy differs.
+> file, a `sha256` and `bytes` pinning what the Zenodo record serves or what a
+> dataset-level `base_url` mirror serves. Legacy manifests may also carry
+> `hosted_sha256` / `hosted_bytes` when an in-repo copy differs.
 > The optional
 > `superseded_sha256` lists earlier pinned digests, newest last. Files carrying
 > the same `positional_pair` value are row-indexed companions and must move
@@ -103,7 +104,7 @@ The hosted datasets formerly stored in these subdirectories are:
 | `gsplats_visible_human_head/` | 3D Visible Human head, true-color cryosections (NLM) | 1 `.gsplats.zarr.zip` + `vh_head_colors.npz` (30.23 MB total; per-splat RGB, indexed positionally against the fit; regenerated from a 636 x 451 x 896 volume matching the stored centers' extent, with a color distribution within TV distance 0.0065 of the original sidecar; verified on load at agreement 1.0, #1670) |
 | `gsplats_flylight_mcfo_63x/` | 3D *Drosophila* whole brain, MultiColor FlpOut (Janelia FlyLight, 63x) | 1 `.gsplats.zarr.zip` (7.65 MB) |
 | `gsplats_nexrad_supercell/` | 4D NEXRAD Oklahoma convective evening incl. the El Reno tornadic supercell (KTLX, 2013-05-31 21Z - 06-01 03Z) | 1 bundle zip with 82 volume scans (12.88 MB) |
-| _(not bundled)_ `gsplats_4d_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the zips (130 MiB) are in the published `cc-by` record and pinned in the manifest. The demo tries the manifest fetch first, then falls back to the unzipped local pair |
+| _(not bundled)_ `gsplats_4d_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the corrected zips (136 MiB) come from the mirror attached to this dataset entry and are pinned in the manifest. The demo tries the manifest fetch first, then falls back to the unzipped local pair |
 | _(not bundled)_ `gsplats_cell_tracking` | 4D zebrafish cell-tracking challenge | 7 crop pairs (4D splats + lineage tracks, 632.4 MB) — **not in Git LFS**; uploaded to the published `cc-by` record and pinned in the manifest |
 
 > **Note — uploads.** The neuromast pair, both h2afva timelapse variants, the
@@ -118,10 +119,12 @@ The hosted datasets formerly stored in these subdirectories are:
 > `positional_pair` it needs the COMPLETE prior generation, which is why the
 > generator refuses a re-pin that moves one member of a pair without the other.
 > Do the upload BEFORE the record is published: publication freezes the files.
-> `scripts/zenodo_migration_audit.py --live`
-> verifies that every declared pin matches the published records. All four were
-> published on 2026-09-02, so each carries `published: true` and the fetch derives
-> a checksum-verified public URL from its record id.
+> `scripts/zenodo_migration_audit.py --live` compares declared pins with the
+> published records. A dataset-level `base_url` may intentionally diverge from
+> its provenance record until that record is re-versioned, as the neuromast
+> dataset currently does. All four were published on 2026-09-02, so each carries
+> `published: true`; absent an override, the fetch derives a checksum-verified
+> public URL from its record id.
 
 ### Other Data Files
 

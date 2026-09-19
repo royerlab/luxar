@@ -2069,7 +2069,7 @@ class TestMeshLodRevealRecipe:
         assert level_faces == [100, 200, 300, total - 600]
         assert sum(level_faces) == total
 
-    def test_reveal_centre_changes_which_faces_land_in_the_first_level(
+    def test_reveal_center_changes_which_faces_land_in_the_first_level(
         self, tmp_path: Path
     ) -> None:
         """The centre must reach the ordering, not just the argument parser.
@@ -2078,7 +2078,7 @@ class TestMeshLodRevealRecipe:
         so two centres only produce different ladders when the surface is
         ASYMMETRIC about them — on a mesh symmetric between the two, the distance
         field is a relabelling and the first level can come out identical, which
-        would make this pass against a `--reveal-centre` that was parsed and
+        would make this pass against a `--reveal-center` that was parsed and
         thrown away. The grid spans [-1, 1]², so the two corners below are maximally
         far apart and the first level around each is a different corner's faces.
         """
@@ -2094,7 +2094,7 @@ class TestMeshLodRevealRecipe:
                 source,
                 out,
                 n_lods=4,
-                reveal_centre=centre,
+                reveal_center=centre,
                 spatial_dims="0,1",
             )
             level = zarr.open_group(str(out), mode="r")["surf/additive_0"]
@@ -2116,7 +2116,7 @@ class TestMeshLodRevealRecipe:
         # centres, in which case this test proves nothing and the fixture is the
         # thing to fix.
         assert near_min != near_max, (
-            "the two centres produced the same first level — --reveal-centre is "
+            "the two centres produced the same first level — --reveal-center is "
             "being parsed and dropped, or this fixture is symmetric about them"
         )
         # And the DIRECTION is right, not merely different: the shell grown from
@@ -2131,7 +2131,7 @@ class TestMeshLodRevealRecipe:
         [
             ({"n_lods": 4}, "--n-lods", "-L/--levels"),
             ({"add_method": "radial"}, "-m/--add-method", "--subst-method"),
-            ({"reveal_centre": "0,0,0"}, "--reveal-centre", "no equivalent"),
+            ({"reveal_center": "0,0,0"}, "--reveal-center", "no equivalent"),
             ({"spatial_dims": "0,1,2"}, "--spatial-dims", "no equivalent"),
             ({"counts": "10,20"}, "--counts/--breakpoints", "no equivalent"),
         ],
@@ -2159,7 +2159,7 @@ class TestMeshLodRevealRecipe:
                 add_method=knobs.get("add_method"),
                 n_lods=knobs.get("n_lods"),
                 counts=knobs.get("counts"),
-                reveal_centre=knobs.get("reveal_centre"),
+                reveal_center=knobs.get("reveal_center"),
                 spatial_dims=knobs.get("spatial_dims"),
                 levels_given=False,
                 compression_given=False,
@@ -2195,7 +2195,7 @@ class TestMeshLodRevealRecipe:
                 add_method=None,
                 n_lods=None,
                 counts=None,
-                reveal_centre=None,
+                reveal_center=None,
                 spatial_dims=None,
                 levels_given=given.get("levels_given", False),
                 compression_given=given.get("compression_given", False),
@@ -2214,7 +2214,7 @@ class TestMeshLodRevealRecipe:
                 add_method=None,
                 n_lods=None,
                 counts=None,
-                reveal_centre=None,
+                reveal_center=None,
                 spatial_dims=None,
                 levels_given=False,
                 compression_given=False,
@@ -2239,7 +2239,7 @@ class TestMeshLodRevealRecipe:
                 add_method="cluster",
                 n_lods=None,
                 counts=None,
-                reveal_centre=None,
+                reveal_center=None,
                 spatial_dims=None,
                 levels_given=False,
                 compression_given=False,
@@ -2257,7 +2257,7 @@ class TestMeshLodRevealRecipe:
                 add_method=None,
                 n_lods=4,
                 counts="10,20",
-                reveal_centre=None,
+                reveal_center=None,
                 spatial_dims=None,
                 levels_given=False,
                 compression_given=False,
@@ -2301,7 +2301,7 @@ class TestMeshLodRevealRecipe:
             ("n_lods", 6),
             ("add_method", "radial"),
             ("counts", "100,300"),
-            ("reveal_centre", "0,0"),
+            ("reveal_center", "0,0"),
             ("spatial_dims", "0,1"),
         ],
     )

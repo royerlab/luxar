@@ -24,7 +24,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { buildInfo } from '../../../../../config/build-info';
+import { VIEWER_VERSION } from '../../../../../version';
 
 // Mock the heavy imports so the helper runs without GPU / zarr.
 vi.mock('../../../../../utils/console-interceptor', () => ({
@@ -238,9 +238,9 @@ describe('installDebugInterface', () => {
       // populated even though bootstrap never ran.
       expect(dbg.app).toBeDefined();
       expect(dbg.consoleInterceptor).toBeDefined();
-      // The fresh base reports the real build stamp (unstamped under vitest),
-      // not a hardcoded constant.
-      expect(dbg.version).toBe(buildInfo().version);
+      // The fresh base reports the package version (`VIEWER_VERSION`), not a
+      // hardcoded constant.
+      expect(dbg.version).toBe(VIEWER_VERSION);
     });
   });
 

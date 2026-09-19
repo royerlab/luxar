@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { computeCacheBudgets, computeOpfsWriteQueueBudgetBytes } from '../../../cache/heap-budget';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
 
 function forceAbortSignalAnyFallback(): () => void {
   const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
@@ -62,21 +63,14 @@ const createMocks = () => {
     async *keys() {},
   };
 
-  vi.stubGlobal('navigator', {
-    storage: {
-      async getDirectory() {
-        return {
-          async getDirectoryHandle() {
-            return mockDirHandle;
-          },
-          async *entries() {},
-        };
-      },
-      async estimate() {
-        return { quota: 10e9, usage: 1e9 };
-      },
+  // Origin root → `luxar/` → this flat dataset dir (see opfs.mock.ts).
+  createFakeOpfsRoot({
+    datasetDir: mockDirHandle,
+    onRemoveDataset: () => {
+      files.clear();
+      metaFiles.clear();
     },
-  });
+  }).install();
 
   // Audit C4 fix: constant `0xab` hash defeated chunk-key uniqueness —
   // every chunk hashed to the same value, so collision handling was
@@ -412,7 +406,7 @@ describe('MultiLevelCachingStore', () => {
   describe('Content Hash Validation', () => {
     // Removed: 'should validate cache on init' was an unfailable
     // expect(stats).toBeDefined() check (cache.md W2). The init-time
-    // validation behavior is covered by the explicit clear-cache /
+    // validation behavior is covered by the explicit ?clearCache /
     // TTL / content-hash-mismatch tests below.
     // Removed: 'should skip validation for datasets without content_hash'
     // was an expect(noHashStore).toBeDefined() check on a freshly-
@@ -1005,6 +999,23 @@ describe('MultiLevelCachingStore', () => {
       expect(l1.chunksSize).toBe(0);
     });
 
+    it('stops at L2 when a queued OPFS read is canceled', async () => {
+      await store.init();
+      const l2Store = (store as any).l2Store as OPFSStore;
+      vi.spyOn(l2Store, 'get').mockImplementation(async () => {
+        await Promise.resolve();
+        (store as any).pendingGets.get('queued.chunk').controller.abort();
+        return undefined;
+      });
+      const sourceGet = vi.spyOn((store as any).source, 'get');
+
+      const outcome = await store.getResult('queued.chunk');
+
+      expect(outcome).toEqual({ ok: false, error: { kind: 'Aborted' } });
+      expect(sourceGet).not.toHaveBeenCalled();
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
+    });
+
     it('should bypass cache when validating content_hash (critical fix)', async () => {
       // This test verifies the fix for the cache validation bug where
       // validation was reading .zattrs from cache, comparing cached hash
@@ -1338,7 +1349,7 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
-    it('per-caller signal bypasses coalescing (independent fetches)', async () => {
+    it('coalesces signal-bearing callers into one underlying fetch', async () => {
       let fetchCount = 0;
       global.fetch = vi.fn(() => {
         fetchCount++;
@@ -1353,14 +1364,52 @@ describe('MultiLevelCachingStore', () => {
 
       const ac1 = new AbortController();
       const ac2 = new AbortController();
-      // Two callers both passing signals: each gets its own fetch.
+      // Demand reads normally carry per-update signals. They must still share
+      // the same-key fetch or ordinary concurrent loaders amplify requests.
       const [r1, r2] = await Promise.all([
         store.getResult('signal-key', { signal: ac1.signal }),
         store.getResult('signal-key', { signal: ac2.signal }),
       ]);
-      // Two independent fetches because the signal-bearing path bypasses pendingGets.
-      expect(fetchCount).toBe(2);
+      expect(fetchCount).toBe(1);
       expect(r1.ok && r2.ok).toBe(true);
+    });
+
+    it('aborts only the cancelled waiter while another coalesced caller continues', async () => {
+      let fetchSignal: AbortSignal | undefined;
+      let releaseFetch!: () => void;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        fetchSignal = init?.signal ?? undefined;
+        return new Promise<Response>((resolve, reject) => {
+          releaseFetch = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              async arrayBuffer() {
+                return new Uint8Array([7]).buffer;
+              },
+            } as Response);
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      }) as unknown as typeof fetch;
+
+      const first = new AbortController();
+      const second = new AbortController();
+      const firstRead = store.getResult('shared-signal-key', { signal: first.signal });
+      const secondRead = store.getResult('shared-signal-key', { signal: second.signal });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      first.abort();
+      const firstResult = await firstRead;
+      expect(firstResult.ok).toBe(false);
+      if (!firstResult.ok) expect(firstResult.error.kind).toBe('Aborted');
+      expect(fetchSignal?.aborted).toBe(false);
+
+      releaseFetch();
+      const secondResult = await secondRead;
+      expect(secondResult.ok).toBe(true);
+      expect(global.fetch).toHaveBeenCalledOnce();
     });
 
     it('pendingGets is cleaned on settle (subsequent calls re-fetch if L1/L2 missed)', async () => {
@@ -1637,6 +1686,31 @@ describe('MultiLevelCachingStore', () => {
       expect(observedSignal?.aborted).toBe(true);
     });
 
+    it('invalidation aborts a signal-bearing chain before it can repopulate L1', async () => {
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        observedSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          observedSignal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const caller = new AbortController();
+      const read = store.get('signal-invalidation-race', { signal: caller.signal });
+      for (let i = 0; i < 20 && observedSignal === undefined; i++) await Promise.resolve();
+
+      const clear = store.clearAll();
+      await expect(read).rejects.toMatchObject({ name: 'AbortError' });
+      await clear;
+      expect(observedSignal?.aborted).toBe(true);
+      const l1Cache = (store as unknown as { l1Cache: { has(key: string): boolean } }).l1Cache;
+      expect(l1Cache.has('signal-invalidation-race')).toBe(false);
+    });
+
     it('retry backoff includes jitter (commit 4.3)', async () => {
       // With Math.random() forced to deterministic values we can prove
       // the jittered delay differs from a pure exponential. We don't
@@ -1683,13 +1757,35 @@ describe('MultiLevelCachingStore', () => {
       expect(global.fetch).toHaveBeenCalledTimes(3);
     });
 
-    it('should handle network errors', async () => {
+    it('rejects exhausted network errors instead of returning a fill-valued miss', async () => {
       global.fetch = vi.fn(async () => {
         throw new Error('Network error');
       }) as any;
 
-      const result = await store.get('test');
-      expect(result).toBeUndefined(); // Graceful failure
+      await expect(store.get('test')).rejects.toThrow('fetch exhausted retries');
+    });
+
+    it('forwards zarrita GetOptions.signal through get() to the underlying fetch', async () => {
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        observedSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const controller = new AbortController();
+      const pending = store.get('cancelled', { signal: controller.signal });
+      await vi.waitFor(() => expect(observedSignal).toBeDefined());
+
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(observedSignal?.aborted).toBe(true);
     });
 
     it('should handle OPFS initialization failure', async () => {
@@ -1742,117 +1838,109 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l2.count).toBe(0);
     });
 
-    it(
-      'VC-1: dispose aborts in-flight cache validation (entry self-evicts when the aborted validation settles)',
-      { timeout: 15_000 },
-      async () => {
-        // Mock fetch that hangs UNTIL the abort signal fires; abort path
-        // rejects with the standard AbortError so fetchWithRetry can unwind.
-        let observedSignal: AbortSignal | undefined;
-        global.fetch = vi.fn((_url: string, init?: RequestInit) => {
-          const signal = init?.signal as AbortSignal | undefined;
-          observedSignal = signal;
+    it('VC-1: dispose aborts in-flight cache validation (entry self-evicts when the aborted validation settles)', async () => {
+      // Mock fetch that hangs UNTIL the abort signal fires; abort path
+      // rejects with the standard AbortError so fetchWithRetry can unwind.
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        observedSignal = signal;
+        return new Promise<Response>((_resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as any;
+
+      const slowStore = new MultiLevelCachingStore('https://example.com/slow.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      // Kick off init (which calls validateCache → fetchWithRetry).
+      const initPromise = slowStore.init();
+      // Give the init enough time to enter fetchWithRetry.
+      await new Promise((r) => setTimeout(r, 50));
+
+      await slowStore.dispose();
+
+      // The fetch's signal must have aborted as a consequence of dispose().
+      expect(observedSignal?.aborted).toBe(true);
+
+      // init() must resolve now that the validation chain has unwound.
+      await initPromise;
+    });
+
+    it('two stores sharing a datasetId: disposing the first cancels its queue entry, the second can still validate', async () => {
+      // Two stores using the same URL share the same datasetId
+      // (SHA-256(url)). The first to start init populates the
+      // static validationQueues entry; the second waits on it.
+      // When the first is disposed mid-validation, its queue entry
+      // is aborted (self-evicting when the aborted validation settles)
+      // — so the second can install its own entry and complete cleanly.
+      const url = 'https://example.com/shared-dataset.zarr';
+
+      // First fetch hangs forever to keep store-1's validation
+      // in flight; second fetch resolves so store-2 can finish.
+      let firstAttempt = true;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        if (firstAttempt) {
+          firstAttempt = false;
           return new Promise<Response>((_resolve, reject) => {
-            if (signal?.aborted) {
-              reject(new DOMException('Aborted', 'AbortError'));
-              return;
-            }
-            signal?.addEventListener(
+            init?.signal?.addEventListener(
               'abort',
               () => reject(new DOMException('Aborted', 'AbortError')),
               { once: true }
             );
           });
-        }) as any;
+        }
+        // Subsequent fetches return a real response so store-2 can
+        // finish init (this includes both the .zattrs probe and
+        // chunk fetches).
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return new Uint8Array([1, 2, 3]).buffer;
+          },
+          async text() {
+            return '{}';
+          },
+          headers: new Headers(),
+        } as unknown as Response);
+      }) as unknown as typeof fetch;
 
-        const slowStore = new MultiLevelCachingStore('https://example.com/slow.zarr', {
-          l1MaxSize: 20 * 1024 * 1024,
-          l2MaxSize: 4096,
-        });
-        // Kick off init (which calls validateCache → fetchWithRetry).
-        const initPromise = slowStore.init();
-        // Give the init enough time to enter fetchWithRetry.
-        await new Promise((r) => setTimeout(r, 50));
+      const store1 = new MultiLevelCachingStore(url, {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      const init1 = store1.init();
+      // Let init1 enter validateCache → fetchWithRetry.
+      await new Promise((r) => setTimeout(r, 50));
 
-        await slowStore.dispose();
+      // Dispose store1 mid-validation — its queue entry should be
+      // aborted, allowing init2 (which would otherwise wait on
+      // store1's queue) to install its own entry.
+      await store1.dispose();
+      await init1;
 
-        // The fetch's signal must have aborted as a consequence of dispose().
-        expect(observedSignal?.aborted).toBe(true);
+      // Now create + init a second store on the same URL. The
+      // hanging fetch is gone (firstAttempt already consumed),
+      // so this should succeed without timing out.
+      const store2 = new MultiLevelCachingStore(url, {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      await store2.init();
 
-        // init() must resolve now that the validation chain has unwound.
-        await initPromise;
-      }
-    );
-
-    it(
-      'two stores sharing a datasetId: disposing the first cancels its queue entry, the second can still validate',
-      { timeout: 15_000 },
-      async () => {
-        // Two stores using the same URL share the same datasetId
-        // (SHA-256(url)). The first to start init populates the
-        // static validationQueues entry; the second waits on it.
-        // When the first is disposed mid-validation, its queue entry
-        // is aborted (self-evicting when the aborted validation settles)
-        // — so the second can install its own entry and complete cleanly.
-        const url = 'https://example.com/shared-dataset.zarr';
-
-        // First fetch hangs forever to keep store-1's validation
-        // in flight; second fetch resolves so store-2 can finish.
-        let firstAttempt = true;
-        global.fetch = vi.fn((_url: string, init?: RequestInit) => {
-          if (firstAttempt) {
-            firstAttempt = false;
-            return new Promise<Response>((_resolve, reject) => {
-              init?.signal?.addEventListener(
-                'abort',
-                () => reject(new DOMException('Aborted', 'AbortError')),
-                { once: true }
-              );
-            });
-          }
-          // Subsequent fetches return a real response so store-2 can
-          // finish init (this includes both the .zattrs probe and
-          // chunk fetches).
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            async arrayBuffer() {
-              return new Uint8Array([1, 2, 3]).buffer;
-            },
-            async text() {
-              return '{}';
-            },
-            headers: new Headers(),
-          } as unknown as Response);
-        }) as unknown as typeof fetch;
-
-        const store1 = new MultiLevelCachingStore(url, {
-          l1MaxSize: 20 * 1024 * 1024,
-          l2MaxSize: 4096,
-        });
-        const init1 = store1.init();
-        // Let init1 enter validateCache → fetchWithRetry.
-        await new Promise((r) => setTimeout(r, 50));
-
-        // Dispose store1 mid-validation — its queue entry should be
-        // aborted, allowing init2 (which would otherwise wait on
-        // store1's queue) to install its own entry.
-        await store1.dispose();
-        await init1;
-
-        // Now create + init a second store on the same URL. The
-        // hanging fetch is gone (firstAttempt already consumed),
-        // so this should succeed without timing out.
-        const store2 = new MultiLevelCachingStore(url, {
-          l1MaxSize: 20 * 1024 * 1024,
-          l2MaxSize: 4096,
-        });
-        await store2.init();
-
-        // Cleanup.
-        await store2.dispose();
-      }
-    );
+      // Cleanup.
+      await store2.dispose();
+    });
 
     it('disposed-store reads unwind quietly without touching tiers', async () => {
       // After dispose, callers must not be able to populate L1/L2 or
@@ -1920,58 +2008,54 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
-    it(
-      'VC-2: cache-validation HEAD probe uses a shorter timeout than data fetches',
-      { timeout: 15_000 },
-      async () => {
-        // Verify timing: the validation HEAD probe should abort under the
-        // shorter `validationTimeoutMs` budget (5 s), not the full 30 s
-        // `timeoutMs` data budget. We assert that the FIRST attempt's abort
-        // fires within ~validationTimeoutMs / maxAttempts.
-        const startTimes = new Map<string, number>();
-        const abortTimes = new Map<string, number>();
-        global.fetch = vi.fn((url: string, init?: RequestInit) => {
-          const path = url.replace('https://example.com/timeout.zarr/', '');
-          startTimes.set(path, Date.now());
-          const signal = init?.signal as AbortSignal | undefined;
-          return new Promise<Response>((_resolve, reject) => {
-            signal?.addEventListener(
-              'abort',
-              () => {
-                abortTimes.set(path, Date.now());
-                reject(new DOMException('Aborted', 'AbortError'));
-              },
-              { once: true }
-            );
-          });
-        }) as any;
-
-        const timeoutStore = new MultiLevelCachingStore('https://example.com/timeout.zarr', {
-          l1MaxSize: 20 * 1024 * 1024,
-          l2MaxSize: 4096,
+    it('VC-2: cache-validation HEAD probe uses a shorter timeout than data fetches', async () => {
+      // Verify timing: the validation HEAD probe should abort under the
+      // shorter `validationTimeoutMs` budget (5 s), not the full 30 s
+      // `timeoutMs` data budget. We assert that the FIRST attempt's abort
+      // fires within ~validationTimeoutMs / maxAttempts.
+      const startTimes = new Map<string, number>();
+      const abortTimes = new Map<string, number>();
+      global.fetch = vi.fn((url: string, init?: RequestInit) => {
+        const path = url.replace('https://example.com/timeout.zarr/', '');
+        startTimes.set(path, Date.now());
+        const signal = init?.signal as AbortSignal | undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => {
+              abortTimes.set(path, Date.now());
+              reject(new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true }
+          );
         });
-        const initPromise = timeoutStore.init();
+      }) as any;
 
-        // Let the validation budget run through enough retries for our
-        // measurement, but stay well under the data-fetch budget.
-        await new Promise((r) => setTimeout(r, 2500));
+      const timeoutStore = new MultiLevelCachingStore('https://example.com/timeout.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      const initPromise = timeoutStore.init();
 
-        // Whichever root document the probe reached for — the budget under
-        // test is the validation one, not the document's spelling.
-        const rootDoc = [...startTimes.keys()].find(isRootDocRequest);
-        expect(rootDoc).toBeDefined();
-        const start = startTimes.get(rootDoc as string);
-        const abort = abortTimes.get(rootDoc as string);
-        expect(start).toBeDefined();
-        expect(abort).toBeDefined();
-        // First-attempt abort should fire within ~validationTimeoutMs/4 ≈ 1.25 s
-        // (validation budget), not 30 s/4 ≈ 7.5 s (data budget).
-        expect((abort as number) - (start as number)).toBeLessThan(2000);
+      // Let the validation budget run through enough retries for our
+      // measurement, but stay well under the data-fetch budget.
+      await new Promise((r) => setTimeout(r, 2500));
 
-        await timeoutStore.dispose();
-        await initPromise;
-      }
-    );
+      // Whichever root document the probe reached for — the budget under
+      // test is the validation one, not the document's spelling.
+      const rootDoc = [...startTimes.keys()].find(isRootDocRequest);
+      expect(rootDoc).toBeDefined();
+      const start = startTimes.get(rootDoc as string);
+      const abort = abortTimes.get(rootDoc as string);
+      expect(start).toBeDefined();
+      expect(abort).toBeDefined();
+      // First-attempt abort should fire within ~validationTimeoutMs/4 ≈ 1.25 s
+      // (validation budget), not 30 s/4 ≈ 7.5 s (data budget).
+      expect((abort as number) - (start as number)).toBeLessThan(2000);
+
+      await timeoutStore.dispose();
+      await initPromise;
+    });
   });
 
   describe('Debug Features', () => {
@@ -2047,10 +2131,10 @@ describe('MultiLevelCachingStore', () => {
   });
 
   describe('URL Parameter Handling', () => {
-    it('should disable caching with ?no-cache', async () => {
+    it('should disable caching with ?noCache', async () => {
       // [cache.md/Wn][P2] Previously asserted r1/r2 `toBeDefined()` and
       // `>=1` fetches. Strengthen to: (a) exact bytes for both results,
-      // (b) exact-2 fetches (one per get) — proves no-cache truly bypasses
+      // (b) exact-2 fetches (one per get) — proves ?noCache truly bypasses
       // L1 (a regression that still cached in L1 would show only 1 fetch).
       const noCacheStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
         noCache: true,
@@ -2059,17 +2143,17 @@ describe('MultiLevelCachingStore', () => {
 
       mocks.fetchedUrls.length = 0;
 
-      // Should always fetch from HTTP  (no-cache bypasses L1/L2)
+      // Should always fetch from HTTP  (?noCache bypasses L1/L2)
       const result1 = await noCacheStore.get('test');
       const result2 = await noCacheStore.get('test'); // Second time
 
       expect(result1).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
       expect(result2).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
-      // With no-cache, EVERY get() must fetch — exact 2 fetches of /test.
+      // With ?noCache, EVERY get() must fetch — exact 2 fetches of /test.
       expect(mocks.fetchedUrls.filter((u) => u.includes('test')).length).toBe(2);
     });
 
-    it('should skip ONLY the L2 tier with ?no-opfs (#1645)', async () => {
+    it('should skip ONLY the L2 tier with ?noOpfs (#1645)', async () => {
       // The deterministic sibling of the OPFS circuit breaker: no OPFSStore is
       // ever constructed (so nothing can stall), while L1 keeps serving. A
       // DELIBERATE disable must not raise the degradation badges — neither
@@ -2088,7 +2172,7 @@ describe('MultiLevelCachingStore', () => {
         const result2 = await noOpfsStore.get('test');
         expect(result1).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
         expect(result2).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
-        // L1 still serves the repeat: exactly ONE fetch, unlike ?no-cache's two.
+        // L1 still serves the repeat: exactly ONE fetch, unlike ?noCache's two.
         expect(mocks.fetchedUrls.filter((u) => u.includes('test')).length).toBe(1);
 
         const stats = noOpfsStore.getStats();
@@ -2101,7 +2185,7 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
-    it('should enable debug logging with ?cache-debug', async () => {
+    it('should enable debug logging with ?cacheDebug', async () => {
       // Debug logging is routed through `log.info`, which calls `console.log`
       // (the central log utility's standardised channel for INFO-level output).
       const consoleLog = vi.spyOn(console, 'log');
@@ -2117,13 +2201,13 @@ describe('MultiLevelCachingStore', () => {
       consoleLog.mockRestore();
     });
 
-    it('should clear cache with ?clear-cache', async () => {
+    it('should clear cache with ?clearCache', async () => {
       // [cache.md/W10][P2] Previous version constructed a fresh `clearStore`
       // and asserted `l2.size === 0` — but a fresh store's l2.size is
       // unconditionally 0 in this mock (no cross-instance persistence),
       // so the assertion passes whether `clearCache` did anything or not.
       // Strengthen by pinning `clearOnInitCount`, the observable side-effect
-      // of the ?clear-cache flow surfaced by getStats().
+      // of the ?clearCache flow surfaced by getStats().
       await store.get('test1');
       await store.dispose();
 
@@ -2134,7 +2218,7 @@ describe('MultiLevelCachingStore', () => {
 
       const stats = clearStore.getStats();
       expect(stats.l2.size).toBe(0); // Documented in MultiLevelCacheStats.l2.size
-      // The real ?clear-cache observable: clearOnInitCount === 1.
+      // The real ?clearCache observable: clearOnInitCount === 1.
       expect(stats.clearOnInitCount).toBe(1);
     });
   });
@@ -2387,10 +2471,10 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.health.opfsAvailable).toBe(true);
     });
 
-    // S4: clearOnInitCount counts ?clear-cache invocations. A store
+    // S4: clearOnInitCount counts ?clearCache invocations. A store
     // constructed without clearCache stays at 0; one with clearCache
     // increments to 1 after init.
-    it('clearOnInitCount stays 0 when ?clear-cache was not requested', () => {
+    it('clearOnInitCount stays 0 when ?clearCache was not requested', () => {
       const stats = store.getStats();
       expect(stats.clearOnInitCount).toBe(0);
     });
@@ -2707,7 +2791,7 @@ describe('MultiLevelCachingStore', () => {
       const s = new MultiLevelCachingStore('https://example.com/gate-a.zarr', {
         l1MaxSize: 20 * 1024 * 1024,
         l2MaxSize: 4096,
-        clearCache: true, // even with ?clear-cache, clearAll must not run
+        clearCache: true, // even with ?clearCache, clearAll must not run
       });
       const opfsInitSpy = vi.spyOn(OPFSStore.prototype, 'init');
       const clearAllSpy = vi.spyOn(s, 'clearAll');
@@ -2768,7 +2852,7 @@ describe('MultiLevelCachingStore', () => {
       expect(validateSpy).not.toHaveBeenCalled();
     });
 
-    it('(c) ?clear-cache + dispose before the clear step: clearAll does not run on the dead instance', async () => {
+    it('(c) ?clearCache + dispose before the clear step: clearAll does not run on the dead instance', async () => {
       let releaseL2Init!: () => void;
       const l2InitGate = new Promise<void>((resolve) => {
         releaseL2Init = resolve;
@@ -2778,7 +2862,7 @@ describe('MultiLevelCachingStore', () => {
       const s = new MultiLevelCachingStore('https://example.com/gate-c.zarr', {
         l1MaxSize: 20 * 1024 * 1024,
         l2MaxSize: 4096,
-        clearCache: true, // ?clear-cache → shouldClearOnInit
+        clearCache: true, // ?clearCache → shouldClearOnInit
       });
       const clearAllSpy = vi.spyOn(s, 'clearAll');
 
@@ -2793,7 +2877,7 @@ describe('MultiLevelCachingStore', () => {
       await initPromise;
 
       // The clear step is guarded by the post-await disposed check, so a
-      // disposed ?clear-cache store never wipes the shared OPFS directory.
+      // disposed ?clearCache store never wipes the shared OPFS directory.
       expect(clearAllSpy).not.toHaveBeenCalled();
     });
   });

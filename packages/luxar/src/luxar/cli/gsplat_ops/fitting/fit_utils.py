@@ -119,6 +119,7 @@ class FitPipelineCtx:
     denoise_patch_size: int
     denoise_search_distance: int
     denoise_backend: str
+    voxel_size: "Optional[tuple[float, ...]]" = None
     denoise_effective_h: Optional[float] = None
     denoise_norm_range: "Optional[tuple[float, float]]" = None
 
@@ -363,6 +364,7 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
         "lr": ctx.lr,
         "floor": ctx.floor,
         "norm_range": ctx.norm_range,
+        "voxel_size": ctx.voxel_size,
         "seed_method": ctx.seed_method,
         "verbose": ctx.verbose,
         "cull_retention": ctx.cull_retention,
@@ -622,6 +624,7 @@ def dispatch_parallel_tiled(
         build_worker_cmd,
         fit_tiled_parallel,
         luxar_argv0,
+        report_auto_jobs,
         resolve_jobs,
     )
     from luxar.gsplats.fitting.downscale import downscale_volume, normalize_downscale
@@ -646,15 +649,18 @@ def dispatch_parallel_tiled(
     tile_voxels = max((int(math.prod(s.shape)) for s in specs), default=1)
 
     try:
-        n_jobs = resolve_jobs(
+        worker_limit = resolve_jobs(
             ctx.jobs,
             tile_voxels=tile_voxels,
             num_tiles=n_tiles,
             device=ctx.device,
         )
+        n_jobs = worker_limit.count
     except ValueError:
         aprint(f"Error: --jobs must be an integer or 'auto', got '{ctx.jobs}'")
         raise typer.Exit(1)
+
+    report_auto_jobs(ctx.jobs, worker_limit)
 
     # Only spawn workers when there is genuine concurrency to gain.
     # Otherwise (n_jobs == 1) fall through to the sequential tiled
@@ -1466,7 +1472,7 @@ def save_fit_output(
     from luxar.gsplats.gsplat_data import GSplatData
 
     if isinstance(result, GSplatData):
-        result.save(output_path, compress=compress)
+        result.save(output_path, compress=compress, amplitude_bits="auto")
         n = int(result.n_splats)
     else:  # a partition / tree node has no flat-matrix equivalent
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
@@ -1478,6 +1484,8 @@ def save_fit_output(
             output_path,
             result,
             compress=compress,
+            amplitude_bits="auto",
+            source_dtype=result.meta.get("fit_stats", {}).get("source_dtype"),
             fitting_info=fitting,
             fitting_config=config,
             provenance_info=provenance,

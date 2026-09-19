@@ -35,6 +35,7 @@ class IOAdapterMixin(_GSplatDataOps):
         zip_deflate: bool = False,
         barrier_dims: Optional[Sequence[int]] = None,
         root_attrs: Optional[dict] = None,
+        amplitude_bits: Literal["auto", 8, 16] = 16,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
@@ -42,6 +43,10 @@ class IOAdapterMixin(_GSplatDataOps):
             path: Output path (should end with .gsplats.zarr or .gsplats.zarr.zip/.tar.gz if compress is used)
             ordering: Spatial ordering method ("morton", "hilbert", or "none")
             encoding_mode: Encoding mode (AUTO, PRECISION, or MEMORY), defaults to AUTO
+            amplitude_bits: AUTO amplitude quantization tier. ``16`` preserves
+                the historical default; ``8`` opts into uint8 geometric-log
+                codes; ``"auto"`` uses 8 bits only for 8-bit integer sources
+                recorded in ``stats["source_dtype"]`` and otherwise uses 16.
             include_fitting_info: Whether to include fitting statistics
             include_provenance: Whether to include provenance info from stats
             description: Optional user description
@@ -74,7 +79,11 @@ class IOAdapterMixin(_GSplatDataOps):
             >>> result.save("fitted.gsplats.zarr.zip", compress="zip")
         """
         from luxar.encoding import EncodingMode
-        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import (
+            resolve_amplitude_bits,
+            split_fitting_info,
+            write_gsplats_tree,
+        )
         from luxar.io.reader import DEFAULT_COMP
 
         # Use AUTO as default
@@ -95,6 +104,10 @@ class IOAdapterMixin(_GSplatDataOps):
                 include_provenance=include_provenance,
             )
         )
+        resolved_amplitude_bits = resolve_amplitude_bits(
+            amplitude_bits,
+            source_dtype=self.stats.get("source_dtype"),
+        )
 
         # One authoring path: serialize this dataset's node tree to the current
         # format (v3.4) via the shared walker (the same machinery the scene
@@ -110,6 +123,7 @@ class IOAdapterMixin(_GSplatDataOps):
             tree,
             ordering=ordering,
             encoding_mode=encoding_mode,
+            amplitude_bits=resolved_amplitude_bits,
             fitting_info=fitting_info,
             fitting_config=fitting_config,
             provenance_info=provenance_info,

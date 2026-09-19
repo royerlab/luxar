@@ -112,6 +112,11 @@ export async function updateSceneForDimensions(
      * one update call, never persisted.
      */
     frameBudgetMs?: number;
+    /**
+     * Pinned playback ladder depth (see `ViewState.ladderDepth`). Per-pass,
+     * like `frameBudgetMs`.
+     */
+    ladderDepth?: number | 'auto';
   }
 ): Promise<void> {
   const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
@@ -133,6 +138,9 @@ export async function updateSceneForDimensions(
   if (opts?.frameBudgetMs !== undefined) {
     viewState.frameBudgetMs = opts.frameBudgetMs;
   }
+  if (opts?.ladderDepth !== undefined) {
+    viewState.ladderDepth = opts.ladderDepth;
+  }
 
   await updateView(viewState, loaderId);
 }
@@ -149,12 +157,14 @@ export async function updateSceneForDimensions(
  * @param loaderId - Optional loader ID, defaults to default loader.
  * @param opts.budgetMs - Per-pass LOD time budget for the shadow pass
  *   (always set — it is also what makes prefix ladders cacheable).
+ * @param opts.ladderDepth - Pinned playback ladder depth; the shadow pass
+ *   deepens to exactly this many rungs (see `ViewState.ladderDepth`).
  */
 export function prefetchSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId: string | undefined,
-  opts: { budgetMs: number }
+  opts: { budgetMs: number; ladderDepth?: number | 'auto' }
 ): void {
   const manager = SceneLoaderManager.getInstance();
   const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
@@ -165,7 +175,7 @@ export function prefetchSceneForDimensions(
     maxRadius,
     defaultTolerance: config.dataLoading.spatial.defaultTolerance,
   });
-  sceneLoader.prefetchSlice(viewState, opts.budgetMs);
+  sceneLoader.prefetchSlice(viewState, opts.budgetMs, opts.ladderDepth);
 }
 
 /**

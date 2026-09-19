@@ -47,6 +47,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # Opening framing. The star field deliberately spans +/-500 units while the
@@ -250,6 +251,7 @@ def generate_cubic_array(
                 blending_mode="additive",
                 intensity=0.384,
                 layer=True,
+                additive_lod=stream_ladder(len(positions)),
             )
             aprint(f"✓ Added {len(positions):,} points (cubic array)")
 
@@ -268,6 +270,7 @@ def generate_cubic_array(
                 opacity=0.4,  # Semi-transparent
                 blending_mode="normal",  # Normal blending for stars
                 layer=True,
+                additive_lod=stream_ladder(len(star_pos)),
             )
             aprint(f"✓ Added {len(star_pos):,} background stars")
 

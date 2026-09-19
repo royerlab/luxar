@@ -129,12 +129,14 @@ class TestTheRecipeConstantsAgreeWithEachOther:
         read a whole timepoint at a time."""
         assert demo.CHUNK_PROFILE == "archive"
 
-    def test_the_progressive_ladder_has_the_recorded_twelve_rungs(self):
-        assert demo.EXPECTED_RUNGS == 12
+    def test_the_progressive_ladder_has_the_recorded_four_rungs(self):
+        assert (
+            demo.EXPECTED_RUNGS == 4
+        )  # equal-count --n-lods 4 (check-demo-ladders floor)
 
 
 class TestTheRecomputeCommandsAreRealCliPaths:
-    def test_the_recipe_invokes_top_level_optimise(self, monkeypatch, tmp_path):
+    def test_the_recipe_invokes_top_level_optimize(self, monkeypatch, tmp_path):
         parent = tmp_path / "parent.gsplats.zarr"
         parent.mkdir()
         calls = []
@@ -165,7 +167,7 @@ class TestTheRecomputeCommandsAreRealCliPaths:
             ("gsplat", "flatten"),
             ("gsplat", "lod"),
         ]
-        assert calls[2][0] == "optimise"
+        assert calls[2][0] == "optimize"
 
 
 class TestTheRebuiltArchiveShapeIsPinned:

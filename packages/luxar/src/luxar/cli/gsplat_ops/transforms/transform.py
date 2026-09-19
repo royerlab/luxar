@@ -515,9 +515,10 @@ def run_transform_dataset(
                     or translate_vec is not None
                     or center
                 )
-                if geometry_changed:
-                    from luxar.gsplats.tree import without_meta_key
+                from luxar.gsplats.tree import without_meta_key
 
+                node = without_meta_key(node, "dimension_metadata")
+                if geometry_changed:
                     node = without_meta_key(node, "coverage_fraction")
                     # The selector names the UNITS of the thresholds just
                     # scrubbed, so it goes with them: the writer re-derives in
@@ -556,6 +557,7 @@ def run_transform_dataset(
                     data.save(
                         output_path,
                         encoding_mode=encoding_mode_obj,
+                        amplitude_bits="auto",
                         include_fitting_info=True,
                         compress=compress,
                         root_attrs=read_authored_appearance(input_path),
@@ -568,6 +570,8 @@ def run_transform_dataset(
                         output_path,
                         result_node,
                         encoding_mode=encoding_mode_obj,
+                        amplitude_bits="auto",
+                        source_dtype=(stats or {}).get("source_dtype"),
                         compress=compress,
                         fitting_info=fitting_info,
                         fitting_config=fitting_config,

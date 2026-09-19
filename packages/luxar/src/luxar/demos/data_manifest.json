@@ -5,8 +5,8 @@
     "cc-by": {
       "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
       "license": "cc-by-4.0",
-      "zenodo_doi": "10.5281/zenodo.21912280",
-      "zenodo_record": "21912280",
+      "zenodo_doi": "10.5281/zenodo.22804363",
+      "zenodo_record": "22804363",
       "zenodo_conceptdoi": "10.5281/zenodo.21912279",
       "base_url": null,
       "published": true
@@ -23,8 +23,8 @@
     "h2afva": {
       "title": "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint light-sheet timelapse as Gaussian splats (with a lighter 51-timepoint fit)",
       "license": "cc-by-4.0",
-      "zenodo_doi": "10.5281/zenodo.21912284",
-      "zenodo_record": "21912284",
+      "zenodo_doi": "10.5281/zenodo.22807312",
+      "zenodo_record": "22807312",
       "zenodo_conceptdoi": "10.5281/zenodo.21912283",
       "base_url": null,
       "published": true
@@ -32,8 +32,8 @@
     "droso-timelapse": {
       "title": "Drosophila melanogaster embryogenesis: a 500-timepoint light-sheet timelapse as Gaussian splats",
       "license": "cc-by-4.0",
-      "zenodo_doi": "10.5281/zenodo.22118695",
-      "zenodo_record": "22118695",
+      "zenodo_doi": "10.5281/zenodo.22804386",
+      "zenodo_record": "22804386",
       "zenodo_conceptdoi": "10.5281/zenodo.22118694",
       "base_url": null,
       "published": true
@@ -462,18 +462,20 @@
       "files": [
         {
           "name": "neuromast_membranes.gsplats.zarr.zip",
-          "sha256": "ceaa9a41feb872d6ee7698a18742d36a26c9b7bf5e5b7c77b5c762fc90445e18",
-          "bytes": 71081858,
+          "sha256": "b272a271f2cd8383e65933d9bec1e07c80b1078b86ec899417cab8604cc43b22",
+          "bytes": 72387907,
           "superseded_sha256": [
-            "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31"
+            "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31",
+            "ceaa9a41feb872d6ee7698a18742d36a26c9b7bf5e5b7c77b5c762fc90445e18"
           ]
         },
         {
           "name": "neuromast_nuclei.gsplats.zarr.zip",
-          "sha256": "89e3be6eb19b2b3bce322403b1f18bfeba2313dc354bd710a42048068b095677",
-          "bytes": 65289118,
+          "sha256": "6453283f2f4031fa7a99d82fc03ce6fa5f38438a86cd9fc3e1bfd3be362228b0",
+          "bytes": 70394448,
           "superseded_sha256": [
-            "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1"
+            "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1",
+            "89e3be6eb19b2b3bce322403b1f18bfeba2313dc354bd710a42048068b095677"
           ]
         }
       ]
@@ -578,15 +580,16 @@
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 1115714088,
+          "approx_bytes": 1112445452,
           "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
           "files": [
             {
               "name": "h2afva_51tp.gsplats.zarr.zip",
-              "sha256": "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae",
-              "bytes": 1115714088,
+              "sha256": "bb2f5d00b8a63e525ab6cd182b896c21f9a8a8b9bb3a64507611d0ab54bdc761",
+              "bytes": 1112445452,
               "superseded_sha256": [
-                "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11"
+                "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11",
+                "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae"
               ]
             }
           ]
@@ -624,8 +627,11 @@
       "files": [
         {
           "name": "drosophila_embryogenesis_500tp.gsplats.zarr.zip",
-          "sha256": "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b",
-          "bytes": 863811020
+          "sha256": "ee3193babb074e16958665bb96e880dea7d9af695b4521c1c2fbb81991f5b393",
+          "bytes": 1158979910,
+          "superseded_sha256": [
+            "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b"
+          ]
         }
       ]
     },

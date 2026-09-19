@@ -197,6 +197,7 @@ from luxar.demos import (
     parse_int_arg,
     print_data_provenance,
     require_module,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._cinematic_camera import pull_in
@@ -1457,6 +1458,7 @@ def create_luxar_scene(
                 ),
                 citation=DEMO_META["citation"],
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = (
                 "El Reno Tornadic Supercell - NEXRAD Level II (2013-05-31)"
             )

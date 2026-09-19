@@ -14,6 +14,7 @@
  */
 
 import type { BlendingMode } from './blending';
+import type { OrderingMethodName } from './format-contract';
 import * as THREE from 'three';
 import type { DimensionMetadata } from './dims';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
@@ -259,7 +260,7 @@ export interface PointsMetadata {
   has_keys?: boolean;
 
   /** Spatial ordering method */
-  ordering?: 'morton' | 'hilbert' | 'none';
+  ordering?: OrderingMethodName;
 
   /** Elements per chunk */
   chunk_size?: number;
@@ -386,6 +387,25 @@ export interface ViewState {
    * SliceCache key (`buildSliceViewSig`).
    */
   frameBudgetMs?: number;
+
+  /**
+   * Pinned additive-ladder depth for progressive loaders during dimension
+   * playback and scrubbing — the "playback detail" setting. A number makes a
+   * pass load EXACTLY `min(ladderDepth, nLods)` rungs, cold or not, ignoring the
+   * time budget, so every frame of a time-lapse is drawn at the same rung and
+   * the tick waits for the data instead of showing whatever happened to be
+   * resident. `'auto'` lets each loader resolve its own depth from its energy
+   * stamps (`resolveLadderDepth`); a ladder without stamps stays time-budgeted.
+   * Absent = the time-budgeted behaviour.
+   *
+   * Like `frameBudgetMs` this is a **PER-PASS DIRECTIVE, not state**: the scene
+   * loader strips it before persisting the view state, threads it through the
+   * handler ctxs into the DERIVED per-node view state, and the SlicePrefetcher
+   * hands the same value to its shadow passes so the t+1 S-cache entry carries
+   * the pinned prefix. It must never enter `viewStatesEqual` nor the SliceCache
+   * key.
+   */
+  ladderDepth?: number | 'auto';
 
   /**
    * Set only on the SlicePrefetcher's shadow pass: marks stores as PREFETCH so

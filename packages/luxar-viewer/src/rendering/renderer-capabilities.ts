@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
 
 import { detectDisplayCapabilities, type HDRCapabilities } from '../utils/hdr/hdr-detection';
+import { log, Modules } from '../utils/log';
 
 export type { WebGPURenderer } from 'three/webgpu';
 
@@ -110,6 +111,8 @@ export interface RendererCapabilities {
    * capacity.
    */
   readonly maxTextureSize: number;
+  /** Maximum renderbuffer dimension (`MAX_RENDERBUFFER_SIZE`). */
+  readonly maxRenderbufferSize: number;
   /** `[min, max]` `gl_PointSize` range — used for debug logging. */
   readonly pointSizeRange: readonly [number, number];
 
@@ -148,7 +151,7 @@ export interface RendererCapabilities {
  * to distinguish real WebGPU from compat WebGL2, but that flag is about
  * the *backing API*, not the *effective framebuffer Y orientation*.
  * Branching on it left the image visibly flipped under
- * `?webgpu-force-webgl` because the geometry factory assumed WebGL's
+ * `?webgpuForceWebgl` because the geometry factory assumed WebGL's
  * bottom-up FBO while WebGPURenderer was producing top-down output.
  *
  * @internal — exported only so SceneManager can pass the result through
@@ -164,7 +167,7 @@ export function detectFramebufferYDown(renderer: Renderer): boolean {
  * feature (or, under the WebGL2 compat backend, the equivalent GL extension).
  *
  * Read from the backend that is actually running rather than from the API
- * surface, for the same reason `maxTextureSize` is below: `?webgpu-force-webgl`
+ * surface, for the same reason `maxTextureSize` is below: `?webgpuForceWebgl`
  * runs a WebGL2 context behind the WebGPU renderer, and assuming a real device's
  * feature set there would overestimate it.
  */
@@ -220,6 +223,16 @@ export function createRendererCapabilities(
     const maxTextureSizeRaw = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number | null;
     const maxTextureSize =
       typeof maxTextureSizeRaw === 'number' && maxTextureSizeRaw > 0 ? maxTextureSizeRaw : 2048;
+    const maxRenderbufferSizeRaw = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number | null;
+    const hasRenderbufferLimit =
+      typeof maxRenderbufferSizeRaw === 'number' && maxRenderbufferSizeRaw > 0;
+    const maxRenderbufferSize = hasRenderbufferLimit ? maxRenderbufferSizeRaw : maxTextureSize;
+    if (!hasRenderbufferLimit) {
+      log.warning(
+        Modules.RENDERER,
+        `MAX_RENDERBUFFER_SIZE probe failed; using MAX_TEXTURE_SIZE (${maxTextureSize})`
+      );
+    }
 
     const rawRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
     const pointSizeRange: readonly [number, number] =
@@ -259,6 +272,7 @@ export function createRendererCapabilities(
       hdr,
       maxMSAASamples,
       maxTextureSize,
+      maxRenderbufferSize,
       pointSizeRange,
       readBackbufferPixels() {
         // Bind the canvas backbuffer explicitly. `runPipeline` is
@@ -299,7 +313,7 @@ export function createRendererCapabilities(
   // actually running (createRendererCapabilities runs post-init on the
   // production path). Real WebGPU exposes `device.limits`; the WebGL2
   // compat backend exposes the raw `gl` context instead — probe it so a
-  // 4096-class device under `?webgpu-force-webgl` isn't overestimated.
+  // 4096-class device under `?webgpuForceWebgl` isn't overestimated.
   // Fall back to WebGPU's guaranteed default limit (8192).
   const backend = (
     renderer as unknown as {
@@ -310,12 +324,25 @@ export function createRendererCapabilities(
     }
   ).backend;
   let maxTextureSize = 8192;
+  let maxRenderbufferSize = 8192;
   const maxTextureDimension2D = backend?.device?.limits?.maxTextureDimension2D;
   if (typeof maxTextureDimension2D === 'number' && maxTextureDimension2D > 0) {
     maxTextureSize = maxTextureDimension2D;
+    maxRenderbufferSize = maxTextureDimension2D;
   } else if (backend?.gl && typeof backend.gl.getParameter === 'function') {
     const glMax = backend.gl.getParameter(backend.gl.MAX_TEXTURE_SIZE) as number | null;
     if (typeof glMax === 'number' && glMax > 0) maxTextureSize = glMax;
+    const renderbufferMax = backend.gl.getParameter(backend.gl.MAX_RENDERBUFFER_SIZE) as
+      number | null;
+    if (typeof renderbufferMax === 'number' && renderbufferMax > 0) {
+      maxRenderbufferSize = renderbufferMax;
+    } else {
+      maxRenderbufferSize = maxTextureSize;
+      log.warning(
+        Modules.RENDERER,
+        `MAX_RENDERBUFFER_SIZE probe failed; using MAX_TEXTURE_SIZE (${maxTextureSize})`
+      );
+    }
   }
 
   return {
@@ -324,6 +351,7 @@ export function createRendererCapabilities(
     hdr,
     maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
     maxTextureSize,
+    maxRenderbufferSize,
     pointSizeRange: [1, 1024],
     readBackbufferPixels() {
       // WebGPU backbuffer readback. WebGPURenderer doesn't have a

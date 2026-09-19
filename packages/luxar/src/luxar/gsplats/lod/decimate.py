@@ -142,25 +142,17 @@ def resolve_method(method: AutoOrMethod, n_target: int, n_in: int) -> MethodName
 def _resolve_labeled_method(
     data: GSplatData, method: AutoOrMethod, chosen: MethodName
 ) -> tuple[MethodName, bool]:
-    """Keep categorical labels exact or reject an explicit merge."""
+    """Keep labeled ``auto`` conservative while permitting explicit merge."""
     label_override = method == "auto" and data.label_ids is not None
     if label_override:
         warnings.warn(
             "method='auto' selected 'prefix' because the input carries "
-            "categorical channel 'label_ids'; merging would have to combine "
-            "class ids, and no combination rule is defined",
+            "categorical channel 'label_ids'; prefix preserves exact input rows "
+            "by default. Pass method='merge' to coarsen within exact label groups",
             UserWarning,
             stacklevel=3,
         )
         return "prefix", True
-
-    if chosen == "merge" and data.label_ids is not None:
-        raise ValueError(
-            "cannot coarsen: input carries categorical channel 'label_ids'; "
-            "merging would have to combine class ids, and there is no meaningful "
-            "combination of two class ids. Use method='prefix' or call "
-            "without_label_ids() first."
-        )
     return chosen, False
 
 
@@ -185,7 +177,8 @@ def decimate(
             ``(0, 1]``). See :func:`resolve_target_count`.
         method: ``"merge"``, ``"prefix"``, or ``"auto"`` (the measured rule —
             see the module docstring). Labeled inputs constrain ``"auto"`` to
-            ``"prefix"`` because merging has no defined categorical rule.
+            ``"prefix"`` as the conservative default; explicit ``"merge"``
+            coarsens independently within exact label groups.
         prefix_method: Ordering for ``method="prefix"``, passed to
             :func:`compute_additive_order` (``auto`` / ``self_energy`` /
             ``mass`` / ``greedy`` / ``radial`` / ...).
@@ -211,16 +204,15 @@ def decimate(
         Returns the input unchanged when ``target`` resolves to the full count.
         ``merge`` can land slightly under the request — the clustering drops
         degenerate (empty / non-positive-mass) clusters, so a 165,340 ask on the
-        1.65M-splat reference dataset yields 165,276. The one case that lands
-        OVER is a ``coarsen_dims`` target below the number of barrier groups:
-        every group keeps at least one representative rather than whole
-        timepoints/channels being deleted to hit a count (the reduction says so
-        on the console).
+        1.65M-splat reference dataset yields 165,276. A request below the number
+        of coordinate and/or label barrier groups lands OVER: every group keeps
+        at least one representative rather than whole timepoints, channels, or
+        classes being deleted to hit a count (the reduction says so on the
+        console).
 
     Raises:
         ValueError: on an out-of-range target, an unknown method, or a
-            ``coarsen_dims`` index outside ``[0, data.ndim)``; also when
-            ``method="merge"`` is requested for categorical labels.
+            ``coarsen_dims`` index outside ``[0, data.ndim)``.
     """
     n_in = int(data.n_splats)
     n_target = resolve_target_count(target, n_in)
@@ -294,8 +286,9 @@ def decimate(
             # out representatives that carry a whole cluster's mass, dimming the
             # object by up to a third and losing exactly the property merging
             # exists for. `merge_to_count` asks the same operator for M = target
-            # bins instead, so nothing is discarded and any target is reachable
-            # (a factor >= 2 could never honour a target above half the input).
+            # bins instead, so nothing is discarded and any target at or above
+            # the coordinate/label barrier-group count is reachable (a factor
+            # >= 2 could never honour a target above half the input).
             out = merge_to_count(
                 data,
                 n_target=n_target,

@@ -121,3 +121,43 @@ class TestSceneDimensionMetadata:
         assert dims_dict["dimensions"][0]["name"] == "t"
         assert dims_dict["dimensions"][0]["unit"] == "ms"
         assert dims_dict["dimensions"][0]["range"] == [0, 100]
+
+
+class TestGsplatDimensionMetadata:
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            [{"name": "x"}, {"name": "y"}],
+            [{"name": "x"}, "y", {"name": "z"}],
+        ],
+    )
+    def test_malformed_metadata_keeps_inferred_defaults(
+        self, metadata: object, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.core.dimension_inference import build_dimensions_from_data
+
+        centers = np.array([[0, 0, 0], [1, 2, 3]], dtype=np.float32)
+        dimensions = build_dimensions_from_data(centers, metadata)  # type: ignore[arg-type]
+
+        assert [dimension.name for dimension in dimensions.dimensions] == [
+            "x",
+            "y",
+            "z",
+        ]
+        assert "ignoring it" in capsys.readouterr().out
+
+    def test_duplicate_names_keep_inferred_defaults(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.core.dimension_inference import build_dimensions_from_data
+
+        centers = np.array([[0, 0, 0], [1, 2, 3]], dtype=np.float32)
+        metadata = [{"name": "same"}, {"name": "same"}, {"name": "z"}]
+        dimensions = build_dimensions_from_data(centers, metadata)
+
+        assert [dimension.name for dimension in dimensions.dimensions] == [
+            "x",
+            "y",
+            "z",
+        ]
+        assert "invalid" in capsys.readouterr().out

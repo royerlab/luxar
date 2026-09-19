@@ -2,8 +2,14 @@ import { defineConfig } from 'vitest/config';
 
 import { COVERAGE_THRESHOLDS } from './coverage-thresholds.mjs';
 import { resolve } from 'path';
+import { viewerVersionDefine } from './tools/build-identity.ts';
 
 export default defineConfig({
+  // `VIEWER_VERSION` is the package.json version under vitest too, so
+  // `version.test.ts` can prove the define → module → barrel wiring against
+  // the file itself. Deliberately NOT the `__LUXAR_BUILD__` stamp: the
+  // build-info tests rely on vitest being the UNSTAMPED context.
+  define: viewerVersionDefine(),
   test: {
     // `node` is the DEFAULT; a file that needs a DOM opts in with a
     // `// @vitest-environment jsdom` docblock on its first line.
@@ -34,11 +40,11 @@ export default defineConfig({
     // heavier jsdom + zarr/scene-loader suites under whole-suite execution,
     // where worker contention stretches individual tests; a too-tight ceiling
     // turned transient slowness into hard `Test timed out` / `Hook timed out`
-    // failures. Keep the local 15s ceilings strict, but allow SCHED_IDLE CI
-    // workers 60s so host contention does not turn deterministic tests or hooks
-    // red.
-    testTimeout: process.env.CI ? 60_000 : 15_000,
-    hookTimeout: process.env.CI ? 60_000 : 15_000,
+    // failures. Use the same 60s budget everywhere: off-CI promotion runs share
+    // the host with other work and can be more contended than capped CI workers.
+    // Worker sizing remains environment-specific below.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     // Worker threads, not forked processes. A thread reuses the host process's
     // heap and module machinery instead of paying a full V8 + Vite-runtime
     // bootstrap per worker, which is most of the fixed cost when the suite is

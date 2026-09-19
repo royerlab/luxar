@@ -117,8 +117,8 @@ test.describe('element actions — click to open a link', () => {
     expect(opened).toBe(false);
   });
 
-  test('?no-links suppresses navigation and the pointer cursor', async ({ page, context }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-links`);
+  test('?noLinks suppresses navigation and the pointer cursor', async ({ page, context }) => {
+    await page.goto(`/?src=${DATASET}&debug&noLinks`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page);
 

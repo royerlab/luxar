@@ -408,10 +408,10 @@ def fit_planned_parallel(
 
 
 def max_padded_box_voxels(plan: FitPlan) -> int:
-    """Largest padded-box voxel count over budgeted boxes (for VRAM sizing).
+    """Largest padded-box voxel count over budgeted boxes (for worker sizing).
 
     The per-worker working set is bounded by the biggest box, so ``-j auto``
-    divides free VRAM by ~2x this (via ``resolve_jobs``) to size concurrency.
+    uses this for its GPU-memory and host-RAM estimates via ``resolve_jobs``.
     """
     vs = [int(s) for s in plan.volume_shape]
     shape = (vs[0], vs[1], vs[2])

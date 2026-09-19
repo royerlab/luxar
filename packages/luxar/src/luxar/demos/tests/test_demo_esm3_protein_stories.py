@@ -112,6 +112,58 @@ def test_select_members_honours_the_kingdom_filter() -> None:
     assert sorted(cluster.indices.tolist()) == [0, 1, 3]
 
 
+def test_cluster_geometry_centres_on_the_bounding_box_not_the_median() -> None:
+    from luxar.demos.demo_esm3_protein_stories import cluster_geometry
+
+    # Nine members piled at x=0 and one straggler at x=4: the median sits on
+    # the pile, the bounding-box centre halfway to the straggler.
+    members = np.zeros((10, 3))
+    members[-1, 0] = 4.0
+    centre, radial = cluster_geometry(members)
+    assert np.allclose(centre, [2.0, 0.0, 0.0])
+    assert radial.shape == (10,) and np.isclose(radial.max(), 2.0)
+    assert np.isclose(radial[0], 2.0)
+
+
+def test_bubble_encloses_the_farthest_member() -> None:
+    from luxar.demos.demo_esm3_protein_stories import (
+        BUBBLE_ENCLOSE_MARGIN,
+        SPHERE_RADIUS_SCALE,
+        bubble_radius,
+    )
+
+    # r_max well beyond the r95 rule: the enclosing radius wins.
+    wide = StoryCluster(
+        indices=np.arange(3), centre=np.zeros(3), r95=0.5, n_named=3, r50=0.2, r_max=2.0
+    )
+    assert bubble_radius(wide) == BUBBLE_ENCLOSE_MARGIN * 2.0
+    # r_max inside the r95 rule: the rule wins (a compact blob keeps its bubble).
+    tight = StoryCluster(
+        indices=np.arange(3),
+        centre=np.zeros(3),
+        r95=0.5,
+        n_named=3,
+        r50=0.2,
+        r_max=0.55,
+    )
+    assert bubble_radius(tight) == SPHERE_RADIUS_SCALE * 0.5
+
+
+def test_select_members_recentres_on_the_bounding_box() -> None:
+    rng = np.random.default_rng(3)
+    # A dense pile at x=0 plus a thin tail out to x=0.6, all named alike.
+    pile = rng.normal(scale=0.02, size=(200, 3))
+    tail = np.column_stack([np.linspace(0.1, 0.6, 20), np.zeros(20), np.zeros(20)])
+    positions = np.vstack([pile, tail]).astype(np.float32)
+    names = np.array(["Hemoglobin subunit alpha"] * len(positions), dtype=object)
+    kingdoms = np.array(["Other"] * len(positions), dtype=object)
+    cluster = select_story_members(_story(radius=0.8), names, kingdoms, positions)
+    assert len(cluster.indices) == len(positions)
+    lo, hi = positions.min(axis=0), positions.max(axis=0)
+    assert np.allclose(cluster.centre, (lo + hi) / 2, atol=1e-6)
+    assert cluster.r_max > cluster.r95 > cluster.r50 > 0
+
+
 def test_select_members_fails_loudly_when_nothing_matches() -> None:
     names = np.array(["Myoglobin"], dtype=object)
     with pytest.raises(ValueError, match="matched no protein names"):
@@ -323,6 +375,40 @@ def test_story_narration_is_the_short_spoken_script_not_the_panel() -> None:
     assert 20 <= len(OVERVIEW_NARRATION.split()) <= 80
     # A story without an authored script still gets something short to say.
     assert story_narration(_story()) == "Test story. why?"
+
+
+def test_auto_dolly_is_authored_and_gated_on_the_turntable() -> None:
+    """The dolly breathes under the spin, and stops when the spin does.
+
+    Asserted on the source because this demo builds its `ViewerConfig` inside
+    the scene build, which needs the ~50 MB landscape cache. `--no-auto-rotate`
+    exists to ask for a still camera, so a scene that stopped rotating but kept
+    sliding in and out would be a worse answer than either.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(demo))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "ViewerConfig"
+    ]
+    assert len(calls) == 1, "the demo authors exactly one ViewerConfig"
+    keywords = {kw.arg: kw.value for kw in calls[0].keywords if kw.arg is not None}
+
+    assert keywords["auto_dolly"].id == "auto_rotate"  # type: ignore[union-attr]
+    # The tuned kiosk values, gated so they vanish with the turntable.
+    expected = {"auto_dolly_amplitude_percent": 95.0, "auto_dolly_period": 58.5}
+    for name, value in expected.items():
+        gated = keywords[name]
+        assert isinstance(gated, ast.IfExp), f"{name} must be gated on auto_rotate"
+        assert gated.test.id == "auto_rotate"  # type: ignore[union-attr]
+        assert gated.body.value == value  # type: ignore[union-attr]
+        # The `else` branch must be None, not 0: an omitted field keeps the
+        # viewer's own default, while a zero would author a degenerate one.
+        assert gated.orelse.value is None  # type: ignore[union-attr]
 
 
 def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:

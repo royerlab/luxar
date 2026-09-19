@@ -47,6 +47,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, hsv_to_rgb, launch_viewer, parse_int_arg
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # Lorenz system parameters (classic values)
@@ -170,6 +171,7 @@ def generate_lorenz_attractor(
                 opacity=0.9,
                 blending_mode="additive",
                 intensity=0.0625,
+                additive_lod=stream_ladder(n_points),
                 layer=True,
             )
 

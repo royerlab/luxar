@@ -11,7 +11,7 @@ Its group holds:
   documents (``_zarr_compat.write_raw_bytes``), named by ``attrs["audio_file"]``
   so a reader never guesses the extension. ``finalize/hashing.py`` folds the
   bytes into ``content_hash`` through ``PAYLOAD_FILE_ATTRS`` — the same hook
-  that closed #1720 for overlay images — and ``luxar optimise`` carries the
+  that closed #1720 for overlay images — and ``luxar optimize`` carries the
   file for the same reason.
 
 Everything the adder validated lands verbatim as attrs; the writer only adds

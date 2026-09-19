@@ -22,7 +22,9 @@ from typing import (
 import numpy as np
 from arbol import aprint
 
-from ....typing_utils.constants import DEFAULT_POINT_RADIUS
+from ....typing_utils.constants import (
+    DEFAULT_POINT_RADIUS,
+)
 from ....typing_utils.json_safe import json_safe_value
 from ....validation.writing import (
     POINTS_RESERVED_ATTRS,
@@ -363,7 +365,7 @@ def add_points_impl(
                     colors=colors_for_energy,
                     scalars=scalars_for_energy,
                     salience_kind=additive_spec.get("salience_kind", "size"),
-                    reveal_centre=additive_spec.get("reveal_centre"),
+                    reveal_center=additive_spec.get("reveal_center"),
                     spatial_dims=resolve_reveal_spatial_dims(
                         additive_spec, scene, ndim
                     ),
@@ -772,6 +774,556 @@ def add_points_multi_lod_wrapper_impl(
     )
 
 
+def _stratified_point_order(
+    scene: Any,
+    positions: np.ndarray,
+    compression: int,
+    seed: int,
+    extend_to_all: Optional[Union[List[str], str]],
+) -> np.ndarray:
+    """Order displayed-space points evenly, round-robin across hidden slices."""
+    from ..lod.group import resolve_same_type_axes
+    from ..lod.spatial_uniform import stratified_grid_order
+
+    displayed, hidden, _ = resolve_same_type_axes(
+        scene, positions, extend_to_all, "points"
+    )
+    rng = np.random.default_rng(seed)
+
+    def local_order(rows: np.ndarray) -> np.ndarray:
+        shuffled = rows[rng.permutation(rows.size)]
+        sample = positions[shuffled][:, displayed[:3]]
+        if sample.shape[1] < 3:
+            sample = np.pad(sample, ((0, 0), (0, 3 - sample.shape[1])))
+        target = max(1, int(rows.size) // compression)
+        depth = min(31, max(1, int(np.ceil(np.log2(target) / 3.0)) + 2))
+        order, _ = stratified_grid_order(sample, depth)
+        return shuffled[order]
+
+    all_rows = np.arange(positions.shape[0], dtype=np.intp)
+    if all_rows.size == 0 or not hidden:
+        return local_order(all_rows)
+
+    hidden_values = (
+        positions[:, hidden[0]] if len(hidden) == 1 else positions[:, hidden]
+    )
+    _, slice_ids = np.unique(hidden_values, axis=0, return_inverse=True)
+    within_slice_rank = np.empty(positions.shape[0], dtype=np.intp)
+    grouped_rows = np.argsort(slice_ids, kind="stable").astype(np.intp, copy=False)
+    boundaries = np.flatnonzero(np.diff(slice_ids[grouped_rows])) + 1
+    for rows in np.split(grouped_rows, boundaries):
+        ordered = local_order(rows)
+        within_slice_rank[ordered] = np.arange(ordered.size, dtype=np.intp)
+    return np.lexsort((slice_ids, within_slice_rank)).astype(np.intp, copy=False)
+
+
+def _same_type_point_coarse_levels(
+    *,
+    method: str,
+    scene: Any,
+    name: str,
+    pos_arr: np.ndarray,
+    n_points: int,
+    radii: Any,
+    energy: np.ndarray,
+    source_colors: Any,
+    displayed: List[int],
+    discrete_hidden: List[int],
+    compression_factor: int,
+    levels: int,
+    seed: int,
+    extend_to_all: Any,
+) -> List[Any]:
+    """Construct finest-to-coarsest same-type point level descriptors."""
+    from ....gsplats.lift import coarse_point_levels, same_type_merge_level
+    from ..lod.group import same_type_color_classes
+
+    if method != "merge":
+        aprint(f"  📐 Substitutive-LOD '{name}': ordering {n_points:,} points")
+        order = _stratified_point_order(
+            scene, pos_arr, compression_factor, seed, extend_to_all
+        )
+        return coarse_point_levels(
+            order, energy, compression_factor=compression_factor, levels=levels
+        )
+    radius_values = np.broadcast_to(
+        np.asarray(DEFAULT_POINT_RADIUS if radii is None else radii, dtype=np.float64),
+        (n_points,),
+    )
+    color_classes = same_type_color_classes(source_colors)
+    barriers = pos_arr[:, discrete_hidden] if discrete_hidden else None
+    coarse: List[Any] = []
+    previous_count = n_points
+    for level in range(1, levels + 1):
+        count = max(1, n_points // (compression_factor**level))
+        if count >= previous_count:
+            continue
+        coarse.append(
+            same_type_merge_level(
+                pos_arr,
+                radius_values,
+                energy,
+                n_target=count,
+                spatial_dims=displayed[:3],
+                barrier_keys=barriers,
+                ordering_keys=color_classes,
+            )
+        )
+        previous_count = count
+    return coarse
+
+
+def _same_type_point_level_payload(
+    *,
+    method: str,
+    level: Any,
+    reduction_level: int,
+    pos_arr: np.ndarray,
+    n_points: int,
+    radii: Any,
+    colors: Any,
+    source_colors: Any,
+    scalars: Any,
+    sharpness: Any,
+    labels: Any,
+    keys: Any,
+    energy: np.ndarray,
+    child_attrs: Dict[str, Any],
+    compensation: Any,
+    auto_compensates: bool,
+) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, float]:
+    """Materialize one point child payload for either same-type method."""
+    from ..lod.group import subsampled_same_type_level_channels
+    from ..lod.points import compute_points_energy
+
+    if method != "merge":
+        indices, measured_gain = level
+        gain = (
+            measured_gain
+            if compensation == "auto" and auto_compensates
+            else 1.0
+            if compensation == "auto"
+            else float(compensation) ** reduction_level
+        )
+        level_colors, level_scalars, level_attrs = subsampled_same_type_level_channels(
+            colors=colors,
+            colors_for_energy=source_colors,
+            scalars=scalars,
+            indices=indices,
+            n_elements=n_points,
+            gain=gain,
+            child_attrs=child_attrs,
+        )
+        return (
+            pos_arr[indices],
+            slice_optional_array(radii, indices, n_points),
+            level_colors,
+            level_scalars,
+            slice_optional_array(sharpness, indices, n_points),
+            slice_optional_array(labels, indices, n_points),
+            slice_optional_array(keys, indices, n_points),
+            level_attrs,
+            gain,
+        )
+    level_positions, level_radii, assignments, merge_weights = level
+    totals = np.bincount(
+        assignments, weights=merge_weights, minlength=len(level_positions)
+    )
+    color_source = (
+        np.ones((n_points, 3), dtype=np.float32)
+        if source_colors is None
+        else source_colors
+    )
+    level_colors = np.column_stack(
+        [
+            np.bincount(
+                assignments,
+                weights=merge_weights * color_source[:, channel],
+                minlength=len(level_positions),
+            )
+            / totals
+            for channel in range(color_source.shape[1])
+        ]
+    ).astype(np.float32)
+    color_gain = np.ones(len(level_positions), dtype=np.float64)
+    if auto_compensates:
+        target = np.bincount(
+            assignments, weights=energy, minlength=len(level_positions)
+        )
+        represented = compute_points_energy(
+            len(level_positions), level_radii, level_colors, None
+        )
+        required_gain = np.divide(
+            target,
+            represented,
+            out=np.ones_like(target),
+            where=represented > 0.0,
+        )
+        radius_gain = np.cbrt(np.minimum(required_gain, 1.0))
+        level_radii = np.asarray(level_radii, dtype=np.float32) * radius_gain.astype(
+            np.float32
+        )
+        color_gain = np.maximum(required_gain, 1.0)
+        level_colors[:, :3] *= color_gain[:, None].astype(np.float32)
+    level_attrs = dict(child_attrs)
+    level_attrs.pop("colormap", None)
+    return (
+        level_positions,
+        level_radii,
+        level_colors,
+        None,
+        None,
+        None,
+        None,
+        level_attrs,
+        float(np.max(color_gain, initial=1.0)),
+    )
+
+
+def _report_point_merge_channels(
+    method: str, *, sharpness: Any, labels: Any, keys: Any, scalars: Any, colors: Any
+) -> None:
+    """Report point channels that merge drops or bakes into representative color."""
+    if method != "merge":
+        return
+    for channel, value in (
+        ("sharpness", sharpness),
+        ("labels", labels),
+        ("keys", keys),
+    ):
+        if value is not None:
+            aprint(
+                f"  ↳ merge drops per-point {channel}; representatives have no source identity"
+            )
+    if scalars is not None and colors is None:
+        aprint("  ↳ merge bakes per-point scalars through the authored colormap")
+
+
+def _warn_continuous_same_type_axes(geometry: str, axes: List[int]) -> None:
+    """Warn when continuous hidden axes cannot define independent merge slices."""
+    if not axes:
+        return
+    warnings.warn(
+        f"substitutive_lod with coarse={geometry!r} found continuous hidden "
+        f"dimensions {tuple(axes)}; they are not treated as independent slices, "
+        "so per-slice preservation is not applied. Hidden slice dimensions "
+        "should be discrete (categorical / timepoint / channel).",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _add_points_subsampled_lod_wrapper_impl(
+    group: "Group",
+    *,
+    name: str,
+    pos_arr: np.ndarray,
+    n_points: int,
+    colors: Any,
+    radii: Any,
+    sharpness: Any,
+    scalars: Any,
+    labels: Any,
+    keys: Any,
+    image_labels: Any,
+    parent: Optional["Node"],
+    extend_to_all: Optional[Union[List[str], str]],
+    spec: Dict[str, Any],
+    additive_lod: Any,
+    fine_partition: Optional[tuple[int, List[np.ndarray], Dict[str, Any]]],
+    attrs: Dict[str, Any],
+) -> Union["Group", Points]:
+    """Write spatially stratified Points levels above the original Points node."""
+    from ....gsplats.lift import lift_points_to_gsplats
+    from ....gsplats.lod.quality import mixture_quality
+    from ....utils.lod_breakpoints import hidden_coordinate_count
+    from ..lod.group import (
+        assert_same_type_slice_capacity,
+        compose_additive_under_substitutive,
+        effective_blending_mode,
+        level_additive_lod,
+        level_attrs_with_quality,
+        normalized_same_type_colors,
+        resolve_lod_ladder,
+        resolve_same_type_axes,
+    )
+    from ..lod.points import compute_points_energy, resolve_additive_axis_points
+
+    colors_for_energy = colors
+    if scalars is not None and colors is None:
+        colormap = attrs.get("colormap")
+        if colormap is None:
+            raise ValueError(
+                "substitutive_lod on Points with scalars requires a colormap "
+                "(scalars map to colour via a colormap LUT). Pass colormap=..., "
+                "or provide explicit per-point colors."
+            )
+        from ....colormaps import scalars_to_colors
+
+        scalar_array = np.broadcast_to(
+            np.asarray(scalars, dtype=np.float64).reshape(-1), (n_points,)
+        )
+        colors_for_energy = scalars_to_colors(scalar_array, colormap)
+
+    scene = group._find_scene()
+    compression_factor = int(spec["compression_factor"])
+    displayed, discrete_hidden, continuous_hidden = resolve_same_type_axes(
+        scene, pos_arr, extend_to_all, "points"
+    )
+    resident_slices = hidden_coordinate_count(pos_arr, discrete_hidden)
+    _warn_continuous_same_type_axes("points", continuous_hidden)
+    assert_same_type_slice_capacity(
+        same_type="points",
+        element_name="points",
+        elements=n_points,
+        resident_slices=resident_slices,
+        compression_factor=compression_factor,
+        levels=int(spec["levels"]),
+    )
+    radii_for_energy = None
+    if radii is not None:
+        radii_for_energy = np.broadcast_to(
+            np.asarray(radii, dtype=np.float64).reshape(-1), (n_points,)
+        )
+    normalized_colors_for_energy = normalized_same_type_colors(
+        colors_for_energy,
+        n_points,
+        integer_storage=colors is not None and not is_broadcast_color(colors),
+    )
+    energy = compute_points_energy(
+        n_points,
+        radii_for_energy,
+        normalized_colors_for_energy,
+        None,
+    )
+    method = spec.get("method", "subsample")
+    coarse = _same_type_point_coarse_levels(
+        method=method,
+        scene=scene,
+        name=name,
+        pos_arr=pos_arr,
+        n_points=n_points,
+        radii=radii,
+        energy=energy,
+        source_colors=normalized_colors_for_energy,
+        displayed=displayed,
+        discrete_hidden=discrete_hidden,
+        compression_factor=compression_factor,
+        levels=int(spec["levels"]),
+        seed=int(spec.get("seed") or 0),
+        extend_to_all=extend_to_all,
+    )
+    if not coarse:
+        aprint(
+            f"  ⚠ substitutive_lod '{name}': input too small to synthesize coarse "
+            "levels; writing the flat Points node."
+        )
+        return add_points_impl(
+            group,
+            name=name,
+            positions=pos_arr,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            scalars=scalars,
+            labels=labels,
+            keys=keys,
+            image_labels=image_labels,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            dim_order=None,
+            fill=None,
+            partition=False,
+            additive_lod=additive_lod,
+            substitutive_lod=None,
+            **attrs,
+        )
+    _report_point_merge_channels(
+        method,
+        sharpness=sharpness,
+        labels=labels,
+        keys=keys,
+        scalars=scalars,
+        colors=colors,
+    )
+
+    slices = resident_slices if additive_lod is None else 1
+    resolved_additive = compose_additive_under_substitutive(
+        additive_lod,
+        resolve=resolve_additive_axis_points,
+        elements=n_points,
+        name=name,
+        slices=slices,
+    )
+    parent_node = parent or group
+    coarse_first = list(reversed(coarse))
+    counts = [int(level[0].shape[0]) for level in coarse_first] + [n_points]
+    coverage_vals, lod_selector = resolve_lod_ladder(
+        spec.get("coverage_fractions"),
+        counts,
+        parent_node,
+        name=name,
+        partition_bound=fine_partition is not None,
+        length_error=lambda n_explicit, n_levels: (
+            f"coverage_fractions has {n_explicit} entries but the LOD ladder "
+            f"has {n_levels} levels ({len(coarse_first)} points + 1 finest)"
+        ),
+    )
+    lod_attrs = {key: value for key, value in attrs.items() if key in COMPOSITING_ATTRS}
+    child_attrs = {
+        key: value for key, value in attrs.items() if key not in COMPOSITING_ATTRS
+    }
+    child_attrs.pop("coverage_fraction", None)
+    lod_attrs.setdefault("display_type", "points")
+    aprint(
+        f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} point levels + finest "
+        f"(counts coarsest→finest={counts}, K={compression_factor})"
+    )
+    lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
+
+    blending_mode = effective_blending_mode(parent_node, attrs, "points")
+    auto_compensates = blending_mode in {"additive", "luminous"}
+    compensation = spec.get("brightness_compensation", "auto")
+    quality_stamps = bool(spec["quality_stamps"])
+    quality_reference = (
+        lift_points_to_gsplats(
+            pos_arr,
+            DEFAULT_POINT_RADIUS if radii is None else radii,
+            colors=None,
+        )
+        if quality_stamps
+        else None
+    )
+    for child_index, level in enumerate(coarse_first):
+        reduction_level = len(coarse_first) - child_index
+        (
+            level_positions,
+            level_radii,
+            level_colors,
+            level_scalars,
+            level_sharpness,
+            level_labels,
+            level_keys,
+            level_attrs,
+            gain,
+        ) = _same_type_point_level_payload(
+            method=method,
+            level=level,
+            reduction_level=reduction_level,
+            pos_arr=pos_arr,
+            n_points=n_points,
+            radii=radii,
+            colors=colors,
+            source_colors=normalized_colors_for_energy,
+            scalars=scalars,
+            sharpness=sharpness,
+            labels=labels,
+            keys=keys,
+            energy=energy,
+            child_attrs=child_attrs,
+            compensation=compensation,
+            auto_compensates=auto_compensates,
+        )
+        if quality_reference is not None:
+            quality_level = lift_points_to_gsplats(
+                level_positions,
+                DEFAULT_POINT_RADIUS if level_radii is None else level_radii,
+                colors=None,
+            )
+            level_attrs = level_attrs_with_quality(
+                level_attrs,
+                mixture_quality(quality_level, quality_reference, device="cpu").quality,
+            )
+        with warnings.catch_warnings():
+            if gain > 1.0:
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r".*HDR colors with maximum value .* detected.*",
+                    category=UserWarning,
+                )
+            lod_group_node.add_points(
+                f"child_{child_index}",
+                level_positions,
+                colors=level_colors,
+                radii=level_radii,
+                sharpness=level_sharpness,
+                scalars=level_scalars,
+                labels=level_labels,
+                keys=level_keys,
+                image_labels=None,
+                extend_to_all=extend_to_all,
+                partition=False,
+                additive_lod=level_additive_lod(
+                    resolved_additive,
+                    level_n=int(level_positions.shape[0]),
+                    compression_factor=compression_factor,
+                    is_coarsest=(child_index == 0),
+                    slices=slices,
+                ),
+                substitutive_lod=None,
+                coverage_fraction=coverage_vals[child_index],
+                **level_attrs,
+            )
+
+    finest_index = len(coarse_first)
+    if fine_partition is not None:
+        max_elements, parts, bsp_tree = fine_partition
+        add_points_partition_wrapper_impl(
+            group,
+            name=f"child_{finest_index}",
+            pos_arr=pos_arr,
+            parts=parts,
+            n_points=n_points,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            scalars=scalars,
+            labels=labels,
+            keys=keys,
+            parent=lod_group_node,
+            extend_to_all=extend_to_all,
+            max_elements=max_elements,
+            bsp_tree=bsp_tree,
+            additive_lod=resolved_additive,
+            additive_lod_slices=slices,
+            wrapper_coverage_fraction=coverage_vals[-1],
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if quality_stamps
+                else child_attrs
+            ),
+        )
+    else:
+        lod_group_node.add_points(
+            f"child_{finest_index}",
+            pos_arr,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            scalars=scalars,
+            labels=labels,
+            keys=keys,
+            image_labels=image_labels,
+            extend_to_all=extend_to_all,
+            partition=False,
+            additive_lod=level_additive_lod(
+                resolved_additive,
+                level_n=n_points,
+                compression_factor=compression_factor,
+                is_coarsest=False,
+                slices=slices,
+            ),
+            substitutive_lod=None,
+            coverage_fraction=coverage_vals[-1],
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if quality_stamps
+                else child_attrs
+            ),
+        )
+    return lod_group_node
+
+
 def add_points_substitutive_lod_wrapper_impl(
     group: "Group",
     *,
@@ -828,16 +1380,38 @@ def add_points_substitutive_lod_wrapper_impl(
         image_labels=image_labels,
     )
 
+    if spec.get("coarse", "gsplats") == "points":
+        return _add_points_subsampled_lod_wrapper_impl(
+            group,
+            name=name,
+            pos_arr=pos_arr,
+            n_points=n_points,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            scalars=scalars,
+            labels=labels,
+            keys=keys,
+            image_labels=image_labels,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            spec=spec,
+            additive_lod=additive_lod,
+            fine_partition=fine_partition,
+            attrs=attrs,
+        )
+
     from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
     from ..lod.group import (
         compose_additive_under_substitutive,
         gsplat_additive_lod_from,
         level_additive_lod,
+        level_attrs_with_quality,
         resident_slice_count,
         resolve_lod_ladder,
     )
     from ..lod.points import resolve_additive_axis_points
-    from ..lod.reveal import is_reveal_additive_method, preflight_reveal_centre
+    from ..lod.reveal import is_reveal_additive_method, preflight_reveal_center
 
     # The coarse gsplat children never carry image_labels, so only the original
     # Points child must refuse its additive ladder when image_labels is present.
@@ -859,7 +1433,7 @@ def add_points_substitutive_lod_wrapper_impl(
         slices=slices,
     )
     reveal_note = (
-        " Coarse levels use self_energy ordering, so reveal_centre is not applied."
+        " Coarse levels use self_energy ordering, so reveal_center is not applied."
         if coarse_additive is not None
         and is_reveal_additive_method(str(coarse_additive.get("method")))
         else ""
@@ -880,9 +1454,9 @@ def add_points_substitutive_lod_wrapper_impl(
         ),
     )
     # Same reason as the channel check above: the finest child is written LAST, so
-    # a reveal_centre that does not match the DERIVED shell axes would otherwise
+    # a reveal_center that does not match the DERIVED shell axes would otherwise
     # raise once every coarse level is already on disk.
-    preflight_reveal_centre(finest_additive, group._find_scene(), pos_arr, "positions")
+    preflight_reveal_center(finest_additive, group._find_scene(), pos_arr, "positions")
     compression_factor = int(spec["compression_factor"])
 
     # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake
@@ -939,6 +1513,7 @@ def add_points_substitutive_lod_wrapper_impl(
         seed=spec.get("seed"),
         coarsen_dims=coarsen_dims,
         max_aspect=spec.get("max_aspect", 3.0),
+        quality_stamps=bool(spec["quality_stamps"]),
     )
 
     # Degenerate input -> finest Points shape rather than a one-child LOD group.
@@ -1069,7 +1644,13 @@ def add_points_substitutive_lod_wrapper_impl(
             lod_group=None,
             additive_lod=gsplat_additive_lod_from(lvl_spec, int(lvl_data.n_splats)),
             coverage_fraction=coverage_vals[idx],
-            **gsplat_child_attrs,
+            **(
+                level_attrs_with_quality(
+                    gsplat_child_attrs, float(lvl_data.stats["quality"])
+                )
+                if spec["quality_stamps"]
+                else gsplat_child_attrs
+            ),
         )
 
     if fine_partition is not None:
@@ -1095,7 +1676,11 @@ def add_points_substitutive_lod_wrapper_impl(
             additive_lod=finest_additive,
             additive_lod_slices=slices,
             wrapper_coverage_fraction=coverage_vals[-1],
-            **child_attrs,
+            **(
+                level_attrs_with_quality(child_attrs, 1.0)
+                if spec["quality_stamps"]
+                else child_attrs
+            ),
         )
         return lod_group_node
 
@@ -1124,7 +1709,11 @@ def add_points_substitutive_lod_wrapper_impl(
         ),
         substitutive_lod=None,
         coverage_fraction=coverage_vals[-1],
-        **child_attrs,
+        **(
+            level_attrs_with_quality(child_attrs, 1.0)
+            if spec["quality_stamps"]
+            else child_attrs
+        ),
     )
 
     return lod_group_node
