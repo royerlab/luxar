@@ -111,7 +111,12 @@ from luxar.core.viewer_config import (
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import cached_download, control_serve_args, launch_viewer
+from luxar.demos import (
+    bake_scene_environment,
+    cached_download,
+    control_serve_args,
+    launch_viewer,
+)
 from luxar.demos._audio_synth import synthesise_foa_from_clip
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -1673,6 +1678,9 @@ def build_stories_scene(
                     add_story_sounds(scene, stories)
 
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")
+    # Same reason as the protein-universe tour: the bubbles are physical
+    # meshes, so freeze their environment rather than capturing it per viewer.
+    bake_scene_environment(output_path)
     return n
 
 

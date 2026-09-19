@@ -171,7 +171,12 @@ from luxar.core.viewer_config import (
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import control_serve_args, launch_viewer, parse_path_arg
+from luxar.demos import (
+    bake_scene_environment,
+    control_serve_args,
+    launch_viewer,
+    parse_path_arg,
+)
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._dependencies import require_module
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -3320,6 +3325,10 @@ def build_universe_scene(
                     )
 
     aprint(f"✓ Wrote {n:,} clusters and {len(stories)} stories to {output_path}")
+    # The bubbles are `material="physical"` and so read `scene.environment`.
+    # Freeze it into the store instead of leaving every viewer to capture it
+    # live; best-effort, and a no-op without a development checkout.
+    bake_scene_environment(output_path)
     return n
 
 
