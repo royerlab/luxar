@@ -825,7 +825,16 @@ def find_port(host: str, start: int = 8000, attempts: int = 100) -> int | None:
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve exported Luxar scene")
     parser.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
-    default_host = "0.0.0.0" if HAS_CONTROL_PANEL else "127.0.0.1"  # noqa: S104
+    # Binding every interface is the POINT of a panel scene: the tablet is a
+    # different device, so loopback cannot serve it. A scene without a panel
+    # still defaults to loopback, and `--host 127.0.0.1` overrides either way.
+    # The exposure is documented in the generated README and TESTING notes,
+    # with `--control-token` for an untrusted network.
+    default_host = (
+        "0.0.0.0"  # noqa: S104 # nosec B104 - a tablet cannot reach loopback
+        if HAS_CONTROL_PANEL
+        else "127.0.0.1"
+    )
     parser.add_argument(
         "--host",
         default=default_host,
