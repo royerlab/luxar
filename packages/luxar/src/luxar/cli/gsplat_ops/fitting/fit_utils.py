@@ -494,9 +494,12 @@ def split_seeds_across_tiles(
 
 
 def announce_seed_split_lower_bound(
-    parsed_seeds: "int | float | None", n_tiles: int
+    parsed_seeds: "int | float | None",
+    n_tiles: int,
+    *,
+    exact_counts_resolved: bool = False,
 ) -> None:
-    """Announce the conservative split when plan time cannot inspect content."""
+    """Announce the conservative split and where exact counts are resolved."""
     if (
         not isinstance(parsed_seeds, int)
         or isinstance(parsed_seeds, bool)
@@ -508,7 +511,11 @@ def announce_seed_split_lower_bound(
     aprint(
         f"Seeds: {parsed_seeds:,} whole-volume budget -> at least "
         f"{per_tile:,} per non-empty tile across {n_tiles} grid tiles "
-        "(each worker resolves the exact non-empty count)"
+        + (
+            "(exact non-empty counts resolved at plan time)"
+            if exact_counts_resolved
+            else "(each worker resolves the exact non-empty count)"
+        )
     )
 
 

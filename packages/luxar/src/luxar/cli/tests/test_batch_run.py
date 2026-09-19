@@ -584,7 +584,9 @@ def test_batch_plan_rejects_unsupported_content_fit_before_discovery(
         )
 
 
-def test_batch_plan_allows_preprocessed_content_denoising(tmp_path: Path) -> None:
+def test_batch_plan_allows_preprocessed_content_denoising(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Preprocess mode retargets content workers to the denoised store."""
     from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
@@ -622,6 +624,7 @@ def test_batch_plan_allows_preprocessed_content_denoising(tmp_path: Path) -> Non
     assert result.manifest.denoise_mode == "preprocess"
     assert result.manifest.denoised_zarr_path == str(out.resolve() / "denoised.zarr")
     assert "denoise" not in result.manifest.fit_args
+    assert "Tile-local reads off:" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -712,7 +715,7 @@ def test_batch_plan_resolves_one_global_floor_level(tmp_path: Path) -> None:
 
 
 def test_batch_plan_records_uniform_tile_occupancy_for_workers(
-    tmp_path: Path,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from luxar.gsplats.batch.fit_command import build_task_fit_argv
 
@@ -737,6 +740,35 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     )
     assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
     assert argv[argv.index("--tile-nonempty-count") + 1] == "1"
+    output = capsys.readouterr().out
+    assert "exact non-empty counts resolved at plan time" in output
+    assert "each worker resolves the exact non-empty count" not in output
+
+
+def test_batch_plan_defers_invalid_seeds_to_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import luxar.cli.gsplat_ops.batch.planning as planning
+
+    src = tmp_path / "movie.zarr"
+    _write_timelapse(src, np.stack([_blob_field()]))
+
+    def _unexpected_scan(*args, **kwargs):
+        raise AssertionError("invalid seeds must not trigger an occupancy scan")
+
+    monkeypatch.setattr(planning, "_uniform_tile_nonempty_count", _unexpected_scan)
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        seeds="bogus",
+        tile_size=16,
+        tile_overlap=0,
+    ).manifest
+
+    assert manifest.fit_args["seeds"] == "bogus"
+    assert manifest.tile_local_reads is True
+    assert manifest.tile_nonempty_counts is None
 
 
 def test_batch_plan_skips_occupancy_scan_without_integer_seeds(

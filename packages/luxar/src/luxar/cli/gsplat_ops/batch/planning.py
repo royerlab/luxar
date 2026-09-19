@@ -427,11 +427,12 @@ def _planned_uniform_tile_local_metadata(
     floor_deferred: bool,
 ) -> tuple[bool, Optional[List[int]]]:
     """Resolve tile-local eligibility and optional per-slice seed divisors."""
+    if mode != "uniform":
+        return False, None
+
     planned_floor = fit_args.get("floor")
     reason = None
-    if mode != "uniform":
-        reason = "content tiling uses planned boxes"
-    elif downscale_factors is not None:
+    if downscale_factors is not None:
         reason = "--downscale changes the worker tile grid"
     elif denoise.denoise:
         reason = "--denoise requires worker-side data resolution"
@@ -447,7 +448,10 @@ def _planned_uniform_tile_local_metadata(
 
     from luxar.cli.gsplat_config import parse_seeds
 
-    parsed_seeds = parse_seeds(fit_args.get("seeds"))
+    try:
+        parsed_seeds = parse_seeds(fit_args.get("seeds"))
+    except ValueError:
+        parsed_seeds = None
     if not _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
         return True, None
 
@@ -1974,16 +1978,21 @@ def _validate_content_fit_flags(tiling: str, fit_args: dict) -> None:
     )
 
 
-def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
+def _announce_seed_split(
+    mode: str,
+    fit_args: dict,
+    n_tiles: int,
+    *,
+    exact_counts_resolved: bool,
+) -> None:
     """Announce how an integer ``--seeds`` budget divides across a task's tiles.
 
-    Emitted ONCE at plan time as a lower bound: planning knows the geometric
-    tile count but does not hold the task's array to count non-empty tiles. Both
-    ``batch-fit run`` and ``batch-fit submit --dry-run`` therefore show what is
-    guaranteed, while each ``--tile k/M`` task resolves the exact divisor. Task
-    output does not reach this console: the local pool captures it and Slurm
-    sends it to a log. Content plans ignore ``--seeds`` because per-box budgets
-    come from the density model.
+    Emitted ONCE at plan time as a lower bound from the geometric tile count.
+    Supported tile-local plans also resolve each selected slice's exact divisor
+    during occupancy scanning; fallback plans leave that resolution to each
+    ``--tile k/M`` task. Task output does not reach this console: the local pool
+    captures it and Slurm sends it to a log. Content plans ignore ``--seeds``
+    because per-box budgets come from the density model.
     """
     if mode == "content" or not fit_args.get("seeds"):
         return
@@ -1994,7 +2003,11 @@ def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
     # each task's own `fit` validates it), so guard: a malformed value must fail
     # in the task as it always has, not break planning here over a notice.
     try:
-        announce_seed_split_lower_bound(parse_seeds(fit_args["seeds"]), n_tiles)
+        announce_seed_split_lower_bound(
+            parse_seeds(fit_args["seeds"]),
+            n_tiles,
+            exact_counts_resolved=exact_counts_resolved,
+        )
     except ValueError:
         pass
 
@@ -2473,8 +2486,6 @@ def plan_batch(
         total_tasks=total_tasks,
     )
 
-    _announce_seed_split(mode, fit_args, n_tiles)
-
     tile_local_reads, tile_nonempty_counts = _planned_uniform_tile_local_metadata(
         mode=mode,
         input_path=input_path,
@@ -2490,6 +2501,12 @@ def plan_batch(
         downscale_factors=downscale_factors,
         denoise=denoise,
         floor_deferred=floor_deferred,
+    )
+    _announce_seed_split(
+        mode,
+        fit_args,
+        n_tiles,
+        exact_counts_resolved=tile_nonempty_counts is not None,
     )
 
     preset_config = PRESETS.get(fit.preset, PRESETS["standard"])
