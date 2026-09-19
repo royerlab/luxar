@@ -1466,12 +1466,13 @@ scene-from-old against scene-from-new, or use the hosted-digest check above.
 
 Each of these cost hours and none announces itself:
 
-- **`hatch run` is broken box-wide.** `grimp` needs rustc 1.94, the box has
-  1.92, so the env cannot build. This kills any `make test-*`/`check-*` and any
-  gallery capture (its data server is `hatch run luxar serve`, which then blows
-  the 90 s webServer timeout). Workaround: call the built venv interpreter
-  directly with `PYTHONPATH=packages/luxar/src`; note `luxar.cli` is a *package*
-  exposing a Typer `app`, so `-m luxar.cli` will not run — drive the app object.
+- **A missing `grimp` wheel broke `hatch run` box-wide.** The source build needed
+  rustc 1.94 while the box had 1.92, killing every `make test-*`/`check-*` and
+  gallery capture. The workaround was to call the built venv interpreter with
+  `PYTHONPATH=packages/luxar/src`; note `luxar.cli` is a *package* exposing a
+  Typer `app`, so `-m luxar.cli` will not run — drive the app object. Upstream
+  fixed this on 2026-09-11 by backfilling the standard CPython 3.14 macOS arm64
+  wheels for 3.16/3.17.
 - **`urllib`'s default User-Agent is blocked at the edge.** It presents as a
   uniform failure across every URL, which reads like broken routes rather than a
   blocked client. Use a browser UA. Never trust a negative HTTP result without
