@@ -12,6 +12,8 @@ from typer.testing import CliRunner
 
 from luxar.cli.gsplat_commands import app_gsplat
 from luxar.cli.tests._testing import normalized_cli_output
+from luxar.core.group.group import Group
+from luxar.gsplats.fit_tiled_gsplats import fit_tiled, merge_tile_results
 
 runner = CliRunner()
 
@@ -170,17 +172,40 @@ def test_batch_fit_group_renamed_from_slurm_fit() -> None:
     assert runner.invoke(app_gsplat, ["slurm-fit", "--help"]).exit_code != 0
 
 
-@pytest.mark.parametrize("command", ["run", "submit"])
-def test_batch_progressive_help_describes_flat_result(command: str) -> None:
-    """Progressive batch fitting is a schedule, not a delivered LOD ladder."""
-    result = runner.invoke(app_gsplat, ["batch-fit", command, "--help"])
+@pytest.mark.parametrize(
+    ("command", "is_batch"),
+    [(["fit"], False), (["batch-fit", "run"], True), (["batch-fit", "submit"], True)],
+)
+def test_progressive_help_describes_flat_result(
+    command: list[str], is_batch: bool
+) -> None:
+    """Every progressive CLI flag describes a schedule, not a delivered ladder."""
+    result = runner.invoke(app_gsplat, [*command, "--help"])
     output = normalized_cli_output(result)
+    folded_output = output.casefold()
 
     assert result.exit_code == 0, output
-    assert "optimization schedule" in output
-    assert "one flat splat set per tile" in output
-    assert "--merge-recipe stream" in output
-    assert "progressive fitting per tile (multi-LOD)" not in output
+    assert "optimization schedule" in folded_output
+    assert "flat splat set" in folded_output
+    assert "multi-lod" not in folded_output
+    if is_batch:
+        assert "--merge-recipe stream" in output
+        assert "luxar gsplat additive" in output
+        assert "not supported with --tiling content" in folded_output
+
+
+def test_progressive_python_docs_describe_flat_results() -> None:
+    """The Python entry points agree that progressive fitting returns flat data."""
+    volume_doc = (Group.add_gsplats_from_volume.__doc__ or "").casefold()
+    data_doc = (Group.add_gsplats_from_data.__doc__ or "").casefold()
+    tiled_doc = (fit_tiled.__doc__ or "").casefold()
+    merge_doc = (merge_tile_results.__doc__ or "").casefold()
+
+    assert "multi-lod" not in volume_doc
+    assert "add_gsplats(..., additive_lod=...)" in volume_doc
+    assert "from progressive fitting" not in data_doc
+    assert "multi-lod" not in tiled_doc
+    assert "multi-lod" not in merge_doc
 
 
 def test_run_dry_run_reports_plan_without_fitting(tmp_path: Path) -> None:

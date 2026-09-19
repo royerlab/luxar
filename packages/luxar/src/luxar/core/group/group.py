@@ -1091,8 +1091,8 @@ class Group(Node):
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats from a GSplatData object.
 
-        Multi-additive-LOD data (from progressive fitting or
-        ``make_additive_lod``) is written with per-sub-LOD subgroups
+        Multi-additive-LOD data (from ``make_additive_lod`` or an
+        ``additive_lod=`` spec) is written with per-sub-LOD subgroups
         directly under the gsplats node (``<node>/additive_<i>/...``)
         for progressive (prefix-sum) loading. Single-LOD data uses the
         flat layout (arrays at the node path).
@@ -1389,8 +1389,9 @@ class Group(Node):
                 In progressive mode, this is iterations per pass.
             device: Compute device ("cuda", "mps", "cpu", or None for auto)
             progressive: Optimize in several passes against residuals, returning one
-                flat splat set. Build a streaming ladder separately with
-                ``luxar.gsplats.lod.make_additive_lod``.
+                flat splat set. To build a streaming ladder, use
+                ``add_gsplats(..., additive_lod=...)`` or
+                ``add_gsplats_from_file(..., additive_lod=...)``.
             max_splats_per_pass: Max splats per progressive pass (default: 5000)
             psnr_patience: Stop progressive fitting if PSNR gain < this (dB)
             max_passes: Max number of progressive passes (None = unlimited)

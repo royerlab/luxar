@@ -10,6 +10,7 @@ from arbol import aprint
 
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
+from .help_text import BATCH_PROGRESSIVE_HELP
 from .plan_configs import build_plan_configs
 from .submit_pipeline import (
     generate_all_scripts,
@@ -171,11 +172,8 @@ def run_batch_submit(
     batch_progressive: bool = typer.Option(
         False,
         "--progressive",
-        help="Optimize each tile in several passes against residuals. This is an "
-        "optimization schedule and returns one flat splat set per tile, not a LOD "
-        "ladder. Build a streaming ladder with --merge-recipe stream (or run "
-        "`luxar gsplat lod --recipe stream` after merging). "
-        "Combine with --parallel for better GPU utilization.",
+        help=BATCH_PROGRESSIVE_HELP
+        + " Combine with --parallel for better GPU utilization.",
     ),
     batch_splats_per_pass: Optional[int] = typer.Option(
         None, "--splats-per-pass", help="Max splats per progressive pass"
