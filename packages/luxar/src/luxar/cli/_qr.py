@@ -502,7 +502,10 @@ def _penalty(matrix: list[list[bool]]) -> int:
     named function against the clause it implements.
     """
     size = len(matrix)
-    lines = [list(row) for row in matrix] + [list(col) for col in zip(*matrix)]
+    # strict: the matrix is square, so the transpose consumes every row.
+    lines = [list(row) for row in matrix] + [
+        list(col) for col in zip(*matrix, strict=True)
+    ]
     return (
         _penalty_runs(lines)
         + _penalty_blocks(matrix)
@@ -587,9 +590,13 @@ def qr_ascii(matrix: list[list[bool]], *, border: int = 2, invert: bool = False)
     if len(rows) % 2:
         rows.append([False] * width)
     out = []
-    for top, bottom in zip(rows[0::2], rows[1::2]):
+    # strict: the pad above makes the row count even, so the halves pair exactly.
+    for top, bottom in zip(rows[0::2], rows[1::2], strict=True):
         out.append(
-            "".join(_HALF[(t ^ invert, b ^ invert)] for t, b in zip(top, bottom))
+            "".join(
+                _HALF[(t ^ invert, b ^ invert)]
+                for t, b in zip(top, bottom, strict=True)
+            )
         )
     return "\n".join(out)
 
