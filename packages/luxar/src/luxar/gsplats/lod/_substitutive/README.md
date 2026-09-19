@@ -98,8 +98,9 @@ per-splat or per-bin loops.
   energy `P = Σ_b ⟨f,Ḡ⟩² / ‖Ḡ‖²`. A pass is **committed only if it
   strictly increases `P`** (relative `1e-9` margin), so the result is
   monotone and never worse than the warm start in projection energy `P`;
-  the first non-improving pass stops iteration. Candidate bins for a splat are the *current* bins
-  of its Morton-order neighbours (`±candidate_bins_k//2` on the curve),
+  the first non-improving pass stops iteration. Candidate bins for a splat are
+  the *current* bins of its Morton-order neighbours (`±candidate_bins_k//2` on
+  the curve),
   re-gathered against live assignments each pass — an `O(N·k)` gather that
   replaces a per-iteration spatial-hash kNN.
 

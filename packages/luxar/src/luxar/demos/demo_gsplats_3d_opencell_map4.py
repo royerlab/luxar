@@ -383,8 +383,8 @@ Data Source:
   - Spinning-disk confocal, 51 z-slices x 600 x 600
 
 Channels (each is a layer — press L):
-  - Cyan: MAP4-GFP (microtubule network)
-  - Blue: Hoechst 33342 (nuclei)
+  - Cyan: Hoechst 33342 (nuclei)
+  - Blue: MAP4-GFP (microtubule network)
 
 Citation:
   Cho et al. (2022). OpenCell. Science, 375(6585), eabi6983.
