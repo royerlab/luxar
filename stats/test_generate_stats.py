@@ -142,6 +142,7 @@ def test_reports_format_test_file_counts_with_thousands_separators(
 
     html_report = html_file.read_text()
     markdown_report = markdown_file.read_text()
+    assert "Py + TS + Rust + Go + E2E" in html_report
     for count in (
         "1,001",
         "2,002",

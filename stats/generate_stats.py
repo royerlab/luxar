@@ -1610,7 +1610,7 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
     <div class="stat-card"><h3>Lines of Code</h3><div class="value">{total_code_lines:,}</div><div class="label">Executable only</div></div>
     <div class="stat-card"><h3>Total Lines</h3><div class="value">{total_lines:,}</div><div class="label">Incl. comments &amp; blanks</div></div>
     <div class="stat-card"><h3>Languages</h3><div class="value">{active_langs}</div><div class="label">Active in tree</div></div>
-    <div class="stat-card"><h3>Test Files</h3><div class="value">{total_test_files:,}</div><div class="label">Py + TS + Rust + E2E</div></div>
+    <div class="stat-card"><h3>Test Files</h3><div class="value">{total_test_files:,}</div><div class="label">Py + TS + Rust + Go + E2E</div></div>
     <div class="stat-card"><h3>Tests</h3><div class="value">{total_tests:,}</div><div class="label">Collected cases</div></div>
     <div class="stat-card"><h3>Coverage</h3><div class="value">{weighted_cov:.1f}%</div><div class="label">Py/TS weighted</div></div>
     <div class="stat-card"><h3>Commits</h3><div class="value">{git["total_commits"]:,}</div><div class="label">{git["commits_last_30_days"]} in last 30d</div></div>
