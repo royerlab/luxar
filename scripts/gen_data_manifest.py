@@ -698,21 +698,18 @@ DATASETS: dict[str, dict] = {
             "archive + fit locally (GPU). The archive is never fetched whole."
         ),
     ),
+    # `redistribute=False` governs re-hosting the dataset itself: the raw
+    # recording or a fitted archive derived from it. It does not prohibit a
+    # supplementary screen recording that shows the data, nor the analysed
+    # input crop deliberately published in benchmark-volume record
+    # 10.5281/zenodo.22682969 with the CTC licence chain disclosed. Loic
+    # confirmed this scope on 2026-09-18.
     "gsplats_tribolium": dict(
         bucket="local-compute",
         redistribute=False,
         license="conflict",
         source="Cell Tracking Challenge / Zenodo 5270323",
-        reason=(
-            "CTC origin forbids cloning; Zenodo re-host CC-BY is an authority conflict. "
-            "SCOPE (Loic, 2026-09-18): this flag governs RE-HOSTING THE DATASET -- the raw "
-            "recording or a fitted archive derived from it -- and nothing else. It does not "
-            "reach a screen recording that merely shows the data (a supplementary video films "
-            "a Tribolium fit, with the licence chain stated in the video record), nor the "
-            "analysed input crop deposited in the benchmark-volume record "
-            "10.5281/zenodo.22682969, which is published deliberately with the CTC chain "
-            "disclosed in its description. Do not read this flag as contradicting either."
-        ),
+        reason="CTC origin forbids cloning; Zenodo re-host CC-BY is an authority conflict.",
         strategy="Fetch raw from the Cell Tracking Challenge + fit locally (GPU), or seek CTC permission.",
     ),
     # ---- Bucket 1: regenerate client-side (no GPU); not hosted -------------
