@@ -327,14 +327,15 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
     mesh ladder carries no energy stamps at all — the only route by which a mesh
     could acquire one is a caller writing it by hand, which is exactly this.
 
-    The check is deliberately on the ENERGY FIELDS, not the containers: substitutive
-    levels use ``level_stats.geometric_error`` for their separate surface-error
-    currency, which must never be mistaken for mixture ``quality`` or acquire the
-    energy pair that makes the viewer's brightness compensation engage.
+    The check rejects a non-dict container, then inspects valid containers for the
+    ENERGY FIELDS: substitutive levels use ``level_stats.geometric_error`` for their
+    separate surface-error currency, which must never be mistaken for mixture
+    ``quality`` or acquire the energy pair that makes the viewer's brightness
+    compensation engage.
     """
     for container in ("level_stats", "lod_stats"):
         value = attrs.get(container)
-        if value is not None and not isinstance(value, dict):
+        if container in attrs and not isinstance(value, dict):
             raise TypeError(
                 f"{container} must be a dict when adding a mesh; "
                 f"got {type(value).__name__}"

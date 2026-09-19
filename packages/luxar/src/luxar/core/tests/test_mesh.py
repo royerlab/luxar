@@ -496,14 +496,15 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
 
 @pytest.mark.parametrize("container", ["level_stats", "lod_stats"])
 @pytest.mark.parametrize("substitutive_lod", [False, True])
+@pytest.mark.parametrize("value", [None, "not-a-dict"])
 def test_mesh_rejects_non_dict_stats_containers(
-    tmp_path, container: str, substitutive_lod: bool
+    tmp_path, container: str, substitutive_lod: bool, value: object
 ) -> None:
     with LuxarZarrCompiler(
         tmp_path / f"{container}-{substitutive_lod}.luxar.zarr"
     ) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        kwargs = {container: "not-a-dict"}
+        kwargs = {container: value}
         if substitutive_lod:
             kwargs["substitutive_lod"] = True
         with pytest.raises(ValueError, match=rf"{container} must be a dict"):
