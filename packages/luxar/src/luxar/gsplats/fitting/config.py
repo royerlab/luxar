@@ -83,10 +83,10 @@ class OptimConfig:
 class LossConfig:
     """Loss function configuration for fit_gaussian_splats().
 
-    Default loss is "l1": across the loss-comparison study (Supp. Doc. 5),
-    L1 reaches equal-or-higher held-out PSNR than MSE on every microscopy
-    dataset tested. Pass ``loss_type="mse"`` or ``loss_type="poisson"`` to
-    override.
+    Default loss is "l1": in the loss-comparison study (Supp. Doc. 5), L1
+    beats MSE on held-out PSNR on 11 of 17 microscopy volumes and never
+    trails it by more than 0.28 dB. Pass ``loss_type="mse"`` or
+    ``loss_type="poisson"`` to override.
 
     Applied by unpacking — there is no ``loss=`` parameter::
 

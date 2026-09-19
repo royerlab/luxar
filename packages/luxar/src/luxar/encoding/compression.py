@@ -1,18 +1,19 @@
 """Per-dtype compressor policy for Luxar zarr arrays.
 
-Measured under deployment conditions (64 KiB chunks, Hilbert-ordered splats,
-native + in-browser wasm decode — manuscript supplementary
-``codec_selection``), the best general-purpose configuration is not one
+Measured on 64 KiB re-chunked code arrays of a Hilbert-ordered fit (native +
+in-browser decode — manuscript supplementary ``codec_selection``), the best general-purpose configuration is not one
 compressor but a policy keyed on the ELEMENT WIDTH of the stored codes:
 
 - multi-byte integer codes (uint16 fixed-point / quantized) → ``zstd`` level 9
-  with BYTE shuffle (bit shuffle is silently neutralised by Blosc's internal
-  heuristics above level 1 at 64 KiB chunks; byte shuffle at high level is
-  what actually engages);
+  with BYTE shuffle (C-Blosc skips bit shuffle on any block whose element
+  count is not a multiple of 8, which a 64 KiB chunk of (N, 3) uint16 codes is
+  whenever Blosc's level-dependent block size leaves it as one block; byte
+  shuffle at level >= 7 is what engages);
 - single-byte codes (uint8) → ``zstd`` level 9, no shuffle (filters are
   no-ops or harmful for single-byte payloads);
-- floats → ``zstd`` level 9, no shuffle (mantissa entropy dominates; the
-  structured exponent bytes compress without help).
+- floats → ``zstd`` level 9, no shuffle (an engineering simplification for the
+  rare float32 fallbacks; in the benchmark three of four float32 arrays
+  compressed best byte-shuffled).
 
 Decode speed is level-independent (natively and in wasm), so the high level
 is purely a write-time budget. The policy applies whenever a writer asks for

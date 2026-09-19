@@ -46,7 +46,9 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
  * are physically sound:
  *
  * - `additive` / `luminous`: order-independent compositing sums energy
- *   linearly in opacity ⇒ both mechanisms are brightness-exact.
+ *   linearly in opacity ⇒ both mechanisms behave as a self-energy-based
+ *   brightness heuristic. Not brightness-exact: e(k) is a squared-amplitude
+ *   fraction while additive brightness is linear in amplitude.
  * - `volumetric`: order-dependent emission–absorption, but opacity linearly
  *   scales the optical depth `τ = κ·opacity·intensity`
  *   (VOLUMETRIC_BLENDING_SPEC.md §3.1), which is what makes an opacity fade

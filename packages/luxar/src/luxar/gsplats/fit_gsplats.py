@@ -321,12 +321,14 @@ def fit_gaussian_splats(
     lr : float, default=0.01
         Learning rate for Adam optimizer.
     loss_type : str, default="l1"
-        Loss function: "l1" (default; robust to outliers, preserves sharp features),
-        "mse" (directly minimizes MSE at a critical point — but in finite-iteration
-        Adam fitting, L1 reaches equal-or-higher PSNR on every microscopy dataset
-        tested in the loss-comparison study, Supp. Doc. 5), or "poisson" (natural
-        for count/photon data; uses 1.1-10x fewer iterations than MSE on most
-        datasets, at the cost of up to ~0.5 dB held-out PSNR vs L1 on noisy data).
+        Loss function: "l1" (default; robust to outliers, preserves sharp features;
+        in the loss-comparison study, Supp. Doc. 5, L1 beats MSE on held-out PSNR
+        on 11 of 17 microscopy volumes and never trails it by more than 0.28 dB),
+        "mse" (the global unregularised MSE minimiser maximises training PSNR, but
+        finite-iteration regularised fits do not reach it), or "poisson" (natural
+        for count/photon data; stops in the fewest iterations on most confocal
+        volumes, 8-15x shorter wall time than MSE where MSE runs to the iteration
+        cap, at a held-out cost vs L1 of up to ~2.9 dB).
     asymmetric_penalty : float, default=1.0
         Over-prediction penalty factor for asymmetric loss. Multiplies loss for regions
         where pred > target by this factor. Set to None to disable asymmetric loss.
