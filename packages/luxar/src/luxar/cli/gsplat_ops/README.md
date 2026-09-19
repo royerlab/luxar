@@ -63,6 +63,7 @@ importers name the owning module directly, never a re-export root.
 - `planning.py` — dataset discovery + decomposition + manifest planning (shared by `run` and `submit`)
 - `recipe_args.py` — merge-time `--recipe` option parsing/validation
 - `validation.py` — structural tile-store validation helpers (leaf arrays, node dirs)
+- `help_text.py` — shared `--progressive` help text for `run` and `submit`
 
 ### `transforms/` — edit-style commands on a fitted `.gsplats.zarr`
 
