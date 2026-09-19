@@ -237,7 +237,8 @@ def run_fit_volume(
         "auto",
         "--tiling",
         help="Decomposition: auto | none | uniform | content. auto = whole "
-        "volume if it fits one tile, else uniform (or content when a density "
+        "volume unless BOTH some dimension exceeds --tile-size AND the volume "
+        "has more than 64 M voxels; then uniform (or content when a density "
         "--cal/--k-star-ref is given). Replaces the old --tiled.",
         rich_help_panel="Tiling",
     ),
@@ -474,8 +475,11 @@ def run_fit_volume(
     progressive: bool = typer.Option(
         False,
         "--progressive",
-        help="Enable progressive fitting: fit in multiple passes on residuals, "
-        "producing a multi-LOD result. Each pass adds detail to the previous. "
+        help="Enable progressive fitting: optimise in several passes, each pass "
+        "fitting new splats to the residual of the previous ones. The passes are "
+        "an optimisation schedule, not a level-of-detail structure: the result is "
+        "ONE flat splat set (build a streaming ladder afterwards with "
+        "`luxar gsplat lod --recipe stream`). "
         "Tip: for tiled batch jobs, combine with --parallel to improve GPU utilization.",
         rich_help_panel="Progressive fitting",
     ),

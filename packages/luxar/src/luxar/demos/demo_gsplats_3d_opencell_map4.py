@@ -127,8 +127,11 @@ N_CHANNELS = 2
 
 # Channel configuration with colours
 CHANNELS = [
-    {"index": 0, "name": "MAP4-GFP (Microtubules)", "colormap": "cyan"},
-    {"index": 1, "name": "Hoechst (Nuclei)", "colormap": "blue"},
+    # OpenCell raw stacks carry the Hoechst channel first and the GFP channel
+    # second; the colormap stays with the index so the published record keeps
+    # its appearance.
+    {"index": 0, "name": "Hoechst (Nuclei)", "colormap": "cyan"},
+    {"index": 1, "name": "MAP4-GFP (Microtubules)", "colormap": "blue"},
 ]
 
 # Fit parameters (fixed-K, seeds=K*)

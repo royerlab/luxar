@@ -2064,11 +2064,15 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats_from_data("nuclei", result)
 
-# Progressive fitting → multi-LOD gsplats node (per-LOD subgroups)
+# Progressive fitting → still ONE flat gsplats node: the passes are an
+# optimisation schedule, and the result is flattened before it is returned
 result = fit_progressive_gaussian_splats(image, max_splats=50000)
 with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
-    scene.add_gsplats_from_data("nuclei", result)  # auto-detects multi-LOD
+    scene.add_gsplats_from_data("nuclei", result)
+
+# A streaming (additive) ladder is a separate step on the fitted data
+from luxar.gsplats.lod import make_additive_lod  # or: luxar gsplat lod --recipe stream
 
 # From saved .gsplats.zarr file (preserves LOD structure)
 with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
