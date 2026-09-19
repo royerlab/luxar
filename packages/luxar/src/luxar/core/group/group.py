@@ -1388,7 +1388,9 @@ class Group(Node):
             n_iters: Optimization iterations (default: 1000).
                 In progressive mode, this is iterations per pass.
             device: Compute device ("cuda", "mps", "cpu", or None for auto)
-            progressive: Use progressive multi-pass fitting (produces multi-LOD)
+            progressive: Optimize in several passes against residuals, returning one
+                flat splat set. Build a streaming ladder separately with
+                ``luxar.gsplats.lod.make_additive_lod``.
             max_splats_per_pass: Max splats per progressive pass (default: 5000)
             psnr_patience: Stop progressive fitting if PSNR gain < this (dB)
             max_passes: Max number of progressive passes (None = unlimited)

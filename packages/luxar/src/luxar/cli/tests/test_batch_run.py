@@ -170,6 +170,19 @@ def test_batch_fit_group_renamed_from_slurm_fit() -> None:
     assert runner.invoke(app_gsplat, ["slurm-fit", "--help"]).exit_code != 0
 
 
+@pytest.mark.parametrize("command", ["run", "submit"])
+def test_batch_progressive_help_describes_flat_result(command: str) -> None:
+    """Progressive batch fitting is a schedule, not a delivered LOD ladder."""
+    result = runner.invoke(app_gsplat, ["batch-fit", command, "--help"])
+    output = normalized_cli_output(result)
+
+    assert result.exit_code == 0, output
+    assert "optimization schedule" in output
+    assert "one flat splat set per tile" in output
+    assert "--merge-recipe stream" in output
+    assert "progressive fitting per tile (multi-LOD)" not in output
+
+
 def test_run_dry_run_reports_plan_without_fitting(tmp_path: Path) -> None:
     src = tmp_path / "vol.zarr"
     _make_zarr(src)

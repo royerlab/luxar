@@ -124,7 +124,12 @@ def run_batch_run(
         None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
     ),
     batch_progressive: bool = typer.Option(
-        False, "--progressive", help="Progressive fitting per tile (multi-LOD)."
+        False,
+        "--progressive",
+        help="Optimize each tile in several passes against residuals. This is an "
+        "optimization schedule and returns one flat splat set per tile, not a LOD "
+        "ladder. Build a streaming ladder with --merge-recipe stream (or run "
+        "`luxar gsplat lod --recipe stream` after merging).",
     ),
     batch_splats_per_pass: Optional[int] = typer.Option(
         None, "--splats-per-pass", help="Max splats per progressive pass"

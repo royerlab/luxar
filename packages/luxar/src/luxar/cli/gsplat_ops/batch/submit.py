@@ -171,7 +171,10 @@ def run_batch_submit(
     batch_progressive: bool = typer.Option(
         False,
         "--progressive",
-        help="Use progressive fitting per tile (multi-LOD). "
+        help="Optimize each tile in several passes against residuals. This is an "
+        "optimization schedule and returns one flat splat set per tile, not a LOD "
+        "ladder. Build a streaming ladder with --merge-recipe stream (or run "
+        "`luxar gsplat lod --recipe stream` after merging). "
         "Combine with --parallel for better GPU utilization.",
     ),
     batch_splats_per_pass: Optional[int] = typer.Option(
