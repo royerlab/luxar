@@ -1416,6 +1416,22 @@ class TestSingleTileWorkerFloor:
         assert "⚠" in out and "10000" in out
         assert "0 SPLATS" in out and "skipped by the merge" in out
 
+    def test_numeric_floor_warning_measures_selected_tile(
+        self, monkeypatch, capsys
+    ) -> None:
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+
+        volume = np.zeros((96, 96), dtype=np.float32)
+        volume[48:, 48:] = 100.0
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub([]))
+
+        fit_single_tile(_single_tile_ctx("0/9"), volume, {"floor": 5.0}, None)
+
+        out = capsys.readouterr().out
+        assert "0 SPLATS" in out
+        assert "tile 0/9" in out
+
     def test_null_floor_config_means_disabled(self, monkeypatch) -> None:
         """``floor: null`` in a --config YAML disables the floor on the
         single-tile worker, exactly as on the sequential and non-tiled paths
@@ -2441,3 +2457,67 @@ class TestVoxelSizePartitionPlanes:
             == self._voxel_frame_splits()
         )
         assert self._plane_is_between_its_sides(voxelled) == []
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")
+def test_single_tile_worker_uses_preselected_region_and_planned_divisor(
+    monkeypatch,
+) -> None:
+    import luxar.gsplats.fit_tiled_gsplats as ftg
+    from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+
+    selected = np.ones((48, 48), dtype=np.float32)
+    seen: dict[str, Any] = {}
+
+    def fail_scan(*args, **kwargs):
+        raise AssertionError("worker must not scan sibling tiles")
+
+    def fake_fit_tile(volume, spec, **kwargs):
+        seen["volume_shape"] = volume.shape
+        seen["origin"] = spec.origin
+        seen["tile_data"] = kwargs["tile_data"]
+        seen["seeds"] = kwargs["seeds"]
+        return _empty_result(2)
+
+    monkeypatch.setattr(ftg, "count_nonempty_tiles", fail_scan)
+    monkeypatch.setattr(ftg, "fit_tile", fake_fit_tile)
+
+    fit_single_tile(
+        _single_tile_ctx("4/9"),
+        selected,
+        {"floor": "none", "cull_retention": 0.0},
+        100,
+        full_volume_shape=(80, 80),
+        nonempty_tiles=2,
+        preselected_tile=True,
+    )
+
+    assert seen["volume_shape"] == (48, 48)
+    assert seen["origin"] == (32.0, 32.0)
+    assert seen["tile_data"] is selected
+    assert seen["seeds"] == 50
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")
+def test_single_tile_worker_applies_cull_retention(monkeypatch) -> None:
+    import luxar.gsplats.fit_tiled_gsplats as ftg
+    from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    def fake_fit_tile(volume, spec, **kwargs):
+        return GSplatData(
+            centers=np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32),
+            amplitudes=np.array([9.0, 1.0], dtype=np.float32),
+            cholesky_factors=np.array(
+                [[1.0, 0.0, 1.0], [1.0, 0.0, 1.0]], dtype=np.float32
+            ),
+        )
+
+    monkeypatch.setattr(ftg, "fit_tile", fake_fit_tile)
+    result = fit_single_tile(
+        _single_tile_ctx("0/1"),
+        np.ones((8, 8), dtype=np.float32),
+        {"floor": "none", "cull_retention": 0.5},
+        None,
+    )
+    assert result.n_splats == 1

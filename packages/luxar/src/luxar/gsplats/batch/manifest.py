@@ -77,6 +77,16 @@ class BatchManifest:
     n_tiles: int = 1
     """Spatial slots per (t,c): tile count in ``uniform`` mode, box count in
     ``content`` mode (kept as one field so task-id decode / packing are shared)."""
+    tile_signal_weights: Optional[List[List[float]]] = None
+    """Uniform mode: one row per selected ``(t, c)`` slice and one value per tile.
+
+    A zero marks a tile that the floor + Hann-window predicate will skip. The
+    current worker uses only the non-zero count to preserve the historical equal
+    seed split; retaining the measured weights lets a later occupancy-weighted
+    allocator consume the same plan-time scan without re-reading the volume.
+    ``None`` keeps older manifests and unsupported planning modes on the legacy
+    worker-side scan.
+    """
     plan_path: Optional[str] = None
     """``content`` mode: path to the shared ``FitPlan`` JSON (relative to
     ``output_dir``) every array task reads via ``fit --plan … --plan-box``."""

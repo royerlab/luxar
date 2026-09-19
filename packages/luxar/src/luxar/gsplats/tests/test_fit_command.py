@@ -65,6 +65,32 @@ def test_uniform_argv() -> None:
     assert argv[argv.index("--preset") + 1] == "standard"
 
 
+def test_uniform_argv_carries_tile_local_plan_metadata() -> None:
+    from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+    manifest = BatchManifest(
+        input_path="in.zarr",
+        output_dir="/o",
+        mode="uniform",
+        spatial_shape=(8, 8),
+        n_tiles=4,
+        tile_size=6,
+        tile_overlap=2,
+        n_timepoints=1,
+        n_channels=1,
+        tile_signal_weights=[[1.0, 0.0, 3.0, 0.0]],
+    )
+    argv = build_task_fit_argv(manifest, _job(k=2), "out.tmp", argv0=_ARGV0)
+    assert argv[argv.index("--tile-region") + 1] == "4:8,0:6"
+    assert argv[argv.index("--tile-volume-shape") + 1] == "8,8"
+    assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
+
+    script = generate_fit_sbatch(manifest, "# preamble\n")
+    assert '--tile-region "$TILE_REGION"' in script
+    assert "TILE_REGIONS=(0:6,0:6 0:6,4:8 4:8,0:6 4:8,4:8)" in script
+    assert "NONEMPTY_COUNTS=(2)" in script
+
+
 def test_content_argv() -> None:
     m = BatchManifest(
         input_path="in.zarr",

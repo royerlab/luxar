@@ -469,6 +469,51 @@ class TestLoadVolume:
         loaded = load_volume(path, channel=1, timepoint=0)
         assert loaded.shape == (4, 4, 4)
 
+    def test_load_npy_region_with_explicit_axes(self, tmp_path: Path) -> None:
+        volume = np.arange(6 * 2 * 8 * 10, dtype=np.uint16).reshape(6, 2, 8, 10)
+        path = tmp_path / "test.npy"
+        np.save(path, volume)
+        region = (slice(1, 5), slice(2, 7), slice(3, 9))
+
+        loaded = load_volume(path, channel=1, axes="z,c,y,x", region=region)
+
+        np.testing.assert_array_equal(
+            loaded, volume[1:5, 1, 2:7, 3:9].astype(np.float32)
+        )
+
+    def test_load_zarr_region_after_time_channel_selection(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        volume = np.arange(2 * 3 * 6 * 8 * 10, dtype=np.uint16).reshape(2, 3, 6, 8, 10)
+        path = tmp_path / "test.luxar.zarr"
+        root = zarr.open_group(str(path), mode="w")
+        create_array(root, "0", data=volume)
+        region = (slice(1, 5), slice(2, 7), slice(3, 9))
+
+        loaded = load_volume(path, channel=2, timepoint=1, region=region, info={})
+
+        np.testing.assert_array_equal(
+            loaded, volume[(1, 2, *region)].astype(np.float32)
+        )
+
+    def test_load_zarr_region_with_explicit_axes(self, tmp_path: Path) -> None:
+        import zarr
+
+        volume = np.arange(6 * 2 * 8 * 10, dtype=np.uint16).reshape(6, 2, 8, 10)
+        path = tmp_path / "test.luxar.zarr"
+        zarr.open(str(path), mode="w", shape=volume.shape, dtype=volume.dtype)[:] = (
+            volume
+        )
+        region = (slice(1, 5), slice(2, 7), slice(3, 9))
+
+        loaded = load_volume(path, channel=1, axes="z,c,y,x", region=region)
+
+        np.testing.assert_array_equal(
+            loaded, volume[1:5, 1, 2:7, 3:9].astype(np.float32)
+        )
+
     def test_load_validates_minimum_dims(self, tmp_path: Path) -> None:
         # 1D array should fail
         path = tmp_path / "test.npy"

@@ -23,6 +23,39 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest
 
 
+def _tile_local_read_args(manifest: BatchManifest, job: BatchJob) -> list[str]:
+    """Worker metadata that replaces its full-frame tile scan and read."""
+    rows = manifest.tile_signal_weights
+    if not rows or not manifest.spatial_shape:
+        return []
+    row_index = job.task_id // manifest.n_tiles
+    if not 0 <= row_index < len(rows):
+        return []
+    weights = rows[row_index]
+    if len(weights) != manifest.n_tiles:
+        return []
+
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    specs = compute_tile_specs(
+        tuple(manifest.spatial_shape), manifest.tile_size, manifest.tile_overlap
+    )
+    if len(specs) != manifest.n_tiles:
+        return []
+    spec = specs[job.tile_index]
+    region = ",".join(f"{span.start}:{span.stop}" for span in spec.slices)
+    shape = ",".join(str(size) for size in manifest.spatial_shape)
+    nonempty = sum(weight > 0.0 for weight in weights) or manifest.n_tiles
+    return [
+        "--tile-region",
+        region,
+        "--tile-volume-shape",
+        shape,
+        "--tile-nonempty-count",
+        str(nonempty),
+    ]
+
+
 def iter_fit_arg_flags(fit_args: Dict[str, Any]) -> Iterator[Tuple[str, Optional[str]]]:
     """Yield ``(flag, value_or_None)`` for each ``fit_args`` entry.
 
@@ -122,6 +155,7 @@ def build_task_fit_argv(
             # it and the merge skips it) instead of failing the task forever.
             "--allow-empty-tile",
         ]
+        cmd += _tile_local_read_args(manifest, job)
 
     if manifest.array_key is not None:
         cmd += ["--array-key", manifest.array_key]

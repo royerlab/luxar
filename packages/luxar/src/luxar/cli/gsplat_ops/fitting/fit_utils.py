@@ -1117,7 +1117,14 @@ def warn_if_level_erases_volume(volume: "Any", level: float, *, what: str) -> No
 
 
 def fit_single_tile(
-    ctx: FitPipelineCtx, volume: "Any", fit_config: dict, parsed_seeds: "Any"
+    ctx: FitPipelineCtx,
+    volume: "Any",
+    fit_config: dict,
+    parsed_seeds: "Any",
+    *,
+    full_volume_shape: "Optional[tuple[int, ...]]" = None,
+    nonempty_tiles: Optional[int] = None,
+    preselected_tile: bool = False,
 ) -> "Any":
     """Single-tile mode (Slurm-ready): fit tile ``--tile N/M`` of the grid."""
     from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles, fit_tile
@@ -1134,7 +1141,8 @@ def fit_single_tile(
         aprint("Error: --tile N/M requires integer values")
         raise typer.Exit(1)
 
-    specs = compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)
+    grid_shape = full_volume_shape or volume.shape
+    specs = compute_tile_specs(grid_shape, ctx.tile_size, ctx.tile_overlap)
     if tile_total != len(specs):
         aprint(
             f"Note: --tile specifies {tile_total} tiles but "
@@ -1183,6 +1191,10 @@ def fit_single_tile(
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
+    if preselected_tile and floor_spec_needs_volume(floor_spec):
+        raise typer.BadParameter(
+            "tile-local worker metadata requires a plan-resolved numeric --floor"
+        )
     probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
     _validate_floor(floor_spec)
     resolved_floor = resolve_volume_floor_denoised(
@@ -1206,8 +1218,9 @@ def fit_single_tile(
         and fit_config.get("_denoise_params") is not None,
     )
     if resolved_floor is not None and not floor_spec_needs_volume(floor_spec):
+        warning_volume = volume if preselected_tile else volume[specs[tile_idx].slices]
         warn_if_level_erases_volume(
-            volume,
+            warning_volume,
             resolved_floor,
             what=_tile_worker_label(ctx, tile_idx, len(specs)),
         )
@@ -1216,7 +1229,8 @@ def fit_single_tile(
     # Every independent worker scans the same volume, grid and resolved floor,
     # so all of them derive one identical divisor without parent-only state.
     if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
-        nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
+        if nonempty_tiles is None:
+            nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
         tile_seeds = split_seeds_across_tiles(
             parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
         )
@@ -1226,7 +1240,8 @@ def fit_single_tile(
     with asection(
         f"Fitting tile {tile_idx}/{len(specs)} grid={specs[tile_idx].grid_index}"
     ):
-        return fit_tile(
+        cull_retention = fit_config.get("cull_retention")
+        result = fit_tile(
             volume,
             specs[tile_idx],
             voxel_size=fc_voxel_size,
@@ -1235,9 +1250,19 @@ def fit_single_tile(
             max_splats_per_pass=ctx.max_splats_per_pass,
             psnr_patience=ctx.psnr_patience,
             max_passes=ctx.max_passes,
+            tile_data=volume if preselected_tile else None,
             seeds=tile_seeds,
             **fit_config,
         )
+        if (
+            cull_retention is not None
+            and 0 < float(cull_retention) < 1.0
+            and result.n_splats > 0
+        ):
+            from luxar.gsplats.fit_tiled_gsplats import _cull_keeping_measured_scores
+
+            result = _cull_keeping_measured_scores(result, float(cull_retention))
+        return result
 
 
 def fit_sequential_tiled(

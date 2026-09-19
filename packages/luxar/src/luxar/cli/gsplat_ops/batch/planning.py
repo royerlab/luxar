@@ -25,7 +25,10 @@ from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 import typer
 from arbol import aprint, asection
 
-from luxar.cli.gsplat_ops.fitting.fit_utils import CONTENT_UNSUPPORTED_FIT_FLAGS
+from luxar.cli.gsplat_ops.fitting.fit_utils import (
+    CONTENT_UNSUPPORTED_FIT_FLAGS,
+    floor_spec_needs_volume,
+)
 from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
 from luxar.typing_utils.enums import PhysicalUnit
@@ -364,6 +367,96 @@ def _materialize(view: Any) -> Any:
     import numpy as _np
 
     return _np.asarray(view[:], dtype=_np.float32)
+
+
+def _uniform_tile_signal_weights(
+    input_path: Path,
+    *,
+    specs: Sequence[Any],
+    t_indices: Sequence[int],
+    c_indices: Sequence[int],
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Tuple[int, ...],
+    applied_floor: Optional[float],
+) -> List[List[float]]:
+    """Measure every uniform tile once, lazily, for worker seed accounting."""
+    import numpy as _np
+
+    from luxar.gsplats.fit_tiled_gsplats import tile_has_signal
+    from luxar.gsplats.tiling import cosine_window
+
+    rows: List[List[float]] = []
+    for timepoint in t_indices:
+        for channel in c_indices:
+            view = _pinned_slice_volume(
+                input_path,
+                channel=channel,
+                timepoint=timepoint,
+                array_key=array_key,
+                axes=axes,
+                axes_labels=axes_labels,
+                channel_shape=channel_shape,
+                spatial_shape=spatial_shape,
+            )
+            weights: List[float] = []
+            for spec in specs:
+                tile_data = _np.asarray(view[spec.slices], dtype=_np.float32)
+                if applied_floor is not None:
+                    tile_data = _np.clip(tile_data - applied_floor, 0.0, None)
+                tile_data = tile_data * cosine_window(spec)
+                weights.append(
+                    float(_np.clip(tile_data, 0.0, None).sum(dtype=_np.float64))
+                    if tile_has_signal(tile_data)
+                    else 0.0
+                )
+            rows.append(weights)
+    return rows
+
+
+def _planned_uniform_tile_signal_weights(
+    *,
+    mode: str,
+    input_path: Path,
+    specs: Sequence[Any],
+    t_indices: Sequence[int],
+    c_indices: Sequence[int],
+    array_key: Optional[str],
+    axes_list: Optional[Sequence[str]],
+    ome_info: "OMEZarrInfo",
+    spatial: Tuple[int, ...],
+    fit_args: dict[str, Any],
+    downscale_factors: Any,
+    denoise: DenoiseConfig,
+    floor_deferred: bool,
+) -> Optional[List[List[float]]]:
+    planned_floor = fit_args.get("floor")
+    if (
+        mode != "uniform"
+        or downscale_factors is not None
+        or denoise.denoise
+        or floor_deferred
+        or floor_spec_needs_volume(planned_floor)
+    ):
+        return None
+    applied_floor = (
+        None if planned_floor in (None, "none", "0", 0, 0.0) else float(planned_floor)
+    )
+    with asection("Scanning uniform tile occupancy"):
+        return _uniform_tile_signal_weights(
+            input_path,
+            specs=specs,
+            t_indices=t_indices,
+            c_indices=c_indices,
+            array_key=array_key,
+            axes=",".join(axes_list) if axes_list else None,
+            axes_labels=list(ome_info.axes),
+            channel_shape=tuple(ome_info.channel_shape),
+            spatial_shape=tuple(spatial),
+            applied_floor=applied_floor,
+        )
 
 
 def _bounded_exact_range(view: Any, max_block_voxels: int) -> Tuple[float, float]:
@@ -2351,6 +2444,22 @@ def plan_batch(
 
     _announce_seed_split(mode, fit_args, n_tiles)
 
+    tile_signal_weights = _planned_uniform_tile_signal_weights(
+        mode=mode,
+        input_path=input_path,
+        specs=specs if mode == "uniform" else (),
+        t_indices=t_indices,
+        c_indices=c_indices,
+        array_key=array_key,
+        axes_list=axes_list,
+        ome_info=ome_info,
+        spatial=tuple(spatial),
+        fit_args=fit_args,
+        downscale_factors=downscale_factors,
+        denoise=denoise,
+        floor_deferred=floor_deferred,
+    )
+
     preset_config = PRESETS.get(fit.preset, PRESETS["standard"])
     n_iters = fit.iters if fit.iters is not None else preset_config.get("n_iters", 3000)
     if throughput_table:
@@ -2390,6 +2499,7 @@ def plan_batch(
         tile_size=tile_size_resolved,
         tile_overlap=tile_overlap,
         n_tiles=n_tiles,
+        tile_signal_weights=tile_signal_weights,
         plan_path=plan_path_str,
         total_tasks=total_tasks,
         preset=fit.preset,

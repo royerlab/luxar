@@ -250,6 +250,7 @@ def fit_tile(
     max_splats_per_pass: int = 5000,
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
+    tile_data: Optional[np.ndarray] = None,
     **fit_kwargs: Any,
 ) -> GSplatData:
     """Fit Gaussian splats on a single tile of a larger volume.
@@ -382,8 +383,13 @@ def fit_tile(
         verbose=bool(fit_kwargs.get("verbose", False)),
     )
 
-    # 1. Extract tile subvolume (materializes from zarr if needed)
-    tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
+    # 1. Extract tile subvolume (materializes from zarr if needed). Batch workers
+    # may receive the exact region already materialized so host RAM stays tile-local.
+    tile_data = (
+        np.asarray(volume[spec.slices], dtype=np.float32)
+        if tile_data is None
+        else np.asarray(tile_data, dtype=np.float32)
+    )
 
     # 1b. Denoise tile (if requested via fit_kwargs)
     # Use pop to remove denoise keys before forwarding to fitting functions

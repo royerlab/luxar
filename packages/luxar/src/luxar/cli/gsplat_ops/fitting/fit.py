@@ -63,6 +63,60 @@ def _parse_voxel_size(value: Optional[str]) -> "Optional[tuple[float, ...]]":
         ) from exc
 
 
+def _parse_tile_region(value: Optional[str]) -> "Optional[tuple[slice, ...]]":
+    """Parse the internal ``--tile-region START:STOP,...`` worker handoff."""
+    if value is None:
+        return None
+    spans = []
+    try:
+        for raw in value.split(","):
+            start, stop = raw.split(":", 1)
+            spans.append(slice(int(start), int(stop)))
+    except (TypeError, ValueError) as exc:
+        raise typer.BadParameter(
+            "--tile-region must be START:STOP[,START:STOP...]"
+        ) from exc
+    if any(span.start < 0 or span.stop <= span.start for span in spans):
+        raise typer.BadParameter(
+            "--tile-region spans must be non-empty and non-negative"
+        )
+    return tuple(spans)
+
+
+def _parse_tile_volume_shape(value: Optional[str]) -> "Optional[tuple[int, ...]]":
+    if value is None:
+        return None
+    try:
+        shape = tuple(int(part.strip()) for part in value.split(","))
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "--tile-volume-shape must be comma-separated integers"
+        ) from exc
+    if not shape or any(size <= 0 for size in shape):
+        raise typer.BadParameter("--tile-volume-shape entries must be positive")
+    return shape
+
+
+def _parse_tile_worker_metadata(
+    *,
+    tile: Optional[str],
+    tile_region: Optional[str],
+    tile_volume_shape: Optional[str],
+    tile_nonempty_count: Optional[int],
+) -> "tuple[Optional[tuple[slice, ...]], Optional[tuple[int, ...]]]":
+    region = _parse_tile_region(tile_region)
+    shape = _parse_tile_volume_shape(tile_volume_shape)
+    if (region is None) != (shape is None):
+        raise typer.BadParameter(
+            "--tile-region and --tile-volume-shape must be provided together"
+        )
+    if region is not None and tile is None:
+        raise typer.BadParameter("--tile-region requires --tile")
+    if tile_nonempty_count is not None and tile_nonempty_count <= 0:
+        raise typer.BadParameter("--tile-nonempty-count must be positive")
+    return region, shape
+
+
 def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
     """Carry the loader-observed source dtype into the fit config.
 
@@ -269,6 +323,13 @@ def run_fit_volume(
         "--tile",
         help="Fit single tile N/M (e.g., '3/16' = tile index 3 of 16 total)",
         rich_help_panel="Tiling",
+    ),
+    tile_region: Optional[str] = typer.Option(None, "--tile-region", hidden=True),
+    tile_volume_shape: Optional[str] = typer.Option(
+        None, "--tile-volume-shape", hidden=True
+    ),
+    tile_nonempty_count: Optional[int] = typer.Option(
+        None, "--tile-nonempty-count", hidden=True
     ),
     jobs: str = typer.Option(
         "1",
@@ -604,6 +665,12 @@ def run_fit_volume(
         raise typer.Exit(1)
     parsed_norm_range = _parse_norm_range(norm_range)
     parsed_voxel_size = _parse_voxel_size(voxel_size)
+    parsed_tile_region, parsed_tile_volume_shape = _parse_tile_worker_metadata(
+        tile=tile,
+        tile_region=tile_region,
+        tile_volume_shape=tile_volume_shape,
+        tile_nonempty_count=tile_nonempty_count,
+    )
 
     try:
         from luxar.gsplats import fit_gaussian_splats
@@ -625,6 +692,7 @@ def run_fit_volume(
                     array_key,
                     axes=axes,
                     info=source_info,
+                    region=parsed_tile_region,
                 )
                 aprint(f"Volume shape: {volume.shape}")
 
@@ -639,7 +707,10 @@ def run_fit_volume(
                 or plan_box is not None
             )
             resolved_tiling = _resolve_tiling_impl(
-                tiling, volume.shape, tile_size, _has_density
+                tiling,
+                parsed_tile_volume_shape or volume.shape,
+                tile_size,
+                _has_density,
             )
 
             # A calibration records the floor it subtracted, and measured its
@@ -856,7 +927,15 @@ def run_fit_volume(
             # 6. Fit
             if tile is not None:
                 # Single-tile mode (Slurm-ready)
-                result = fit_single_tile(ctx, volume, fit_config, parsed_seeds)
+                result = fit_single_tile(
+                    ctx,
+                    volume,
+                    fit_config,
+                    parsed_seeds,
+                    full_volume_shape=parsed_tile_volume_shape,
+                    nonempty_tiles=tile_nonempty_count,
+                    preselected_tile=parsed_tile_region is not None,
+                )
 
             elif tiled:
                 # Full tiled fitting

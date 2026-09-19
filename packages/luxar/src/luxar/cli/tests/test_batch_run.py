@@ -711,6 +711,40 @@ def test_batch_plan_resolves_one_global_floor_level(tmp_path: Path) -> None:
     assert float(levels.pop()) == pytest.approx(expected, rel=1e-6)
 
 
+def test_batch_plan_records_uniform_tile_occupancy_for_workers(
+    tmp_path: Path,
+) -> None:
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+
+    src = tmp_path / "movie.zarr"
+    full = np.zeros((1, 16, 24, 24), dtype=np.float32)
+    full[0, 8, 20, 20] = 10.0
+    _write_timelapse(src, full)
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        seeds="100",
+        tile_size=16,
+        tile_overlap=0,
+    ).manifest
+
+    assert manifest.tile_signal_weights is not None
+    assert len(manifest.tile_signal_weights) == 1
+    assert [weight > 0.0 for weight in manifest.tile_signal_weights[0]] == [
+        False,
+        False,
+        False,
+        True,
+    ]
+    argv = build_task_fit_argv(
+        manifest, manifest.jobs[3], tmp_path / "tile.gsplats.zarr", argv0=[]
+    )
+    assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
+    assert argv[argv.index("--tile-nonempty-count") + 1] == "1"
+
+
 def test_batch_plan_resolves_one_global_normalization_range(tmp_path: Path) -> None:
     """Every timepoint gets one raw-input range resolved across the run."""
     from luxar.gsplats.batch.fit_command import build_task_fit_argv
