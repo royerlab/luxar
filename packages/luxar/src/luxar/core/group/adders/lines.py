@@ -1790,6 +1790,17 @@ def _add_lines_subsampled_lod_wrapper_impl(
     level_colors: Any
     vertex_indices: Any
     for child_index, selected_ids in enumerate(coarse_first):
+        reduction_level = len(coarse_first) - child_index
+        selected_light = (
+            total_light
+            if method == "merge"
+            else float(np.sum(light_integrals[selected_ids]))
+        )
+        measured_gain = (
+            total_light / selected_light
+            if total_light > 0.0 and selected_light > 0.0
+            else 1.0
+        )
         if method == "merge":
             (
                 level_vertices,
@@ -1805,20 +1816,9 @@ def _add_lines_subsampled_lod_wrapper_impl(
             level_scalars = None
             level_attrs = dict(child_attrs)
             level_attrs.pop("colormap", None)
+            requested_gain = 1.0
         else:
             level_vertices = None
-        reduction_level = len(coarse_first) - child_index
-        selected_light = (
-            total_light
-            if method == "merge"
-            else float(np.sum(light_integrals[selected_ids]))
-        )
-        measured_gain = (
-            total_light / selected_light
-            if total_light > 0.0 and selected_light > 0.0
-            else 1.0
-        )
-        if method != "merge":
             requested_gain = (
                 measured_gain
                 if compensation == "auto" and auto_compensates
@@ -1828,21 +1828,21 @@ def _add_lines_subsampled_lod_wrapper_impl(
             )
             width_gain = requested_gain
             color_gain = 1.0
-            if requested_gain > 1.0:
-                activation_threshold = coverage_vals[
-                    min(child_index + 1, len(coverage_vals) - 1)
-                ]
-                width_gain = min(
-                    requested_gain,
-                    _line_width_gain_cap(
-                        vert_arr,
-                        widths_for_energy,
-                        displayed,
-                        activation_threshold,
-                        lod_selector,
-                    ),
-                )
-                color_gain = requested_gain / width_gain
+        if requested_gain > 1.0:
+            activation_threshold = coverage_vals[
+                min(child_index + 1, len(coverage_vals) - 1)
+            ]
+            width_gain = min(
+                requested_gain,
+                _line_width_gain_cap(
+                    vert_arr,
+                    widths_for_energy,
+                    displayed,
+                    activation_threshold,
+                    lod_selector,
+                ),
+            )
+            color_gain = requested_gain / width_gain
         if color_gain > 1.0:
             aprint(
                 f"  ↳ child_{child_index}: capped width gain at "
