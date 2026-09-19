@@ -1122,43 +1122,6 @@ each later wave's overrides, newest winning so per-store byte counts stay
 accurate), rebuild, re-render, redeploy — one changed file. Roughly four minutes
 degraded.
 
-### 3.23 An automated reviewer that improves numbers will not converge on a document of numbers
-
-A runbook of measured figures has no completion point — there is always one more
-number to refine. Point a review pipeline that **pushes fixes** at it and the two
-never settle:
-
-    author appends a section  ->  review runs, pushes an improvement  ->  that push
-    resets the gate  ->  review runs again on the new head  ->  ...
-
-On PR #2298 this ran ~10 rounds. Confirmed from the dispatch logs, not inferred:
-
-    work-dispatcher.log    8x  dispatch fix-worker #2298 (gate=failure cifail=0)
-    review-dispatcher.log      re-review on each successive head
-
-**`cifail=0` every round is the tell: CI was never failing.** And critically, the
-review was not rejecting a broken thing — it was making *correct* improvements
-each pass (grounding ratios in published metadata, separating eager from
-full-detail counts, catching that 56 zero-shaped `array_ref` placeholders had been
-counted as real arrays). Good corrections, no fixed point.
-
-Three traps around it:
-
-- **Freezing the author is not enough.** With all author pushes stopped, the head
-  still moved three more times. The loop does not need the human in it.
-- **A fresh PR does not escape it.** Superseding the branch carries the same
-  document to the same reviewer. The branch was never the cause.
-- **Commit metadata cannot attribute the pushes.** This repo's commits alternate
-  between two configured identities belonging to the same person
-  (`Loic Royer <loic.royer@czbiohub.org>`, `royer <royerloic@gmail.com>`), and
-  rebases rewrite the committer. The dispatch logs are the only reliable source —
-  `git log` will mislead you into diagnosing a collision between authors.
-
-Two things that do work: **batch, land, open fresh** — treat a docs PR as a batch
-with a declared end rather than an inbox; and for a document the gate cannot
-converge on, **land it by hand** and let the next batch carry the improvements the
-reviewer would have made.
-
 ## 4. Cloudflare configuration
 
 ### 4.1 Cache rule on the data subdomain
