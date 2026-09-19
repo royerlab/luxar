@@ -698,12 +698,12 @@ DATASETS: dict[str, dict] = {
             "archive + fit locally (GPU). The archive is never fetched whole."
         ),
     ),
-    # `redistribute=False` governs re-hosting the dataset itself: the raw
-    # recording or a fitted archive derived from it. It does not prohibit a
-    # supplementary screen recording that shows the data, nor the analysed
-    # input crop deliberately published in benchmark-volume record
-    # 10.5281/zenodo.22682969 with the CTC licence chain disclosed. Loic
-    # confirmed this scope on 2026-09-18.
+    # For this dataset, `redistribute=False` governs re-hosting the dataset
+    # itself: the raw recording or a fitted archive derived from it. It does
+    # not prohibit a supplementary screen recording that shows the data, nor
+    # the analysed input crop deliberately published in benchmark-volume
+    # record 10.5281/zenodo.22682969 with the CTC licence chain disclosed.
+    # Loic confirmed this scope on 2026-09-18.
     "gsplats_tribolium": dict(
         bucket="local-compute",
         redistribute=False,
