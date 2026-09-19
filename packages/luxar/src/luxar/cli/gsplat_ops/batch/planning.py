@@ -409,6 +409,28 @@ def _uniform_tile_nonempty_count(
     return nonempty or len(specs)
 
 
+def _uniform_tile_local_disabled_reason(
+    *,
+    downscale_factors: Any,
+    denoise: DenoiseConfig,
+    floor_deferred: bool,
+    planned_floor: Any,
+    norm_range: "Optional[Tuple[float, float]]",
+) -> Optional[str]:
+    """Explain why a uniform plan cannot hand workers exact tile regions."""
+    if downscale_factors is not None:
+        return "--downscale changes the worker tile grid"
+    if denoise.denoise:
+        return "--denoise requires worker-side data resolution"
+    if floor_deferred:
+        return "background floor resolution is deferred"
+    if floor_spec_needs_volume(planned_floor):
+        return "background floor is not plan-resolved"
+    if norm_range is None:
+        return "normalization range is not plan-resolved"
+    return None
+
+
 def _planned_uniform_tile_local_metadata(
     *,
     mode: str,
@@ -431,17 +453,13 @@ def _planned_uniform_tile_local_metadata(
         return False, None
 
     planned_floor = fit_args.get("floor")
-    reason = None
-    if downscale_factors is not None:
-        reason = "--downscale changes the worker tile grid"
-    elif denoise.denoise:
-        reason = "--denoise requires worker-side data resolution"
-    elif floor_deferred:
-        reason = "background floor resolution is deferred"
-    elif floor_spec_needs_volume(planned_floor):
-        reason = "background floor is not plan-resolved"
-    elif norm_range is None:
-        reason = "normalization range is not plan-resolved"
+    reason = _uniform_tile_local_disabled_reason(
+        downscale_factors=downscale_factors,
+        denoise=denoise,
+        floor_deferred=floor_deferred,
+        planned_floor=planned_floor,
+        norm_range=norm_range,
+    )
     if reason is not None:
         aprint(f"Tile-local reads off: {reason}.")
         return False, None
