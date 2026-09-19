@@ -42,7 +42,9 @@ cat stats/PROJECT_STATS.md         # GitHub-friendly markdown summary
 >
 > Go participates in this completeness gate. Because Go is an optional
 > toolchain, install it with `make install-go` before running `make stats` on a
-> checkout that does not already have `go` on `PATH`.
+> checkout that does not already have `go` on `PATH`. The Go leg also compiles
+> the native launcher, so install its platform build dependencies described in
+> [`packages/luxar-launcher/README.md`](../packages/luxar-launcher/README.md).
 
 ## Files
 
