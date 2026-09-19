@@ -2351,22 +2351,28 @@ def test_lines_merge_caps_uncolored_width_and_carries_residual_in_color(
     groups = {}
     for method in ("subsample", "merge"):
         out = tmp_path / f"lines-uncolored-{method}.luxar.zarr"
-        with LuxarZarrCompiler(out) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lines(
-                "curves",
-                vertices,
-                0.2,
-                line_type="segments",
-                blending_mode="additive",
-                substitutive_lod=dict(
-                    coarse="lines",
-                    method=method,
-                    compression_factor=4,
-                    levels=3,
-                    quality_stamps=False,
-                ),
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "error",
+                message=r".*HDR colors with maximum value .* detected.*",
+                category=UserWarning,
             )
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    vertices,
+                    0.2,
+                    line_type="segments",
+                    blending_mode="additive",
+                    substitutive_lod=dict(
+                        coarse="lines",
+                        method=method,
+                        compression_factor=4,
+                        levels=3,
+                        quality_stamps=False,
+                    ),
+                )
         groups[method] = zarr.open(str(out), mode="r")["curves"]
 
     decoder = ArrayDecoder()

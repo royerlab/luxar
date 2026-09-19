@@ -1435,7 +1435,7 @@ def _same_type_line_coarse_levels(
             ordering_keys=preferences,
             directions=directions,
         )
-        parts: List[List[Any]] = [[], [], [], []]
+        parts: List[List[Any]] = [[], [], []]
         color_parts: List[Any] = []
         width_gains: List[float] = []
         color_gains: List[float] = []
@@ -1479,14 +1479,7 @@ def _same_type_line_coarse_levels(
             width_gains.append(width_gain)
             color_gains.append(color_gain)
             if edges is not None:
-                parts[3].append(edges)
-        if max(color_gains, default=1.0) > 1.0:
-            child_index = len(level_counts) - level_index - 1
-            aprint(
-                f"  ↳ child_{child_index}: capped width gain at "
-                f"{max(width_gains):.3g}×; carrying "
-                f"{max(color_gains):.3g}× in HDR color"
-            )
+                parts[2].append(edges)
         level_colors = None
         if any(colors is not None for colors in color_parts):
             level_colors = np.concatenate(
@@ -1502,8 +1495,10 @@ def _same_type_line_coarse_levels(
                 np.concatenate(parts[0]),
                 np.concatenate(parts[1]),
                 level_colors,
-                np.concatenate(parts[3]).reshape(-1) if parts[3] else None,
+                np.concatenate(parts[2]).reshape(-1) if parts[2] else None,
                 count,
+                max(width_gains, default=1.0),
+                max(color_gains, default=1.0),
             )
         )
     return coarse
@@ -1540,15 +1535,6 @@ def _warn_continuous_line_axes(axes: List[int]) -> None:
         RuntimeWarning,
         stacklevel=3,
     )
-
-
-def _same_type_line_counts(
-    coarse_first: List[Any], method: str, finest: int
-) -> List[int]:
-    """Return coarse-to-fine element counts for merged or subsampled lines."""
-    if method == "merge":
-        return [int(level[4]) for level in coarse_first] + [finest]
-    return [int(level.size) for level in coarse_first] + [finest]
 
 
 def _line_quality_reference(
@@ -1781,8 +1767,6 @@ def _add_lines_subsampled_lod_wrapper_impl(
         ),
     )
     coarse_first = list(reversed(coarse))
-    counts = _same_type_line_counts(coarse_first, method, n_polylines)
-    assert counts == planned_counts
     lod_attrs = {key: value for key, value in attrs.items() if key in COMPOSITING_ATTRS}
     child_attrs = {
         key: value for key, value in attrs.items() if key not in COMPOSITING_ATTRS
@@ -1791,7 +1775,7 @@ def _add_lines_subsampled_lod_wrapper_impl(
     lod_attrs.setdefault("display_type", "lines")
     aprint(
         f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} line levels + finest "
-        f"(polylines coarsest→finest={counts}, K={compression_factor})"
+        f"(polylines coarsest→finest={planned_counts}, K={compression_factor})"
     )
     lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
@@ -1807,16 +1791,20 @@ def _add_lines_subsampled_lod_wrapper_impl(
     vertex_indices: Any
     for child_index, selected_ids in enumerate(coarse_first):
         if method == "merge":
-            level_vertices, level_widths, level_colors, child_indices, level_count = (
-                selected_ids
-            )
+            (
+                level_vertices,
+                level_widths,
+                level_colors,
+                child_indices,
+                level_count,
+                width_gain,
+                color_gain,
+            ) = selected_ids
             child_line_type = "indexed"
             vertex_indices = None
             level_scalars = None
             level_attrs = dict(child_attrs)
             level_attrs.pop("colormap", None)
-            requested_gain = 1.0
-            color_gain = 1.0
         else:
             level_vertices = None
         reduction_level = len(coarse_first) - child_index
@@ -1830,39 +1818,36 @@ def _add_lines_subsampled_lod_wrapper_impl(
             if total_light > 0.0 and selected_light > 0.0
             else 1.0
         )
-        requested_gain = (
-            requested_gain
-            if method == "merge"
-            else (
+        if method != "merge":
+            requested_gain = (
                 measured_gain
                 if compensation == "auto" and auto_compensates
                 else 1.0
                 if compensation == "auto"
                 else float(compensation) ** reduction_level
             )
-        )
-        width_gain = requested_gain
-        color_gain = 1.0
-        if requested_gain > 1.0:
-            activation_threshold = coverage_vals[
-                min(child_index + 1, len(coverage_vals) - 1)
-            ]
-            width_gain = min(
-                requested_gain,
-                _line_width_gain_cap(
-                    vert_arr,
-                    widths_for_energy,
-                    displayed,
-                    activation_threshold,
-                    lod_selector,
-                ),
-            )
-            color_gain = requested_gain / width_gain
-            if color_gain > 1.0:
-                aprint(
-                    f"  ↳ child_{child_index}: capped width gain at "
-                    f"{width_gain:.3g}×; carrying {color_gain:.3g}× in HDR color"
+            width_gain = requested_gain
+            color_gain = 1.0
+            if requested_gain > 1.0:
+                activation_threshold = coverage_vals[
+                    min(child_index + 1, len(coverage_vals) - 1)
+                ]
+                width_gain = min(
+                    requested_gain,
+                    _line_width_gain_cap(
+                        vert_arr,
+                        widths_for_energy,
+                        displayed,
+                        activation_threshold,
+                        lod_selector,
+                    ),
                 )
+                color_gain = requested_gain / width_gain
+        if color_gain > 1.0:
+            aprint(
+                f"  ↳ child_{child_index}: capped width gain at "
+                f"{width_gain:.3g}×; carrying {color_gain:.3g}× in HDR color"
+            )
         if method != "merge":
             vertex_indices, child_indices, child_line_type = _selected_line_topology(
                 polylines=polylines,
