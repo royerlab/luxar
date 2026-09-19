@@ -20,9 +20,10 @@
  *    compositing sums energy; the ladder commits highest-energy splats first),
  *    which reads as a brightening pop. Scaling opacity by `1/e(k)` — opacity is a
  *    linear multiplier on summed energy in additive/luminous, and on optical
- *    depth `τ` in volumetric — holds the total at `E` throughout, the temporal
- *    twin of mechanism 1's build-time mass conservation (same conservation law,
- *    time axis instead of scale axis).
+ *    depth `τ` in volumetric — holds the total near `E` throughout. This is a
+ *    self-energy heuristic rather than the exact conservation law used by
+ *    mechanism 1: `e(k)` is quadratic in amplitude while additive brightness is
+ *    linear, and the approximation becomes exact only when the leaf is complete.
  *
  * Both mechanisms apply to the modes in `BLENDABLE_MODES`
  * (`scene/lod-fade.ts`) — additive / luminous / volumetric; see that set's doc
