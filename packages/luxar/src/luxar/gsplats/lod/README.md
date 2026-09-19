@@ -630,7 +630,8 @@ in `O(N log N)` (sub-second at 256K).
   are the current bins of a splat's Morton-curve neighbours — an
   `O(N·k)` gather, not a spatial-hash kNN), rebuilds templates, and keeps
   the pass only if the global projection energy `P = Σ_b ⟨f,Ḡ⟩²/‖Ḡ‖²`
-  does not decrease. So the result is never worse than the warm start.
+  strictly increases. So the result is never worse than the warm start in
+  projection energy `P`.
 - A reduction of **256K splats → 64K builds in ~3–4 s on CPU** (vs.
   ~1 hr before); the full 6-level ladder builds in ~5 s. Quality is high:
   a 4× reduction reconstructs at ~46 dB PSNR vs. the full set (Lloyd adds
