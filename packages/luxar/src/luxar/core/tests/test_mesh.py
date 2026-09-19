@@ -494,6 +494,22 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
         assert scene.add_mesh("plain", _V, _F, opacity=0.5) is not None
 
 
+@pytest.mark.parametrize("container", ["level_stats", "lod_stats"])
+@pytest.mark.parametrize("substitutive_lod", [False, True])
+def test_mesh_rejects_non_dict_stats_containers(
+    tmp_path, container: str, substitutive_lod: bool
+) -> None:
+    with LuxarZarrCompiler(
+        tmp_path / f"{container}-{substitutive_lod}.luxar.zarr"
+    ) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        kwargs = {container: "not-a-dict"}
+        if substitutive_lod:
+            kwargs["substitutive_lod"] = True
+        with pytest.raises(ValueError, match=rf"{container} must be a dict"):
+            scene.add_mesh("m", _V, _F, **kwargs)
+
+
 def test_every_sibling_structural_parameter_is_bound_by_name() -> None:
     """No structural knob may reach ``**attrs`` and answer like a typo.
 

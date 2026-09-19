@@ -150,15 +150,14 @@ def _normalized_collapse_error(
     if np.any(missing):
         # Components whose every face collapsed have no surviving root. They still
         # belong to the source surface, so omitting them would understate the error
-        # exactly when a small feature disappeared. Map them to one real coarse
-        # vertex (the one nearest their centroid): not the tight nearest-surface
-        # distance, but a valid, linear-time upper bound.
-        missing_center = source_spatial[missing].mean(axis=0)
+        # exactly when a small feature disappeared. Orphans are rare by construction,
+        # so map each one to its own nearest real coarse vertex rather than inflating
+        # the bound by forcing disconnected islands through one shared representative.
         output_spatial = output_vertices[:, spatial]
-        fallback = int(
-            np.argmin(np.linalg.norm(output_spatial - missing_center, axis=1))
+        orphan_distances = np.linalg.norm(
+            source_spatial[missing, None, :] - output_spatial[None, :, :], axis=2
         )
-        representative_indices[missing] = fallback
+        representative_indices[missing] = np.argmin(orphan_distances, axis=1)
     representatives = output_vertices[representative_indices][:, spatial]
     return float(
         np.linalg.norm(source_spatial - representatives, axis=1).max() / diagonal

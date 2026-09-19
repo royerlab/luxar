@@ -18,6 +18,7 @@ import pytest
 from .. import qem
 from ..decimate import (
     QEM_AUTO_VERTEX_LIMIT,
+    _normalized_collapse_error,
     decimate,
     decimate_cluster,
     decimate_ladder,
@@ -111,6 +112,15 @@ class TestDecimateCluster:
 
         assert 0.0 < coarse.geometric_error < 1.0
         assert unchanged.geometric_error == 0.0
+
+    def test_orphan_vertices_use_their_own_nearest_coarse_vertex(self) -> None:
+        source = np.array([[-5, 0, 0], [5, 0, 0]], dtype=np.float64)
+        output = np.array([[-1, 0, 0], [1, 0, 0]], dtype=np.float64)
+        inverse = np.array([-1, -1], dtype=np.int64)
+
+        error = _normalized_collapse_error(source, output, inverse, (0, 1, 2))
+
+        assert error == pytest.approx(0.4)
 
     def test_a_ladder_of_levels_is_strictly_coarser_and_still_a_sphere(self) -> None:
         v, f = octasphere(4)
@@ -501,6 +511,28 @@ class TestDecimateQEM:
         )
         assert len(preserved.vertices) - edges + len(preserved.faces) == 2
         assert boundary == 0 and nonmanifold == 0
+        assert 0.0 < preserved.geometric_error < 1.0
+
+    def test_mid_weight_stays_in_the_partial_colour_tradeoff_regime(self) -> None:
+        v, f = octasphere(3)
+        side = v[:, 0] + 0.31 * v[:, 1] >= 0
+        colors = np.zeros((len(v), 3), np.uint8)
+        colors[side, 0] = 255
+        colors[~side, 2] = 255
+
+        default = decimate_qem(v, f, target_vertices=40, colors=colors)
+        partial = decimate_qem(
+            v, f, target_vertices=40, colors=colors, attribute_weight=0.05
+        )
+
+        assert default.colors is not None and partial.colors is not None
+        default_mixed = np.count_nonzero(
+            (default.colors[:, 0] > 0) & (default.colors[:, 2] > 0)
+        )
+        partial_mixed = np.count_nonzero(
+            (partial.colors[:, 0] > 0) & (partial.colors[:, 2] > 0)
+        )
+        assert 0 < partial_mixed < default_mixed
 
     def test_attribute_quadric_preserves_a_scalar_boundary(self) -> None:
         v, f = octasphere(3)

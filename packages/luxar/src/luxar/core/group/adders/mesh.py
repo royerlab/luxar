@@ -332,6 +332,14 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
     currency, which must never be mistaken for mixture ``quality`` or acquire the
     energy pair that makes the viewer's brightness compensation engage.
     """
+    for container in ("level_stats", "lod_stats"):
+        value = attrs.get(container)
+        if value is not None and not isinstance(value, dict):
+            raise TypeError(
+                f"{container} must be a dict when adding a mesh; "
+                f"got {type(value).__name__}"
+            )
+
     energy_keys = {"reference_energy", "energy_fraction_cum"}
     supplied = sorted(
         f"{container}.{key}"
@@ -1618,10 +1626,16 @@ def add_mesh_substitutive_lod_wrapper_impl(
         previous = count
 
     if not coarse:
+        weight_note = (
+            f" A positive attribute_weight={spec['attribute_weight']} can prevent "
+            "attribute-incompatible vertices from merging."
+            if spec["attribute_weight"] > 0
+            else ""
+        )
         aprint(
             f"  📐 Substitutive-LOD '{name}': no level reduced the surface "
             f"({n_vertices:,} vertices at K={compression_factor}) — writing a "
-            "plain mesh leaf instead."
+            f"plain mesh leaf instead.{weight_note}"
         )
         return add_mesh_impl(
             group,
@@ -1676,11 +1690,6 @@ def add_mesh_substitutive_lod_wrapper_impl(
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
     child_attrs.pop("coverage_fraction", None)
     caller_level_stats = child_attrs.pop("level_stats", None)
-    if caller_level_stats is not None and not isinstance(caller_level_stats, dict):
-        raise TypeError(
-            "level_stats must be a dict when adding a substitutive mesh ladder; "
-            f"got {type(caller_level_stats).__name__}"
-        )
     lod_attrs.setdefault("display_type", "mesh")
 
     # ONE display window for the whole ladder, stamped on every child. Each

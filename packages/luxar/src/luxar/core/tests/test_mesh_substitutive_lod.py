@@ -153,10 +153,11 @@ def ladder_children(nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 class TestLadderShape:
-    def test_every_level_carries_separate_geometric_error(self, tmp_path):
+    @pytest.mark.parametrize("method", ["cluster", "qem"])
+    def test_every_level_carries_separate_geometric_error(self, tmp_path, method):
         verts, faces = octasphere(3)
         children = ladder_children(
-            write_ladder(tmp_path, verts, faces, substitutive_lod={"method": "cluster"})
+            write_ladder(tmp_path, verts, faces, substitutive_lod={"method": method})
         )
 
         errors = [child["level_stats"]["geometric_error"] for child in children]
@@ -164,6 +165,25 @@ class TestLadderShape:
         assert errors[-1] == 0.0
         assert all("reference_energy" not in child["level_stats"] for child in children)
         assert all("quality" not in child["level_stats"] for child in children)
+
+    def test_no_reduction_notice_names_positive_attribute_weight(
+        self, tmp_path, capsys
+    ):
+        verts, faces = octasphere(4)
+        scalars = np.arange(len(verts), dtype=np.float32)
+
+        write_ladder(
+            tmp_path,
+            verts,
+            faces,
+            scalars=scalars,
+            colormap="viridis",
+            substitutive_lod={"method": "cluster", "attribute_weight": 1.0},
+        )
+
+        message = capsys.readouterr().out
+        assert "no level reduced the surface" in message
+        assert "attribute_weight=1.0" in message
 
     def test_attribute_weight_is_forwarded_to_the_decimator(self, tmp_path):
         verts, faces = octasphere(3)
