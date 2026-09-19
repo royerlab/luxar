@@ -703,7 +703,16 @@ DATASETS: dict[str, dict] = {
         redistribute=False,
         license="conflict",
         source="Cell Tracking Challenge / Zenodo 5270323",
-        reason="CTC origin forbids cloning; Zenodo re-host CC-BY is an authority conflict.",
+        reason=(
+            "CTC origin forbids cloning; Zenodo re-host CC-BY is an authority conflict. "
+            "SCOPE (Loic, 2026-09-18): this flag governs RE-HOSTING THE DATASET -- the raw "
+            "recording or a fitted archive derived from it -- and nothing else. It does not "
+            "reach a screen recording that merely shows the data (a supplementary video films "
+            "a Tribolium fit, with the licence chain stated in the video record), nor the "
+            "analysed input crop deposited in the benchmark-volume record "
+            "10.5281/zenodo.22682969, which is published deliberately with the CTC chain "
+            "disclosed in its description. Do not read this flag as contradicting either."
+        ),
         strategy="Fetch raw from the Cell Tracking Challenge + fit locally (GPU), or seek CTC permission.",
     ),
     # ---- Bucket 1: regenerate client-side (no GPU); not hosted -------------

@@ -31,7 +31,9 @@ Download size (exact, from Range probes of the Drive files; decimal GB/MB):
   encoded so far and the label tables all live on top of it. --without-images
   peaks at ~16 GB, for the UMAP over the embeddings.
 
-Data source: OpenCell / CytoSelf (CC BY 4.0)
+Data source: OpenCell / CytoSelf (CC BY-SA 4.0 -- ShareAlike, as recorded in
+data_manifest.json; the AWS Open Data registry entry czb-opencell.yaml is the
+primary source)
   - Embeddings: Global VQ-VAE-2 representations (9,216-dim per image)
   - Labels: Protein name, subcellular localization
   - 114,806 images across ~1,311 proteins
