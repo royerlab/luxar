@@ -568,6 +568,9 @@ def run_fit_volume(
         "--cull-retention",
         help="After fitting, remove the weakest splats that collectively "
         "contribute less than (1 - value) of the total amplitude. "
+        "A --tile k/M worker applies this independently to its tile; batch-fit "
+        "does the same before merging, so --flat approximates rather than exactly "
+        "matches one global cull over the merged splats. "
         "For example, 0.95 — what a bare fit falls through to — discards splats "
         "in the bottom 5% of cumulative amplitude; how many splats that is "
         "depends on how heavy-tailed the data is, and on a sparse volume it can "
