@@ -278,7 +278,7 @@ def fit_tile(
     progressive : bool, default False
         If True, use progressive fitting (multiple passes on residuals)
         instead of standard single-pass fitting. The passes are an
-        optimisation schedule: each tile still returns one flat splat set.
+        optimization schedule: each tile still returns one flat splat set.
     max_splats_per_pass : int, default 5000
         Maximum splats per progressive pass (ignored if progressive=False).
     psnr_patience : float, default 0.5
@@ -318,7 +318,7 @@ def fit_tile(
     -------
     GSplatData
         Fit result with centers in global volume coordinates (a single
-        flat LOD; ``progressive=True`` changes how each tile is optimised,
+        flat LOD; ``progressive=True`` changes how each tile is optimized,
         not the structure of the result).
 
     Raises

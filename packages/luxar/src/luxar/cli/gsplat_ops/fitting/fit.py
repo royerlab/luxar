@@ -475,9 +475,9 @@ def run_fit_volume(
     progressive: bool = typer.Option(
         False,
         "--progressive",
-        help="Enable progressive fitting: optimise in several passes, each pass "
+        help="Enable progressive fitting: optimize in several passes, each pass "
         "fitting new splats to the residual of the previous ones. The passes are "
-        "an optimisation schedule, not a level-of-detail structure: the result is "
+        "an optimization schedule, not a level-of-detail structure: the result is "
         "ONE flat splat set (build a streaming ladder afterwards with "
         "`luxar gsplat lod --recipe stream`). "
         "Tip: for tiled batch jobs, combine with --parallel to improve GPU utilization.",

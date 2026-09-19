@@ -324,8 +324,8 @@ def fit_gaussian_splats(
         Loss function: "l1" (default; robust to outliers, preserves sharp features;
         in the loss-comparison study, Supp. Doc. 5, L1 beats MSE on held-out PSNR
         on 11 of 17 microscopy volumes and never trails it by more than 0.28 dB),
-        "mse" (the global unregularised MSE minimiser maximises training PSNR, but
-        finite-iteration regularised fits do not reach it), or "poisson" (natural
+        "mse" (the global unregularized MSE minimizer maximizes training PSNR, but
+        finite-iteration regularized fits do not reach it), or "poisson" (natural
         for count/photon data; stops in the fewest iterations on most confocal
         volumes, 8-15x shorter wall time than MSE where MSE runs to the iteration
         cap, at a held-out cost vs L1 of up to ~2.9 dB).
