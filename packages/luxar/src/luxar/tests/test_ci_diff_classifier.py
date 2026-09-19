@@ -61,6 +61,11 @@ CUDA_WORKFLOW = REPO / ".github/workflows/cuda-nightly.yml"
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
     (
+        ".github/dependabot.yml",
+        "py",
+        "test_dependabot_config.py validates its lockstep dependency groups",
+    ),
+    (
         ".github/workflows/cadence-liveness.yml",
         "py",
         "test_daily_workflow_has_the_permissions_and_token_to_enforce_the_table parses it",
