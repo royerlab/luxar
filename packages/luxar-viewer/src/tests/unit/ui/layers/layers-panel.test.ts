@@ -743,7 +743,11 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     expect(findActiveLevelStatus(container)?.textContent).toBe('L1/2 · ~60%');
   });
 
-  it('appends the separate normalized mesh error without energy stamps', () => {
+  it.each([
+    [0, 'L1/2'],
+    [0.125, 'L1/2 · ε≤13%'],
+    [0.995, 'L1/2 · ε≤100%'],
+  ])('formats the separate normalized mesh error %s as %s', (geometricError, expected) => {
     registryGetMock.mockReturnValue({
       activeChildIndex: 0,
       children: [
@@ -753,7 +757,7 @@ describe('LayersPanel — LOD active-level dropdown', () => {
             userData: {
               nodeType: 'mesh',
               visibleTriangleCount: 10,
-              attrs: { level_stats: { geometric_error: 0.125 } },
+              attrs: { level_stats: { geometric_error: geometricError } },
             },
           },
         },
@@ -766,7 +770,7 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     panel.show();
     panel.layerState.select('/pyramid', 'single');
 
-    expect(findActiveLevelStatus(container)?.textContent).toBe('L1/2 · ε≤13%');
+    expect(findActiveLevelStatus(container)?.textContent).toBe(expected);
   });
 
   it('dropdown options are 1-based labels with 0-based values', () => {

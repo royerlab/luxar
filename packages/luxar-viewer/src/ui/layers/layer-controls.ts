@@ -1136,10 +1136,14 @@ export class LayerControls {
       const qualityStr = q == null ? '' : ` · ~${Math.round(q * 100)}%`;
       const geometricError = displayedGeometricErrorFraction(entry.children[shown]?.object ?? {});
       const errorStr =
-        geometricError == null ? '' : ` · ε≤${(geometricError * 100).toPrecision(2)}%`;
+        geometricError == null || geometricError === 0
+          ? ''
+          : ` · ε≤${Math.round(geometricError * 100)}%`;
       return `L${shown + 1}/${entry.children.length}${qualityStr}${errorStr}${suffix}`;
     }
     if (this.isBroadcastPartition(primary)) {
+      // This readout summarizes nested level indices only; ε is scoped to the
+      // direct kind=lod branch above until partition-wide error aggregation exists.
       // Aggregate across EVERY nested lod_group, not just the first: under
       // auto-selection each part picks its own level by its own on-screen
       // size, so they legitimately diverge (the mosaic recipe is unbalanced
