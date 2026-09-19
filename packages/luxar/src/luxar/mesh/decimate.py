@@ -69,7 +69,9 @@ from numpy.typing import NDArray
 # Keep the automatic tier below the one-minute boundary.
 QEM_AUTO_VERTEX_LIMIT = 10_000
 DECIMATION_METHODS = frozenset({"cluster", "qem"})
+# 4M exact pairs cost ~0.15 s per call, or ~3 s across a 25-pass bisection.
 _ORPHAN_NEAREST_PAIR_BUDGET = 4_000_000
+# 1M pairs cap each 3D distance temporary at 3M float64 elements.
 _ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET = 1_000_000
 
 
