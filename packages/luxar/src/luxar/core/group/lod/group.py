@@ -1301,13 +1301,32 @@ def resolve_substitutive_axis(
     }
 
 
+def _resolve_brightness_compensation(value: Any) -> Union[str, float]:
+    """Normalize the same-type brightness control."""
+    if value == "auto":
+        return "auto"
+    try:
+        brightness = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "brightness_compensation must be 'auto' or a finite value >= 0; "
+            f"got {value!r}"
+        ) from exc
+    if not math.isfinite(brightness) or brightness < 0.0:
+        raise ValueError(
+            "brightness_compensation must be 'auto' or a finite value >= 0; "
+            f"got {value!r}"
+        )
+    return brightness
+
+
 def resolve_same_type_representation(
     kwargs: Dict[str, Any],
     *,
     geometry: str,
     same_type: str,
     inapplicable_reasons: Dict[str, str],
-) -> tuple[str, Union[str, float]]:
+) -> tuple[str, Union[str, float], str]:
     """Resolve the shared ``coarse=`` and compensation vocabulary."""
     coarse = str(kwargs.pop("coarse", "gsplats")).replace("-", "_")
     allowed = ["gsplats", same_type]
@@ -1317,22 +1336,24 @@ def resolve_same_type_representation(
             f"{allowed}; got {coarse!r}"
         )
 
-    brightness = kwargs.pop("brightness_compensation", "auto")
-    if brightness != "auto":
-        try:
-            brightness = float(brightness)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "brightness_compensation must be 'auto' or a finite value >= 0; "
-                f"got {brightness!r}"
-            ) from exc
-        if not math.isfinite(brightness) or brightness < 0.0:
-            raise ValueError(
-                "brightness_compensation must be 'auto' or a finite value >= 0; "
-                f"got {brightness!r}"
-            )
-
+    brightness = _resolve_brightness_compensation(
+        kwargs.pop("brightness_compensation", "auto")
+    )
+    representation_method = "subsample"
     if coarse == same_type:
+        representation_method = str(kwargs.pop("method", "subsample")).replace("-", "_")
+        if representation_method not in {"subsample", "merge"}:
+            raise ValueError(
+                f"substitutive_lod for {geometry}: method must be 'subsample' or "
+                f"'merge' when coarse={same_type!r}; got {representation_method!r}"
+            )
+    if coarse == same_type:
+        if representation_method == "merge" and brightness != "auto":
+            raise ValueError(
+                f"substitutive_lod for {geometry}: numeric "
+                "'brightness_compensation' does not apply to method='merge' — "
+                "merged representatives already conserve their source light."
+            )
         for key, reason in inapplicable_reasons.items():
             if key in kwargs:
                 raise ValueError(
@@ -1344,7 +1365,7 @@ def resolve_same_type_representation(
             f"substitutive_lod for {geometry}: 'brightness_compensation' applies "
             f"only when coarse={same_type!r}"
         )
-    return coarse, brightness
+    return coarse, brightness, representation_method
 
 
 def effective_blending_mode(
@@ -1425,6 +1446,28 @@ def same_type_colors_for_energy(colors: Any, n_elements: int) -> Any:
     if array.ndim == 2 and array.shape[0] == 1:
         return np.broadcast_to(array, (n_elements, array.shape[1]))
     return array
+
+
+def normalized_same_type_colors(
+    colors: Any, n_elements: int, *, integer_storage: bool
+) -> Any:
+    """Broadcast colours and convert encoded integer storage to display values."""
+    array = same_type_colors_for_energy(colors, n_elements)
+    if array is None:
+        return None
+    result = np.asarray(array, dtype=np.float32)
+    if integer_storage and np.issubdtype(np.asarray(array).dtype, np.integer):
+        result = result / float(np.iinfo(np.asarray(array).dtype).max)
+    return result
+
+
+def same_type_color_classes(colors: Any) -> Any:
+    """Quantize RGB into soft merge-ordering dimensions."""
+    if colors is None:
+        return None
+    rgb = np.clip(np.asarray(colors, dtype=np.float32)[:, :3], 0.0, None)
+    scale = max(1.0, float(np.max(rgb, initial=0.0)))
+    return np.rint(np.clip(rgb / scale, 0.0, 1.0) * 7.0).astype(np.int64)
 
 
 def materialize_same_type_colors(

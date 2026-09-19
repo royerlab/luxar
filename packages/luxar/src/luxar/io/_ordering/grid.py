@@ -9,39 +9,9 @@ from __future__ import annotations
 
 import numpy as np
 
-
-def normalize_coords_to_grid(
-    coords: np.ndarray, min_coords: np.ndarray, max_coords: np.ndarray, resolution: int
-) -> np.ndarray:
-    """Normalize float coordinates to integer grid [0, resolution-1].
-
-    Args:
-        coords: Float coordinates, shape (N, d)
-        min_coords: Minimum bounds, shape (d,)
-        max_coords: Maximum bounds, shape (d,)
-        resolution: Grid resolution (e.g., 2^16 = 65536)
-
-    Returns:
-        Integer coordinates, shape (N, d), dtype uint32
-    """
-    working_dtype = np.promote_types(coords.dtype, np.float32)
-    coords = coords.astype(working_dtype, copy=False)
-    min_coords = min_coords.astype(working_dtype, copy=False)
-    max_coords = max_coords.astype(working_dtype, copy=False)
-
-    # Normalize to [0, 1]
-    ranges = max_coords - min_coords
-    # Handle degenerate dimensions (zero range)
-    ranges = np.where(ranges > 0, ranges, 1.0)
-    normalized = (coords - min_coords) / ranges
-
-    # Clamp to [0, 1] (handle floating point errors)
-    normalized = np.clip(normalized, 0.0, 1.0)
-
-    # Scale to [0, resolution-1]
-    grid_coords = (normalized * (resolution - 1)).astype(np.uint32)
-
-    return np.asarray(grid_coords)
+from ...utils.spatial_ordering import (
+    normalize_coords_to_grid as normalize_coords_to_grid,
+)
 
 
 def compute_auto_resolution(coords: np.ndarray, max_resolution: int = 2**16) -> int:
