@@ -31,8 +31,8 @@ Localization: Cytoskeleton (microtubule network)
 
 Channels:
 ---------
-  0: MAP4-GFP       — Target protein (microtubule network, cyan)
-  1: Hoechst 33342  — Nuclear stain (blue)
+  0: Hoechst 33342  — Nuclear stain (cyan)
+  1: MAP4-GFP       — Target protein (microtubule network, blue)
 
 How to Cite:
 ------------
