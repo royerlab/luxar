@@ -61,9 +61,11 @@ def test_viewer_lockstep_dependencies_share_dependabot_group(
     for group_name, group in viewer_update.get("groups", {}).items():
         if group.get("applies-to", "version-updates") != applies_to:
             continue
-        patterns = group["patterns"]
+        patterns = group.get("patterns", [])
+        excluded = group.get("exclude-patterns", [])
         if all(
             any(fnmatchcase(member, pattern) for pattern in patterns)
+            and not any(fnmatchcase(member, pattern) for pattern in excluded)
             for member in family_members
         ):
             matching_groups.append(group_name)
