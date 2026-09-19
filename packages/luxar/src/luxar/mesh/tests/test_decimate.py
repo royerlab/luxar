@@ -17,6 +17,8 @@ import pytest
 
 from .. import qem
 from ..decimate import (
+    _ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET,
+    _ORPHAN_NEAREST_PAIR_BUDGET,
     QEM_AUTO_VERTEX_LIMIT,
     _normalized_collapse_error,
     decimate,
@@ -139,7 +141,9 @@ class TestDecimateCluster:
 
         assert error == pytest.approx(0.6)
 
-    def test_many_disconnected_components_bound_orphan_work(self) -> None:
+    def test_many_disconnected_components_bound_orphan_work(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         n_islands = 5_000
         offsets = np.random.default_rng(7).random((n_islands, 3), dtype=np.float32)
         tetra = np.array(
@@ -154,11 +158,21 @@ class TestDecimateCluster:
             tetra_faces[None, :, :]
             + (4 * np.arange(n_islands, dtype=np.uint32))[:, None, None]
         ).reshape(-1, 3)
+        norm_sizes: list[int] = []
+        norm = np.linalg.norm
+
+        def recording_norm(values: Any, *args: Any, **kwargs: Any) -> Any:
+            norm_sizes.append(np.asarray(values).size)
+            return norm(values, *args, **kwargs)
+
+        monkeypatch.setattr(np.linalg, "norm", recording_norm)
 
         coarse = decimate_cluster(vertices, faces, target_vertices=len(vertices) // 4)
 
         assert 0 < len(coarse.vertices) < len(vertices)
-        assert np.isfinite(coarse.geometric_error)
+        assert 0.0 < coarse.geometric_error < 1.0
+        assert max(norm_sizes) <= 3 * _ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET
+        assert sum(norm_sizes) <= 2 * _ORPHAN_NEAREST_PAIR_BUDGET
 
     def test_a_ladder_of_levels_is_strictly_coarser_and_still_a_sphere(self) -> None:
         v, f = octasphere(4)
