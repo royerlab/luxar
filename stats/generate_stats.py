@@ -659,10 +659,16 @@ def collect_test_file_counts(root: Path) -> dict[str, Any]:
         if viewer.exists()
         else []
     )
-    # CUDA tests are the GPU-kernel subset of the Python suite: pytest files whose
-    # path or name says "cuda". They are counted INSIDE the Python column and shown
-    # separately so the GPU-only coverage is visible (they skip on a host without CUDA).
-    cuda_tests = [p for p in py_tests if "cuda" in str(p.relative_to(root)).lower()]
+    # CUDA tests are the GPU-kernel subset of the Python suite. Keep this narrower
+    # than every test whose name mentions CUDA: build/configuration tests do not
+    # require a GPU and therefore do not belong in the GPU-only coverage count.
+    python_root = root / "packages" / "luxar" / "src" / "luxar"
+    cuda_tests = [
+        path
+        for path in py_tests
+        if path.is_relative_to(python_root)
+        and "/cuda/tests/" in f"/{path.relative_to(python_root).as_posix()}"
+    ]
     go_tests = [p for p in root.rglob("*_test.go") if not _is_skipped(p)]
     return {
         "python_count": len(py_tests),
@@ -722,7 +728,11 @@ def get_test_statistics(
     go_static = 0
     for gf in inventory["go_files"]:
         try:
-            go_static += len(re.findall(r"^func Test\w*\s*\(", Path(gf).read_text(errors="ignore"), re.M))
+            go_static += len(
+                re.findall(
+                    r"^func Test\w*\s*\(", Path(gf).read_text(errors="ignore"), re.M
+                )
+            )
         except OSError:
             pass
     test_stats["go"]["test_count"] = go_static
@@ -754,7 +764,9 @@ def get_test_statistics(
     return test_stats
 
 
-def _run_cuda_tests(root: Path, test_stats: dict[str, Any], cuda_files: list[str]) -> None:
+def _run_cuda_tests(
+    root: Path, test_stats: dict[str, Any], cuda_files: list[str]
+) -> None:
     """Run only the CUDA-kernel test files and record collected / passed / skipped.
 
     These tests are already part of the Python run; this pass exists so the
@@ -764,9 +776,20 @@ def _run_cuda_tests(root: Path, test_stats: dict[str, Any], cuda_files: list[str
     if not cuda_files:
         return
     with asection("CUDA-kernel tests (subset of the Python suite)"):
-        cmd = ["hatch", "run", "pytest", "-q", "--tb=no", "-p", "no:cacheprovider", *cuda_files]
+        cmd = [
+            "hatch",
+            "run",
+            "pytest",
+            "-q",
+            "--tb=no",
+            "-p",
+            "no:cacheprovider",
+            *cuda_files,
+        ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, cwd=root)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=1800, cwd=root
+            )
         except FileNotFoundError:
             _mark_incomplete(test_stats["cuda"], "tool_missing", "hatch not found")
             return
@@ -774,45 +797,70 @@ def _run_cuda_tests(root: Path, test_stats: dict[str, Any], cuda_files: list[str
             _mark_incomplete(test_stats["cuda"], "timeout", "test run timed out")
             return
         sec = test_stats["cuda"]
-        for key, pat in (("test_passed", r"(\d+) passed"), ("test_skipped", r"(\d+) skipped"),
-                         ("test_failed", r"(\d+) failed")):
+        for key, pat in (
+            ("test_passed", r"(\d+) passed"),
+            ("test_skipped", r"(\d+) skipped"),
+            ("test_failed", r"(\d+) failed"),
+        ):
             m = re.search(pat, result.stdout + result.stderr)
             sec[key] = int(m.group(1)) if m else 0
-        sec["test_count"] = sec["test_passed"] + sec["test_skipped"] + sec["test_failed"]
-        aprint(f"Collected: {sec['test_count']}, Passed: {sec['test_passed']}, "
-               f"Skipped (no CUDA device): {sec['test_skipped']}, Failed: {sec['test_failed']}")
+        sec["test_count"] = (
+            sec["test_passed"] + sec["test_skipped"] + sec["test_failed"]
+        )
+        aprint(
+            f"Collected: {sec['test_count']}, Passed: {sec['test_passed']}, "
+            f"Skipped (no CUDA device): {sec['test_skipped']}, Failed: {sec['test_failed']}"
+        )
         if result.returncode not in (0, 1) and sec["test_count"] == 0:
-            _mark_incomplete(sec, "run_failed",
-                             f"test run exited with code {result.returncode} and produced no results")
+            _mark_incomplete(
+                sec,
+                "run_failed",
+                f"test run exited with code {result.returncode} and produced no results",
+            )
 
 
 def _run_go_tests(root: Path, test_stats: dict[str, Any], go_files: list[str]) -> None:
-    """Run `go test -v` in every package directory that holds a *_test.go."""
+    """Run `go test -v ./...` once for every Go module in the repository."""
     if not go_files:
         return
-    dirs = sorted({str(Path(f).parent) for f in go_files})
+    module_roots = sorted(
+        path.parent for path in root.rglob("go.mod") if not _is_skipped(path)
+    )
+    sec = test_stats["go"]
+    if not module_roots:
+        _mark_incomplete(sec, "run_failed", "no go.mod found for Go tests")
+        return
     with asection("Go tests"):
         passed = failed = 0
-        for d in dirs:
+        for module_root in module_roots:
             try:
-                result = subprocess.run(["go", "test", "-v", "./..."], capture_output=True,
-                                        text=True, timeout=600, cwd=d)
+                result = subprocess.run(
+                    ["go", "test", "-v", "./..."],
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                    cwd=module_root,
+                )
             except FileNotFoundError:
                 aprint("go not found; skipping Go tests")
-                _mark_incomplete(test_stats["go"], "tool_missing", "go not found")
+                _mark_incomplete(sec, "tool_missing", "go not found")
                 return
             except subprocess.TimeoutExpired:
-                _mark_incomplete(test_stats["go"], "timeout", "test run timed out")
+                _mark_incomplete(sec, "timeout", "test run timed out")
                 return
-            passed += len(re.findall(r"^--- PASS:", result.stdout, re.M))
-            failed += len(re.findall(r"^--- FAIL:", result.stdout, re.M))
-            if result.returncode != 0 and failed == 0:
-                _mark_incomplete(test_stats["go"], "run_failed",
-                                 f"go test exited with code {result.returncode} and produced no results")
-        sec = test_stats["go"]
-        sec["test_passed"], sec["test_failed"] = passed, failed
-        if passed + failed:
-            sec["test_count"] = passed + failed
+            module_passed = len(re.findall(r"^--- PASS:", result.stdout, re.M))
+            module_failed = len(re.findall(r"^--- FAIL:", result.stdout, re.M))
+            passed += module_passed
+            failed += module_failed
+            sec["test_passed"], sec["test_failed"] = passed, failed
+            if passed + failed:
+                sec["test_count"] = passed + failed
+            if result.returncode != 0 and module_failed == 0:
+                _mark_incomplete(
+                    sec,
+                    "run_failed",
+                    f"go test exited with code {result.returncode} and produced no results",
+                )
         aprint(f"Passed: {passed}, Failed: {failed}")
 
 
@@ -1403,6 +1451,7 @@ def generate_html_report(stats: dict[str, Any], output_file: Path) -> None:
         tests["python"]["test_failed"]
         + tests["typescript"]["test_failed"]
         + tests["rust"]["test_failed"]
+        + tests.get("go", {}).get("test_failed", 0)
     )
 
     py = langs["python"]
@@ -1815,7 +1864,7 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
     <td class="number">&mdash;</td>
     <td class="number">{total_passed:,}</td>
     <td>{pass_status}</td></tr>
-<td>Code Coverage</td>
+<tr><td>Code Coverage</td>
     <td class="number">{py_cov:.1f}%</td>
     <td class="number">&mdash;</td>
     <td class="number">{ts_cov:.1f}%</td>
@@ -1824,7 +1873,7 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
     <td class="number">&mdash;</td>
     <td class="number">{weighted_cov:.1f}%</td>
     <td>{cov_status}</td></tr>
-<td>Tests per 1K LOC</td>
+<tr><td>Tests per 1K LOC</td>
     <td class="number">{py_tpk:.1f}</td>
     <td class="number">&mdash;</td>
     <td class="number">{ts_tpk:.1f}</td>
@@ -2143,20 +2192,22 @@ def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
     # Tests
     lines.append("## Tests & Coverage")
     lines.append("")
-    cuda = tests.get("cuda", {})
-    go = tests.get("go", {})
-    lines.append("| Metric | Python | of which CUDA | TypeScript | Rust | Go | E2E | Total |")
+    cuda_tests = tests.get("cuda", {})
+    go_tests = tests.get("go", {})
+    lines.append(
+        "| Metric | Python | of which CUDA | TypeScript | Rust | Go | E2E | Total |"
+    )
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     lines.append(
-        f"| Test files | {tests['python']['test_files']:,} | {cuda.get('test_files', 0):,} | "
+        f"| Test files | {tests['python']['test_files']:,} | {cuda_tests.get('test_files', 0):,} | "
         f"{tests['typescript']['test_files']:,} | "
-        f"{tests['rust']['test_files']:,} | {go.get('test_files', 0):,} | "
+        f"{tests['rust']['test_files']:,} | {go_tests.get('test_files', 0):,} | "
         f"{tests['e2e']['test_files']:,} | {total_test_files:,} |"
     )
     lines.append(
-        f"| Tests collected | {tests['python']['test_count']:,} | {cuda.get('test_count', 0):,} | "
+        f"| Tests collected | {tests['python']['test_count']:,} | {cuda_tests.get('test_count', 0):,} | "
         f"{tests['typescript']['test_count']:,} | "
-        f"{tests['rust']['test_count']:,} | {go.get('test_count', 0):,} | &mdash; | {total_tests:,} |"
+        f"{tests['rust']['test_count']:,} | {go_tests.get('test_count', 0):,} | &mdash; | {total_tests:,} |"
     )
     total_passed = (
         tests["python"]["test_passed"]
@@ -2165,13 +2216,14 @@ def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
         + tests.get("go", {}).get("test_passed", 0)
     )
     cuda_passed_cell = (
-        f"{cuda.get('test_passed', 0):,} ({cuda.get('test_skipped', 0):,} skipped, no GPU)"
-        if cuda.get("test_skipped") else f"{cuda.get('test_passed', 0):,}"
+        f"{cuda_tests.get('test_passed', 0):,} ({cuda_tests.get('test_skipped', 0):,} skipped, no GPU)"
+        if cuda_tests.get("test_skipped")
+        else f"{cuda_tests.get('test_passed', 0):,}"
     )
     lines.append(
         f"| Tests passed | {tests['python']['test_passed']:,} | {cuda_passed_cell} | "
         f"{tests['typescript']['test_passed']:,} | "
-        f"{tests['rust']['test_passed']:,} | {go.get('test_passed', 0):,} | &mdash; | {total_passed:,} |"
+        f"{tests['rust']['test_passed']:,} | {go_tests.get('test_passed', 0):,} | &mdash; | {total_passed:,} |"
     )
     lines.append(
         f"| Coverage | {py_cov:.1f}% | &mdash; | {ts_cov:.1f}% | &mdash; | &mdash; | &mdash; | "

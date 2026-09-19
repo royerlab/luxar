@@ -58,8 +58,18 @@ def _rust_section(
 def _healthy_stats() -> dict[str, Any]:
     return {
         "python": _section(coverage=84.0),
+        "cuda": {
+            "test_files": 2,
+            "test_count": 20,
+            "test_passed": 10,
+            "test_skipped": 10,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        },
         "typescript": _section(coverage=70.0),
         "rust": _rust_section(),
+        "go": _rust_section(),
         "e2e": {"test_files": 3, "test_count": 0},
         "error": None,
     }
@@ -73,6 +83,8 @@ def _report_stats() -> dict[str, Any]:
     tests["python"]["test_files"] = 1_001
     tests["typescript"]["test_files"] = 2_002
     tests["rust"]["test_files"] = 3_003
+    tests["cuda"]["test_files"] = 5_005
+    tests["go"]["test_files"] = 6_006
     tests["e2e"]["test_files"] = 4_004
     return {
         "languages": languages,
@@ -130,7 +142,15 @@ def test_reports_format_test_file_counts_with_thousands_separators(
 
     html_report = html_file.read_text()
     markdown_report = markdown_file.read_text()
-    for count in ("1,001", "2,002", "3,003", "4,004", "10,010"):
+    for count in (
+        "1,001",
+        "2,002",
+        "3,003",
+        "4,004",
+        "5,005",
+        "6,006",
+        "16,016",
+    ):
         assert count in html_report
         assert count in markdown_report
 
@@ -171,6 +191,38 @@ def test_html_report_does_not_treat_skipped_tests_as_failures(tmp_path: Path) ->
     html_report = html_file.read_text()
     assert "All Passing" in html_report
     assert "Some Failures" not in html_report
+
+
+def test_html_report_treats_go_failures_as_failures(tmp_path: Path) -> None:
+    report_stats = _report_stats()
+    report_stats["tests"]["go"]["test_passed"] = 49
+    report_stats["tests"]["go"]["test_failed"] = 1
+    html_file = tmp_path / "stats.html"
+
+    gs.generate_html_report(report_stats, html_file)
+
+    test_table = html_file.read_text().split("Test &amp; Quality Metrics", 1)[1]
+    test_table = test_table.split("</table>", 1)[0]
+    assert "Some Failures" in test_table
+    assert "All Passing" not in test_table
+
+
+def test_report_test_tables_have_consistent_rows(tmp_path: Path) -> None:
+    html_file = tmp_path / "stats.html"
+    markdown_file = tmp_path / "stats.md"
+
+    gs.generate_html_report(_report_stats(), html_file)
+    gs.generate_markdown_report(_report_stats(), markdown_file)
+
+    html_table = html_file.read_text().split("Test &amp; Quality Metrics", 1)[1]
+    html_table = html_table.split("</table>", 1)[0]
+    assert html_table.count("<tr>") == html_table.count("</tr>")
+
+    markdown_table = markdown_file.read_text().split("## Tests & Coverage", 1)[1]
+    markdown_table = markdown_table.split("## Git Activity", 1)[0]
+    rows = [line for line in markdown_table.splitlines() if line.startswith("|")]
+    assert rows
+    assert all(len(row.split("|")) - 2 == 8 for row in rows)
 
 
 # ---------------------------------------------------------------------------
@@ -603,42 +655,251 @@ def _mk(path: Path, text: str = "") -> None:
 
 def test_inventory_counts_cuda_subset_and_go_files(tmp_path: Path) -> None:
     _mk(tmp_path / "packages" / "luxar" / "src" / "luxar" / "a" / "tests" / "test_a.py")
-    _mk(tmp_path / "packages" / "luxar" / "src" / "luxar" / "gsplats" / "cuda" / "tests" / "test_cuda_forward.py")
-    _mk(tmp_path / "packages" / "luxar" / "src" / "luxar" / "tests" / "test_cuda_build.py")
-    _mk(tmp_path / "packages" / "luxar-launcher" / "main_test.go", "func TestA(t *testing.T) {}\nfunc TestB(t *testing.T) {}\n")
+    _mk(
+        tmp_path
+        / "packages"
+        / "luxar"
+        / "src"
+        / "luxar"
+        / "gsplats"
+        / "cuda"
+        / "tests"
+        / "test_cuda_forward.py"
+    )
+    _mk(
+        tmp_path
+        / "packages"
+        / "luxar"
+        / "src"
+        / "luxar"
+        / "tests"
+        / "test_cuda_build.py"
+    )
+    _mk(
+        tmp_path / "packages" / "luxar-launcher" / "main_test.go",
+        "func TestA(t *testing.T) {}\nfunc TestB(t *testing.T) {}\n",
+    )
     inv = gs.collect_test_file_counts(tmp_path)
-    assert inv["python_count"] == 3          # CUDA files are Python test files too
-    assert inv["cuda_count"] == 2            # ...and are also reported as the CUDA subset
+    assert inv["python_count"] == 3
+    assert inv["cuda_count"] == 1
     assert inv["go_count"] == 1
     stats = gs.get_test_statistics(tmp_path, run_tests=False, run_coverage=False)
-    assert stats["cuda"]["test_files"] == 2
+    assert stats["cuda"]["test_files"] == 1
     assert stats["go"]["test_files"] == 1
-    assert stats["go"]["test_count"] == 2    # static `func Test...` count needs no toolchain
+    assert stats["go"]["test_count"] == 2
 
 
-def test_go_runner_parses_pass_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_go_runner_parses_pass_fail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = tmp_path / "module"
+    _mk(module / "go.mod", "module example.com/module\n")
+    test_file = module / "main_test.go"
+    _mk(test_file)
     out = "=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n--- FAIL: TestB (0.00s)\nFAIL\n"
-    monkeypatch.setattr(gs.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=out, stderr="", returncode=1))
-    stats = {"go": {"test_files": 1, "test_count": 2, "test_passed": 0, "test_failed": 0, "incomplete": None, "incomplete_kind": None}}
-    gs._run_go_tests(tmp_path, stats, [str(tmp_path / "x" / "main_test.go")])
+    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=1, stdout=out))
+    stats = {
+        "go": {
+            "test_files": 1,
+            "test_count": 2,
+            "test_passed": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        }
+    }
+    gs._run_go_tests(tmp_path, stats, [str(test_file)])
     assert (stats["go"]["test_passed"], stats["go"]["test_failed"]) == (1, 1)
-    assert stats["go"]["incomplete"] is None   # a genuinely failing run is a complete measurement
+    assert stats["go"]["incomplete"] is None
 
 
-def test_go_runner_missing_toolchain_is_incomplete(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_go_runner_runs_each_module_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = tmp_path / "module"
+    _mk(module / "go.mod", "module example.com/module\n")
+    root_test = module / "main_test.go"
+    child_test = module / "internal" / "foo" / "foo_test.go"
+    _mk(root_test)
+    _mk(child_test)
+    calls: list[Path] = []
+
+    def run(*_args: Any, **kwargs: Any) -> types.SimpleNamespace:
+        calls.append(Path(kwargs["cwd"]))
+        return types.SimpleNamespace(
+            stdout="--- PASS: TestA (0.00s)\n", stderr="", returncode=0
+        )
+
+    monkeypatch.setattr(gs.subprocess, "run", run)
+    stats = {
+        "go": {
+            "test_files": 2,
+            "test_count": 2,
+            "test_passed": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        }
+    }
+
+    gs._run_go_tests(tmp_path, stats, [str(root_test), str(child_test)])
+
+    assert calls == [module]
+    assert stats["go"]["test_passed"] == 1
+
+
+def test_go_runner_without_module_is_incomplete(tmp_path: Path) -> None:
+    test_file = tmp_path / "main_test.go"
+    _mk(test_file)
+    stats = {
+        "go": {
+            "test_files": 1,
+            "test_count": 1,
+            "test_passed": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        }
+    }
+
+    gs._run_go_tests(tmp_path, stats, [str(test_file)])
+
+    assert stats["go"]["incomplete_kind"] == "run_failed"
+    assert stats["go"]["incomplete"] == "no go.mod found for Go tests"
+
+
+def test_go_runner_checks_each_module_for_incomplete_results(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    for module in (first, second):
+        _mk(module / "go.mod", f"module example.com/{module.name}\n")
+        _mk(module / "main_test.go")
+    results = iter(
+        (
+            types.SimpleNamespace(
+                stdout="--- FAIL: TestA (0.00s)\n", stderr="", returncode=1
+            ),
+            types.SimpleNamespace(stdout="", stderr="build failed", returncode=2),
+        )
+    )
+    monkeypatch.setattr(gs.subprocess, "run", lambda *_a, **_k: next(results))
+    stats = {
+        "go": {
+            "test_files": 2,
+            "test_count": 2,
+            "test_passed": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        }
+    }
+
+    gs._run_go_tests(
+        tmp_path,
+        stats,
+        [str(first / "main_test.go"), str(second / "main_test.go")],
+    )
+
+    assert stats["go"]["test_failed"] == 1
+    assert stats["go"]["incomplete_kind"] == "run_failed"
+
+
+def test_go_runner_preserves_counts_before_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    for module in (first, second):
+        _mk(module / "go.mod", f"module example.com/{module.name}\n")
+        _mk(module / "main_test.go")
+    results: list[types.SimpleNamespace | subprocess.TimeoutExpired] = [
+        types.SimpleNamespace(
+            stdout="--- PASS: TestA (0.00s)\n", stderr="", returncode=0
+        ),
+        subprocess.TimeoutExpired(cmd=["go", "test"], timeout=600),
+    ]
+
+    def run(*_args: Any, **_kwargs: Any) -> types.SimpleNamespace:
+        result = results.pop(0)
+        if isinstance(result, subprocess.TimeoutExpired):
+            raise result
+        return result
+
+    monkeypatch.setattr(gs.subprocess, "run", run)
+    stats = {
+        "go": {
+            "test_files": 2,
+            "test_count": 2,
+            "test_passed": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        }
+    }
+
+    gs._run_go_tests(
+        tmp_path,
+        stats,
+        [str(first / "main_test.go"), str(second / "main_test.go")],
+    )
+
+    assert stats["go"]["test_passed"] == 1
+    assert stats["go"]["incomplete_kind"] == "timeout"
+
+
+def test_go_runner_missing_toolchain_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = tmp_path / "module"
+    _mk(module / "go.mod", "module example.com/module\n")
+    test_file = module / "main_test.go"
+    _mk(test_file)
+
     def boom(*a, **k):
         raise FileNotFoundError("go")
+
     monkeypatch.setattr(gs.subprocess, "run", boom)
-    stats = {"go": {"test_files": 1, "test_count": 2, "test_passed": 0, "test_failed": 0, "incomplete": None, "incomplete_kind": None}}
-    gs._run_go_tests(tmp_path, stats, [str(tmp_path / "x" / "main_test.go")])
+    stats = {
+        "go": {
+            "test_files": 1,
+            "test_count": 2,
+            "test_passed": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        }
+    }
+    gs._run_go_tests(tmp_path, stats, [str(test_file)])
     assert stats["go"]["incomplete_kind"] == "tool_missing"
-    assert "go: go not found" in gs.validate_measurements(stats | {"python": {}, "typescript": {}, "rust": {}}, run_tests=True, run_coverage=True)
+    assert "go: go not found" in gs.validate_measurements(
+        stats | {"python": {}, "typescript": {}, "rust": {}},
+        run_tests=True,
+        run_coverage=True,
+    )
 
 
-def test_cuda_runner_counts_skips_as_collected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cuda_runner_counts_skips_as_collected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     out = "ssssss....                                                       [100%]\n4 passed, 196 skipped in 2.10s\n"
-    monkeypatch.setattr(gs.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=out, stderr="", returncode=0))
-    stats = {"cuda": {"test_files": 12, "test_count": 0, "test_passed": 0, "test_skipped": 0, "test_failed": 0, "incomplete": None, "incomplete_kind": None}}
+    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=0, stdout=out))
+    stats = {
+        "cuda": {
+            "test_files": 12,
+            "test_count": 0,
+            "test_passed": 0,
+            "test_skipped": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        }
+    }
     gs._run_cuda_tests(tmp_path, stats, [str(tmp_path / "t" / "test_cuda_x.py")])
-    assert (stats["cuda"]["test_count"], stats["cuda"]["test_passed"], stats["cuda"]["test_skipped"]) == (200, 4, 196)
+    assert (
+        stats["cuda"]["test_count"],
+        stats["cuda"]["test_passed"],
+        stats["cuda"]["test_skipped"],
+    ) == (200, 4, 196)
     assert stats["cuda"]["incomplete"] is None

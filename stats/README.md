@@ -39,6 +39,10 @@ cat stats/PROJECT_STATS.md         # GitHub-friendly markdown summary
 > nothing is requested and nothing can be incomplete. Note that the reports it
 > writes carry zeros for the test counts and coverage — don't commit a
 > `stats-fast` report over a full one.
+>
+> Go participates in this completeness gate. Because Go is an optional
+> toolchain, install it with `make install-go` before running `make stats` on a
+> checkout that does not already have `go` on `PATH`.
 
 ## Files
 
@@ -131,7 +135,8 @@ The analyzer:
    - **CUDA**: kernels, device functions, host functions
    - **Go**: functions, structs, interfaces
    - **CSS**: rules, variables, media queries
-4. **Runs tests** with coverage for Python, TypeScript, and Rust
+4. **Runs test suites** for Python, TypeScript, Rust, CUDA, and Go, with coverage
+   for Python and TypeScript
 5. **Gathers Git statistics** (commits, contributors, activity)
 6. **Analyzes dependencies** from package manifests (pyproject.toml, package.json, Cargo.toml)
 7. **Generates HTML** with embedded CSS for portable viewing
@@ -188,6 +193,7 @@ Typical statistics for Luxar (run `make stats` for current values):
 - File and executable-line counts across all supported languages
 - Primary-language code distribution
 - Class, interface, function, kernel, and other definition counts
-- **Comprehensive test coverage** with Python/TypeScript/Rust tests
+- **Comprehensive test reporting** for Python/TypeScript/Rust/CUDA/Go, plus
+  Python/TypeScript coverage
 
 See `project_stats.html` for the full interactive report with charts and detailed breakdowns!
