@@ -502,9 +502,12 @@ def _penalty(matrix: list[list[bool]]) -> int:
     named function against the clause it implements.
     """
     size = len(matrix)
-    # strict: the matrix is square, so the transpose consumes every row.
+    # No `strict=`: this module is copied verbatim into an exported folder
+    # that must import on Python 3.9, where the keyword is a TypeError. The
+    # matrix is square, so the transpose consumes every row regardless.
     lines = [list(row) for row in matrix] + [
-        list(col) for col in zip(*matrix, strict=True)
+        list(col)
+        for col in zip(*matrix)  # noqa: B905 - Python 3.9 has no strict=
     ]
     return (
         _penalty_runs(lines)
@@ -590,12 +593,15 @@ def qr_ascii(matrix: list[list[bool]], *, border: int = 2, invert: bool = False)
     if len(rows) % 2:
         rows.append([False] * width)
     out = []
-    # strict: the pad above makes the row count even, so the halves pair exactly.
-    for top, bottom in zip(rows[0::2], rows[1::2], strict=True):
+    # The pad above makes the row count even, so the halves pair exactly.
+    # No `strict=` -- see `_penalty` on the 3.9 floor.
+    for top, bottom in zip(  # noqa: B905 - Python 3.9 has no strict=
+        rows[0::2], rows[1::2]
+    ):
         out.append(
             "".join(
                 _HALF[(t ^ invert, b ^ invert)]
-                for t, b in zip(top, bottom, strict=True)
+                for t, b in zip(top, bottom)  # noqa: B905 - 3.9 has no strict=
             )
         )
     return "\n".join(out)

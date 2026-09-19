@@ -1137,6 +1137,17 @@ def _looks_like_a_type_union(text: str) -> bool:
     )
 
 
+def _uses_zip_strict(node: ast.Call) -> bool:
+    """`zip(..., strict=...)`, which is a TypeError before 3.10.
+
+    An API-level version floor, not a syntax one: it parses everywhere and only
+    fails when the call runs. Worth naming separately because a linter that
+    wants `strict=` on every `zip` (ruff's B905) pushes straight into it.
+    """
+    name = node.func.id if isinstance(node.func, ast.Name) else None
+    return name == "zip" and any(kw.arg == "strict" for kw in node.keywords)
+
+
 def _runtime_only_since_310(source: str) -> list[str]:
     """Constructs in `source` that are EXECUTED and need Python 3.10+.
 
@@ -1154,6 +1165,8 @@ def _runtime_only_since_310(source: str) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Match):
             found.append(f"line {node.lineno}: match statement")
+        elif isinstance(node, ast.Call) and _uses_zip_strict(node):
+            found.append(f"line {node.lineno}: zip(strict=...)")
         elif (
             isinstance(node, ast.BinOp)
             and isinstance(node.op, ast.BitOr)
