@@ -70,7 +70,7 @@ DEFAULT_METHOD: PointsMethodName = DEFAULT_ADDITIVE_METHOD
 # resolver until its same-type arm lands.
 
 
-def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]]:
+def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float], str]:
     """Pop and validate the Points-only substitutive representation keys."""
     from .group import resolve_same_type_representation
 
@@ -86,10 +86,6 @@ def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]
             "max_aspect": (
                 "it caps anisotropy on merged Gaussian levels, and same-type "
                 "point levels contain no Gaussians"
-            ),
-            "method": (
-                "it selects the Gaussian clustering algorithm, and same-type "
-                "point levels are spatially stratified instead"
             ),
             "device": (
                 "it selects where Gaussian clustering runs; same-type point "
@@ -124,7 +120,7 @@ def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
         return resolve_substitutive_axis(spec, "Points")
 
     kwargs = dict(spec)
-    coarse, brightness = _resolve_points_representation(kwargs)
+    coarse, brightness, representation_method = _resolve_points_representation(kwargs)
     resolved = resolve_substitutive_axis(
         kwargs,
         "Points",
@@ -133,6 +129,8 @@ def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
     assert resolved is not None
     resolved["coarse"] = coarse
     resolved["brightness_compensation"] = brightness
+    if coarse == "points":
+        resolved["method"] = representation_method
     return resolved
 
 

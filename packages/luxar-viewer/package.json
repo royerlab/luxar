@@ -107,12 +107,13 @@
     "check:layers": "depcruise src --config .dependency-cruiser.cjs",
     "check:overrides": "node scripts/check-overrides.mjs",
     "check:node-types": "node scripts/check-node-types-version.mjs",
+    "check:three-types": "node scripts/check-three-types-version.mjs",
     "check:knip": "knip --no-progress --no-config-hints",
     "check:knip:ci": "knip --no-progress --no-config-hints --include files,dependencies",
     "format": "prettier --write --cache --cache-strategy content src scripts tools examples \"*.{ts,mts,cts,js,mjs,cjs}\"",
     "check:format": "prettier --check --cache --cache-strategy content src scripts tools examples \"*.{ts,mts,cts,js,mjs,cjs}\"",
     "check": "pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm test --run",
-    "check:static": "pnpm run check:overrides && pnpm run check:node-types && pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci",
+    "check:static": "pnpm run check:overrides && pnpm run check:node-types && pnpm run check:three-types && pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci",
     "check:coverage-slack": "node scripts/check-coverage-slack.mjs",
     "check:ci": "node scripts/run-ci-checks.mjs",
     "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
@@ -127,7 +128,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
-    "@types/node": "^22.12.0",
+    "@types/node": "^22.20.2",
     "@types/three": "~0.185.1",
     "@typescript-eslint/eslint-plugin": "^8.70.0",
     "@typescript-eslint/parser": "^8.70.0",

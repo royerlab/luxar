@@ -145,8 +145,15 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
     (
         "Makefile",
         "py",
-        "test_python_version_declarations.py greps it for a sub-floor interpreter, "
-        "and test_demo_commands.py grades the `clean-*` recipes and cache root",
+        "test_python_version_declarations.py and test_go_version_declarations.py "
+        "guard toolchain pins, and test_demo_commands.py grades the `clean-*` "
+        "recipes and cache root",
+    ),
+    (
+        "packages/luxar-launcher/go.mod",
+        "py",
+        "test_go_version_declarations.py compares its language floor with the CI "
+        "and bootstrap toolchains",
     ),
     (
         "Makefile",

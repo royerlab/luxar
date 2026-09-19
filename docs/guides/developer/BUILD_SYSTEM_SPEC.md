@@ -168,14 +168,15 @@ The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`,
 **What `make install-go` does:**
 1. macOS: installs Go via Homebrew (no sudo)
 2. Linux: downloads the official Go tarball into `~/.local/go/` (no sudo); user adds `~/.local/go/bin` to PATH
-3. Skips the install if a `go` binary is already on PATH
+3. Reuses a `go` binary already on PATH only when it meets the pinned `GO_VERSION`; otherwise it stops with a platform-specific upgrade remedy
 
 **What `make build-launchers` does:**
 1. Locates `go` (PATH or `~/.local/go/bin/go`)
-2. Builds the launcher with **`CGO_ENABLED=1`** because the WebView library links against system WebKit
-3. On macOS: builds `darwin-arm64` + `darwin-amd64` then `lipo`-merges into `darwin-universal`. Fails loudly if amd64 build fails (no silent rename — universal binary must actually be universal)
-4. On Linux: builds `linux-<host-arch>` against `libwebkit2gtk-4.1-dev` + `pkg-config`. The pinned `webview_go` still asks for `webkit2gtk-4.0`, so when 4.1 is available the build prepends the checked-in `packages/luxar-launcher/pkgconfig` compatibility module, which resolves that request to 4.1 without vendoring the binding. On older development hosts with only 4.0, the native module remains available instead of being shadowed by the shim.
-5. Drops binaries into `packages/luxar/src/luxar/cli/_launchers/`
+2. Rejects toolchains older than the pinned `GO_VERSION` before producing a binary
+3. Builds the launcher with **`CGO_ENABLED=1`** because the WebView library links against system WebKit
+4. On macOS: builds `darwin-arm64` + `darwin-amd64` then `lipo`-merges into `darwin-universal`. Fails loudly if amd64 build fails (no silent rename — universal binary must actually be universal)
+5. On Linux: builds `linux-<host-arch>` against `libwebkit2gtk-4.1-dev` + `pkg-config`. The pinned `webview_go` still asks for `webkit2gtk-4.0`, so when 4.1 is available the build prepends the checked-in `packages/luxar-launcher/pkgconfig` compatibility module, which resolves that request to 4.1 without vendoring the binding. On older development hosts with only 4.0, the native module remains available instead of being shadowed by the shim.
+6. Drops binaries into `packages/luxar/src/luxar/cli/_launchers/`
 
 **Critical constraint: CGO blocks pure cross-compilation.** Unlike Rust/WASM (where pure-Go cross-compile from any host worked previously), the launcher cannot be built for Linux from a macOS host or vice-versa without a CGO cross-toolchain (Zig, etc.). For full cross-platform release artifacts, build each OS on its own CI matrix runner.
 
@@ -1078,6 +1079,7 @@ that cap without re-measuring queue pressure.
 |------|----------------|--------|
 | Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
 | Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x supports `^20.19.0 || >=22.12.0` |
+| Go | 1.27.1 (pinned) | Native launcher compiler — `install-go` installs `GO_VERSION` (see the Makefile), and launcher builds reject older toolchains |
 | Rust | stable | WASM compilation |
 | wasm-pack | 0.15.0 (pinned) | WASM packaging — `install-rust` installs exactly `WASM_PACK_VERSION` (see the Makefile) with `cargo install --locked --force`, then fails unless PATH answers with that version |
 

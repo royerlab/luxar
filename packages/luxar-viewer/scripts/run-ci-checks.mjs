@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 export const CI_CHECKS = [
   'check:overrides',
   'check:node-types',
+  'check:three-types',
   'check:format',
   'typecheck',
   'lint',

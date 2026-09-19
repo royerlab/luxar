@@ -50,6 +50,35 @@ def test_spatial_partition_respects_max_elements_and_preserves_splats():
     assert sum(leaf.n_splats for leaf in leaves) == 60
 
 
+def test_adaptive_labeled_parts_keep_one_shared_vocabulary():
+    """Per-part reduction must not compact a shared categorical vocabulary."""
+    from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+
+    data = _clustered(30).with_label_ids(
+        np.repeat(np.array([0, 1], dtype=np.uint8), 30),
+        {0: "near", 1: "far", 9: "unused"},
+    )
+    node = build_recipe(
+        data,
+        "adaptive",
+        RecipeParams(
+            max_elements=20,
+            compression_factor=2,
+            levels=1,
+            substitutive_method="kmeans",
+            lloyd_iterations=0,
+            additive_ladders=False,
+            quality_stamps=False,
+            device="cpu",
+        ),
+    )
+
+    leaves = list(iter_leaves(node))
+    sublods = [leaf.additive_sublods[0] for leaf in leaves]
+    assert {tuple(np.unique(sublod.label_ids)) for sublod in sublods} == {(0,), (1,)}
+    assert all(sublod.label_vocabulary == data.label_vocabulary for sublod in sublods)
+
+
 def test_spatial_partition_is_spatially_coherent():
     """The two separated clusters land in different parts (BSP splits on space)."""
     data = _clustered(30)

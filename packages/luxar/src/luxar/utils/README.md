@@ -88,6 +88,14 @@ Array manipulation utilities.
 - Automatic type conversion with validation
 - Shape validation with helpful error messages
 
+### `spatial_ordering.py`
+Layer-neutral coordinate quantization and Morton encoding shared by `io` and
+`gsplats` without reversing their dependency order.
+
+**Key Functions:**
+- `normalize_coords_to_grid()`: Quantize floating coordinates to an integer grid
+- `morton_encode_nd()`: Interleave nD integer coordinates into uint64 Morton codes
+
 ### `atomic_copy.py`
 Atomic directory-tree copy. Writes to a sibling temp dir and `os.replace`s on
 success, so the destination either exists in full or not at all. Used by
