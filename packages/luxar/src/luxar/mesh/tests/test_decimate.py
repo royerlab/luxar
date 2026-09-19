@@ -113,7 +113,11 @@ class TestDecimateCluster:
         assert 0.0 < coarse.geometric_error < 1.0
         assert unchanged.geometric_error == 0.0
 
-    def test_orphan_vertices_use_their_own_nearest_coarse_vertex(self) -> None:
+    def test_orphan_vertices_use_their_own_nearest_coarse_vertex(
+        self, monkeypatch
+    ) -> None:
+        module = importlib.import_module("luxar.mesh.decimate")
+        monkeypatch.setattr(module, "_ORPHAN_DISTANCE_BLOCK_PAIR_BUDGET", 2)
         source = np.array([[-5, 0, 0], [5, 0, 0]], dtype=np.float64)
         output = np.array([[-1, 0, 0], [1, 0, 0]], dtype=np.float64)
         inverse = np.array([-1, -1], dtype=np.int64)
@@ -121,6 +125,19 @@ class TestDecimateCluster:
         error = _normalized_collapse_error(source, output, inverse, (0, 1, 2))
 
         assert error == pytest.approx(0.4)
+
+    def test_large_orphan_search_uses_a_conservative_shared_representative(
+        self, monkeypatch
+    ) -> None:
+        module = importlib.import_module("luxar.mesh.decimate")
+        monkeypatch.setattr(module, "_ORPHAN_NEAREST_PAIR_BUDGET", 3)
+        source = np.array([[-5, 0, 0], [5, 0, 0]], dtype=np.float64)
+        output = np.array([[-1, 0, 0], [1, 0, 0]], dtype=np.float64)
+        inverse = np.array([-1, -1], dtype=np.int64)
+
+        error = _normalized_collapse_error(source, output, inverse, (0, 1, 2))
+
+        assert error == pytest.approx(0.6)
 
     def test_many_disconnected_components_bound_orphan_work(self) -> None:
         n_islands = 5_000
