@@ -363,7 +363,7 @@ The package supports three loss functions, each optimized for different data cha
 ### **L1 (Mean Absolute Error)** - Default
 - **Best for**: Microscopy and most image-reconstruction tasks where the held-out (signal-recovery) metric matters
 - **Characteristics**: Robust to outliers, preserves edges, encourages sparse residuals
-- **Use when**: General-purpose default — verified empirically (Supp. Doc. 5) to reach equal-or-higher held-out PSNR than MSE on every microscopy dataset tested
+- **Use when**: General-purpose default — in the loss-comparison study (Supp. Doc. 5), L1 beats MSE on held-out PSNR on 11 of 17 microscopy volumes and never trails it by more than 0.28 dB
 - **Special synergy**: L1 + asymmetric penalty provides exceptional stability
 
 ### **Poisson (Deviance)**
