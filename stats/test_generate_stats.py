@@ -588,3 +588,57 @@ def test_git_statistics_head_scoped_and_no_transient_fields(tmp_path: Path) -> N
     assert "current_branch" not in stats
     assert "local_branches" not in stats
     assert "remote_branches" not in stats
+
+
+# ---------------------------------------------------------------------------
+# CUDA and Go test inventory / runners (added 2026-09-12: the report used to
+# fold the GPU-kernel tests into Python silently and omit the Go launcher tests)
+# ---------------------------------------------------------------------------
+
+
+def _mk(path: Path, text: str = "") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_inventory_counts_cuda_subset_and_go_files(tmp_path: Path) -> None:
+    _mk(tmp_path / "packages" / "luxar" / "src" / "luxar" / "a" / "tests" / "test_a.py")
+    _mk(tmp_path / "packages" / "luxar" / "src" / "luxar" / "gsplats" / "cuda" / "tests" / "test_cuda_forward.py")
+    _mk(tmp_path / "packages" / "luxar" / "src" / "luxar" / "tests" / "test_cuda_build.py")
+    _mk(tmp_path / "packages" / "luxar-launcher" / "main_test.go", "func TestA(t *testing.T) {}\nfunc TestB(t *testing.T) {}\n")
+    inv = gs.collect_test_file_counts(tmp_path)
+    assert inv["python_count"] == 3          # CUDA files are Python test files too
+    assert inv["cuda_count"] == 2            # ...and are also reported as the CUDA subset
+    assert inv["go_count"] == 1
+    stats = gs.get_test_statistics(tmp_path, run_tests=False, run_coverage=False)
+    assert stats["cuda"]["test_files"] == 2
+    assert stats["go"]["test_files"] == 1
+    assert stats["go"]["test_count"] == 2    # static `func Test...` count needs no toolchain
+
+
+def test_go_runner_parses_pass_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    out = "=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n--- FAIL: TestB (0.00s)\nFAIL\n"
+    monkeypatch.setattr(gs.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=out, stderr="", returncode=1))
+    stats = {"go": {"test_files": 1, "test_count": 2, "test_passed": 0, "test_failed": 0, "incomplete": None, "incomplete_kind": None}}
+    gs._run_go_tests(tmp_path, stats, [str(tmp_path / "x" / "main_test.go")])
+    assert (stats["go"]["test_passed"], stats["go"]["test_failed"]) == (1, 1)
+    assert stats["go"]["incomplete"] is None   # a genuinely failing run is a complete measurement
+
+
+def test_go_runner_missing_toolchain_is_incomplete(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def boom(*a, **k):
+        raise FileNotFoundError("go")
+    monkeypatch.setattr(gs.subprocess, "run", boom)
+    stats = {"go": {"test_files": 1, "test_count": 2, "test_passed": 0, "test_failed": 0, "incomplete": None, "incomplete_kind": None}}
+    gs._run_go_tests(tmp_path, stats, [str(tmp_path / "x" / "main_test.go")])
+    assert stats["go"]["incomplete_kind"] == "tool_missing"
+    assert "go: go not found" in gs.validate_measurements(stats | {"python": {}, "typescript": {}, "rust": {}}, run_tests=True, run_coverage=True)
+
+
+def test_cuda_runner_counts_skips_as_collected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    out = "ssssss....                                                       [100%]\n4 passed, 196 skipped in 2.10s\n"
+    monkeypatch.setattr(gs.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=out, stderr="", returncode=0))
+    stats = {"cuda": {"test_files": 12, "test_count": 0, "test_passed": 0, "test_skipped": 0, "test_failed": 0, "incomplete": None, "incomplete_kind": None}}
+    gs._run_cuda_tests(tmp_path, stats, [str(tmp_path / "t" / "test_cuda_x.py")])
+    assert (stats["cuda"]["test_count"], stats["cuda"]["test_passed"], stats["cuda"]["test_skipped"]) == (200, 4, 196)
+    assert stats["cuda"]["incomplete"] is None
