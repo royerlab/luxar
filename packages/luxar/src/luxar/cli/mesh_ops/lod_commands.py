@@ -517,7 +517,7 @@ def _reject_cross_recipe_flags(
     levels_given: bool,
     compression_given: bool,
     subst_method_given: bool,
-    attribute_weight_given: bool = False,
+    attribute_weight_given: bool,
 ) -> None:
     """Refuse a knob used against the recipe it does not belong to.
 
@@ -706,7 +706,7 @@ def _build_ladder_specs(
     levels: int,
     compression_factor: int,
     method: str,
-    attribute_weight: float = 0.0,
+    attribute_weight: float,
     add_method: Optional[str],
     n_lods: Optional[int],
     counts: Optional[str],
@@ -779,7 +779,7 @@ def run_lod(
     levels: int,
     compression_factor: int,
     method: str,
-    attribute_weight: float = 0.0,
+    attribute_weight: float,
     overwrite: bool,
     recipe: str = RECIPE_LEVELS,
     add_method: Optional[str] = None,
@@ -1131,9 +1131,9 @@ def lod_command(
         min=0.0,
         help=(
             "[--recipe levels] Opt-in appearance preservation. QEM adds a "
-            "normalized colour/scalar merge penalty; cluster treats exact "
-            "colour/scalar values as hard cell barriers. Zero keeps the existing "
-            "geometry-only behavior."
+            "normalized colour/scalar merge penalty; on cluster, any positive "
+            "value is the same hard barrier between exact colour/scalar values. "
+            "Zero keeps the existing geometry-only behavior."
         ),
     ),
     overwrite: bool = typer.Option(

@@ -1225,7 +1225,10 @@ be a child of a `kind=partition` group;
 gathered-and-renumbered vertex table (vertices on a cut are duplicated between
 neighbouring parts). A mesh may equally be a child of a `kind=lod` group —
 `add_mesh(substitutive_lod=…)` writes that shape, with each coarse level a decimated
-copy of the surface. The two cannot be combined in one call.
+copy of the surface. Each child stamps `level_stats.geometric_error`, the measured
+source-to-level collapse bound normalized by the source bounding-box diagonal; this
+is separate from mixture `quality` and carries no energy fields. The two cannot be
+combined in one call.
 
 ### 6. Sound Nodes
 

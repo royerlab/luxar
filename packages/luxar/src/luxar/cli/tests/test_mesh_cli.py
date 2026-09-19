@@ -572,6 +572,7 @@ def _run(
         levels=2,
         compression_factor=4,
         method="cluster",
+        attribute_weight=0.0,
         overwrite=overwrite,
     )
 
@@ -592,6 +593,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="qem",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) == 3
@@ -631,6 +633,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2, "the grid must produce a real ladder"
@@ -682,6 +685,7 @@ class TestMeshLod:
                 levels=2,
                 compression_factor=4,
                 method="bogus",
+                attribute_weight=0.0,
                 overwrite=True,
             )
         assert (out / "keepme.txt").read_text() == "previous output"
@@ -717,6 +721,7 @@ class TestMeshLod:
                 levels=2,
                 compression_factor=4,
                 method="qem",
+                attribute_weight=0.0,
                 overwrite=True,
             )
         assert (out / "keepme.txt").read_text() == "previous output"
@@ -1122,6 +1127,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1175,6 +1181,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 1
@@ -1210,6 +1217,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1263,6 +1271,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 1
@@ -1301,6 +1310,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1354,6 +1364,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1392,6 +1403,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1427,6 +1439,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1465,6 +1478,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1628,6 +1642,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1673,6 +1688,7 @@ class TestMeshLod:
                     levels=2,
                     compression_factor=4,
                     method="auto",
+                    attribute_weight=0.0,
                     overwrite=False,
                 )
             )
@@ -1695,6 +1711,7 @@ class TestMeshLod:
                     levels=2,
                     compression_factor=4,
                     method="auto",
+                    attribute_weight=0.0,
                     overwrite=False,
                 )
             )
@@ -1737,6 +1754,7 @@ class TestMeshLod:
                 levels=2,
                 compression_factor=4,
                 method="bogus",
+                attribute_weight=0.0,
                 overwrite=False,
             )
 
@@ -1779,6 +1797,7 @@ class TestMeshLod:
             levels=2,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
         )
         assert len(counts) >= 2
@@ -1906,6 +1925,7 @@ class TestMeshLodOutputPaths:
                 levels=2,
                 compression_factor=4,
                 method="auto",
+                attribute_weight=0.0,
                 overwrite=True,
                 recipe="reveaal",
             )
@@ -1977,6 +1997,7 @@ class TestMeshLodRevealRecipe:
             levels=3,
             compression_factor=4,
             method="auto",
+            attribute_weight=0.0,
             overwrite=False,
             recipe="reveal",
             **knobs,
@@ -2164,6 +2185,7 @@ class TestMeshLodRevealRecipe:
                 levels_given=False,
                 compression_given=False,
                 subst_method_given=False,
+                attribute_weight_given=False,
             )
         message = _plain(str(excinfo.value))
         assert expect_typed in message
@@ -2221,6 +2243,7 @@ class TestMeshLodRevealRecipe:
                 levels_given=False,
                 compression_given=False,
                 subst_method_given=False,
+                attribute_weight_given=False,
             )
 
     def test_a_decimation_method_passed_to_add_method_points_at_subst_method(
@@ -2246,6 +2269,7 @@ class TestMeshLodRevealRecipe:
                 levels_given=False,
                 compression_given=False,
                 subst_method_given=False,
+                attribute_weight_given=False,
             )
         assert "--subst-method" in _plain(str(excinfo.value))
 
@@ -2264,6 +2288,7 @@ class TestMeshLodRevealRecipe:
                 levels_given=False,
                 compression_given=False,
                 subst_method_given=False,
+                attribute_weight_given=False,
             )
 
     def test_an_invalid_add_method_is_refused_before_anything_is_written(
@@ -2291,6 +2316,7 @@ class TestMeshLodRevealRecipe:
                 levels=3,
                 compression_factor=4,
                 method="auto",
+                attribute_weight=0.0,
                 overwrite=True,
                 recipe="reveal",
                 add_method="salience",
@@ -2337,6 +2363,7 @@ class TestMeshLodRevealRecipe:
                 levels=3,
                 compression_factor=4,
                 method="auto",
+                attribute_weight=0.0,
                 overwrite=True,
                 recipe="levels",
                 **{knob: value},
@@ -2476,3 +2503,4 @@ class TestMeshLodRecipeGateThroughTheRealCLI:
         assert result.exit_code == 0
         summary = _plain(result.output)
         assert "reveal" in summary, summary
+        assert "any positive value is the same hard barrier" in summary, summary
