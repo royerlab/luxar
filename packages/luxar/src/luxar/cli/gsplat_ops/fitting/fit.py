@@ -104,7 +104,7 @@ def _parse_tile_worker_metadata(
     tile_volume_shape: Optional[str],
     tile_nonempty_count: Optional[int],
     tile_seed_count: Optional[int],
-    fold_tile_slivers: bool,
+    fold_tile_slivers: Optional[bool],
 ) -> "tuple[Optional[tuple[slice, ...]], Optional[tuple[int, ...]]]":
     region = _parse_tile_region(tile_region)
     shape = _parse_tile_volume_shape(tile_volume_shape)
@@ -123,8 +123,13 @@ def _parse_tile_worker_metadata(
     # hands its workers an exact count while each still reads the whole volume.
     if tile_seed_count is not None and tile is None:
         raise typer.BadParameter("--tile-seed-count requires --tile")
-    if fold_tile_slivers and tile is None:
-        raise typer.BadParameter("--fold-tile-slivers requires --tile")
+    # Tri-state since #2838: unset means "fold", which is what every other
+    # producer does. Only an EXPLICIT flag is a usage error off the --tile path,
+    # where there is no grid choice left to make.
+    if fold_tile_slivers is not None and tile is None:
+        raise typer.BadParameter(
+            "--fold-tile-slivers/--no-fold-tile-slivers requires --tile"
+        )
     return region, shape
 
 
@@ -345,7 +350,9 @@ def run_fit_volume(
     tile_seed_count: Optional[int] = typer.Option(
         None, "--tile-seed-count", hidden=True
     ),
-    fold_tile_slivers: bool = typer.Option(False, "--fold-tile-slivers", hidden=True),
+    fold_tile_slivers: Optional[bool] = typer.Option(
+        None, "--fold-tile-slivers/--no-fold-tile-slivers", hidden=True
+    ),
     jobs: str = typer.Option(
         "1",
         "--jobs",
@@ -957,7 +964,12 @@ def run_fit_volume(
                     full_volume_shape=parsed_tile_volume_shape,
                     nonempty_tiles=tile_nonempty_count,
                     tile_seed_count=tile_seed_count,
-                    fold_tile_slivers=fold_tile_slivers,
+                    # Unset folds: the `--tile k/M` worker must build the same
+                    # grid the sequential, -j N and batch-fit producers do, or
+                    # M itself means something different here (#2838).
+                    fold_tile_slivers=(
+                        True if fold_tile_slivers is None else fold_tile_slivers
+                    ),
                     preselected_tile=parsed_tile_region is not None,
                 )
 

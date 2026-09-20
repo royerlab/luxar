@@ -646,6 +646,81 @@ def test_cli_parallel_forwards_exact_counts_and_folded_grid(
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_parallel_forwards_the_parents_resolved_floor_and_scale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The occupancy scan already resolved both; workers get the ANSWERS.
+
+    Forwarding the user's spec instead left every worker re-resolving the same
+    level against the same volume and relied on the sampler being deterministic
+    to keep them in step. The shared scale must arrive in RAW input units — the
+    worker's own ``_ensure_tile_norm_range`` shifts it by the floor — or every
+    tile would be normalized against a doubly-subtracted top.
+    """
+    from luxar.gsplats.fit_tiled_gsplats import _tile_norm_range
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
+
+    captured: dict[str, Any] = {}
+
+    def _fake_parallel(**kwargs: Any) -> GSplatData:
+        captured.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+    )
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / "resolved.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "-j",
+            "2",
+            "--flat",
+            "--seeds",
+            "90",
+            "--floor",
+            "p50",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    commands = [
+        captured["worker_cmd_builder"](i, _N_TILES, tmp_path / f"r{i}")
+        for i in range(_N_TILES)
+    ]
+    floors = {cmd[cmd.index("--floor") + 1] for cmd in commands}
+    assert floors != {"p50"}, "the parent forwarded the spec, not its answer"
+    assert len(floors) == 1
+
+    volume = np.load(vol)
+    expected_level = resolve_volume_floor_denoised(volume, "p50", guard_numeric=True)
+    assert expected_level is not None
+    assert float(next(iter(floors))) == pytest.approx(expected_level)
+
+    tile_basis = _tile_norm_range(volume, {}, expected_level)
+    assert tile_basis is not None
+    ranges = {cmd[cmd.index("--norm-range") + 1] for cmd in commands}
+    assert len(ranges) == 1
+    low, high = (float(part) for part in next(iter(ranges)).split(","))
+    assert low == 0.0
+    assert high - expected_level == pytest.approx(tile_basis[1], rel=1e-6)
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
 def test_cli_parallel_downscale_announces_conservative_seed_split(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

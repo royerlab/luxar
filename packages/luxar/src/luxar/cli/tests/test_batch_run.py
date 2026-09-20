@@ -32,6 +32,34 @@ def test_tile_worker_metadata_rejects_fold_without_tile() -> None:
         )
 
 
+def test_tile_worker_metadata_rejects_explicit_no_fold_without_tile() -> None:
+    from luxar.cli.gsplat_ops.fitting.fit import _parse_tile_worker_metadata
+
+    with pytest.raises(typer.BadParameter, match="requires --tile"):
+        _parse_tile_worker_metadata(
+            tile=None,
+            tile_region=None,
+            tile_volume_shape=None,
+            tile_nonempty_count=None,
+            tile_seed_count=None,
+            fold_tile_slivers=False,
+        )
+
+
+def test_tile_worker_metadata_allows_unset_fold_without_tile() -> None:
+    """Unset is the DEFAULT, not a request (#2838): every plain fit carries it."""
+    from luxar.cli.gsplat_ops.fitting.fit import _parse_tile_worker_metadata
+
+    assert _parse_tile_worker_metadata(
+        tile=None,
+        tile_region=None,
+        tile_volume_shape=None,
+        tile_nonempty_count=None,
+        tile_seed_count=None,
+        fold_tile_slivers=None,
+    ) == (None, None)
+
+
 def test_tile_worker_metadata_accepts_zero_planned_seeds() -> None:
     from luxar.cli.gsplat_ops.fitting.fit import _parse_tile_worker_metadata
 

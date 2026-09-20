@@ -93,8 +93,14 @@ def _norm_range_args(
 def _tile_handoff_args(
     fold_tile_slivers: bool, tile_seed_count: Optional[int]
 ) -> list[str]:
-    """Build hidden arguments that keep a worker on the parent's tile plan."""
-    args = ["--fold-tile-slivers"] if fold_tile_slivers else []
+    """Build hidden arguments that keep a worker on the parent's tile plan.
+
+    The fold flag is emitted EXPLICITLY either way. Since #2838 the worker's own
+    default is to fold, so an omitted flag no longer means "unfolded" — a parent
+    replaying a historical unfolded grid has to say ``--no-fold-tile-slivers``
+    or its workers would build a different grid than the one it merges.
+    """
+    args = ["--fold-tile-slivers" if fold_tile_slivers else "--no-fold-tile-slivers"]
     if tile_seed_count is not None:
         args += ["--tile-seed-count", str(tile_seed_count)]
     return args
@@ -135,7 +141,7 @@ def build_worker_cmd(
     denoise_backend: str = "auto",
     denoise_2d: bool = False,
     allow_empty_tile: bool = False,
-    fold_tile_slivers: bool = False,
+    fold_tile_slivers: bool = True,
     tile_seed_count: Optional[int] = None,
 ) -> list[str]:
     """Build the ``luxar gsplat fit --tile i/M`` argv for one worker.
@@ -313,7 +319,7 @@ def fit_tiled_parallel(
     source_dtype: Optional[str] = None,
     volume: "Any | None" = None,
     device: Optional[str] = None,
-    fold_tile_slivers: bool = False,
+    fold_tile_slivers: bool = True,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 

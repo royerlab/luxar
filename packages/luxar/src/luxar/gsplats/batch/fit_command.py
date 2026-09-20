@@ -156,8 +156,14 @@ def build_task_fit_argv(
             # it and the merge skips it) instead of failing the task forever.
             "--allow-empty-tile",
         ]
-        if manifest.fold_tile_slivers:
-            cmd.append("--fold-tile-slivers")
+        # Explicit either way: the worker folds by default since #2838, so a
+        # LEGACY manifest with fold_tile_slivers=False has to say so or its
+        # tasks would build a different grid than the plan they resume.
+        cmd.append(
+            "--fold-tile-slivers"
+            if manifest.fold_tile_slivers
+            else "--no-fold-tile-slivers"
+        )
         cmd += _tile_local_read_args(manifest, job)
 
     if manifest.array_key is not None:

@@ -536,10 +536,14 @@ def _weighted_uniform_seed_counts(
     parsed_seeds: "int | float | None",
     fit_config: dict,
     saturation_exponent: float,
-    *,
-    keep_resolved_preprocessing: bool,
 ) -> "tuple[int, ...] | None":
-    """Resolve one exact occupancy-weighted count per uniform tile."""
+    """Resolve one exact occupancy-weighted count per uniform tile.
+
+    Resolves the background floor and the shared intensity scale IN
+    ``fit_config`` (marked ``_floor_resolved`` / ``_norm_range_resolved``) on the
+    way, because the occupancy measurement needs both. Returns ``None``, having
+    touched nothing, when the budget is not an integer that gets divided.
+    """
     if not _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
         return None
     assert isinstance(parsed_seeds, int) and not isinstance(parsed_seeds, bool)
@@ -554,32 +558,31 @@ def _weighted_uniform_seed_counts(
     from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
     from luxar.gsplats.fitting.validation import _validate_floor
 
-    resolved = fit_config if keep_resolved_preprocessing else dict(fit_config)
-    floor_spec = resolved.get("floor", "auto")
-    probe_cache = resolved.setdefault("_denoise_probe_cache", {})
+    floor_spec = fit_config.get("floor", "auto")
+    probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
     _validate_floor(floor_spec)
     applied_floor = resolve_volume_floor_denoised(
         volume,
         floor_spec,
-        denoise_h=resolved.get("_denoise_h"),
-        denoise_params=resolved.get("_denoise_params"),
+        denoise_h=fit_config.get("_denoise_h"),
+        denoise_params=fit_config.get("_denoise_params"),
         probe_cache=probe_cache,
         guard_numeric=True,
-        verbose=bool(resolved.get("verbose", True))
+        verbose=bool(fit_config.get("verbose", True))
         and floor_spec_needs_volume(floor_spec)
-        and resolved.get("_denoise_h") is not None
-        and resolved.get("_denoise_params") is not None,
+        and fit_config.get("_denoise_h") is not None
+        and fit_config.get("_denoise_params") is not None,
     )
-    resolved["floor"] = applied_floor if applied_floor is not None else "none"
-    resolved["_floor_resolved"] = True
+    fit_config["floor"] = applied_floor if applied_floor is not None else "none"
+    fit_config["_floor_resolved"] = True
     _ensure_tile_norm_range(
         volume,
-        resolved,
+        fit_config,
         applied_floor,
-        verbose=bool(resolved.get("verbose", True)),
+        verbose=bool(fit_config.get("verbose", True)),
     )
-    resolved["_norm_range_resolved"] = True
-    norm_range = resolved.get("norm_range")
+    fit_config["_norm_range_resolved"] = True
+    norm_range = fit_config.get("norm_range")
     signal_threshold = 0.0 if norm_range is None else 0.1 * float(norm_range[1])
     weights = uniform_tile_occupancy_weights(
         volume,
@@ -596,6 +599,51 @@ def _weighted_uniform_seed_counts(
         f"({len(specs)} grid tiles)"
     )
     return counts
+
+
+def _resolved_worker_preprocessing(
+    ctx: FitPipelineCtx, fit_config: dict, *, resolved: bool
+) -> "tuple[Optional[str], Optional[tuple[float, float]]]":
+    """The ``--floor`` / ``--norm-range`` a ``-j N`` parent hands its workers.
+
+    :func:`_weighted_uniform_seed_counts` has just resolved both against this
+    very volume in order to weigh the tiles. Forwarding the ANSWERS instead of
+    the user's spec saves each of the M workers the same bounded resolution, and
+    — more to the point — removes a class of parent/worker disagreement rather
+    than relying on every worker re-deriving the parent's number. When the scan
+    did not run (``resolved=False``: a compression ratio, ``--seeds auto``, or a
+    one-tile grid) nothing was resolved and the spec is forwarded as before.
+
+    ``--denoise`` needs no special case: the parent resolves the level with the
+    same ``_denoise_h`` / ``_denoise_params`` the worker is handed, from the same
+    deterministic bounded probe of the same (post-downscale) whole volume, so the
+    forwarded number is bit-for-bit the one the worker would have computed.
+
+    Two values are NOT forwarded and fall back to the spec. A negative resolved
+    level (legitimate on dark-frame-corrected data) would reach argv as
+    ``--floor -5.0``, which click parses as an option, not a value. And a
+    declined shared range (``None`` — see ``_tile_norm_range``) carries no
+    scale to hand on; the worker declines identically on its own.
+
+    The resolved range lives in the floor-SUBTRACTED tile basis, while
+    ``--norm-range`` is read in raw input units and shifted by the worker's
+    ``_ensure_tile_norm_range``, so the level is added back here.
+    """
+    if not resolved:
+        return ctx.floor, ctx.norm_range
+    level = fit_config.get("floor")
+    floor_arg = ctx.floor
+    applied = 0.0
+    if level == "none":
+        floor_arg = "none"
+    elif isinstance(level, (int, float)) and not isinstance(level, bool):
+        applied = float(level)
+        if applied >= 0.0:
+            floor_arg = f"{applied:.17g}"
+    shifted = fit_config.get("norm_range")
+    if shifted is None:
+        return floor_arg, ctx.norm_range
+    return floor_arg, (0.0, float(shifted[1]) + applied)
 
 
 def reject_rescaled_volume_refit(
@@ -762,7 +810,9 @@ def dispatch_parallel_tiled(
             parent_seeds,
             fit_config,
             ctx.saturation_exponent,
-            keep_resolved_preprocessing=False,
+        )
+        worker_floor, worker_norm_range = _resolved_worker_preprocessing(
+            ctx, fit_config, resolved=tile_seed_counts is not None
         )
 
         # Format downscale for worker argv (scalar or per-axis).
@@ -794,16 +844,18 @@ def dispatch_parallel_tiled(
                 config=ctx.config,
                 loss=ctx.loss,
                 lr=ctx.lr,
-                # Forward the user's SPEC verbatim: for auto/pNN each worker
-                # resolves it against the same volume with the deterministic
-                # sampler, so every worker subtracts one identical level. (An
-                # unset floor lets each worker apply its own --config/--preset
-                # merge.) A user NUMERIC passes straight through to the worker,
-                # which now applies it unvetoed — see fit_single_tile: a numeric
-                # above the volume's max windows every tile to zero, warned about
-                # per tile rather than silently ignored as it once was.
-                floor=ctx.floor,
-                norm_range=ctx.norm_range,
+                # The RESOLVED level and shared scale whenever the parent had to
+                # resolve them to weigh the tiles, so no worker re-derives what
+                # this process already measured on the same volume; otherwise
+                # the user's SPEC verbatim, which each worker resolves against
+                # that same volume with the deterministic sampler (an unset
+                # floor lets each worker apply its own --config/--preset merge).
+                # Either way a NUMERIC reaches the worker unvetoed — see
+                # fit_single_tile: a level above the volume's max windows every
+                # tile to zero, warned about per tile rather than silently
+                # ignored as it once was. See _resolved_worker_preprocessing.
+                floor=worker_floor,
+                norm_range=worker_norm_range,
                 seed_method=ctx.seed_method,
                 downscale=ds_arg,
                 channel=ctx.channel,
@@ -1266,10 +1318,15 @@ def fit_single_tile(
     full_volume_shape: "Optional[tuple[int, ...]]" = None,
     nonempty_tiles: Optional[int] = None,
     tile_seed_count: Optional[int] = None,
-    fold_tile_slivers: bool = False,
+    fold_tile_slivers: bool = True,
     preselected_tile: bool = False,
 ) -> "Any":
-    """Single-tile mode (Slurm-ready): fit tile ``--tile N/M`` of the grid."""
+    """Single-tile mode (Slurm-ready): fit tile ``--tile N/M`` of the grid.
+
+    ``fold_tile_slivers`` defaults to the folded grid every other producer
+    builds (#2838); only an explicit ``--no-fold-tile-slivers`` from a legacy
+    plan asks for the historical unfolded one.
+    """
     from luxar.gsplats.fit_tiled_gsplats import fit_tile
     from luxar.gsplats.tiling import compute_tile_specs
 
@@ -1290,6 +1347,13 @@ def fit_single_tile(
         ctx.tile_size,
         ctx.tile_overlap,
         fold_slivers=fold_tile_slivers,
+    )
+    # A hand-run `--tile k/M` is the one path where the user picked M from a
+    # grid they computed themselves, so say which grid was actually built.
+    aprint(
+        f"Tile grid: {len(specs)} tiles for {tuple(int(s) for s in grid_shape)} "
+        f"(tile_size={ctx.tile_size}, overlap={ctx.tile_overlap}, "
+        f"fold_tile_slivers={fold_tile_slivers})"
     )
     if tile_total != len(specs):
         aprint(
@@ -1449,7 +1513,6 @@ def fit_sequential_tiled(
         parsed_seeds,
         fit_config,
         ctx.saturation_exponent,
-        keep_resolved_preprocessing=True,
     )
     tile_seeds = (
         parsed_seeds

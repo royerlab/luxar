@@ -147,7 +147,15 @@ def test_old_manifest_keeps_historical_sliver_grid() -> None:
 
     argv = build_task_fit_argv(manifest, _job(k=1), "out.tmp", argv0=_ARGV0)
     assert argv[argv.index("--tile-region") + 1] == "480:532"
+    # The worker folds by DEFAULT since #2838, so silence would now build the
+    # 1-tile folded grid and strand tile 1. A legacy plan has to say so.
+    assert "--no-fold-tile-slivers" in argv
     assert "--fold-tile-slivers" not in argv
+
+    from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+    script = generate_fit_sbatch(manifest, "# preamble\n")
+    assert "--no-fold-tile-slivers" in script
 
 
 def test_tile_local_argv_without_integer_seed_count() -> None:

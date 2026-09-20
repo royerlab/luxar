@@ -201,8 +201,15 @@ def _tile_local_fit_command_parts(
 
 
 def _fold_sliver_fit_command_parts(manifest: BatchManifest) -> list[str]:
-    """Render the manifest-versioned uniform-grid geometry switch."""
-    return ["    --fold-tile-slivers"] if manifest.fold_tile_slivers else []
+    """Render the manifest-versioned uniform-grid geometry switch.
+
+    Emitted EXPLICITLY either way: since #2838 the worker folds by default, so a
+    LEGACY manifest carrying ``fold_tile_slivers=False`` must say so or its tasks
+    would resume a plan on a grid nobody planned.
+    """
+    if manifest.fold_tile_slivers:
+        return ["    --fold-tile-slivers"]
+    return ["    --no-fold-tile-slivers"]
 
 
 def _tile_local_variable_lines(plan: "Optional[TileLocalReadPlan]") -> list[str]:

@@ -161,6 +161,34 @@ def _tile_fit_kwargs(
     return tile_kwargs
 
 
+def _skipped_tile_result(
+    spec: TileSpec, ndim: int, applied_floor: "float | None"
+) -> GSplatData:
+    """The 0-splat result a tile contributes when it is never fitted.
+
+    Identical in shape and stats to what :func:`fit_tile` returns for a tile
+    windowed to near-zero signal, so a tile skipped for a zero seed budget is
+    indistinguishable downstream: the merge stays positionally aligned with the
+    grid (which is what labels the partition's BSP tree), ``splats_per_tile``
+    keeps its zero, and the normalization block still records the level that
+    would have been subtracted. This is the in-process counterpart of the
+    ``.empty`` marker a ``--allow-empty-tile`` batch worker writes.
+    """
+    from luxar.gsplats.utils.trils import tril_size
+
+    result = GSplatData(
+        centers=np.zeros((0, ndim), dtype=np.float32),
+        amplitudes=np.zeros((0,), dtype=np.float32),
+        cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
+        stats={"time_seconds": 0.0, "skipped": True},
+    )
+    result.stats["tile_index"] = spec.index
+    result.stats["tile_grid_index"] = spec.grid_index
+    result.stats["tile_origin"] = spec.origin
+    _stamp_tile_normalization(result.stats, applied_floor)
+    return result
+
+
 def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatData:
     """The fit's closing amplitude trim, keeping the score it just measured.
 
@@ -793,7 +821,7 @@ def fit_tiled(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
-    fold_tile_slivers: bool = False,
+    fold_tile_slivers: bool = True,
     tile_seed_counts: "Optional[Sequence[int]]" = None,
     # Taken explicitly rather than left in **fit_kwargs: forwarded to the tiles,
     # they would declare the WHOLE acquisition as each crop's source. They
@@ -846,14 +874,27 @@ def fit_tiled(
         Stop progressive passes if ΔPSNR < this value in dB.
     max_passes : int, optional
         Maximum number of progressive passes (None = unlimited).
-    fold_tile_slivers : bool, default False
+    fold_tile_slivers : bool, default True
         Fold a trailing tile whose unique coverage is smaller than the overlap
-        into its predecessor. The public library preserves its historical
-        unfolded grid by default; the CLI opts in so direct and batch fits agree.
+        into its predecessor, instead of emitting an overlap-dominated sliver.
+
+        **This CHANGES OUTPUT versus pre-#2838**, where the default was
+        ``False``. There is now exactly ONE uniform grid: this function, the
+        ``fit --tiling uniform`` sequential and ``-j N`` paths, the
+        ``fit --tile k/M`` worker, and every ``batch-fit`` producer all build
+        it. On ``(108, 1352, 532)`` at ``tile_size=512, overlap=32`` that is 3
+        tiles, where the unfolded grid had 6 — so the same call on the same
+        volume now fits different regions with different per-tile budgets, and
+        the result differs from a pre-#2838 one by more than a ``content_hash``.
+        Pass ``False`` to reproduce a historical grid.
     tile_seed_counts : sequence of int, optional
         Exact per-tile integer seed counts in grid order. When provided, this
         overrides ``seeds`` for each tile; its length must match the resolved
-        grid. This is the CLI handoff for occupancy-weighted whole-volume budgets.
+        grid. This is the CLI handoff for occupancy-weighted whole-volume
+        budgets. A ``0`` entry means "this tile holds no signal": the tile is
+        NOT fitted and contributes a 0-splat placeholder, mirroring the
+        ``--allow-empty-tile`` batch worker (the inner fitter rejects a
+        non-positive integer ``seeds``).
     cull_retention : float or None, default=0.95
         Post-fit cumulative culling on the merged result.  Keeps the top
         splats that account for this fraction of total amplitude (0--1).
@@ -994,6 +1035,19 @@ def fit_tiled(
 
         for spec in specs:
             label = f"Tile {spec.index + 1}/{len(specs)} grid={spec.grid_index}"
+            if tile_seed_counts is not None and int(tile_seed_counts[spec.index]) == 0:
+                # A zero budget is how the occupancy-weighted allocator says
+                # "no signal here" — it never zeroes a tile that holds any.
+                # Handing that 0 to `fit_tile` would reach the fitter's
+                # "seeds as int must be positive" on any tile that does, and
+                # this in-process loop has no per-tile `allow_empty_tile`
+                # escape hatch the way a batch worker subprocess does.
+                results.append(
+                    _skipped_tile_result(spec, len(volume_shape), applied_floor)
+                )
+                if verbose:
+                    aprint(f"{label}: zero seed budget, not fitted")
+                continue
             with asection(label):
                 tile_result = fit_tile(
                     volume,
@@ -1075,7 +1129,7 @@ def merge_tile_results(
     source_stored_bytes: Optional[int] = None,
     volume: "Any | None" = None,
     device: Optional[str] = None,
-    fold_tile_slivers: bool = False,
+    fold_tile_slivers: bool = True,
 ) -> "Any":
     """Merge per-tile fit results, preserving any additive ladders they carry.
 
@@ -1131,6 +1185,12 @@ def merge_tile_results(
         a factor too small and would no longer separate the parts they label,
         and by merged-quality scoring to render back on the reference grid.
         ``None`` when the grid and the splats share one frame.
+    fold_tile_slivers : bool, default True
+        The uniform-grid geometry ``results`` were fitted on, replayed here to
+        label the partition's split planes. Must match whatever built the tiles
+        — every Luxar producer now folds (#2838), so the default agrees with
+        them; pass ``False`` only to merge tiles fitted on a historical
+        unfolded grid.
     source_shape, source_dtype, source_itemsize : optional
         What the merged result is a representation of, stamped by
         :func:`_tiled_source_grid_stats` — no tile can say, since each was handed
