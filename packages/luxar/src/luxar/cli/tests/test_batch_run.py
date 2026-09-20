@@ -18,6 +18,74 @@ from luxar.gsplats.fit_tiled_gsplats import fit_tiled, merge_tile_results
 runner = CliRunner()
 
 
+def test_tile_worker_metadata_rejects_fold_without_tile() -> None:
+    from luxar.cli.gsplat_ops.fitting.fit import _parse_tile_worker_metadata
+
+    with pytest.raises(typer.BadParameter, match="requires --tile"):
+        _parse_tile_worker_metadata(
+            tile=None,
+            tile_region=None,
+            tile_volume_shape=None,
+            tile_nonempty_count=None,
+            tile_seed_count=None,
+            fold_tile_slivers=True,
+        )
+
+
+def test_tile_worker_metadata_accepts_zero_planned_seeds() -> None:
+    from luxar.cli.gsplat_ops.fitting.fit import _parse_tile_worker_metadata
+
+    region, shape = _parse_tile_worker_metadata(
+        tile="0/1",
+        tile_region="0:4,0:4",
+        tile_volume_shape="4,4",
+        tile_nonempty_count=1,
+        tile_seed_count=0,
+        fold_tile_slivers=False,
+    )
+
+    assert region == (slice(0, 4), slice(0, 4))
+    assert shape == (4, 4)
+
+
+def test_resume_rejects_completed_tiles_from_another_grid(tmp_path: Path) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 0, 1, "tile1.gsplats.zarr", 0.0)
+    existing = BatchManifest(
+        mode="uniform",
+        spatial_shape=(108, 1352, 532),
+        tile_size=512,
+        tile_overlap=32,
+        fold_tile_slivers=False,
+        n_tiles=6,
+        jobs=[job],
+    )
+    save_manifest(existing, output_dir)
+    tile = output_dir / "tiles" / job.output_filename
+    tile.mkdir(parents=True)
+    fresh = BatchManifest(
+        mode="uniform",
+        spatial_shape=(108, 1352, 532),
+        tile_size=512,
+        tile_overlap=32,
+        fold_tile_slivers=True,
+        n_tiles=3,
+    )
+
+    with pytest.raises(typer.BadParameter, match="pass --no-resume"):
+        _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+    _refuse_resume_grid_mismatch(output_dir, fresh, resume=False)
+
+
 def test_local_cpu_profile_preserves_auto_sizing(monkeypatch) -> None:
     """CPU execution still uses the legacy default profile for tile sizing."""
     import luxar.gsplats.gpu_profile as gpu_profile
@@ -776,13 +844,15 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     assert manifest.tile_local_reads is True
     assert manifest.fold_tile_slivers is True
     assert manifest.tile_nonempty_counts == [2]
-    assert manifest.tile_occupancy_weights == [[64.0, 0.0, 0.0, 1.0]]
+    assert manifest.tile_occupancy_weights == [
+        [pytest.approx(64.0**0.44), 0.0, 0.0, 1.0]
+    ]
     argv = build_task_fit_argv(
         manifest, manifest.jobs[3], tmp_path / "tile.gsplats.zarr", argv0=[]
     )
     assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
     assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
-    assert argv[argv.index("--tile-seed-count") + 1] == "2"
+    assert argv[argv.index("--tile-seed-count") + 1] == "14"
     output = capsys.readouterr().out
     assert "occupancy-weighted across 4 grid tiles" in output
     assert "exact per-tile counts resolved at plan time" in output

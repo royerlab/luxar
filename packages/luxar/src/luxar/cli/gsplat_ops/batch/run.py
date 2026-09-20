@@ -60,7 +60,10 @@ def run_batch_run(
         None, "--n-features-ref", rich_help_panel="Content-aware tiling"
     ),
     saturation_exponent: float = typer.Option(
-        0.44, "--saturation-exponent", rich_help_panel="Content-aware tiling"
+        0.44,
+        "--saturation-exponent",
+        help="Sub-linear exponent for content budgets and uniform tile weights.",
+        rich_help_panel="Content-aware tiling",
     ),
     saturation_cap: Optional[int] = typer.Option(
         None, "--saturation-cap", rich_help_panel="Content-aware tiling"
