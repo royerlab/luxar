@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "recordedAt": "2026-09-20",
+    "sourceCommit": "74332da89e41cc3134c46699a78920b7d9b7eb02",
+    "platform": "Linux x86_64 (obsidian)",
+    "browser": "Chrome for Testing 151.0.7922.34",
+    "playwright": "1.62.1",
+    "observed": {
+      "ssim": [0.634, 0.634],
+      "meanDeltaE": [6.314, 6.314],
+      "referenceBlownPixelFraction": 0.0002492,
+      "meanLumaRatio": [0.676276, 0.676276]
+    }
+  },
+  "benches": [
+    {
+      "id": "points-additive-merge",
+      "geometry": "points",
+      "blendingMode": "additive",
+      "lodGroup": "/points_additive",
+      "coarseLevel": 0,
+      "finestLevel": 1,
+      "thresholds": {
+        "minSsim": 0.6,
+        "maxMeanDeltaE": 7.2,
+        "maxBlownPixelFractionDelta": 0.001,
+        "minReferenceBlownPixelFraction": 0.0001,
+        "minMeanLumaRatio": 0.65
+      }
+    }
+  ]
+}
