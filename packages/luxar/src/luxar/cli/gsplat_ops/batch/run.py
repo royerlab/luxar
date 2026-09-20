@@ -8,6 +8,7 @@ from typing import Optional
 import typer
 from arbol import aprint
 
+from .help_text import BATCH_PROGRESSIVE_HELP
 from .plan_configs import build_plan_configs
 from .run_orchestration import run_batch_local_orchestration
 
@@ -124,7 +125,9 @@ def run_batch_run(
         None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
     ),
     batch_progressive: bool = typer.Option(
-        False, "--progressive", help="Progressive fitting per tile (multi-LOD)."
+        False,
+        "--progressive",
+        help=BATCH_PROGRESSIVE_HELP,
     ),
     batch_splats_per_pass: Optional[int] = typer.Option(
         None, "--splats-per-pass", help="Max splats per progressive pass"

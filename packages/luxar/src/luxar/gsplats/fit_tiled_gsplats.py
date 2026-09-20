@@ -765,7 +765,8 @@ def fit_tiled(
     verbose : bool, default True
         Print per-tile progress with arbol.
     progressive : bool, default False
-        Use progressive fitting per tile (multi-LOD output).
+        Optimize each tile in several residual passes. The fitter flattens those
+        passes into one splat set before the tiles are merged.
     max_splats_per_pass : int, default 5000
         Maximum splats per progressive pass (ignored if progressive=False).
     psnr_patience : float, default 0.5
@@ -803,10 +804,11 @@ def fit_tiled(
     -------
     GSplatData
         Merged result with all splats in global coordinates.
-        Multi-LOD if progressive=True. The merged reconstruction is also scored
-        against the whole volume. Metrics land in ``stats`` for a flat result
-        and in the root node's in-memory ``meta["fit_stats"]`` for a tree, ready
-        for the CLI writer to persist at the store root.
+        Progressive fitting changes the optimization schedule, not the result's
+        LOD structure. The merged reconstruction is also scored against the whole
+        volume. Metrics land in ``stats`` for a flat result and in the root node's
+        in-memory ``meta["fit_stats"]`` for a tree, ready for the CLI writer to
+        persist at the store root.
 
     Notes
     -----
@@ -989,12 +991,12 @@ def merge_tile_results(
     volume: "Any | None" = None,
     device: Optional[str] = None,
 ) -> "Any":
-    """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
+    """Merge per-tile fit results, preserving any additive ladders they carry.
 
     Shared by both the sequential :func:`fit_tiled` loop and the parallel
-    orchestrator in ``fit_tiled_parallel``.  Concatenates tile results
-    (LOD-aware when ``progressive``), stamps tiled-fitting stats, and applies
-    a single post-fit cumulative cull on the merged result.
+    orchestrator in ``fit_tiled_parallel``. Concatenates tile results, stamps
+    tiled-fitting stats, and applies a single post-fit cumulative cull on the
+    merged result.
 
     With ``partition=True`` (the CLI default) the tiles are kept as a
     ``kind=partition`` tree — one part per (Hann-apodized) tile, which sum
@@ -1016,7 +1018,7 @@ def merge_tile_results(
     num_tiles : int
         Number of tiles in the grid (``len(specs)``).
     progressive : bool
-        Whether tiles were fit progressively (selects LOD-aware merge).
+        Whether tiles were fit progressively, recorded in the merged stats.
     cull_retention : float or None
         Post-fit cumulative culling fraction on the merged result (0--1).
         ``None`` or outside (0, 1) disables culling.
@@ -1056,7 +1058,7 @@ def merge_tile_results(
     Returns
     -------
     GSplatData
-        Merged result. Multi-LOD if ``progressive`` and tiles carry sublods.
+        Merged result, preserving additive sub-LODs when the inputs carry them.
     """
     if len(results) == 0:
         return _empty_merge(volume_shape, results, applied_floor)
@@ -1064,8 +1066,7 @@ def merge_tile_results(
     # Partition: keep one part per tile (frustum culling). Apodized tiles sum
     # correctly as additive parts; cull each tile independently (the flat path's
     # single global cull has no meaning once tiles stay separate parts). Each
-    # region's `.tree` preserves its additive ladder, so a progressive tiled fit
-    # yields a partition of leaves-with-ladders for free.
+    # region's `.tree` preserves any additive ladder already carried by that tile.
     if partition:
         # Track each surviving region's TILE index alongside it: two independent
         # filters run below (empty tiles, then tiles a cull empties), so position
@@ -1145,7 +1146,7 @@ def merge_tile_results(
             )
         return node
 
-    # Merge tile results — LOD-aware if progressive
+    # Merge tile results, preserving additive ladders when present.
     has_lods = any(r.n_additive_sublods > 1 for r in results)
     if has_lods:
         merged = _merge_lods_across_tiles(results)
