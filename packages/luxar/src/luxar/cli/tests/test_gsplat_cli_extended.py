@@ -7832,6 +7832,7 @@ class TestFitProvenanceRewriteAudit:
     REWRITERS: ClassVar[dict[str, list[str]]] = {
         "slice": ["gsplat", "slice", "{in}", "{out}", "0:4, :, :"],
         "reencode": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
+        "reencode:archive": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
         "partition": TestLODCarriesAuthoredAppearance.REWRITERS["partition"],
         "lod": TestLODCarriesAuthoredAppearance.REWRITERS["lod:stream"],
         "flatten": TestLODCarriesAuthoredAppearance.REWRITERS["flatten"],
@@ -7852,6 +7853,7 @@ class TestFitProvenanceRewriteAudit:
         [
             "slice",
             "reencode",
+            "reencode:archive",
             "partition",
             "lod",
             "flatten",
@@ -7868,6 +7870,31 @@ class TestFitProvenanceRewriteAudit:
     ) -> None:
         self._stamp_provenance(medium_gsplats)
         input_path = medium_gsplats
+        command = label.partition(":")[0]
+        if label == "reencode:archive":
+            import shutil
+
+            root = zc_open_group(medium_gsplats, mode="r+")
+            root["fitting"].require_group("config").attrs["n_iters"] = 123
+            root.require_group("provenance").attrs["source"] = "fixture"
+            root.require_group("pipeline").attrs["lod_kind"] = "stream"
+            zc_consolidate(root)
+            archive_base = tmp_path / "provenance-input.gsplats.zarr"
+            input_path = Path(
+                shutil.make_archive(
+                    str(archive_base),
+                    "zip",
+                    root_dir=medium_gsplats.parent,
+                    base_dir=medium_gsplats.name,
+                )
+            )
+            from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+            _, archived_stats = load_gsplat_node(input_path, include_stats=True)
+            assert archived_stats["part_provenance"] == self.PROVENANCE
+            assert archived_stats["config"] == {"n_iters": 123}
+            assert archived_stats["provenance"] == {"source": "fixture"}
+            assert archived_stats["lod_kind"] == "stream"
         if label == "flatten":
             input_path = tmp_path / "partitioned-input.gsplats.zarr"
             partition = runner.invoke(
@@ -7883,7 +7910,7 @@ class TestFitProvenanceRewriteAudit:
             )
             assert partition.exit_code == 0, partition.stdout
 
-        out = tmp_path / f"provenance-{label}.gsplats.zarr"
+        out = tmp_path / f"provenance-{label.replace(':', '-')}.gsplats.zarr"
         argv = TestLODCarriesAuthoredAppearance._resolve(
             self.REWRITERS[label], input_path, out, tmp_path
         )
@@ -7893,8 +7920,12 @@ class TestFitProvenanceRewriteAudit:
         assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
         output = zc_open_group(out, mode="r")
         provenance = output["fitting"].attrs["part_provenance"]
-        if label in {"reencode", "partition", "lod"}:
+        if command in {"reencode", "partition", "lod"}:
             assert provenance == self.PROVENANCE
+            if label == "reencode:archive":
+                assert dict(output["fitting"]["config"].attrs) == {"n_iters": 123}
+                assert dict(output["provenance"].attrs) == {"source": "fixture"}
+                assert dict(output["pipeline"].attrs) == {"lod_kind": "stream"}
         elif label == "flatten":
             assert provenance == [
                 {

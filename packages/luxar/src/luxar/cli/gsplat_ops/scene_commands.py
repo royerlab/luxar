@@ -410,6 +410,7 @@ def reencode_command(
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
         from luxar.gsplats.io.save_gsplats import (
             FORMAT_VERSION,
+            split_fitting_info,
             write_gsplats_tree,
         )
         from luxar.gsplats.tree import total_splats
@@ -417,11 +418,10 @@ def reencode_command(
         with asection(f"Re-encoding {input_path.name} → {encoding}"):
             node, stats = load_gsplat_node(input_path, include_stats=True)
 
-            # Preserve the aux provenance groups verbatim (write_gsplats_tree
-            # drops them unless re-supplied). Read from the on-disk root; for
-            # a compressed input the loader already handled extraction, so
-            # re-open via the same path is safe for directory stores. Use the
-            # in-memory node for a compressed source (no directory to reopen).
+            # Preserve the aux provenance groups (write_gsplats_tree drops them
+            # unless re-supplied). Directory stores can be copied verbatim;
+            # archives have already been extracted and cleaned up by the loader,
+            # so rebuild the same four buckets from the loaded root stats.
             pipeline_info = fitting_info = fitting_config = provenance_info = None
             if input_path.is_dir():
                 root = zarr.open_group(str(input_path), mode="r")
@@ -433,6 +433,17 @@ def reencode_command(
                         fitting_config = dict(root["fitting"]["config"].attrs)
                 if "provenance" in root:
                     provenance_info = dict(root["provenance"].attrs)
+            else:
+                (
+                    fitting_info,
+                    fitting_config,
+                    provenance_info,
+                    pipeline_info,
+                ) = split_fitting_info(
+                    stats,
+                    include_fitting_info=True,
+                    include_provenance=True,
+                )
 
             from luxar.gsplats.io.load_gsplats import read_rebuild_root_attrs
 
