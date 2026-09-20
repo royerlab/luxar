@@ -1,6 +1,5 @@
 """Tests for nD transform validation and composition."""
 
-import warnings
 from types import SimpleNamespace
 
 import numpy as np
@@ -91,13 +90,16 @@ class TestValidateNdTransform:
         with pytest.raises(ValueError, match="unknown keys"):
             validate_nd_transform({"Time": {"scale": 1.0, "rotation": 45}})
 
-    def test_warn_scale_zero(self) -> None:
-        """Test warning for scale=0."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+    def test_reject_scale_zero(self) -> None:
+        """Test rejection for scale=0."""
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"nd_transform\['Time'\]\.scale.*"
+                r"zero scale is not a supported transform"
+            ),
+        ):
             validate_nd_transform({"Time": {"scale": 0.0}})
-            assert len(w) == 1
-            assert "scale is 0" in str(w[0].message)
 
     def test_reject_invalid_permutation_type(self) -> None:
         """Test rejection of non-list permutation."""
