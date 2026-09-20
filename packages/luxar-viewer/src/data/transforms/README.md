@@ -39,7 +39,8 @@ The 4x4 row-vs-column-major validation lives in
 // Inverse-transform (slicePosition, tolerance) from world to local
 // space. Returns fresh arrays; inputs are read-only. Displayed dims
 // are skipped. Permutations use the inverse permutation (tolerance
-// unchanged). Affine entries with scale === 0 are skipped.
+// unchanged). Zero-scale affines are invalid at authoring time; the
+// viewer defensively skips them if malformed data reaches this path.
 // On a DISCRETE dimension the local position is snapped to the grid
 // point whose forward image is the queried world value, or `noPreimage`
 // is set when there is none — see "The no-preimage rule" below.
@@ -82,8 +83,9 @@ export function computeWorldNdTransform(sceneGraph: SceneNode, targetPath: strin
   never mutate inputs.
 - **Identity is `{}`.** `composeNdTransforms()` with no args returns
   `{}`; an entry that collapses to `scale=1, offset=0` is omitted.
-- **scale === 0 is non-invertible** and left untouched by
-  `invertNdTransformForQuery` rather than dividing by zero.
+- **scale === 0 is rejected by authoring validation.** If malformed data
+  reaches the viewer, `invertNdTransformForQuery` defensively leaves that
+  dimension untouched rather than dividing by zero.
 - **Mixed types drop.** Affine ∘ permutation on the same dimension
   has no meaning and that dimension is omitted from the composition.
 - **Backtracking walk.** `computeWorldNdTransform` does a DFS with
