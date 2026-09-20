@@ -584,6 +584,8 @@ def read_gsplat_root_stats(root: Any, *, include_stats: bool = True) -> Dict[str
     stats: Dict[str, Any] = {}
     if "fitting" in root:
         stats.update(dict(root["fitting"].attrs))
+        if "config" in root["fitting"]:
+            stats["config"] = dict(root["fitting"]["config"].attrs)
     if "pipeline" in root:
         for key, value in root["pipeline"].attrs.items():
             stats.setdefault(key, value)
