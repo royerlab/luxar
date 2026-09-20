@@ -74,8 +74,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 ├───────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  scene.luxar.zarr/                                                          │
-│  ├── .zattrs              Scene metadata (dimensions, units, transforms)   │
-│  ├── .zmetadata           Consolidated metadata                            │
+│  ├── zarr.json            Scene attributes and consolidated metadata       │
 │  └── node_name/                                                            │
 │      ├── positions/       Blosc(zstd-9) compressed uint16 chunks           │
 │      ├── colors/          Blosc compressed uint8/float32                   │
@@ -104,7 +103,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │           ↓                                                                 │
 │  data/                                                                      │
 │  ┌──────────────────┐                                                      │
-│  │ Scene loader     │  Parse .zattrs, build THREE.js scene graph           │
+│  │ Scene loader     │  Parse scene attributes, build THREE.js scene graph  │
 │  │ Spatial index    │  Query chunk_bounds for AABB intersection            │
 │  │ Array decoder    │  Dequantize uint16 → float32                         │
 │  │ nD slicer        │  Hypersphere visibility (effective radius)           │
@@ -2381,8 +2380,9 @@ store uncompressed):
 
 ## Metadata Consolidation
 
-After scene construction, call `# Context manager handles finalization automatically` to:
-- Consolidate all metadata into `.zmetadata` file
+Exiting the `LuxarZarrCompiler` context manager finalizes the store to:
+- Consolidate metadata in the container's root metadata document (see
+  [Compatibility Notes](#compatibility-notes))
 - Improve load performance by reducing metadata requests
 - Enable efficient streaming from remote stores
 

@@ -1003,7 +1003,7 @@ make build-cuda SLURM=1 SLURM_PARTITION=gpu
 If you see "GPU fitting will use slower PyTorch fallback", fitting still works — just slower.
 
 **nD navigation not working**
-- Verify `scene_dimensions` defined in `.zattrs`
+- Verify `scene_dimensions` is defined in the scene attributes
 - Check dimension count matches position array shape
 - Ensure non-displayed dimensions have valid `range` and `step`
 

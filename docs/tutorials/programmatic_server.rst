@@ -149,10 +149,11 @@ The pattern below mirrors the approach used in the Luxar test suite itself
        #   app = create_server_app(path, cors_origin="*")
 
        # Zarr metadata is accessible
-       resp = requests.get(f"{base_url}/.zattrs")
+       resp = requests.get(f"{base_url}/zarr.json")
        assert resp.status_code == 200
        metadata = resp.json()
-       assert "luxar" in metadata  # Luxar scenes store config under this key
+       assert metadata["zarr_format"] == 3
+       assert metadata["attributes"]["format_type"] == "luxar_zarr"
 
 
    def test_scene_metadata(sample_zarr_path):
@@ -168,13 +169,16 @@ The pattern below mirrors the approach used in the Luxar test suite itself
        thread.start()
        wait_for_server(base_url)
 
-       resp = requests.get(f"{base_url}/.zattrs")
-       attrs = resp.json()
+       resp = requests.get(f"{base_url}/zarr.json")
+       assert resp.status_code == 200
+       metadata = resp.json()
 
        # Verify scene-level keys
-       luxar_meta = attrs["luxar"]
-       assert "scene" in luxar_meta
-       assert "children" in luxar_meta["scene"]
+       attrs = metadata["attributes"]
+       assert attrs["type"] == "scene"
+       assert "scene_dimensions" in attrs
+       children = metadata["consolidated_metadata"]["metadata"]
+       assert any("/" not in path for path in children)
 
 **Key points:**
 
@@ -217,10 +221,10 @@ respective names. The root path returns a JSON directory listing.
    # }
 
    # Each dataset is served at its own subpath:
-   resp = requests.get("http://127.0.0.1:8000/neurons.luxar.zarr/.zattrs")
+   resp = requests.get("http://127.0.0.1:8000/neurons.luxar.zarr/zarr.json")
    assert resp.status_code == 200
 
-   resp = requests.get("http://127.0.0.1:8000/vasculature.luxar.zarr/.zattrs")
+   resp = requests.get("http://127.0.0.1:8000/vasculature.luxar.zarr/zarr.json")
    assert resp.status_code == 200
 
 The directory listing JSON structure uses three possible values for the
@@ -269,7 +273,7 @@ authentication middleware, or other services.
    # After starting main_app:
    # - GET /api/experiments      -> your custom endpoint
    # - GET /data/health          -> Luxar health check
-   # - GET /data/.zattrs         -> Zarr metadata
+   # - GET /data/neurons.luxar.zarr/zarr.json -> dataset metadata
    # - GET /data/neurons.luxar.zarr/   -> dataset files (if /data/scenes/ is a directory)
    # - GET /data/                -> JSON directory listing
 
@@ -294,9 +298,9 @@ You can also mount multiple independent Luxar apps at different paths:
    main_app.mount("/vessels", create_server_app("/data/vasculature.luxar.zarr"))
 
    # GET /neurons/health   -> {"status": "ok"}
-   # GET /neurons/.zattrs  -> neuron scene metadata
+   # GET /neurons/zarr.json -> neuron scene metadata
    # GET /vessels/health   -> {"status": "ok"}
-   # GET /vessels/.zattrs  -> vasculature scene metadata
+   # GET /vessels/zarr.json -> vasculature scene metadata
 
 This second pattern gives you fine-grained control over which datasets are
 exposed at which paths, and lets you apply different middleware or
