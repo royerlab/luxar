@@ -697,19 +697,22 @@ arm.transform = transforms.rotate_y(45)  # Relative to parent
 
 ## Data Format
 
-Luxar uses Zarr for chunked, compressed storage optimized for streaming.
+Luxar uses Zarr for chunked, compressed storage optimized for streaming. New
+stores use Zarr format 3 by default:
 
 ```
 scene.luxar.zarr/
-├── .zattrs                 # Scene metadata (dimensions, version)
-├── .zmetadata              # Consolidated metadata for fast loading
+├── zarr.json               # Scene attributes and consolidated metadata
 └── node_name/
-    ├── .zattrs             # Node attributes (type, transform, rendering)
+    ├── zarr.json           # Node attributes (type, transform, rendering)
     ├── positions/          # (N, D) float32 coordinates
     ├── colors/             # (N, 3) float32 RGB values
     ├── radii/              # (N,) float32 point sizes
     └── chunk_bounds/       # Spatial index for efficient queries
 ```
+
+See the [format compatibility notes](docs/guides/user/LUXAR_ZARR_FORMAT.md#compatibility-notes)
+for the format-2 container layout.
 
 ### Performance Characteristics
 
@@ -1000,7 +1003,7 @@ make build-cuda SLURM=1 SLURM_PARTITION=gpu
 If you see "GPU fitting will use slower PyTorch fallback", fitting still works — just slower.
 
 **nD navigation not working**
-- Verify `scene_dimensions` defined in `.zattrs`
+- Verify `scene_dimensions` is defined in the scene attributes
 - Check dimension count matches position array shape
 - Ensure non-displayed dimensions have valid `range` and `step`
 

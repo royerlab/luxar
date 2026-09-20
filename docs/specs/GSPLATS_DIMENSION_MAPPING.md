@@ -239,7 +239,7 @@ Key fields:
 
 ```
 gsplat_node/
-  ├── .zattrs                   (metadata above)
+  ├── zarr.json                 (attributes above; default format 3)
   ├── centers                   (N, ndim) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶) / float32 (PRECISION)
   ├── amplitudes                (N,) or (1,) uint8/uint16 (AUTO) / float32 (PRECISION)
   ├── cholesky_factors_diag     (N, d) or (1, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION), d=ndim (diagonal, scale-like terms)

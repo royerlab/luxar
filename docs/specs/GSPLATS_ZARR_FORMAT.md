@@ -143,7 +143,7 @@ is present).
 Broadcasting uses the standard `luxar.encoding` format. When all elements share the same value, the array is stored with shape `(1,)` or `(1, d)` with encoding metadata:
 
 ```json
-// amplitudes/.zattrs - all splats have amplitude=1.0
+// amplitudes attributes - all splats have amplitude=1.0
 {
   "encoding": {
     "name": "broadcasted",
@@ -152,7 +152,7 @@ Broadcasting uses the standard `luxar.encoding` format. When all elements share 
 }
 ```
 
-The `n_splats` attribute on a leaf's `.zattrs` always reflects the true count (N), regardless of broadcasting.
+The `n_splats` attribute on a leaf always reflects the true count (N), regardless of broadcasting.
 
 ---
 
@@ -226,13 +226,17 @@ unit. Consumers that do not know the attribute ignore it.
 
 ## Zarr Structure (v3.x — node tree)
 
+These trees show the default Zarr format-3 container layout. See the
+[Luxar format compatibility notes](../guides/user/LUXAR_ZARR_FORMAT.md#compatibility-notes)
+for the format-2 container differences.
+
 The file root IS the node. The same three primitives nest arbitrarily:
 
 ### Shape 1 — bare leaf (single splat set)
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, has_label_ids,
+├── zarr.json         # attributes: type: "gsplats", n_splats, ndim, has_colors, has_label_ids,
 │                     # ordering, ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
 │                     # amplitude_mass, amplitude_mass_weighted_mean,
@@ -240,8 +244,8 @@ fitted.gsplats.zarr/
 │                     # position_bounds, truncation_radius,
 │                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
 │                     # format_version: "3.4", format_type: "gsplats_zarr",
-│                     # timestamp, luxar_gsplats_version, description?
-├── .zmetadata        # Consolidated metadata for fast loading
+│                     # timestamp, luxar_gsplats_version, description?;
+│                     # also carries consolidated metadata
 ├── centers                   # (N, d) uint16 (AUTO; lut_uint8 when a LUT is eligible; float32 if an axis extent ≥ 2¹⁶, or if a neither-gridded-nor-LUT axis's grid is too coarse for the splats' σ) / float32 (PRECISION), spatially ordered
 ├── amplitudes                # (N,) uint8/uint16 (AUTO) / float32 (PRECISION)
 ├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
@@ -250,23 +254,23 @@ fitted.gsplats.zarr/
 ├── label_ids         # (N,) or broadcast (1,) smallest exact uint (optional; never LUT/quantized)
 ├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/          # Optimization info (optional)
-│   ├── .zattrs       # time_seconds, iterations, converged, psnr_db, …
-│   └── config/.zattrs  # Fitter hyperparameters
+│   ├── zarr.json     # attributes: time_seconds, iterations, converged, psnr_db, …
+│   └── config/zarr.json  # attributes: fitter hyperparameters
 ├── pipeline/         # Reduction/topology stats (optional)
-│   └── .zattrs       # lod_kind, method, compression_factor, coverage_inflation, refine, …
+│   └── zarr.json     # attributes: lod_kind, method, compression_factor, coverage_inflation, refine, …
 └── provenance/       # Image lineage (optional)
-    └── .zattrs       # source_file, shape, dtype, normalization
+    └── zarr.json     # attributes: source_file, shape, dtype, normalization
 ```
 
 ### Shape 2 — additive ladder (prefix-sum LODs over the same N splats)
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "gsplats", n_splats (total), ndim, n_additive_sublods,
+├── zarr.json         # attributes: type: "gsplats", n_splats (total), ndim, n_additive_sublods,
 │                     # position_bounds, format_version: "3.4", …
 ├── additive_0/       # Coarsest additive sub-LOD (index 0 = coarsest)
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
-│   └── .zattrs       # type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
+│   └── zarr.json     # attributes: type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
 ├── additive_1/       # Only present when n_additive_sublods > 1
 │   └── …
 └── additive_{M-1}/   # Finest sub-LOD
@@ -280,15 +284,15 @@ Sub-LOD groups carry lightweight attrs (no rendering defaults).
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "group", kind: "lod", selector: "screen-area",
+├── zarr.json         # attributes: type: "group", kind: "lod", selector: "screen-area",
 │                     # default_level: <int>, display_type: "gsplats",
 │                     # position_bounds, format_version: "3.4", …
 ├── child_0/          # Coarsest child (child_0 = coarsest on disk)
-│   ├── .zattrs       # coverage_fraction: 0.0, compression_factor, level_index, …
+│   ├── zarr.json     # attributes: coverage_fraction: 0.0, compression_factor, level_index, …
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── …
 ├── child_1/
-│   ├── .zattrs       # coverage_fraction: <0..1>, …
+│   ├── zarr.json     # attributes: coverage_fraction: <0..1>, …
 │   └── …
 └── child_{N-1}/      # Finest child (coverage_fraction: 0.5, or 1.0 when the
     │                 #   ladder is bound to a spatial partition — see below)
@@ -404,10 +408,10 @@ ladder) is valid as a child.
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "group", kind: "partition", display_type: "gsplats",
+├── zarr.json         # attributes: type: "group", kind: "partition", display_type: "gsplats",
 │                     # max_elements: <int>, position_bounds, bsp_tree?, format_version: "3.4", …
 ├── part_0/           # BSP part 0 (any node shape valid per part)
-│   ├── .zattrs       # position_bounds (per-part bounds for frustum culling), child_index
+│   ├── zarr.json     # attributes: position_bounds (per-part bounds for frustum culling), child_index
 │   └── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 ├── part_1/
 │   └── …
@@ -476,9 +480,9 @@ A `kind=lod` group whose children are additive-ladder leaves combines both axes:
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "group", kind: "lod", …
+├── zarr.json         # attributes: type: "group", kind: "lod", …
 ├── child_0/          # Coarsest substitutive level — additive ladder
-│   ├── .zattrs       # type: "gsplats", n_additive_sublods, …
+│   ├── zarr.json     # attributes: type: "gsplats", n_additive_sublods, …
 │   ├── additive_0/
 │   └── additive_{M-1}/
 └── child_{N-1}/      # Finest substitutive level — additive ladder
@@ -489,7 +493,7 @@ fitted.gsplats.zarr/
 Partitions of LOD groups (`kind=partition` whose parts are `kind=lod` nodes)
 are also valid and nest in the same way.
 
-### Root Attributes (.zattrs)
+### Root Attributes
 
 The root carries both the node-type attrs (stamped by the shared walker) and
 the self-identifying file header (stamped by `write_gsplats_tree`):
@@ -505,12 +509,12 @@ the self-identifying file header (stamped by `write_gsplats_tree`):
 ```
 
 For a bare-leaf root, the node attrs (`type`, `n_splats`, `ndim`, `ordering`,
-`position_bounds`, rendering defaults) live alongside these header keys on the
-same `.zattrs`. For a group root (`kind=lod` or `kind=partition`), the node
+`position_bounds`, rendering defaults) live alongside these header keys in the
+same root attributes. For a group root (`kind=lod` or `kind=partition`), the node
 attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
 `position_bounds`, and any group-level meta.
 
-### Per-Leaf Splat Attributes (`.zattrs` on a leaf group)
+### Per-Leaf Splat Attributes
 
 ```json
 {
@@ -1736,11 +1740,17 @@ is purely a write-time budget. Pass an explicit `Blosc(...)` to override, or
 Quantized code arrays (COORDINATE `linear_perchannel_u16`, the Cholesky
 `log_perchannel` / `signed_log_perchannel` halves, the scalar
 `bounded_scalar` / `geolog_scalar` amplitudes, and COLOR `rgb_uint8` /
-`geolog_perchannel` / integer-passthrough codes) may carry a zarr v2
-**filter** in `.zarray`:
+`geolog_perchannel` / integer-passthrough codes) may carry this transform. In
+format 2 it appears as a filter in `.zarray`:
 
 ```json
 "filters": [{"id": "luxar_delta_v1", "cols": 3, "bits": 16}]
+```
+
+In format 3 it appears in the array's `zarr.json` codec chain:
+
+```json
+{"name": "luxar_delta_v1", "configuration": {"cols": 3, "bits": 16}}
 ```
 
 Hilbert ordering makes consecutive codes a smooth ramp; the filter stores
@@ -1774,14 +1784,15 @@ of that chunk's column — still bounded to a single chunk (each chunk has its
 own implicit 0 anchor).
 
 Reader requirements: chunks are whole-chunk reconstructed inside the zarr
-codec pipeline, so sub-chunk range reads keep working unchanged. In Python
-the codec registers via the numcodecs `numcodecs.codecs` **entry point**
-(declared in luxar's `pyproject.toml`), so any vanilla `zarr.open(...)` on a
-machine with luxar *installed* resolves it with no import; `import
-luxar.encoding` also registers it eagerly. The web viewer registers the
-TypeScript twin (`data/codecs/luxar-delta.ts`) as `numcodecs.luxar_delta_v1`
-in its zarr facade. Readers without luxar installed fail loudly (unknown
-codec), never silently corrupt.
+codec pipeline, so sub-chunk range reads keep working unchanged. An installed
+Luxar package registers both format spellings through the numcodecs
+`numcodecs.codecs` and zarr `zarr.codecs` entry points (declared in luxar's
+`pyproject.toml`), so a vanilla `zarr.open(...)` resolves either with no import;
+`import luxar.encoding` also registers them eagerly. The web viewer registers
+the TypeScript twin (`data/codecs/luxar-delta.ts`) as
+`numcodecs.luxar_delta_v1` for format 2 and the bare `luxar_delta_v1` for format
+3. Readers without Luxar installed fail loudly (unknown codec), never silently
+corrupt.
 
 ### Chunk Sizing
 

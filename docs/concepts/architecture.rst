@@ -122,7 +122,7 @@ The server layer sits between storage and viewer, providing:
 
 The server automatically:
 
-* Serves ``.zmetadata`` for fast initialization
+* Serves consolidated metadata for fast initialization
 * Provides directory listings for Zarr groups
 * Handles CORS for cross-origin viewer access
 * Includes health check at ``/health``
@@ -188,7 +188,7 @@ Storage Layer (Zarr Format)
 * **Chunk-based spatial index**: Precomputed bounding boxes enable O(chunks × dims) queries
 * **Compound ordering**: Discrete dimensions (time, channel) → spatial dimensions (x, y, z)
 * **Compression pipeline**: Quantization (2-4×) + blosc/zstd (2-10×) = 4-40× total
-* **Metadata consolidation**: Single .zmetadata file for fast initialization
+* **Metadata consolidation**: Root metadata document enables fast initialization
 
 **Design Decisions**:
 

@@ -41,6 +41,43 @@ def _load_module() -> ModuleType:
 cd = _load_module() if _SCRIPT.exists() else None
 
 
+def _markdown_section(path: Path, heading: str) -> str:
+    text = path.read_text()
+    start = text.index(heading) + len(heading)
+    level = len(heading) - len(heading.lstrip("#"))
+    lines = text[start:].splitlines()
+    end = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.startswith("#" * level + " ")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[:end])
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "heading"),
+    [
+        ("README.md", "## Data Format"),
+        ("docs/guides/user/LUXAR_ZARR_FORMAT.md", "## Format Structure"),
+        ("docs/specs/GSPLATS_ZARR_FORMAT.md", "## Zarr Structure"),
+    ],
+)
+def test_default_format_trees_do_not_show_zarr_v2_metadata_files(
+    relative_path: str, heading: str
+) -> None:
+    section = _markdown_section(REPO_ROOT / relative_path, heading)
+    fenced_blocks = section.split("```")[1::2]
+    stale_names = {".zattrs", ".zgroup", ".zarray", ".zmetadata"}
+
+    assert fenced_blocks
+    assert not {
+        name for block in fenced_blocks for name in stale_names if name in block
+    }
+
+
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
