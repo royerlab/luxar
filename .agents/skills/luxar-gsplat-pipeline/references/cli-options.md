@@ -13,7 +13,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 ### Core
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--seeds` / `-s` | auto | int = splat count — a WHOLE-VOLUME budget (what a default `cal` reports as K*); a tiled fit divides it across its N non-empty tiles (`ceil(K/N)`, floored at 1) instead of giving each tile the full count. Non-empty means the tile survives the resolved floor plus Hann window; the scan does not replay optional per-tile denoising, so denoising can still skip a counted tile. Every worker computes the same N. `K < N` gives N. A non-positive int is left alone so the fitter still rejects it. float in (0,1] = compression ratio, scale-free so applied per tile unchanged; `auto`. Ignored under `--tiling content` (budgets come from the density plan). A `cal --auto-region` K* is region-scoped, NOT a whole-volume budget — transfer it via `--cal` + `--tiling content`, not `--seeds` |
+| `--seeds` / `-s` | auto | int = splat count — a WHOLE-VOLUME budget (what a default `cal` reports as K*); a tiled fit divides it across the tiles that survive the resolved floor plus Hann window instead of giving each tile the full count. `fit --tiling uniform` (sequential AND the `-j N` parent, which forwards an exact per-worker count) and `batch-fit` with tile-local reads divide it OCCUPANCY-WEIGHTED (saturated Hann-weighted foreground, `--saturation-exponent`), so a busy tile gets more. Equal share (`ceil(K/N)`) only where nobody weighed it: a hand-run `--tile k/M`, and a `batch-fit` plan with tile-local reads off. The occupancy scan does not replay optional per-tile denoising, so denoising can still empty a counted tile. `K` below the non-empty count gives 1 per such tile; a tile weighted to zero is skipped. A non-positive int is left alone so the fitter still rejects it. float in (0,1] = compression ratio, scale-free so applied per tile unchanged; `auto`. Ignored under `--tiling content` (budgets come from the density plan). A `cal --auto-region` K* is region-scoped, NOT a whole-volume budget — transfer it via `--cal` + `--tiling content`, not `--seeds` |
 | `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile of non-zero voxels; a plain number = fixed value; `none` or `0` = disable (legacy hard-min). Resolved against the WHOLE volume under any tiling — never against a tile or box crop, so every tile/box works from the same level. `uniform`/`content` resolve it once in the parent and pass the number down; the uniform `-j N` / `--tile k/M` workers each resolve the same spec against the same whole volume (the sampler is deterministic, so they agree) |
 | `--iters` / `-n` | preset | max optimization iterations |
 | `--preset` | none | `draft` / `standard` / `hifi` / `ultra` / `n2s` (see preset table) |
@@ -40,7 +40,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | --- | --- | --- |
 | `--tiling` | auto | `auto` / `none` / `uniform` / `content` |
 | `--flat` | false | emit a single leaf instead of a `kind=partition` |
-| `--tile-size` | 256 | tile edge in voxels |
+| `--tile-size` | 256 | tile edge in voxels. One uniform grid everywhere (#2838): a trailing sliver thinner than the overlap is FOLDED into its predecessor, which then spans up to `tile_size + overlap - 1` voxels (287 at 256/32 = 1.41x the voxels in 3D). Size this for that worst case — it is the GPU-memory knob |
 | `--overlap` | 32 | inter-tile overlap voxels (Hann-stitched) |
 | `--tile` | none | fit a single tile `N/M` (e.g. `3/16`) — Slurm-ready |
 | `--jobs` / `-j` | 1 | concurrent tiles on one GPU; `auto` accounts for GPU memory plus shared host RAM/CPU limits |
@@ -52,7 +52,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--cal` | none | calibration JSON from `gsplat cal` (supplies density) |
 | `--k-star-ref` | — | reference K* (effective splats) |
 | `--n-features-ref` | — | reference feature count |
-| `--saturation-exponent` | 0.44 | K ~ features^alpha |
+| `--saturation-exponent` | 0.44 | K ~ features^alpha. NOT content-only: it also shapes the occupancy-weighted split of an integer `--seeds` budget across UNIFORM tiles |
 | `--saturation-cap` | — | per-box splat cap |
 | `--feature-threshold` | — | absolute feature-count threshold |
 | `--feature-metric` | peaks | `peaks` / `edges` / `intensity` |

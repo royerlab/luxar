@@ -57,6 +57,21 @@ def _tile_local_read_args(manifest: BatchManifest, job: BatchJob) -> list[str]:
     return args
 
 
+def floor_resolved_tokens(fit_args: Dict[str, Any]) -> list[str]:
+    """``["--floor-resolved"]`` when a task's ``--floor`` is the PLAN's answer.
+
+    Every ``--floor`` a batch task receives was decided once for the whole run
+    (:func:`~luxar.cli.gsplat_ops.batch.planning.resolve_batch_floor`), so the
+    worker must apply it verbatim rather than re-guarding it against its own
+    tile — the per-(t, c) pedestal disagreement #1174 removes. Since #2838 an
+    UNMARKED numeric ``--floor`` is read as a user request and guarded, which is
+    right for a hand-run ``fit --tile k/M`` and wrong for a planned task, hence
+    this marker. Inert for ``none`` and for a forwarded volume-derived spec
+    (which is guarded where it becomes a level, marker or not).
+    """
+    return [] if fit_args.get("floor") is None else ["--floor-resolved"]
+
+
 def iter_fit_arg_flags(fit_args: Dict[str, Any]) -> Iterator[Tuple[str, Optional[str]]]:
     """Yield ``(flag, value_or_None)`` for each ``fit_args`` entry.
 
@@ -178,6 +193,7 @@ def build_task_fit_argv(
         cmd += ["--preset", manifest.preset]
 
     cmd += fit_args_to_tokens(manifest.fit_args)
+    cmd += floor_resolved_tokens(manifest.fit_args)
 
     if manifest.axes:
         # Workers re-load the full store per task; without --axes they fall back

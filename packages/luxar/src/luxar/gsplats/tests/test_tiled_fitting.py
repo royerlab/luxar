@@ -1680,10 +1680,13 @@ class TestSingleTileWorkerFloor:
 
     A volume-derived spec (``auto``/``pNN``) becomes a level here for the first
     time, so it is resolved against the WHOLE volume and guarded. A CONCRETE
-    numeric is applied unvetoed (#1174): it is normally a level a parent already
-    resolved and guarded for all the workers, and re-guarding it per sub-volume is
-    the pedestal disagreement the shared resolution removes — a too-high one is
-    announced loudly instead of being silently dropped.
+    numeric depends on WHO sent it (#2838): a USER numeric is guarded here too,
+    against this worker's own whole-volume read, so the flag means the same thing
+    as it does under ``--tiling none``; a PARENT-RESOLVED level
+    (``floor_resolved=True``, the hidden ``--floor-resolved``) is applied unvetoed
+    (#1174), because re-guarding it per sub-volume is the pedestal disagreement
+    the shared resolution removes — a too-high one is announced loudly instead of
+    being silently dropped.
     """
 
     def _pedestal_volume(self) -> np.ndarray:
@@ -1708,17 +1711,15 @@ class TestSingleTileWorkerFloor:
         )
         assert result.stats["floor"] == pytest.approx(expected)
 
-    def test_too_high_numeric_floor_is_applied_but_announced(
+    def test_too_high_user_numeric_floor_is_guarded_like_tiling_none(
         self, monkeypatch, capsys
     ) -> None:
-        """A numeric floor above this worker's max is APPLIED, loudly (#1174).
+        """An UNMARKED numeric floor is a user request, so it is guarded (#2838).
 
-        Behaviour change: this used to be guarded here and reported-and-IGNORED,
-        so two uniform sub-paths disagreed about the same flag — the sequential
-        in-process fit applied its one resolved level while a ``--tile k/M`` / ``-j
-        N`` worker quietly dropped it. The number now wins (no worker may disagree
-        with its siblings about the pedestal), and the resulting all-zero tile is
-        explained up front instead of surfacing as a bare "empty store".
+        A hand-run ``fit --tile k/M --floor 10000`` reads the same whole volume a
+        ``--tiling none`` fit does, so it must reach the same verdict: reported
+        and ignored, not applied until every tile windows to zero. Without this
+        the same flag meant opposite things on two entry points.
         """
         import luxar.gsplats.fit_tiled_gsplats as ftg
         from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
@@ -1728,6 +1729,35 @@ class TestSingleTileWorkerFloor:
         monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
         result = fit_single_tile(
             _single_tile_ctx("0/4"), volume, {"floor": 10_000.0}, None
+        )
+        assert result.stats["floor"] is None
+        assert len(records) == 1
+        out = capsys.readouterr().out
+        assert "would erase all signal" in out
+
+    def test_too_high_resolved_floor_is_applied_but_announced(
+        self, monkeypatch, capsys
+    ) -> None:
+        """A PARENT-RESOLVED level above this worker's max is APPLIED, loudly.
+
+        The number is already the answer — a level the parent resolved against
+        the whole volume the tiles share — so re-guarding it here would be the
+        per-sub-volume pedestal disagreement #1174 removes. It wins, and the
+        resulting all-zero tile is explained up front instead of surfacing as a
+        bare "empty store".
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+
+        volume = self._pedestal_volume()
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        result = fit_single_tile(
+            _single_tile_ctx("0/4"),
+            volume,
+            {"floor": 10_000.0},
+            None,
+            floor_resolved=True,
         )
         assert result.stats["floor"] == pytest.approx(10_000.0)
         # Subtracting it clips the whole tile to zero, so the fit is skipped

@@ -706,6 +706,9 @@ def test_cli_parallel_forwards_the_parents_resolved_floor_and_scale(
     floors = {cmd[cmd.index("--floor") + 1] for cmd in commands}
     assert floors != {"p50"}, "the parent forwarded the spec, not its answer"
     assert len(floors) == 1
+    # ... and says it is an ANSWER, so each worker applies it verbatim instead
+    # of re-guarding it against its own tile (#1174).
+    assert all("--floor-resolved" in cmd for cmd in commands)
 
     volume = np.load(vol)
     expected_level = resolve_volume_floor_denoised(volume, "p50", guard_numeric=True)
@@ -941,7 +944,7 @@ def _worker_preprocessing(
     fit_config: dict,
     *,
     resolved: bool,
-) -> "tuple[str | None, tuple[float, float] | None]":
+) -> "tuple[str | None, tuple[float, float] | None, bool]":
     """Call the private helper with only the two ctx fields it reads."""
     from luxar.cli.gsplat_ops.fitting.fit_utils import _resolved_worker_preprocessing
 
@@ -953,7 +956,7 @@ def test_worker_preprocessing_forwards_nothing_when_no_scan_ran() -> None:
     """A ratio / ``auto`` / one-tile grid resolved nothing to forward."""
     assert _worker_preprocessing(
         "p50", None, {"floor": 7.0, "norm_range": (0.0, 3.0)}, resolved=False
-    ) == ("p50", None)
+    ) == ("p50", None, False)
 
 
 def test_worker_preprocessing_forwards_a_refused_level_as_none() -> None:
@@ -961,13 +964,14 @@ def test_worker_preprocessing_forwards_a_refused_level_as_none() -> None:
     range is forwarded unshifted (nothing was subtracted)."""
     assert _worker_preprocessing(
         "p99", None, {"floor": "none", "norm_range": (0.0, 3.0)}, resolved=True
-    ) == ("none", (0.0, 3.0))
+    ) == ("none", (0.0, 3.0), False)
 
 
 def test_worker_preprocessing_forwards_the_level_and_the_unshifted_range() -> None:
+    """A forwarded LEVEL is marked resolved, so the worker applies it verbatim."""
     assert _worker_preprocessing(
         "auto", None, {"floor": 2.0, "norm_range": (0.0, 3.0)}, resolved=True
-    ) == ("2", (0.0, 5.0))
+    ) == ("2", (0.0, 5.0), True)
 
 
 @pytest.mark.parametrize(
@@ -980,10 +984,12 @@ def test_worker_preprocessing_forwards_the_level_and_the_unshifted_range() -> No
 def test_worker_preprocessing_forwards_neither_half(fit_config: dict) -> None:
     """Both or neither. Forwarding a floor without its range (or a range
     un-shifted by a NEGATIVE floor, which can land at or below zero) hands the
-    worker something its own parser rejects."""
+    worker something its own parser rejects. A forwarded SPEC is never marked
+    resolved: the worker resolves and guards it itself."""
     assert _worker_preprocessing("auto", None, fit_config, resolved=True) == (
         "auto",
         None,
+        False,
     )
 
 
@@ -1072,61 +1078,38 @@ def test_cli_parallel_negative_floor_forwards_the_spec_not_a_bad_range(
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
 @pytest.mark.parametrize("seeds", ["200", "0.02"])
-def test_cli_parallel_too_high_floor_matches_the_hand_run_worker(
+def test_too_high_user_floor_means_the_same_on_every_entry_point(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seeds: str
 ) -> None:
-    """A too-high numeric ``--floor`` reaches the worker unguarded, either way.
+    """A USER ``--floor`` above the volume's max is ignored, whoever fits (#2838).
 
-    The parent resolves the level only to WEIGH the tiles, which happens only
-    for an INTEGER ``--seeds``. Resolving it there with the whole-volume guard
-    (``guard_numeric=True``) made ``-j N --seeds 200 --floor 200`` silently
-    ignore a floor that ``-j N --seeds 0.02 --floor 200`` and a hand-run
-    ``fit --tile k/M --floor 200`` both apply — the same flag on the same volume
-    switched by an unrelated option. The parent must resolve with the WORKER's
-    semantics, so the handoff moves no number.
+    Four entry points, one flag, one meaning — and they disagreed twice over.
+    Resolving in the ``-j N`` parent with the guard OFF made
+    ``-j 2 --seeds 200 --floor 200`` forward the level to workers that applied it
+    too: every tile windowed to zero, every worker wrote ``.empty``, and the run
+    died with ``Cannot write empty points (0 points)`` mentioning neither the
+    floor nor ``-j`` — while ``-j 1`` on the same command line fitted normally.
+    Turning the parent's guard back ON while leaving the WORKER unguarded would
+    only move the split to ``--seeds 0.02`` (no occupancy scan, so the spec is
+    forwarded verbatim) and to a hand-run ``--tile k/M``. Hence both halves here:
+    the parent guards a user spec, and an unmarked numeric is guarded again at
+    the worker (no ``--floor-resolved``), so all four land on "ignored".
+
+    The parametrization is the first divergence: the occupancy scan runs only for
+    an INTEGER budget, so the two ``--seeds`` forms took different routes.
     """
-    captured: dict[str, Any] = {}
-
-    def _fake_parallel(**kwargs: Any) -> GSplatData:
-        captured.update(kwargs)
-        return _one_splat_result()
-
-    monkeypatch.setattr(
-        "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
-    )
-
     vol = tmp_path / "sparse.npy"
     _make_sparse_volume(vol)  # max 1.0, so a floor of 200 is far above it
-    result = runner.invoke(
-        app,
-        [
-            "gsplat",
-            "fit",
-            str(vol),
-            str(tmp_path / f"floor-{seeds}.gsplats.zarr"),
-            "--tiling",
-            "uniform",
-            "--tile-size",
-            "24",
-            "--overlap",
-            "4",
-            "-j",
-            "2",
-            "--flat",
-            "--seeds",
-            seeds,
-            "--floor",
-            "200",
-            "--device",
-            "cpu",
-        ],
-    )
-    assert result.exit_code == 0, result.output
+    volume = np.load(vol)
 
-    cmd = captured["worker_cmd_builder"](0, captured["num_tiles"], tmp_path / "w0")
-    assert cmd[cmd.index("--floor") + 1] == "200"
+    # 1. `--tiling none` — the reference semantics the other three must match:
+    # the level is reported and IGNORED at the whole-volume fit's own decision
+    # point, so the fit proceeds on un-floored data.
+    from luxar.gsplats.fitting.preprocessing import _resolve_applied_norm_bounds
 
-    # The hand-run worker this must agree with.
+    _, _, non_tiled_floor = _resolve_applied_norm_bounds(volume, 0.0, True, "200")
+    assert non_tiled_floor is None
+
     seen: dict[str, Any] = {}
 
     def _fake_fit_tile(volume: Any, spec: Any, **kwargs: Any) -> GSplatData:
@@ -1134,6 +1117,32 @@ def test_cli_parallel_too_high_floor_matches_the_hand_run_worker(
         return _one_splat_result()
 
     monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tile", _fake_fit_tile)
+
+    tiling_args = ["--tile-size", "24", "--overlap", "4", "--device", "cpu"]
+
+    # 2. Sequential `--tiling uniform` (-j 1): one level for the whole grid.
+    sequential = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / f"seq-{seeds}.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--flat",
+            "--seeds",
+            seeds,
+            "--floor",
+            "200",
+            *tiling_args,
+        ],
+    )
+    assert sequential.exit_code == 0, sequential.output
+    assert seen["floor"] == "none"
+
+    # 3. A hand-run `--tile k/M` worker, which has no parent at all.
+    seen.clear()
     hand_run = runner.invoke(
         app,
         [
@@ -1143,17 +1152,56 @@ def test_cli_parallel_too_high_floor_matches_the_hand_run_worker(
             str(tmp_path / f"hand-{seeds}.gsplats.zarr"),
             "--tile",
             "0/25",
-            "--tile-size",
-            "24",
-            "--overlap",
-            "4",
             "--seeds",
             seeds,
             "--floor",
             "200",
-            "--device",
-            "cpu",
+            *tiling_args,
         ],
     )
     assert hand_run.exit_code == 0, hand_run.output
-    assert seen["floor"] == 200.0
+    assert seen["floor"] == "none"
+
+    # 4. `-j N`: what the parent forwards, and what a worker does with it.
+    captured: dict[str, Any] = {}
+
+    def _fake_parallel(**kwargs: Any) -> GSplatData:
+        captured.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+    )
+    parallel = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / f"floor-{seeds}.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "-j",
+            "2",
+            "--flat",
+            "--seeds",
+            seeds,
+            "--floor",
+            "200",
+            *tiling_args,
+        ],
+    )
+    assert parallel.exit_code == 0, parallel.output
+
+    cmd = captured["worker_cmd_builder"](0, captured["num_tiles"], tmp_path / "w0")
+    # An integer budget ran the scan, so the parent forwards the verdict it
+    # reached ("none"); a ratio forwards the spec for the worker to judge. Either
+    # way nothing here is a parent-RESOLVED level, so no marker is emitted.
+    assert cmd[cmd.index("--floor") + 1] == ("none" if seeds == "200" else "200")
+    assert "--floor-resolved" not in cmd
+
+    # And the argv the parent built really does reach the same verdict.
+    seen.clear()
+    worker = runner.invoke(app, cmd[cmd.index("gsplat") :])
+    assert worker.exit_code == 0, normalized_cli_output(worker)
+    assert seen["floor"] == "none"

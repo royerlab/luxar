@@ -356,6 +356,17 @@ def run_fit_volume(
     fold_tile_slivers: Optional[bool] = typer.Option(
         None, "--fold-tile-slivers/--no-fold-tile-slivers", hidden=True
     ),
+    floor_resolved: bool = typer.Option(
+        False,
+        "--floor-resolved",
+        hidden=True,
+        help="The numeric --floor on this command line is a LEVEL a parent "
+        "already resolved against the whole volume, not a user request — apply "
+        "it verbatim instead of re-guarding it against this worker's sub-volume "
+        "(#1174/#2838). Read by single-tile mode (every `-j N` and batch-fit "
+        "worker); inert elsewhere and for a non-numeric --floor, which is "
+        "guarded wherever it first becomes a level.",
+    ),
     jobs: str = typer.Option(
         "1",
         "--jobs",
@@ -974,6 +985,7 @@ def run_fit_volume(
                         True if fold_tile_slivers is None else fold_tile_slivers
                     ),
                     preselected_tile=parsed_tile_region is not None,
+                    floor_resolved=floor_resolved,
                 )
 
             elif tiled:

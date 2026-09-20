@@ -7,7 +7,7 @@ import shlex
 from dataclasses import replace
 from typing import TYPE_CHECKING, Optional
 
-from luxar.gsplats.batch.fit_command import iter_fit_arg_flags
+from luxar.gsplats.batch.fit_command import floor_resolved_tokens, iter_fit_arg_flags
 from luxar.gsplats.batch.manifest import BatchManifest
 from luxar.io.ome_zarr import classify_axis_labels
 
@@ -405,8 +405,14 @@ def generate_fit_sbatch(
             fit_cmd_parts.append(f"    {flag}")  # boolean flag
         else:
             fit_cmd_parts.append(f"    {flag} {shlex.quote(value)}")
+    fit_cmd_parts.extend(
+        f"    {token}" for token in floor_resolved_tokens(manifest.fit_args)
+    )
     if manifest.floor_deferred:
+        # The deferred level is read from floor_level.json at task start; it is
+        # the plan's answer just the same, so it is marked resolved too.
         fit_cmd_parts.append('    --floor "$FLOOR_LEVEL"')
+        fit_cmd_parts.append("    --floor-resolved")
     if manifest.axes:
         # Forward the explicit axis order so each task loads the same shape the
         # planner discovered (else the positional heuristic can mis-order axes).

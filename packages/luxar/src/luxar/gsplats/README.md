@@ -202,7 +202,9 @@ result.save("tiled_output.gsplats.zarr")
 ```python
 from luxar.gsplats import compute_tile_specs, fit_tile
 
-# 1. Compute tile grid (deterministic, identical on all workers)
+# 1. Compute tile grid (deterministic, identical on all workers).
+#    `fold_slivers` defaults to True, so this is the same grid `fit_tiled`,
+#    `fit --tiling uniform`, `fit --tile k/M` and `batch-fit` all build.
 specs = compute_tile_specs(volume.shape, tile_size=256, overlap=32)
 
 # 2. Fit a single tile (e.g., on a Slurm job array)
@@ -215,7 +217,7 @@ merged = GSplatData.concatenate(all_tile_results)
 **Tiling module** (`tiling.py`):
 
 - `TileSpec` -- Frozen dataclass describing one tile: grid index, slices, origin, shape, border flags, and actual per-axis overlap with neighbors.
-- `compute_tile_specs(volume_shape, tile_size, overlap)` -- Deterministic grid of overlapping tiles in row-major order. Edge tiles are clamped to volume boundaries.
+- `compute_tile_specs(volume_shape, tile_size, overlap, *, fold_slivers=True)` -- Deterministic grid of overlapping tiles in row-major order. Edge tiles are clamped to volume boundaries. `fold_slivers=True` (the default, #2838) folds an overlap-dominated trailing tile into its predecessor, which can then span up to `tile_size + overlap - 1` voxels; it is the grid every Luxar producer builds, so pairing this with `fit_tile` reproduces exactly what the CLI fits and merges. Pass `False` only to rebuild a pre-#2838 store's unfolded grid.
 - `cosine_window(spec)` -- Builds an nD separable Hann apodization window from a `TileSpec`. Two adjacent windows sum to exactly 1.0 in the overlap zone (partition-of-unity property).
 - `grid_bsp_tree(specs, *, scale=None)` -- Serialized `bsp_tree` over a uniform tile grid, so the viewer paints tile-parts back-to-front instead of by centroid (#1555). `scale` is a per-axis, finite and strictly positive factor mapping the specs' voxel frame onto the frame the splats actually live in (see below).
 - `resolve_grid_scale(ndim, *, downscale_factors=None, voxel_size=None, output_space="real")` -- Builds that `scale`. The two terms COMPOSE: a `--downscale` grid is computed on the decimated shape while the workers rescale their splats back to full resolution, and a `voxel_size` fit with `output_space="real"` emits physical centers. Returns `None` when both are no-ops (#1587). Raises on an `output_space` outside `("real", "voxel")` -- silently reading a typo as "voxel" would drop the spacing term, which is the very mismatch this closes -- on a `voxel_size` that is neither a scalar nor length-`ndim`, and on a resolved factor that is not finite and positive (a YAML `.nan` passes the fitter's own `<= 0` test and would otherwise become a `NaN` split plane). Every producer of a uniform tile grid's `bsp_tree` goes through it: `fit_tiled`, `dispatch_parallel_tiled`, and the `batch-fit` planner (which resolves the workers' `--preset`/`--config` once and records the answer as the manifest's `grid_scale`, for the merge to read).
@@ -1060,8 +1062,8 @@ Scale-hierarchical detection via optimized image decomposition.
 
 ### Tiling Functions
 
-#### `compute_tile_specs(volume_shape, tile_size, overlap)`
-Compute a deterministic grid of overlapping tiles covering a volume. Returns a list of `TileSpec` in row-major order (identical inputs always produce identical output).
+#### `compute_tile_specs(volume_shape, tile_size, overlap, *, fold_slivers=True)`
+Compute a deterministic grid of overlapping tiles covering a volume. Returns a list of `TileSpec` in row-major order (identical inputs always produce identical output). `fold_slivers` defaults to `True` (#2838) — the one uniform grid `fit_tiled`, `fit --tiling uniform`, `fit --tile k/M` and `batch-fit` share, so a hand-rolled `compute_tile_specs` + `fit_tile` loop tiles the volume exactly as the CLI does. On `(108, 1352, 532)` at `tile_size=512, overlap=32` that is 3 tiles, not the 6 the unfolded grid gives. Pass `fold_slivers=False` only to reproduce a grid planned before #2838.
 
 #### `cosine_window(spec)`
 Build an nD cosine (Hann) apodization window for a tile. Boundary faces stay at 1.0; interior faces are tapered over the actual overlap with the neighboring tile.

@@ -197,9 +197,11 @@ def _tile_fit_kwargs(
 def _zero_splat_tile(ndim: int) -> GSplatData:
     """The unstamped 0-splat payload of a tile that was never fitted.
 
-    The single spelling behind both ways a tile can contribute nothing —
-    :func:`fit_tile`'s near-zero-signal skip and :func:`_skipped_tile_result` —
-    so the two can never drift apart in shape or stats.
+    The single spelling behind every way a tile can contribute nothing —
+    :func:`fit_tile`'s near-zero-signal skip, :func:`_skipped_tile_result`, and
+    the ``.empty`` marker a parallel worker leaves behind
+    (:func:`~luxar.gsplats.fit_tiled_parallel._empty_tile`) — so they can never
+    drift apart in shape or stats.
     """
     from luxar.gsplats.utils.trils import tril_size
 
@@ -1070,17 +1072,14 @@ def fit_tiled(
     # Same treatment for the intensity scale: resolve ONCE here so every tile
     # shares it, rather than letting each tile normalize by its own extremes.
     # `fit_tile` would resolve it per tile otherwise — identical result, but a
-    # bounded volume read per tile instead of one. The marker says "already
-    # looked", so a declined range (None, see `_tile_norm_range`) costs one read
-    # here rather than one per tile.
-    if fit_kwargs.get("norm_range") is None:
-        fit_kwargs["_norm_range_resolved"] = True
-        fit_kwargs["norm_range"] = _tile_norm_range(
-            volume, fit_kwargs, applied_floor, verbose=verbose
-        )
-    else:
-        _ensure_tile_norm_range(volume, fit_kwargs, applied_floor, verbose=verbose)
-        fit_kwargs["_norm_range_resolved"] = True
+    # bounded volume read per tile instead of one. `_ensure_tile_norm_range`
+    # consults the already-resolved marker FIRST, which is the only way to tell a
+    # caller-DECLINED range (None, see `_tile_norm_range`) from "nobody has looked
+    # yet" — an upstream decline re-measured here would re-read the volume and
+    # re-print its own warning. The marker is then re-set for the per-tile
+    # `fit_tile` calls below (it is popped, not forwarded).
+    _ensure_tile_norm_range(volume, fit_kwargs, applied_floor, verbose=verbose)
+    fit_kwargs["_norm_range_resolved"] = True
 
     volume_shape = tuple(volume.shape)
     specs = compute_tile_specs(

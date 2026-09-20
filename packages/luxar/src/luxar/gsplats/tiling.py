@@ -97,7 +97,7 @@ def compute_tile_specs(
     tile_size: int | Sequence[int],
     overlap: int | Sequence[int],
     *,
-    fold_slivers: bool = False,
+    fold_slivers: bool = True,
 ) -> list[TileSpec]:
     """Compute a deterministic grid of overlapping tiles covering a volume.
 
@@ -124,6 +124,15 @@ def compute_tile_specs(
         Must satisfy ``0 <= overlap <= tile_size // 2`` on each axis.
         Overlaps larger than half the tile size cause triple tile overlap,
         which breaks the Hann partition-of-unity guarantee.
+    fold_slivers : bool, default True
+        Fold a trailing sliver into its predecessor. **Defaults to the FOLDED
+        grid** (#2838): it is the grid every Luxar producer builds — the
+        sequential and ``-j N`` ``fit --tiling uniform`` paths, a hand-run
+        ``fit --tile k/M``, and ``batch-fit`` — so pairing this function with
+        :func:`~luxar.gsplats.fit_tiled_gsplats.fit_tile` by hand reproduces
+        exactly the grid those commands fit and merge. Pass ``False`` only to
+        rebuild the historical unfolded grid of a store written before #2838
+        (a legacy ``batch-fit`` manifest records which one it planned).
 
     Returns
     -------

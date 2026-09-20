@@ -2339,6 +2339,10 @@ def test_uniform_tile_worker_does_not_re_guard_a_concrete_level(
     ``guard_numeric=True``, so a timepoint whose sampled max is below the level
     got ``floor=None`` (hard-min normalization) while every sibling subtracted the
     level: exactly the per-timepoint pedestal difference #1174 removes.
+
+    Since #2838 the exemption is carried by the ``--floor-resolved`` marker every
+    batch task command emits (``floor_resolved_tokens``), so that an UNMARKED user
+    numeric can go back to being guarded like every other entry point's.
     """
     from types import SimpleNamespace
 
@@ -2365,7 +2369,7 @@ def test_uniform_tile_worker_does_not_re_guard_a_concrete_level(
 
     # The concrete level the parent resolved and already guarded, as it arrives
     # from argv: a STRING that happens to be a number.
-    fit_single_tile(ctx, dim_volume, {"floor": "45.0"}, None)
+    fit_single_tile(ctx, dim_volume, {"floor": "45.0"}, None, floor_resolved=True)
     assert seen["floor"] == pytest.approx(45.0)
 
     # A volume-derived SPEC is still resolved (and guarded) here, since it
@@ -2384,15 +2388,14 @@ def test_uniform_tile_worker_does_not_re_guard_a_concrete_level(
 def test_uniform_tile_worker_warns_loudly_when_the_level_erases_its_volume(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    """A user numeric >= this worker's own max is APPLIED, but announced loudly.
+    """A RESOLVED level >= this worker's own max is APPLIED, but announced loudly.
 
-    Behaviour change vs main on `fit --tile k/M --floor 110` and `fit -j N
-    --floor 110` (whose `-j` parent forwards the spec verbatim): main guarded the
-    numeric here and reported-and-IGNORED it, so the fit went ahead; the level is
-    now applied unvetoed, so the tile windows to zero and yields an ``.empty``
-    marker. FAILS against the current tree, which strips the guard silently — with
-    nothing downstream of ``.empty`` mentioning the floor, the user gets "writer
-    rejects empty stores" and no clue why.
+    The plan's level is applied unvetoed (no worker may disagree with its
+    siblings about the pedestal), so a task whose own sub-volume sits below it
+    windows to zero and yields an ``.empty`` marker — with nothing downstream of
+    ``.empty`` mentioning the floor, the user would otherwise get "writer rejects
+    empty stores" and no clue why. (A user numeric without the marker is guarded
+    instead; see ``TestSingleTileWorkerFloor`` in ``test_tiled_fitting.py``.)
     """
     from types import SimpleNamespace
 
@@ -2419,7 +2422,7 @@ def test_uniform_tile_worker_warns_loudly_when_the_level_erases_its_volume(
     )
     dim_volume = _blob_field() * 0.1 + 1.0  # max ~2, far below 110
 
-    fit_single_tile(ctx, dim_volume, {"floor": "110"}, None)
+    fit_single_tile(ctx, dim_volume, {"floor": "110"}, None, floor_resolved=True)
 
     # Still APPLIED: no worker may disagree with its siblings about the pedestal.
     assert seen["floor"] == pytest.approx(110.0)
@@ -2430,7 +2433,7 @@ def test_uniform_tile_worker_warns_loudly_when_the_level_erases_its_volume(
     assert "0 SPLATS" in out and "skipped by the merge" in out  # the consequence
 
     # A level comfortably below the volume's max says nothing.
-    fit_single_tile(ctx, dim_volume, {"floor": "0.5"}, None)
+    fit_single_tile(ctx, dim_volume, {"floor": "0.5"}, None, floor_resolved=True)
     assert seen["floor"] == pytest.approx(0.5)
     assert "⚠" not in capsys.readouterr().out
 
@@ -2447,6 +2450,32 @@ def test_submit_sbatch_carries_the_numeric_level(tmp_path: Path) -> None:
     script = generate_fit_sbatch(manifest, env_preamble="")
     assert f"--floor {manifest.floor_level}" in script
     assert "--floor auto" not in script
+    # ... and marks it as the PLAN's answer, so the task applies it verbatim
+    # instead of re-guarding it against its own (t, c) tile (#1174/#2838).
+    assert "--floor-resolved" in script
+
+
+def test_task_argv_marks_a_planned_floor_as_resolved(tmp_path: Path) -> None:
+    """Every batch task command says its ``--floor`` was decided by the plan.
+
+    Without the marker a numeric ``--floor`` now reads as a USER request and is
+    guarded per sub-volume, which is right for a hand-run ``fit --tile k/M`` and
+    is the #1174 regression for a planned task.
+    """
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+    from luxar.gsplats.batch.manifest import BatchJob
+
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    manifest = _plan(src, tmp_path / "out", floor="auto").manifest
+    argv = build_task_fit_argv(
+        manifest,
+        BatchJob(0, 0, 0, 0, "tile0.gsplats.zarr", 0.0),
+        tmp_path / "tile.gsplats.zarr",
+        argv0=["luxar"],
+    )
+    assert argv[argv.index("--floor") + 1] == str(manifest.floor_level)
+    assert "--floor-resolved" in argv
 
 
 def test_resolve_tiling_small_volume_fits_whole() -> None:
