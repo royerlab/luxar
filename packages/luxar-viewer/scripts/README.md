@@ -23,6 +23,8 @@ scripts/
 ├── check-node-types-version.test.mjs # unit coverage for the Node types guard
 ├── check-three-types-version.mjs  # Three runtime/types/embed minor-version declaration guard
 ├── check-three-types-version.test.mjs # unit coverage for the Three types guard
+├── check-jsdom-version.mjs        # jsdom Blob-bridge pin and Dependabot policy guard
+├── check-jsdom-version.test.mjs   # unit coverage for the jsdom version guard
 ├── public-api-exports.json        # The public barrel's value-export list (shared with the barrel unit test)
 ├── check-jsdoc-coverage.ts        # Standalone JSDoc coverage report
 ├── check-overrides.mjs            # pnpm overrides single-source guard
