@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 import typer
 from arbol import aprint, asection
 
-from luxar.cli.gsplat_ops.fitting.fit_utils import CONTENT_UNSUPPORTED_FIT_FLAGS
+from luxar.cli.gsplat_ops.fitting.fit_utils import (
+    CONTENT_UNSUPPORTED_FIT_FLAGS,
+    _needs_nonempty_tile_scan,
+    floor_spec_needs_volume,
+)
 from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
 from luxar.typing_utils.enums import PhysicalUnit
@@ -364,6 +368,148 @@ def _materialize(view: Any) -> Any:
     import numpy as _np
 
     return _np.asarray(view[:], dtype=_np.float32)
+
+
+def _uniform_tile_nonempty_count(
+    input_path: Path,
+    *,
+    specs: Sequence[Any],
+    timepoint: int,
+    channel: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Tuple[int, ...],
+    applied_floor: Optional[float],
+) -> int:
+    """Count one slice's non-empty uniform tiles without materializing its frame."""
+    import numpy as _np
+
+    from luxar.gsplats.fit_tiled_gsplats import tile_has_signal
+    from luxar.gsplats.tiling import cosine_window
+
+    view = _pinned_slice_volume(
+        input_path,
+        channel=channel,
+        timepoint=timepoint,
+        array_key=array_key,
+        axes=axes,
+        axes_labels=axes_labels,
+        channel_shape=channel_shape,
+        spatial_shape=spatial_shape,
+    )
+    nonempty = 0
+    for spec in specs:
+        tile_data = _np.asarray(view[spec.slices], dtype=_np.float32)
+        if applied_floor is not None:
+            tile_data = _np.clip(tile_data - applied_floor, 0.0, None)
+        tile_data = tile_data * cosine_window(spec)
+        nonempty += int(tile_has_signal(tile_data))
+    return nonempty or len(specs)
+
+
+def _uniform_tile_local_disabled_reason(
+    *,
+    downscale_factors: Any,
+    denoise: DenoiseConfig,
+    floor_deferred: bool,
+    planned_floor: Any,
+    norm_range: "Optional[Tuple[float, float]]",
+) -> Optional[str]:
+    """Explain why a uniform plan cannot hand workers exact tile regions."""
+    if downscale_factors is not None:
+        return "--downscale changes the worker tile grid"
+    if denoise.denoise:
+        return "--denoise requires worker-side data resolution"
+    if floor_deferred:
+        return "background floor resolution is deferred"
+    if floor_spec_needs_volume(planned_floor):
+        return "background floor is not plan-resolved"
+    if norm_range is None:
+        return "normalization range is not plan-resolved"
+    return None
+
+
+def _planned_uniform_tile_local_metadata(
+    *,
+    mode: str,
+    input_path: Path,
+    specs: Sequence[Any],
+    t_indices: Sequence[int],
+    c_indices: Sequence[int],
+    array_key: Optional[str],
+    axes_list: Optional[Sequence[str]],
+    ome_info: "OMEZarrInfo",
+    spatial: Tuple[int, ...],
+    fit_args: dict[str, Any],
+    norm_range: "Optional[Tuple[float, float]]",
+    downscale_factors: Any,
+    denoise: DenoiseConfig,
+    floor_deferred: bool,
+) -> tuple[bool, Optional[List[int]]]:
+    """Resolve tile-local eligibility and optional per-slice seed divisors."""
+    if mode != "uniform":
+        return False, None
+
+    planned_floor = fit_args.get("floor")
+    reason = _uniform_tile_local_disabled_reason(
+        downscale_factors=downscale_factors,
+        denoise=denoise,
+        floor_deferred=floor_deferred,
+        planned_floor=planned_floor,
+        norm_range=norm_range,
+    )
+    if reason is not None:
+        aprint(f"Tile-local reads off: {reason}.")
+        return False, None
+
+    from luxar.cli.gsplat_config import parse_seeds
+
+    try:
+        parsed_seeds = parse_seeds(fit_args.get("seeds"))
+    except ValueError:
+        parsed_seeds = None
+    if not _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        return True, None
+
+    applied_floor = (
+        None if planned_floor in (None, "none", "0", 0, 0.0) else float(planned_floor)
+    )
+    pairs = [(timepoint, channel) for timepoint in t_indices for channel in c_indices]
+    max_workers = min(8, len(pairs))
+    counts = [len(specs)] * len(pairs)
+    with asection(
+        f"Scanning uniform tile occupancy across {len(pairs)} slices "
+        f"({max_workers} parallel)"
+    ):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _uniform_tile_nonempty_count,
+                    input_path,
+                    specs=specs,
+                    timepoint=timepoint,
+                    channel=channel,
+                    array_key=array_key,
+                    axes=",".join(axes_list) if axes_list else None,
+                    axes_labels=list(ome_info.axes),
+                    channel_shape=tuple(ome_info.channel_shape),
+                    spatial_shape=tuple(spatial),
+                    applied_floor=applied_floor,
+                ): (row_index, timepoint, channel)
+                for row_index, (timepoint, channel) in enumerate(pairs)
+            }
+            for completed, future in enumerate(as_completed(futures), start=1):
+                row_index, timepoint, channel = futures[future]
+                counts[row_index] = future.result()
+                aprint(
+                    f"Tile occupancy: {completed}/{len(pairs)} "
+                    f"(T={timepoint}, C={channel})"
+                )
+    return True, counts
 
 
 def _bounded_exact_range(view: Any, max_block_voxels: int) -> Tuple[float, float]:
@@ -1850,16 +1996,21 @@ def _validate_content_fit_flags(tiling: str, fit_args: dict) -> None:
     )
 
 
-def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
+def _announce_seed_split(
+    mode: str,
+    fit_args: dict,
+    n_tiles: int,
+    *,
+    exact_counts_resolved: bool,
+) -> None:
     """Announce how an integer ``--seeds`` budget divides across a task's tiles.
 
-    Emitted ONCE at plan time as a lower bound: planning knows the geometric
-    tile count but does not hold the task's array to count non-empty tiles. Both
-    ``batch-fit run`` and ``batch-fit submit --dry-run`` therefore show what is
-    guaranteed, while each ``--tile k/M`` task resolves the exact divisor. Task
-    output does not reach this console: the local pool captures it and Slurm
-    sends it to a log. Content plans ignore ``--seeds`` because per-box budgets
-    come from the density model.
+    Emitted ONCE at plan time as a lower bound from the geometric tile count.
+    Supported tile-local plans also resolve each selected slice's exact divisor
+    during occupancy scanning; fallback plans leave that resolution to each
+    ``--tile k/M`` task. Task output does not reach this console: the local pool
+    captures it and Slurm sends it to a log. Content plans ignore ``--seeds``
+    because per-box budgets come from the density model.
     """
     if mode == "content" or not fit_args.get("seeds"):
         return
@@ -1870,7 +2021,11 @@ def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
     # each task's own `fit` validates it), so guard: a malformed value must fail
     # in the task as it always has, not break planning here over a notice.
     try:
-        announce_seed_split_lower_bound(parse_seeds(fit_args["seeds"]), n_tiles)
+        announce_seed_split_lower_bound(
+            parse_seeds(fit_args["seeds"]),
+            n_tiles,
+            exact_counts_resolved=exact_counts_resolved,
+        )
     except ValueError:
         pass
 
@@ -2349,7 +2504,28 @@ def plan_batch(
         total_tasks=total_tasks,
     )
 
-    _announce_seed_split(mode, fit_args, n_tiles)
+    tile_local_reads, tile_nonempty_counts = _planned_uniform_tile_local_metadata(
+        mode=mode,
+        input_path=input_path,
+        specs=specs if mode == "uniform" else (),
+        t_indices=t_indices,
+        c_indices=c_indices,
+        array_key=array_key,
+        axes_list=axes_list,
+        ome_info=ome_info,
+        spatial=tuple(spatial),
+        fit_args=fit_args,
+        norm_range=norm_range,
+        downscale_factors=downscale_factors,
+        denoise=denoise,
+        floor_deferred=floor_deferred,
+    )
+    _announce_seed_split(
+        mode,
+        fit_args,
+        n_tiles,
+        exact_counts_resolved=tile_nonempty_counts is not None,
+    )
 
     preset_config = PRESETS.get(fit.preset, PRESETS["standard"])
     n_iters = fit.iters if fit.iters is not None else preset_config.get("n_iters", 3000)
@@ -2390,6 +2566,8 @@ def plan_batch(
         tile_size=tile_size_resolved,
         tile_overlap=tile_overlap,
         n_tiles=n_tiles,
+        tile_local_reads=tile_local_reads,
+        tile_nonempty_counts=tile_nonempty_counts,
         plan_path=plan_path_str,
         total_tasks=total_tasks,
         preset=fit.preset,

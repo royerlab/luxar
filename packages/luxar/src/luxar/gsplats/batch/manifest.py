@@ -77,6 +77,15 @@ class BatchManifest:
     n_tiles: int = 1
     """Spatial slots per (t,c): tile count in ``uniform`` mode, box count in
     ``content`` mode (kept as one field so task-id decode / packing are shared)."""
+    tile_local_reads: bool = False
+    """Whether uniform workers may read only their manifest-derived tile region."""
+    tile_nonempty_counts: Optional[List[int]] = None
+    """One floor + Hann-window non-empty tile count per selected ``(t, c)``.
+
+    Only positive integer whole-volume seed budgets need these counts. Tile-local
+    reads remain enabled without them for auto seeds and compression ratios.
+    Occupancy-weighted allocation remains a separate behavior change (#2819).
+    """
     plan_path: Optional[str] = None
     """``content`` mode: path to the shared ``FitPlan`` JSON (relative to
     ``output_dir``) every array task reads via ``fit --plan … --plan-box``."""
@@ -257,6 +266,59 @@ class BatchManifest:
     array_job_id: Optional[int] = None
     preemptible_job_id: Optional[int] = None
     merge_job_id: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class TileLocalReadPlan:
+    """Validated manifest-derived worker regions and optional seed divisors."""
+
+    regions: Tuple[str, ...]
+    volume_shape: str
+    nonempty_counts: Optional[Tuple[int, ...]]
+
+
+def tile_local_read_plan(manifest: BatchManifest) -> Optional[TileLocalReadPlan]:
+    """Resolve the single local/Slurm tile-local worker handoff."""
+    if not manifest.tile_local_reads:
+        return None
+    if manifest.mode != "uniform":
+        raise ValueError("tile-local reads require a uniform batch manifest")
+    if not manifest.spatial_shape:
+        raise ValueError("tile-local reads require a non-empty spatial_shape")
+
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    specs = compute_tile_specs(
+        tuple(manifest.spatial_shape), manifest.tile_size, manifest.tile_overlap
+    )
+    if len(specs) != manifest.n_tiles:
+        raise ValueError(
+            "tile-local grid mismatch: manifest records "
+            f"{manifest.n_tiles} tiles but spatial_shape/tile settings produce "
+            f"{len(specs)}"
+        )
+    regions = tuple(
+        ",".join(f"{span.start}:{span.stop}" for span in spec.slices) for spec in specs
+    )
+
+    counts = manifest.tile_nonempty_counts
+    if counts is not None:
+        expected_rows = manifest.n_timepoints * manifest.n_channels
+        if len(counts) != expected_rows:
+            raise ValueError(
+                "tile-local count mismatch: manifest records "
+                f"{len(counts)} rows but T*C requires {expected_rows}"
+            )
+        if any(count <= 0 or count > manifest.n_tiles for count in counts):
+            raise ValueError(
+                "tile-local non-empty counts must be between 1 and n_tiles"
+            )
+
+    return TileLocalReadPlan(
+        regions=regions,
+        volume_shape=",".join(str(size) for size in manifest.spatial_shape),
+        nonempty_counts=tuple(counts) if counts is not None else None,
+    )
 
 
 def floor_suppression_applied(manifest: BatchManifest) -> bool:

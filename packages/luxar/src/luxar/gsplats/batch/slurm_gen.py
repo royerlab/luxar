@@ -153,6 +153,58 @@ def _parallel_worker_env_lines(
     return lines
 
 
+def _tile_local_fit_command_parts(manifest: BatchManifest) -> list[str]:
+    """Render hidden worker arguments for tile-local reads."""
+    from luxar.gsplats.batch.manifest import tile_local_read_plan
+
+    plan = tile_local_read_plan(manifest)
+    if plan is None:
+        return []
+    parts = [
+        '    --tile-region "$TILE_REGION"',
+        '    --tile-volume-shape "$TILE_VOLUME_SHAPE"',
+    ]
+    if plan.nonempty_counts is not None:
+        parts.append('    --tile-nonempty-count "$NONEMPTY_COUNT"')
+    return parts
+
+
+def _tile_local_variable_lines(manifest: BatchManifest) -> list[str]:
+    """Render manifest-derived shell arrays for tile-local reads."""
+    from luxar.gsplats.batch.manifest import tile_local_read_plan
+
+    plan = tile_local_read_plan(manifest)
+    if plan is None:
+        return []
+    lines = [
+        "TILE_REGIONS=("
+        + " ".join(shlex.quote(region) for region in plan.regions)
+        + ")",
+        "TILE_VOLUME_SHAPE=" + shlex.quote(plan.volume_shape),
+    ]
+    if plan.nonempty_counts is not None:
+        lines.append(
+            "NONEMPTY_COUNTS=("
+            + " ".join(str(count) for count in plan.nonempty_counts)
+            + ")"
+        )
+    lines.append("")
+    return lines
+
+
+def _tile_local_task_lines(manifest: BatchManifest) -> list[str]:
+    """Render task-local lookups for tile-local reads."""
+    from luxar.gsplats.batch.manifest import tile_local_read_plan
+
+    plan = tile_local_read_plan(manifest)
+    if plan is None:
+        return []
+    lines = ['    local TILE_REGION="${TILE_REGIONS[$K]}"']
+    if plan.nonempty_counts is not None:
+        lines.append('    local NONEMPTY_COUNT="${NONEMPTY_COUNTS[$TC_IDX]}"')
+    return lines
+
+
 def generate_fit_sbatch(
     manifest: BatchManifest,
     env_preamble: str,
@@ -286,6 +338,7 @@ def generate_fit_sbatch(
             # (finalized below) instead of failing the task forever.
             "    --allow-empty-tile",
         ]
+        fit_cmd_parts.extend(_tile_local_fit_command_parts(manifest))
     if manifest.array_key is not None:
         fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
     if manifest.n_channels > 1 or has_explicit_channels:
@@ -346,6 +399,8 @@ def generate_fit_sbatch(
         ]
     )
 
+    lines.extend(_tile_local_variable_lines(manifest))
+
     # Index mapping arrays (for --timepoints/--channels slicing)
     if manifest.timepoint_indices is not None:
         t_arr = " ".join(str(i) for i in manifest.timepoint_indices)
@@ -368,6 +423,7 @@ def generate_fit_sbatch(
             "    local T_IDX=$((TASK_ID / (N_CHANNELS * N_TILES)))",
             "    local R=$((TASK_ID % (N_CHANNELS * N_TILES)))",
             "    local C_IDX=$((R / N_TILES))",
+            "    local TC_IDX=$((T_IDX * N_CHANNELS + C_IDX))",
             "    local K=$((R % N_TILES))",
             # Map sequential indices to actual dataset indices
             "    local T=${T_INDICES[$T_IDX]}" if has_t_map else "    local T=$T_IDX",
@@ -405,6 +461,7 @@ def generate_fit_sbatch(
             '    echo "=== Task $TASK_ID / $TOTAL_TASKS (T=$T C=$C K=$K) ==="',
         ]
     )
+    lines.extend(_tile_local_task_lines(manifest))
 
     lines.extend(_parallel_worker_env_lines(manifest, tpj))
 

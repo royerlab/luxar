@@ -30,6 +30,38 @@ def _write_zarr_array(path: Path, arr: np.ndarray) -> None:
     z[:] = arr
 
 
+@pytest.mark.parametrize(
+    ("shape", "region", "expected_shape"),
+    [
+        ((1, 1, 1, 8, 8), (slice(0, 6), slice(2, 8)), (6, 6)),
+        ((1, 8, 8, 8), (slice(0, 6), slice(1, 7), slice(2, 8)), (6, 6, 6)),
+    ],
+)
+def test_load_volume_region_targets_post_squeeze_axes(
+    tmp_path: Path,
+    shape: tuple[int, ...],
+    region: tuple[slice, ...],
+    expected_shape: tuple[int, ...],
+) -> None:
+    arr = np.arange(np.prod(shape), dtype=np.uint16).reshape(shape)
+    path = tmp_path / "vol.zarr"
+    _write_zarr_array(path, arr)
+
+    loaded = load_volume(path, region=region)
+
+    expected = np.squeeze(arr)[region].astype(np.float32)
+    assert loaded.shape == expected_shape
+    np.testing.assert_array_equal(loaded, expected)
+
+
+def test_load_volume_region_rank_must_match_surviving_axes(tmp_path: Path) -> None:
+    path = tmp_path / "vol.zarr"
+    _write_zarr_array(path, np.zeros((1, 8, 8, 8), dtype=np.uint16))
+
+    with pytest.raises(ValueError, match="region has 2 axes.*keeps 3"):
+        load_volume(path, region=(slice(0, 4), slice(0, 4)))
+
+
 class TestOpenVolumeLazy:
     """A zarr store comes back as its array object, never as a numpy copy."""
 

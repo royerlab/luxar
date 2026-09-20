@@ -20,7 +20,36 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional, Tuple
 
-from luxar.gsplats.batch.manifest import BatchJob, BatchManifest
+from luxar.gsplats.batch.manifest import (
+    BatchJob,
+    BatchManifest,
+    tile_local_read_plan,
+)
+
+
+def _tile_local_read_args(manifest: BatchManifest, job: BatchJob) -> list[str]:
+    """Worker metadata that replaces its full-frame tile scan and read."""
+    plan = tile_local_read_plan(manifest)
+    if plan is None:
+        return []
+    if not 0 <= job.tile_index < len(plan.regions):
+        raise ValueError(
+            f"tile index {job.tile_index} is outside 0..{len(plan.regions) - 1}"
+        )
+    args = [
+        "--tile-region",
+        plan.regions[job.tile_index],
+        "--tile-volume-shape",
+        plan.volume_shape,
+    ]
+    if plan.nonempty_counts is not None:
+        row_index = job.task_id // manifest.n_tiles
+        if not 0 <= row_index < len(plan.nonempty_counts):
+            raise ValueError(
+                f"task {job.task_id} maps to missing tile-local count row {row_index}"
+            )
+        args += ["--tile-nonempty-count", str(plan.nonempty_counts[row_index])]
+    return args
 
 
 def iter_fit_arg_flags(fit_args: Dict[str, Any]) -> Iterator[Tuple[str, Optional[str]]]:
@@ -122,6 +151,7 @@ def build_task_fit_argv(
             # it and the merge skips it) instead of failing the task forever.
             "--allow-empty-tile",
         ]
+        cmd += _tile_local_read_args(manifest, job)
 
     if manifest.array_key is not None:
         cmd += ["--array-key", manifest.array_key]

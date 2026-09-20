@@ -584,7 +584,9 @@ def test_batch_plan_rejects_unsupported_content_fit_before_discovery(
         )
 
 
-def test_batch_plan_allows_preprocessed_content_denoising(tmp_path: Path) -> None:
+def test_batch_plan_allows_preprocessed_content_denoising(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Preprocess mode retargets content workers to the denoised store."""
     from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
@@ -622,6 +624,7 @@ def test_batch_plan_allows_preprocessed_content_denoising(tmp_path: Path) -> Non
     assert result.manifest.denoise_mode == "preprocess"
     assert result.manifest.denoised_zarr_path == str(out.resolve() / "denoised.zarr")
     assert "denoise" not in result.manifest.fit_args
+    assert "Tile-local reads off:" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -709,6 +712,169 @@ def test_batch_plan_resolves_one_global_floor_level(tmp_path: Path) -> None:
     assert len(manifest.jobs) == 4
     assert len(levels) == 1
     assert float(levels.pop()) == pytest.approx(expected, rel=1e-6)
+
+
+def test_batch_plan_records_uniform_tile_occupancy_for_workers(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+
+    src = tmp_path / "movie.zarr"
+    full = np.zeros((1, 16, 24, 24), dtype=np.float32)
+    full[0, 8, 20, 20] = 10.0
+    _write_timelapse(src, full)
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        seeds="100",
+        tile_size=16,
+        tile_overlap=0,
+    ).manifest
+
+    assert manifest.tile_local_reads is True
+    assert manifest.tile_nonempty_counts == [1]
+    argv = build_task_fit_argv(
+        manifest, manifest.jobs[3], tmp_path / "tile.gsplats.zarr", argv0=[]
+    )
+    assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
+    assert argv[argv.index("--tile-nonempty-count") + 1] == "1"
+    output = capsys.readouterr().out
+    assert "exact non-empty counts resolved at plan time" in output
+    assert "each worker resolves the exact non-empty count" not in output
+
+
+def test_batch_plan_defers_invalid_seeds_to_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import luxar.cli.gsplat_ops.batch.planning as planning
+
+    src = tmp_path / "movie.zarr"
+    _write_timelapse(src, np.stack([_blob_field()]))
+
+    def _unexpected_scan(*args, **kwargs):
+        raise AssertionError("invalid seeds must not trigger an occupancy scan")
+
+    monkeypatch.setattr(planning, "_uniform_tile_nonempty_count", _unexpected_scan)
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        seeds="bogus",
+        tile_size=16,
+        tile_overlap=0,
+    ).manifest
+
+    assert manifest.fit_args["seeds"] == "bogus"
+    assert manifest.tile_local_reads is True
+    assert manifest.tile_nonempty_counts is None
+
+
+def test_batch_plan_skips_occupancy_scan_without_integer_seeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import luxar.cli.gsplat_ops.batch.planning as planning
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+
+    src = tmp_path / "movie.zarr"
+    _write_timelapse(src, np.stack([_blob_field()]))
+
+    def _unexpected_scan(*args, **kwargs):
+        raise AssertionError("occupancy scan should not run")
+
+    monkeypatch.setattr(planning, "_uniform_tile_nonempty_count", _unexpected_scan)
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        tile_size=16,
+        tile_overlap=0,
+    ).manifest
+
+    assert manifest.tile_local_reads is True
+    assert manifest.tile_nonempty_counts is None
+    argv = build_task_fit_argv(
+        manifest, manifest.jobs[0], tmp_path / "tile.gsplats.zarr", argv0=[]
+    )
+    assert "--tile-region" in argv
+    assert "--tile-nonempty-count" not in argv
+
+
+def test_batch_plan_logs_when_tile_local_reads_are_disabled(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    src = tmp_path / "constant.zarr"
+    _write_timelapse(src, np.ones((1, 16, 24, 24), dtype=np.float32))
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        seeds="100",
+        tile_size=16,
+        tile_overlap=0,
+    ).manifest
+
+    assert manifest.tile_local_reads is False
+    assert (
+        "Tile-local reads off: normalization range is not plan-resolved."
+        in capsys.readouterr().out
+    )
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        (1, 1, 8, 8, 8),
+        (1, 1, 1, 8, 8),
+        (1, 8, 8, 8),
+    ],
+)
+def test_batch_tile_local_argv_loads_exact_planned_region(
+    tmp_path: Path, shape: tuple[int, ...]
+) -> None:
+    import zarr
+
+    from luxar.cli.gsplat_config import load_volume
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    src = tmp_path / "source.zarr"
+    data = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    array = zarr.open_array(str(src), mode="w", shape=shape, dtype="f4")
+    array[:] = data
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        axes_list=[],
+        floor="none",
+        seeds="100",
+        tile_size=6,
+        tile_overlap=2,
+    ).manifest
+    job = manifest.jobs[-1]
+    argv = build_task_fit_argv(manifest, job, tmp_path / "tile.gsplats.zarr", argv0=[])
+
+    region_text = argv[argv.index("--tile-region") + 1]
+    region = tuple(
+        slice(*(int(value) for value in span.split(":")))
+        for span in region_text.split(",")
+    )
+    channel = int(argv[argv.index("--channel") + 1]) if "--channel" in argv else None
+    timepoint = (
+        int(argv[argv.index("--timepoint") + 1]) if "--timepoint" in argv else None
+    )
+    loaded = load_volume(src, channel=channel, timepoint=timepoint, region=region)
+    specs = compute_tile_specs(
+        tuple(manifest.spatial_shape), manifest.tile_size, manifest.tile_overlap
+    )
+    expected_shape = tuple(
+        int(span.stop) - int(span.start) for span in specs[job.tile_index].slices
+    )
+
+    assert loaded.shape == expected_shape
+    np.testing.assert_array_equal(loaded, np.squeeze(data)[region])
 
 
 def test_batch_plan_resolves_one_global_normalization_range(tmp_path: Path) -> None:

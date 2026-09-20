@@ -196,6 +196,7 @@ def _apply_axes_spec(
     axes: str,
     channel: Optional[int],
     timepoint: Optional[int],
+    region: Optional[Tuple[slice, ...]] = None,
 ) -> np.ndarray:
     """Collapse a non-canonically-ordered nD array to its spatial volume.
 
@@ -239,6 +240,15 @@ def _apply_axes_spec(
         ) from exc
     channel_coord_by_axis = dict(zip(channel_indices, channel_coords))
     index: list = [slice(None)] * arr.ndim
+    spatial_indices = [i for i, kind in enumerate(kinds) if kind == "s"]
+    if region is not None:
+        if len(region) != len(spatial_indices):
+            raise ValueError(
+                f"region has {len(region)} axes but --axes {axes!r} names "
+                f"{len(spatial_indices)} spatial axes"
+            )
+        for axis, span in zip(spatial_indices, region, strict=True):
+            index[axis] = span
     for i, k in enumerate(kinds):
         if k in ("t", "c"):
             which, idx = (
@@ -273,6 +283,33 @@ def _record_source_dtype(info: Optional[dict], volume: Any) -> None:
         info["source_dtype"] = str(np.dtype(src_dtype))
 
 
+def _slice_eager_region(
+    volume: Any, path: Path, region: Optional[Tuple[slice, ...]]
+) -> Any:
+    """Apply ``region`` only when the reader could not do it lazily."""
+    if region is None or is_zarr_path(path):
+        return volume
+    return np.asarray(volume[region], dtype=np.float32)
+
+
+def _squeezed_region_spans(
+    shape: Tuple[int, ...], region: Optional[Tuple[slice, ...]]
+) -> Tuple[slice, ...]:
+    """Map post-squeeze spatial spans back onto the reader-visible axes."""
+    if region is None:
+        return (slice(None),) * len(shape)
+    surviving_axes = [axis for axis, size in enumerate(shape) if size != 1]
+    if len(region) != len(surviving_axes):
+        raise ValueError(
+            f"region has {len(region)} axes but positional loading keeps "
+            f"{len(surviving_axes)} axes after squeezing shape {shape}"
+        )
+    spans = [slice(None)] * len(shape)
+    for axis, span in zip(surviving_axes, region, strict=True):
+        spans[axis] = span
+    return tuple(spans)
+
+
 def load_volume(
     path: Path,
     channel: Optional[int] = None,
@@ -280,6 +317,7 @@ def load_volume(
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
     info: Optional[dict] = None,
+    region: Optional[Tuple[slice, ...]] = None,
 ) -> np.ndarray:
     """Load a volume from various file formats.
 
@@ -312,6 +350,8 @@ def load_volume(
             denominator of a compression ratio) would otherwise describe the
             working copy and overstate it by the cast's inflation factor —
             exactly 2x for the 16-bit acquisitions most microscopy produces.
+        region: Optional spatial slices applied before materializing a zarr array.
+            Non-zarr formats are sliced after loading.
 
     Returns:
         Volume as float32 numpy array (>=2D)
@@ -349,7 +389,12 @@ def load_volume(
         # explicit --axes the raw array is loaded and sliced by _apply_axes_spec
         # below (bypassing the positional TCZYX/CZYX heuristic).
         volume = _load_zarr_volume(
-            path, channel, timepoint, array_key, raw=axes is not None
+            path,
+            channel,
+            timepoint,
+            array_key,
+            raw=axes is not None,
+            region=None if axes is not None else region,
         )
 
     elif suffix in (".tiff", ".tif"):
@@ -383,7 +428,7 @@ def load_volume(
         # Pass `volume` as-is (a lazy zarr array for .zarr inputs) so
         # _apply_axes_spec slices the time/channel axes BEFORE materializing —
         # do NOT np.asarray() here or a huge nD movie loads fully into RAM.
-        volume = _apply_axes_spec(volume, axes, channel, timepoint)
+        volume = _apply_axes_spec(volume, axes, channel, timepoint, region)
         # The spec already fixed the shape (time/channel dropped, spatial kept) —
         # do NOT squeeze, or a deliberately-kept size-1 spatial axis (e.g. a
         # single z-plane via --axes z,y,x) would be silently dropped.
@@ -394,6 +439,7 @@ def load_volume(
         # is there because np.squeeze is typed as returning Any.
         volume = np.asarray(volume, dtype=np.float32)
         volume = np.asarray(np.squeeze(volume), dtype=np.float32)
+        volume = _slice_eager_region(volume, path, region)
 
     if volume.ndim < 2:
         raise ValueError(
@@ -401,6 +447,7 @@ def load_volume(
             f"with shape {volume.shape}"
         )
 
+    assert isinstance(volume, np.ndarray)
     aprint(f"  Shape: {volume.shape}, dtype: float32")
     return volume
 
@@ -1019,6 +1066,7 @@ def _load_zarr_volume(
     timepoint: Optional[int],
     array_key: Optional[str],
     raw: bool = False,
+    region: Optional[Tuple[slice, ...]] = None,
 ) -> np.ndarray:
     """Load a volume from a zarr store, handling OME-ZARR conventions.
 
@@ -1077,23 +1125,29 @@ def _load_zarr_volume(
             channel_coords = decode_flat_channel_index(channel, channel_shape)
         idx = [t, *channel_coords]
         aprint(f"  Slicing {ndim}D: indices {idx} → 3D spatial")
-        volume = np.array(arr[tuple(idx)])
+        spans = _squeezed_region_spans(tuple(shape[-3:]), region)
+        volume = np.array(arr[tuple([*idx, *spans])])
     elif ndim == 5:
         t = timepoint if timepoint is not None else 0
         c = channel if channel is not None else 0
         aprint(f"  Slicing 5D (TCZYX): T={t}, C={c}")
-        volume = np.array(arr[t, c, :, :, :])
+        spans = _squeezed_region_spans(tuple(shape[-3:]), region)
+        volume = np.array(arr[(t, c, *spans)])
     elif ndim == 4:
         if channel is not None:
             aprint(f"  Slicing 4D (CZYX): C={channel}")
-            volume = np.array(arr[channel, :, :, :])
+            spans = _squeezed_region_spans(tuple(shape[1:]), region)
+            volume = np.array(arr[(channel, *spans)])
         elif timepoint is not None:
             aprint(f"  Slicing 4D (TZYX): T={timepoint}")
-            volume = np.array(arr[timepoint, :, :, :])
+            spans = _squeezed_region_spans(tuple(shape[1:]), region)
+            volume = np.array(arr[(timepoint, *spans)])
         else:
             aprint("  4D array — using as-is (use --channel or --timepoint to slice)")
-            volume = np.array(arr)
+            spans = _squeezed_region_spans(tuple(shape), region)
+            volume = np.array(arr[spans])
     else:
-        volume = np.array(arr)
+        spans = _squeezed_region_spans(tuple(shape), region)
+        volume = np.array(arr[spans])
 
     return volume

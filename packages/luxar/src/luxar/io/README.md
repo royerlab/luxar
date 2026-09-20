@@ -556,7 +556,7 @@ one cites shows up as a failing test rather than as a plausible wrong number.
 sources fed to gsplat fitting/calibration), independent of the compiled
 `.luxar.zarr` scene format above:
 
-- `volume.load_volume(path, channel=, timepoint=, array_key=, axes=, info=)` —
+- `volume.load_volume(path, channel=, timepoint=, array_key=, axes=, info=, region=)` —
   reads `.npy` / `.npz` / `.zarr` / `.zarr.zip` / `.tiff` / imageio-supported
   files to a float32 volume, with OME-Zarr-aware positional slicing and an
   explicit `--axes` override. Missing optional readers raise `ImportError` (the
