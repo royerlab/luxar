@@ -74,8 +74,8 @@ def _refuse_resume_grid_mismatch(
         tile_word = "tile" if completed_count == 1 else "tiles"
         aprint(
             f"Warning: {completed_count} completed {tile_word} predate occupancy "
-            "weighting; resumed output will mix their equal-share budgets with "
-            f"weighted budgets for new tiles. {legacy_weight_help}."
+            "weighting and will retain their equal-share budgets. "
+            f"{legacy_weight_help}."
         )
 
 
