@@ -49,8 +49,8 @@ updates:
         update-types:
           - "version-update:semver-minor"
           - "version-update:semver-major"
-      # Vitest's jsdom bridge reads BlobImpl._buffer through a private wrapper
-      # symbol that jsdom 30.1 removed. Unpin only when Vitest stops using it.
+      # Vitest's jsdom bridge reads _buffer from a private Blob impl; jsdom 30.1
+      # removes the wrapper link entirely. Unpin when Vitest uses public Blob APIs.
       - dependency-name: "jsdom"
         update-types:
           - "version-update:semver-minor"
