@@ -11,9 +11,10 @@
  * 5.0.1 ships the same `createCompatUtils` implementation.
  *
  * Dependabot's minor/major ignore also suppresses advisory PRs that require a
- * newer jsdom line. When unpinning, re-check that risk and the Node runtime
- * floors derived from jsdom 30's undici 8 dependency, including the contributor
- * Node 22.22 floor and the package `engines.node` contract.
+ * newer jsdom line. When unpinning, re-check that risk and the contributor Node
+ * 22.22 floor derived from jsdom 30's undici 8 dependency. The package
+ * `engines.node` contract deliberately tracks Vite's supported range instead,
+ * so it should move only if that range changes.
  */
 
 import { readFileSync } from 'node:fs';
