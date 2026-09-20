@@ -118,8 +118,8 @@ def _parse_tile_worker_metadata(
         raise typer.BadParameter("--tile-nonempty-count must be positive")
     if tile_seed_count is not None and tile_seed_count < 0:
         raise typer.BadParameter("--tile-seed-count must be non-negative")
-    if tile_seed_count is not None and region is None:
-        raise typer.BadParameter("--tile-seed-count requires --tile-region")
+    if tile_seed_count is not None and tile is None:
+        raise typer.BadParameter("--tile-seed-count requires --tile")
     if fold_tile_slivers and tile is None:
         raise typer.BadParameter("--fold-tile-slivers requires --tile")
     return region, shape
@@ -480,7 +480,8 @@ def run_fit_volume(
     saturation_exponent: float = typer.Option(
         0.44,
         "--saturation-exponent",
-        help="Sub-linear exponent alpha (K~feat^alpha).",
+        help="Sub-linear exponent alpha (K~feat^alpha) for content planning "
+        "and occupancy-weighted uniform integer seed budgets.",
         rich_help_panel="Content-aware tiling",
     ),
     saturation_cap: Optional[int] = typer.Option(
@@ -789,6 +790,7 @@ def run_fit_volume(
                 feature_threshold=feature_threshold,
                 feature_metric=feature_metric,
                 target_features=target_features,
+                saturation_exponent=saturation_exponent,
                 plan_only=plan_only,
                 plan_box=plan_box,
                 progressive=progressive,

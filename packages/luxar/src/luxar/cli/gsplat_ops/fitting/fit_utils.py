@@ -119,6 +119,7 @@ class FitPipelineCtx:
     denoise_patch_size: int
     denoise_search_distance: int
     denoise_backend: str
+    saturation_exponent: float = 0.44
     voxel_size: "Optional[tuple[float, ...]]" = None
     denoise_effective_h: Optional[float] = None
     denoise_norm_range: "Optional[tuple[float, float]]" = None
@@ -529,6 +530,74 @@ def _needs_nonempty_tile_scan(parsed_seeds: "int | float | None", n_tiles: int) 
     )
 
 
+def _weighted_uniform_seed_counts(
+    volume: "Any",
+    specs: list,
+    parsed_seeds: "int | float | None",
+    fit_config: dict,
+    saturation_exponent: float,
+    *,
+    keep_resolved_preprocessing: bool,
+) -> "tuple[int, ...] | None":
+    """Resolve one exact occupancy-weighted count per uniform tile."""
+    if not _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        return None
+    assert isinstance(parsed_seeds, int) and not isinstance(parsed_seeds, bool)
+    if not math.isfinite(saturation_exponent) or saturation_exponent <= 0.0:
+        raise typer.BadParameter("--saturation-exponent must be finite and positive")
+
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import (
+        _ensure_tile_norm_range,
+        uniform_tile_occupancy_weights,
+    )
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    resolved = fit_config if keep_resolved_preprocessing else dict(fit_config)
+    floor_spec = resolved.get("floor", "auto")
+    probe_cache = resolved.setdefault("_denoise_probe_cache", {})
+    _validate_floor(floor_spec)
+    applied_floor = resolve_volume_floor_denoised(
+        volume,
+        floor_spec,
+        denoise_h=resolved.get("_denoise_h"),
+        denoise_params=resolved.get("_denoise_params"),
+        probe_cache=probe_cache,
+        guard_numeric=True,
+        verbose=bool(resolved.get("verbose", True))
+        and floor_spec_needs_volume(floor_spec)
+        and resolved.get("_denoise_h") is not None
+        and resolved.get("_denoise_params") is not None,
+    )
+    resolved["floor"] = applied_floor if applied_floor is not None else "none"
+    resolved["_floor_resolved"] = True
+    _ensure_tile_norm_range(
+        volume,
+        resolved,
+        applied_floor,
+        verbose=bool(resolved.get("verbose", True)),
+    )
+    resolved["_norm_range_resolved"] = True
+    norm_range = resolved.get("norm_range")
+    signal_threshold = 0.0 if norm_range is None else 0.1 * float(norm_range[1])
+    weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        applied_floor,
+        signal_threshold=signal_threshold,
+        saturation_exponent=saturation_exponent,
+    )
+    counts = allocate_weighted_integer_seeds(parsed_seeds, weights)
+    nonempty = sum(weight > 0.0 for weight in weights)
+    aprint(
+        f"Seeds: {parsed_seeds:,} whole-volume budget -> "
+        f"occupancy-weighted across {nonempty} non-empty tiles "
+        f"({len(specs)} grid tiles)"
+    )
+    return counts
+
+
 def reject_rescaled_volume_refit(
     recipe_params: "Any",
     effective_downscale: "Any",
@@ -651,7 +720,9 @@ def dispatch_parallel_tiled(
         )
     else:
         grid_shape = tuple(volume.shape)
-    specs = compute_tile_specs(grid_shape, ctx.tile_size, ctx.tile_overlap)
+    specs = compute_tile_specs(
+        grid_shape, ctx.tile_size, ctx.tile_overlap, fold_slivers=True
+    )
     n_tiles = len(specs)
     tile_voxels = max((int(math.prod(s.shape)) for s in specs), default=1)
 
@@ -682,17 +753,17 @@ def dispatch_parallel_tiled(
             f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
             f"{n_jobs} concurrent worker(s)"
         )
-        # Announce a conservative seed split HERE, in the parent. Each worker
-        # resolves the exact non-empty count itself, but workers run under
-        # subprocess.run(capture_output=True), so on success their stdout is
-        # discarded and the user would only ever see the parent's undivided
-        # "Seeds: K" line. The raw whole-volume count is still forwarded below;
-        # dividing it here as well would double-divide in each worker.
         from luxar.cli.gsplat_config import parse_seeds
 
         parent_seeds = parse_seeds(ctx.seeds)
-        if _needs_nonempty_tile_scan(parent_seeds, n_tiles):
-            announce_seed_split_lower_bound(parent_seeds, n_tiles)
+        tile_seed_counts = _weighted_uniform_seed_counts(
+            reference_volume,
+            specs,
+            parent_seeds,
+            fit_config,
+            ctx.saturation_exponent,
+            keep_resolved_preprocessing=False,
+        )
 
         # Format downscale for worker argv (scalar or per-axis).
         ds_arg: Optional[str] = None
@@ -713,10 +784,9 @@ def dispatch_parallel_tiled(
                 m,
                 ctx.tile_size,
                 ctx.tile_overlap,
-                # The RAW whole-volume --seeds string, on purpose: each worker
-                # re-enters `fit --tile i/M` and splits it per tile itself (see
-                # split_seeds_across_tiles in fit_single_tile). Dividing here
-                # too would double-divide the budget.
+                # Keep the public seed specification for non-integer modes and
+                # provenance. Integer budgets are overridden below by the exact
+                # occupancy-weighted count computed once by the parent.
                 seeds=ctx.seeds,
                 iters=ctx.iters,
                 device=ctx.device,
@@ -754,6 +824,10 @@ def dispatch_parallel_tiled(
                 # whole run: the worker writes an .empty marker and
                 # exits 0; the orchestrator skips it at merge.
                 allow_empty_tile=True,
+                fold_tile_slivers=True,
+                tile_seed_count=(
+                    tile_seed_counts[i] if tile_seed_counts is not None else None
+                ),
             )
 
         # Per-invocation staging (unique token): so concurrent `fit -j`
@@ -802,6 +876,7 @@ def dispatch_parallel_tiled(
                 source_dtype=fit_config.get("source_dtype"),
                 volume=reference_volume,
                 device=ctx.device,
+                fold_tile_slivers=True,
             )
 
         with asection(f"Saving to {ctx.output_path.name}"):
@@ -1358,40 +1433,29 @@ def fit_sequential_tiled(
     recipe_params: "Any",
 ) -> "Any":
     """Full (in-process, sequential) tiled fitting."""
-    from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles, fit_tiled
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
-    from luxar.gsplats.fitting.validation import _validate_floor
+    from luxar.gsplats.fit_tiled_gsplats import fit_tiled
     from luxar.gsplats.tiling import compute_tile_specs
 
     # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports);
     # fit_tiled hands its `seeds` to EVERY tile, so split it across the grid
     # first. ``volume`` is already downscaled when --downscale is in play,
     # which is exactly the grid fit_tiled will build below.
-    specs = compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)
-    floor_spec = fit_config.get("floor", "auto")
-    probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
-    _validate_floor(floor_spec)
-    if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
-        resolved_floor = resolve_volume_floor_denoised(
-            volume,
-            floor_spec,
-            denoise_h=fit_config.get("_denoise_h"),
-            denoise_params=fit_config.get("_denoise_params"),
-            probe_cache=probe_cache,
-            guard_numeric=True,
-            verbose=bool(fit_config.get("verbose", True))
-            and floor_spec_needs_volume(floor_spec)
-            and fit_config.get("_denoise_h") is not None
-            and fit_config.get("_denoise_params") is not None,
-        )
-        nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
-        tile_seeds = split_seeds_across_tiles(
-            parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
-        )
-        fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
-        fit_config["_floor_resolved"] = True
-    else:
-        tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
+    specs = compute_tile_specs(
+        volume.shape, ctx.tile_size, ctx.tile_overlap, fold_slivers=True
+    )
+    tile_seed_counts = _weighted_uniform_seed_counts(
+        volume,
+        specs,
+        parsed_seeds,
+        fit_config,
+        ctx.saturation_exponent,
+        keep_resolved_preprocessing=True,
+    )
+    tile_seeds = (
+        parsed_seeds
+        if tile_seed_counts is not None
+        else split_seeds_across_tiles(parsed_seeds, len(specs))
+    )
 
     # Extract params that are explicit in fit_tiled to avoid
     # "got multiple values" conflicts with **fit_config
@@ -1431,6 +1495,8 @@ def fit_sequential_tiled(
         partition=seq_partition,
         recipe=ctx.recipe,
         recipe_params=recipe_params,
+        fold_tile_slivers=True,
+        tile_seed_counts=tile_seed_counts,
         **fit_config,
     )
 

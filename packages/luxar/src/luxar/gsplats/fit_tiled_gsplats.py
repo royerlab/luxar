@@ -108,6 +108,59 @@ def count_nonempty_tiles(
     return len(specs)
 
 
+def uniform_tile_occupancy_weights(
+    volume: Any,
+    specs: Sequence[TileSpec],
+    applied_floor: "float | None",
+    *,
+    signal_threshold: float,
+    saturation_exponent: float,
+) -> list[float]:
+    """Measure saturated Hann-weighted occupancy for a uniform tile grid."""
+    weights: list[float] = []
+    for spec in specs:
+        tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
+        if applied_floor is not None:
+            tile_data = np.clip(tile_data - applied_floor, 0.0, None)
+        weights.append(
+            tile_occupancy_weight(
+                tile_data,
+                cosine_window(spec),
+                signal_threshold=signal_threshold,
+                saturation_exponent=saturation_exponent,
+            )
+        )
+    return weights if any(weight > 0.0 for weight in weights) else [1.0] * len(specs)
+
+
+def _validate_tile_seed_counts(
+    tile_seed_counts: "Optional[Sequence[int]]", n_tiles: int
+) -> None:
+    """Validate an optional exact seed-count handoff against a tile grid."""
+    if tile_seed_counts is None:
+        return
+    if len(tile_seed_counts) != n_tiles:
+        raise ValueError(
+            "tile_seed_counts length must match the resolved tile grid "
+            f"({len(tile_seed_counts)} != {n_tiles})"
+        )
+    if any(count < 0 for count in tile_seed_counts):
+        raise ValueError("tile_seed_counts entries must be non-negative")
+
+
+def _tile_fit_kwargs(
+    fit_kwargs: dict[str, Any],
+    tile_seed_counts: "Optional[Sequence[int]]",
+    tile_index: int,
+) -> dict[str, Any]:
+    """Return fit arguments with an exact count for one tile when provided."""
+    if tile_seed_counts is None:
+        return fit_kwargs
+    tile_kwargs = dict(fit_kwargs)
+    tile_kwargs["seeds"] = int(tile_seed_counts[tile_index])
+    return tile_kwargs
+
+
 def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatData:
     """The fit's closing amplitude trim, keeping the score it just measured.
 
@@ -740,6 +793,8 @@ def fit_tiled(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
+    fold_tile_slivers: bool = False,
+    tile_seed_counts: "Optional[Sequence[int]]" = None,
     # Taken explicitly rather than left in **fit_kwargs: forwarded to the tiles,
     # they would declare the WHOLE acquisition as each crop's source. They
     # describe the merged result, so the merge is where they are applied.
@@ -791,6 +846,14 @@ def fit_tiled(
         Stop progressive passes if ΔPSNR < this value in dB.
     max_passes : int, optional
         Maximum number of progressive passes (None = unlimited).
+    fold_tile_slivers : bool, default False
+        Fold a trailing tile whose unique coverage is smaller than the overlap
+        into its predecessor. The public library preserves its historical
+        unfolded grid by default; the CLI opts in so direct and batch fits agree.
+    tile_seed_counts : sequence of int, optional
+        Exact per-tile integer seed counts in grid order. When provided, this
+        overrides ``seeds`` for each tile; its length must match the resolved
+        grid. This is the CLI handoff for occupancy-weighted whole-volume budgets.
     cull_retention : float or None, default=0.95
         Post-fit cumulative culling on the merged result.  Keeps the top
         splats that account for this fraction of total amplitude (0--1).
@@ -914,7 +977,10 @@ def fit_tiled(
         fit_kwargs["_norm_range_resolved"] = True
 
     volume_shape = tuple(volume.shape)
-    specs = compute_tile_specs(volume_shape, tile_size, overlap)
+    specs = compute_tile_specs(
+        volume_shape, tile_size, overlap, fold_slivers=fold_tile_slivers
+    )
+    _validate_tile_seed_counts(tile_seed_counts, len(specs))
 
     results: list[GSplatData] = []
     t0 = time.perf_counter()
@@ -938,7 +1004,7 @@ def fit_tiled(
                     max_splats_per_pass=max_splats_per_pass,
                     psnr_patience=psnr_patience,
                     max_passes=max_passes,
-                    **fit_kwargs,
+                    **_tile_fit_kwargs(fit_kwargs, tile_seed_counts, spec.index),
                 )
                 n = tile_result.n_splats
                 if verbose:
@@ -982,6 +1048,7 @@ def fit_tiled(
         grid_scale=grid_scale,
         volume=volume,
         device=fit_kwargs.get("device"),
+        fold_tile_slivers=fold_tile_slivers,
     )
     return merged
 
@@ -1008,6 +1075,7 @@ def merge_tile_results(
     source_stored_bytes: Optional[int] = None,
     volume: "Any | None" = None,
     device: Optional[str] = None,
+    fold_tile_slivers: bool = False,
 ) -> "Any":
     """Merge per-tile fit results, preserving any additive ladders they carry.
 
@@ -1117,7 +1185,12 @@ def merge_tile_results(
             # splats' own frame — see `grid_scale` above (#1587).
             bsp_tree=(
                 grid_bsp_tree(
-                    compute_tile_specs(volume_shape, tile_size, overlap),
+                    compute_tile_specs(
+                        volume_shape,
+                        tile_size,
+                        overlap,
+                        fold_slivers=fold_tile_slivers,
+                    ),
                     scale=grid_scale,
                 )
                 if len(results) == num_tiles

@@ -146,6 +146,87 @@ class TestComputeTileSpecs:
             total[spec.slices] += cosine_window(spec)
         np.testing.assert_allclose(total, 1.0, atol=1e-6)
 
+    def test_direct_fitter_matches_batch_grid_for_reported_volume(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.gsplats.batch.manifest import BatchManifest, tile_local_read_plan
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        shape = (108, 1352, 532)
+        manifest = BatchManifest(
+            mode="uniform",
+            spatial_shape=shape,
+            tile_size=512,
+            tile_overlap=32,
+            n_tiles=3,
+            tile_local_reads=True,
+            fold_tile_slivers=True,
+        )
+        batch_plan = tile_local_read_plan(manifest)
+        assert batch_plan is not None
+
+        seen: list[tuple[slice, ...]] = []
+        seen_seeds: list[int] = []
+
+        def _fake_fit_tile(volume: Any, spec: Any, **kwargs: Any) -> GSplatData:
+            seen.append(spec.slices)
+            seen_seeds.append(kwargs["seeds"])
+            return GSplatData(
+                centers=np.zeros((0, 3), dtype=np.float32),
+                amplitudes=np.zeros((0,), dtype=np.float32),
+                cholesky_factors=np.zeros((0, 6), dtype=np.float32),
+                stats={"skipped": True},
+            )
+
+        monkeypatch.setattr(ftg, "fit_tile", _fake_fit_tile)
+        monkeypatch.setattr(ftg, "merge_tile_results", lambda *args, **kwargs: object())
+
+        class _ShapeOnlyVolume:
+            dtype = np.dtype(np.float32)
+
+            def __init__(self, volume_shape: tuple[int, ...]) -> None:
+                self.shape = volume_shape
+
+        ftg.fit_tiled(
+            _ShapeOnlyVolume(shape),
+            tile_size=512,
+            overlap=32,
+            fold_tile_slivers=True,
+            tile_seed_counts=(11, 22, 33),
+            floor="none",
+            _floor_resolved=True,
+            norm_range=(0.0, 1.0),
+            verbose=False,
+        )
+
+        direct_regions = tuple(
+            ",".join(f"{span.start}:{span.stop}" for span in slices) for slices in seen
+        )
+        assert direct_regions == batch_plan.regions
+        assert [tuple(span.start for span in slices) for slices in seen] == [
+            (0, 0, 0),
+            (0, 480, 0),
+            (0, 960, 0),
+        ]
+        assert seen_seeds == [11, 22, 33]
+
+    def test_direct_fitter_rejects_seed_count_length_mismatch(self) -> None:
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        volume = np.zeros((20, 20), dtype=np.float32)
+        with pytest.raises(ValueError, match="length must match"):
+            ftg.fit_tiled(
+                volume,
+                tile_size=10,
+                overlap=0,
+                tile_seed_counts=(5,),
+                floor="none",
+                _floor_resolved=True,
+                norm_range=(0.0, 1.0),
+                verbose=False,
+            )
+
     def test_zero_overlap(self) -> None:
         """Zero overlap should produce non-overlapping tiles."""
         shape = (100,)

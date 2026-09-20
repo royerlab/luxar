@@ -90,6 +90,16 @@ def _norm_range_args(
     ]
 
 
+def _tile_handoff_args(
+    fold_tile_slivers: bool, tile_seed_count: Optional[int]
+) -> list[str]:
+    """Build hidden arguments that keep a worker on the parent's tile plan."""
+    args = ["--fold-tile-slivers"] if fold_tile_slivers else []
+    if tile_seed_count is not None:
+        args += ["--tile-seed-count", str(tile_seed_count)]
+    return args
+
+
 def build_worker_cmd(
     argv0: list[str],
     input_path: str | Path,
@@ -125,6 +135,8 @@ def build_worker_cmd(
     denoise_backend: str = "auto",
     denoise_2d: bool = False,
     allow_empty_tile: bool = False,
+    fold_tile_slivers: bool = False,
+    tile_seed_count: Optional[int] = None,
 ) -> list[str]:
     """Build the ``luxar gsplat fit --tile i/M`` argv for one worker.
 
@@ -215,6 +227,7 @@ def build_worker_cmd(
             cmd += ["--denoise-2d"]
     if allow_empty_tile:
         cmd += ["--allow-empty-tile"]
+    cmd += _tile_handoff_args(fold_tile_slivers, tile_seed_count)
     return cmd
 
 
@@ -300,6 +313,7 @@ def fit_tiled_parallel(
     source_dtype: Optional[str] = None,
     volume: "Any | None" = None,
     device: Optional[str] = None,
+    fold_tile_slivers: bool = False,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -503,6 +517,7 @@ def fit_tiled_parallel(
         source_dtype=source_dtype,
         volume=reference,
         device=device,
+        fold_tile_slivers=fold_tile_slivers,
     )
 
     if not keep_tiles:

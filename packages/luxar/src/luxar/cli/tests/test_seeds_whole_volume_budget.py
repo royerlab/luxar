@@ -234,14 +234,10 @@ def test_all_empty_scan_falls_back_to_grid_count() -> None:
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
-def test_cli_sequential_tiled_splits_seeds(
+def test_cli_sequential_tiled_hands_exact_seed_counts_and_folded_grid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``fit --tiling uniform --seeds 90`` hands ``fit_tiled`` 10 (90 / 9 tiles).
-
-    Pre-fix this was 90 — which ``fit_tiled`` then applied to EVERY tile, for a
-    ~810-splat budget on a 90-splat request.
-    """
+    """The in-process path receives one exact count per folded-grid tile."""
     seen: dict[str, Any] = {}
 
     def _fake_fit_tiled(volume: Any, **kwargs: Any) -> GSplatData:
@@ -275,7 +271,9 @@ def test_cli_sequential_tiled_splits_seeds(
     )
 
     assert result.exit_code == 0, result.output
-    assert seen["seeds"] == 90 // _N_TILES == 10
+    assert seen["fold_tile_slivers"] is True
+    assert sum(seen["tile_seed_counts"]) == 90
+    assert len(set(seen["tile_seed_counts"])) > 1
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
@@ -365,8 +363,12 @@ def test_cli_sequential_sparse_fit_splits_over_nonempty_tiles(
     )
 
     assert result.exit_code == 0, result.output
-    assert seen["seeds"] == 50
-    assert "4 non-empty tiles (25 grid tiles)" in result.output
+    counts = seen["tile_seed_counts"]
+    assert sum(counts) == 200
+    assert sum(count > 0 for count in counts) == 4
+    assert max(counts) > min(count for count in counts if count > 0)
+    assert seen["fold_tile_slivers"] is True
+    assert "occupancy-weighted across 4 non-empty tiles" in result.output
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
@@ -408,7 +410,9 @@ def test_cli_sequential_single_nonempty_tile_announces_sparse_grid(
 
     assert result.exit_code == 0, result.output
     assert seen["seeds"] == 200
-    assert "1 non-empty tile (25 grid tiles)" in result.output
+    assert sum(seen["tile_seed_counts"]) == 200
+    assert sum(count > 0 for count in seen["tile_seed_counts"]) == 1
+    assert "occupancy-weighted across 1 non-empty tiles" in result.output
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
@@ -449,10 +453,13 @@ def test_cli_sequential_divisor_reuses_resolved_floor(
     )
 
     assert result.exit_code == 0, result.output
-    assert seen["seeds"] == 50
+    assert seen["seeds"] == 200
+    assert sum(seen["tile_seed_counts"]) == 200
+    assert sum(count > 0 for count in seen["tile_seed_counts"]) == 4
     assert seen["floor"] == 3.0
     assert seen["_floor_resolved"] is True
-    assert "4 non-empty tiles (25 grid tiles)" in result.output
+    assert seen["_norm_range_resolved"] is True
+    assert "occupancy-weighted across 4 non-empty tiles" in result.output
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
@@ -585,20 +592,10 @@ def test_cli_whole_volume_fit_keeps_full_budget(
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
-def test_cli_parallel_forwards_raw_budget_and_announces_split(
+def test_cli_parallel_forwards_exact_counts_and_folded_grid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``-j 2`` forwards the RAW ``--seeds 90`` to its workers and says so.
-
-    Two halves, both load-bearing:
-
-    * The worker argv must carry ``--seeds 90`` **verbatim**. Each worker
-      re-enters ``fit --tile i/M`` and divides for itself, so dividing in the
-      dispatcher too would double-divide (90 -> 10 -> 2).
-    * The parent must still ANNOUNCE the split. Workers run under
-      ``subprocess.run(capture_output=True)``, so their notice is discarded on
-      success and the user would otherwise only see the undivided "Seeds: 90".
-    """
+    """The ``-j`` parent computes once and hands each worker its exact share."""
     captured: dict[str, Any] = {}
 
     def _fake_parallel(**kwargs: Any) -> GSplatData:
@@ -638,16 +635,14 @@ def test_cli_parallel_forwards_raw_budget_and_announces_split(
     assert result.exit_code == 0, result.output
     assert captured["num_tiles"] == _N_TILES
 
-    argv = captured["worker_cmd_builder"](0, captured["num_tiles"], tmp_path / "t0")
-    assert "--seeds" in argv
-    assert argv[argv.index("--seeds") + 1] == "90", (
-        f"worker must get the raw whole-volume budget, got {argv}"
-    )
-
-    # The parent cannot inspect the workers' final grid, so it announces only
-    # the geometric lower bound; each worker prints the exact split internally.
-    assert "whole-volume budget" in result.output
-    assert "at least 10 per non-empty tile across 9 grid tiles" in result.output
+    commands = [
+        captured["worker_cmd_builder"](i, _N_TILES, tmp_path / f"t{i}")
+        for i in range(_N_TILES)
+    ]
+    counts = [int(cmd[cmd.index("--tile-seed-count") + 1]) for cmd in commands]
+    assert sum(counts) == 90
+    assert all("--fold-tile-slivers" in cmd for cmd in commands)
+    assert "occupancy-weighted across 9 non-empty tiles" in result.output
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
@@ -693,8 +688,15 @@ def test_cli_parallel_downscale_announces_conservative_seed_split(
     )
 
     assert result.exit_code == 0, result.output
-    assert captured["num_tiles"] == 6
-    assert "at least 15 per non-empty tile across 6 grid tiles" in result.output
+    assert captured["num_tiles"] == 3
+    commands = [
+        captured["worker_cmd_builder"](i, 3, tmp_path / f"downscaled-{i}")
+        for i in range(3)
+    ]
+    counts = [int(cmd[cmd.index("--tile-seed-count") + 1]) for cmd in commands]
+    assert sum(counts) == 90
+    assert all("--fold-tile-slivers" in cmd for cmd in commands)
+    assert "occupancy-weighted across 3 non-empty tiles" in result.output
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
