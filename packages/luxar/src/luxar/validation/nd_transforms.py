@@ -10,7 +10,7 @@ BEFORE slicing in the viewer pipeline.
 
 from __future__ import annotations
 
-import warnings
+import math
 from typing import Any, Dict, List
 
 from ..typing_utils._format_contract import (
@@ -172,21 +172,20 @@ def _validate_affine_params(entry: Dict[str, Any], dim_name: str) -> None:
     for key in ("scale", "offset"):
         if key in entry:
             try:
-                float(entry[key])
+                value = float(entry[key])
             except (TypeError, ValueError) as e:
                 raise ValueError(
                     f"nd_transform['{dim_name}'].{key} must be a number, "
                     f"got {type(entry[key]).__name__}"
                 ) from e
+            if not math.isfinite(value):
+                raise ValueError(f"nd_transform['{dim_name}'].{key} must be finite")
 
     scale = entry.get("scale", 1.0)
     if float(scale) == 0.0:
-        warnings.warn(
-            f"nd_transform['{dim_name}'].scale is 0, which collapses "
-            f"all values to offset={entry.get('offset', 0.0)}. "
-            f"This is likely unintentional.",
-            UserWarning,
-            stacklevel=2,
+        raise ValueError(
+            f"nd_transform['{dim_name}'].scale is 0; "
+            f"zero scale is not a supported transform"
         )
 
     # Reject unknown keys

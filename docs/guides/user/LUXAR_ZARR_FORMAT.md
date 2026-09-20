@@ -2167,7 +2167,7 @@ In addition to the 4x4 spatial `transform`, nodes can carry an `nd_transform` at
 }
 ```
 
-Both fields are optional (default to `1.0` and `0.0` respectively). The effective value is computed as: `effective_value = scale * original_value + offset`. For discrete ordinal dimensions, the result is rounded to the nearest integer.
+Both fields are optional (default to `1.0` and `0.0` respectively). Both must be finite, and `scale` must be non-zero; invalid values are rejected at validation time. The effective value is computed as: `effective_value = scale * original_value + offset`. For discrete ordinal dimensions, the result is rounded to the nearest integer.
 
 ### Permutation Entry (Categorical Dimensions)
 
