@@ -8,6 +8,7 @@
       "lodGroup": "/points_additive",
       "coarseLevel": 0,
       "finestLevel": 1,
+      "levelPointCounts": [4096, 16384],
       "thresholds": {
         "minSsim": 0.72,
         "maxMeanDeltaE": 3.2,

@@ -45,11 +45,13 @@ scripts/
 recorded coarse and finest levels at the same pinned camera with LOD fading and
 stream-energy compensation disabled, and writes PNGs plus `summary.json` under
 `test-results/lod-visual-ab/`. The command is deliberately opt-in and separate
-from `test:perf:e2e`: it gates image similarity, not timing.
+from `test:perf:e2e`: it gates image similarity, not timing. Thresholds are
+recorded for Linux Chromium, so the command refuses other platforms.
 
 Each `(geometry, blending mode)` bench owns its thresholds in
-`lod-visual-ab-thresholds.json`. A threshold change should include the old and
-new measured values in the PR description.
+`lod-visual-ab-thresholds.json`: minimum SSIM, maximum mean CIE76 DeltaE, and
+maximum increase in full-resolution blown-pixel fraction. A threshold change
+should include the old and new measured values in the PR description.
 
 ## Build
 

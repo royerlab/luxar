@@ -143,13 +143,20 @@ function blownPixelFraction(rgb) {
   return blown / pixelCount;
 }
 
-export function scoreImagePair(referenceRgb, candidateRgb, size = DEFAULT_SCORE_SIZE) {
+export function scoreImagePair(
+  referenceRgb,
+  candidateRgb,
+  size = DEFAULT_SCORE_SIZE,
+  fullResolutionBlownPixelFraction = null
+) {
   assertRgb(referenceRgb, size, 'reference image');
   assertRgb(candidateRgb, size, 'candidate image');
   const referenceGrey = toGrey(referenceRgb);
   const candidateGrey = toGrey(candidateRgb);
-  const referenceBlown = blownPixelFraction(referenceRgb);
-  const candidateBlown = blownPixelFraction(candidateRgb);
+  const referenceBlown =
+    fullResolutionBlownPixelFraction?.reference ?? blownPixelFraction(referenceRgb);
+  const candidateBlown =
+    fullResolutionBlownPixelFraction?.candidate ?? blownPixelFraction(candidateRgb);
   return {
     ssim: ssim(referenceGrey, candidateGrey, size),
     ncc: ncc(referenceGrey, candidateGrey),
@@ -176,7 +183,7 @@ export function evaluateThresholds(score, thresholds) {
 export async function captureCanvasImage(page, canvas, size = DEFAULT_SCORE_SIZE) {
   const png = await canvas.screenshot();
   const stats = await page.evaluate(
-    async ({ base64, comparisonSize }) => {
+    async ({ base64, comparisonSize, blownChannel }) => {
       const image = new Image();
       image.src = `data:image/png;base64,${base64}`;
       await image.decode();
@@ -189,12 +196,14 @@ export async function captureCanvasImage(page, canvas, size = DEFAULT_SCORE_SIZE
       const fullData = fullContext.getImageData(0, 0, image.width, image.height).data;
       let lit = 0;
       let nearWhite = 0;
+      let blown = 0;
       let lumaSum = 0;
       const pixelCount = image.width * image.height;
       for (let offset = 0; offset < fullData.length; offset += 4) {
         const maximum = Math.max(fullData[offset], fullData[offset + 1], fullData[offset + 2]);
         if (maximum > 16) lit++;
         if (maximum > 235) nearWhite++;
+        if (maximum >= blownChannel) blown++;
         lumaSum += (fullData[offset] + fullData[offset + 1] + fullData[offset + 2]) / 3;
       }
       const small = document.createElement('canvas');
@@ -215,11 +224,12 @@ export async function captureCanvasImage(page, canvas, size = DEFAULT_SCORE_SIZE
         height: image.height,
         litFraction: lit / pixelCount,
         nearWhiteFraction: nearWhite / pixelCount,
+        blownPixelFraction: blown / pixelCount,
         meanLuma: lumaSum / pixelCount,
         rgb,
       };
     },
-    { base64: png.toString('base64'), comparisonSize: size }
+    { base64: png.toString('base64'), comparisonSize: size, blownChannel: BLOWN_CHANNEL }
   );
   return { png, ...stats, grey: toGrey(stats.rgb) };
 }

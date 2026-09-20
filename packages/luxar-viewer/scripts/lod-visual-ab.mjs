@@ -13,6 +13,11 @@ const viewerRoot = resolve(here, '..');
 const repoRoot = resolve(viewerRoot, '../..');
 const scoreSize = 256;
 
+if (process.platform !== 'linux') {
+  console.error('LOD visual A/B thresholds are recorded for Linux Chromium only.');
+  process.exit(2);
+}
+
 function arg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
   if (index < 0) return fallback;
@@ -102,30 +107,56 @@ async function captureLevel(browser, bench, label, expectedLevel, query) {
     `http://127.0.0.1:${viewerPort}/?src=${src}&debug&dpr=1&noLodFade&noLodEnergy&${query}`
   );
   await page.waitForFunction(
-    ({ lodGroup, activeLevel }) => {
+    ({ lodGroup, activeLevel, expectedPointCount }) => {
       const debug = window.__luxarDebug;
       const group = debug?.getState?.()?.lodGroups?.find((entry) => entry.name === lodGroup);
       if (group?.activeLevel !== activeLevel) return false;
-      let visiblePoints = 0;
+      let lodObject = null;
       debug?.scene?.traverse((object) => {
-        if (object.visible && object.userData?.nodeType === 'points') {
+        if (object.name === lodGroup) lodObject = object;
+      });
+      const selectedChild = lodObject?.children?.[activeLevel];
+      if (!selectedChild?.visible) return false;
+      let visiblePoints = 0;
+      selectedChild.traverse((object) => {
+        if (object.userData?.nodeType === 'points') {
           visiblePoints += object.userData.visiblePointCount ?? 0;
         }
       });
-      return visiblePoints > 0;
+      return visiblePoints === expectedPointCount;
     },
-    { lodGroup: bench.lodGroup, activeLevel: expectedLevel },
+    {
+      lodGroup: bench.lodGroup,
+      activeLevel: expectedLevel,
+      expectedPointCount: bench.levelPointCounts[expectedLevel],
+    },
     { timeout: 120_000 }
   );
   await page.evaluate(() => window.__luxarDebug.app.sceneManager.requestRender?.());
   await page.waitForTimeout(500);
-  const selected = await page.evaluate((lodGroup) => {
-    const state = window.__luxarDebug.getState();
-    return state.lodGroups.find((entry) => entry.name === lodGroup)?.activeLevel ?? -1;
-  }, bench.lodGroup);
+  const selection = await page.evaluate(
+    ({ lodGroup, activeLevel }) => {
+      const state = window.__luxarDebug.getState();
+      let lodObject = null;
+      window.__luxarDebug.scene.traverse((object) => {
+        if (object.name === lodGroup) lodObject = object;
+      });
+      let visiblePointCount = 0;
+      lodObject?.children?.[activeLevel]?.traverse((object) => {
+        if (object.userData?.nodeType === 'points') {
+          visiblePointCount += object.userData.visiblePointCount ?? 0;
+        }
+      });
+      return {
+        selectedLevel: state.lodGroups.find((entry) => entry.name === lodGroup)?.activeLevel ?? -1,
+        visiblePointCount,
+      };
+    },
+    { lodGroup: bench.lodGroup, activeLevel: expectedLevel }
+  );
   const image = await captureCanvasImage(page, page.locator('canvas#app'), scoreSize);
   await page.close();
-  return { label, selectedLevel: selected, pageErrors, ...image };
+  return { label, ...selection, pageErrors, ...image };
 }
 
 function serialisableArm(arm) {
@@ -147,6 +178,7 @@ spawnServer('python3', ['-m', 'http.server', String(dataPort), '--bind', '127.0.
 
 const summary = { fixture: fixtureRelative, scoreSize, benches: [] };
 let failed = false;
+let browser = null;
 try {
   await waitHttp(`http://127.0.0.1:${viewerPort}/`);
   await waitHttp(`http://127.0.0.1:${dataPort}/`);
@@ -162,7 +194,7 @@ try {
     ],
   };
   if (channel) launchOptions.channel = channel;
-  const browser = await chromium.launch(launchOptions);
+  browser = await chromium.launch(launchOptions);
   for (const bench of thresholdsDocument.benches) {
     const benchDir = resolve(outDir, bench.id);
     mkdirSync(benchDir, { recursive: true });
@@ -176,8 +208,16 @@ try {
     );
     writeFileSync(resolve(benchDir, 'finest.png'), finest.png);
     writeFileSync(resolve(benchDir, 'coarse.png'), coarse.png);
-    const score = scoreImagePair(finest.rgb, coarse.rgb, scoreSize);
+    const score = scoreImagePair(finest.rgb, coarse.rgb, scoreSize, {
+      reference: finest.blownPixelFraction,
+      candidate: coarse.blownPixelFraction,
+    });
     const verdict = evaluateThresholds(score, bench.thresholds);
+    const captureChecks = {
+      noPageErrors: finest.pageErrors.length === 0 && coarse.pageErrors.length === 0,
+      rendered: finest.litFraction >= 0.01 && coarse.litFraction >= 0.01,
+    };
+    const pass = verdict.pass && Object.values(captureChecks).every(Boolean);
     const result = {
       id: bench.id,
       geometry: bench.geometry,
@@ -186,6 +226,8 @@ try {
       arms: { finest: serialisableArm(finest), coarse: serialisableArm(coarse) },
       score,
       verdict,
+      captureChecks,
+      pass,
     };
     summary.benches.push(result);
     console.log(`\n=== ${bench.id} (${bench.geometry}/${bench.blendingMode}) ===`);
@@ -193,14 +235,16 @@ try {
       `SSIM=${score.ssim.toFixed(4)}  NCC=${score.ncc.toFixed(4)}  ` +
         `meanDeltaE=${score.meanDeltaE.toFixed(3)}  ` +
         `blownDelta=${(score.blownPixelFraction.delta * 100).toFixed(3)}%  ` +
-        `${verdict.pass ? 'PASS' : 'FAIL'}`
+        `${pass ? 'PASS' : 'FAIL'}`
     );
-    if (finest.pageErrors.length || coarse.pageErrors.length) failed = true;
-    if (finest.litFraction < 0.01 || coarse.litFraction < 0.01) failed = true;
-    if (!verdict.pass) failed = true;
+    if (!captureChecks.noPageErrors) {
+      console.error(`Page errors: ${[...finest.pageErrors, ...coarse.pageErrors].join('; ')}`);
+    }
+    if (!captureChecks.rendered) console.error('An arm rendered (almost) nothing.');
+    if (!pass) failed = true;
   }
-  await browser.close();
 } finally {
+  await browser?.close();
   killAll();
 }
 

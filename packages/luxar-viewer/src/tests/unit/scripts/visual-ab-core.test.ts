@@ -32,6 +32,17 @@ describe('visual A/B scoring', () => {
     expect(score.blownPixelFraction.delta).toBe(1);
   });
 
+  it('uses full-resolution clipping fractions when captures provide them', () => {
+    const rgb = solidRgb(40, 40, 40);
+    const score = scoreImagePair(rgb, rgb, 8, { reference: 0.02, candidate: 0.05 });
+
+    expect(score.blownPixelFraction).toEqual({
+      reference: 0.02,
+      candidate: 0.05,
+      delta: 0.030000000000000002,
+    });
+  });
+
   it('evaluates every recorded threshold independently', () => {
     const verdict = evaluateThresholds(
       { ssim: 0.91, meanDeltaE: 4.5, blownPixelFraction: { delta: 0.02 } },
