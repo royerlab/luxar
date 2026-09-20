@@ -118,6 +118,9 @@ def _parse_tile_worker_metadata(
         raise typer.BadParameter("--tile-nonempty-count must be positive")
     if tile_seed_count is not None and tile_seed_count < 0:
         raise typer.BadParameter("--tile-seed-count must be non-negative")
+    # A per-tile count needs a tile, not necessarily a tile-local READ plan:
+    # `batch-fit` pairs it with --tile-region, but the direct `fit -j` parent
+    # hands its workers an exact count while each still reads the whole volume.
     if tile_seed_count is not None and tile is None:
         raise typer.BadParameter("--tile-seed-count requires --tile")
     if fold_tile_slivers and tile is None:

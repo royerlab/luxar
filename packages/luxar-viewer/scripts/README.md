@@ -30,11 +30,33 @@ scripts/
 ├── check-typedoc-warnings-tests.mjs # node:test coverage for the warning ratchet
 ├── generate-third-party-licenses.mjs # Build redistributed dependency notices
 ├── generate-third-party-licenses.test.mjs # Tests for complete notices
+├── generate-lod-visual-ab-fixture.py # Deterministic LOD visual A/B fixture
+├── lod-visual-ab.mjs              # Opt-in coarse-vs-finest rendered acceptance bench
+├── lod-visual-ab-thresholds.json  # Per-bench visual thresholds and provenance
+├── visual-ab-core.mjs             # Shared screenshot capture and image scoring
+├── visual-ab-core.test.mjs        # Tests for shared visual scoring
 ├── perf-diff.mjs                  # Markdown delta table from perf-bench JSON
 ├── perf-diff.test.mjs             # tests for perf-diff's buildPerfDiff()
 ├── run-ci-checks.mjs              # Aggregate viewer static + coverage merge gates
 └── perf/                          # perf-bench capture fixtures / helpers
 ```
+
+## LOD visual A/B
+
+`pnpm test:lod-visual-ab` generates a deterministic fixture, captures the
+recorded coarse and finest levels at the same pinned camera with LOD fading and
+stream-energy compensation disabled, and writes PNGs plus `summary.json` under
+`test-results/lod-visual-ab/`. The command is deliberately opt-in and separate
+from `test:perf:e2e`: it gates image similarity, not timing. Thresholds are
+recorded for Linux Chromium, so the command refuses other platforms.
+
+Each `(geometry, blending mode)` bench owns its thresholds in
+`lod-visual-ab-thresholds.json`: minimum SSIM and coarse/finest mean-luma ratio,
+maximum mean CIE76 DeltaE, and maximum increase in full-resolution blown-pixel
+fraction. The finest arm must also contain a recorded minimum fraction of blown
+pixels so the clipping check cannot silently become inert. A threshold change
+should include the old and new measured values in the PR description and refresh
+the recorded provenance.
 
 ## Build
 

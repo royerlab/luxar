@@ -19,6 +19,7 @@ def _refuse_resume_grid_mismatch(
     *,
     resume: bool,
     mismatch_help: str = "pass --no-resume to refit every tile",
+    legacy_weight_help: str = "Pass --no-resume to refit every tile",
 ) -> None:
     """Refuse index-based resume when completed tiles use another grid."""
     if not resume or not (output_dir / "manifest.json").exists():
@@ -28,12 +29,12 @@ def _refuse_resume_grid_mismatch(
 
     existing = load_manifest(output_dir)
     tiles_dir = output_dir / "tiles"
-    has_completed = any(
+    completed_count = sum(
         (tiles_dir / job.output_filename).exists()
         or Path(str(tiles_dir / job.output_filename) + ".empty").exists()
         for job in existing.jobs
     )
-    if not has_completed:
+    if completed_count == 0:
         return
 
     def grid_signature(manifest: "BatchManifest") -> tuple[Any, ...]:
@@ -65,6 +66,16 @@ def _refuse_resume_grid_mismatch(
         raise typer.BadParameter(
             "cannot resume: the existing tile outputs use a different grid; "
             f"{mismatch_help}"
+        )
+    if (
+        existing.tile_occupancy_weights is None
+        and fresh.tile_occupancy_weights is not None
+    ):
+        tile_word = "tile" if completed_count == 1 else "tiles"
+        aprint(
+            f"Warning: {completed_count} completed {tile_word} predating occupancy "
+            "weighting will keep equal-share budgets. "
+            f"{legacy_weight_help}."
         )
 
 
