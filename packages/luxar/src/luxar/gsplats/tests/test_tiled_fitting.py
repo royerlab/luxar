@@ -194,7 +194,47 @@ def test_tile_occupancy_weight_thresholds_and_saturates() -> None:
         window,
         signal_threshold=0.1,
         saturation_exponent=0.5,
-    ) == pytest.approx(1.5**0.5)
+    ) == pytest.approx(1.75 * (1.5 / 1.75) ** 0.5)
+
+
+def test_tile_occupancy_weight_keeps_homogeneous_density_size_independent() -> None:
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    small_window = np.ones(8, dtype=np.float32)
+    large_window = np.ones(16, dtype=np.float32)
+    weights = [
+        tile_occupancy_weight(
+            np.ones_like(window),
+            window,
+            signal_threshold=0.1,
+            saturation_exponent=0.44,
+        )
+        for window in (small_window, large_window)
+    ]
+
+    assert weights == pytest.approx([8.0, 16.0])
+    counts = allocate_weighted_integer_seeds(2400, weights)
+    assert counts == (800, 1600)
+    assert counts[0] / small_window.sum() == counts[1] / large_window.sum()
+
+
+def test_tile_occupancy_weight_preserves_calibrated_exponent_at_equal_size() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    exponent = 0.44
+    window = np.ones(16, dtype=np.float32)
+    sparse = np.r_[np.ones(2), np.zeros(14)].astype(np.float32)
+    dense = np.r_[np.ones(8), np.zeros(8)].astype(np.float32)
+
+    sparse_weight = tile_occupancy_weight(
+        sparse, window, signal_threshold=0.1, saturation_exponent=exponent
+    )
+    dense_weight = tile_occupancy_weight(
+        dense, window, signal_threshold=0.1, saturation_exponent=exponent
+    )
+
+    assert dense_weight / sparse_weight == pytest.approx((8 / 2) ** exponent)
 
 
 def test_tile_occupancy_weight_distinguishes_empty_and_dim_tiles() -> None:

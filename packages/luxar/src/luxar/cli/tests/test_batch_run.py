@@ -1063,14 +1063,19 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     assert manifest.fold_tile_slivers is True
     assert manifest.tile_nonempty_counts == [2]
     assert manifest.tile_occupancy_weights == [
-        [pytest.approx(64.0**0.44), 0.0, 0.0, 1.0]
+        [
+            pytest.approx(4096.0 * (64.0 / 4096.0) ** 0.44),
+            0.0,
+            0.0,
+            pytest.approx(1024.0 * (1.0 / 1024.0) ** 0.44),
+        ]
     ]
     argv = build_task_fit_argv(
         manifest, manifest.jobs[3], tmp_path / "tile.gsplats.zarr", argv0=[]
     )
     assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
     assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
-    assert argv[argv.index("--tile-seed-count") + 1] == "14"
+    assert argv[argv.index("--tile-seed-count") + 1] == "7"
     output = capsys.readouterr().out
     assert "occupancy-weighted across 4 grid tiles" in output
     assert "exact per-tile counts resolved at plan time" in output

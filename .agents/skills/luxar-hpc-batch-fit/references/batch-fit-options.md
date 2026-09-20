@@ -42,13 +42,16 @@ scale; a config-supplied `voxel_size` takes precedence over discovered spacing.
 
 Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 (t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
-volume's M non-empty tiles (`ceil(K/M)`, floored at 1) instead of fitting K per
-tile, so each timepoint/channel tracks K rather than K x the grid size. Every
-task derives the same M from the volume, grid, resolved floor, and Hann-window
-skip predicate. `K < M` gives M. A float ratio is
-scale-free and applied per tile unchanged. Under **content** tiling `--seeds` is
-ignored: tasks are emitted as `--tiling content --plan … --plan-box k` and each
-box takes its budget from the shared density plan.
+volume's non-empty tiles by Hann-weighted foreground occupancy instead of fitting
+K per tile, so each timepoint/channel tracks K rather than K x the grid size. The
+weight is `Hann voxels × foreground_fraction^saturation_exponent`: homogeneous
+content therefore gets the same splat density in differently-sized tiles, while
+the calibrated exponent still controls relative density between equally-sized
+tiles. Largest-remainder rounding preserves K whenever K can give every non-empty
+tile one seed; otherwise each non-empty tile gets one. A float ratio is scale-free
+and applied per tile unchanged. Under **content** tiling `--seeds` is ignored:
+tasks are emitted as `--tiling content --plan … --plan-box k` and each box takes
+its budget from the shared density plan.
 
 `--floor` (default `auto`, same as `fit`/`cal`): subtract a background floor /
 DC-offset (clip at 0) before normalization, so amplitudes are background-relative.
