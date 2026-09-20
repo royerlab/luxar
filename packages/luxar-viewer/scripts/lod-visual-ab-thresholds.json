@@ -1,5 +1,17 @@
 {
   "schemaVersion": 1,
+  "provenance": {
+    "recordedAt": "2026-09-20",
+    "sourceCommit": "85f4fe2257033a98c2907ae8694b808cedfa7389",
+    "platform": "Linux x86_64 (obsidian)",
+    "browser": "Chrome for Testing 151.0.7922.34",
+    "playwright": "1.62.1",
+    "observed": {
+      "ssim": [0.6206, 0.634],
+      "meanDeltaE": [6.314, 6.672],
+      "referenceBlownPixelFraction": 0.0002492
+    }
+  },
   "benches": [
     {
       "id": "points-additive-merge",
