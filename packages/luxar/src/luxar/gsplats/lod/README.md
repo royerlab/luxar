@@ -416,7 +416,7 @@ make_substitutive_lod(
     method: str = "auto",               # see "Substitutive methods" below
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
-    color_weight: float = 0.0,           # API-only; 1–10 = soft-to-strong hue preference
+    color_weight: float = 0.0,           # API-only; ~0.1–1 greedy, ~1–10 Lloyd
     coverage_inflation: float = 3.0,    # anti-grid inter-spread widening (1.0 = off)
     conserve_mass: bool = True,         # per-level (per-barrier-group) DC conservation
     refine: str = "none",               # "l2" = post-merge L2 refit per level
@@ -604,9 +604,12 @@ further: each bin's amplitude is set to exactly its members' summed
 L²-optimal projection. Per-bin per-channel colored light is then conserved
 together with the mass-weighted mean colors. Set the API-only `color_weight`
 knob to discourage cross-hue bins when spatial overlap alone would blend
-colors; `1`–`10` spans a soft-to-strong preference for both greedy and Lloyd
-methods. There is no `--color-weight` CLI or `RecipeParams` field today. The
-global `conserve_mass` rescale becomes a near-no-op safety net.
+colors. Its scale is method-specific because greedy compares cluster pairs
+while Lloyd compares members and bin centroids: roughly `0.1`–`1` spans a
+soft-to-strong preference for greedy, versus `1`–`10` for Lloyd. Since `auto`
+may use both methods in one ladder, pin an explicit method when consistent
+chromatic strength matters. There is no `--color-weight` CLI or `RecipeParams`
+field today. The global `conserve_mass` rescale becomes a near-no-op safety net.
 The default stays `amplitude="l2"` for fitted volumetric gsplats.
 
 ### Substitutive methods

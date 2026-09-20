@@ -894,13 +894,15 @@ def make_substitutive_lod(
     color_weight
         Opt-in chromatic penalty in the partition cost. ``0`` (default) keeps
         the historical spatial/intensity-only partition byte-for-byte. Values
-        above zero apply the same ``exp(-color_weight * distance²)`` affinity
-        in greedy and Lloyd partitioning, so one value has comparable strength
-        when ``method="auto"`` switches between them. ``1`` to ``10`` is the
-        useful range for a soft-to-strong hue preference. RGB is normalized by
-        brightness; pure black maps to neutral chromaticity, and alpha is
-        deliberately excluded while representative alpha is composed in
-        optical-depth space. This expert knob is API-only today.
+        above zero apply an ``exp(-color_weight * distance²)`` affinity, but
+        the distance is pair-to-pair for greedy and member-to-centroid for
+        Lloyd, so the useful scale is method-specific: roughly ``0.1`` to
+        ``1`` for greedy and ``1`` to ``10`` for Lloyd spans a soft-to-strong
+        hue preference. Because ``method="auto"`` may switch per level, pin an
+        explicit method when consistent chromatic strength matters. RGB is
+        normalized by brightness; pure black maps to neutral chromaticity, and
+        alpha is deliberately excluded while representative alpha is composed
+        in optical-depth space. This expert knob is API-only today.
     coverage_inflation
         Inflation factor β >= 1 applied to each representative's
         *inter-center* spread (``Σ_out = intra + β·inter``) with a
@@ -1398,11 +1400,8 @@ def merge_to_count(
         raise ValueError(
             f"method must be one of {list(_VALID_CHOICES)}, got {method!r}"
         )
-    if not math.isfinite(color_weight) or color_weight < 0.0:
-        raise ValueError(f"color_weight must be finite and >= 0.0, got {color_weight}")
     src = _finest_content(data)
-    if color_weight > 0.0 and src.colors is None:
-        raise ValueError("color_weight > 0 requires per-splat colors")
+    _validate_color_weight(color_weight, src)
     if src.n_splats <= n_target:
         return src
     target_device = _resolve_reduction_device(device, caller="merge_to_count")
