@@ -194,6 +194,7 @@ On write, the system validates:
 - Categorical dims get `permutation` param
 - Permutation is valid (correct length, each index once)
 - Scale is non-zero
+- Scale and offset are finite
 - No mixing of affine and permutation params on a single dimension
 
 ## 7. Hierarchical Composition
