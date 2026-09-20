@@ -9,7 +9,26 @@ from pathlib import Path
 import numpy as np
 
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
+from luxar._zarr_compat import read_array_meta
 from luxar.encoding import EncodingMode
+
+
+def read_level_element_counts(output: Path) -> list[int]:
+    level_element_counts: list[int] = []
+    level = 0
+    while True:
+        positions_metadata = read_array_meta(
+            output / "points_additive" / f"child_{level}" / "positions"
+        )
+        if positions_metadata is None:
+            break
+        level_element_counts.append(int(positions_metadata["shape"][0]))
+        level += 1
+    if not level_element_counts:
+        raise RuntimeError(
+            f"generated fixture contains no readable LOD levels: {output}"
+        )
+    return level_element_counts
 
 
 def build_fixture(output: Path) -> None:
@@ -98,18 +117,7 @@ def build_fixture(output: Path) -> None:
             additive_lod=False,
         )
 
-    level_element_counts = []
-    level = 0
-    while True:
-        positions_metadata = (
-            output / "points_additive" / f"child_{level}" / "positions" / "zarr.json"
-        )
-        if not positions_metadata.exists():
-            break
-        level_element_counts.append(
-            json.loads(positions_metadata.read_text())["shape"][0]
-        )
-        level += 1
+    level_element_counts = read_level_element_counts(output)
 
     metadata = {
         "schemaVersion": 1,

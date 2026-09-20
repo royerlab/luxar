@@ -7,9 +7,10 @@
     "browser": "Chrome for Testing 151.0.7922.34",
     "playwright": "1.62.1",
     "observed": {
-      "ssim": [0.6206, 0.634],
-      "meanDeltaE": [6.314, 6.672],
-      "referenceBlownPixelFraction": 0.0002492
+      "ssim": [0.634, 0.634],
+      "meanDeltaE": [6.314, 6.314],
+      "referenceBlownPixelFraction": 0.0002492,
+      "meanLumaRatio": [0.676276, 0.676276]
     }
   },
   "benches": [
@@ -24,7 +25,8 @@
         "minSsim": 0.6,
         "maxMeanDeltaE": 7.2,
         "maxBlownPixelFractionDelta": 0.001,
-        "minReferenceBlownPixelFraction": 0.0001
+        "minReferenceBlownPixelFraction": 0.0001,
+        "minMeanLumaRatio": 0.65
       }
     }
   ]

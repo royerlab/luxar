@@ -12,9 +12,6 @@ perf-bench JSON captures into a Markdown table.
 scripts/
 ├── ab-webgpu-vs-webgl.mjs         # Real-WebGPU vs WebGL screenshot A/B (SSIM/NCC), the
 │                                  #   MESH_PHYSICAL_MATERIALS_SPEC §3.6 acceptance test
-├── lod-visual-ab.mjs              # Opt-in coarse-vs-finest LOD image gate
-├── lod-visual-ab-thresholds.json  # Reviewed per-bench SSIM/DeltaE/clipping limits
-├── visual-ab-core.mjs             # Shared screenshot decode and image metrics
 ├── bake-env.mjs                   # Headless driver for `luxar env bake`: opens ?bakeEnv,
 │                                  #   waits for the capture, writes the .env.bin container
 ├── build-wasm.sh             # Rust → WASM build via wasm-pack (pnpm build:wasm[:dev])
@@ -54,11 +51,12 @@ from `test:perf:e2e`: it gates image similarity, not timing. Thresholds are
 recorded for Linux Chromium, so the command refuses other platforms.
 
 Each `(geometry, blending mode)` bench owns its thresholds in
-`lod-visual-ab-thresholds.json`: minimum SSIM, maximum mean CIE76 DeltaE, and
-maximum increase in full-resolution blown-pixel fraction. The finest arm must
-also contain a recorded minimum fraction of blown pixels so the clipping check
-cannot silently become inert. A threshold change should include the old and new
-measured values in the PR description and refresh the recorded provenance.
+`lod-visual-ab-thresholds.json`: minimum SSIM and coarse/finest mean-luma ratio,
+maximum mean CIE76 DeltaE, and maximum increase in full-resolution blown-pixel
+fraction. The finest arm must also contain a recorded minimum fraction of blown
+pixels so the clipping check cannot silently become inert. A threshold change
+should include the old and new measured values in the PR description and refresh
+the recorded provenance.
 
 ## Build
 

@@ -21,6 +21,35 @@ function toGrey(rgb) {
   return grey;
 }
 
+function arraysEqual(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/** Capture until two consecutive comparison images are pixel-identical. */
+export async function captureStableImage(
+  capture,
+  { intervalMs = 250, minCaptures = 2, maxCaptures = 40 } = {}
+) {
+  let previous = null;
+  const recentMeanLuma = [];
+  for (let captureCount = 1; captureCount <= maxCaptures; captureCount++) {
+    const current = await capture();
+    recentMeanLuma.push(current.meanLuma);
+    if (recentMeanLuma.length > 6) recentMeanLuma.shift();
+    if (captureCount >= minCaptures && previous && arraysEqual(previous.rgb, current.rgb)) {
+      return { ...current, stabilityCaptures: captureCount };
+    }
+    previous = current;
+    if (captureCount < maxCaptures) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+    }
+  }
+  throw new Error(
+    `image did not stabilise after ${maxCaptures} captures; recent mean luma: ` +
+      recentMeanLuma.map((value) => value.toFixed(6)).join(', ')
+  );
+}
+
 /** Global SSIM over 8x8 box windows on two equal-length greyscale arrays. */
 export function ssim(a, b, size) {
   const k1 = 0.01;
@@ -180,6 +209,18 @@ export function evaluateThresholds(score, thresholds) {
       score.blownPixelFraction.delta <= thresholds.maxBlownPixelFractionDelta,
   };
   return { pass: Object.values(checks).every(Boolean), checks };
+}
+
+/** Validate capture health and additive-light conservation for one A/B pair. */
+export function evaluateCaptureChecks(reference, candidate, thresholds) {
+  const meanLumaRatio = reference.meanLuma > 0 ? candidate.meanLuma / reference.meanLuma : 0;
+  const checks = {
+    noPageErrors: reference.pageErrors.length === 0 && candidate.pageErrors.length === 0,
+    rendered: reference.litFraction >= 0.01 && candidate.litFraction >= 0.01,
+    blownSentinelActive: reference.blownPixelFraction >= thresholds.minReferenceBlownPixelFraction,
+    meanLumaRatio: meanLumaRatio >= thresholds.minMeanLumaRatio,
+  };
+  return { metrics: { meanLumaRatio }, checks, pass: Object.values(checks).every(Boolean) };
 }
 
 /** Capture a canvas locator and decode a fixed-size RGB comparison image in-page. */

@@ -1,12 +1,62 @@
 import { describe, expect, it } from 'vitest';
 
-import { evaluateThresholds, ncc, scoreImagePair } from './visual-ab-core.mjs';
+import {
+  captureStableImage,
+  evaluateCaptureChecks,
+  evaluateThresholds,
+  ncc,
+  scoreImagePair,
+} from './visual-ab-core.mjs';
 
 function solidRgb(red, green, blue, pixels = 64) {
   return Array.from({ length: pixels }, () => [red, green, blue]).flat();
 }
 
 describe('visual A/B scoring', () => {
+  it('waits for two pixel-identical captures rather than matching mean luma', async () => {
+    const captures = [
+      { rgb: [0, 1, 2], meanLuma: 1 },
+      { rgb: [2, 1, 0], meanLuma: 1 },
+      { rgb: [2, 1, 0], meanLuma: 1 },
+    ];
+
+    const stable = await captureStableImage(() => Promise.resolve(captures.shift()), {
+      intervalMs: 0,
+      maxCaptures: 3,
+    });
+
+    expect(stable.rgb).toEqual([2, 1, 0]);
+    expect(stable.stabilityCaptures).toBe(3);
+  });
+
+  it('does not accept an early plateau before the minimum capture count', async () => {
+    const captures = [
+      { rgb: [1], meanLuma: 1 },
+      { rgb: [1], meanLuma: 1 },
+      { rgb: [2], meanLuma: 2 },
+      { rgb: [2], meanLuma: 2 },
+    ];
+
+    const stable = await captureStableImage(() => Promise.resolve(captures.shift()), {
+      intervalMs: 0,
+      minCaptures: 4,
+      maxCaptures: 4,
+    });
+
+    expect(stable.rgb).toEqual([2]);
+    expect(stable.stabilityCaptures).toBe(4);
+  });
+
+  it('fails with recent luma diagnostics when captures never stabilise', async () => {
+    let value = 0;
+    await expect(
+      captureStableImage(() => Promise.resolve({ rgb: [value++], meanLuma: value }), {
+        intervalMs: 0,
+        maxCaptures: 3,
+      })
+    ).rejects.toThrow('recent mean luma: 1.000000, 2.000000, 3.000000');
+  });
+
   it('reports identity across every metric', () => {
     const rgb = solidRgb(64, 96, 128);
     const score = scoreImagePair(rgb, rgb, 8);
@@ -73,5 +123,40 @@ describe('visual A/B scoring', () => {
       meanDeltaE: true,
       blownPixelFractionDelta: false,
     });
+  });
+
+  it('fails capture checks when additive light falls below the recorded ratio', () => {
+    const reference = {
+      pageErrors: [],
+      litFraction: 0.2,
+      blownPixelFraction: 0.001,
+      meanLuma: 20,
+    };
+    const candidate = { ...reference, meanLuma: 12 };
+    const result = evaluateCaptureChecks(reference, candidate, {
+      minReferenceBlownPixelFraction: 0.0001,
+      minMeanLumaRatio: 0.65,
+    });
+
+    expect(result.metrics.meanLumaRatio).toBe(0.6);
+    expect(result.checks.meanLumaRatio).toBe(false);
+    expect(result.pass).toBe(false);
+  });
+
+  it('passes capture checks exactly on the light-ratio boundary', () => {
+    const reference = {
+      pageErrors: [],
+      litFraction: 0.2,
+      blownPixelFraction: 0.001,
+      meanLuma: 20,
+    };
+    const candidate = { ...reference, meanLuma: 13 };
+    const result = evaluateCaptureChecks(reference, candidate, {
+      minReferenceBlownPixelFraction: 0.001,
+      minMeanLumaRatio: 0.65,
+    });
+
+    expect(result.metrics.meanLumaRatio).toBe(0.65);
+    expect(result.pass).toBe(true);
   });
 });

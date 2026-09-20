@@ -82,18 +82,58 @@ function spawnServer(cmd, args, cwd) {
   children.push(child);
   return child;
 }
-function killAll() {
+function signalAll(signal) {
   for (const c of children) {
     try {
-      c.kill('SIGTERM');
+      c.kill(signal);
     } catch {
       /* already gone */
     }
   }
 }
-process.on('exit', killAll);
-process.on('SIGINT', () => {
-  killAll();
+
+async function stopAll() {
+  signalAll('SIGTERM');
+  await Promise.all(
+    children.map(async (child) => {
+      if (await waitForExit(child, 3000)) return;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        return;
+      }
+      await waitForExit(child, 3000);
+    })
+  );
+}
+
+function waitForExit(child, timeoutMs) {
+  if (child.exitCode !== null) return Promise.resolve(true);
+  return new Promise((resolveExit) => {
+    const timeout = setTimeout(() => resolveExit(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timeout);
+      resolveExit(true);
+    });
+  });
+}
+
+async function waitPortFree(port, timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start <= timeoutMs) {
+    try {
+      await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(250) });
+    } catch {
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(`port ${port} remained in use after server teardown`);
+}
+
+process.on('exit', () => signalAll('SIGTERM'));
+process.on('SIGINT', async () => {
+  await stopAll();
   process.exit(130);
 });
 
@@ -155,7 +195,7 @@ async function captureArm(browser, renderer, bloom) {
     );
     await page.waitForTimeout(500);
   }
-  await page.evaluate(() => window.__luxarDebug.app.sceneManager.requestRender?.());
+  await page.evaluate(() => window.__luxarDebug.renderOnce());
   await page.waitForTimeout(300);
 
   const backend = await page.evaluate(() => {
@@ -215,17 +255,18 @@ await assertPortFree(viewerPort, 'viewer');
 await assertPortFree(dataPort, 'data');
 
 spawnServer(
-  'pnpm',
-  ['exec', 'vite', '--port', String(viewerPort), '--strictPort', '--clearScreen', 'false'],
+  resolve(viewerRoot, 'node_modules/.bin/vite'),
+  ['--port', String(viewerPort), '--strictPort', '--clearScreen', 'false'],
   viewerRoot
 );
 spawnServer('python3', ['-m', 'http.server', String(dataPort), '--bind', '127.0.0.1'], repoRoot);
 
+let browser = null;
 try {
   await waitHttp(`http://localhost:${viewerPort}/`);
   await waitHttp(`http://127.0.0.1:${dataPort}/`);
 
-  const browser = await chromium.launch({
+  browser = await chromium.launch({
     headless: true,
     channel,
     args: [
@@ -288,9 +329,12 @@ try {
       failed = true;
     }
   }
-  await browser.close();
 } finally {
-  killAll();
+  await browser?.close();
+  await stopAll();
+  if (children.length > 0) {
+    await Promise.all([waitPortFree(viewerPort), waitPortFree(dataPort)]);
+  }
 }
 
 writeFileSync(resolve(outDir, 'summary.json'), JSON.stringify(summary, null, 2));
