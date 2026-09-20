@@ -355,7 +355,7 @@ def _positive_manifest_seed_budget(manifest: BatchManifest) -> int:
 def _validated_occupancy_seed_counts(
     manifest: BatchManifest, counts: Optional[List[int]]
 ) -> Optional[Tuple[Tuple[int, ...], ...]]:
-    """Validate persisted occupancy rows and derive positive worker counts."""
+    """Validate persisted occupancy rows and derive exact worker counts."""
     weights = manifest.tile_occupancy_weights
     if weights is None:
         return None
@@ -385,10 +385,7 @@ def _validated_occupancy_seed_counts(
 
     total_seeds = _positive_manifest_seed_budget(manifest)
     return tuple(
-        tuple(
-            max(1, count) for count in allocate_weighted_integer_seeds(total_seeds, row)
-        )
-        for row in normalized_rows
+        allocate_weighted_integer_seeds(total_seeds, row) for row in normalized_rows
     )
 
 

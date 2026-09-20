@@ -382,8 +382,10 @@ def _uniform_tile_occupancy_weights(
     channel_shape: Tuple[int, ...],
     spatial_shape: Tuple[int, ...],
     applied_floor: Optional[float],
+    signal_threshold: float,
+    saturation_exponent: float,
 ) -> List[float]:
-    """Measure one slice's tile occupancy without materializing its frame."""
+    """Measure one slice's saturated foreground occupancy tile by tile."""
     import numpy as _np
 
     from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
@@ -404,7 +406,14 @@ def _uniform_tile_occupancy_weights(
         tile_data = _np.asarray(view[spec.slices], dtype=_np.float32)
         if applied_floor is not None:
             tile_data = _np.clip(tile_data - applied_floor, 0.0, None)
-        weights.append(tile_occupancy_weight(tile_data, cosine_window(spec)))
+        weights.append(
+            tile_occupancy_weight(
+                tile_data,
+                cosine_window(spec),
+                signal_threshold=signal_threshold,
+                saturation_exponent=saturation_exponent,
+            )
+        )
     return weights if any(weight > 0.0 for weight in weights) else [1.0] * len(specs)
 
 
@@ -446,6 +455,7 @@ def _planned_uniform_tile_local_metadata(
     downscale_factors: Any,
     denoise: DenoiseConfig,
     floor_deferred: bool,
+    saturation_exponent: float,
 ) -> tuple[bool, Optional[List[int]], Optional[List[List[float]]]]:
     """Resolve tile-local eligibility and optional per-slice seed divisors."""
     if mode != "uniform":
@@ -471,10 +481,14 @@ def _planned_uniform_tile_local_metadata(
         parsed_seeds = None
     if not _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
         return True, None, None
+    if not math.isfinite(saturation_exponent) or saturation_exponent <= 0.0:
+        raise typer.BadParameter("--saturation-exponent must be finite and positive")
 
     applied_floor = (
         None if planned_floor in (None, "none", "0", 0, 0.0) else float(planned_floor)
     )
+    assert norm_range is not None
+    signal_threshold = 0.1 * max(0.0, float(norm_range[1]) - (applied_floor or 0.0))
     pairs = [(timepoint, channel) for timepoint in t_indices for channel in c_indices]
     max_workers = min(8, len(pairs))
     counts = [len(specs)] * len(pairs)
@@ -499,6 +513,8 @@ def _planned_uniform_tile_local_metadata(
                     channel_shape=tuple(ome_info.channel_shape),
                     spatial_shape=tuple(spatial),
                     applied_floor=applied_floor,
+                    signal_threshold=signal_threshold,
+                    saturation_exponent=saturation_exponent,
                 ): (row_index, timepoint, channel)
                 for row_index, (timepoint, channel) in enumerate(pairs)
             }
@@ -2492,7 +2508,11 @@ def plan_batch(
         specs = compute_tile_specs(spatial, tile_size, tile_overlap, fold_slivers=True)
         n_tiles = len(specs)
         needs_tiling = n_tiles > 1
-        tile_voxels = tile_size ** len(spatial) if needs_tiling else total_voxels
+        tile_voxels = (
+            max((int(math.prod(spec.shape)) for spec in specs), default=1)
+            if needs_tiling
+            else total_voxels
+        )
 
     # Resolve after decomposition: each partition part expands the stored
     # stream:<c> independently, while only one hidden time slice is drawn.
@@ -2540,6 +2560,7 @@ def plan_batch(
         downscale_factors=downscale_factors,
         denoise=denoise,
         floor_deferred=floor_deferred,
+        saturation_exponent=content.saturation_exponent,
     )
     _announce_seed_split(
         mode,

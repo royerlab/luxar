@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import math
 import shlex
-from typing import Optional
+from dataclasses import replace
+from typing import TYPE_CHECKING, Optional
 
 from luxar.gsplats.batch.fit_command import iter_fit_arg_flags
 from luxar.gsplats.batch.manifest import BatchManifest
 from luxar.io.ome_zarr import classify_axis_labels
+
+if TYPE_CHECKING:
+    from luxar.gsplats.batch.manifest import TileLocalReadPlan
+
+
+_MAX_INLINE_TILE_SEED_BYTES = 2_000_000
 
 
 def _preprocessed_axes(manifest: BatchManifest) -> Optional[str]:
@@ -153,11 +160,33 @@ def _parallel_worker_env_lines(
     return lines
 
 
-def _tile_local_fit_command_parts(manifest: BatchManifest) -> list[str]:
-    """Render hidden worker arguments for tile-local reads."""
+def _slurm_tile_local_read_plan(
+    manifest: BatchManifest,
+) -> "Optional[TileLocalReadPlan]":
+    """Bound inline seed metadata, falling back to the equal-share divisor."""
+    from arbol import aprint
+
     from luxar.gsplats.batch.manifest import tile_local_read_plan
 
     plan = tile_local_read_plan(manifest)
+    if plan is None or plan.seed_counts is None:
+        return plan
+    rendered_bytes = sum(
+        len(str(count)) + 1 for row in plan.seed_counts for count in row
+    )
+    if rendered_bytes <= _MAX_INLINE_TILE_SEED_BYTES:
+        return plan
+    aprint(
+        "Tile occupancy weights omitted from the Slurm script because the inline "
+        "seed table would be too large; workers will use the equal-share divisor."
+    )
+    return replace(plan, seed_counts=None)
+
+
+def _tile_local_fit_command_parts(
+    plan: "Optional[TileLocalReadPlan]",
+) -> list[str]:
+    """Render hidden worker arguments for tile-local reads."""
     if plan is None:
         return []
     parts = [
@@ -176,11 +205,8 @@ def _fold_sliver_fit_command_parts(manifest: BatchManifest) -> list[str]:
     return ["    --fold-tile-slivers"] if manifest.fold_tile_slivers else []
 
 
-def _tile_local_variable_lines(manifest: BatchManifest) -> list[str]:
+def _tile_local_variable_lines(plan: "Optional[TileLocalReadPlan]") -> list[str]:
     """Render manifest-derived shell arrays for tile-local reads."""
-    from luxar.gsplats.batch.manifest import tile_local_read_plan
-
-    plan = tile_local_read_plan(manifest)
     if plan is None:
         return []
     lines = [
@@ -205,11 +231,10 @@ def _tile_local_variable_lines(manifest: BatchManifest) -> list[str]:
     return lines
 
 
-def _tile_local_task_lines(manifest: BatchManifest) -> list[str]:
+def _tile_local_task_lines(
+    manifest: BatchManifest, plan: "Optional[TileLocalReadPlan]"
+) -> list[str]:
     """Render task-local lookups for tile-local reads."""
-    from luxar.gsplats.batch.manifest import tile_local_read_plan
-
-    plan = tile_local_read_plan(manifest)
     if plan is None:
         return []
     lines = ['    local TILE_REGION="${TILE_REGIONS[$K]}"']
@@ -255,6 +280,7 @@ def generate_fit_sbatch(
     effective_partition = partition_override or manifest.slurm_partition
     effective_concurrent = max_concurrent_override or manifest.max_concurrent
     output_dir = _validated_output_dir(manifest.output_dir)
+    tile_local_plan = _slurm_tile_local_read_plan(manifest)
     log_stem = job_name.removeprefix("luxar-")
 
     lines = [
@@ -356,7 +382,7 @@ def generate_fit_sbatch(
             "    --allow-empty-tile",
         ]
         fit_cmd_parts.extend(_fold_sliver_fit_command_parts(manifest))
-        fit_cmd_parts.extend(_tile_local_fit_command_parts(manifest))
+        fit_cmd_parts.extend(_tile_local_fit_command_parts(tile_local_plan))
     if manifest.array_key is not None:
         fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
     if manifest.n_channels > 1 or has_explicit_channels:
@@ -417,7 +443,7 @@ def generate_fit_sbatch(
         ]
     )
 
-    lines.extend(_tile_local_variable_lines(manifest))
+    lines.extend(_tile_local_variable_lines(tile_local_plan))
 
     # Index mapping arrays (for --timepoints/--channels slicing)
     if manifest.timepoint_indices is not None:
@@ -479,7 +505,7 @@ def generate_fit_sbatch(
             '    echo "=== Task $TASK_ID / $TOTAL_TASKS (T=$T C=$C K=$K) ==="',
         ]
     )
-    lines.extend(_tile_local_task_lines(manifest))
+    lines.extend(_tile_local_task_lines(manifest, tile_local_plan))
 
     lines.extend(_parallel_worker_env_lines(manifest, tpj))
 

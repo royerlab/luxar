@@ -183,6 +183,56 @@ class TestComputeTileSpecs:
                 assert spec.overlap_high[0] == expected
 
 
+def test_tile_occupancy_weight_thresholds_and_saturates() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    tile = np.array([0.05, 1.0, 1.0], dtype=np.float32)
+    window = np.array([0.25, 0.5, 1.0], dtype=np.float32)
+
+    assert tile_occupancy_weight(
+        tile,
+        window,
+        signal_threshold=0.1,
+        saturation_exponent=0.5,
+    ) == pytest.approx(1.5**0.5)
+
+
+def test_tile_occupancy_weight_distinguishes_empty_and_dim_tiles() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    window = np.array([0.25, 0.5, 1.0], dtype=np.float32)
+
+    assert (
+        tile_occupancy_weight(
+            np.zeros(3, dtype=np.float32),
+            window,
+            signal_threshold=0.1,
+            saturation_exponent=0.5,
+        )
+        == 0.0
+    )
+    assert (
+        tile_occupancy_weight(
+            np.full(3, 0.05, dtype=np.float32),
+            window,
+            signal_threshold=0.1,
+            saturation_exponent=0.5,
+        )
+        == 1.0
+    )
+
+
+def test_tile_occupancy_weight_preserves_hann_taper() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    assert tile_occupancy_weight(
+        np.array([1.0, 0.0, 0.0], dtype=np.float32),
+        np.array([0.25, 0.5, 1.0], dtype=np.float32),
+        signal_threshold=0.1,
+        saturation_exponent=1.0,
+    ) == pytest.approx(0.25)
+
+
 class TestCosineWindow:
     """Tests for cosine_window()."""
 

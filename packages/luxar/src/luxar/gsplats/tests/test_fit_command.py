@@ -97,9 +97,39 @@ def test_uniform_argv_carries_tile_local_plan_metadata() -> None:
     assert '--tile-region "$TILE_REGION"' in script
     assert "TILE_REGIONS=(0:6,0:6 0:6,4:8 4:8,0:6 4:8,4:8)" in script
     assert "NONEMPTY_COUNTS=(2)" in script
-    assert "TILE_SEED_COUNTS=(25 75 1 1)" in script
+    assert "TILE_SEED_COUNTS=(25 75 0 0)" in script
     assert '--tile-seed-count "$TILE_SEED_COUNT"' in script
     assert "--fold-tile-slivers" in script
+
+
+def test_slurm_large_seed_table_falls_back_to_equal_share(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.batch.slurm_gen as slurm_gen
+
+    manifest = BatchManifest(
+        input_path="in.zarr",
+        output_dir="/o",
+        mode="uniform",
+        spatial_shape=(8, 8),
+        n_tiles=4,
+        tile_size=6,
+        tile_overlap=2,
+        n_timepoints=1,
+        n_channels=1,
+        tile_local_reads=True,
+        fold_tile_slivers=True,
+        tile_nonempty_counts=[2],
+        tile_occupancy_weights=[[1.0, 3.0, 0.0, 0.0]],
+        fit_args={"seeds": "100"},
+    )
+    monkeypatch.setattr(slurm_gen, "_MAX_INLINE_TILE_SEED_BYTES", 1)
+
+    script = slurm_gen.generate_fit_sbatch(manifest, "# preamble\n")
+
+    assert "TILE_SEED_COUNTS" not in script
+    assert "--tile-seed-count" not in script
+    assert '--tile-nonempty-count "$NONEMPTY_COUNT"' in script
 
 
 def test_old_manifest_keeps_historical_sliver_grid() -> None:

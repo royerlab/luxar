@@ -83,7 +83,7 @@ def run_batch_submit(
     saturation_exponent: float = typer.Option(
         0.44,
         "--saturation-exponent",
-        help="[--tiling content] Sub-linear exponent alpha in K~features^alpha.",
+        help="Sub-linear exponent for content budgets and uniform tile weights.",
         rich_help_panel="Content-aware tiling",
     ),
     saturation_cap: Optional[int] = typer.Option(

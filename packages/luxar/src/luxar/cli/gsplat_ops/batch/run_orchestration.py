@@ -13,6 +13,47 @@ if TYPE_CHECKING:
     from luxar.gsplats.batch.manifest import BatchManifest
 
 
+def _refuse_resume_grid_mismatch(
+    output_dir: Path, fresh: "BatchManifest", *, resume: bool
+) -> None:
+    """Refuse index-based resume when completed tiles use another grid."""
+    if not resume or not (output_dir / "manifest.json").exists():
+        return
+
+    from luxar.gsplats.batch.manifest import load_manifest
+
+    existing = load_manifest(output_dir)
+    tiles_dir = output_dir / "tiles"
+    has_completed = any(
+        (tiles_dir / job.output_filename).exists()
+        or Path(str(tiles_dir / job.output_filename) + ".empty").exists()
+        for job in existing.jobs
+    )
+    if not has_completed:
+        return
+    old_grid = (
+        existing.mode,
+        tuple(existing.spatial_shape),
+        existing.tile_size,
+        existing.tile_overlap,
+        existing.fold_tile_slivers,
+        existing.n_tiles,
+    )
+    new_grid = (
+        fresh.mode,
+        tuple(fresh.spatial_shape),
+        fresh.tile_size,
+        fresh.tile_overlap,
+        fresh.fold_tile_slivers,
+        fresh.n_tiles,
+    )
+    if old_grid != new_grid:
+        raise typer.BadParameter(
+            "cannot resume: the existing tile outputs use a different grid; "
+            "pass --no-resume to refit every tile"
+        )
+
+
 def _resolve_local_gpu_profile(
     gpus: str,
 ) -> tuple[list[int], str, Optional[list[int]], Optional[list[dict[str, Any]]]]:
@@ -161,6 +202,7 @@ def run_batch_local_orchestration(
         resolved_gpu=resolved_gpu,
     )
     manifest = plan.manifest
+    _refuse_resume_grid_mismatch(output_dir, manifest, resume=not no_resume)
 
     # Resolve merge colors + recipe params for the streaming merge.
     colors = None

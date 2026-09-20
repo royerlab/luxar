@@ -104,6 +104,7 @@ def _parse_tile_worker_metadata(
     tile_volume_shape: Optional[str],
     tile_nonempty_count: Optional[int],
     tile_seed_count: Optional[int],
+    fold_tile_slivers: bool,
 ) -> "tuple[Optional[tuple[slice, ...]], Optional[tuple[int, ...]]]":
     region = _parse_tile_region(tile_region)
     shape = _parse_tile_volume_shape(tile_volume_shape)
@@ -115,10 +116,12 @@ def _parse_tile_worker_metadata(
         raise typer.BadParameter("--tile-region requires --tile")
     if tile_nonempty_count is not None and tile_nonempty_count <= 0:
         raise typer.BadParameter("--tile-nonempty-count must be positive")
-    if tile_seed_count is not None and tile_seed_count <= 0:
-        raise typer.BadParameter("--tile-seed-count must be positive")
+    if tile_seed_count is not None and tile_seed_count < 0:
+        raise typer.BadParameter("--tile-seed-count must be non-negative")
     if tile_seed_count is not None and region is None:
         raise typer.BadParameter("--tile-seed-count requires --tile-region")
+    if fold_tile_slivers and tile is None:
+        raise typer.BadParameter("--fold-tile-slivers requires --tile")
     return region, shape
 
 
@@ -683,6 +686,7 @@ def run_fit_volume(
         tile_volume_shape=tile_volume_shape,
         tile_nonempty_count=tile_nonempty_count,
         tile_seed_count=tile_seed_count,
+        fold_tile_slivers=fold_tile_slivers,
     )
 
     try:
