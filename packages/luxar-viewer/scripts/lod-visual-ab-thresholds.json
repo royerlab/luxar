@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "provenance": {
     "recordedAt": "2026-09-20",
-    "sourceCommit": "74332da89e41cc3134c46699a78920b7d9b7eb02",
+    "sourceCommit": "3baf74369c5812aa0fc6a4bfb244627e3429a745",
     "platform": "Linux x86_64 (obsidian)",
     "browser": "Chrome for Testing 151.0.7922.34",
     "playwright": "1.62.1",
@@ -14,10 +14,16 @@
         "meanLumaRatio": [0.676276, 0.676276]
       },
       "gsplats-normal-chromatic": {
-        "ssim": 0.989669,
-        "meanDeltaE": 0.260916,
-        "referenceBlownPixelFraction": 0.0282152,
-        "meanLumaRatio": 1.009191
+        "ssim": 0.999799,
+        "meanDeltaE": 0.279285,
+        "referenceBlownPixelFraction": 0.0278066,
+        "meanLumaRatio": 0.998286
+      },
+      "gsplats-normal-spatial": {
+        "ssim": 0.999717,
+        "meanDeltaE": 0.355109,
+        "referenceBlownPixelFraction": 0.0278066,
+        "meanLumaRatio": 1.016908
       }
     }
   },
@@ -27,7 +33,7 @@
       "better": "gsplats-normal-chromatic",
       "worse": "gsplats-normal-spatial",
       "metric": "meanDeltaE",
-      "minImprovement": 0.1
+      "minImprovement": 0.05
     }
   ],
   "benches": [
@@ -54,8 +60,8 @@
       "coarseLevel": 0,
       "finestLevel": 1,
       "thresholds": {
-        "minSsim": 0.98,
-        "maxMeanDeltaE": 0.5,
+        "minSsim": 0.995,
+        "maxMeanDeltaE": 0.35,
         "maxBlownPixelFractionDelta": 0.001,
         "minReferenceBlownPixelFraction": 0.0001,
         "minMeanLumaRatio": 0.98
@@ -69,11 +75,11 @@
       "coarseLevel": 0,
       "finestLevel": 1,
       "thresholds": {
-        "minSsim": 0.0,
-        "maxMeanDeltaE": 100.0,
-        "maxBlownPixelFractionDelta": 1.0,
+        "minSsim": 0.995,
+        "maxMeanDeltaE": 0.45,
+        "maxBlownPixelFractionDelta": 0.001,
         "minReferenceBlownPixelFraction": 0.0001,
-        "minMeanLumaRatio": 0.0
+        "minMeanLumaRatio": 0.98
       }
     }
   ]
