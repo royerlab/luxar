@@ -90,14 +90,14 @@ def test_uniform_argv_carries_tile_local_plan_metadata() -> None:
     assert argv[argv.index("--tile-region") + 1] == "0:6,0:6"
     assert argv[argv.index("--tile-volume-shape") + 1] == "8,8"
     assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
-    assert argv[argv.index("--tile-seed-count") + 1] == "26"
+    assert argv[argv.index("--tile-seed-count") + 1] == "25"
     assert "--fold-tile-slivers" in argv
 
     script = generate_fit_sbatch(manifest, "# preamble\n")
     assert '--tile-region "$TILE_REGION"' in script
     assert "TILE_REGIONS=(0:6,0:6 0:6,4:8 4:8,0:6 4:8,4:8)" in script
     assert "NONEMPTY_COUNTS=(2)" in script
-    assert "TILE_SEED_COUNTS=(26 74 1 1)" in script
+    assert "TILE_SEED_COUNTS=(25 75 1 1)" in script
     assert '--tile-seed-count "$TILE_SEED_COUNT"' in script
     assert "--fold-tile-slivers" in script
 

@@ -73,6 +73,25 @@ def _broadcast_to_ndim(
     return result
 
 
+def _axis_grid_bounds(
+    length: int, tile_size: int, overlap: int, *, fold_slivers: bool
+) -> tuple[list[int], list[int]]:
+    """Return one axis's starts/ends, optionally absorbing its trailing sliver."""
+    starts: list[int] = []
+    ends: list[int] = []
+    position = 0
+    stride = tile_size - overlap
+    while position < length:
+        starts.append(position)
+        ends.append(min(position + tile_size, length))
+        position += stride
+    if fold_slivers and len(starts) > 1 and length - ends[-2] < overlap:
+        starts.pop()
+        ends.pop()
+        ends[-1] = length
+    return starts, ends
+
+
 def compute_tile_specs(
     volume_shape: tuple[int, ...],
     tile_size: int | Sequence[int],
@@ -134,23 +153,12 @@ def compute_tile_specs(
             )
 
     # Compute grid starts and ends per axis
-    strides = tuple(t - o for t, o in zip(ts, ov))
     grid_starts: list[list[int]] = []
     grid_ends: list[list[int]] = []
     for d in range(ndim):
-        starts: list[int] = []
-        ends: list[int] = []
-        pos = 0
-        while pos < volume_shape[d]:
-            starts.append(pos)
-            ends.append(min(pos + ts[d], volume_shape[d]))
-            pos += strides[d]
-        if fold_slivers and len(starts) > 1:
-            trailing_unique = volume_shape[d] - ends[-2]
-            if trailing_unique < ov[d]:
-                starts.pop()
-                ends.pop()
-                ends[-1] = volume_shape[d]
+        starts, ends = _axis_grid_bounds(
+            volume_shape[d], ts[d], ov[d], fold_slivers=fold_slivers
+        )
         grid_starts.append(starts)
         grid_ends.append(ends)
 

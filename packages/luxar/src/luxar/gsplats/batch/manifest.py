@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 def allocate_weighted_integer_seeds(
     total: int, weights: Sequence[float]
 ) -> Tuple[int, ...]:
-    """Allocate an integer seed budget by weight with deterministic rounding."""
+    """Allocate proportional integer seeds with deterministic largest remainders."""
     positive = [index for index, weight in enumerate(weights) if weight > 0.0]
     allocation = [0] * len(weights)
     if not positive or total <= 0:
@@ -23,21 +23,43 @@ def allocate_weighted_integer_seeds(
             allocation[index] = 1
         return tuple(allocation)
 
-    for index in positive:
-        allocation[index] = 1
-    remaining = total - len(positive)
-    weight_sum = sum(weights[index] for index in positive)
-    shares = [remaining * weights[index] / weight_sum for index in positive]
+    remaining_indices = positive
+    remaining_total = total
+    while remaining_indices:
+        weight_sum = sum(weights[index] for index in remaining_indices)
+        clamped = [
+            index
+            for index in remaining_indices
+            if remaining_total * weights[index] / weight_sum < 1.0
+        ]
+        if not clamped:
+            break
+        for index in clamped:
+            allocation[index] = 1
+        remaining_total -= len(clamped)
+        remaining_indices = [
+            index for index in remaining_indices if index not in clamped
+        ]
+
+    if not remaining_indices:
+        return tuple(allocation)
+    weight_sum = sum(weights[index] for index in remaining_indices)
+    shares = [
+        remaining_total * weights[index] / weight_sum for index in remaining_indices
+    ]
     floors = [math.floor(share) for share in shares]
-    for index, count in zip(positive, floors, strict=True):
-        allocation[index] += count
-    remainder = remaining - sum(floors)
+    for index, count in zip(remaining_indices, floors, strict=True):
+        allocation[index] = count
+    remainder = remaining_total - sum(floors)
     ranked = sorted(
-        range(len(positive)),
-        key=lambda offset: (-(shares[offset] - floors[offset]), positive[offset]),
+        range(len(remaining_indices)),
+        key=lambda offset: (
+            -(shares[offset] - floors[offset]),
+            remaining_indices[offset],
+        ),
     )
     for offset in ranked[:remainder]:
-        allocation[positive[offset]] += 1
+        allocation[remaining_indices[offset]] += 1
     return tuple(allocation)
 
 
@@ -117,8 +139,8 @@ class BatchManifest:
     """One floor + Hann-window non-empty tile count per selected ``(t, c)``.
 
     Only positive integer whole-volume seed budgets need these counts. Tile-local
-    reads remain enabled without them for auto seeds and compression ratios.
-    Occupancy-weighted allocation remains a separate behavior change (#2819).
+    reads remain enabled without them for auto seeds and compression ratios. New
+    plans persist the corresponding per-tile weights alongside these counts.
     """
     tile_occupancy_weights: Optional[List[List[float]]] = None
     """One Hann-weighted occupancy row per selected ``(t, c)`` slice."""
@@ -314,6 +336,62 @@ class TileLocalReadPlan:
     seed_counts: Optional[Tuple[Tuple[int, ...], ...]]
 
 
+def _positive_manifest_seed_budget(manifest: BatchManifest) -> int:
+    """Return the positive integer budget required by occupancy metadata."""
+    raw_seeds = manifest.fit_args.get("seeds")
+    if isinstance(raw_seeds, bool) or not isinstance(raw_seeds, (int, str)):
+        raise ValueError("tile occupancy weights require positive integer seeds")
+    try:
+        total_seeds = int(raw_seeds)
+    except ValueError as exc:
+        raise ValueError(
+            "tile occupancy weights require positive integer seeds"
+        ) from exc
+    if total_seeds <= 0:
+        raise ValueError("tile occupancy weights require positive integer seeds")
+    return total_seeds
+
+
+def _validated_occupancy_seed_counts(
+    manifest: BatchManifest, counts: Optional[List[int]]
+) -> Optional[Tuple[Tuple[int, ...], ...]]:
+    """Validate persisted occupancy rows and derive positive worker counts."""
+    weights = manifest.tile_occupancy_weights
+    if weights is None:
+        return None
+    if counts is None:
+        raise ValueError("tile occupancy weights require non-empty counts")
+    expected_rows = manifest.n_timepoints * manifest.n_channels
+    if len(weights) != expected_rows:
+        raise ValueError(
+            "tile occupancy weight mismatch: manifest records "
+            f"{len(weights)} rows but T*C requires {expected_rows}"
+        )
+    normalized_rows: list[Tuple[float, ...]] = []
+    for row_index, row in enumerate(weights):
+        if len(row) != manifest.n_tiles:
+            raise ValueError(
+                f"tile occupancy row {row_index} has {len(row)} weights; "
+                f"expected {manifest.n_tiles}"
+            )
+        normalized = tuple(float(weight) for weight in row)
+        if any(not math.isfinite(weight) or weight < 0.0 for weight in normalized):
+            raise ValueError("tile occupancy weights must be finite and non-negative")
+        if sum(weight > 0.0 for weight in normalized) != counts[row_index]:
+            raise ValueError(
+                f"tile occupancy row {row_index} disagrees with its non-empty count"
+            )
+        normalized_rows.append(normalized)
+
+    total_seeds = _positive_manifest_seed_budget(manifest)
+    return tuple(
+        tuple(
+            max(1, count) for count in allocate_weighted_integer_seeds(total_seeds, row)
+        )
+        for row in normalized_rows
+    )
+
+
 def tile_local_read_plan(manifest: BatchManifest) -> Optional[TileLocalReadPlan]:
     """Resolve the single local/Slurm tile-local worker handoff."""
     if not manifest.tile_local_reads:
@@ -354,49 +432,7 @@ def tile_local_read_plan(manifest: BatchManifest) -> Optional[TileLocalReadPlan]
                 "tile-local non-empty counts must be between 1 and n_tiles"
             )
 
-    seed_counts: Optional[Tuple[Tuple[int, ...], ...]] = None
-    weights = manifest.tile_occupancy_weights
-    if weights is not None:
-        if counts is None:
-            raise ValueError("tile occupancy weights require non-empty counts")
-        expected_rows = manifest.n_timepoints * manifest.n_channels
-        if len(weights) != expected_rows:
-            raise ValueError(
-                "tile occupancy weight mismatch: manifest records "
-                f"{len(weights)} rows but T*C requires {expected_rows}"
-            )
-        normalized_rows: list[Tuple[float, ...]] = []
-        for row_index, row in enumerate(weights):
-            if len(row) != manifest.n_tiles:
-                raise ValueError(
-                    f"tile occupancy row {row_index} has {len(row)} weights; "
-                    f"expected {manifest.n_tiles}"
-                )
-            normalized = tuple(float(weight) for weight in row)
-            if any(not math.isfinite(weight) or weight < 0.0 for weight in normalized):
-                raise ValueError(
-                    "tile occupancy weights must be finite and non-negative"
-                )
-            if sum(weight > 0.0 for weight in normalized) != counts[row_index]:
-                raise ValueError(
-                    f"tile occupancy row {row_index} disagrees with its non-empty count"
-                )
-            normalized_rows.append(normalized)
-
-        raw_seeds = manifest.fit_args.get("seeds")
-        try:
-            total_seeds = int(raw_seeds)
-        except (TypeError, ValueError):
-            total_seeds = 0
-        if isinstance(raw_seeds, bool) or total_seeds <= 0:
-            raise ValueError("tile occupancy weights require positive integer seeds")
-        seed_counts = tuple(
-            tuple(
-                max(1, count)
-                for count in allocate_weighted_integer_seeds(total_seeds, row)
-            )
-            for row in normalized_rows
-        )
+    seed_counts = _validated_occupancy_seed_counts(manifest, counts)
 
     return TileLocalReadPlan(
         regions=regions,
