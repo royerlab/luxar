@@ -831,6 +831,13 @@ def _stamp_level_footprint(level_stats: dict, level_data: GSplatData) -> None:
         level_stats["footprint_dims"] = footprint_dims.tolist()
 
 
+def _validate_color_weight(color_weight: float, data: GSplatData) -> None:
+    if not math.isfinite(color_weight) or color_weight < 0.0:
+        raise ValueError(f"color_weight must be finite and >= 0.0, got {color_weight}")
+    if color_weight > 0.0 and data.colors is None:
+        raise ValueError("color_weight > 0 requires per-splat colors")
+
+
 def make_substitutive_lod(
     data: GSplatData,
     *,
@@ -887,8 +894,13 @@ def make_substitutive_lod(
     color_weight
         Opt-in chromatic penalty in the partition cost. ``0`` (default) keeps
         the historical spatial/intensity-only partition byte-for-byte. Values
-        above zero discourage bins from mixing different normalized RGB
-        chromaticities while amplitude remains the intensity currency.
+        above zero apply the same ``exp(-color_weight * distance²)`` affinity
+        in greedy and Lloyd partitioning, so one value has comparable strength
+        when ``method="auto"`` switches between them. ``1`` to ``10`` is the
+        useful range for a soft-to-strong hue preference. RGB is normalized by
+        brightness; pure black maps to neutral chromaticity, and alpha is
+        deliberately excluded while representative alpha is composed in
+        optical-depth space. This expert knob is API-only today.
     coverage_inflation
         Inflation factor β >= 1 applied to each representative's
         *inter-center* spread (``Σ_out = intra + β·inter``) with a
@@ -1041,8 +1053,6 @@ def make_substitutive_lod(
         )
     if coverage_inflation < 1.0:
         raise ValueError(f"coverage_inflation must be >= 1.0, got {coverage_inflation}")
-    if not math.isfinite(color_weight) or color_weight < 0.0:
-        raise ValueError(f"color_weight must be finite and >= 0.0, got {color_weight}")
     if amplitude not in ("l2", "mass"):
         raise ValueError(f"amplitude must be 'l2' or 'mass', got {amplitude!r}")
     if refine not in _VALID_REFINE:
@@ -1068,8 +1078,7 @@ def make_substitutive_lod(
     L_levels = int(levels)
 
     src = _finest_content(data)
-    if color_weight > 0.0 and src.colors is None:
-        raise ValueError("color_weight > 0 requires per-splat colors")
+    _validate_color_weight(color_weight, src)
     target_device = _resolve_reduction_device(device, caller="make_substitutive_lod")
 
     # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
@@ -1314,6 +1323,7 @@ def make_substitutive_lod(
             "method": method,
             "n_substitutive_levels": len(sub_levels),
             "coverage_inflation": float(coverage_inflation),
+            "color_weight": float(color_weight),
             "conserve_mass": bool(conserve_mass),
             "refine": refine,
             "refine_iters": eff_refine_iters,
@@ -1330,8 +1340,6 @@ def make_substitutive_lod(
             "coarsen_dims": resolved_merge_coarsen_dims(norm_coarsen, src.ndim),
         }
     )
-    if color_weight > 0.0:
-        out_stats["color_weight"] = float(color_weight)
     return GSplatData.from_substitutive_levels(sub_levels, stats=out_stats)
 
 
@@ -1444,12 +1452,11 @@ _MASS_SCALE_BOUND = 10.0
 def _chromatic_features(colors: torch.Tensor) -> torch.Tensor:
     """Return non-negative RGB chromaticities, independent of brightness."""
     rgb = colors[:, :3].to(dtype=torch.float64)
-    if not colors.dtype.is_floating_point:
-        rgb = rgb / float(torch.iinfo(colors.dtype).max)
     rgb = rgb.clamp_min(0.0)
     total = rgb.sum(dim=-1, keepdim=True)
     tiny = torch.finfo(rgb.dtype).tiny
-    return torch.where(total > tiny, rgb / total.clamp_min(tiny), 0.0)
+    neutral = torch.full_like(rgb, 1.0 / 3.0)
+    return torch.where(total > tiny, rgb / total.clamp_min(tiny), neutral)
 
 
 def _subset_mass(

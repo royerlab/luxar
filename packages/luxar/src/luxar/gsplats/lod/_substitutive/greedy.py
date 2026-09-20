@@ -26,7 +26,7 @@ from luxar.gsplats.lod._kernels import (
     sqrt_det_from_cholesky,
     template_squared_norm_torch,
 )
-from luxar.gsplats.lod._substitutive import _TINY
+from luxar.gsplats.lod._substitutive import _TINY, chromatic_affinity
 from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
 
@@ -81,8 +81,28 @@ def _pair_merge_costs(
     cost = bin_residual_energy_torch(f_norm_sq, inner, norm_sq)
     if color0 is not None and color1 is not None and color_weight > 0.0:
         color_distance_sq = ((color0 - color1) ** 2).sum(dim=-1)
-        cost = cost + color_weight * color_distance_sq * f_norm_sq
+        projected_energy = (f_norm_sq - cost).clamp_min(0.0)
+        cost = (
+            cost
+            + (1.0 - chromatic_affinity(color_distance_sq, color_weight))
+            * projected_energy
+        )
     return cost
+
+
+def _merge_cluster_color(
+    cluster_colors: torch.Tensor | None,
+    cluster_weights: torch.Tensor | None,
+    a: int,
+    b: int,
+) -> None:
+    if cluster_colors is None or cluster_weights is None:
+        return
+    total_weight = (cluster_weights[a] + cluster_weights[b]).clamp_min(_TINY)
+    cluster_colors[a] = (
+        cluster_weights[a] * cluster_colors[a] + cluster_weights[b] * cluster_colors[b]
+    ) / total_weight
+    cluster_weights[a] = total_weight
 
 
 def _merge_two_clusters(
@@ -150,7 +170,9 @@ def _greedy_partition(
     Lc = L.clone()
     am = amps.clone()
     cluster_colors = color_features.clone() if color_features is not None else None
-    cluster_weights = amps * sqrt_det_from_cholesky(L)
+    cluster_weights = (
+        amps * sqrt_det_from_cholesky(L) if color_features is not None else None
+    )
     active = np.ones(N, dtype=bool)
     version = np.zeros(N, dtype=np.int64)
     members: list[list[int]] = [[i] for i in range(N)]
@@ -243,13 +265,7 @@ def _greedy_partition(
 
         # Merge b into a's slot.
         mu_bar, L_bar, a_star = _merge_two_clusters(cen, Lc, am, a, b)
-        if cluster_colors is not None:
-            total_weight = (cluster_weights[a] + cluster_weights[b]).clamp_min(_TINY)
-            cluster_colors[a] = (
-                cluster_weights[a] * cluster_colors[a]
-                + cluster_weights[b] * cluster_colors[b]
-            ) / total_weight
-            cluster_weights[a] = total_weight
+        _merge_cluster_color(cluster_colors, cluster_weights, a, b)
         cen[a] = mu_bar
         Lc[a] = L_bar
         am[a] = a_star

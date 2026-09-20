@@ -24,11 +24,16 @@ def read_level_element_counts(
         )
         if array_metadata is None:
             break
-        level_element_counts.append(int(array_metadata["shape"][0]))
+        shape = array_metadata["shape"]
+        encoding = array_metadata.get("attributes", {}).get("encoding", {})
+        if shape[0] == 0 and encoding.get("name") == "array_ref":
+            shape = encoding["original_shape"]
+        level_element_counts.append(int(shape[0]))
         level += 1
     if not level_element_counts:
         raise RuntimeError(
-            f"generated fixture contains no readable LOD levels: {output}"
+            f"generated fixture contains no readable LOD levels for "
+            f"{node_name}/{array_name}: {output}"
         )
     return level_element_counts
 
@@ -120,23 +125,25 @@ def build_fixture(output: Path) -> None:
         )
 
         gsplat_count = 4096
-        gsplat_arm = np.arange(gsplat_count) % 4
+        gsplat_hue = np.arange(gsplat_count) % 4
+        gsplat_sample = np.arange(gsplat_count) // 4
         gsplat_radius = 0.35 + 3.1 * np.sqrt(
-            (np.arange(gsplat_count) + 0.5) / gsplat_count
+            (gsplat_sample + 0.5) / (gsplat_count // 4)
         )
-        gsplat_angle = gsplat_radius * 1.8 + gsplat_arm * (np.pi / 2)
+        gsplat_angle = gsplat_radius * 1.8
+        strand_offset = (gsplat_hue - 1.5) * 0.055
         gsplat_centers = np.column_stack(
             [
-                gsplat_radius * np.cos(gsplat_angle),
-                gsplat_radius * np.sin(gsplat_angle),
-                0.08 * np.sin(gsplat_angle * 3.0),
+                (gsplat_radius + strand_offset) * np.cos(gsplat_angle),
+                (gsplat_radius + strand_offset) * np.sin(gsplat_angle),
+                0.08 * np.sin(gsplat_angle * 3.0) + strand_offset,
             ]
         ).astype(np.float32)
         palette = 2.0 * np.array(
             [[1.0, 0.12, 0.08], [0.08, 0.35, 1.0], [0.12, 1.0, 0.24], [1.0, 0.2, 0.8]],
             dtype=np.float32,
         )
-        gsplat_colors = palette[gsplat_arm]
+        gsplat_colors = palette[gsplat_hue]
         gsplat_cholesky = np.tile(
             np.array([0.045, 0.0, 0.045, 0.0, 0.0, 0.045], dtype=np.float32),
             (gsplat_count, 1),
@@ -148,7 +155,7 @@ def build_fixture(output: Path) -> None:
             cholesky_factors=gsplat_cholesky,
             colors=gsplat_colors,
             opacity=0.8,
-            blending_mode="additive",
+            blending_mode="normal",
             substitutive_lod={
                 "compression_factor": 4,
                 "levels": 1,
@@ -158,10 +165,30 @@ def build_fixture(output: Path) -> None:
             },
             additive_lod=False,
         )
+        scene.add_gsplats(
+            "gsplats_spatial",
+            centers=gsplat_centers,
+            amplitudes=np.full(gsplat_count, 0.65, dtype=np.float32),
+            cholesky_factors=gsplat_cholesky,
+            colors=gsplat_colors,
+            opacity=0.8,
+            blending_mode="normal",
+            substitutive_lod={
+                "compression_factor": 4,
+                "levels": 1,
+                "method": "kmeans_lloyd",
+                "color_weight": 0.0,
+                "quality_stamps": False,
+            },
+            additive_lod=False,
+        )
 
     point_level_counts = read_level_element_counts(output)
     gsplat_level_counts = read_level_element_counts(
         output, "gsplats_chromatic", "centers"
+    )
+    spatial_gsplat_level_counts = read_level_element_counts(
+        output, "gsplats_spatial", "centers"
     )
 
     metadata = {
@@ -174,10 +201,16 @@ def build_fixture(output: Path) -> None:
                 "levelElementCounts": point_level_counts,
             },
             {
-                "id": "gsplats-additive-chromatic",
+                "id": "gsplats-normal-chromatic",
                 "geometry": "gsplats",
                 "lodGroup": "/gsplats_chromatic",
                 "levelElementCounts": gsplat_level_counts,
+            },
+            {
+                "id": "gsplats-normal-spatial",
+                "geometry": "gsplats",
+                "lodGroup": "/gsplats_spatial",
+                "levelElementCounts": spatial_gsplat_level_counts,
             },
         ],
     }

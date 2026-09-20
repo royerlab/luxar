@@ -28,7 +28,11 @@ from luxar.gsplats.lod._kernels import bin_squared_norm_torch
 from luxar.gsplats.lod._substitutive.greedy import _merge_two_clusters
 from luxar.gsplats.lod._substitutive.kmeans_lloyd import _score_and_pick
 from luxar.gsplats.lod._substitutive.warm_start import _morton_partition
-from luxar.gsplats.lod.substitutive import merge_to_count, resolved_merge_coarsen_dims
+from luxar.gsplats.lod.substitutive import (
+    _chromatic_features,
+    merge_to_count,
+    resolved_merge_coarsen_dims,
+)
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
 # ─────────────────────────────────────────────────────────────────────
@@ -2582,49 +2586,53 @@ def test_unlabeled_substitutive_default_path_is_byte_stable() -> None:
 
 
 def _interleaved_colour_pairs() -> GSplatData:
-    centers = np.array(
-        [[0.0, 0.0, 0.0], [0.01, 0.0, 0.0], [1.0, 0.0, 0.0], [1.01, 0.0, 0.0]],
-        dtype=np.float32,
-    )
+    count = 800
+    rng = np.random.default_rng(7)
+    centers = rng.uniform(-1.0, 1.0, (count, 3)).astype(np.float32)
     cholesky = np.tile(
         np.array([0.05, 0.0, 0.05, 0.0, 0.0, 0.05], dtype=np.float32),
-        (4, 1),
+        (count, 1),
     )
-    colors = np.array(
-        [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
-        dtype=np.float32,
-    )
+    colors = np.zeros((count, 3), dtype=np.float32)
+    colors[: count // 2, 0] = 1.0
+    colors[count // 2 :, 2] = 1.0
     return GSplatData(
         centers=centers,
-        amplitudes=np.ones(4, dtype=np.float32),
+        amplitudes=np.ones(count, dtype=np.float32),
         cholesky_factors=cholesky,
         colors=colors,
     )
 
 
-def _assert_red_and_blue_representatives(colors: np.ndarray) -> None:
+def _mixed_colour_fraction(colors: np.ndarray) -> float:
     rgb = np.asarray(colors)[:, :3]
-    assert rgb.shape == (2, 3)
-    assert np.max(rgb[:, 0]) > 0.95
-    assert np.max(rgb[:, 2]) > 0.95
-    assert np.max(np.minimum(rgb[:, 0], rgb[:, 2])) < 0.05
+    return float(np.mean(np.minimum(rgb[:, 0], rgb[:, 2]) > 0.05))
 
 
-def test_chromatic_cost_changes_merge_to_count_partition() -> None:
+@pytest.mark.parametrize("method", ["greedy", "kmeans_lloyd"])
+def test_chromatic_cost_changes_merge_to_count_partition(method: str) -> None:
     data = _interleaved_colour_pairs()
 
-    spatial = merge_to_count(data, n_target=2, method="greedy", device="cpu")
+    spatial = merge_to_count(data, n_target=200, method=method, device="cpu")
     chromatic = merge_to_count(
         data,
-        n_target=2,
-        method="greedy",
-        color_weight=100.0,
+        n_target=200,
+        method=method,
+        color_weight=8.0,
         device="cpu",
     )
 
-    assert np.all(np.asarray(spatial.colors)[:, 0] > 0.4)
-    assert np.all(np.asarray(spatial.colors)[:, 2] > 0.4)
-    _assert_red_and_blue_representatives(np.asarray(chromatic.colors))
+    assert _mixed_colour_fraction(np.asarray(spatial.colors)) > 0.7
+    assert _mixed_colour_fraction(np.asarray(chromatic.colors)) < 0.1
+
+
+def test_black_has_neutral_chromaticity() -> None:
+    features = _chromatic_features(
+        torch.tensor([[0, 0, 0], [255, 0, 0]], dtype=torch.uint8)
+    )
+
+    assert torch.allclose(features[0], torch.full((3,), 1.0 / 3.0, dtype=torch.float64))
+    assert torch.equal(features[1], torch.tensor([1.0, 0.0, 0.0], dtype=torch.float64))
 
 
 def test_chromatic_cost_changes_full_ladder_partition() -> None:
@@ -2638,7 +2646,7 @@ def test_chromatic_cost_changes_full_ladder_partition() -> None:
     )
 
     coarse = out.at_substitutive(1).flattened()
-    _assert_red_and_blue_representatives(np.asarray(coarse.colors))
+    assert _mixed_colour_fraction(np.asarray(coarse.colors)) < 0.01
     assert out.stats["color_weight"] == 100.0
 
 

@@ -7,16 +7,18 @@
     "browser": "Chrome for Testing 151.0.7922.34",
     "playwright": "1.62.1",
     "observed": {
-      "ssim": [0.634, 0.634],
-      "meanDeltaE": [6.314, 6.314],
-      "referenceBlownPixelFraction": 0.0002492,
-      "meanLumaRatio": [0.676276, 0.676276]
-    },
-    "gsplatsAdditiveChromatic": {
-      "ssim": 0.989669,
-      "meanDeltaE": 0.260916,
-      "referenceBlownPixelFraction": 0.0282152,
-      "meanLumaRatio": 1.009191
+      "points-additive-merge": {
+        "ssim": [0.634, 0.634],
+        "meanDeltaE": [6.314, 6.314],
+        "referenceBlownPixelFraction": 0.0002492,
+        "meanLumaRatio": [0.676276, 0.676276]
+      },
+      "gsplats-normal-chromatic": {
+        "ssim": 0.989669,
+        "meanDeltaE": 0.260916,
+        "referenceBlownPixelFraction": 0.0282152,
+        "meanLumaRatio": 1.009191
+      }
     }
   },
   "benches": [
@@ -36,9 +38,9 @@
       }
     },
     {
-      "id": "gsplats-additive-chromatic",
+      "id": "gsplats-normal-chromatic",
       "geometry": "gsplats",
-      "blendingMode": "additive",
+      "blendingMode": "normal",
       "lodGroup": "/gsplats_chromatic",
       "coarseLevel": 0,
       "finestLevel": 1,
@@ -48,6 +50,21 @@
         "maxBlownPixelFractionDelta": 0.001,
         "minReferenceBlownPixelFraction": 0.0001,
         "minMeanLumaRatio": 0.98
+      }
+    },
+    {
+      "id": "gsplats-normal-spatial",
+      "geometry": "gsplats",
+      "blendingMode": "normal",
+      "lodGroup": "/gsplats_spatial",
+      "coarseLevel": 0,
+      "finestLevel": 1,
+      "thresholds": {
+        "minSsim": 0.0,
+        "maxMeanDeltaE": 100.0,
+        "maxBlownPixelFractionDelta": 1.0,
+        "minReferenceBlownPixelFraction": 0.0001,
+        "minMeanLumaRatio": 0.0
       }
     }
   ]

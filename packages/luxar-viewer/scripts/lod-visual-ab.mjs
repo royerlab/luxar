@@ -253,6 +253,16 @@ async function captureLevel(
       },
       { minCaptures: 8 }
     );
+    const visibleGroups = await page.evaluate((lodGroups) => {
+      const visible = [];
+      window.__luxarDebug?.scene?.traverse((object) => {
+        if (lodGroups.includes(object.name) && object.visible) visible.push(object.name);
+      });
+      return visible;
+    }, allLodGroups);
+    if (visibleGroups.length !== 1 || visibleGroups[0] !== bench.lodGroup) {
+      throw new Error(`${label} isolation changed during capture: ${visibleGroups.join(', ')}`);
+    }
     return { label, ...selection, pageErrors, ...image };
   } finally {
     await page.close();

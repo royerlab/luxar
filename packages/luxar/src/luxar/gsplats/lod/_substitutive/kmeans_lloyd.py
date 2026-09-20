@@ -22,7 +22,7 @@ from luxar.gsplats.lod._kernels import (
     sqrt_det_from_cholesky,
     template_squared_norm_torch,
 )
-from luxar.gsplats.lod._substitutive import _TINY
+from luxar.gsplats.lod._substitutive import _TINY, chromatic_affinity
 from luxar.gsplats.lod._substitutive.warm_start import _morton_order
 from luxar.gsplats.utils.alpha import ALPHA_CLAMP
 
@@ -264,7 +264,7 @@ def _score_and_pick(
             color_distance_sq = (
                 (color_features[s:e].unsqueeze(1) - bin_colors[cb]) ** 2
             ).sum(dim=-1)
-            score = score * torch.exp(-0.5 * color_weight * color_distance_sq)
+            score = score * chromatic_affinity(color_distance_sq, color_weight)
         pick = score.argmax(dim=1)  # (b,)
         out[s:e] = cb[torch.arange(b, device=device), pick]
     return out
@@ -340,7 +340,7 @@ def _cost_increment_lloyd_vectorized(
             color_variance.index_add_(
                 0, assign, weights * (color_delta * color_delta).sum(dim=-1)
             )
-            projection = projection * torch.exp(-color_weight * color_variance)
+            projection = projection * chromatic_affinity(color_variance, color_weight)
         return float(projection.sum()), mu_bar, Sigma_bar, bin_colors
 
     best_P, mu_bar, Sigma_bar, bin_colors = projection_energy(assignments)

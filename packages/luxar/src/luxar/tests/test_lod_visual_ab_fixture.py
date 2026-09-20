@@ -54,6 +54,30 @@ def test_reads_counts_for_a_named_gsplat_node(tmp_path: Path) -> None:
     ) == [1024, 4096]
 
 
+def test_reads_count_from_array_reference_metadata(tmp_path: Path) -> None:
+    generator = _load_generator()
+    centers = tmp_path / "gsplats_spatial" / "child_0" / "centers"
+    centers.mkdir(parents=True)
+    (centers / "zarr.json").write_text(
+        json.dumps(
+            {
+                "node_type": "array",
+                "shape": [0, 3],
+                "attributes": {
+                    "encoding": {
+                        "name": "array_ref",
+                        "original_shape": [4096, 3],
+                    }
+                },
+            }
+        )
+    )
+
+    assert generator.read_level_element_counts(
+        tmp_path, "gsplats_spatial", "centers"
+    ) == [4096]
+
+
 def test_rejects_fixture_without_readable_levels(tmp_path: Path) -> None:
     generator = _load_generator()
 
