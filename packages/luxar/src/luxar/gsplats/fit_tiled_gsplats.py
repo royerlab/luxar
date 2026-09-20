@@ -302,13 +302,14 @@ def _tile_norm_range(
     * The applied floor reaches the sampled top, so the shifted top is nothing
       but :func:`resolve_volume_norm_range`'s degenerate epsilon. Reachable
       through an unguarded numeric ``--floor``: the single-tile CLI worker
-      resolves with ``guard_numeric=False`` on purpose, so one level resolved by
-      its parent still applies to a dim timepoint, and the bounded sample can
-      under-report the max. A tile that really is below the floor clips to zero
-      and is skipped by the near-zero guard — but a tile holding the signal the
-      sample missed would be normalized by ~1e-12 and come back ~1e12 times too
-      dark, which is far worse than losing cross-tile comparability where the
-      shared measurement is meaningless anyway.
+      applies a parent-resolved level (``--floor-resolved``) verbatim on
+      purpose, so that level still applies to a dim timepoint, and the bounded
+      sample can under-report the max. A genuine user numeric is guarded here
+      like at every other entry point. A tile that really is below the floor
+      clips to zero and is skipped by the near-zero guard — but a tile holding
+      the signal the sample missed would be normalized by ~1e-12 and come back
+      ~1e12 times too dark, which is far worse than losing cross-tile
+      comparability where the shared measurement is meaningless anyway.
 
     That last test is deliberately narrow: it catches the epsilon the shift
     manufactures, not every unhelpfully small range. A volume that is honestly
