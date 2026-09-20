@@ -171,6 +171,11 @@ def _tile_local_fit_command_parts(manifest: BatchManifest) -> list[str]:
     return parts
 
 
+def _fold_sliver_fit_command_parts(manifest: BatchManifest) -> list[str]:
+    """Render the manifest-versioned uniform-grid geometry switch."""
+    return ["    --fold-tile-slivers"] if manifest.fold_tile_slivers else []
+
+
 def _tile_local_variable_lines(manifest: BatchManifest) -> list[str]:
     """Render manifest-derived shell arrays for tile-local reads."""
     from luxar.gsplats.batch.manifest import tile_local_read_plan
@@ -350,8 +355,7 @@ def generate_fit_sbatch(
             # (finalized below) instead of failing the task forever.
             "    --allow-empty-tile",
         ]
-        if manifest.fold_tile_slivers:
-            fit_cmd_parts.append("    --fold-tile-slivers")
+        fit_cmd_parts.extend(_fold_sliver_fit_command_parts(manifest))
         fit_cmd_parts.extend(_tile_local_fit_command_parts(manifest))
     if manifest.array_key is not None:
         fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")

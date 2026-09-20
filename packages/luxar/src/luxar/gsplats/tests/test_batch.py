@@ -4112,9 +4112,9 @@ class TestUniformSlotBspTreeFrame:
         as far as a merge: the planner builds its tasks on the FULL-resolution
         shape while each ``fit --tile k/M`` worker recomputes the grid on its own
         decimated one, so the tile counts disagree. Measured on this 32^3 store
-        with ``--tile-size 12 --overlap 2``: the plan builds 64 tiles per slot
+        with ``--tile-size 12 --overlap 2``: the folded plan builds 27 tiles per slot
         and a ``downscale: 2`` worker (volume ``(16, 16, 16)``) sees 8, so tiles
-        8..63 exit 1 with "tile index out of range". Refused at plan time
+        8..26 exit 1 with "tile index out of range". Refused at plan time
         instead (#1624) — before a task is submitted or a tile is written —
         rather than recorded as a frame the merge would never be reached to
         apply. The message must carry both counts: that difference IS the
@@ -4130,7 +4130,7 @@ class TestUniformSlotBspTreeFrame:
             self._plan(tmp_path, config=config)
         message = str(excinfo.value)
         assert "downscale" in message
-        assert "64 tiles" in message  # what this plan built
+        assert "27 tiles" in message  # what this plan built
         assert "only 8" in message  # what a worker would see
         assert "(16, 16, 16)" in message  # its decimated volume
 

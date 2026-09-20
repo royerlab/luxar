@@ -50,11 +50,12 @@ _N_TILES = 9
 def test_weighted_integer_seeds_preserve_budget_and_tie_order() -> None:
     assert allocate_weighted_integer_seeds(10, [1.0, 1.0, 1.0]) == (4, 3, 3)
     assert allocate_weighted_integer_seeds(100, [1.0, 3.0, 0.0, 0.0]) == (
-        26,
-        74,
+        25,
+        75,
         0,
         0,
     )
+    assert allocate_weighted_integer_seeds(10, [1.0, 1.0, 98.0]) == (1, 1, 8)
 
 
 def test_weighted_integer_seeds_keep_one_per_nonempty_tile_below_floor() -> None:

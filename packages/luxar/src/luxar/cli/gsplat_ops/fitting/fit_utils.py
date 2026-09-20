@@ -1160,6 +1160,28 @@ def _validate_preselected_tile_metadata(
         )
 
 
+def _single_tile_seeds(
+    parsed_seeds: "int | float | None",
+    *,
+    volume: "Any",
+    specs: list,
+    resolved_floor: "float | None",
+    nonempty_tiles: "int | None",
+    tile_seed_count: "int | None",
+) -> "int | float | None":
+    """Resolve one worker's seed count from plan metadata or legacy fallback."""
+    if tile_seed_count is not None:
+        return tile_seed_count
+    if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles
+
+        divisor = nonempty_tiles
+        if divisor is None:
+            divisor = count_nonempty_tiles(volume, specs, resolved_floor)
+        return split_seeds_across_tiles(parsed_seeds, divisor, grid_tiles=len(specs))
+    return split_seeds_across_tiles(parsed_seeds, len(specs))
+
+
 def fit_single_tile(
     ctx: FitPipelineCtx,
     volume: "Any",
@@ -1173,7 +1195,7 @@ def fit_single_tile(
     preselected_tile: bool = False,
 ) -> "Any":
     """Single-tile mode (Slurm-ready): fit tile ``--tile N/M`` of the grid."""
-    from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles, fit_tile
+    from luxar.gsplats.fit_tiled_gsplats import fit_tile
     from luxar.gsplats.tiling import compute_tile_specs
 
     assert ctx.tile is not None
@@ -1290,16 +1312,14 @@ def fit_single_tile(
 
     # Every independent worker scans the same volume, grid and resolved floor,
     # so all of them derive one identical divisor without parent-only state.
-    if tile_seed_count is not None:
-        tile_seeds = tile_seed_count
-    elif _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
-        if nonempty_tiles is None:
-            nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
-        tile_seeds = split_seeds_across_tiles(
-            parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
-        )
-    else:
-        tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
+    tile_seeds = _single_tile_seeds(
+        parsed_seeds,
+        volume=volume,
+        specs=specs,
+        resolved_floor=resolved_floor,
+        nonempty_tiles=nonempty_tiles,
+        tile_seed_count=tile_seed_count,
+    )
 
     with asection(
         f"Fitting tile {tile_idx}/{len(specs)} grid={specs[tile_idx].grid_index}"

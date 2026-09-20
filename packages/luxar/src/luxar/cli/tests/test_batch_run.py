@@ -267,10 +267,11 @@ def test_run_dry_run_announces_whole_volume_seed_split(tmp_path: Path) -> None:
         ],
     )
     assert res.exit_code == 0, res.output
-    assert "whole-volume budget" in res.output
-    assert "at least 100 per non-empty tile" in res.output
-    assert "8 grid tiles" in res.output
-    assert "exact non-empty count" in res.output
+    output = normalized_cli_output(res)
+    assert "whole-volume budget" in output
+    assert "occupancy-weighted" in output
+    assert "8 grid tiles" in output
+    assert "exact per-tile counts resolved at plan time" in output
 
 
 def test_run_dry_run_no_seed_notice_without_seeds(tmp_path: Path) -> None:
@@ -781,7 +782,7 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     )
     assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
     assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
-    assert argv[argv.index("--tile-seed-count") + 1] == "3"
+    assert argv[argv.index("--tile-seed-count") + 1] == "2"
     output = capsys.readouterr().out
     assert "occupancy-weighted across 4 grid tiles" in output
     assert "exact per-tile counts resolved at plan time" in output
