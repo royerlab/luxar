@@ -73,7 +73,7 @@ def submit_batch_jobs(
         mismatch_help=(
             "delete the stale tiles or submit into a fresh output directory"
         ),
-        legacy_weight_help=("submit into a fresh output directory to refit every tile"),
+        legacy_weight_help=("Submit into a fresh output directory to refit every tile"),
     )
     (out / "tiles").mkdir(parents=True, exist_ok=True)
     (out / "merged").mkdir(parents=True, exist_ok=True)

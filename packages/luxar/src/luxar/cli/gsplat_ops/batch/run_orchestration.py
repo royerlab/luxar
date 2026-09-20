@@ -19,7 +19,7 @@ def _refuse_resume_grid_mismatch(
     *,
     resume: bool,
     mismatch_help: str = "pass --no-resume to refit every tile",
-    legacy_weight_help: str = "pass --no-resume to refit every tile",
+    legacy_weight_help: str = "Pass --no-resume to refit every tile",
 ) -> None:
     """Refuse index-based resume when completed tiles use another grid."""
     if not resume or not (output_dir / "manifest.json").exists():
@@ -73,8 +73,8 @@ def _refuse_resume_grid_mismatch(
     ):
         tile_word = "tile" if completed_count == 1 else "tiles"
         aprint(
-            f"Warning: {completed_count} completed {tile_word} predate occupancy "
-            "weighting and will retain their equal-share budgets. "
+            f"Warning: {completed_count} completed {tile_word} predating occupancy "
+            "weighting will keep equal-share budgets. "
             f"{legacy_weight_help}."
         )
 

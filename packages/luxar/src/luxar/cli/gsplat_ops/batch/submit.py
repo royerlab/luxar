@@ -618,7 +618,7 @@ def run_batch_submit(
                     "delete the stale tiles or submit into a fresh output directory"
                 ),
                 legacy_weight_help=(
-                    "submit into a fresh output directory to refit every tile"
+                    "Submit into a fresh output directory to refit every tile"
                 ),
             )
         n_t = manifest.n_timepoints

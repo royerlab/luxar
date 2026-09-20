@@ -113,8 +113,11 @@ def test_resume_accepts_completed_tiles_with_identical_regions(tmp_path: Path) -
     _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
 
 
+@pytest.mark.parametrize("completed_count", [1, 2])
 def test_resume_warns_when_completed_tiles_predate_weighting(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    completed_count: int,
 ) -> None:
     from luxar.cli.gsplat_ops.batch.run_orchestration import (
         _refuse_resume_grid_mismatch,
@@ -142,7 +145,8 @@ def test_resume_warns_when_completed_tiles_predate_weighting(
     tiles_dir = output_dir / "tiles"
     tiles_dir.mkdir(parents=True)
     (tiles_dir / jobs[0].output_filename).mkdir()
-    Path(str(tiles_dir / jobs[1].output_filename) + ".empty").touch()
+    if completed_count == 2:
+        Path(str(tiles_dir / jobs[1].output_filename) + ".empty").touch()
     fresh = BatchManifest(
         **common,
         tile_occupancy_weights=[[1.0, 2.0]],
@@ -151,8 +155,11 @@ def test_resume_warns_when_completed_tiles_predate_weighting(
     _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
 
     output = capsys.readouterr().out
-    assert "2 completed tiles predate occupancy weighting" in output
-    assert "--no-resume" in output
+    tile_word = "tile" if completed_count == 1 else "tiles"
+    assert (
+        f"{completed_count} completed {tile_word} predating occupancy weighting "
+        "will keep equal-share budgets. Pass --no-resume to refit every tile."
+    ) in output
 
 
 @pytest.mark.parametrize(
