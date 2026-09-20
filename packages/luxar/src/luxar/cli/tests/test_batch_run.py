@@ -86,6 +86,86 @@ def test_resume_rejects_completed_tiles_from_another_grid(tmp_path: Path) -> Non
     _refuse_resume_grid_mismatch(output_dir, fresh, resume=False)
 
 
+def test_resume_accepts_completed_tiles_with_identical_regions(tmp_path: Path) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 0, 27, "tile0.gsplats.zarr", 0.0)
+    common = {
+        "mode": "uniform",
+        "spatial_shape": (512, 512, 512),
+        "tile_size": 256,
+        "tile_overlap": 32,
+        "n_tiles": 27,
+    }
+    existing = BatchManifest(**common, fold_tile_slivers=False, jobs=[job])
+    save_manifest(existing, output_dir)
+    (output_dir / "tiles" / job.output_filename).mkdir(parents=True)
+    fresh = BatchManifest(**common, fold_tile_slivers=True)
+
+    _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+
+
+def test_slurm_submit_rejects_completed_tiles_from_another_grid(
+    tmp_path: Path,
+) -> None:
+    from luxar.cli.gsplat_ops.batch.submit_slurm import submit_batch_jobs
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        load_manifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 1, 6, "tile1.gsplats.zarr", 0.0)
+    existing = BatchManifest(
+        mode="uniform",
+        spatial_shape=(108, 1352, 532),
+        tile_size=512,
+        tile_overlap=32,
+        fold_tile_slivers=False,
+        n_tiles=6,
+        jobs=[job],
+    )
+    save_manifest(existing, output_dir)
+    (output_dir / "tiles" / job.output_filename).mkdir(parents=True)
+    fresh = BatchManifest(
+        mode="uniform",
+        spatial_shape=(108, 1352, 532),
+        tile_size=512,
+        tile_overlap=32,
+        fold_tile_slivers=True,
+        n_tiles=3,
+    )
+
+    with pytest.raises(typer.BadParameter, match="fresh output directory"):
+        submit_batch_jobs(
+            output_dir=output_dir,
+            manifest=fresh,
+            fit_script="",
+            merge_script="",
+            preamble="",
+            calibrate_script=None,
+            denoise_script=None,
+            floor_script=None,
+            preempt_fit_script=None,
+            total_tasks=3,
+            preempt_partition=None,
+        )
+
+    persisted = load_manifest(output_dir)
+    assert persisted.fold_tile_slivers is False
+    assert persisted.n_tiles == 6
+
+
 def test_local_cpu_profile_preserves_auto_sizing(monkeypatch) -> None:
     """CPU execution still uses the legacy default profile for tile sizing."""
     import luxar.gsplats.gpu_profile as gpu_profile

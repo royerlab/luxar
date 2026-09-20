@@ -14,7 +14,11 @@ if TYPE_CHECKING:
 
 
 def _refuse_resume_grid_mismatch(
-    output_dir: Path, fresh: "BatchManifest", *, resume: bool
+    output_dir: Path,
+    fresh: "BatchManifest",
+    *,
+    resume: bool,
+    mismatch_help: str = "pass --no-resume to refit every tile",
 ) -> None:
     """Refuse index-based resume when completed tiles use another grid."""
     if not resume or not (output_dir / "manifest.json").exists():
@@ -31,26 +35,36 @@ def _refuse_resume_grid_mismatch(
     )
     if not has_completed:
         return
-    old_grid = (
-        existing.mode,
-        tuple(existing.spatial_shape),
-        existing.tile_size,
-        existing.tile_overlap,
-        existing.fold_tile_slivers,
-        existing.n_tiles,
-    )
-    new_grid = (
-        fresh.mode,
-        tuple(fresh.spatial_shape),
-        fresh.tile_size,
-        fresh.tile_overlap,
-        fresh.fold_tile_slivers,
-        fresh.n_tiles,
-    )
+
+    def grid_signature(manifest: "BatchManifest") -> tuple[Any, ...]:
+        if manifest.mode != "uniform":
+            return (
+                manifest.mode,
+                tuple(manifest.spatial_shape),
+                manifest.tile_size,
+                manifest.tile_overlap,
+                manifest.n_tiles,
+            )
+
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        specs = compute_tile_specs(
+            tuple(manifest.spatial_shape),
+            manifest.tile_size,
+            manifest.tile_overlap,
+            fold_slivers=manifest.fold_tile_slivers,
+        )
+        regions = tuple(
+            tuple((span.start, span.stop) for span in spec.slices) for spec in specs
+        )
+        return manifest.mode, regions
+
+    old_grid = grid_signature(existing)
+    new_grid = grid_signature(fresh)
     if old_grid != new_grid:
         raise typer.BadParameter(
             "cannot resume: the existing tile outputs use a different grid; "
-            "pass --no-resume to refit every tile"
+            f"{mismatch_help}"
         )
 
 
