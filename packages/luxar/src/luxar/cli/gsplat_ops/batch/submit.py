@@ -12,6 +12,7 @@ from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from .help_text import BATCH_PROGRESSIVE_HELP
 from .plan_configs import build_plan_configs
+from .run_orchestration import _refuse_resume_grid_mismatch
 from .submit_pipeline import (
     generate_all_scripts,
     resolve_gpu_context,
@@ -608,6 +609,18 @@ def run_batch_submit(
             resolved_gpu=resolved_gpu,
         )
         manifest = plan.manifest
+        if dry_run:
+            _refuse_resume_grid_mismatch(
+                output_dir,
+                manifest,
+                resume=True,
+                mismatch_help=(
+                    "delete the stale tiles or submit into a fresh output directory"
+                ),
+                legacy_weight_help=(
+                    "submit into a fresh output directory to refit every tile"
+                ),
+            )
         n_t = manifest.n_timepoints
         n_c = manifest.n_channels
         spatial = manifest.spatial_shape

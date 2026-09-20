@@ -113,6 +113,88 @@ def test_resume_accepts_completed_tiles_with_identical_regions(tmp_path: Path) -
     _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
 
 
+def test_resume_warns_when_completed_tiles_predate_weighting(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    jobs = [
+        BatchJob(0, 0, index, 2, f"tile{index}.gsplats.zarr", 0.0) for index in range(2)
+    ]
+    common = {
+        "mode": "uniform",
+        "spatial_shape": (16, 16, 24),
+        "tile_size": 16,
+        "tile_overlap": 4,
+        "n_tiles": 2,
+        "fold_tile_slivers": False,
+    }
+    existing = BatchManifest(**common, jobs=jobs)
+    save_manifest(existing, output_dir)
+    tiles_dir = output_dir / "tiles"
+    tiles_dir.mkdir(parents=True)
+    (tiles_dir / jobs[0].output_filename).mkdir()
+    Path(str(tiles_dir / jobs[1].output_filename) + ".empty").touch()
+    fresh = BatchManifest(
+        **common,
+        tile_occupancy_weights=[[1.0, 2.0]],
+    )
+
+    _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+
+    output = capsys.readouterr().out
+    assert "2 completed tiles predate occupancy weighting" in output
+    assert "--no-resume" in output
+
+
+@pytest.mark.parametrize(
+    ("existing_mode", "fresh_mode"),
+    [("content", "content"), ("uniform", "content")],
+)
+def test_resume_rejects_changed_content_grid(
+    tmp_path: Path, existing_mode: str, fresh_mode: str
+) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 0, 2, "tile0.gsplats.zarr", 0.0)
+    existing = BatchManifest(
+        mode=existing_mode,
+        spatial_shape=(32, 32, 32),
+        tile_size=16 if existing_mode == "uniform" else 0,
+        tile_overlap=4 if existing_mode == "uniform" else 0,
+        n_tiles=2,
+        jobs=[job],
+    )
+    save_manifest(existing, output_dir)
+    (output_dir / "tiles" / job.output_filename).mkdir(parents=True)
+    fresh = BatchManifest(
+        mode=fresh_mode,
+        spatial_shape=(32, 32, 32),
+        tile_size=0,
+        tile_overlap=0,
+        n_tiles=3,
+    )
+
+    with pytest.raises(typer.BadParameter, match="different grid"):
+        _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+
+
 def test_slurm_submit_rejects_completed_tiles_from_another_grid(
     tmp_path: Path,
 ) -> None:
@@ -164,6 +246,55 @@ def test_slurm_submit_rejects_completed_tiles_from_another_grid(
     persisted = load_manifest(output_dir)
     assert persisted.fold_tile_slivers is False
     assert persisted.n_tiles == 6
+
+
+def test_slurm_submit_dry_run_rejects_completed_tiles_from_another_grid(
+    tmp_path: Path,
+) -> None:
+    import zarr
+
+    from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+
+    source = tmp_path / "volume.zarr"
+    array = zarr.open_array(
+        str(source), mode="w", shape=(16, 16, 79), chunks=(16, 16, 32), dtype="f4"
+    )
+    array[:] = 1.0
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 1, 2, "tile1.gsplats.zarr", 0.0)
+    existing = BatchManifest(
+        mode="uniform",
+        spatial_shape=(16, 16, 79),
+        tile_size=64,
+        tile_overlap=16,
+        fold_tile_slivers=False,
+        n_tiles=2,
+        jobs=[job],
+    )
+    save_manifest(existing, output_dir)
+    (output_dir / "tiles" / job.output_filename).mkdir(parents=True)
+
+    result = runner.invoke(
+        app_gsplat,
+        [
+            "batch-fit",
+            "submit",
+            str(source),
+            str(output_dir),
+            "--partition",
+            "gpu",
+            "--axes",
+            "z,y,x",
+            "--tile-size",
+            "64",
+            "--overlap",
+            "16",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "fresh output directory" in normalized_cli_output(result)
 
 
 def test_local_cpu_profile_preserves_auto_sizing(monkeypatch) -> None:
