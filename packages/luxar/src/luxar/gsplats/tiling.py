@@ -105,7 +105,11 @@ def compute_tile_specs(
     are clamped to the volume boundary and may be smaller than ``tile_size``.
     With ``fold_slivers=True``, a trailing tile whose unique coverage is smaller
     than the overlap is folded into its predecessor instead of creating an
-    overlap-dominated sliver.
+    overlap-dominated sliver. That predecessor then spans up to
+    ``tile_size + overlap - 1`` voxels on the folded axis — a folded tile is the
+    one case where a tile is BIGGER than ``tile_size``, so size it for peak
+    memory accordingly: 256/32 reaches 287 (1.41x the voxels of a full tile in
+    3D), 256/64 reaches 319 (1.93x), 24/8 reaches 31 (2.16x).
     Each tile stores its actual overlap with neighbors (which may differ from
     the ``overlap`` parameter at volume edges) to ensure correct windowing.
 

@@ -366,15 +366,35 @@ integer ``--seeds`` is read as a whole-volume budget to match: when the fit is
 tiled (``--tiling uniform``, a large ``--tiling auto`` volume, a ``--tile k/M``
 worker, or a uniform-mode ``batch-fit`` task) the budget is *divided* across
 the tiles that survive floor subtraction and Hann windowing instead of being
-handed to each tile in full. Every worker derives the same non-empty count from
-the volume, tile grid, and resolved floor. The split is still equal per
-non-empty tile rather than proportional to occupancy, so an uneven grid can
-misallocate the budget between busy and barely occupied tiles; use
-``--tiling content`` for density-proportional allocation. A
-:math:`K^{\star}` smaller than that count floors at one seed per non-empty tile. A
-*ratio* ``--seeds`` (a float in ``(0, 1]``) is scale-free and is applied to
-each tile unchanged. Under ``--tiling content`` ``--seeds`` is ignored entirely
-— per-box budgets come from the density plan.
+handed to each tile in full.
+
+How it is divided depends on who does the dividing, and it is worth knowing
+which case you are in:
+
+* ``--tiling uniform`` launched as one command — the sequential in-process
+  path, or a ``-j N`` parent and its workers — weights the split by
+  **occupancy**: the parent measures saturated Hann-weighted foreground per
+  tile once and hands each tile its exact count, so a busy tile gets more than
+  a barely occupied one.
+* ``batch-fit`` weights it the same way *when the plan can resolve tile-local
+  reads*. It falls back to the equal share when it cannot: under
+  ``--downscale`` or ``--denoise``, with a deferred or volume-derived floor, or
+  with no plan-resolved ``--norm-range``. A Slurm plan also falls back when the
+  inline per-task seed table would be too large for the generated script (it
+  says so), which a local ``batch-fit run`` of the same plan does not — so the
+  two can allocate differently.
+* A **hand-run** ``luxar gsplat fit --tile k/M`` worker is still **equal share**
+  per non-empty tile. It has no parent to hand it a weighted count, and scanning
+  the whole volume from every worker is exactly the cost the shared plan exists
+  to avoid.
+
+Either way a :math:`K^{\star}` smaller than the non-empty tile count floors at
+one seed per non-empty tile, and every worker of one run derives the same
+non-empty count from the volume, tile grid, and resolved floor. For
+allocation driven by measured density rather than tile occupancy, use
+``--tiling content``. A *ratio* ``--seeds`` (a float in ``(0, 1]``) is
+scale-free and is applied to each tile unchanged. Under ``--tiling content``
+``--seeds`` is ignored entirely — per-box budgets come from the density plan.
 
 .. warning::
 

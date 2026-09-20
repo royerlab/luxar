@@ -16,7 +16,8 @@ typer command, volume load, tiling resolution and grid math all run.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -831,3 +832,328 @@ def test_cli_zero_seeds_still_rejected_when_tiled(tmp_path: Path) -> None:
     assert whole.exit_code != 0, whole_output
     assert tiled.exit_code != 0, tiled_output
     assert "seeds as int must be positive" in tiled_output
+
+
+# ------------------------------------------- the tri-state fold flag (#2838)
+
+# 80x80 at 48/16 is the smallest shape where the two grids DIFFER: folded 2x2,
+# unfolded 3x3. Every other CLI test here uses a shape whose two grids coincide
+# (48/24/4 -> 9 both ways, 96/24/4 -> 25 both ways), so none of them can see
+# which one was built.
+_FOLD_SHAPE = (80, 80)
+_FOLD_TILE_SIZE = 48
+_FOLD_OVERLAP = 16
+
+
+def test_fold_shape_distinguishes_the_two_grids() -> None:
+    """Guard on the fixture itself: the assertions below are only meaningful
+    while these two counts differ."""
+    folded = compute_tile_specs(
+        _FOLD_SHAPE, _FOLD_TILE_SIZE, _FOLD_OVERLAP, fold_slivers=True
+    )
+    unfolded = compute_tile_specs(
+        _FOLD_SHAPE, _FOLD_TILE_SIZE, _FOLD_OVERLAP, fold_slivers=False
+    )
+    assert (len(folded), len(unfolded)) == (4, 9)
+
+
+def _make_fold_volume(path: Path) -> None:
+    """A blob-filled 80x80 whose folded and unfolded grids differ (4 vs 9)."""
+    v = np.zeros(_FOLD_SHAPE, np.float32)
+    yy, xx = np.ogrid[: _FOLD_SHAPE[0], : _FOLD_SHAPE[1]]
+    for cy, cx in [(20, 20), (20, 60), (60, 20), (60, 60), (40, 40)]:
+        v += np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 40.0).astype(np.float32)
+    np.save(path, v)
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+@pytest.mark.parametrize(
+    ("flag", "expected_tiles"),
+    [
+        (None, 4),  # unset -> the folded default every producer now builds
+        ("--fold-tile-slivers", 4),
+        ("--no-fold-tile-slivers", 9),  # the legacy-manifest replay
+    ],
+)
+def test_cli_tile_worker_resolves_the_fold_flag_tri_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    flag: "str | None",
+    expected_tiles: int,
+) -> None:
+    """``--tile k/M`` builds the grid the tri-state flag asks for, and says so.
+
+    Unset must resolve to the FOLDED grid: the command's
+    ``True if fold_tile_slivers is None else fold_tile_slivers`` is load-bearing
+    because ``None`` is falsy, so dropping it would silently hand
+    ``compute_tile_specs(fold_slivers=None)`` the unfolded grid. This also
+    closes the unverified half of the legacy-manifest round trip — that a worker
+    HONOURS the ``--no-fold-tile-slivers`` a legacy plan emits, not merely that
+    the plan emits it.
+    """
+    seen: dict[str, Any] = {}
+
+    def _fake_fit_tile(volume: Any, spec: Any, **kwargs: Any) -> GSplatData:
+        seen.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tile", _fake_fit_tile)
+
+    vol = tmp_path / "fold.npy"
+    _make_fold_volume(vol)
+    argv = [
+        "gsplat",
+        "fit",
+        str(vol),
+        str(tmp_path / "fold.gsplats.zarr"),
+        "--tile",
+        "0/4",
+        "--tile-size",
+        str(_FOLD_TILE_SIZE),
+        "--overlap",
+        str(_FOLD_OVERLAP),
+        "--floor",
+        "none",
+        "--seeds",
+        "90",
+        "--device",
+        "cpu",
+    ]
+    if flag is not None:
+        argv.append(flag)
+    result = runner.invoke(app, argv)
+
+    assert result.exit_code == 0, result.output
+    output = normalized_cli_output(result)
+    # The `Tile grid:` line is the user-visible artefact the changelog promises.
+    assert f"Tile grid: {expected_tiles} tiles for (80, 80)" in output
+    assert f"fold_tile_slivers={flag != '--no-fold-tile-slivers'}" in output
+    # And the resolved count is what the whole-volume budget is divided by.
+    assert seen["seeds"] == -(-90 // expected_tiles)
+
+
+# ------------------------------------- what a `-j N` parent forwards (#2838)
+
+
+def _worker_preprocessing(
+    floor: "str | None",
+    norm_range: "tuple[float, float] | None",
+    fit_config: dict,
+    *,
+    resolved: bool,
+) -> "tuple[str | None, tuple[float, float] | None]":
+    """Call the private helper with only the two ctx fields it reads."""
+    from luxar.cli.gsplat_ops.fitting.fit_utils import _resolved_worker_preprocessing
+
+    ctx = cast(Any, SimpleNamespace(floor=floor, norm_range=norm_range))
+    return _resolved_worker_preprocessing(ctx, fit_config, resolved=resolved)
+
+
+def test_worker_preprocessing_forwards_nothing_when_no_scan_ran() -> None:
+    """A ratio / ``auto`` / one-tile grid resolved nothing to forward."""
+    assert _worker_preprocessing(
+        "p50", None, {"floor": 7.0, "norm_range": (0.0, 3.0)}, resolved=False
+    ) == ("p50", None)
+
+
+def test_worker_preprocessing_forwards_a_refused_level_as_none() -> None:
+    """A guard-refused volume-derived spec becomes an explicit ``none``, and the
+    range is forwarded unshifted (nothing was subtracted)."""
+    assert _worker_preprocessing(
+        "p99", None, {"floor": "none", "norm_range": (0.0, 3.0)}, resolved=True
+    ) == ("none", (0.0, 3.0))
+
+
+def test_worker_preprocessing_forwards_the_level_and_the_unshifted_range() -> None:
+    assert _worker_preprocessing(
+        "auto", None, {"floor": 2.0, "norm_range": (0.0, 3.0)}, resolved=True
+    ) == ("2", (0.0, 5.0))
+
+
+@pytest.mark.parametrize(
+    "fit_config",
+    [
+        {"floor": 2.0, "norm_range": None},  # the shared scale was declined
+        {"floor": -3.0, "norm_range": (0.0, 0.5)},  # negative: argv cannot say it
+    ],
+)
+def test_worker_preprocessing_forwards_neither_half(fit_config: dict) -> None:
+    """Both or neither. Forwarding a floor without its range (or a range
+    un-shifted by a NEGATIVE floor, which can land at or below zero) hands the
+    worker something its own parser rejects."""
+    assert _worker_preprocessing("auto", None, fit_config, resolved=True) == (
+        "auto",
+        None,
+    )
+
+
+def _make_dark_frame_volume(path: Path) -> None:
+    """Dark-frame-corrected data: a negative pedestal with one real signal block.
+
+    The block is 16 of 2304 voxels (0.7%), so a ``norm_percentile`` of 1.0 puts
+    the high endpoint inside the NOISE, at roughly -2.5. Subtracting the
+    negative ``auto`` level then leaves a tile-basis top just above zero, whose
+    un-shift back into raw units is NEGATIVE.
+    """
+    rng = np.random.default_rng(0)
+    volume = rng.normal(-3.0, 0.2, (48, 48)).astype(np.float32)
+    volume[10:14, 10:14] += 50.0
+    np.save(path, volume)
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_parallel_negative_floor_forwards_the_spec_not_a_bad_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A negative resolved level must not produce ``--norm-range 0,<negative>``.
+
+    Un-shifting the tile-basis top by a negative level puts the raw top at or
+    below zero, and the worker's own ``--norm-range`` parser refuses
+    ``image_max <= image_min`` — so every worker would exit 1 and the run would
+    report "M of M tile fits failed" with the real cause buried in a stderr
+    tail. The level itself is not forwardable either (``--floor -2.5`` parses as
+    an option), so BOTH fall back to the spec and each worker re-resolves it.
+    """
+    captured: dict[str, Any] = {}
+
+    def _fake_parallel(**kwargs: Any) -> GSplatData:
+        captured.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+    )
+
+    vol = tmp_path / "dark.npy"
+    _make_dark_frame_volume(vol)
+    config = tmp_path / "cfg.yaml"
+    config.write_text("norm_percentile: 1.0\n")
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / "dark.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "-j",
+            "2",
+            "--flat",
+            "--seeds",
+            "90",
+            "--floor",
+            "auto",
+            "--config",
+            str(config),
+            "--device",
+            "cpu",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    # The premise: the parent really did resolve a NEGATIVE level here.
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
+
+    level = resolve_volume_floor_denoised(np.load(vol), "auto")
+    assert level is not None and level < 0.0
+
+    cmd = captured["worker_cmd_builder"](0, captured["num_tiles"], tmp_path / "w0")
+    assert cmd[cmd.index("--floor") + 1] == "auto"
+    assert "--norm-range" not in cmd
+    # And the argv the parent built actually runs.
+    worker = runner.invoke(app, cmd[cmd.index("gsplat") :])
+    assert worker.exit_code == 0, normalized_cli_output(worker)
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+@pytest.mark.parametrize("seeds", ["200", "0.02"])
+def test_cli_parallel_too_high_floor_matches_the_hand_run_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seeds: str
+) -> None:
+    """A too-high numeric ``--floor`` reaches the worker unguarded, either way.
+
+    The parent resolves the level only to WEIGH the tiles, which happens only
+    for an INTEGER ``--seeds``. Resolving it there with the whole-volume guard
+    (``guard_numeric=True``) made ``-j N --seeds 200 --floor 200`` silently
+    ignore a floor that ``-j N --seeds 0.02 --floor 200`` and a hand-run
+    ``fit --tile k/M --floor 200`` both apply — the same flag on the same volume
+    switched by an unrelated option. The parent must resolve with the WORKER's
+    semantics, so the handoff moves no number.
+    """
+    captured: dict[str, Any] = {}
+
+    def _fake_parallel(**kwargs: Any) -> GSplatData:
+        captured.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+    )
+
+    vol = tmp_path / "sparse.npy"
+    _make_sparse_volume(vol)  # max 1.0, so a floor of 200 is far above it
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / f"floor-{seeds}.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "-j",
+            "2",
+            "--flat",
+            "--seeds",
+            seeds,
+            "--floor",
+            "200",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    cmd = captured["worker_cmd_builder"](0, captured["num_tiles"], tmp_path / "w0")
+    assert cmd[cmd.index("--floor") + 1] == "200"
+
+    # The hand-run worker this must agree with.
+    seen: dict[str, Any] = {}
+
+    def _fake_fit_tile(volume: Any, spec: Any, **kwargs: Any) -> GSplatData:
+        seen.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tile", _fake_fit_tile)
+    hand_run = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / f"hand-{seeds}.gsplats.zarr"),
+            "--tile",
+            "0/25",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--seeds",
+            seeds,
+            "--floor",
+            "200",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert hand_run.exit_code == 0, hand_run.output
+    assert seen["floor"] == 200.0

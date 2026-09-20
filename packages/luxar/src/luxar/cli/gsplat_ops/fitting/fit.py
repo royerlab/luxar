@@ -325,7 +325,10 @@ def run_fit_volume(
     tile_size: int = typer.Option(
         256,
         "--tile-size",
-        help="Tile size in voxels (per axis)",
+        help="Tile size in voxels (per axis). A trailing sliver is folded into "
+        "its neighbour, so one tile per axis can span up to "
+        "tile_size + overlap - 1 voxels (256/32 -> 287, i.e. 1.41x the voxels "
+        "of a full tile in 3D); size this for that worst case.",
         rich_help_panel="Tiling",
     ),
     tile_overlap: int = typer.Option(

@@ -148,6 +148,39 @@ def _validate_tile_seed_counts(
         raise ValueError("tile_seed_counts entries must be non-negative")
 
 
+def _reject_seed_coordinate_array(seeds: Any) -> None:
+    """Refuse explicit seed COORDINATES on a tile — they are whole-volume."""
+    if isinstance(seeds, np.ndarray):
+        raise ValueError(
+            "Explicit seed coordinate arrays are not supported with tiled fitting. "
+            "Use an integer (count per tile), float (compression ratio), or None (auto)."
+        )
+
+
+def _is_zero_seed_budget(seeds: Any) -> bool:
+    """Whether ``seeds`` is the integer 0, i.e. "this tile was budgeted nothing"."""
+    return isinstance(seeds, int) and not isinstance(seeds, bool) and seeds == 0
+
+
+def _reject_nonpositive_shared_seed_budget(
+    seeds: Any, tile_seed_counts: "Optional[Sequence[int]]"
+) -> None:
+    """Refuse a non-positive SHARED ``seeds``, which is invalid user input.
+
+    ``fit_tile`` reads ``seeds == 0`` as "this tile was budgeted nothing, skip
+    it", which is right for an apportioned count but would silently swallow a
+    ``--seeds 0``. The two are only distinguishable HERE: a ``seeds`` handed to
+    every tile is the user's number, while ``tile_seed_counts`` overrides it per
+    tile. Raised with the fitter's own wording, which is what used to surface
+    (see ``split_seeds_across_tiles``, which passes a non-positive K through
+    UNCHANGED precisely so the error is not rounded away).
+    """
+    if tile_seed_counts is not None:
+        return
+    if isinstance(seeds, int) and not isinstance(seeds, bool) and seeds <= 0:
+        raise ValueError("seeds as int must be positive")
+
+
 def _tile_fit_kwargs(
     fit_kwargs: dict[str, Any],
     tile_seed_counts: "Optional[Sequence[int]]",
@@ -159,6 +192,23 @@ def _tile_fit_kwargs(
     tile_kwargs = dict(fit_kwargs)
     tile_kwargs["seeds"] = int(tile_seed_counts[tile_index])
     return tile_kwargs
+
+
+def _zero_splat_tile(ndim: int) -> GSplatData:
+    """The unstamped 0-splat payload of a tile that was never fitted.
+
+    The single spelling behind both ways a tile can contribute nothing —
+    :func:`fit_tile`'s near-zero-signal skip and :func:`_skipped_tile_result` —
+    so the two can never drift apart in shape or stats.
+    """
+    from luxar.gsplats.utils.trils import tril_size
+
+    return GSplatData(
+        centers=np.zeros((0, ndim), dtype=np.float32),
+        amplitudes=np.zeros((0,), dtype=np.float32),
+        cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
+        stats={"time_seconds": 0.0, "skipped": True},
+    )
 
 
 def _skipped_tile_result(
@@ -173,15 +223,13 @@ def _skipped_tile_result(
     keeps its zero, and the normalization block still records the level that
     would have been subtracted. This is the in-process counterpart of the
     ``.empty`` marker a ``--allow-empty-tile`` batch worker writes.
-    """
-    from luxar.gsplats.utils.trils import tril_size
 
-    result = GSplatData(
-        centers=np.zeros((0, ndim), dtype=np.float32),
-        amplitudes=np.zeros((0,), dtype=np.float32),
-        cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-        stats={"time_seconds": 0.0, "skipped": True},
-    )
+    :func:`fit_tile` returns this for a zero ``seeds`` budget itself, so the
+    contract holds wherever a zero budget can arrive (a ``--tile-seed-count 0``
+    worker as much as the in-process loop); the loop's own check is then just a
+    short-circuit that skips extracting the tile at all.
+    """
+    result = _zero_splat_tile(ndim)
     result.stats["tile_index"] = spec.index
     result.stats["tile_grid_index"] = spec.grid_index
     result.stats["tile_origin"] = spec.origin
@@ -388,11 +436,18 @@ def fit_tile(
     **fit_kwargs
         All other keyword arguments forwarded to the fitting function.
         ``seeds`` here is **per tile**: an integer is the count for THIS tile
-        alone. The CLI's ``--seeds`` is a whole-volume budget and is divided by
-        the non-empty tile count before reaching this function (see
-        ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``);
-        a direct Python caller does that division itself if it wants the same
-        semantics.
+        alone, and **0 is a skip**, not an error — the caller has budgeted this
+        tile nothing, so a 0-splat :func:`_skipped_tile_result` comes back
+        instead of the fitter's "seeds as int must be positive". The CLI's
+        ``--seeds`` is a whole-volume budget, divided before reaching this
+        function: normally into one exact occupancy-weighted count per tile
+        (``tile_seed_counts`` on :func:`fit_tiled`, ``--tile-seed-count`` on a
+        worker, both from
+        ``luxar.cli.gsplat_ops.fitting.fit_utils._weighted_uniform_seed_counts``),
+        and by the equal-share fallback
+        ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``
+        where no weighting ran (a hand-run ``--tile k/M``). A direct Python
+        caller does that division itself if it wants the same semantics.
         ``floor`` (default ``"auto"``) is intercepted here: a spec string is
         resolved once against the whole ``volume`` via
         :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
@@ -429,11 +484,7 @@ def fit_tile(
     """
     # Reject explicit seed arrays — they don't make sense per-tile
     seeds = fit_kwargs.get("seeds")
-    if isinstance(seeds, np.ndarray):
-        raise ValueError(
-            "Explicit seed coordinate arrays are not supported with tiled fitting. "
-            "Use an integer (count per tile), float (compression ratio), or None (auto)."
-        )
+    _reject_seed_coordinate_array(seeds)
 
     # Background floor: resolve the spec against the WHOLE volume (never the
     # tile) so every tile — including independent --tile k/M workers —
@@ -465,6 +516,17 @@ def fit_tile(
         denoise_params=fit_kwargs.get("_denoise_params"),
         probe_cache=probe_cache,
     )
+
+    # A ZERO integer budget is not an error here, it is a SKIP. It is what the
+    # occupancy-weighted allocator says for "no signal in this tile", and it
+    # reaches this function two ways: `fit_tiled`'s loop (which short-circuits
+    # before extracting the tile) and a `--tile-seed-count 0` worker, which has
+    # no loop to guard it. Handing the 0 down would hit the fitter's "seeds as
+    # int must be positive" and kill that worker, and `--allow-empty-tile` would
+    # not rescue it — that only covers SAVING a 0-splat result. Returning the
+    # placeholder makes the contract hold wherever the budget arrives.
+    if _is_zero_seed_budget(seeds):
+        return _skipped_tile_result(spec, len(spec.shape), applied_floor)
 
     # Resolve the INTENSITY SCALE against the whole volume too, for the same
     # reason the floor is: a tile normalized by its own extremes is fitted
@@ -523,15 +585,7 @@ def fit_tile(
 
     # 3. Skip fitting if tile has negligible signal (e.g., windowed to near-zero)
     if not tile_has_signal(tile_data):
-        from luxar.gsplats.utils.trils import tril_size
-
-        ndim = tile_data.ndim
-        result = GSplatData(
-            centers=np.zeros((0, ndim), dtype=np.float32),
-            amplitudes=np.zeros((0,), dtype=np.float32),
-            cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-            stats={"time_seconds": 0.0, "skipped": True},
-        )
+        result = _zero_splat_tile(tile_data.ndim)
     elif progressive:
         from luxar.gsplats.fit_progressive_gsplats import (
             fit_progressive_gaussian_splats,
@@ -887,6 +941,12 @@ def fit_tiled(
         volume now fits different regions with different per-tile budgets, and
         the result differs from a pre-#2838 one by more than a ``content_hash``.
         Pass ``False`` to reproduce a historical grid.
+
+        A folded tile also EXCEEDS ``tile_size``: it spans up to
+        ``tile_size + overlap - 1`` voxels on the folded axis, so peak per-tile
+        memory is that much above what ``tile_size`` alone suggests (256/32 ->
+        287, 1.41x the voxels in 3D; 256/64 -> 319, 1.93x; 24/8 -> 31, 2.16x).
+        Size ``tile_size`` for that worst case.
     tile_seed_counts : sequence of int, optional
         Exact per-tile integer seed counts in grid order. When provided, this
         overrides ``seeds`` for each tile; its length must match the resolved
@@ -917,10 +977,15 @@ def fit_tiled(
         ``residual_pass_min_iters`` when ``progressive=True``).
         ``seeds`` is handed to EVERY tile as-is, so an integer here is a
         **per-tile** count, not a whole-volume budget: N tiles fit ~N x seeds
-        splats. The CLI's ``--seeds`` IS a whole-volume budget and is divided
-        by the non-empty tile count before this call (see
-        ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``);
-        a direct Python caller that wants the same semantics divides itself.
+        splats — unless ``tile_seed_counts`` overrides it per tile, which is
+        what the CLI normally passes. The CLI's ``--seeds`` IS a whole-volume
+        budget, divided before this call into one exact occupancy-weighted
+        count per tile
+        (``luxar.cli.gsplat_ops.fitting.fit_utils._weighted_uniform_seed_counts``
+        → ``tile_seed_counts``), falling back to the equal share
+        ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``
+        where no weighting ran; a direct Python caller that wants the same
+        semantics divides itself.
 
     Returns
     -------
@@ -1022,6 +1087,7 @@ def fit_tiled(
         volume_shape, tile_size, overlap, fold_slivers=fold_tile_slivers
     )
     _validate_tile_seed_counts(tile_seed_counts, len(specs))
+    _reject_nonpositive_shared_seed_budget(fit_kwargs.get("seeds"), tile_seed_counts)
 
     results: list[GSplatData] = []
     t0 = time.perf_counter()
@@ -1229,6 +1295,18 @@ def merge_tile_results(
         regions = [r for _, r in indexed]
         if not regions:
             return _empty_merge(volume_shape, results, applied_floor)
+        # The grid this merge re-derives has to be the one the tiles were fitted
+        # on, and `fold_tile_slivers` is the only thing that can make it differ.
+        # An external caller that built an UNFOLDED grid itself and did not say
+        # so now gets the folded default, i.e. fewer leaves than labelled
+        # regions. `prune_serialized_bsp_tree` catches that only while the kept
+        # labels are NOT a subset of the smaller tree's — once enough tiles come
+        # back empty they are, and the planes are silently relabelled from the
+        # wrong geometry. Check the recomputed grid too, the way
+        # `merge_orchestrator._uniform_slot_bsp_tree` does.
+        grid_specs = compute_tile_specs(
+            volume_shape, tile_size, overlap, fold_slivers=fold_tile_slivers
+        )
         node = GSplatData.partition_from_regions(
             regions,
             recipe=recipe,
@@ -1244,16 +1322,8 @@ def merge_tile_results(
             # `scale` lifts the (possibly downscaled) voxel grid into the
             # splats' own frame — see `grid_scale` above (#1587).
             bsp_tree=(
-                grid_bsp_tree(
-                    compute_tile_specs(
-                        volume_shape,
-                        tile_size,
-                        overlap,
-                        fold_slivers=fold_tile_slivers,
-                    ),
-                    scale=grid_scale,
-                )
-                if len(results) == num_tiles
+                grid_bsp_tree(grid_specs, scale=grid_scale)
+                if len(results) == num_tiles and len(grid_specs) == num_tiles
                 else None
             ),
             region_labels=[i for i, _ in indexed],

@@ -732,6 +732,80 @@ class TestFitTiled:
         assert result.stats["splats_per_tile"][0] == 0
         assert len(result.stats["splats_per_tile"]) == 4
 
+    def test_zero_seed_budget_keeps_a_partition_grid_aligned(self) -> None:
+        """The same skip under ``partition=True``, which is the CLI DEFAULT.
+
+        ``_skipped_tile_result``'s whole reason to exist is this shape: the
+        placeholder has to survive ``merge_tile_results``' ``len(results) ==
+        num_tiles`` gate so the BSP tree is built and ``region_labels`` still
+        names the tile each surviving part came from. ``partition=False`` (the
+        test above) cannot see any of that.
+        """
+        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+
+        volume = np.zeros((40, 40), dtype=np.float32)
+        volume[5:35, 5:35] = 1.0
+        assert len(compute_tile_specs((40, 40), 24, 8, fold_slivers=True)) == 4
+
+        node = fit_tiled(
+            volume,
+            tile_size=24,
+            overlap=8,
+            partition=True,
+            tile_seed_counts=(0, 5, 5, 5),
+            floor="none",
+            n_iters=2,
+            device="cpu",
+            cull_retention=None,
+            verbose=False,
+        )
+
+        # Tile 0 was never fitted, so three parts survive — and the placeholder
+        # kept `results` grid-aligned, so the split-plane tree was still built
+        # and pruned onto those three rather than dropped.
+        assert len(node.children) == 3
+        assert node.bsp_tree is not None
+
+        def _leaves(sub: dict) -> list[int]:
+            if "part" in sub:
+                return [int(sub["part"])]
+            return _leaves(sub["left"]) + _leaves(sub["right"])
+
+        assert sorted(_leaves(node.bsp_tree)) == [0, 1, 2]
+
+    def test_fit_tile_reads_a_zero_seed_budget_as_a_skip(self) -> None:
+        """``fit_tile(seeds=0)`` is the door every zero budget passes through.
+
+        A ``--tile-seed-count 0`` worker calls it with no loop to short-circuit
+        first, and ``--allow-empty-tile`` does not help — that only covers
+        SAVING a 0-splat result. Handing the 0 down reached the fitter's "seeds
+        as int must be positive" and killed the worker.
+        """
+        from luxar.gsplats.fit_tiled_gsplats import fit_tile
+
+        volume = np.zeros((40, 40), dtype=np.float32)
+        volume[5:35, 5:35] = 1.0
+        specs = compute_tile_specs((40, 40), 24, 8, fold_slivers=True)
+        # This tile holds signal, so fit_tile's own near-zero skip is not what
+        # returns the placeholder.
+        assert volume[specs[0].slices].max() > 0.0
+
+        result = fit_tile(
+            volume,
+            specs[0],
+            seeds=0,
+            floor="none",
+            norm_range=(0.0, 1.0),
+            n_iters=2,
+            device="cpu",
+            verbose=False,
+        )
+
+        assert result.n_splats == 0
+        assert result.stats["skipped"] is True
+        assert result.stats["tile_index"] == 0
+        assert result.stats["tile_grid_index"] == specs[0].grid_index
+
     def test_degenerates_to_single_tile(self) -> None:
         """Volume smaller than tile_size should behave like non-tiled fitting."""
         from luxar.gsplats.fit_tiled_gsplats import fit_tiled
@@ -2503,6 +2577,83 @@ class TestDownscaledPartitionPlanes:
         # ...and consequently separates nothing.
         failures = self._separation_failures(bad.bsp_tree, self._part_centers(bad))
         assert len(failures) == len(bad_splits), failures
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")
+class TestMergeGridMismatch:
+    """``merge_tile_results`` must refuse a recomputed grid of the wrong size.
+
+    It rebuilds the tile grid from ``volume_shape``/``tile_size``/``overlap`` to
+    label the split planes, and only gated that on ``len(results) ==
+    num_tiles`` — never on the rebuilt grid itself. Since #2838 flipped
+    ``fold_tile_slivers`` to ``True``, an external caller that built its own
+    UNFOLDED grid and does not say so gets a tree with FEWER leaves than
+    labelled regions, silently pruned rather than refused.
+    ``merge_orchestrator._uniform_slot_bsp_tree`` already makes this check.
+    """
+
+    SHAPE = (80, 80, 80)
+    TILE_SIZE = 48
+    OVERLAP = 16
+    # Only these tiles of the 27-tile unfolded grid carry splats. The labels
+    # have to be a SUBSET of the folded grid's 8 leaves or
+    # ``prune_serialized_bsp_tree`` already refuses the whole tree as a
+    # non-subset — that backstop hides the mismatch on an all-tiles-fitted
+    # merge, and stops hiding it exactly when some tiles come back empty.
+    NONEMPTY = (0, 1, 2)
+
+    def _unfolded_specs(self) -> "list[TileSpec]":
+        return compute_tile_specs(
+            self.SHAPE, self.TILE_SIZE, self.OVERLAP, fold_slivers=False
+        )
+
+    def _merge(self, **kwargs: "Any") -> "Any":
+        from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        specs = self._unfolded_specs()
+        ones = (1.0,) * len(self.SHAPE)
+        results = [
+            _core_region(s, ones, 6, 100 + s.index)
+            if s.index in self.NONEMPTY
+            else GSplatData(
+                centers=np.zeros((0, 3), dtype=np.float32),
+                amplitudes=np.zeros((0,), dtype=np.float32),
+                cholesky_factors=np.zeros((0, 6), dtype=np.float32),
+            )
+            for s in specs
+        ]
+        return merge_tile_results(
+            results,
+            volume_shape=self.SHAPE,
+            tile_size=self.TILE_SIZE,
+            overlap=self.OVERLAP,
+            num_tiles=len(specs),
+            progressive=False,
+            cull_retention=None,
+            elapsed=0.0,
+            verbose=False,
+            partition=True,
+            **kwargs,
+        )
+
+    def test_the_two_grids_really_differ(self) -> None:
+        folded = compute_tile_specs(
+            self.SHAPE, self.TILE_SIZE, self.OVERLAP, fold_slivers=True
+        )
+        assert (len(folded), len(self._unfolded_specs())) == (8, 27)
+
+    def test_a_mismatched_recomputed_grid_drops_the_tree(self) -> None:
+        """The default folds, so the rebuilt grid has 8 leaves for 27 tiles."""
+        node = self._merge()
+        assert len(node.children) == len(self.NONEMPTY)
+        assert node.bsp_tree is None
+
+    def test_declaring_the_unfolded_grid_still_labels_the_planes(self) -> None:
+        """The check must not cost the caller that DOES declare its geometry."""
+        node = self._merge(fold_tile_slivers=False)
+        assert len(node.children) == len(self.NONEMPTY)
+        assert node.bsp_tree is not None
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_parallel imports torch")

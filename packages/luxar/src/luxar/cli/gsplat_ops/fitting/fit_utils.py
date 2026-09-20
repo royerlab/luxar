@@ -536,6 +536,8 @@ def _weighted_uniform_seed_counts(
     parsed_seeds: "int | float | None",
     fit_config: dict,
     saturation_exponent: float,
+    *,
+    guard_numeric: bool,
 ) -> "tuple[int, ...] | None":
     """Resolve one exact occupancy-weighted count per uniform tile.
 
@@ -543,6 +545,17 @@ def _weighted_uniform_seed_counts(
     ``fit_config`` (marked ``_floor_resolved`` / ``_norm_range_resolved``) on the
     way, because the occupancy measurement needs both. Returns ``None``, having
     touched nothing, when the budget is not an integer that gets divided.
+
+    ``guard_numeric`` must be the semantics of whoever will FIT with the level
+    this resolves, so resolving it here never changes the number: ``True`` for
+    the in-process sequential path (which hands the level straight to
+    :func:`~luxar.gsplats.fit_tiled_gsplats.fit_tiled`, itself a
+    ``guard_numeric=True`` caller), ``False`` for the ``-j N`` parent, whose
+    workers re-enter :func:`fit_single_tile` and resolve with
+    ``guard_numeric=False`` on purpose. Getting that wrong would make a
+    too-high user ``--floor`` depend on the FORM of ``--seeds`` (this scan runs
+    only for an integer budget) and would split ``-j N`` from a hand-run
+    ``--tile k/M``.
     """
     if not _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
         return None
@@ -567,7 +580,7 @@ def _weighted_uniform_seed_counts(
         denoise_h=fit_config.get("_denoise_h"),
         denoise_params=fit_config.get("_denoise_params"),
         probe_cache=probe_cache,
-        guard_numeric=True,
+        guard_numeric=guard_numeric,
         verbose=bool(fit_config.get("verbose", True))
         and floor_spec_needs_volume(floor_spec)
         and fit_config.get("_denoise_h") is not None
@@ -614,36 +627,48 @@ def _resolved_worker_preprocessing(
     did not run (``resolved=False``: a compression ratio, ``--seeds auto``, or a
     one-tile grid) nothing was resolved and the spec is forwarded as before.
 
+    This is a pure OPTIMIZATION — it must not move a single number. The parent
+    resolved with the WORKER's guard semantics (see
+    :func:`_weighted_uniform_seed_counts`), so the level it hands on is the one
+    the worker would have derived itself.
+
     ``--denoise`` needs no special case: the parent resolves the level with the
     same ``_denoise_h`` / ``_denoise_params`` the worker is handed, from the same
     deterministic bounded probe of the same (post-downscale) whole volume, so the
     forwarded number is bit-for-bit the one the worker would have computed.
 
-    Two values are NOT forwarded and fall back to the spec. A negative resolved
-    level (legitimate on dark-frame-corrected data) would reach argv as
-    ``--floor -5.0``, which click parses as an option, not a value. And a
-    declined shared range (``None`` — see ``_tile_norm_range``) carries no
-    scale to hand on; the worker declines identically on its own.
+    The two values are forwarded together or not at all. The resolved range
+    lives in the floor-SUBTRACTED tile basis, while ``--norm-range`` is read in
+    raw input units and shifted by the worker's ``_ensure_tile_norm_range``, so
+    the level is added back here — which means un-shifting by a NEGATIVE level
+    can put the raw top at or below zero, and ``--norm-range 0,-2.54`` is
+    rejected outright by the worker's own parser (every worker exits 1, i.e. the
+    whole run dies). Two cases therefore fall back to the user's spec, which
+    each worker re-resolves against this same volume exactly as it did before
+    the handoff existed:
 
-    The resolved range lives in the floor-SUBTRACTED tile basis, while
-    ``--norm-range`` is read in raw input units and shifted by the worker's
-    ``_ensure_tile_norm_range``, so the level is added back here.
+    * A NEGATIVE resolved level (legitimate on dark-frame-corrected data). It
+      could not be spelled in argv anyway — ``--floor -5.0`` is parsed by click
+      as an option, not a value. Only a volume-derived spec (``auto``/``pNN``)
+      reaches here negative: ``_validate_floor`` rejects a negative user
+      numeric, and a deterministic re-resolve of ``auto`` gives the same level.
+    * A declined shared range (``None`` — see ``_tile_norm_range``), which
+      carries no scale to hand on. The worker declines identically on its own.
     """
     if not resolved:
         return ctx.floor, ctx.norm_range
     level = fit_config.get("floor")
-    floor_arg = ctx.floor
-    applied = 0.0
-    if level == "none":
-        floor_arg = "none"
-    elif isinstance(level, (int, float)) and not isinstance(level, bool):
-        applied = float(level)
-        if applied >= 0.0:
-            floor_arg = f"{applied:.17g}"
     shifted = fit_config.get("norm_range")
     if shifted is None:
-        return floor_arg, ctx.norm_range
-    return floor_arg, (0.0, float(shifted[1]) + applied)
+        return ctx.floor, ctx.norm_range
+    if level == "none":
+        return "none", (0.0, float(shifted[1]))
+    if not isinstance(level, (int, float)) or isinstance(level, bool):
+        return ctx.floor, ctx.norm_range
+    applied = float(level)
+    if applied < 0.0:
+        return ctx.floor, ctx.norm_range
+    return f"{applied:.17g}", (0.0, float(shifted[1]) + applied)
 
 
 def reject_rescaled_volume_refit(
@@ -810,6 +835,12 @@ def dispatch_parallel_tiled(
             parent_seeds,
             fit_config,
             ctx.saturation_exponent,
+            # Each worker is a `fit --tile k/M`, which resolves UNGUARDED
+            # (`fit_single_tile`, #1174). Resolving with the same semantics here
+            # is what keeps the forwarded level equal to the one the worker
+            # would derive — and keeps a too-high `--floor` from behaving
+            # differently depending on whether `--seeds` was an int or a ratio.
+            guard_numeric=False,
         )
         worker_floor, worker_norm_range = _resolved_worker_preprocessing(
             ctx, fit_config, resolved=tile_seed_counts is not None
@@ -844,11 +875,12 @@ def dispatch_parallel_tiled(
                 config=ctx.config,
                 loss=ctx.loss,
                 lr=ctx.lr,
-                # The RESOLVED level and shared scale whenever the parent had to
-                # resolve them to weigh the tiles, so no worker re-derives what
-                # this process already measured on the same volume; otherwise
-                # the user's SPEC verbatim, which each worker resolves against
-                # that same volume with the deterministic sampler (an unset
+                # The RESOLVED level and shared scale (always BOTH) whenever the
+                # parent had to resolve them to weigh the tiles, so no worker
+                # re-derives what this process already measured on the same
+                # volume; otherwise the user's SPEC verbatim, which each worker
+                # resolves against that same volume with the deterministic
+                # sampler and the same guard semantics the parent used (an unset
                 # floor lets each worker apply its own --config/--preset merge).
                 # Either way a NUMERIC reaches the worker unvetoed — see
                 # fit_single_tile: a level above the volume's max windows every
@@ -1296,9 +1328,20 @@ def _single_tile_seeds(
     nonempty_tiles: "int | None",
     tile_seed_count: "int | None",
 ) -> "int | float | None":
-    """Resolve one worker's seed count from plan metadata or legacy fallback."""
+    """Resolve one worker's seed count from plan metadata or legacy fallback.
+
+    An explicit ``tile_seed_count`` of 0 is a budget — the parent measured this
+    tile as empty — and :func:`~luxar.gsplats.fit_tiled_gsplats.fit_tile` skips
+    it. A non-positive ``--seeds`` is not: it is invalid input, refused here
+    with the fitter's own wording so ``fit --tile k/M --seeds 0`` still fails
+    the way ``--tiling none`` and ``--tiling uniform`` do rather than writing an
+    empty tile.
+    """
     if tile_seed_count is not None:
         return tile_seed_count
+    if isinstance(parsed_seeds, int) and not isinstance(parsed_seeds, bool):
+        if parsed_seeds <= 0:
+            raise ValueError("seeds as int must be positive")
     if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
         from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles
 
@@ -1391,19 +1434,24 @@ def fit_single_tile(
     # here would drop it on a dim/bleached timepoint (``floor=None`` → hard-min
     # normalization) while every sibling task subtracts it: precisely the
     # per-timepoint pedestal difference the shared resolution removes. The number
-    # normally comes from a parent that already resolved and guarded it against
-    # the whole volume the tiles belong to (`batch-fit` plan time; the
-    # `fit --tiling uniform -j N` parent, which forwards its ``--floor`` spec
-    # verbatim, so each worker re-resolves the same spec against the same volume).
+    # normally comes from a parent that already resolved it against the whole
+    # volume the tiles belong to (`batch-fit` plan time; the
+    # `fit --tiling uniform -j N` parent, which resolves once to weigh the tiles
+    # and forwards the ANSWER — see `_resolved_worker_preprocessing`). That
+    # parent resolves with ``guard_numeric=False``, i.e. with THIS function's
+    # semantics, so the forwarded level is the one this worker would have
+    # derived from the spec itself and the handoff moves no number. Where it
+    # cannot forward (a negative level, or no shared range) it forwards the
+    # user's SPEC instead and this worker resolves it, as it always did.
     #
     # BEHAVIOUR CHANGE vs main: a USER numeric on this path — `fit --tile k/M
     # --floor 110`, or `-j N --floor 110` — used to be guarded here too and would
     # be reported-and-ignored when it exceeded the volume's sampled max. It is now
-    # APPLIED, so a too-high number windows the tile to zero. The loud warn-only
-    # check below names exactly that, since the resulting ``.empty`` tile would
-    # otherwise never mention the floor. A volume-derived spec (``auto``/``pNN``)
-    # is still resolved against this whole volume WITH the guard, because it
-    # becomes a level here for the first time.
+    # APPLIED on BOTH, so a too-high number windows the tile to zero. The loud
+    # warn-only check below names exactly that, since the resulting ``.empty``
+    # tile would otherwise never mention the floor. A volume-derived spec
+    # (``auto``/``pNN``) is still resolved against this whole volume WITH the
+    # guard, because it becomes a level here for the first time.
     # With --denoise the tile is denoised BEFORE the level is subtracted, so a
     # volume-derived spec is resolved on the DENOISED basis (#1178) — the same
     # correction `fit_tiled` applies, from the same deterministic probe of the
@@ -1513,6 +1561,9 @@ def fit_sequential_tiled(
         parsed_seeds,
         fit_config,
         ctx.saturation_exponent,
+        # `fit_tiled` below is the fitter here, and it resolves a user spec with
+        # the "would erase all signal" guard — so resolving it early must too.
+        guard_numeric=True,
     )
     tile_seeds = (
         parsed_seeds

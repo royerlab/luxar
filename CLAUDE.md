@@ -485,12 +485,23 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # k/M`, `batch-fit`, and the `fit_tiled` Python API alike. On (108, 1352, 532)
 # at 512/32 that is 3 tiles, not the 6 the unfolded grid gave — so a store
 # refitted after #2838 differs from its predecessor in tile count and regions.
+# Folding makes ONE tile per axis BIGGER than `--tile-size` — up to
+# `tile_size + overlap - 1` voxels, 287 at the 256/32 default = 1.41x the voxels
+# in 3D (256/64 = 1.93x). `--tile-size` is the GPU-memory knob: size it for that.
 # An integer `--seeds K` is a WHOLE-VOLUME budget (what a default `cal`
 # reports): a tiled fit DIVIDES it across the tiles that survive the resolved
-# floor plus Hann window instead of giving each tile the full count. The share
-# is OCCUPANCY-WEIGHTED (saturated Hann-weighted foreground per tile), so a busy
-# tile gets more than a nearly-empty one; every non-empty tile gets at least 1,
-# and K below the non-empty count gives exactly 1 per such tile.
+# floor plus Hann window instead of giving each tile the full count. The grid is
+# unified but the WEIGHTING is not. `fit --tiling uniform` (sequential and the
+# `-j N` parent) and `batch-fit` divide K OCCUPANCY-WEIGHTED (saturated
+# Hann-weighted foreground per tile), so a busy tile gets more than a
+# nearly-empty one. Two paths stay EQUAL-SHARE: a hand-run `fit --tile k/M`
+# (no parent to hand it a count; scanning the volume per worker is the cost the
+# plan exists to avoid), and a `batch-fit` plan that cannot resolve tile-local
+# reads (`--downscale`, `--denoise`, a deferred or volume-derived floor, no
+# plan-resolved `--norm-range`) or — Slurm only — whose inline seed table would
+# be too big for the script, so the same plan can allocate differently locally
+# and on Slurm. Either way every non-empty tile gets at least 1, and K below the
+# non-empty count gives exactly 1 per such tile.
 
 # Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
