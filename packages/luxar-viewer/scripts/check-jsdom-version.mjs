@@ -33,9 +33,9 @@ function viewerUpdater(contents) {
   if (directoryIndex === -1) return null;
 
   let start = directoryIndex;
-  while (start > 0 && !/^  - package-ecosystem:/.test(lines[start])) start -= 1;
+  while (start > 0 && !/^ {2}- package-ecosystem:/.test(lines[start])) start -= 1;
   let end = directoryIndex + 1;
-  while (end < lines.length && !/^  - package-ecosystem:/.test(lines[end])) end += 1;
+  while (end < lines.length && !/^ {2}- package-ecosystem:/.test(lines[end])) end += 1;
   return lines.slice(start, end);
 }
 
