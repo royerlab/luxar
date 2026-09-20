@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-// @ts-expect-error The opt-in Node script is plain ESM, outside the app TS build.
-import { evaluateThresholds, scoreImagePair } from '../../../../scripts/visual-ab-core.mjs';
+import { evaluateThresholds, ncc, scoreImagePair } from './visual-ab-core.mjs';
 
-function solidRgb(red: number, green: number, blue: number, pixels = 64): number[] {
+function solidRgb(red, green, blue, pixels = 64) {
   return Array.from({ length: pixels }, () => [red, green, blue]).flat();
 }
 
@@ -18,6 +17,11 @@ describe('visual A/B scoring', () => {
     expect(score.blownPixelFraction.reference).toBe(0);
     expect(score.blownPixelFraction.candidate).toBe(0);
     expect(score.blownPixelFraction.delta).toBe(0);
+  });
+
+  it('defines zero-variance NCC for identical and different constants', () => {
+    expect(ncc([4, 4, 4], [4, 4, 4])).toBe(1);
+    expect(ncc([4, 4, 4], [5, 5, 5])).toBe(0);
   });
 
   it('detects colour error and newly clipped pixels', () => {
@@ -43,16 +47,30 @@ describe('visual A/B scoring', () => {
     });
   });
 
-  it('evaluates every recorded threshold independently', () => {
+  it('passes values exactly on every threshold boundary', () => {
     const verdict = evaluateThresholds(
-      { ssim: 0.91, meanDeltaE: 4.5, blownPixelFraction: { delta: 0.02 } },
+      { ssim: 0.95, meanDeltaE: 4, blownPixelFraction: { delta: 0.01 } },
+      { minSsim: 0.95, maxMeanDeltaE: 4, maxBlownPixelFractionDelta: 0.01 }
+    );
+
+    expect(verdict.pass).toBe(true);
+    expect(verdict.checks).toEqual({
+      ssim: true,
+      meanDeltaE: true,
+      blownPixelFractionDelta: true,
+    });
+  });
+
+  it('reports mixed threshold results independently', () => {
+    const verdict = evaluateThresholds(
+      { ssim: 0.94, meanDeltaE: 3, blownPixelFraction: { delta: 0.02 } },
       { minSsim: 0.95, maxMeanDeltaE: 4, maxBlownPixelFractionDelta: 0.01 }
     );
 
     expect(verdict.pass).toBe(false);
     expect(verdict.checks).toEqual({
       ssim: false,
-      meanDeltaE: false,
+      meanDeltaE: true,
       blownPixelFractionDelta: false,
     });
   });

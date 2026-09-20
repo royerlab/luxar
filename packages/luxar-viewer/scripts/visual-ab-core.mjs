@@ -71,7 +71,10 @@ export function ssim(a, b, size) {
   return sum / windowCount;
 }
 
-/** Normalised cross-correlation (Pearson) of two greyscale arrays. */
+/**
+ * Normalised cross-correlation (Pearson) of two greyscale arrays.
+ * Identical zero-variance arrays score 1; other zero-variance pairs score 0.
+ */
 export function ncc(a, b) {
   const sampleCount = a.length;
   let meanA = 0;

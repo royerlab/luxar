@@ -29,8 +29,9 @@ const outDir = resolve(viewerRoot, arg('out', 'test-results/lod-visual-ab'));
 const viewerPort = Number(arg('viewer-port', 5198));
 const dataPort = Number(arg('data-port', 9006));
 const channel = arg('channel', null);
-const viewport = { width: 960, height: 720 };
+const viewport = { width: 768, height: 768 };
 const fixture = resolve(outDir, 'fixture.luxar.zarr');
+const fixtureMetadataPath = resolve(outDir, 'fixture-metadata.json');
 const fixtureRelative = relative(repoRoot, fixture).split('\\').join('/');
 if (fixtureRelative.startsWith('..')) {
   console.error(`--out must live under the repository root (${repoRoot}); got ${outDir}`);
@@ -52,16 +53,26 @@ const generated = spawnSync(
 );
 if (generated.status !== 0) process.exit(generated.status ?? 1);
 
-const children = [];
-function spawnServer(command, args, cwd) {
+const servers = [];
+function spawnServer(label, command, args, cwd) {
   const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-  child.stdout.on('data', () => {});
-  child.stderr.on('data', () => {});
-  children.push(child);
+  const recentLines = [];
+  const capture = (chunk) => {
+    for (const line of chunk.toString().split(/\r?\n/)) {
+      if (!line) continue;
+      recentLines.push(line);
+      if (recentLines.length > 20) recentLines.shift();
+    }
+  };
+  child.stdout.on('data', capture);
+  child.stderr.on('data', capture);
+  const server = { label, child, recentLines };
+  servers.push(server);
+  return server;
 }
 
 function killAll() {
-  for (const child of children) {
+  for (const { child } of servers) {
     try {
       child.kill('SIGTERM');
     } catch {
@@ -84,7 +95,7 @@ async function assertPortFree(port, label) {
   throw new Error(`${label} port ${port} is already in use; pass a free port override`);
 }
 
-async function waitHttp(url, timeoutMs = 60_000) {
+async function waitHttp(url, server, timeoutMs = 60_000) {
   const start = Date.now();
   for (;;) {
     try {
@@ -93,12 +104,43 @@ async function waitHttp(url, timeoutMs = 60_000) {
     } catch {
       // Server is still starting.
     }
-    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${url}`);
+    if (Date.now() - start > timeoutMs) {
+      const output = server.recentLines.length
+        ? `\nRecent ${server.label} output:\n${server.recentLines.join('\n')}`
+        : `\n${server.label} produced no output.`;
+      throw new Error(`timed out waiting for ${url}${output}`);
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 250));
   }
 }
 
-async function captureLevel(browser, bench, label, expectedLevel, query) {
+async function readSelection(page, lodGroup, activeLevel) {
+  return page.evaluate(
+    ({ groupName, level }) => {
+      const state = window.__luxarDebug.getState();
+      let lodObject = null;
+      window.__luxarDebug.scene.traverse((object) => {
+        if (object.name === groupName) lodObject = object;
+      });
+      let visibleElementCount = 0;
+      lodObject?.children?.[level]?.traverse((object) => {
+        const count =
+          object.userData?.visiblePointCount ??
+          object.userData?.visibleSplatCount ??
+          object.userData?.visibleSegmentCount ??
+          object.userData?.visibleTriangleCount;
+        if (typeof count === 'number') visibleElementCount += count;
+      });
+      return {
+        selectedLevel: state.lodGroups.find((entry) => entry.name === groupName)?.activeLevel ?? -1,
+        visibleElementCount,
+      };
+    },
+    { groupName: lodGroup, level: activeLevel }
+  );
+}
+
+async function captureLevel(browser, bench, fixtureBench, label, expectedLevel, query) {
   const page = await browser.newPage({ viewport });
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -106,54 +148,45 @@ async function captureLevel(browser, bench, label, expectedLevel, query) {
   await page.goto(
     `http://127.0.0.1:${viewerPort}/?src=${src}&debug&dpr=1&noLodFade&noLodEnergy&${query}`
   );
-  await page.waitForFunction(
-    ({ lodGroup, activeLevel, expectedPointCount }) => {
-      const debug = window.__luxarDebug;
-      const group = debug?.getState?.()?.lodGroups?.find((entry) => entry.name === lodGroup);
-      if (group?.activeLevel !== activeLevel) return false;
-      let lodObject = null;
-      debug?.scene?.traverse((object) => {
-        if (object.name === lodGroup) lodObject = object;
-      });
-      const selectedChild = lodObject?.children?.[activeLevel];
-      if (!selectedChild?.visible) return false;
-      let visiblePoints = 0;
-      selectedChild.traverse((object) => {
-        if (object.userData?.nodeType === 'points') {
-          visiblePoints += object.userData.visiblePointCount ?? 0;
-        }
-      });
-      return visiblePoints === expectedPointCount;
-    },
-    {
-      lodGroup: bench.lodGroup,
-      activeLevel: expectedLevel,
-      expectedPointCount: bench.levelPointCounts[expectedLevel],
-    },
-    { timeout: 120_000 }
-  );
-  await page.evaluate(() => window.__luxarDebug.app.sceneManager.requestRender?.());
+  const expectedElementCount = fixtureBench.levelElementCounts[expectedLevel];
+  try {
+    await page.waitForFunction(
+      ({ lodGroup, activeLevel, elementCount }) => {
+        const debug = window.__luxarDebug;
+        const group = debug?.getState?.()?.lodGroups?.find((entry) => entry.name === lodGroup);
+        if (group?.activeLevel !== activeLevel) return false;
+        let lodObject = null;
+        debug?.scene?.traverse((object) => {
+          if (object.name === lodGroup) lodObject = object;
+        });
+        const selectedChild = lodObject?.children?.[activeLevel];
+        if (!selectedChild?.visible) return false;
+        let visibleElementCount = 0;
+        selectedChild.traverse((object) => {
+          const count =
+            object.userData?.visiblePointCount ??
+            object.userData?.visibleSplatCount ??
+            object.userData?.visibleSegmentCount ??
+            object.userData?.visibleTriangleCount;
+          if (typeof count === 'number') visibleElementCount += count;
+        });
+        return visibleElementCount === elementCount;
+      },
+      { lodGroup: bench.lodGroup, activeLevel: expectedLevel, elementCount: expectedElementCount },
+      { timeout: 120_000 }
+    );
+  } catch (error) {
+    const observed = await readSelection(page, bench.lodGroup, expectedLevel);
+    throw new Error(
+      `${label} level did not settle: expected level ${expectedLevel} with ` +
+        `${expectedElementCount} ${bench.geometry} elements; observed level ` +
+        `${observed.selectedLevel} with ${observed.visibleElementCount}`,
+      { cause: error }
+    );
+  }
+  await page.evaluate(() => window.__luxarDebug.renderOnce());
   await page.waitForTimeout(500);
-  const selection = await page.evaluate(
-    ({ lodGroup, activeLevel }) => {
-      const state = window.__luxarDebug.getState();
-      let lodObject = null;
-      window.__luxarDebug.scene.traverse((object) => {
-        if (object.name === lodGroup) lodObject = object;
-      });
-      let visiblePointCount = 0;
-      lodObject?.children?.[activeLevel]?.traverse((object) => {
-        if (object.userData?.nodeType === 'points') {
-          visiblePointCount += object.userData.visiblePointCount ?? 0;
-        }
-      });
-      return {
-        selectedLevel: state.lodGroups.find((entry) => entry.name === lodGroup)?.activeLevel ?? -1,
-        visiblePointCount,
-      };
-    },
-    { lodGroup: bench.lodGroup, activeLevel: expectedLevel }
-  );
+  const selection = await readSelection(page, bench.lodGroup, expectedLevel);
   const image = await captureCanvasImage(page, page.locator('canvas#app'), scoreSize);
   await page.close();
   return { label, ...selection, pageErrors, ...image };
@@ -169,19 +202,30 @@ function serialisableArm(arm) {
 
 await assertPortFree(viewerPort, 'viewer');
 await assertPortFree(dataPort, 'data');
-spawnServer(
+const viewerServer = spawnServer(
+  'viewer server',
   'pnpm',
   ['exec', 'vite', '--port', String(viewerPort), '--strictPort', '--clearScreen', 'false'],
   viewerRoot
 );
-spawnServer('python3', ['-m', 'http.server', String(dataPort), '--bind', '127.0.0.1'], repoRoot);
+const dataServer = spawnServer(
+  'data server',
+  'python3',
+  ['-m', 'http.server', String(dataPort), '--bind', '127.0.0.1'],
+  repoRoot
+);
+
+const fixtureMetadata = JSON.parse(readFileSync(fixtureMetadataPath, 'utf8'));
+if (fixtureMetadata.schemaVersion !== 1 || !Array.isArray(fixtureMetadata.benches)) {
+  throw new Error('unsupported fixture-metadata.json schema');
+}
 
 const summary = { fixture: fixtureRelative, scoreSize, benches: [] };
 let failed = false;
 let browser = null;
 try {
-  await waitHttp(`http://127.0.0.1:${viewerPort}/`);
-  await waitHttp(`http://127.0.0.1:${dataPort}/`);
+  await waitHttp(`http://127.0.0.1:${viewerPort}/`, viewerServer);
+  await waitHttp(`http://127.0.0.1:${dataPort}/`, dataServer);
   const launchOptions = {
     headless: true,
     args: [
@@ -196,12 +240,32 @@ try {
   if (channel) launchOptions.channel = channel;
   browser = await chromium.launch(launchOptions);
   for (const bench of thresholdsDocument.benches) {
+    const fixtureBench = fixtureMetadata.benches.find((entry) => entry.id === bench.id);
+    if (!fixtureBench) throw new Error(`fixture metadata is missing bench ${bench.id}`);
+    if (fixtureBench.geometry !== bench.geometry || fixtureBench.lodGroup !== bench.lodGroup) {
+      throw new Error(`fixture metadata disagrees with threshold record for ${bench.id}`);
+    }
+    if (
+      fixtureBench.levelElementCounts.length !== 2 ||
+      bench.coarseLevel !== 0 ||
+      bench.finestLevel !== 1
+    ) {
+      throw new Error(`${bench.id} must declare a two-level coarsest-vs-finest ladder`);
+    }
     const benchDir = resolve(outDir, bench.id);
     mkdirSync(benchDir, { recursive: true });
-    const finest = await captureLevel(browser, bench, 'finest', bench.finestLevel, 'lodFinest');
+    const finest = await captureLevel(
+      browser,
+      bench,
+      fixtureBench,
+      'finest',
+      bench.finestLevel,
+      'lodFinest'
+    );
     const coarse = await captureLevel(
       browser,
       bench,
+      fixtureBench,
       'coarse',
       bench.coarseLevel,
       'lodBias=0.000001'
@@ -216,6 +280,8 @@ try {
     const captureChecks = {
       noPageErrors: finest.pageErrors.length === 0 && coarse.pageErrors.length === 0,
       rendered: finest.litFraction >= 0.01 && coarse.litFraction >= 0.01,
+      blownSentinelActive:
+        finest.blownPixelFraction >= bench.thresholds.minReferenceBlownPixelFraction,
     };
     const pass = verdict.pass && Object.values(captureChecks).every(Boolean);
     const result = {
@@ -241,6 +307,9 @@ try {
       console.error(`Page errors: ${[...finest.pageErrors, ...coarse.pageErrors].join('; ')}`);
     }
     if (!captureChecks.rendered) console.error('An arm rendered (almost) nothing.');
+    if (!captureChecks.blownSentinelActive) {
+      console.error('The finest arm has too few blown pixels for the clipping sentinel.');
+    }
     if (!pass) failed = true;
   }
 } finally {

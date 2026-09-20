@@ -2,6 +2,7 @@
 """Generate the deterministic Points/additive fixture for the LOD visual A/B."""
 
 import argparse
+import json
 import shutil
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from luxar.encoding import EncodingMode
 
 
 def build_fixture(output: Path) -> None:
+    if not output.name.endswith(".luxar.zarr"):
+        raise ValueError(f"output must end in .luxar.zarr: {output}")
     if output.exists():
         shutil.rmtree(output)
 
@@ -83,7 +86,7 @@ def build_fixture(output: Path) -> None:
             colors=colors,
             radii=radii,
             sharpness=np.full(count, 0.5, dtype=np.float32),
-            opacity=0.08,
+            opacity=0.35,
             blending_mode="additive",
             substitutive_lod={
                 "coarse": "points",
@@ -94,6 +97,34 @@ def build_fixture(output: Path) -> None:
             },
             additive_lod=False,
         )
+
+    level_element_counts = []
+    level = 0
+    while True:
+        positions_metadata = (
+            output / "points_additive" / f"child_{level}" / "positions" / "zarr.json"
+        )
+        if not positions_metadata.exists():
+            break
+        level_element_counts.append(
+            json.loads(positions_metadata.read_text())["shape"][0]
+        )
+        level += 1
+
+    metadata = {
+        "schemaVersion": 1,
+        "benches": [
+            {
+                "id": "points-additive-merge",
+                "geometry": "points",
+                "lodGroup": "/points_additive",
+                "levelElementCounts": level_element_counts,
+            }
+        ],
+    }
+    (output.parent / "fixture-metadata.json").write_text(
+        json.dumps(metadata, indent=2) + "\n"
+    )
 
 
 def main() -> None:
