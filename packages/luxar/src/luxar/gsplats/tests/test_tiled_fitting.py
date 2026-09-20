@@ -125,6 +125,27 @@ class TestComputeTileSpecs:
         specs = compute_tile_specs((100,), tile_size=10, overlap=5)
         assert len(specs) > 1
 
+    def test_trailing_sliver_smaller_than_overlap_folds_into_neighbor(self) -> None:
+        specs = compute_tile_specs((532,), tile_size=512, overlap=32, fold_slivers=True)
+
+        assert len(specs) == 1
+        assert specs[0].slices == (slice(0, 532),)
+        assert specs[0].shape == (532,)
+
+    def test_folded_sliver_keeps_hann_partition_of_unity(self) -> None:
+        specs = compute_tile_specs(
+            (1020,), tile_size=512, overlap=32, fold_slivers=True
+        )
+
+        assert [spec.slices for spec in specs] == [
+            (slice(0, 512),),
+            (slice(480, 1020),),
+        ]
+        total = np.zeros(1020, dtype=np.float32)
+        for spec in specs:
+            total[spec.slices] += cosine_window(spec)
+        np.testing.assert_allclose(total, 1.0, atol=1e-6)
+
     def test_zero_overlap(self) -> None:
         """Zero overlap should produce non-overlapping tiles."""
         shape = (100,)
@@ -160,6 +181,56 @@ class TestComputeTileSpecs:
                 nxt = specs[i + 1]
                 expected = spec.slices[0].stop - nxt.slices[0].start
                 assert spec.overlap_high[0] == expected
+
+
+def test_tile_occupancy_weight_thresholds_and_saturates() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    tile = np.array([0.05, 1.0, 1.0], dtype=np.float32)
+    window = np.array([0.25, 0.5, 1.0], dtype=np.float32)
+
+    assert tile_occupancy_weight(
+        tile,
+        window,
+        signal_threshold=0.1,
+        saturation_exponent=0.5,
+    ) == pytest.approx(1.5**0.5)
+
+
+def test_tile_occupancy_weight_distinguishes_empty_and_dim_tiles() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    window = np.array([0.25, 0.5, 1.0], dtype=np.float32)
+
+    assert (
+        tile_occupancy_weight(
+            np.zeros(3, dtype=np.float32),
+            window,
+            signal_threshold=0.1,
+            saturation_exponent=0.5,
+        )
+        == 0.0
+    )
+    assert (
+        tile_occupancy_weight(
+            np.full(3, 0.05, dtype=np.float32),
+            window,
+            signal_threshold=0.1,
+            saturation_exponent=0.5,
+        )
+        == 1.0
+    )
+
+
+def test_tile_occupancy_weight_preserves_hann_taper() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    assert tile_occupancy_weight(
+        np.array([1.0, 0.0, 0.0], dtype=np.float32),
+        np.array([0.25, 0.5, 1.0], dtype=np.float32),
+        signal_threshold=0.1,
+        saturation_exponent=1.0,
+    ) == pytest.approx(0.25)
 
 
 class TestCosineWindow:
@@ -2483,19 +2554,21 @@ def test_single_tile_worker_uses_preselected_region_and_planned_divisor(
     monkeypatch.setattr(ftg, "fit_tile", fake_fit_tile)
 
     fit_single_tile(
-        _single_tile_ctx("4/9"),
+        _single_tile_ctx("3/4"),
         selected,
         {"floor": "none", "norm_range": (0.0, 1.0), "cull_retention": 0.0},
         100,
         full_volume_shape=(80, 80),
         nonempty_tiles=2,
+        tile_seed_count=37,
+        fold_tile_slivers=True,
         preselected_tile=True,
     )
 
     assert seen["volume_shape"] == (48, 48)
     assert seen["origin"] == (32.0, 32.0)
     assert seen["tile_data"] is selected
-    assert seen["seeds"] == 50
+    assert seen["seeds"] == 37
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")

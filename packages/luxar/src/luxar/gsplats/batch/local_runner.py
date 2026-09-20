@@ -44,8 +44,8 @@ from luxar.gsplats.utils.device import (
 def _task_voxels(manifest: BatchManifest) -> int:
     """Working-set proxy (voxels) for VRAM-based concurrency sizing.
 
-    Content mode: the largest padded box of the shared plan. Uniform: the tile
-    volume (capped at the whole volume). Falls back to total voxels.
+    Content mode: the largest padded box of the shared plan. Uniform: the
+    largest actual tile, including folded slivers. Falls back to total voxels.
     """
     total = math.prod(manifest.spatial_shape) if manifest.spatial_shape else 1
     if manifest.mode == "content" and manifest.plan_path:
@@ -60,8 +60,19 @@ def _task_voxels(manifest: BatchManifest) -> int:
         except Exception:
             return max(1, total)
     if manifest.tile_size and manifest.tile_size > 0 and manifest.spatial_shape:
-        tv = int(manifest.tile_size ** len(manifest.spatial_shape))
-        return max(1, min(tv, total))
+        try:
+            from luxar.gsplats.tiling import compute_tile_specs
+
+            specs = compute_tile_specs(
+                tuple(manifest.spatial_shape),
+                manifest.tile_size,
+                manifest.tile_overlap,
+                fold_slivers=manifest.fold_tile_slivers,
+            )
+            return max(1, max(int(math.prod(spec.shape)) for spec in specs))
+        except (TypeError, ValueError):
+            nominal = int(manifest.tile_size ** len(manifest.spatial_shape))
+            return max(1, min(nominal, total))
     return max(1, total)
 
 

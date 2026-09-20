@@ -73,15 +73,39 @@ def _broadcast_to_ndim(
     return result
 
 
+def _axis_grid_bounds(
+    length: int, tile_size: int, overlap: int, *, fold_slivers: bool
+) -> tuple[list[int], list[int]]:
+    """Return one axis's starts/ends, optionally absorbing its trailing sliver."""
+    starts: list[int] = []
+    ends: list[int] = []
+    position = 0
+    stride = tile_size - overlap
+    while position < length:
+        starts.append(position)
+        ends.append(min(position + tile_size, length))
+        position += stride
+    if fold_slivers and len(starts) > 1 and length - ends[-2] < overlap:
+        starts.pop()
+        ends.pop()
+        ends[-1] = length
+    return starts, ends
+
+
 def compute_tile_specs(
     volume_shape: tuple[int, ...],
     tile_size: int | Sequence[int],
     overlap: int | Sequence[int],
+    *,
+    fold_slivers: bool = False,
 ) -> list[TileSpec]:
     """Compute a deterministic grid of overlapping tiles covering a volume.
 
     The grid uses a stride of ``tile_size - overlap`` per axis. Edge tiles
     are clamped to the volume boundary and may be smaller than ``tile_size``.
+    With ``fold_slivers=True``, a trailing tile whose unique coverage is smaller
+    than the overlap is folded into its predecessor instead of creating an
+    overlap-dominated sliver.
     Each tile stores its actual overlap with neighbors (which may differ from
     the ``overlap`` parameter at volume edges) to ensure correct windowing.
 
@@ -129,17 +153,12 @@ def compute_tile_specs(
             )
 
     # Compute grid starts and ends per axis
-    strides = tuple(t - o for t, o in zip(ts, ov))
     grid_starts: list[list[int]] = []
     grid_ends: list[list[int]] = []
     for d in range(ndim):
-        starts: list[int] = []
-        ends: list[int] = []
-        pos = 0
-        while pos < volume_shape[d]:
-            starts.append(pos)
-            ends.append(min(pos + ts[d], volume_shape[d]))
-            pos += strides[d]
+        starts, ends = _axis_grid_bounds(
+            volume_shape[d], ts[d], ov[d], fold_slivers=fold_slivers
+        )
         grid_starts.append(starts)
         grid_ends.append(ends)
 

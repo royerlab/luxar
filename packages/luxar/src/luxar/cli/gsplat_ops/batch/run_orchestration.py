@@ -13,6 +13,72 @@ if TYPE_CHECKING:
     from luxar.gsplats.batch.manifest import BatchManifest
 
 
+def _refuse_resume_grid_mismatch(
+    output_dir: Path,
+    fresh: "BatchManifest",
+    *,
+    resume: bool,
+    mismatch_help: str = "pass --no-resume to refit every tile",
+    legacy_weight_help: str = "Pass --no-resume to refit every tile",
+) -> None:
+    """Refuse index-based resume when completed tiles use another grid."""
+    if not resume or not (output_dir / "manifest.json").exists():
+        return
+
+    from luxar.gsplats.batch.manifest import load_manifest
+
+    existing = load_manifest(output_dir)
+    tiles_dir = output_dir / "tiles"
+    completed_count = sum(
+        (tiles_dir / job.output_filename).exists()
+        or Path(str(tiles_dir / job.output_filename) + ".empty").exists()
+        for job in existing.jobs
+    )
+    if completed_count == 0:
+        return
+
+    def grid_signature(manifest: "BatchManifest") -> tuple[Any, ...]:
+        if manifest.mode != "uniform":
+            return (
+                manifest.mode,
+                tuple(manifest.spatial_shape),
+                manifest.tile_size,
+                manifest.tile_overlap,
+                manifest.n_tiles,
+            )
+
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        specs = compute_tile_specs(
+            tuple(manifest.spatial_shape),
+            manifest.tile_size,
+            manifest.tile_overlap,
+            fold_slivers=manifest.fold_tile_slivers,
+        )
+        regions = tuple(
+            tuple((span.start, span.stop) for span in spec.slices) for spec in specs
+        )
+        return manifest.mode, regions
+
+    old_grid = grid_signature(existing)
+    new_grid = grid_signature(fresh)
+    if old_grid != new_grid:
+        raise typer.BadParameter(
+            "cannot resume: the existing tile outputs use a different grid; "
+            f"{mismatch_help}"
+        )
+    if (
+        existing.tile_occupancy_weights is None
+        and fresh.tile_occupancy_weights is not None
+    ):
+        tile_word = "tile" if completed_count == 1 else "tiles"
+        aprint(
+            f"Warning: {completed_count} completed {tile_word} predating occupancy "
+            "weighting will keep equal-share budgets. "
+            f"{legacy_weight_help}."
+        )
+
+
 def _resolve_local_gpu_profile(
     gpus: str,
 ) -> tuple[list[int], str, Optional[list[int]], Optional[list[dict[str, Any]]]]:
@@ -161,6 +227,7 @@ def run_batch_local_orchestration(
         resolved_gpu=resolved_gpu,
     )
     manifest = plan.manifest
+    _refuse_resume_grid_mismatch(output_dir, manifest, resume=not no_resume)
 
     # Resolve merge colors + recipe params for the streaming merge.
     colors = None

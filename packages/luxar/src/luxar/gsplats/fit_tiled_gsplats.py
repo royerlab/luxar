@@ -56,6 +56,24 @@ def tile_has_signal(tile_data: np.ndarray) -> bool:
     return not bool(tile_data.max() < _TILE_SIGNAL_EPS)
 
 
+def tile_occupancy_weight(
+    tile_data: np.ndarray,
+    window: np.ndarray,
+    *,
+    signal_threshold: float = _TILE_SIGNAL_EPS,
+    saturation_exponent: float = 1.0,
+) -> float:
+    """Return a saturated Hann-weighted foreground count for one uniform tile."""
+    windowed = tile_data * window
+    if not tile_has_signal(windowed):
+        return 0.0
+    occupied = tile_data >= max(float(signal_threshold), _TILE_SIGNAL_EPS)
+    foreground = float(np.sum(window, where=occupied, dtype=np.float64))
+    if foreground > 0.0:
+        return float(foreground ** float(saturation_exponent))
+    return 1.0
+
+
 def count_nonempty_tiles(
     volume: Any,
     specs: Sequence[TileSpec],

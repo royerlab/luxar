@@ -49,6 +49,11 @@ def _tile_local_read_args(manifest: BatchManifest, job: BatchJob) -> list[str]:
                 f"task {job.task_id} maps to missing tile-local count row {row_index}"
             )
         args += ["--tile-nonempty-count", str(plan.nonempty_counts[row_index])]
+        if plan.seed_counts is not None:
+            args += [
+                "--tile-seed-count",
+                str(plan.seed_counts[row_index][job.tile_index]),
+            ]
     return args
 
 
@@ -151,6 +156,8 @@ def build_task_fit_argv(
             # it and the merge skips it) instead of failing the task forever.
             "--allow-empty-tile",
         ]
+        if manifest.fold_tile_slivers:
+            cmd.append("--fold-tile-slivers")
         cmd += _tile_local_read_args(manifest, job)
 
     if manifest.array_key is not None:

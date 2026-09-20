@@ -130,6 +130,18 @@ def test_task_voxels_uniform_caps_at_total() -> None:
     assert _task_voxels(m2) == 8**3
 
 
+def test_task_voxels_uses_largest_folded_tile() -> None:
+    m = BatchManifest(
+        mode="uniform",
+        tile_size=256,
+        tile_overlap=64,
+        fold_tile_slivers=True,
+        spatial_shape=(511, 511, 511),
+    )
+
+    assert _task_voxels(m) == 319**3
+
+
 def test_task_voxels_fallback_total_when_no_tile() -> None:
     m = BatchManifest(mode="uniform", tile_size=0, spatial_shape=(10, 10, 10))
     assert _task_voxels(m) == 1000

@@ -370,7 +370,7 @@ def _materialize(view: Any) -> Any:
     return _np.asarray(view[:], dtype=_np.float32)
 
 
-def _uniform_tile_nonempty_count(
+def _uniform_tile_occupancy_weights(
     input_path: Path,
     *,
     specs: Sequence[Any],
@@ -382,11 +382,13 @@ def _uniform_tile_nonempty_count(
     channel_shape: Tuple[int, ...],
     spatial_shape: Tuple[int, ...],
     applied_floor: Optional[float],
-) -> int:
-    """Count one slice's non-empty uniform tiles without materializing its frame."""
+    signal_threshold: float,
+    saturation_exponent: float,
+) -> List[float]:
+    """Measure one slice's saturated foreground occupancy tile by tile."""
     import numpy as _np
 
-    from luxar.gsplats.fit_tiled_gsplats import tile_has_signal
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
     from luxar.gsplats.tiling import cosine_window
 
     view = _pinned_slice_volume(
@@ -399,14 +401,20 @@ def _uniform_tile_nonempty_count(
         channel_shape=channel_shape,
         spatial_shape=spatial_shape,
     )
-    nonempty = 0
+    weights: List[float] = []
     for spec in specs:
         tile_data = _np.asarray(view[spec.slices], dtype=_np.float32)
         if applied_floor is not None:
             tile_data = _np.clip(tile_data - applied_floor, 0.0, None)
-        tile_data = tile_data * cosine_window(spec)
-        nonempty += int(tile_has_signal(tile_data))
-    return nonempty or len(specs)
+        weights.append(
+            tile_occupancy_weight(
+                tile_data,
+                cosine_window(spec),
+                signal_threshold=signal_threshold,
+                saturation_exponent=saturation_exponent,
+            )
+        )
+    return weights if any(weight > 0.0 for weight in weights) else [1.0] * len(specs)
 
 
 def _uniform_tile_local_disabled_reason(
@@ -447,10 +455,11 @@ def _planned_uniform_tile_local_metadata(
     downscale_factors: Any,
     denoise: DenoiseConfig,
     floor_deferred: bool,
-) -> tuple[bool, Optional[List[int]]]:
+    saturation_exponent: float,
+) -> tuple[bool, Optional[List[int]], Optional[List[List[float]]]]:
     """Resolve tile-local eligibility and optional per-slice seed divisors."""
     if mode != "uniform":
-        return False, None
+        return False, None, None
 
     planned_floor = fit_args.get("floor")
     reason = _uniform_tile_local_disabled_reason(
@@ -462,7 +471,7 @@ def _planned_uniform_tile_local_metadata(
     )
     if reason is not None:
         aprint(f"Tile-local reads off: {reason}.")
-        return False, None
+        return False, None, None
 
     from luxar.cli.gsplat_config import parse_seeds
 
@@ -471,14 +480,19 @@ def _planned_uniform_tile_local_metadata(
     except ValueError:
         parsed_seeds = None
     if not _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
-        return True, None
+        return True, None, None
+    if not math.isfinite(saturation_exponent) or saturation_exponent <= 0.0:
+        raise typer.BadParameter("--saturation-exponent must be finite and positive")
 
     applied_floor = (
         None if planned_floor in (None, "none", "0", 0, 0.0) else float(planned_floor)
     )
+    assert norm_range is not None
+    signal_threshold = 0.1 * max(0.0, float(norm_range[1]) - (applied_floor or 0.0))
     pairs = [(timepoint, channel) for timepoint in t_indices for channel in c_indices]
     max_workers = min(8, len(pairs))
     counts = [len(specs)] * len(pairs)
+    weights = [[1.0] * len(specs) for _ in pairs]
     with asection(
         f"Scanning uniform tile occupancy across {len(pairs)} slices "
         f"({max_workers} parallel)"
@@ -488,7 +502,7 @@ def _planned_uniform_tile_local_metadata(
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
-                    _uniform_tile_nonempty_count,
+                    _uniform_tile_occupancy_weights,
                     input_path,
                     specs=specs,
                     timepoint=timepoint,
@@ -499,17 +513,20 @@ def _planned_uniform_tile_local_metadata(
                     channel_shape=tuple(ome_info.channel_shape),
                     spatial_shape=tuple(spatial),
                     applied_floor=applied_floor,
+                    signal_threshold=signal_threshold,
+                    saturation_exponent=saturation_exponent,
                 ): (row_index, timepoint, channel)
                 for row_index, (timepoint, channel) in enumerate(pairs)
             }
             for completed, future in enumerate(as_completed(futures), start=1):
                 row_index, timepoint, channel = futures[future]
-                counts[row_index] = future.result()
+                weights[row_index] = future.result()
+                counts[row_index] = sum(weight > 0.0 for weight in weights[row_index])
                 aprint(
                     f"Tile occupancy: {completed}/{len(pairs)} "
                     f"(T={timepoint}, C={channel})"
                 )
-    return True, counts
+    return True, counts, weights
 
 
 def _bounded_exact_range(view: Any, max_block_voxels: int) -> Tuple[float, float]:
@@ -1567,8 +1584,10 @@ def refuse_downscale_grid_mismatch(
     # `downscale_volume` decimates by strided slicing, so the worker's shape is
     # the CEIL of the division, and its grid is built on that.
     decimated_shape = tuple(-(-s // f) for s, f in zip(spatial, factors))
-    planned = compute_tile_specs(spatial, tile_size, tile_overlap)
-    worker = compute_tile_specs(decimated_shape, tile_size, tile_overlap)
+    planned = compute_tile_specs(spatial, tile_size, tile_overlap, fold_slivers=True)
+    worker = compute_tile_specs(
+        decimated_shape, tile_size, tile_overlap, fold_slivers=True
+    )
     rescaled = [tuple(o * f for o, f in zip(spec.origin, factors)) for spec in worker]
     if len(worker) == len(planned) and all(
         got == tuple(want.origin) for got, want in zip(rescaled, planned)
@@ -2005,12 +2024,12 @@ def _announce_seed_split(
 ) -> None:
     """Announce how an integer ``--seeds`` budget divides across a task's tiles.
 
-    Emitted ONCE at plan time as a lower bound from the geometric tile count.
-    Supported tile-local plans also resolve each selected slice's exact divisor
-    during occupancy scanning; fallback plans leave that resolution to each
-    ``--tile k/M`` task. Task output does not reach this console: the local pool
-    captures it and Slurm sends it to a log. Content plans ignore ``--seeds``
-    because per-box budgets come from the density model.
+    Emitted ONCE at plan time. Supported tile-local plans resolve exact
+    occupancy-weighted per-tile counts; fallback plans announce the equal-share
+    lower bound and leave the exact non-empty divisor to each ``--tile k/M``
+    task. Task output does not reach this console: the local pool captures it
+    and Slurm sends it to a log. Content plans ignore ``--seeds`` because
+    per-box budgets come from the density model.
     """
     if mode == "content" or not fit_args.get("seeds"):
         return
@@ -2021,8 +2040,22 @@ def _announce_seed_split(
     # each task's own `fit` validates it), so guard: a malformed value must fail
     # in the task as it always has, not break planning here over a notice.
     try:
+        parsed_seeds = parse_seeds(fit_args["seeds"])
+        if (
+            exact_counts_resolved
+            and isinstance(parsed_seeds, int)
+            and not isinstance(parsed_seeds, bool)
+            and parsed_seeds > 0
+            and n_tiles > 1
+        ):
+            aprint(
+                f"Seeds: {parsed_seeds:,} whole-volume budget -> occupancy-weighted "
+                f"across {n_tiles} grid tiles "
+                "(exact per-tile counts resolved at plan time)"
+            )
+            return
         announce_seed_split_lower_bound(
-            parse_seeds(fit_args["seeds"]),
+            parsed_seeds,
             n_tiles,
             exact_counts_resolved=exact_counts_resolved,
         )
@@ -2472,10 +2505,14 @@ def plan_batch(
                 tile_size = min(tile_edge, max(spatial))
         assert tile_size is not None
         tile_size_resolved = tile_size
-        specs = compute_tile_specs(spatial, tile_size, tile_overlap)
+        specs = compute_tile_specs(spatial, tile_size, tile_overlap, fold_slivers=True)
         n_tiles = len(specs)
         needs_tiling = n_tiles > 1
-        tile_voxels = tile_size ** len(spatial) if needs_tiling else total_voxels
+        tile_voxels = (
+            max((int(math.prod(spec.shape)) for spec in specs), default=1)
+            if needs_tiling
+            else total_voxels
+        )
 
     # Resolve after decomposition: each partition part expands the stored
     # stream:<c> independently, while only one hidden time slice is drawn.
@@ -2504,7 +2541,11 @@ def plan_batch(
         total_tasks=total_tasks,
     )
 
-    tile_local_reads, tile_nonempty_counts = _planned_uniform_tile_local_metadata(
+    (
+        tile_local_reads,
+        tile_nonempty_counts,
+        tile_occupancy_weights,
+    ) = _planned_uniform_tile_local_metadata(
         mode=mode,
         input_path=input_path,
         specs=specs if mode == "uniform" else (),
@@ -2519,6 +2560,7 @@ def plan_batch(
         downscale_factors=downscale_factors,
         denoise=denoise,
         floor_deferred=floor_deferred,
+        saturation_exponent=content.saturation_exponent,
     )
     _announce_seed_split(
         mode,
@@ -2565,9 +2607,11 @@ def plan_batch(
         mode=mode,
         tile_size=tile_size_resolved,
         tile_overlap=tile_overlap,
+        fold_tile_slivers=mode == "uniform",
         n_tiles=n_tiles,
         tile_local_reads=tile_local_reads,
         tile_nonempty_counts=tile_nonempty_counts,
+        tile_occupancy_weights=tile_occupancy_weights,
         plan_path=plan_path_str,
         total_tasks=total_tasks,
         preset=fit.preset,

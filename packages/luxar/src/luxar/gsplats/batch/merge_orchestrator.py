@@ -1017,6 +1017,7 @@ def _uniform_slot_bsp_tree(
             tuple(manifest.spatial_shape),
             manifest.tile_size,
             manifest.tile_overlap,
+            fold_slivers=manifest.fold_tile_slivers,
         )
     except ValueError as exc:  # geometry the tiler rejects (e.g. overlap >= size)
         if verbose:

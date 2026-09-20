@@ -60,9 +60,21 @@ def submit_batch_jobs(
     """Write sbatch scripts, submit dependent jobs, and persist manifest updates."""
     import subprocess  # nosec B404
 
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
     from luxar.gsplats.batch.manifest import save_manifest
 
     out = output_dir.resolve()
+    _refuse_resume_grid_mismatch(
+        out,
+        manifest,
+        resume=True,
+        mismatch_help=(
+            "delete the stale tiles or submit into a fresh output directory"
+        ),
+        legacy_weight_help=("Submit into a fresh output directory to refit every tile"),
+    )
     (out / "tiles").mkdir(parents=True, exist_ok=True)
     (out / "merged").mkdir(parents=True, exist_ok=True)
     (out / "logs").mkdir(parents=True, exist_ok=True)

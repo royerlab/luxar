@@ -81,17 +81,73 @@ def test_uniform_argv_carries_tile_local_plan_metadata() -> None:
         n_timepoints=1,
         n_channels=1,
         tile_local_reads=True,
+        fold_tile_slivers=True,
         tile_nonempty_counts=[2],
+        tile_occupancy_weights=[[1.0, 3.0, 0.0, 0.0]],
+        fit_args={"seeds": "100"},
     )
-    argv = build_task_fit_argv(manifest, _job(k=2), "out.tmp", argv0=_ARGV0)
-    assert argv[argv.index("--tile-region") + 1] == "4:8,0:6"
+    argv = build_task_fit_argv(manifest, _job(k=0), "out.tmp", argv0=_ARGV0)
+    assert argv[argv.index("--tile-region") + 1] == "0:6,0:6"
     assert argv[argv.index("--tile-volume-shape") + 1] == "8,8"
     assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
+    assert argv[argv.index("--tile-seed-count") + 1] == "25"
+    assert "--fold-tile-slivers" in argv
 
     script = generate_fit_sbatch(manifest, "# preamble\n")
     assert '--tile-region "$TILE_REGION"' in script
     assert "TILE_REGIONS=(0:6,0:6 0:6,4:8 4:8,0:6 4:8,4:8)" in script
     assert "NONEMPTY_COUNTS=(2)" in script
+    assert "TILE_SEED_COUNTS=(25 75 0 0)" in script
+    assert '--tile-seed-count "$TILE_SEED_COUNT"' in script
+    assert "--fold-tile-slivers" in script
+
+
+def test_slurm_large_seed_table_falls_back_to_equal_share(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import luxar.gsplats.batch.slurm_gen as slurm_gen
+
+    manifest = BatchManifest(
+        input_path="in.zarr",
+        output_dir="/o",
+        mode="uniform",
+        spatial_shape=(8, 8),
+        n_tiles=4,
+        tile_size=6,
+        tile_overlap=2,
+        n_timepoints=1,
+        n_channels=1,
+        tile_local_reads=True,
+        fold_tile_slivers=True,
+        tile_nonempty_counts=[2],
+        tile_occupancy_weights=[[1.0, 3.0, 0.0, 0.0]],
+        fit_args={"seeds": "100"},
+    )
+    monkeypatch.setattr(slurm_gen, "_MAX_INLINE_TILE_SEED_BYTES", 1)
+
+    script = slurm_gen.generate_fit_sbatch(manifest, "# preamble\n")
+
+    assert "TILE_SEED_COUNTS" not in script
+    assert "--tile-seed-count" not in script
+    assert '--tile-nonempty-count "$NONEMPTY_COUNT"' in script
+
+
+def test_old_manifest_keeps_historical_sliver_grid() -> None:
+    manifest = BatchManifest(
+        input_path="in.zarr",
+        mode="uniform",
+        spatial_shape=(532,),
+        n_tiles=2,
+        tile_size=512,
+        tile_overlap=32,
+        n_timepoints=1,
+        n_channels=1,
+        tile_local_reads=True,
+    )
+
+    argv = build_task_fit_argv(manifest, _job(k=1), "out.tmp", argv0=_ARGV0)
+    assert argv[argv.index("--tile-region") + 1] == "480:532"
+    assert "--fold-tile-slivers" not in argv
 
 
 def test_tile_local_argv_without_integer_seed_count() -> None:
@@ -161,6 +217,37 @@ def test_tile_local_grid_mismatch_is_loud_for_local_and_slurm() -> None:
     missing_row_job.task_id = 8
     with pytest.raises(ValueError, match="missing tile-local count row 1"):
         build_task_fit_argv(manifest, missing_row_job, "out.tmp", argv0=_ARGV0)
+
+
+@pytest.mark.parametrize(
+    ("weights", "message"),
+    [
+        ([[1.0] * 7], "expected 8"),
+        ([[1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], "non-negative"),
+        ([[1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], "disagrees"),
+    ],
+)
+def test_tile_local_occupancy_weights_are_validated(
+    weights: list[list[float]], message: str
+) -> None:
+    manifest = BatchManifest(
+        input_path="in.zarr",
+        output_dir="/o",
+        mode="uniform",
+        spatial_shape=(8, 8, 8),
+        n_tiles=8,
+        tile_size=4,
+        tile_overlap=0,
+        n_timepoints=1,
+        n_channels=1,
+        tile_local_reads=True,
+        tile_nonempty_counts=[1],
+        tile_occupancy_weights=weights,
+        fit_args={"seeds": "100"},
+    )
+
+    with pytest.raises(ValueError, match=message):
+        build_task_fit_argv(manifest, _job(), "out.tmp", argv0=_ARGV0)
 
 
 def test_content_argv() -> None:

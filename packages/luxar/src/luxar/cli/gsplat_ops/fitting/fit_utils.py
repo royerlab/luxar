@@ -1133,6 +1133,7 @@ def _validate_preselected_tile_metadata(
     fit_config: dict,
     parsed_seeds: "Any",
     nonempty_tiles: Optional[int],
+    tile_seed_count: Optional[int],
 ) -> None:
     """Validate the durable plan-to-worker tile-local handoff."""
     if not preselected_tile:
@@ -1149,10 +1150,36 @@ def _validate_preselected_tile_metadata(
         raise typer.BadParameter(
             "tile-local worker metadata requires a plan-resolved --norm-range"
         )
-    if _needs_nonempty_tile_scan(parsed_seeds, n_tiles) and nonempty_tiles is None:
+    if (
+        _needs_nonempty_tile_scan(parsed_seeds, n_tiles)
+        and nonempty_tiles is None
+        and tile_seed_count is None
+    ):
         raise typer.BadParameter(
             "tile-local integer seed budgets require --tile-nonempty-count"
         )
+
+
+def _single_tile_seeds(
+    parsed_seeds: "int | float | None",
+    *,
+    volume: "Any",
+    specs: list,
+    resolved_floor: "float | None",
+    nonempty_tiles: "int | None",
+    tile_seed_count: "int | None",
+) -> "int | float | None":
+    """Resolve one worker's seed count from plan metadata or legacy fallback."""
+    if tile_seed_count is not None:
+        return tile_seed_count
+    if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles
+
+        divisor = nonempty_tiles
+        if divisor is None:
+            divisor = count_nonempty_tiles(volume, specs, resolved_floor)
+        return split_seeds_across_tiles(parsed_seeds, divisor, grid_tiles=len(specs))
+    return split_seeds_across_tiles(parsed_seeds, len(specs))
 
 
 def fit_single_tile(
@@ -1163,10 +1190,12 @@ def fit_single_tile(
     *,
     full_volume_shape: "Optional[tuple[int, ...]]" = None,
     nonempty_tiles: Optional[int] = None,
+    tile_seed_count: Optional[int] = None,
+    fold_tile_slivers: bool = False,
     preselected_tile: bool = False,
 ) -> "Any":
     """Single-tile mode (Slurm-ready): fit tile ``--tile N/M`` of the grid."""
-    from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles, fit_tile
+    from luxar.gsplats.fit_tiled_gsplats import fit_tile
     from luxar.gsplats.tiling import compute_tile_specs
 
     assert ctx.tile is not None
@@ -1181,7 +1210,12 @@ def fit_single_tile(
         raise typer.Exit(1)
 
     grid_shape = full_volume_shape or volume.shape
-    specs = compute_tile_specs(grid_shape, ctx.tile_size, ctx.tile_overlap)
+    specs = compute_tile_specs(
+        grid_shape,
+        ctx.tile_size,
+        ctx.tile_overlap,
+        fold_slivers=fold_tile_slivers,
+    )
     if tile_total != len(specs):
         aprint(
             f"Note: --tile specifies {tile_total} tiles but "
@@ -1200,6 +1234,7 @@ def fit_single_tile(
         fit_config=fit_config,
         parsed_seeds=parsed_seeds,
         nonempty_tiles=nonempty_tiles,
+        tile_seed_count=tile_seed_count,
     )
 
     # Extract params that are explicit in fit_tile to avoid
@@ -1277,14 +1312,14 @@ def fit_single_tile(
 
     # Every independent worker scans the same volume, grid and resolved floor,
     # so all of them derive one identical divisor without parent-only state.
-    if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
-        if nonempty_tiles is None:
-            nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
-        tile_seeds = split_seeds_across_tiles(
-            parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
-        )
-    else:
-        tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
+    tile_seeds = _single_tile_seeds(
+        parsed_seeds,
+        volume=volume,
+        specs=specs,
+        resolved_floor=resolved_floor,
+        nonempty_tiles=nonempty_tiles,
+        tile_seed_count=tile_seed_count,
+    )
 
     with asection(
         f"Fitting tile {tile_idx}/{len(specs)} grid={specs[tile_idx].grid_index}"

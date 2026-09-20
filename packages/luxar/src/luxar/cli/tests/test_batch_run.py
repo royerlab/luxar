@@ -18,6 +18,292 @@ from luxar.gsplats.fit_tiled_gsplats import fit_tiled, merge_tile_results
 runner = CliRunner()
 
 
+def test_tile_worker_metadata_rejects_fold_without_tile() -> None:
+    from luxar.cli.gsplat_ops.fitting.fit import _parse_tile_worker_metadata
+
+    with pytest.raises(typer.BadParameter, match="requires --tile"):
+        _parse_tile_worker_metadata(
+            tile=None,
+            tile_region=None,
+            tile_volume_shape=None,
+            tile_nonempty_count=None,
+            tile_seed_count=None,
+            fold_tile_slivers=True,
+        )
+
+
+def test_tile_worker_metadata_accepts_zero_planned_seeds() -> None:
+    from luxar.cli.gsplat_ops.fitting.fit import _parse_tile_worker_metadata
+
+    region, shape = _parse_tile_worker_metadata(
+        tile="0/1",
+        tile_region="0:4,0:4",
+        tile_volume_shape="4,4",
+        tile_nonempty_count=1,
+        tile_seed_count=0,
+        fold_tile_slivers=False,
+    )
+
+    assert region == (slice(0, 4), slice(0, 4))
+    assert shape == (4, 4)
+
+
+def test_resume_rejects_completed_tiles_from_another_grid(tmp_path: Path) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 0, 1, "tile1.gsplats.zarr", 0.0)
+    existing = BatchManifest(
+        mode="uniform",
+        spatial_shape=(108, 1352, 532),
+        tile_size=512,
+        tile_overlap=32,
+        fold_tile_slivers=False,
+        n_tiles=6,
+        jobs=[job],
+    )
+    save_manifest(existing, output_dir)
+    tile = output_dir / "tiles" / job.output_filename
+    tile.mkdir(parents=True)
+    fresh = BatchManifest(
+        mode="uniform",
+        spatial_shape=(108, 1352, 532),
+        tile_size=512,
+        tile_overlap=32,
+        fold_tile_slivers=True,
+        n_tiles=3,
+    )
+
+    with pytest.raises(typer.BadParameter, match="pass --no-resume"):
+        _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+    _refuse_resume_grid_mismatch(output_dir, fresh, resume=False)
+
+
+def test_resume_accepts_completed_tiles_with_identical_regions(tmp_path: Path) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 0, 27, "tile0.gsplats.zarr", 0.0)
+    common = {
+        "mode": "uniform",
+        "spatial_shape": (512, 512, 512),
+        "tile_size": 256,
+        "tile_overlap": 32,
+        "n_tiles": 27,
+    }
+    existing = BatchManifest(**common, fold_tile_slivers=False, jobs=[job])
+    save_manifest(existing, output_dir)
+    (output_dir / "tiles" / job.output_filename).mkdir(parents=True)
+    fresh = BatchManifest(**common, fold_tile_slivers=True)
+
+    _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+
+
+@pytest.mark.parametrize("completed_count", [1, 2])
+def test_resume_warns_when_completed_tiles_predate_weighting(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    completed_count: int,
+) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    jobs = [
+        BatchJob(0, 0, index, 2, f"tile{index}.gsplats.zarr", 0.0) for index in range(2)
+    ]
+    common = {
+        "mode": "uniform",
+        "spatial_shape": (16, 16, 24),
+        "tile_size": 16,
+        "tile_overlap": 4,
+        "n_tiles": 2,
+        "fold_tile_slivers": False,
+    }
+    existing = BatchManifest(**common, jobs=jobs)
+    save_manifest(existing, output_dir)
+    tiles_dir = output_dir / "tiles"
+    tiles_dir.mkdir(parents=True)
+    (tiles_dir / jobs[0].output_filename).mkdir()
+    if completed_count == 2:
+        Path(str(tiles_dir / jobs[1].output_filename) + ".empty").touch()
+    fresh = BatchManifest(
+        **common,
+        tile_occupancy_weights=[[1.0, 2.0]],
+    )
+
+    _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+
+    output = capsys.readouterr().out
+    tile_word = "tile" if completed_count == 1 else "tiles"
+    assert (
+        f"{completed_count} completed {tile_word} predating occupancy weighting "
+        "will keep equal-share budgets. Pass --no-resume to refit every tile."
+    ) in output
+
+
+@pytest.mark.parametrize(
+    ("existing_mode", "fresh_mode"),
+    [("content", "content"), ("uniform", "content")],
+)
+def test_resume_rejects_changed_content_grid(
+    tmp_path: Path, existing_mode: str, fresh_mode: str
+) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 0, 2, "tile0.gsplats.zarr", 0.0)
+    existing = BatchManifest(
+        mode=existing_mode,
+        spatial_shape=(32, 32, 32),
+        tile_size=16 if existing_mode == "uniform" else 0,
+        tile_overlap=4 if existing_mode == "uniform" else 0,
+        n_tiles=2,
+        jobs=[job],
+    )
+    save_manifest(existing, output_dir)
+    (output_dir / "tiles" / job.output_filename).mkdir(parents=True)
+    fresh = BatchManifest(
+        mode=fresh_mode,
+        spatial_shape=(32, 32, 32),
+        tile_size=0,
+        tile_overlap=0,
+        n_tiles=3,
+    )
+
+    with pytest.raises(typer.BadParameter, match="different grid"):
+        _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+
+
+def test_slurm_submit_rejects_completed_tiles_from_another_grid(
+    tmp_path: Path,
+) -> None:
+    from luxar.cli.gsplat_ops.batch.submit_slurm import submit_batch_jobs
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        load_manifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 1, 6, "tile1.gsplats.zarr", 0.0)
+    existing = BatchManifest(
+        mode="uniform",
+        spatial_shape=(108, 1352, 532),
+        tile_size=512,
+        tile_overlap=32,
+        fold_tile_slivers=False,
+        n_tiles=6,
+        jobs=[job],
+    )
+    save_manifest(existing, output_dir)
+    (output_dir / "tiles" / job.output_filename).mkdir(parents=True)
+    fresh = BatchManifest(
+        mode="uniform",
+        spatial_shape=(108, 1352, 532),
+        tile_size=512,
+        tile_overlap=32,
+        fold_tile_slivers=True,
+        n_tiles=3,
+    )
+
+    with pytest.raises(typer.BadParameter, match="fresh output directory"):
+        submit_batch_jobs(
+            output_dir=output_dir,
+            manifest=fresh,
+            fit_script="",
+            merge_script="",
+            preamble="",
+            calibrate_script=None,
+            denoise_script=None,
+            floor_script=None,
+            preempt_fit_script=None,
+            total_tasks=3,
+            preempt_partition=None,
+        )
+
+    persisted = load_manifest(output_dir)
+    assert persisted.fold_tile_slivers is False
+    assert persisted.n_tiles == 6
+
+
+def test_slurm_submit_dry_run_rejects_completed_tiles_from_another_grid(
+    tmp_path: Path,
+) -> None:
+    import zarr
+
+    from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+
+    source = tmp_path / "volume.zarr"
+    array = zarr.open_array(
+        str(source), mode="w", shape=(16, 16, 79), chunks=(16, 16, 32), dtype="f4"
+    )
+    array[:] = 1.0
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 1, 2, "tile1.gsplats.zarr", 0.0)
+    existing = BatchManifest(
+        mode="uniform",
+        spatial_shape=(16, 16, 79),
+        tile_size=64,
+        tile_overlap=16,
+        fold_tile_slivers=False,
+        n_tiles=2,
+        jobs=[job],
+    )
+    save_manifest(existing, output_dir)
+    (output_dir / "tiles" / job.output_filename).mkdir(parents=True)
+
+    result = runner.invoke(
+        app_gsplat,
+        [
+            "batch-fit",
+            "submit",
+            str(source),
+            str(output_dir),
+            "--partition",
+            "gpu",
+            "--axes",
+            "z,y,x",
+            "--tile-size",
+            "64",
+            "--overlap",
+            "16",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "fresh output directory" in normalized_cli_output(result)
+
+
 def test_local_cpu_profile_preserves_auto_sizing(monkeypatch) -> None:
     """CPU execution still uses the legacy default profile for tile sizing."""
     import luxar.gsplats.gpu_profile as gpu_profile
@@ -267,10 +553,11 @@ def test_run_dry_run_announces_whole_volume_seed_split(tmp_path: Path) -> None:
         ],
     )
     assert res.exit_code == 0, res.output
-    assert "whole-volume budget" in res.output
-    assert "at least 100 per non-empty tile" in res.output
-    assert "8 grid tiles" in res.output
-    assert "exact non-empty count" in res.output
+    output = normalized_cli_output(res)
+    assert "whole-volume budget" in output
+    assert "occupancy-weighted" in output
+    assert "8 grid tiles" in output
+    assert "exact per-tile counts resolved at plan time" in output
 
 
 def test_run_dry_run_no_seed_notice_without_seeds(tmp_path: Path) -> None:
@@ -759,6 +1046,7 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
 
     src = tmp_path / "movie.zarr"
     full = np.zeros((1, 16, 24, 24), dtype=np.float32)
+    full[0, :4, :4, :4] = 10.0
     full[0, 8, 20, 20] = 10.0
     _write_timelapse(src, full)
 
@@ -772,14 +1060,20 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     ).manifest
 
     assert manifest.tile_local_reads is True
-    assert manifest.tile_nonempty_counts == [1]
+    assert manifest.fold_tile_slivers is True
+    assert manifest.tile_nonempty_counts == [2]
+    assert manifest.tile_occupancy_weights == [
+        [pytest.approx(64.0**0.44), 0.0, 0.0, 1.0]
+    ]
     argv = build_task_fit_argv(
         manifest, manifest.jobs[3], tmp_path / "tile.gsplats.zarr", argv0=[]
     )
     assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
-    assert argv[argv.index("--tile-nonempty-count") + 1] == "1"
+    assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
+    assert argv[argv.index("--tile-seed-count") + 1] == "14"
     output = capsys.readouterr().out
-    assert "exact non-empty counts resolved at plan time" in output
+    assert "occupancy-weighted across 4 grid tiles" in output
+    assert "exact per-tile counts resolved at plan time" in output
     assert "each worker resolves the exact non-empty count" not in output
 
 
@@ -794,7 +1088,7 @@ def test_batch_plan_defers_invalid_seeds_to_workers(
     def _unexpected_scan(*args, **kwargs):
         raise AssertionError("invalid seeds must not trigger an occupancy scan")
 
-    monkeypatch.setattr(planning, "_uniform_tile_nonempty_count", _unexpected_scan)
+    monkeypatch.setattr(planning, "_uniform_tile_occupancy_weights", _unexpected_scan)
     manifest = _plan(
         src,
         tmp_path / "out",
@@ -821,7 +1115,7 @@ def test_batch_plan_skips_occupancy_scan_without_integer_seeds(
     def _unexpected_scan(*args, **kwargs):
         raise AssertionError("occupancy scan should not run")
 
-    monkeypatch.setattr(planning, "_uniform_tile_nonempty_count", _unexpected_scan)
+    monkeypatch.setattr(planning, "_uniform_tile_occupancy_weights", _unexpected_scan)
     manifest = _plan(
         src,
         tmp_path / "out",
@@ -1500,8 +1794,8 @@ def test_batch_plan_refuses_a_downscale_whose_worker_grid_disagrees(
     `fit --tile k/M` run that decimates its own volume and then re-tiles the
     DECIMATED shape, while the planner tiled the full-resolution one. Measured on
     this `(16, 24, 24)` store with `--tile-size 12 --overlap 4`: 18 planned tiles
-    per slot against a worker that sees 4 (its volume is `(8, 12, 12)`), so each
-    slot's tiles 4..17 exit 1 with "tile index out of range" and no merge ever
+    per slot against a worker that sees 1 (its volume is `(8, 12, 12)`), so each
+    slot's tiles 1..17 exit 1 with "tile index out of range" and no merge ever
     happens.
 
     FAILS pre-fix: the plan succeeded, submitted every doomed task, and the
@@ -1519,7 +1813,7 @@ def test_batch_plan_refuses_a_downscale_whose_worker_grid_disagrees(
     message = str(excinfo.value)
     assert "downscale" in message
     assert "18 tiles" in message  # what the plan built
-    assert "only 4" in message  # what a worker would see
+    assert "only 1" in message  # what a worker would see
     assert "(8, 12, 12)" in message  # the decimated shape (ceil division)
     assert "gsplat fit -j N --downscale" in message  # the working alternative
 
