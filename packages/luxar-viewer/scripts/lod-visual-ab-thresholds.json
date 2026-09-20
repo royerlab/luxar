@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "benches": [
+    {
+      "id": "points-additive-merge",
+      "geometry": "points",
+      "blendingMode": "additive",
+      "lodGroup": "/points_additive",
+      "coarseLevel": 0,
+      "finestLevel": 1,
+      "thresholds": {
+        "minSsim": 0.72,
+        "maxMeanDeltaE": 3.2,
+        "maxBlownPixelFractionDelta": 0.001
+      }
+    }
+  ]
+}

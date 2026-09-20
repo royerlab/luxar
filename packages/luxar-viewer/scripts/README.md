@@ -12,6 +12,9 @@ perf-bench JSON captures into a Markdown table.
 scripts/
 ├── ab-webgpu-vs-webgl.mjs         # Real-WebGPU vs WebGL screenshot A/B (SSIM/NCC), the
 │                                  #   MESH_PHYSICAL_MATERIALS_SPEC §3.6 acceptance test
+├── lod-visual-ab.mjs              # Opt-in coarse-vs-finest LOD image gate
+├── lod-visual-ab-thresholds.json  # Reviewed per-bench SSIM/DeltaE/clipping limits
+├── visual-ab-core.mjs             # Shared screenshot decode and image metrics
 ├── bake-env.mjs                   # Headless driver for `luxar env bake`: opens ?bakeEnv,
 │                                  #   waits for the capture, writes the .env.bin container
 ├── build-wasm.sh             # Rust → WASM build via wasm-pack (pnpm build:wasm[:dev])
@@ -35,6 +38,18 @@ scripts/
 ├── run-ci-checks.mjs              # Aggregate viewer static + coverage merge gates
 └── perf/                          # perf-bench capture fixtures / helpers
 ```
+
+## LOD visual A/B
+
+`pnpm test:lod-visual-ab` generates a deterministic fixture, captures the
+recorded coarse and finest levels at the same pinned camera with LOD fading and
+stream-energy compensation disabled, and writes PNGs plus `summary.json` under
+`test-results/lod-visual-ab/`. The command is deliberately opt-in and separate
+from `test:perf:e2e`: it gates image similarity, not timing.
+
+Each `(geometry, blending mode)` bench owns its thresholds in
+`lod-visual-ab-thresholds.json`. A threshold change should include the old and
+new measured values in the PR description.
 
 ## Build
 

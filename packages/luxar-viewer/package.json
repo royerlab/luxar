@@ -79,6 +79,7 @@
     "bench:zip:fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tools/make-zip-bench-fixtures.py \"${LUXAR_BENCH_FIXTURES:-packages/luxar-viewer/bench-fixtures}\"",
     "bench:zip": "playwright test --config playwright.zipbench.config.ts",
     "test:perf:e2e": "LUXAR_E2E_NO_FIXTURES=1 playwright test --config playwright.perf.config.ts",
+    "test:lod-visual-ab": "node scripts/lod-visual-ab.mjs",
     "perf:diff": "node scripts/perf-diff.mjs",
     "test:watch": "vitest --watch",
     "test:with-fixtures": "pnpm test:generate-fixtures && pnpm test",

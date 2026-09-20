@@ -40,6 +40,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
+import { captureCanvasImage, ncc, ssim } from './visual-ab-core.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '..');
@@ -111,81 +112,6 @@ async function waitHttp(url, timeoutMs = 60000) {
 }
 
 // ---------------------------------------------------------------------------
-// Image metrics (Node side, on the 256² greyscale the page hands back)
-// ---------------------------------------------------------------------------
-
-/** Global SSIM over 8×8 box windows on two equal-length greyscale arrays (0..255). */
-function ssim(a, b, size) {
-  const K1 = 0.01;
-  const K2 = 0.03;
-  const L = 255;
-  const C1 = (K1 * L) ** 2;
-  const C2 = (K2 * L) ** 2;
-  const win = 8;
-  let sum = 0;
-  let n = 0;
-  for (let y = 0; y + win <= size; y += win) {
-    for (let x = 0; x + win <= size; x += win) {
-      let ma = 0;
-      let mb = 0;
-      for (let j = 0; j < win; j++) {
-        for (let i = 0; i < win; i++) {
-          const k = (y + j) * size + x + i;
-          ma += a[k];
-          mb += b[k];
-        }
-      }
-      const count = win * win;
-      ma /= count;
-      mb /= count;
-      let va = 0;
-      let vb = 0;
-      let cov = 0;
-      for (let j = 0; j < win; j++) {
-        for (let i = 0; i < win; i++) {
-          const k = (y + j) * size + x + i;
-          const da = a[k] - ma;
-          const db = b[k] - mb;
-          va += da * da;
-          vb += db * db;
-          cov += da * db;
-        }
-      }
-      va /= count - 1;
-      vb /= count - 1;
-      cov /= count - 1;
-      sum += ((2 * ma * mb + C1) * (2 * cov + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2));
-      n++;
-    }
-  }
-  return sum / n;
-}
-
-/** Normalised cross-correlation (Pearson) of two greyscale arrays. */
-function ncc(a, b) {
-  const n = a.length;
-  let ma = 0;
-  let mb = 0;
-  for (let i = 0; i < n; i++) {
-    ma += a[i];
-    mb += b[i];
-  }
-  ma /= n;
-  mb /= n;
-  let num = 0;
-  let da2 = 0;
-  let db2 = 0;
-  for (let i = 0; i < n; i++) {
-    const da = a[i] - ma;
-    const db = b[i] - mb;
-    num += da * db;
-    da2 += da * da;
-    db2 += db * db;
-  }
-  return da2 === 0 || db2 === 0 ? 0 : num / Math.sqrt(da2 * db2);
-}
-
-// ---------------------------------------------------------------------------
 // One arm
 // ---------------------------------------------------------------------------
 
@@ -254,53 +180,9 @@ async function captureArm(browser, renderer, bloom) {
     };
   });
 
-  const png = await page.locator('canvas#app').screenshot();
-  // Decode IN-PAGE (an Image + 2D canvas): drawing the live WebGL/WebGPU canvas
-  // directly reads back black, per the repo's own recipe.
-  const stats = await page.evaluate(
-    async ({ b64, size }) => {
-      const img = new Image();
-      img.src = `data:image/png;base64,${b64}`;
-      await img.decode();
-      const full = document.createElement('canvas');
-      full.width = img.width;
-      full.height = img.height;
-      const fctx = full.getContext('2d');
-      fctx.drawImage(img, 0, 0);
-      const { data } = fctx.getImageData(0, 0, img.width, img.height);
-      let lit = 0;
-      let nearWhite = 0;
-      let sum = 0;
-      const n = img.width * img.height;
-      for (let i = 0; i < data.length; i += 4) {
-        const m = Math.max(data[i], data[i + 1], data[i + 2]);
-        if (m > 16) lit++;
-        if (m > 235) nearWhite++;
-        sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
-      }
-      const small = document.createElement('canvas');
-      small.width = size;
-      small.height = size;
-      const sctx = small.getContext('2d');
-      sctx.drawImage(img, 0, 0, size, size);
-      const sd = sctx.getImageData(0, 0, size, size).data;
-      const grey = new Array(size * size);
-      for (let p = 0; p < size * size; p++) {
-        grey[p] = 0.299 * sd[p * 4] + 0.587 * sd[p * 4 + 1] + 0.114 * sd[p * 4 + 2];
-      }
-      return {
-        width: img.width,
-        height: img.height,
-        litFraction: lit / n,
-        nearWhiteFraction: nearWhite / n,
-        meanLuma: sum / n,
-        grey,
-      };
-    },
-    { b64: png.toString('base64'), size: 256 }
-  );
+  const stats = await captureCanvasImage(page, page.locator('canvas#app'));
   await page.close();
-  return { renderer, bloom, backend, errors, png, ...stats };
+  return { renderer, bloom, backend, errors, ...stats };
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +250,7 @@ try {
       const rest = { ...arm };
       delete rest.png;
       delete rest.grey;
+      delete rest.rgb;
       summary.arms[`${arm.renderer}${suffix}`] = rest;
     }
     const pair = {
