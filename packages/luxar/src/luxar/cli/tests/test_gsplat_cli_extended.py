@@ -7844,8 +7844,17 @@ class TestFitProvenanceRewriteAudit:
     @staticmethod
     def _stamp_provenance(path: Path) -> None:
         root = zc_open_group(path, mode="r+")
-        root.require_group("fitting").attrs["part_provenance"] = (
-            TestFitProvenanceRewriteAudit.PROVENANCE
+        fitting = root.require_group("fitting")
+        fitting.attrs.update(
+            {
+                "part_provenance": TestFitProvenanceRewriteAudit.PROVENANCE,
+                "custom_note": "fitting",
+            }
+        )
+        fitting.require_group("config").attrs["n_iters"] = 123
+        root.require_group("provenance").attrs["source"] = "fixture"
+        root.require_group("pipeline").attrs.update(
+            {"lod_kind": "stream", "custom_note": "pipeline"}
         )
         zc_consolidate(root)
 
@@ -7876,11 +7885,6 @@ class TestFitProvenanceRewriteAudit:
         if archive_kind:
             import shutil
 
-            root = zc_open_group(medium_gsplats, mode="r+")
-            root["fitting"].require_group("config").attrs["n_iters"] = 123
-            root.require_group("provenance").attrs["source"] = "fixture"
-            root.require_group("pipeline").attrs["lod_kind"] = "stream"
-            zc_consolidate(root)
             archive_base = tmp_path / "provenance-input.gsplats.zarr"
             archive_format = "gztar" if archive_kind == "tar.gz" else archive_kind
             input_path = Path(
@@ -7923,13 +7927,18 @@ class TestFitProvenanceRewriteAudit:
         assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
         output = zc_open_group(out, mode="r")
         provenance = output["fitting"].attrs["part_provenance"]
+        if command != "merge":
+            assert dict(output["fitting"]["config"].attrs) == {"n_iters": 123}
         if command in {"reencode", "partition", "lod"}:
             assert provenance == self.PROVENANCE
-            if archive_kind:
-                assert dict(output["fitting"]["config"].attrs) == {"n_iters": 123}
+            if command == "reencode":
+                assert output["fitting"].attrs["custom_note"] == "fitting"
                 assert dict(output["provenance"].attrs) == {"source": "fixture"}
-                assert dict(output["pipeline"].attrs) == {"lod_kind": "stream"}
-        elif label == "flatten":
+                assert dict(output["pipeline"].attrs) == {
+                    "lod_kind": "stream",
+                    "custom_note": "pipeline",
+                }
+        elif command == "flatten":
             assert provenance == [
                 {
                     "part_count": 2,
@@ -7943,7 +7952,7 @@ class TestFitProvenanceRewriteAudit:
                     },
                 }
             ]
-        elif label == "decimate":
+        elif command == "decimate":
             assert [record["fitting"] for record in provenance] == [
                 {
                     key: value
@@ -7952,7 +7961,7 @@ class TestFitProvenanceRewriteAudit:
                 }
                 for record in self.PROVENANCE
             ]
-        elif label == "slice":
+        elif command == "slice":
             assert [record["coordinate"] for record in provenance] == [0.0, 1.0]
             assert all(
                 "source_bytes" not in record["fitting"]

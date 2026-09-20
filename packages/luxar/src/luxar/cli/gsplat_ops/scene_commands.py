@@ -405,26 +405,24 @@ def reencode_command(
         luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision
     """
     try:
-        import zarr
+        import shutil
 
-        from luxar.gsplats.io.load_gsplats import load_gsplat_node
-        from luxar.gsplats.io.save_gsplats import (
-            FORMAT_VERSION,
-            split_fitting_info,
-            write_gsplats_tree,
+        from luxar._zarr_compat import open_group as zc_open_group
+        from luxar.gsplats.io._archive import resolve_store_path
+        from luxar.gsplats.io.load_gsplats import (
+            load_gsplat_node,
+            read_rebuild_root_attrs,
         )
+        from luxar.gsplats.io.save_gsplats import FORMAT_VERSION, write_gsplats_tree
         from luxar.gsplats.tree import total_splats
 
         with asection(f"Re-encoding {input_path.name} → {encoding}"):
-            node, stats = load_gsplat_node(input_path, include_stats=True)
+            zarr_path, temp_dir = resolve_store_path(input_path)
+            try:
+                node, stats = load_gsplat_node(zarr_path, include_stats=True)
+                root = zc_open_group(str(zarr_path), mode="r")
 
-            # Preserve the aux provenance groups (write_gsplats_tree drops them
-            # unless re-supplied). Directory stores can be copied verbatim;
-            # archives have already been extracted and cleaned up by the loader,
-            # so rebuild the same four buckets from the loaded root stats.
-            pipeline_info = fitting_info = fitting_config = provenance_info = None
-            if input_path.is_dir():
-                root = zarr.open_group(str(input_path), mode="r")
+                pipeline_info = fitting_info = fitting_config = provenance_info = None
                 if "pipeline" in root:
                     pipeline_info = dict(root["pipeline"].attrs)
                 if "fitting" in root:
@@ -433,46 +431,36 @@ def reencode_command(
                         fitting_config = dict(root["fitting"]["config"].attrs)
                 if "provenance" in root:
                     provenance_info = dict(root["provenance"].attrs)
-            else:
-                (
-                    fitting_info,
-                    fitting_config,
-                    provenance_info,
-                    pipeline_info,
-                ) = split_fitting_info(
-                    stats,
-                    include_fitting_info=True,
-                    include_provenance=True,
+
+                write_gsplats_tree(
+                    output_path,
+                    node,
+                    ordering=ordering,
+                    encoding_mode=_resolve_encoding_mode(encoding),
+                    amplitude_bits="auto",
+                    source_dtype=stats.get("source_dtype"),
+                    pipeline_info=pipeline_info,
+                    fitting_info=fitting_info,
+                    fitting_config=fitting_config,
+                    provenance_info=provenance_info,
+                    root_attrs=read_rebuild_root_attrs(zarr_path),
                 )
 
-            from luxar.gsplats.io.load_gsplats import read_rebuild_root_attrs
-
-            write_gsplats_tree(
-                output_path,
-                node,
-                ordering=ordering,
-                encoding_mode=_resolve_encoding_mode(encoding),
-                amplitude_bits="auto",
-                source_dtype=stats.get("source_dtype"),
-                pipeline_info=pipeline_info,
-                fitting_info=fitting_info,
-                fitting_config=fitting_config,
-                provenance_info=provenance_info,
-                root_attrs=read_rebuild_root_attrs(input_path),
-            )
-
-            # Read-back verify — a loadable current-format file, not blind success.
-            verify_node, _ = load_gsplat_node(output_path, include_stats=False)
-            out_attrs = dict(zarr.open_group(str(output_path), mode="r").attrs)
-            fmt = out_attrs.get("format_version")
-            if fmt != FORMAT_VERSION:
-                aprint(f"❌ Re-encode produced format_version={fmt!r}")
-                raise typer.Exit(1)
-            if not quiet:
-                aprint(
-                    f"✓ Re-encoded ({encoding}) v{FORMAT_VERSION}: "
-                    f"{total_splats(verify_node):,} splats → {output_path}"
-                )
+                # Read-back verify — a loadable current-format file, not blind success.
+                verify_node, _ = load_gsplat_node(output_path, include_stats=False)
+                out_attrs = dict(zc_open_group(str(output_path), mode="r").attrs)
+                fmt = out_attrs.get("format_version")
+                if fmt != FORMAT_VERSION:
+                    aprint(f"❌ Re-encode produced format_version={fmt!r}")
+                    raise typer.Exit(1)
+                if not quiet:
+                    aprint(
+                        f"✓ Re-encoded ({encoding}) v{FORMAT_VERSION}: "
+                        f"{total_splats(verify_node):,} splats → {output_path}"
+                    )
+            finally:
+                if temp_dir is not None and temp_dir.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
     except typer.Exit:
         raise
     except (FileNotFoundError, ValueError) as exc:
