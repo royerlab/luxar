@@ -228,11 +228,15 @@ unit. Consumers that do not know the attribute ignore it.
 
 The file root IS the node. The same three primitives nest arbitrarily:
 
+These trees show the default Zarr format-3 container layout. See the
+[Luxar format compatibility notes](../guides/user/LUXAR_ZARR_FORMAT.md#compatibility-notes)
+for the format-2 container differences.
+
 ### Shape 1 — bare leaf (single splat set)
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, has_label_ids,
+├── zarr.json         # attributes: type: "gsplats", n_splats, ndim, has_colors, has_label_ids,
 │                     # ordering, ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
 │                     # amplitude_mass, amplitude_mass_weighted_mean,
@@ -240,8 +244,8 @@ fitted.gsplats.zarr/
 │                     # position_bounds, truncation_radius,
 │                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
 │                     # format_version: "3.4", format_type: "gsplats_zarr",
-│                     # timestamp, luxar_gsplats_version, description?
-├── .zmetadata        # Consolidated metadata for fast loading
+│                     # timestamp, luxar_gsplats_version, description?;
+│                     # also carries consolidated metadata
 ├── centers                   # (N, d) uint16 (AUTO; lut_uint8 when a LUT is eligible; float32 if an axis extent ≥ 2¹⁶, or if a neither-gridded-nor-LUT axis's grid is too coarse for the splats' σ) / float32 (PRECISION), spatially ordered
 ├── amplitudes                # (N,) uint8/uint16 (AUTO) / float32 (PRECISION)
 ├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
@@ -250,23 +254,23 @@ fitted.gsplats.zarr/
 ├── label_ids         # (N,) or broadcast (1,) smallest exact uint (optional; never LUT/quantized)
 ├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/          # Optimization info (optional)
-│   ├── .zattrs       # time_seconds, iterations, converged, psnr_db, …
-│   └── config/.zattrs  # Fitter hyperparameters
+│   ├── zarr.json     # attributes: time_seconds, iterations, converged, psnr_db, …
+│   └── config/zarr.json  # attributes: fitter hyperparameters
 ├── pipeline/         # Reduction/topology stats (optional)
-│   └── .zattrs       # lod_kind, method, compression_factor, coverage_inflation, refine, …
+│   └── zarr.json     # attributes: lod_kind, method, compression_factor, coverage_inflation, refine, …
 └── provenance/       # Image lineage (optional)
-    └── .zattrs       # source_file, shape, dtype, normalization
+    └── zarr.json     # attributes: source_file, shape, dtype, normalization
 ```
 
 ### Shape 2 — additive ladder (prefix-sum LODs over the same N splats)
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "gsplats", n_splats (total), ndim, n_additive_sublods,
+├── zarr.json         # attributes: type: "gsplats", n_splats (total), ndim, n_additive_sublods,
 │                     # position_bounds, format_version: "3.4", …
 ├── additive_0/       # Coarsest additive sub-LOD (index 0 = coarsest)
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
-│   └── .zattrs       # type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
+│   └── zarr.json     # attributes: type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
 ├── additive_1/       # Only present when n_additive_sublods > 1
 │   └── …
 └── additive_{M-1}/   # Finest sub-LOD
@@ -280,15 +284,15 @@ Sub-LOD groups carry lightweight attrs (no rendering defaults).
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "group", kind: "lod", selector: "screen-area",
+├── zarr.json         # attributes: type: "group", kind: "lod", selector: "screen-area",
 │                     # default_level: <int>, display_type: "gsplats",
 │                     # position_bounds, format_version: "3.4", …
 ├── child_0/          # Coarsest child (child_0 = coarsest on disk)
-│   ├── .zattrs       # coverage_fraction: 0.0, compression_factor, level_index, …
+│   ├── zarr.json     # attributes: coverage_fraction: 0.0, compression_factor, level_index, …
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── …
 ├── child_1/
-│   ├── .zattrs       # coverage_fraction: <0..1>, …
+│   ├── zarr.json     # attributes: coverage_fraction: <0..1>, …
 │   └── …
 └── child_{N-1}/      # Finest child (coverage_fraction: 0.5, or 1.0 when the
     │                 #   ladder is bound to a spatial partition — see below)

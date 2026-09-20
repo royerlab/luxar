@@ -697,19 +697,22 @@ arm.transform = transforms.rotate_y(45)  # Relative to parent
 
 ## Data Format
 
-Luxar uses Zarr for chunked, compressed storage optimized for streaming.
+Luxar uses Zarr for chunked, compressed storage optimized for streaming. New
+stores use Zarr format 3 by default:
 
 ```
 scene.luxar.zarr/
-├── .zattrs                 # Scene metadata (dimensions, version)
-├── .zmetadata              # Consolidated metadata for fast loading
+├── zarr.json               # Scene attributes and consolidated metadata
 └── node_name/
-    ├── .zattrs             # Node attributes (type, transform, rendering)
+    ├── zarr.json           # Node attributes (type, transform, rendering)
     ├── positions/          # (N, D) float32 coordinates
     ├── colors/             # (N, 3) float32 RGB values
     ├── radii/              # (N,) float32 point sizes
     └── chunk_bounds/       # Spatial index for efficient queries
 ```
+
+See the [format compatibility notes](docs/guides/user/LUXAR_ZARR_FORMAT.md#compatibility-notes)
+for the format-2 container layout.
 
 ### Performance Characteristics
 

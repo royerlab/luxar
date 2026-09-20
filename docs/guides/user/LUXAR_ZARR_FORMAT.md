@@ -154,14 +154,13 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 
 ## Format Structure
 
+The tree below shows the default Zarr format-3 container layout:
+
 ```
 scene.luxar.zarr/
-├── .zattrs                  # Scene-level metadata
-├── .zgroup                  # Zarr group marker
-├── .zmetadata              # Consolidated metadata (optional, created by finalize())
+├── zarr.json               # Scene attributes and consolidated metadata
 ├── <node_name>/            # Scene nodes (groups or points)
-│   ├── .zattrs             # Node-level metadata (includes spatial index metadata)
-│   ├── .zgroup             # Zarr group marker
+│   ├── zarr.json           # Node attributes (includes spatial index metadata)
 │   ├── positions/          # Point positions (required for points, spatially sorted)
 │   ├── colors/             # Point colors (optional, same order as positions)
 │   ├── radii/              # Point radii (optional, same order as positions)
@@ -176,10 +175,12 @@ scene.luxar.zarr/
 │   └── <child_nodes>/      # Nested child nodes (recursive structure)
 └── overlays/               # Screen-space overlays (optional)
     └── <overlay_name>/     # Individual overlay
-        ├── .zattrs         # Overlay metadata (type, position, style, visible_range, hover)
-        ├── .zgroup
+        ├── zarr.json       # Overlay attributes (type, position, style, visible_range, hover)
         └── image.<png|jpeg|webp>  # Raw image file (image overlays only; exact name matches payload; bytes folded into content_hash at compile time)
 ```
+
+See [Compatibility Notes](#compatibility-notes) for the format-2 container
+layout; the attributes and node structure are the same in both formats.
 
 ### Compression & the `luxar_delta_v1` filter
 
@@ -187,22 +188,24 @@ All arrays use Blosc zstd level 9 with a width-aware shuffle policy (byte
 shuffle for multi-byte integer codes, no shuffle for uint8/floats — see
 `luxar.encoding.compression`). Additionally, any quantized uint8/uint16 code
 array (positions/vertices/centers, Cholesky halves, radii/widths/amplitudes,
-sharpness, colors) MAY carry the Luxar-owned zarr v2 filter
-`{"id": "luxar_delta_v1", "cols": C, "bits": 8|16}` in its `.zarray`:
-columnar per-chunk delta+zigzag residuals, applied probe-gated at encode time
-(only where it measurably shrinks the store — 12-16% whole-store, lossless).
+sharpness, colors) MAY carry the Luxar-owned `luxar_delta_v1` transform. In a
+format-3 store it appears as `{"name": "luxar_delta_v1", "configuration":
+{"cols": C, "bits": 8|16}}` in the array's `zarr.json` codec chain: columnar
+per-chunk delta+zigzag residuals, applied probe-gated at encode time (only where
+it measurably shrinks the store — 12-16% whole-store, lossless).
 It is a pure storage transform below the `encoding` attrs; zarr/zarrita undo
 it during whole-chunk reconstruction, so decode and random access are
-unchanged. Readers need the codec available: in Python it auto-registers
-via the numcodecs `numcodecs.codecs` entry point whenever luxar is INSTALLED
-(no import needed; `import luxar.encoding` also registers it); the viewer
-registers `numcodecs.luxar_delta_v1` in its zarr facade. Readers without
-luxar installed fail loudly (unknown codec), never silently. Full wire-format spec:
+unchanged. Readers need the codec available: an installed Luxar package
+auto-registers both format spellings through the `numcodecs.codecs` and
+`zarr.codecs` entry points (`import luxar.encoding` also registers them); the
+viewer registers `numcodecs.luxar_delta_v1` for format 2 and the bare
+`luxar_delta_v1` for format 3. Readers without Luxar installed fail loudly
+(unknown codec), never silently. Full wire-format spec:
 `docs/specs/GSPLATS_ZARR_FORMAT.md` § "The `luxar_delta_v1` delta filter".
 
-## Scene-Level Metadata (.zattrs)
+## Scene-Level Attributes
 
-The root `.zattrs` file contains scene-wide configuration:
+The root group's attributes contain scene-wide configuration:
 
 | Root attr | Written by | Meaning |
 |---|---|---|
