@@ -759,6 +759,7 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
 
     src = tmp_path / "movie.zarr"
     full = np.zeros((1, 16, 24, 24), dtype=np.float32)
+    full[0, :4, :4, :4] = 10.0
     full[0, 8, 20, 20] = 10.0
     _write_timelapse(src, full)
 
@@ -772,14 +773,18 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     ).manifest
 
     assert manifest.tile_local_reads is True
-    assert manifest.tile_nonempty_counts == [1]
+    assert manifest.fold_tile_slivers is True
+    assert manifest.tile_nonempty_counts == [2]
+    assert manifest.tile_occupancy_weights == [[64.0, 0.0, 0.0, 1.0]]
     argv = build_task_fit_argv(
         manifest, manifest.jobs[3], tmp_path / "tile.gsplats.zarr", argv0=[]
     )
     assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
-    assert argv[argv.index("--tile-nonempty-count") + 1] == "1"
+    assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
+    assert argv[argv.index("--tile-seed-count") + 1] == "3"
     output = capsys.readouterr().out
-    assert "exact non-empty counts resolved at plan time" in output
+    assert "occupancy-weighted across 4 grid tiles" in output
+    assert "exact per-tile counts resolved at plan time" in output
     assert "each worker resolves the exact non-empty count" not in output
 
 
@@ -794,7 +799,7 @@ def test_batch_plan_defers_invalid_seeds_to_workers(
     def _unexpected_scan(*args, **kwargs):
         raise AssertionError("invalid seeds must not trigger an occupancy scan")
 
-    monkeypatch.setattr(planning, "_uniform_tile_nonempty_count", _unexpected_scan)
+    monkeypatch.setattr(planning, "_uniform_tile_occupancy_weights", _unexpected_scan)
     manifest = _plan(
         src,
         tmp_path / "out",
@@ -821,7 +826,7 @@ def test_batch_plan_skips_occupancy_scan_without_integer_seeds(
     def _unexpected_scan(*args, **kwargs):
         raise AssertionError("occupancy scan should not run")
 
-    monkeypatch.setattr(planning, "_uniform_tile_nonempty_count", _unexpected_scan)
+    monkeypatch.setattr(planning, "_uniform_tile_occupancy_weights", _unexpected_scan)
     manifest = _plan(
         src,
         tmp_path / "out",
@@ -1500,8 +1505,8 @@ def test_batch_plan_refuses_a_downscale_whose_worker_grid_disagrees(
     `fit --tile k/M` run that decimates its own volume and then re-tiles the
     DECIMATED shape, while the planner tiled the full-resolution one. Measured on
     this `(16, 24, 24)` store with `--tile-size 12 --overlap 4`: 18 planned tiles
-    per slot against a worker that sees 4 (its volume is `(8, 12, 12)`), so each
-    slot's tiles 4..17 exit 1 with "tile index out of range" and no merge ever
+    per slot against a worker that sees 1 (its volume is `(8, 12, 12)`), so each
+    slot's tiles 1..17 exit 1 with "tile index out of range" and no merge ever
     happens.
 
     FAILS pre-fix: the plan succeeded, submitted every doomed task, and the
@@ -1519,7 +1524,7 @@ def test_batch_plan_refuses_a_downscale_whose_worker_grid_disagrees(
     message = str(excinfo.value)
     assert "downscale" in message
     assert "18 tiles" in message  # what the plan built
-    assert "only 4" in message  # what a worker would see
+    assert "only 1" in message  # what a worker would see
     assert "(8, 12, 12)" in message  # the decimated shape (ceil division)
     assert "gsplat fit -j N --downscale" in message  # the working alternative
 

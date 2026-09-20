@@ -77,11 +77,16 @@ def compute_tile_specs(
     volume_shape: tuple[int, ...],
     tile_size: int | Sequence[int],
     overlap: int | Sequence[int],
+    *,
+    fold_slivers: bool = False,
 ) -> list[TileSpec]:
     """Compute a deterministic grid of overlapping tiles covering a volume.
 
     The grid uses a stride of ``tile_size - overlap`` per axis. Edge tiles
     are clamped to the volume boundary and may be smaller than ``tile_size``.
+    With ``fold_slivers=True``, a trailing tile whose unique coverage is smaller
+    than the overlap is folded into its predecessor instead of creating an
+    overlap-dominated sliver.
     Each tile stores its actual overlap with neighbors (which may differ from
     the ``overlap`` parameter at volume edges) to ensure correct windowing.
 
@@ -140,6 +145,12 @@ def compute_tile_specs(
             starts.append(pos)
             ends.append(min(pos + ts[d], volume_shape[d]))
             pos += strides[d]
+        if fold_slivers and len(starts) > 1:
+            trailing_unique = volume_shape[d] - ends[-2]
+            if trailing_unique < ov[d]:
+                starts.pop()
+                ends.pop()
+                ends[-1] = volume_shape[d]
         grid_starts.append(starts)
         grid_ends.append(ends)
 

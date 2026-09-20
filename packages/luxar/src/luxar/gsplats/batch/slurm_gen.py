@@ -166,6 +166,8 @@ def _tile_local_fit_command_parts(manifest: BatchManifest) -> list[str]:
     ]
     if plan.nonempty_counts is not None:
         parts.append('    --tile-nonempty-count "$NONEMPTY_COUNT"')
+    if plan.seed_counts is not None:
+        parts.append('    --tile-seed-count "$TILE_SEED_COUNT"')
     return parts
 
 
@@ -188,6 +190,12 @@ def _tile_local_variable_lines(manifest: BatchManifest) -> list[str]:
             + " ".join(str(count) for count in plan.nonempty_counts)
             + ")"
         )
+    if plan.seed_counts is not None:
+        lines.append(
+            "TILE_SEED_COUNTS=("
+            + " ".join(str(count) for row in plan.seed_counts for count in row)
+            + ")"
+        )
     lines.append("")
     return lines
 
@@ -202,6 +210,10 @@ def _tile_local_task_lines(manifest: BatchManifest) -> list[str]:
     lines = ['    local TILE_REGION="${TILE_REGIONS[$K]}"']
     if plan.nonempty_counts is not None:
         lines.append('    local NONEMPTY_COUNT="${NONEMPTY_COUNTS[$TC_IDX]}"')
+    if plan.seed_counts is not None:
+        lines.append(
+            f'    local TILE_SEED_COUNT="${{TILE_SEED_COUNTS[$((TC_IDX * {manifest.n_tiles} + K))]}}"'
+        )
     return lines
 
 
@@ -338,6 +350,8 @@ def generate_fit_sbatch(
             # (finalized below) instead of failing the task forever.
             "    --allow-empty-tile",
         ]
+        if manifest.fold_tile_slivers:
+            fit_cmd_parts.append("    --fold-tile-slivers")
         fit_cmd_parts.extend(_tile_local_fit_command_parts(manifest))
     if manifest.array_key is not None:
         fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
