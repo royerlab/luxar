@@ -178,7 +178,15 @@ async function readSelection(page, lodGroup, activeLevel) {
   }
 }
 
-async function captureLevel(browser, bench, fixtureBench, label, expectedLevel, query) {
+async function captureLevel(
+  browser,
+  bench,
+  fixtureBench,
+  allLodGroups,
+  label,
+  expectedLevel,
+  query
+) {
   const page = await browser.newPage({ viewport });
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -228,6 +236,14 @@ async function captureLevel(browser, bench, fixtureBench, label, expectedLevel, 
       );
     }
     const selection = await readSelection(page, bench.lodGroup, expectedLevel);
+    await page.evaluate(
+      ({ activeGroup, lodGroups }) => {
+        window.__luxarDebug?.scene?.traverse((object) => {
+          if (lodGroups.includes(object.name)) object.visible = object.name === activeGroup;
+        });
+      },
+      { activeGroup: bench.lodGroup, lodGroups: allLodGroups }
+    );
     const canvas = page.locator('canvas#app');
     const image = await captureStableImage(
       async () => {
@@ -274,6 +290,7 @@ try {
   if (fixtureMetadata.schemaVersion !== 1 || !Array.isArray(fixtureMetadata.benches)) {
     throw new Error('unsupported fixture-metadata.json schema');
   }
+  const allLodGroups = fixtureMetadata.benches.map((bench) => bench.lodGroup);
   await assertPortFree(viewerPort, 'viewer');
   await assertPortFree(dataPort, 'data');
   const viewerServer = spawnServer(
@@ -323,6 +340,7 @@ try {
         browser,
         bench,
         fixtureBench,
+        allLodGroups,
         'finest',
         bench.finestLevel,
         'lodFinest'
@@ -331,6 +349,7 @@ try {
         browser,
         bench,
         fixtureBench,
+        allLodGroups,
         'coarse',
         bench.coarseLevel,
         'lodBias=0.000001'

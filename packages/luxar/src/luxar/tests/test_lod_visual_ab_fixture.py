@@ -40,6 +40,20 @@ def test_reads_level_counts_from_both_zarr_formats(
     assert generator.read_level_element_counts(tmp_path) == [4096, 16384]
 
 
+def test_reads_counts_for_a_named_gsplat_node(tmp_path: Path) -> None:
+    generator = _load_generator()
+    for level, count in enumerate((1024, 4096)):
+        centers = tmp_path / "gsplats_chromatic" / f"child_{level}" / "centers"
+        centers.mkdir(parents=True)
+        (centers / "zarr.json").write_text(
+            json.dumps({"node_type": "array", "shape": [count, 3]})
+        )
+
+    assert generator.read_level_element_counts(
+        tmp_path, "gsplats_chromatic", "centers"
+    ) == [1024, 4096]
+
+
 def test_rejects_fixture_without_readable_levels(tmp_path: Path) -> None:
     generator = _load_generator()
 

@@ -522,6 +522,7 @@ def _reduce_one_level_grouped(
     candidate_bins_k: int,
     coverage_inflation: float,
     device: torch.device,
+    color_weight: float = 0.0,
     conserve_mass: bool = True,
     amplitude: str = "l2",
     refine_config: "Optional[L2RefineConfig]" = None,
@@ -557,6 +558,7 @@ def _reduce_one_level_grouped(
             method=method,
             lloyd_iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
+            color_weight=color_weight,
             coverage_inflation=coverage_inflation,
             device=device,
             conserve_mass=conserve_mass,
@@ -576,6 +578,7 @@ def _reduce_one_level_grouped(
             method=method,
             lloyd_iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
+            color_weight=color_weight,
             coverage_inflation=coverage_inflation,
             device=device,
             conserve_mass=conserve_mass,
@@ -615,6 +618,7 @@ def _reduce_one_level_grouped(
                     method=method,
                     lloyd_iterations=lloyd_iterations,
                     candidate_bins_k=candidate_bins_k,
+                    color_weight=color_weight,
                     coverage_inflation=coverage_inflation,
                     device=device,
                     conserve_mass=conserve_mass,
@@ -835,6 +839,7 @@ def make_substitutive_lod(
     method: AutoOrMethod = "auto",
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
+    color_weight: float = 0.0,
     coverage_inflation: float = 3.0,
     conserve_mass: bool = True,
     amplitude: Literal["l2", "mass"] = "l2",
@@ -879,6 +884,11 @@ def make_substitutive_lod(
         Number of Morton-curve neighbours whose current bins are the
         move candidates for each splat during Lloyd refinement. Tighter
         k → faster, slightly worse quality.
+    color_weight
+        Opt-in chromatic penalty in the partition cost. ``0`` (default) keeps
+        the historical spatial/intensity-only partition byte-for-byte. Values
+        above zero discourage bins from mixing different normalized RGB
+        chromaticities while amplitude remains the intensity currency.
     coverage_inflation
         Inflation factor β >= 1 applied to each representative's
         *inter-center* spread (``Σ_out = intra + β·inter``) with a
@@ -1031,6 +1041,8 @@ def make_substitutive_lod(
         )
     if coverage_inflation < 1.0:
         raise ValueError(f"coverage_inflation must be >= 1.0, got {coverage_inflation}")
+    if not math.isfinite(color_weight) or color_weight < 0.0:
+        raise ValueError(f"color_weight must be finite and >= 0.0, got {color_weight}")
     if amplitude not in ("l2", "mass"):
         raise ValueError(f"amplitude must be 'l2' or 'mass', got {amplitude!r}")
     if refine not in _VALID_REFINE:
@@ -1056,6 +1068,8 @@ def make_substitutive_lod(
     L_levels = int(levels)
 
     src = _finest_content(data)
+    if color_weight > 0.0 and src.colors is None:
+        raise ValueError("color_weight > 0 requires per-splat colors")
     target_device = _resolve_reduction_device(device, caller="make_substitutive_lod")
 
     # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
@@ -1114,6 +1128,7 @@ def make_substitutive_lod(
                 method=meth,
                 lloyd_iterations=lloyd_iterations,
                 candidate_bins_k=candidate_bins_k,
+                color_weight=color_weight,
                 coverage_inflation=coverage_inflation,
                 device=target_device,
                 conserve_mass=conserve_mass,
@@ -1133,6 +1148,7 @@ def make_substitutive_lod(
             method=meth,
             lloyd_iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
+            color_weight=color_weight,
             coverage_inflation=coverage_inflation,
             device=target_device,
             conserve_mass=conserve_mass,
@@ -1314,6 +1330,8 @@ def make_substitutive_lod(
             "coarsen_dims": resolved_merge_coarsen_dims(norm_coarsen, src.ndim),
         }
     )
+    if color_weight > 0.0:
+        out_stats["color_weight"] = float(color_weight)
     return GSplatData.from_substitutive_levels(sub_levels, stats=out_stats)
 
 
@@ -1324,6 +1342,7 @@ def merge_to_count(
     method: AutoOrMethod = "auto",
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
+    color_weight: float = 0.0,
     coverage_inflation: float = 3.0,
     device: Union[str, torch.device, None] = "auto",
     coarsen_dims: Optional[Sequence[int]] = None,
@@ -1347,6 +1366,8 @@ def merge_to_count(
             :func:`make_substitutive_lod`.
         lloyd_iterations: Lloyd refinement passes.
         candidate_bins_k: Lloyd move-candidate neighbours per splat.
+        color_weight: Opt-in chromatic partition penalty; see
+            :func:`make_substitutive_lod`.
         coverage_inflation: Inter-center spread inflation β (see
             :func:`make_substitutive_lod`).
         device: Torch device (``"auto"`` resolves; MPS downgrades to CPU).
@@ -1369,7 +1390,11 @@ def merge_to_count(
         raise ValueError(
             f"method must be one of {list(_VALID_CHOICES)}, got {method!r}"
         )
+    if not math.isfinite(color_weight) or color_weight < 0.0:
+        raise ValueError(f"color_weight must be finite and >= 0.0, got {color_weight}")
     src = _finest_content(data)
+    if color_weight > 0.0 and src.colors is None:
+        raise ValueError("color_weight > 0 requires per-splat colors")
     if src.n_splats <= n_target:
         return src
     target_device = _resolve_reduction_device(device, caller="merge_to_count")
@@ -1382,6 +1407,7 @@ def merge_to_count(
             method=level_method,
             lloyd_iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
+            color_weight=color_weight,
             coverage_inflation=coverage_inflation,
             device=target_device,
         )
@@ -1393,6 +1419,7 @@ def merge_to_count(
         method=level_method,
         lloyd_iterations=lloyd_iterations,
         candidate_bins_k=candidate_bins_k,
+        color_weight=color_weight,
         coverage_inflation=coverage_inflation,
         device=target_device,
     )
@@ -1412,6 +1439,17 @@ def merge_to_count(
 #: ~zero determinant, leaving ``mass_out`` tiny-but-positive) and rescaling
 #: would blow amplitudes up (white-out) rather than fix a drift.
 _MASS_SCALE_BOUND = 10.0
+
+
+def _chromatic_features(colors: torch.Tensor) -> torch.Tensor:
+    """Return non-negative RGB chromaticities, independent of brightness."""
+    rgb = colors[:, :3].to(dtype=torch.float64)
+    if not colors.dtype.is_floating_point:
+        rgb = rgb / float(torch.iinfo(colors.dtype).max)
+    rgb = rgb.clamp_min(0.0)
+    total = rgb.sum(dim=-1, keepdim=True)
+    tiny = torch.finfo(rgb.dtype).tiny
+    return torch.where(total > tiny, rgb / total.clamp_min(tiny), 0.0)
 
 
 def _subset_mass(
@@ -1452,6 +1490,7 @@ def _reduce_one_level(
     candidate_bins_k: int,
     coverage_inflation: float,
     device: torch.device,
+    color_weight: float = 0.0,
     conserve_mass: bool = True,
     mass_dims: Optional[tuple[int, ...]] = None,
     amplitude: str = "l2",
@@ -1501,6 +1540,11 @@ def _reduce_one_level(
         )
     else:
         colors_t = None
+    color_features = (
+        _chromatic_features(colors_t)
+        if colors_t is not None and color_weight > 0.0
+        else None
+    )
 
     # 1) Warm-start partition.
     #
@@ -1514,7 +1558,14 @@ def _reduce_one_level(
     if method.startswith("kmeans"):
         assignments = _morton_partition(centres_t, M=M_target)
     else:
-        assignments = _greedy_partition(centres_t, L_t, amps_t, M_target=M_target)
+        assignments = _greedy_partition(
+            centres_t,
+            L_t,
+            amps_t,
+            M_target=M_target,
+            color_features=color_features,
+            color_weight=color_weight,
+        )
 
     # 2) Optional Lloyd cost-increment refinement (vectorised, monotone).
     if method.endswith("_lloyd"):
@@ -1527,6 +1578,8 @@ def _reduce_one_level(
             iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
             device=device,
+            color_features=color_features,
+            color_weight=color_weight,
         )
 
     # 3) Bin merge: produce M representative splats (vectorised segment ops).

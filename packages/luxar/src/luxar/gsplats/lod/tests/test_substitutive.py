@@ -26,6 +26,7 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod import make_substitutive_lod
 from luxar.gsplats.lod._kernels import bin_squared_norm_torch
 from luxar.gsplats.lod._substitutive.greedy import _merge_two_clusters
+from luxar.gsplats.lod._substitutive.kmeans_lloyd import _score_and_pick
 from luxar.gsplats.lod._substitutive.warm_start import _morton_partition
 from luxar.gsplats.lod.substitutive import merge_to_count, resolved_merge_coarsen_dims
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
@@ -2578,3 +2579,109 @@ def test_unlabeled_substitutive_default_path_is_byte_stable() -> None:
             dtype=np.float32,
         ),
     )
+
+
+def _interleaved_colour_pairs() -> GSplatData:
+    centers = np.array(
+        [[0.0, 0.0, 0.0], [0.01, 0.0, 0.0], [1.0, 0.0, 0.0], [1.01, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    cholesky = np.tile(
+        np.array([0.05, 0.0, 0.05, 0.0, 0.0, 0.05], dtype=np.float32),
+        (4, 1),
+    )
+    colors = np.array(
+        [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+    return GSplatData(
+        centers=centers,
+        amplitudes=np.ones(4, dtype=np.float32),
+        cholesky_factors=cholesky,
+        colors=colors,
+    )
+
+
+def _assert_red_and_blue_representatives(colors: np.ndarray) -> None:
+    rgb = np.asarray(colors)[:, :3]
+    assert rgb.shape == (2, 3)
+    assert np.max(rgb[:, 0]) > 0.95
+    assert np.max(rgb[:, 2]) > 0.95
+    assert np.max(np.minimum(rgb[:, 0], rgb[:, 2])) < 0.05
+
+
+def test_chromatic_cost_changes_merge_to_count_partition() -> None:
+    data = _interleaved_colour_pairs()
+
+    spatial = merge_to_count(data, n_target=2, method="greedy", device="cpu")
+    chromatic = merge_to_count(
+        data,
+        n_target=2,
+        method="greedy",
+        color_weight=100.0,
+        device="cpu",
+    )
+
+    assert np.all(np.asarray(spatial.colors)[:, 0] > 0.4)
+    assert np.all(np.asarray(spatial.colors)[:, 2] > 0.4)
+    _assert_red_and_blue_representatives(np.asarray(chromatic.colors))
+
+
+def test_chromatic_cost_changes_full_ladder_partition() -> None:
+    out = make_substitutive_lod(
+        _interleaved_colour_pairs(),
+        compression_factor=2,
+        levels=1,
+        method="greedy",
+        color_weight=100.0,
+        device="cpu",
+    )
+
+    coarse = out.at_substitutive(1).flattened()
+    _assert_red_and_blue_representatives(np.asarray(coarse.colors))
+    assert out.stats["color_weight"] == 100.0
+
+
+def test_lloyd_assignment_uses_chromatic_affinity_when_requested() -> None:
+    centers = torch.zeros((1, 3), dtype=torch.float64)
+    sigma = torch.eye(3, dtype=torch.float64).reshape(1, 3, 3)
+    amps = torch.ones(1, dtype=torch.float64)
+    bin_centers = torch.zeros((2, 3), dtype=torch.float64)
+    bin_sigma = torch.eye(3, dtype=torch.float64).repeat(2, 1, 1)
+    candidates = torch.tensor([[0, 1]], dtype=torch.int64)
+    red = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float64)
+    bin_colors = torch.tensor([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=torch.float64)
+
+    spatial = _score_and_pick(centers, sigma, amps, bin_centers, bin_sigma, candidates)
+    chromatic = _score_and_pick(
+        centers,
+        sigma,
+        amps,
+        bin_centers,
+        bin_sigma,
+        candidates,
+        color_features=red,
+        bin_colors=bin_colors,
+        color_weight=10.0,
+    )
+
+    assert spatial.item() == 0
+    assert chromatic.item() == 1
+
+
+@pytest.mark.parametrize("color_weight", [-1.0, np.nan, np.inf])
+def test_chromatic_cost_rejects_invalid_weights(color_weight: float) -> None:
+    with pytest.raises(ValueError, match="color_weight must be finite"):
+        merge_to_count(
+            _interleaved_colour_pairs(),
+            n_target=2,
+            color_weight=color_weight,
+            device="cpu",
+        )
+
+
+def test_chromatic_cost_requires_colors() -> None:
+    with pytest.raises(ValueError, match="requires per-splat colors"):
+        make_substitutive_lod(
+            _make_isotropic_3d(8), levels=1, color_weight=1.0, device="cpu"
+        )

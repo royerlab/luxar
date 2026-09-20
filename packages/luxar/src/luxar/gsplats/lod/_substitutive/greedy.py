@@ -37,6 +37,9 @@ def _pair_merge_costs(
     mu1: torch.Tensor,
     L1: torch.Tensor,
     a1: torch.Tensor,
+    color0: torch.Tensor | None = None,
+    color1: torch.Tensor | None = None,
+    color_weight: float = 0.0,
 ) -> torch.Tensor:
     """Batched residual energy E* after merging aligned cluster pairs.
 
@@ -75,7 +78,11 @@ def _pair_merge_costs(
         + gaussian_self_energy_torch(a1, sd1, D)
         + 2.0 * k01
     )
-    return bin_residual_energy_torch(f_norm_sq, inner, norm_sq)
+    cost = bin_residual_energy_torch(f_norm_sq, inner, norm_sq)
+    if color0 is not None and color1 is not None and color_weight > 0.0:
+        color_distance_sq = ((color0 - color1) ** 2).sum(dim=-1)
+        cost = cost + color_weight * color_distance_sq * f_norm_sq
+    return cost
 
 
 def _merge_two_clusters(
@@ -112,6 +119,8 @@ def _greedy_partition(
     L: torch.Tensor,
     amps: torch.Tensor,
     M_target: int,
+    color_features: torch.Tensor | None = None,
+    color_weight: float = 0.0,
 ) -> torch.Tensor:
     """Bottom-up greedy hierarchical merge (Runnalls), lazy-heap variant.
 
@@ -140,6 +149,8 @@ def _greedy_partition(
     cen = centres.clone()
     Lc = L.clone()
     am = amps.clone()
+    cluster_colors = color_features.clone() if color_features is not None else None
+    cluster_weights = amps * sqrt_det_from_cholesky(L)
     active = np.ones(N, dtype=bool)
     version = np.zeros(N, dtype=np.int64)
     members: list[list[int]] = [[i] for i in range(N)]
@@ -154,7 +165,17 @@ def _greedy_partition(
         ai = torch.from_numpy(a_idx).to(device=device, dtype=torch.int64)
         bi = torch.from_numpy(b_idx).to(device=device, dtype=torch.int64)
         costs = (
-            _pair_merge_costs(cen[ai], Lc[ai], am[ai], cen[bi], Lc[bi], am[bi])
+            _pair_merge_costs(
+                cen[ai],
+                Lc[ai],
+                am[ai],
+                cen[bi],
+                Lc[bi],
+                am[bi],
+                cluster_colors[ai] if cluster_colors is not None else None,
+                cluster_colors[bi] if cluster_colors is not None else None,
+                color_weight,
+            )
             .detach()
             .cpu()
             .numpy()
@@ -222,6 +243,13 @@ def _greedy_partition(
 
         # Merge b into a's slot.
         mu_bar, L_bar, a_star = _merge_two_clusters(cen, Lc, am, a, b)
+        if cluster_colors is not None:
+            total_weight = (cluster_weights[a] + cluster_weights[b]).clamp_min(_TINY)
+            cluster_colors[a] = (
+                cluster_weights[a] * cluster_colors[a]
+                + cluster_weights[b] * cluster_colors[b]
+            ) / total_weight
+            cluster_weights[a] = total_weight
         cen[a] = mu_bar
         Lc[a] = L_bar
         am[a] = a_star

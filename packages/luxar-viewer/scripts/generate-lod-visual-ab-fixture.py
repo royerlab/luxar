@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the deterministic Points/additive fixture for the LOD visual A/B."""
+"""Generate deterministic coarse-vs-finest fixtures for the LOD visual A/B."""
 
 import argparse
 import json
@@ -13,16 +13,18 @@ from luxar._zarr_compat import read_array_meta
 from luxar.encoding import EncodingMode
 
 
-def read_level_element_counts(output: Path) -> list[int]:
+def read_level_element_counts(
+    output: Path, node_name: str = "points_additive", array_name: str = "positions"
+) -> list[int]:
     level_element_counts: list[int] = []
     level = 0
     while True:
-        positions_metadata = read_array_meta(
-            output / "points_additive" / f"child_{level}" / "positions"
+        array_metadata = read_array_meta(
+            output / node_name / f"child_{level}" / array_name
         )
-        if positions_metadata is None:
+        if array_metadata is None:
             break
-        level_element_counts.append(int(positions_metadata["shape"][0]))
+        level_element_counts.append(int(array_metadata["shape"][0]))
         level += 1
     if not level_element_counts:
         raise RuntimeError(
@@ -117,7 +119,50 @@ def build_fixture(output: Path) -> None:
             additive_lod=False,
         )
 
-    level_element_counts = read_level_element_counts(output)
+        gsplat_count = 4096
+        gsplat_arm = np.arange(gsplat_count) % 4
+        gsplat_radius = 0.35 + 3.1 * np.sqrt(
+            (np.arange(gsplat_count) + 0.5) / gsplat_count
+        )
+        gsplat_angle = gsplat_radius * 1.8 + gsplat_arm * (np.pi / 2)
+        gsplat_centers = np.column_stack(
+            [
+                gsplat_radius * np.cos(gsplat_angle),
+                gsplat_radius * np.sin(gsplat_angle),
+                0.08 * np.sin(gsplat_angle * 3.0),
+            ]
+        ).astype(np.float32)
+        palette = 2.0 * np.array(
+            [[1.0, 0.12, 0.08], [0.08, 0.35, 1.0], [0.12, 1.0, 0.24], [1.0, 0.2, 0.8]],
+            dtype=np.float32,
+        )
+        gsplat_colors = palette[gsplat_arm]
+        gsplat_cholesky = np.tile(
+            np.array([0.045, 0.0, 0.045, 0.0, 0.0, 0.045], dtype=np.float32),
+            (gsplat_count, 1),
+        )
+        scene.add_gsplats(
+            "gsplats_chromatic",
+            centers=gsplat_centers,
+            amplitudes=np.full(gsplat_count, 0.65, dtype=np.float32),
+            cholesky_factors=gsplat_cholesky,
+            colors=gsplat_colors,
+            opacity=0.8,
+            blending_mode="additive",
+            substitutive_lod={
+                "compression_factor": 4,
+                "levels": 1,
+                "method": "kmeans_lloyd",
+                "color_weight": 8.0,
+                "quality_stamps": False,
+            },
+            additive_lod=False,
+        )
+
+    point_level_counts = read_level_element_counts(output)
+    gsplat_level_counts = read_level_element_counts(
+        output, "gsplats_chromatic", "centers"
+    )
 
     metadata = {
         "schemaVersion": 1,
@@ -126,8 +171,14 @@ def build_fixture(output: Path) -> None:
                 "id": "points-additive-merge",
                 "geometry": "points",
                 "lodGroup": "/points_additive",
-                "levelElementCounts": level_element_counts,
-            }
+                "levelElementCounts": point_level_counts,
+            },
+            {
+                "id": "gsplats-additive-chromatic",
+                "geometry": "gsplats",
+                "lodGroup": "/gsplats_chromatic",
+                "levelElementCounts": gsplat_level_counts,
+            },
         ],
     }
     (output.parent / "fixture-metadata.json").write_text(
