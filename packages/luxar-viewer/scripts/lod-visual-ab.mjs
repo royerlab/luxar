@@ -57,6 +57,7 @@ function spawnServer(label, command, args, cwd) {
   };
   child.stdout.on('data', capture);
   child.stderr.on('data', capture);
+  child.on('error', (error) => capture(error));
   const server = { label, child, recentLines };
   servers.push(server);
   return server;
@@ -408,5 +409,6 @@ try {
   writeFileSync(resolve(outDir, 'summary.json'), JSON.stringify(summary, null, 2));
 }
 
-console.log(`\nWrote ${relative(process.cwd(), outDir)}/summary.json and per-bench PNGs`);
+const writtenOutputs = summary.benches.length ? 'summary.json and per-bench PNGs' : 'summary.json';
+console.log(`\nWrote ${relative(process.cwd(), outDir)}/${writtenOutputs}`);
 process.exitCode = failed ? 1 : 0;

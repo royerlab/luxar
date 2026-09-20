@@ -79,6 +79,7 @@ function spawnServer(cmd, args, cwd) {
   const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', () => {});
   child.stderr.on('data', () => {});
+  child.on('error', (error) => console.error(error));
   children.push(child);
   return child;
 }
