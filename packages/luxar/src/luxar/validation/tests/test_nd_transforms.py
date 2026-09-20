@@ -85,6 +85,20 @@ class TestValidateNdTransform:
         with pytest.raises(ValueError, match="must be a number"):
             validate_nd_transform({"Time": {"scale": "fast"}})
 
+    @pytest.mark.parametrize("key", ["scale", "offset"])
+    @pytest.mark.parametrize(
+        "value",
+        [float("nan"), float("inf"), float("-inf")],
+        ids=["nan", "positive-infinity", "negative-infinity"],
+    )
+    def test_reject_non_finite_affine_param(self, key: str, value: float) -> None:
+        """Test rejection of non-finite affine parameters."""
+        with pytest.raises(
+            ValueError,
+            match=rf"nd_transform\['Time'\]\.{key} must be finite",
+        ):
+            validate_nd_transform({"Time": {key: value}})
+
     def test_reject_unknown_affine_keys(self) -> None:
         """Test rejection of unknown keys in affine entry."""
         with pytest.raises(ValueError, match="unknown keys"):

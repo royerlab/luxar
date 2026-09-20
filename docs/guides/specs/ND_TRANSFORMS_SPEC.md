@@ -410,7 +410,7 @@ Rejected at validation time. Zero scale is not a supported transform.
 Flips the dimension. Valid — reverses the ordering. Bounds computation handles min/max swap.
 
 ### 11.3 Fractional Scale on Discrete Dimensions
-`scale=0.5` on a discrete dimension means indices 0,1,2,3 become 0,1,1,2 (after rounding). Valid but lossy — emit a warning about information loss.
+`scale=0.5` on a discrete dimension means indices 0,1,2,3 become 0,1,1,2 (after rounding). Valid and lossy; no warning is emitted.
 
 ### 11.4 Permutation on Non-Categorical Dimension
 Rejected at validation time. Permutations only apply to categorical dimensions.
