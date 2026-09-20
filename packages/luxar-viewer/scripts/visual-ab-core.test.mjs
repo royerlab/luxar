@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   captureStableImage,
   evaluateCaptureChecks,
+  evaluateLowerIsBetterComparisons,
   evaluateThresholds,
   ncc,
   scoreImagePair,
@@ -123,6 +124,46 @@ describe('visual A/B scoring', () => {
       meanDeltaE: true,
       blownPixelFractionDelta: false,
     });
+  });
+
+  it('passes a lower-is-better comparison on the recorded margin boundary', () => {
+    const comparisons = evaluateLowerIsBetterComparisons(
+      [
+        { id: 'chromatic', score: { meanDeltaE: 2 } },
+        { id: 'spatial', score: { meanDeltaE: 5 } },
+      ],
+      [
+        {
+          id: 'chromatic-improves-colour',
+          better: 'chromatic',
+          worse: 'spatial',
+          metric: 'meanDeltaE',
+          minImprovement: 3,
+        },
+      ]
+    );
+
+    expect(comparisons[0]).toMatchObject({ improvement: 3, pass: true });
+  });
+
+  it('rejects a lower-is-better comparison below the recorded margin', () => {
+    const comparisons = evaluateLowerIsBetterComparisons(
+      [
+        { id: 'chromatic', score: { meanDeltaE: 4.5 } },
+        { id: 'spatial', score: { meanDeltaE: 5 } },
+      ],
+      [
+        {
+          id: 'chromatic-improves-colour',
+          better: 'chromatic',
+          worse: 'spatial',
+          metric: 'meanDeltaE',
+          minImprovement: 1,
+        },
+      ]
+    );
+
+    expect(comparisons[0]).toMatchObject({ improvement: 0.5, pass: false });
   });
 
   it('fails capture checks when additive light falls below the recorded ratio', () => {

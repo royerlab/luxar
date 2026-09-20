@@ -131,12 +131,12 @@ def build_fixture(output: Path) -> None:
             (gsplat_sample + 0.5) / (gsplat_count // 4)
         )
         gsplat_angle = gsplat_radius * 1.8
-        strand_offset = (gsplat_hue - 1.5) * 0.055
+        hue_offset = (gsplat_hue - 1.5) * 0.002
         gsplat_centers = np.column_stack(
             [
-                (gsplat_radius + strand_offset) * np.cos(gsplat_angle),
-                (gsplat_radius + strand_offset) * np.sin(gsplat_angle),
-                0.08 * np.sin(gsplat_angle * 3.0) + strand_offset,
+                (gsplat_radius + hue_offset) * np.cos(gsplat_angle),
+                (gsplat_radius + hue_offset) * np.sin(gsplat_angle),
+                0.08 * np.sin(gsplat_angle * 3.0) + hue_offset,
             ]
         ).astype(np.float32)
         palette = 2.0 * np.array(

@@ -21,6 +21,15 @@
       }
     }
   },
+  "comparisons": [
+    {
+      "id": "chromatic-improves-mean-delta-e",
+      "better": "gsplats-normal-chromatic",
+      "worse": "gsplats-normal-spatial",
+      "metric": "meanDeltaE",
+      "minImprovement": 0.1
+    }
+  ],
   "benches": [
     {
       "id": "points-additive-merge",

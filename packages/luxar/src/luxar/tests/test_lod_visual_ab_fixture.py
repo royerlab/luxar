@@ -7,14 +7,15 @@ from types import ModuleType
 
 import pytest
 
+GENERATOR_PATH = (
+    Path(__file__).resolve().parents[5]
+    / "packages/luxar-viewer/scripts/generate-lod-visual-ab-fixture.py"
+)
+
 
 def _load_generator() -> ModuleType:
-    script = (
-        Path(__file__).resolve().parents[5]
-        / "packages/luxar-viewer/scripts/generate-lod-visual-ab-fixture.py"
-    )
     spec = importlib.util.spec_from_file_location(
-        "generate_lod_visual_ab_fixture", script
+        "generate_lod_visual_ab_fixture", GENERATOR_PATH
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -76,6 +77,13 @@ def test_reads_count_from_array_reference_metadata(tmp_path: Path) -> None:
     assert generator.read_level_element_counts(
         tmp_path, "gsplats_spatial", "centers"
     ) == [4096]
+
+
+def test_gsplat_fixture_interleaves_hues_below_splat_scale() -> None:
+    source = GENERATOR_PATH.read_text()
+
+    assert "hue_offset = (gsplat_hue - 1.5) * 0.002" in source
+    assert "[0.045, 0.0, 0.045" in source
 
 
 def test_rejects_fixture_without_readable_levels(tmp_path: Path) -> None:

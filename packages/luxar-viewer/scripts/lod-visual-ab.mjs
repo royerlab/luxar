@@ -10,6 +10,7 @@ import {
   captureCanvasImage,
   captureStableImage,
   evaluateCaptureChecks,
+  evaluateLowerIsBetterComparisons,
   evaluateThresholds,
   scoreImagePair,
 } from './visual-ab-core.mjs';
@@ -418,6 +419,20 @@ try {
       });
       console.error(`\n${bench.id} failed:`, error);
     }
+  }
+  const comparisons = evaluateLowerIsBetterComparisons(
+    summary.benches,
+    thresholdsDocument.comparisons ?? []
+  );
+  summary.comparisons = comparisons;
+  for (const comparison of comparisons) {
+    console.log(
+      `\n=== ${comparison.id} ===\n` +
+        `${comparison.metric} improvement=${comparison.improvement.toFixed(3)} ` +
+        `(minimum ${comparison.minImprovement.toFixed(3)})  ` +
+        `${comparison.pass ? 'PASS' : 'FAIL'}`
+    );
+    if (!comparison.pass) failed = true;
   }
 } catch (error) {
   failed = true;
