@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "provenance": {
     "recordedAt": "2026-09-20",
-    "sourceCommit": "85f4fe2257033a98c2907ae8694b808cedfa7389",
+    "sourceCommit": "74332da89e41cc3134c46699a78920b7d9b7eb02",
     "platform": "Linux x86_64 (obsidian)",
     "browser": "Chrome for Testing 151.0.7922.34",
     "playwright": "1.62.1",
