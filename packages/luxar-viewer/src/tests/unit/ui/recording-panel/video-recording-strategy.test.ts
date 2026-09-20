@@ -181,7 +181,8 @@ describe('VideoRecordingStrategy', () => {
     // [P2/W4 + P11/M4] The successful onstop path: blob download, "Video saved"
     // toast, AND removal of BOTH per-frame callbacks. Deleting either
     // removePerFrameCallback line (video-recording-strategy.ts:178-179) would
-    // leak stale callbacks into the next recording — pin both here.
+    // leak stale callbacks into the next recording — pin both here. This does
+    // not prove that jsdom's Vitest Blob bridge round-trips the chunk bytes.
     it('on successful onstop: downloads the webm, toasts, and removes both per-frame callbacks', async () => {
       vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
       const canvas = mockSceneManager.renderer.domElement;

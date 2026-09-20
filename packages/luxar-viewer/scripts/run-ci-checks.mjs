@@ -16,6 +16,7 @@ export const CI_CHECKS = [
   'check:overrides',
   'check:node-types',
   'check:three-types',
+  'check:jsdom-version',
   'check:format',
   'typecheck',
   'lint',
