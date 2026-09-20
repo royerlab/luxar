@@ -122,7 +122,7 @@
     "@zarrita/storage": "^0.2.0",
     "comlink": "^4.4.2",
     "fflate": "^0.8.3",
-    "mediabunny": "^1.55.5",
+    "mediabunny": "^1.57.0",
     "zarrita": "^0.7.5"
   },
   "devDependencies": {
