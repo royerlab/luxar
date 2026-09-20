@@ -384,6 +384,7 @@ def _validated_occupancy_seed_counts(
         normalized_rows.append(normalized)
 
     total_seeds = _positive_manifest_seed_budget(manifest)
+    # A zero allocation is safe only because zero-weight tiles are skipped before fit.
     return tuple(
         allocate_weighted_integer_seeds(total_seeds, row) for row in normalized_rows
     )

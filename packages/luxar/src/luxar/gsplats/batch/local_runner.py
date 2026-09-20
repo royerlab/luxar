@@ -44,8 +44,8 @@ from luxar.gsplats.utils.device import (
 def _task_voxels(manifest: BatchManifest) -> int:
     """Working-set proxy (voxels) for VRAM-based concurrency sizing.
 
-    Content mode: the largest padded box of the shared plan. Uniform: the tile
-    volume (capped at the whole volume). Falls back to total voxels.
+    Content mode: the largest padded box of the shared plan. Uniform: the
+    largest actual tile, including folded slivers. Falls back to total voxels.
     """
     total = math.prod(manifest.spatial_shape) if manifest.spatial_shape else 1
     if manifest.mode == "content" and manifest.plan_path:
