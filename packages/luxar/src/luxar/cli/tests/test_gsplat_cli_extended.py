@@ -7832,7 +7832,8 @@ class TestFitProvenanceRewriteAudit:
     REWRITERS: ClassVar[dict[str, list[str]]] = {
         "slice": ["gsplat", "slice", "{in}", "{out}", "0:4, :, :"],
         "reencode": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
-        "reencode:archive": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
+        "reencode:zip": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
+        "reencode:tar.gz": TestLODCarriesAuthoredAppearance.REWRITERS["reencode"],
         "partition": TestLODCarriesAuthoredAppearance.REWRITERS["partition"],
         "lod": TestLODCarriesAuthoredAppearance.REWRITERS["lod:stream"],
         "flatten": TestLODCarriesAuthoredAppearance.REWRITERS["flatten"],
@@ -7853,7 +7854,8 @@ class TestFitProvenanceRewriteAudit:
         [
             "slice",
             "reencode",
-            "reencode:archive",
+            "reencode:zip",
+            "reencode:tar.gz",
             "partition",
             "lod",
             "flatten",
@@ -7870,8 +7872,8 @@ class TestFitProvenanceRewriteAudit:
     ) -> None:
         self._stamp_provenance(medium_gsplats)
         input_path = medium_gsplats
-        command = label.partition(":")[0]
-        if label == "reencode:archive":
+        command, _, archive_kind = label.partition(":")
+        if archive_kind:
             import shutil
 
             root = zc_open_group(medium_gsplats, mode="r+")
@@ -7880,10 +7882,11 @@ class TestFitProvenanceRewriteAudit:
             root.require_group("pipeline").attrs["lod_kind"] = "stream"
             zc_consolidate(root)
             archive_base = tmp_path / "provenance-input.gsplats.zarr"
+            archive_format = "gztar" if archive_kind == "tar.gz" else archive_kind
             input_path = Path(
                 shutil.make_archive(
                     str(archive_base),
-                    "zip",
+                    archive_format,
                     root_dir=medium_gsplats.parent,
                     base_dir=medium_gsplats.name,
                 )
@@ -7922,7 +7925,7 @@ class TestFitProvenanceRewriteAudit:
         provenance = output["fitting"].attrs["part_provenance"]
         if command in {"reencode", "partition", "lod"}:
             assert provenance == self.PROVENANCE
-            if label == "reencode:archive":
+            if archive_kind:
                 assert dict(output["fitting"]["config"].attrs) == {"n_iters": 123}
                 assert dict(output["provenance"].attrs) == {"source": "fixture"}
                 assert dict(output["pipeline"].attrs) == {"lod_kind": "stream"}
