@@ -28,6 +28,7 @@ from luxar.cli.gsplat_ops.fitting.fit_utils import (
     split_seeds_across_tiles,
 )
 from luxar.cli.tests._testing import normalized_cli_output
+from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
 from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tiling import compute_tile_specs
@@ -44,6 +45,20 @@ runner = CliRunner()
 
 # A 48x48 volume tiled at tile_size=24 / overlap=4 gives a 3x3 grid.
 _N_TILES = 9
+
+
+def test_weighted_integer_seeds_preserve_budget_and_tie_order() -> None:
+    assert allocate_weighted_integer_seeds(10, [1.0, 1.0, 1.0]) == (4, 3, 3)
+    assert allocate_weighted_integer_seeds(100, [1.0, 3.0, 0.0, 0.0]) == (
+        26,
+        74,
+        0,
+        0,
+    )
+
+
+def test_weighted_integer_seeds_keep_one_per_nonempty_tile_below_floor() -> None:
+    assert allocate_weighted_integer_seeds(2, [1.0, 3.0, 2.0, 0.0]) == (1, 1, 1, 0)
 
 
 # ---------------------------------------------------------------- unit tests

@@ -31,6 +31,13 @@ uniform``) blends overlapping tiles with half-Hann (cosine) ramps for seamless
 stitching; content tiling (``--tiling content``) fits halo-padded boxes without
 a window and keeps each box's core (see Content Planning below).
 
+The Hann ramps conserve the reconstructed intensity (splat mass) across an
+overlap, but they do not preserve each splat's amplitude: shared structure is
+represented by two tapered splat sets. A scalar colormap evaluated per splat can
+therefore reveal the crossfade even when an intensity residual is seamless. Use
+a display window that saturates the structure of interest, or content tiling
+when per-splat amplitude must remain comparable across spatial parts.
+
 .. autofunction:: luxar.gsplats.fit_tiled_gaussian_splats
 
 .. autofunction:: luxar.gsplats.fit_tile

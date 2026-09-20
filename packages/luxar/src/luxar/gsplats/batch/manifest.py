@@ -4,9 +4,41 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+
+def allocate_weighted_integer_seeds(
+    total: int, weights: Sequence[float]
+) -> Tuple[int, ...]:
+    """Allocate an integer seed budget by weight with deterministic rounding."""
+    positive = [index for index, weight in enumerate(weights) if weight > 0.0]
+    allocation = [0] * len(weights)
+    if not positive or total <= 0:
+        return tuple(allocation)
+    if total < len(positive):
+        for index in positive:
+            allocation[index] = 1
+        return tuple(allocation)
+
+    for index in positive:
+        allocation[index] = 1
+    remaining = total - len(positive)
+    weight_sum = sum(weights[index] for index in positive)
+    shares = [remaining * weights[index] / weight_sum for index in positive]
+    floors = [math.floor(share) for share in shares]
+    for index, count in zip(positive, floors, strict=True):
+        allocation[index] += count
+    remainder = remaining - sum(floors)
+    ranked = sorted(
+        range(len(positive)),
+        key=lambda offset: (-(shares[offset] - floors[offset]), positive[offset]),
+    )
+    for offset in ranked[:remainder]:
+        allocation[positive[offset]] += 1
+    return tuple(allocation)
 
 
 @dataclass
@@ -74,6 +106,8 @@ class BatchManifest:
     content-balanced ``FitPlan`` of boxes — see ``plan_path``)."""
     tile_size: int = 256
     tile_overlap: int = 32
+    fold_tile_slivers: bool = False
+    """Whether this manifest uses overlap-dominated trailing-tile folding."""
     n_tiles: int = 1
     """Spatial slots per (t,c): tile count in ``uniform`` mode, box count in
     ``content`` mode (kept as one field so task-id decode / packing are shared)."""
@@ -86,6 +120,8 @@ class BatchManifest:
     reads remain enabled without them for auto seeds and compression ratios.
     Occupancy-weighted allocation remains a separate behavior change (#2819).
     """
+    tile_occupancy_weights: Optional[List[List[float]]] = None
+    """One Hann-weighted occupancy row per selected ``(t, c)`` slice."""
     plan_path: Optional[str] = None
     """``content`` mode: path to the shared ``FitPlan`` JSON (relative to
     ``output_dir``) every array task reads via ``fit --plan … --plan-box``."""
@@ -275,6 +311,7 @@ class TileLocalReadPlan:
     regions: Tuple[str, ...]
     volume_shape: str
     nonempty_counts: Optional[Tuple[int, ...]]
+    seed_counts: Optional[Tuple[Tuple[int, ...], ...]]
 
 
 def tile_local_read_plan(manifest: BatchManifest) -> Optional[TileLocalReadPlan]:
@@ -289,7 +326,10 @@ def tile_local_read_plan(manifest: BatchManifest) -> Optional[TileLocalReadPlan]
     from luxar.gsplats.tiling import compute_tile_specs
 
     specs = compute_tile_specs(
-        tuple(manifest.spatial_shape), manifest.tile_size, manifest.tile_overlap
+        tuple(manifest.spatial_shape),
+        manifest.tile_size,
+        manifest.tile_overlap,
+        fold_slivers=manifest.fold_tile_slivers,
     )
     if len(specs) != manifest.n_tiles:
         raise ValueError(
@@ -314,10 +354,55 @@ def tile_local_read_plan(manifest: BatchManifest) -> Optional[TileLocalReadPlan]
                 "tile-local non-empty counts must be between 1 and n_tiles"
             )
 
+    seed_counts: Optional[Tuple[Tuple[int, ...], ...]] = None
+    weights = manifest.tile_occupancy_weights
+    if weights is not None:
+        if counts is None:
+            raise ValueError("tile occupancy weights require non-empty counts")
+        expected_rows = manifest.n_timepoints * manifest.n_channels
+        if len(weights) != expected_rows:
+            raise ValueError(
+                "tile occupancy weight mismatch: manifest records "
+                f"{len(weights)} rows but T*C requires {expected_rows}"
+            )
+        normalized_rows: list[Tuple[float, ...]] = []
+        for row_index, row in enumerate(weights):
+            if len(row) != manifest.n_tiles:
+                raise ValueError(
+                    f"tile occupancy row {row_index} has {len(row)} weights; "
+                    f"expected {manifest.n_tiles}"
+                )
+            normalized = tuple(float(weight) for weight in row)
+            if any(not math.isfinite(weight) or weight < 0.0 for weight in normalized):
+                raise ValueError(
+                    "tile occupancy weights must be finite and non-negative"
+                )
+            if sum(weight > 0.0 for weight in normalized) != counts[row_index]:
+                raise ValueError(
+                    f"tile occupancy row {row_index} disagrees with its non-empty count"
+                )
+            normalized_rows.append(normalized)
+
+        raw_seeds = manifest.fit_args.get("seeds")
+        try:
+            total_seeds = int(raw_seeds)
+        except (TypeError, ValueError):
+            total_seeds = 0
+        if isinstance(raw_seeds, bool) or total_seeds <= 0:
+            raise ValueError("tile occupancy weights require positive integer seeds")
+        seed_counts = tuple(
+            tuple(
+                max(1, count)
+                for count in allocate_weighted_integer_seeds(total_seeds, row)
+            )
+            for row in normalized_rows
+        )
+
     return TileLocalReadPlan(
         regions=regions,
         volume_shape=",".join(str(size) for size in manifest.spatial_shape),
         nonempty_counts=tuple(counts) if counts is not None else None,
+        seed_counts=seed_counts,
     )
 
 
