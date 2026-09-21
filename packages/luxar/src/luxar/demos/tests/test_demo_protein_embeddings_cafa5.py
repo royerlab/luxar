@@ -223,6 +223,31 @@ class TestUmapCache:
 
         assert load_cached_umap(cache, legacy_ids_path=ids_path) is None
 
+    def test_legacy_cache_refuses_a_pickled_accessions_file(
+        self, tmp_path: Path
+    ) -> None:
+        import pickle
+
+        marker = tmp_path / "executed"
+
+        class Exploit:
+            def __reduce__(self):
+                return (pathlib.Path.touch, (marker,))
+
+        ids_path = tmp_path / "train_ids.npy"
+        with ids_path.open("wb") as fh:
+            np.lib.format.write_array_header_1_0(
+                fh, {"descr": "|O", "fortran_order": False, "shape": (1,)}
+            )
+            pickle.dump(Exploit(), fh)
+
+        cache = tmp_path / "legacy.npz"
+        np.savez(cache, positions=np.zeros((1, 3), dtype=np.float32))
+
+        with pytest.raises(ValueError, match="refusing to unpickle downloaded file"):
+            load_cached_umap(cache, legacy_ids_path=ids_path)
+        assert not marker.exists(), "the legacy repair path executed the payload"
+
     def test_mismatched_stored_accessions_are_rejected(self, tmp_path: Path) -> None:
         """A cache whose two arrays disagree cannot be trusted to pair up.
 
@@ -738,12 +763,19 @@ def test_accessions_load_from_a_fixed_width_array_without_pickle(tmp_path) -> No
     assert load_accessions(path) == ["P12345", "Q67890", "A0A123"]
 
 
-def test_accessions_load_from_an_object_array(tmp_path) -> None:
-    """The real bundle's shape still works, under the restricted unpickler."""
+def test_accessions_load_from_a_scalar_fixed_width_array(tmp_path) -> None:
+    path = tmp_path / "train_ids.npy"
+    np.save(path, np.array("P12345", dtype="<U10"))
+
+    assert load_accessions(path) == ["P12345"]
+
+
+def test_accessions_refuse_an_object_array(tmp_path) -> None:
     path = tmp_path / "train_ids.npy"
     np.save(path, np.array(["P12345", "Q67890"], dtype=object), allow_pickle=True)
 
-    assert load_accessions(path) == ["P12345", "Q67890"]
+    with pytest.raises(ValueError, match="refusing to unpickle downloaded file"):
+        load_accessions(path)
 
 
 def test_a_malicious_accessions_pickle_is_refused_not_executed(tmp_path) -> None:
@@ -751,9 +783,9 @@ def test_a_malicious_accessions_pickle_is_refused_not_executed(tmp_path) -> None
 
     The CAFA5 bundle comes from a Kaggle dataset its owner can replace at any
     time, and the download is verified by size, not content. ``np.load(...,
-    allow_pickle=True)`` on that file runs whatever it says to run: with this
-    exact payload and the previous code, the command executed. The restricted
-    unpickler refuses the global instead, before any accession is read.
+    allow_pickle=True)`` on that file runs whatever it says to run; this exact
+    payload executes if a caller enables pickle. The loader refuses the object
+    array instead, before any accession is read.
     """
     import pickle
 
@@ -770,6 +802,6 @@ def test_a_malicious_accessions_pickle_is_refused_not_executed(tmp_path) -> None
         )
         pickle.dump(Exploit(), fh)
 
-    with pytest.raises(pickle.UnpicklingError, match="refusing to unpickle"):
+    with pytest.raises(ValueError, match="refusing to unpickle downloaded file"):
         load_accessions(path)
     assert not marker.exists(), "the payload ran — the restriction is not holding"

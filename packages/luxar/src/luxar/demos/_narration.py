@@ -2,11 +2,13 @@
 
 A demo that narrates a story synthesises the clip when the SCENE is built, not
 when it is viewed: the viewer only plays stored MP3/AAC files
-(``docs/guides/specs/SOUND_SPEC.md`` §5). Three engines, tried in order unless
-one is named:
+(``docs/guides/specs/SOUND_SPEC.md`` §5). The engine is selected explicitly or
+from the local free option:
 
-1. **OpenAI TTS** when ``OPENAI_API_KEY`` is set — plain HTTPS to
-   ``/v1/audio/speech`` (no SDK dependency), MP3 out.
+1. **OpenAI TTS** when ``engine="openai"`` or
+   ``LUXAR_NARRATION_ENGINE=openai`` is set — plain HTTPS to
+   ``/v1/audio/speech`` (no SDK dependency), MP3 out; ``OPENAI_API_KEY`` then
+   authenticates the request but never selects the paid engine by itself.
 2. **macOS ``say``** when both ``say`` and ``afconvert`` are on ``PATH`` — the
    system voice rendered to AIFF, then AAC in an ``.m4a`` container.
 3. Otherwise a ``UserWarning`` and ``None``: the demo builds without narration
@@ -175,9 +177,9 @@ def synthesise(
     chosen = resolve_engine(engine)
     if chosen is None:
         warnings.warn(
-            "No narration engine available: set OPENAI_API_KEY for OpenAI TTS, or "
-            "build on macOS for the system voice (`say`). The scene is built "
-            "without narration.",
+            "No narration engine available: set LUXAR_NARRATION_ENGINE=openai "
+            "for OpenAI TTS, or build on macOS for the system voice (`say`). "
+            "The scene is built without narration.",
             UserWarning,
             stacklevel=2,
         )

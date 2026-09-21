@@ -220,10 +220,11 @@ waypoint events above.
 ## 5. The stories demo
 
 - **Narration**: `luxar.demos._narration.synthesise(text, voice, cache_dir)`:
-  OpenAI TTS when `OPENAI_API_KEY` is set (model and voice pinned in the demo),
-  else macOS `say` → `afconvert` to `.m4a`, else a warning and no narration
-  node. Clips are cached by hash of (text, voice, engine) under the demo cache,
-  so a rebuild with unchanged text costs nothing. Each story's narration is its
+  macOS `say` → `afconvert` to `.m4a` when available, or OpenAI TTS when
+  `LUXAR_NARRATION_ENGINE=openai` explicitly selects it and `OPENAI_API_KEY`
+  authenticates the request; otherwise a warning and no narration node. Clips
+  are cached by hash of (text, voice, engine) under the demo cache, so a rebuild
+  with unchanged text costs nothing. Each story's narration is its
   panel text (title, facts, open question) read in order, `trigger="on_arrive"`,
   `delay_ms=600`, bus `voice`.
 - **Ambient bed**: one CC0 clip, `trigger="continuous"`, `fade 1500 ms`, bus
