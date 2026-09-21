@@ -93,10 +93,13 @@ Under **any** tiling (`uniform`, `content`, `--tile k/M`, `-j N`) the spec is
 resolved against the **whole volume**, never against a tile or box crop — which
 would make abutting regions fit against different baselines and show brightness
 steps at their boundaries. `uniform` and `content` resolve it once in the parent
-and hand every tile/box the concrete level; the uniform `-j N`/`--tile k/M`
-workers instead each resolve the spec themselves against that same whole volume,
-which agrees because the sampler is deterministic. `batch-fit` extends this
-across time: one global level for the whole timelapse, resolved at plan time as
+and hand every tile/box the concrete level; a uniform `-j N` parent that resolves
+the level while weighing its tiles forwards that concrete level and the raw-input
+range to its workers, while a hand-run `--tile k/M` worker resolves the same spec
+against the same whole volume. A user numeric floor on that hand-run worker is
+guarded against the whole-volume maximum just as it is without tiling; a level
+forwarded by a parent is marked resolved and applied verbatim. `batch-fit` extends
+this across time: one global level for the whole timelapse, resolved at plan time as
 the **minimum** of the levels measured on a bounded set of evenly spaced `(t, c)`
 slices spanning the whole store — up to 4 timepoints (always including `t=0` and
 `t=T-1` when `T > 1`) x up to 4 channel-like coordinates — and recorded in the

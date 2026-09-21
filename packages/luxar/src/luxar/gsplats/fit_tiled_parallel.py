@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 if TYPE_CHECKING:
     from luxar.gsplats.utils.device import WorkerLimit
 
-import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
@@ -50,17 +49,14 @@ def _announce_unscored_reason(reason: str | None) -> None:
 def _empty_tile(ndim: int) -> GSplatData:
     """A 0-splat placeholder for a skipped (empty) tile.
 
-    Mirrors the 0-splat result ``fit_tile`` returns for a near-zero tile so the
-    parallel path's per-tile bookkeeping matches the sequential path.
+    The same spelling the sequential path uses (``_zero_splat_tile``, which
+    :func:`~luxar.gsplats.fit_tiled_gsplats.fit_tile` and ``_skipped_tile_result``
+    also go through), so an ``.empty`` marker reloaded here is indistinguishable
+    downstream from an in-process skip — stats included.
     """
-    from luxar.gsplats.utils.trils import tril_size
+    from luxar.gsplats.fit_tiled_gsplats import _zero_splat_tile
 
-    return GSplatData(
-        centers=np.zeros((0, ndim), dtype=np.float32),
-        amplitudes=np.zeros((0,), dtype=np.float32),
-        cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-        stats={"skipped": True},
-    )
+    return _zero_splat_tile(ndim)
 
 
 def luxar_argv0() -> list[str]:
@@ -90,6 +86,38 @@ def _norm_range_args(
     ]
 
 
+def _floor_args(floor: Optional[str], floor_resolved: bool) -> list[str]:
+    """Format the floor a worker is given, and say whether it is an ANSWER.
+
+    ``--floor-resolved`` marks a LEVEL this parent resolved against the whole
+    volume: the worker applies it verbatim instead of re-guarding it against its
+    own tile (#1174). A user SPEC forwarded unchanged carries no marker, so the
+    worker guards it exactly as ``--tiling none`` does (#2838).
+    """
+    if floor is None:
+        return []
+    args = ["--floor", str(floor)]
+    if floor_resolved:
+        args.append("--floor-resolved")
+    return args
+
+
+def _tile_handoff_args(
+    fold_tile_slivers: bool, tile_seed_count: Optional[int]
+) -> list[str]:
+    """Build hidden arguments that keep a worker on the parent's tile plan.
+
+    The fold flag is emitted EXPLICITLY either way. Since #2838 the worker's own
+    default is to fold, so an omitted flag no longer means "unfolded" — a parent
+    replaying a historical unfolded grid has to say ``--no-fold-tile-slivers``
+    or its workers would build a different grid than the one it merges.
+    """
+    args = ["--fold-tile-slivers" if fold_tile_slivers else "--no-fold-tile-slivers"]
+    if tile_seed_count is not None:
+        args += ["--tile-seed-count", str(tile_seed_count)]
+    return args
+
+
 def build_worker_cmd(
     argv0: list[str],
     input_path: str | Path,
@@ -107,6 +135,7 @@ def build_worker_cmd(
     loss: Optional[str] = None,
     lr: Optional[float] = None,
     floor: Optional[str] = None,
+    floor_resolved: bool = False,
     norm_range: "Optional[tuple[float, float]]" = None,
     seed_method: Optional[str] = None,
     downscale: Optional[str] = None,
@@ -125,13 +154,18 @@ def build_worker_cmd(
     denoise_backend: str = "auto",
     denoise_2d: bool = False,
     allow_empty_tile: bool = False,
+    fold_tile_slivers: bool = True,
+    tile_seed_count: Optional[int] = None,
 ) -> list[str]:
     """Build the ``luxar gsplat fit --tile i/M`` argv for one worker.
 
     Workers run in single-tile mode (which translates/rescales coordinates and
     disables per-tile culling internally) and write to ``out_path``.  Quiet by
     default to keep concurrent logs readable; ``--cull-retention 0`` defers all
-    culling to the parent's merge.  ``allow_empty_tile`` makes a 0-splat tile
+    culling to the parent's merge.  ``floor_resolved`` marks ``floor`` as a level
+    this parent already resolved, so the worker applies it verbatim instead of
+    guarding it as a user request (see :func:`_floor_args`).  ``allow_empty_tile``
+    makes a 0-splat tile
     write an ``.empty`` marker (and exit 0) instead of erroring on save.  The
     tiling driver flags ``--tiling``, ``--jobs`` and the parent's ``--compress``
     are intentionally **never** forwarded.
@@ -169,8 +203,7 @@ def build_worker_cmd(
         cmd += ["--loss", loss]
     if lr is not None:
         cmd += ["--lr", str(lr)]
-    if floor is not None:
-        cmd += ["--floor", str(floor)]
+    cmd += _floor_args(floor, floor_resolved)
     cmd += _norm_range_args(norm_range)
     if seed_method:
         cmd += ["--seed-method", seed_method]
@@ -215,6 +248,7 @@ def build_worker_cmd(
             cmd += ["--denoise-2d"]
     if allow_empty_tile:
         cmd += ["--allow-empty-tile"]
+    cmd += _tile_handoff_args(fold_tile_slivers, tile_seed_count)
     return cmd
 
 
@@ -300,6 +334,7 @@ def fit_tiled_parallel(
     source_dtype: Optional[str] = None,
     volume: "Any | None" = None,
     device: Optional[str] = None,
+    fold_tile_slivers: bool = True,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -503,6 +538,7 @@ def fit_tiled_parallel(
         source_dtype=source_dtype,
         volume=reference,
         device=device,
+        fold_tile_slivers=fold_tile_slivers,
     )
 
     if not keep_tiles:

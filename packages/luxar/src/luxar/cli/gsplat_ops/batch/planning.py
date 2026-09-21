@@ -386,10 +386,7 @@ def _uniform_tile_occupancy_weights(
     saturation_exponent: float,
 ) -> List[float]:
     """Measure one slice's saturated foreground occupancy tile by tile."""
-    import numpy as _np
-
-    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
-    from luxar.gsplats.tiling import cosine_window
+    from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
 
     view = _pinned_slice_volume(
         input_path,
@@ -401,20 +398,13 @@ def _uniform_tile_occupancy_weights(
         channel_shape=channel_shape,
         spatial_shape=spatial_shape,
     )
-    weights: List[float] = []
-    for spec in specs:
-        tile_data = _np.asarray(view[spec.slices], dtype=_np.float32)
-        if applied_floor is not None:
-            tile_data = _np.clip(tile_data - applied_floor, 0.0, None)
-        weights.append(
-            tile_occupancy_weight(
-                tile_data,
-                cosine_window(spec),
-                signal_threshold=signal_threshold,
-                saturation_exponent=saturation_exponent,
-            )
-        )
-    return weights if any(weight > 0.0 for weight in weights) else [1.0] * len(specs)
+    return uniform_tile_occupancy_weights(
+        view,
+        specs,
+        applied_floor,
+        signal_threshold=signal_threshold,
+        saturation_exponent=saturation_exponent,
+    )
 
 
 def _uniform_tile_local_disabled_reason(

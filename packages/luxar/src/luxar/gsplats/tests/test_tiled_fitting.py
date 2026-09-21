@@ -146,6 +146,149 @@ class TestComputeTileSpecs:
             total[spec.slices] += cosine_window(spec)
         np.testing.assert_allclose(total, 1.0, atol=1e-6)
 
+    def test_direct_fitter_matches_batch_grid_for_reported_volume(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.gsplats.batch.manifest import BatchManifest, tile_local_read_plan
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        shape = (108, 1352, 532)
+        manifest = BatchManifest(
+            mode="uniform",
+            spatial_shape=shape,
+            tile_size=512,
+            tile_overlap=32,
+            n_tiles=3,
+            tile_local_reads=True,
+            fold_tile_slivers=True,
+        )
+        batch_plan = tile_local_read_plan(manifest)
+        assert batch_plan is not None
+
+        seen: list[tuple[slice, ...]] = []
+        seen_seeds: list[int] = []
+
+        def _fake_fit_tile(volume: Any, spec: Any, **kwargs: Any) -> GSplatData:
+            seen.append(spec.slices)
+            seen_seeds.append(kwargs["seeds"])
+            return GSplatData(
+                centers=np.zeros((0, 3), dtype=np.float32),
+                amplitudes=np.zeros((0,), dtype=np.float32),
+                cholesky_factors=np.zeros((0, 6), dtype=np.float32),
+                stats={"skipped": True},
+            )
+
+        monkeypatch.setattr(ftg, "fit_tile", _fake_fit_tile)
+        monkeypatch.setattr(ftg, "merge_tile_results", lambda *args, **kwargs: object())
+
+        class _ShapeOnlyVolume:
+            dtype = np.dtype(np.float32)
+
+            def __init__(self, volume_shape: tuple[int, ...]) -> None:
+                self.shape = volume_shape
+
+        # No fold_tile_slivers= on purpose: the DEFAULT must already be the
+        # batch grid, or a library caller builds a third one (#2838).
+        ftg.fit_tiled(
+            _ShapeOnlyVolume(shape),
+            tile_size=512,
+            overlap=32,
+            tile_seed_counts=(11, 22, 33),
+            floor="none",
+            _floor_resolved=True,
+            norm_range=(0.0, 1.0),
+            verbose=False,
+        )
+
+        direct_regions = tuple(
+            ",".join(f"{span.start}:{span.stop}" for span in slices) for slices in seen
+        )
+        assert direct_regions == batch_plan.regions
+        assert [tuple(span.start for span in slices) for slices in seen] == [
+            (0, 0, 0),
+            (0, 480, 0),
+            (0, 960, 0),
+        ]
+        assert seen_seeds == [11, 22, 33]
+
+    def test_single_tile_worker_defaults_to_the_batch_grid(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``fit --tile k/M`` must build the folded grid without being told.
+
+        The documented Slurm-ready recipe is hand-run, so a worker still on the
+        unfolded grid means both ``M`` and every tile's region disagree with
+        what ``-j N``, the sequential path and ``batch-fit`` build (#2838).
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+        from luxar.gsplats.batch.manifest import BatchManifest, tile_local_read_plan
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        shape = (40, 40)
+        batch_plan = tile_local_read_plan(
+            BatchManifest(
+                mode="uniform",
+                spatial_shape=shape,
+                tile_size=24,
+                tile_overlap=8,
+                n_tiles=4,
+                tile_local_reads=True,
+                fold_tile_slivers=True,
+            )
+        )
+        assert batch_plan is not None
+        assert len(batch_plan.regions) == 4
+
+        seen: list[Any] = []
+
+        def _fake_fit_tile(volume: Any, spec: Any, **kwargs: Any) -> GSplatData:
+            seen.append(spec)
+            return GSplatData(
+                centers=np.zeros((0, 2), dtype=np.float32),
+                amplitudes=np.zeros((0,), dtype=np.float32),
+                cholesky_factors=np.zeros((0, 3), dtype=np.float32),
+                stats={"skipped": True},
+            )
+
+        monkeypatch.setattr(ftg, "fit_tile", _fake_fit_tile)
+        volume = np.zeros(shape, dtype=np.float32)
+        volume[5:35, 5:35] = 1.0
+
+        origins = []
+        for k in range(len(batch_plan.regions)):
+            fit_single_tile(
+                _single_tile_ctx(f"{k}/4", tile_size=24, overlap=8),
+                volume,
+                {"floor": "none", "norm_range": (0.0, 1.0)},
+                None,
+            )
+            origins.append(seen[-1].origin)
+
+        worker_regions = tuple(
+            ",".join(f"{span.start}:{span.stop}" for span in spec.slices)
+            for spec in seen
+        )
+        assert worker_regions == batch_plan.regions
+        assert origins == [(0.0, 0.0), (0.0, 16.0), (16.0, 0.0), (16.0, 16.0)]
+
+    def test_direct_fitter_rejects_seed_count_length_mismatch(self) -> None:
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        volume = np.zeros((20, 20), dtype=np.float32)
+        with pytest.raises(ValueError, match="length must match"):
+            ftg.fit_tiled(
+                volume,
+                tile_size=10,
+                overlap=0,
+                tile_seed_counts=(5,),
+                floor="none",
+                _floor_resolved=True,
+                norm_range=(0.0, 1.0),
+                verbose=False,
+            )
+
     def test_zero_overlap(self) -> None:
         """Zero overlap should produce non-overlapping tiles."""
         shape = (100,)
@@ -553,6 +696,115 @@ class TestFitTiled:
                 assert call.kwargs.get("verbose") is False, (
                     "verbose=False not propagated to fit_gaussian_splats"
                 )
+
+    def test_zero_seed_budget_skips_the_tile_instead_of_crashing(self) -> None:
+        """A 0 in ``tile_seed_counts`` must not reach the fitter (#2838).
+
+        Deliberately drives the REAL ``fit_tile``: the fitter rejects a
+        non-positive integer ``seeds``, and every grid test that stubs
+        ``fit_tile`` out is structurally blind to that.
+        """
+        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+
+        volume = np.zeros((40, 40), dtype=np.float32)
+        volume[5:35, 5:35] = 1.0
+        specs = compute_tile_specs((40, 40), 24, 8, fold_slivers=True)
+        assert len(specs) == 4
+        # Every tile of this grid carries signal, so the zero is not something
+        # fit_tile's own near-zero skip would have caught.
+        assert all(volume[spec.slices].max() > 0.0 for spec in specs)
+
+        result = fit_tiled(
+            volume,
+            tile_size=24,
+            overlap=8,
+            tile_seed_counts=(0, 5, 5, 5),
+            floor="none",
+            n_iters=2,
+            device="cpu",
+            cull_retention=None,
+            verbose=False,
+        )
+
+        assert result.n_splats > 0
+        # The skipped tile still occupies its slot, so the merge stays aligned
+        # with the grid that labels the partition's split planes.
+        assert result.stats["splats_per_tile"][0] == 0
+        assert len(result.stats["splats_per_tile"]) == 4
+
+    def test_zero_seed_budget_keeps_a_partition_grid_aligned(self) -> None:
+        """The same skip under ``partition=True``, which is the CLI DEFAULT.
+
+        ``_skipped_tile_result``'s whole reason to exist is this shape: the
+        placeholder has to survive ``merge_tile_results``' ``len(results) ==
+        num_tiles`` gate so the BSP tree is built and ``region_labels`` still
+        names the tile each surviving part came from. ``partition=False`` (the
+        test above) cannot see any of that.
+        """
+        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+
+        volume = np.zeros((40, 40), dtype=np.float32)
+        volume[5:35, 5:35] = 1.0
+        assert len(compute_tile_specs((40, 40), 24, 8, fold_slivers=True)) == 4
+
+        node = fit_tiled(
+            volume,
+            tile_size=24,
+            overlap=8,
+            partition=True,
+            tile_seed_counts=(0, 5, 5, 5),
+            floor="none",
+            n_iters=2,
+            device="cpu",
+            cull_retention=None,
+            verbose=False,
+        )
+
+        # Tile 0 was never fitted, so three parts survive — and the placeholder
+        # kept `results` grid-aligned, so the split-plane tree was still built
+        # and pruned onto those three rather than dropped.
+        assert len(node.children) == 3
+        assert node.bsp_tree is not None
+
+        def _leaves(sub: dict) -> list[int]:
+            if "part" in sub:
+                return [int(sub["part"])]
+            return _leaves(sub["left"]) + _leaves(sub["right"])
+
+        assert sorted(_leaves(node.bsp_tree)) == [0, 1, 2]
+
+    def test_fit_tile_reads_a_zero_seed_budget_as_a_skip(self) -> None:
+        """``fit_tile(seeds=0)`` is the door every zero budget passes through.
+
+        A ``--tile-seed-count 0`` worker calls it with no loop to short-circuit
+        first, and ``--allow-empty-tile`` does not help — that only covers
+        SAVING a 0-splat result. Handing the 0 down reached the fitter's "seeds
+        as int must be positive" and killed the worker.
+        """
+        from luxar.gsplats.fit_tiled_gsplats import fit_tile
+
+        volume = np.zeros((40, 40), dtype=np.float32)
+        volume[5:35, 5:35] = 1.0
+        specs = compute_tile_specs((40, 40), 24, 8, fold_slivers=True)
+        # This tile holds signal, so fit_tile's own near-zero skip is not what
+        # returns the placeholder.
+        assert volume[specs[0].slices].max() > 0.0
+
+        result = fit_tile(
+            volume,
+            specs[0],
+            seeds=0,
+            floor="none",
+            norm_range=(0.0, 1.0),
+            n_iters=2,
+            device="cpu",
+            verbose=False,
+        )
+
+        assert result.n_splats == 0
+        assert result.stats["skipped"] is True
+        assert result.stats["tile_index"] == 0
+        assert result.stats["tile_grid_index"] == specs[0].grid_index
 
     def test_degenerates_to_single_tile(self) -> None:
         """Volume smaller than tile_size should behave like non-tiled fitting."""
@@ -1428,10 +1680,13 @@ class TestSingleTileWorkerFloor:
 
     A volume-derived spec (``auto``/``pNN``) becomes a level here for the first
     time, so it is resolved against the WHOLE volume and guarded. A CONCRETE
-    numeric is applied unvetoed (#1174): it is normally a level a parent already
-    resolved and guarded for all the workers, and re-guarding it per sub-volume is
-    the pedestal disagreement the shared resolution removes — a too-high one is
-    announced loudly instead of being silently dropped.
+    numeric depends on WHO sent it (#2838): a USER numeric is guarded here too,
+    against this worker's own whole-volume read, so the flag means the same thing
+    as it does under ``--tiling none``; a PARENT-RESOLVED level
+    (``floor_resolved=True``, the hidden ``--floor-resolved``) is applied unvetoed
+    (#1174), because re-guarding it per sub-volume is the pedestal disagreement
+    the shared resolution removes — a too-high one is announced loudly instead of
+    being silently dropped.
     """
 
     def _pedestal_volume(self) -> np.ndarray:
@@ -1456,17 +1711,15 @@ class TestSingleTileWorkerFloor:
         )
         assert result.stats["floor"] == pytest.approx(expected)
 
-    def test_too_high_numeric_floor_is_applied_but_announced(
+    def test_too_high_user_numeric_floor_is_guarded_like_tiling_none(
         self, monkeypatch, capsys
     ) -> None:
-        """A numeric floor above this worker's max is APPLIED, loudly (#1174).
+        """An UNMARKED numeric floor is a user request, so it is guarded (#2838).
 
-        Behaviour change: this used to be guarded here and reported-and-IGNORED,
-        so two uniform sub-paths disagreed about the same flag — the sequential
-        in-process fit applied its one resolved level while a ``--tile k/M`` / ``-j
-        N`` worker quietly dropped it. The number now wins (no worker may disagree
-        with its siblings about the pedestal), and the resulting all-zero tile is
-        explained up front instead of surfacing as a bare "empty store".
+        A hand-run ``fit --tile k/M --floor 10000`` reads the same whole volume a
+        ``--tiling none`` fit does, so it must reach the same verdict: reported
+        and ignored, not applied until every tile windows to zero. Without this
+        the same flag meant opposite things on two entry points.
         """
         import luxar.gsplats.fit_tiled_gsplats as ftg
         from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
@@ -1476,6 +1729,35 @@ class TestSingleTileWorkerFloor:
         monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
         result = fit_single_tile(
             _single_tile_ctx("0/4"), volume, {"floor": 10_000.0}, None
+        )
+        assert result.stats["floor"] is None
+        assert len(records) == 1
+        out = capsys.readouterr().out
+        assert "would erase all signal" in out
+
+    def test_too_high_resolved_floor_is_applied_but_announced(
+        self, monkeypatch, capsys
+    ) -> None:
+        """A PARENT-RESOLVED level above this worker's max is APPLIED, loudly.
+
+        The number is already the answer — a level the parent resolved against
+        the whole volume the tiles share — so re-guarding it here would be the
+        per-sub-volume pedestal disagreement #1174 removes. It wins, and the
+        resulting all-zero tile is explained up front instead of surfacing as a
+        bare "empty store".
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+
+        volume = self._pedestal_volume()
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        result = fit_single_tile(
+            _single_tile_ctx("0/4"),
+            volume,
+            {"floor": 10_000.0},
+            None,
+            floor_resolved=True,
         )
         assert result.stats["floor"] == pytest.approx(10_000.0)
         # Subtracting it clips the whole tile to zero, so the fit is skipped
@@ -2327,6 +2609,83 @@ class TestDownscaledPartitionPlanes:
         assert len(failures) == len(bad_splits), failures
 
 
+@pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")
+class TestMergeGridMismatch:
+    """``merge_tile_results`` must refuse a recomputed grid of the wrong size.
+
+    It rebuilds the tile grid from ``volume_shape``/``tile_size``/``overlap`` to
+    label the split planes, and only gated that on ``len(results) ==
+    num_tiles`` — never on the rebuilt grid itself. Since #2838 flipped
+    ``fold_tile_slivers`` to ``True``, an external caller that built its own
+    UNFOLDED grid and does not say so gets a tree with FEWER leaves than
+    labelled regions, silently pruned rather than refused.
+    ``merge_orchestrator._uniform_slot_bsp_tree`` already makes this check.
+    """
+
+    SHAPE = (80, 80, 80)
+    TILE_SIZE = 48
+    OVERLAP = 16
+    # Only these tiles of the 27-tile unfolded grid carry splats. The labels
+    # have to be a SUBSET of the folded grid's 8 leaves or
+    # ``prune_serialized_bsp_tree`` already refuses the whole tree as a
+    # non-subset — that backstop hides the mismatch on an all-tiles-fitted
+    # merge, and stops hiding it exactly when some tiles come back empty.
+    NONEMPTY = (0, 1, 2)
+
+    def _unfolded_specs(self) -> "list[TileSpec]":
+        return compute_tile_specs(
+            self.SHAPE, self.TILE_SIZE, self.OVERLAP, fold_slivers=False
+        )
+
+    def _merge(self, **kwargs: "Any") -> "Any":
+        from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        specs = self._unfolded_specs()
+        ones = (1.0,) * len(self.SHAPE)
+        results = [
+            _core_region(s, ones, 6, 100 + s.index)
+            if s.index in self.NONEMPTY
+            else GSplatData(
+                centers=np.zeros((0, 3), dtype=np.float32),
+                amplitudes=np.zeros((0,), dtype=np.float32),
+                cholesky_factors=np.zeros((0, 6), dtype=np.float32),
+            )
+            for s in specs
+        ]
+        return merge_tile_results(
+            results,
+            volume_shape=self.SHAPE,
+            tile_size=self.TILE_SIZE,
+            overlap=self.OVERLAP,
+            num_tiles=len(specs),
+            progressive=False,
+            cull_retention=None,
+            elapsed=0.0,
+            verbose=False,
+            partition=True,
+            **kwargs,
+        )
+
+    def test_the_two_grids_really_differ(self) -> None:
+        folded = compute_tile_specs(
+            self.SHAPE, self.TILE_SIZE, self.OVERLAP, fold_slivers=True
+        )
+        assert (len(folded), len(self._unfolded_specs())) == (8, 27)
+
+    def test_a_mismatched_recomputed_grid_drops_the_tree(self) -> None:
+        """The default folds, so the rebuilt grid has 8 leaves for 27 tiles."""
+        node = self._merge()
+        assert len(node.children) == len(self.NONEMPTY)
+        assert node.bsp_tree is None
+
+    def test_declaring_the_unfolded_grid_still_labels_the_planes(self) -> None:
+        """The check must not cost the caller that DOES declare its geometry."""
+        node = self._merge(fold_tile_slivers=False)
+        assert len(node.children) == len(self.NONEMPTY)
+        assert node.bsp_tree is not None
+
+
 @pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_parallel imports torch")
 class TestParallelTiledGridScaleThreading:
     """``fit_tiled_parallel`` must FORWARD its ``grid_scale`` to the merge.
@@ -2577,9 +2936,11 @@ def test_single_tile_worker_rejects_wrong_preselected_shape() -> None:
 
     from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
 
+    # "3/4" is the last tile of the (80, 80) FOLDED grid — the one every
+    # producer builds since #2838 — and spans (32:80, 32:80), i.e. 48x48.
     with pytest.raises(typer.BadParameter, match="loaded shape.*requires"):
         fit_single_tile(
-            _single_tile_ctx("4/9"),
+            _single_tile_ctx("3/4"),
             np.ones((47, 48), dtype=np.float32),
             {"floor": "none", "norm_range": (0.0, 1.0)},
             100,
@@ -2597,7 +2958,7 @@ def test_single_tile_worker_requires_shared_norm_range() -> None:
 
     with pytest.raises(typer.BadParameter, match="plan-resolved --norm-range"):
         fit_single_tile(
-            _single_tile_ctx("4/9"),
+            _single_tile_ctx("3/4"),
             np.ones((48, 48), dtype=np.float32),
             {"floor": "none"},
             100,

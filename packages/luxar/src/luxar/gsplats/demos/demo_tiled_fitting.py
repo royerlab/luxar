@@ -109,7 +109,10 @@ def fit_tiles_and_merge(V: np.ndarray):
     This is equivalent to calling fit_tiled() but also retains per-tile
     results for visualization of individual tile contributions.
     """
-    specs = compute_tile_specs(V.shape, tile_size=TILE_SIZE, overlap=OVERLAP)
+    # fold_slivers matches fit_tiled's default, so this really is the same grid.
+    specs = compute_tile_specs(
+        V.shape, tile_size=TILE_SIZE, overlap=OVERLAP, fold_slivers=True
+    )
     tile_results = []
 
     with asection(

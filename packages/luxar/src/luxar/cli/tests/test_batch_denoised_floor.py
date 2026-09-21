@@ -430,6 +430,9 @@ def test_deferred_floor_scripts_feed_one_level_to_every_worker(tmp_path: Path) -
 
     assert "floor_level.json" in fit_script
     assert '--floor "$FLOOR_LEVEL"' in fit_script
+    # The deferred level is the plan's answer, so it must carry the resolved
+    # marker too — without it every task would re-guard it as a user request.
+    assert "--floor-resolved" in fit_script
     assert "--allow-empty-tile" in fit_script
     assert "batch-fit resolve-floor" in floor_script
 
