@@ -47,9 +47,13 @@ K per tile, so each timepoint/channel tracks K rather than K x the grid size. Th
 weight is `Hann voxels × foreground_fraction^saturation_exponent`: homogeneous
 content therefore gets the same splat density in differently-sized tiles, while
 the calibrated exponent still controls relative density between equally-sized
-tiles. Largest-remainder rounding preserves K whenever K can give every non-empty
-tile one seed; otherwise each non-empty tile gets one. A float ratio is scale-free
-and applied per tile unchanged. Under **content** tiling `--seeds` is ignored:
+tiles. An exponent fitted by `cal --fit-exponent` is measured across region scales
+on absolute feature counts; uniform weighting reuses it only for density, keeping
+tile size linear at fixed density. Largest-remainder rounding preserves K whenever
+K can give every non-empty tile one seed; otherwise each non-empty tile gets one.
+When exact plan-time counts cannot be handed to workers, every task derives the
+same M from the volume, grid, resolved floor, and Hann-window skip predicate. A
+float ratio is scale-free and applied per tile unchanged. Under **content** tiling `--seeds` is ignored:
 tasks are emitted as `--tiling content --plan … --plan-box k` and each box takes
 its budget from the shared density plan.
 
