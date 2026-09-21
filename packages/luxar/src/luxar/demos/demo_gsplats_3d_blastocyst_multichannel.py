@@ -212,6 +212,13 @@ SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 NO_NAPARI = "--no-napari" in sys.argv
 SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
+# Opt-in ONLY; never reached by a failure (acquisition errors raise).
+SYNTHETIC = "--synthetic" in sys.argv
+SCENE_STEM = (
+    "gsplats_3d_blastocyst_multichannel_SYNTHETIC"
+    if SYNTHETIC
+    else "gsplats_3d_blastocyst_multichannel"
+)
 
 # Setup
 Arbol.max_depth = 10
@@ -300,34 +307,50 @@ def load_multichannel_data():
             aprint(f"Loaded {len(volumes)} channels")
             return volumes, str(data.dtype)
 
-        except Exception as e:
-            aprint(f"Remote loading failed: {e}")
-            aprint("Creating synthetic fallback data...")
+        except Exception as exc:
+            # FAIL, rather than fabricate. See the sibling DAPI demo for the
+            # full reasoning: this used to catch everything and return
+            # procedurally generated blobs, which the scene then published
+            # under Blin et al.'s DOI and CC BY 4.0 notice with a description
+            # of a Leica SP8 acquisition. Fabricated imagery carrying real
+            # biological provenance is the one failure this tool must not have.
+            raise DatasetUnavailable(
+                f"could not load IDR idr0062 image 6001240 from {ZARR_URL}: {exc}. "
+                "Check the network and that `fsspec` is installed. Pass "
+                "--synthetic for clearly-labelled stand-in channels with no "
+                "citation, which are not a substitute for this dataset."
+            ) from exc
 
-            # Fallback: synthetic multi-channel data
-            volumes = []
-            shape = (TARGET_SIZE, TARGET_SIZE, TARGET_SIZE)
 
-            for ch_idx, ch_config in enumerate(CHANNELS):
-                V = np.zeros(shape, dtype=np.float32)
+def synthesize_channel_volumes(seed: int = 42):
+    """Procedurally generate per-channel blobs. NOT microscopy.
 
-                # Add channel-specific blobs at different positions
-                np.random.seed(42 + ch_idx)  # Reproducible per channel
-                for _ in range(10 + ch_idx * 5):
-                    center = [np.random.uniform(15, s - 15) for s in shape]
-                    sigma = np.random.uniform(4, 10)
-                    amplitude = np.random.uniform(0.5, 1.0)
+    Reachable only via ``--synthetic``. Cache files, scene name, title,
+    description, caption and citation are all switched by the same flag, so
+    these arrays cannot inherit the real dataset's identity.
 
-                    grids = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
-                    dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
-                    V += amplitude * np.exp(-dist_sq / (2 * sigma**2))
+    Returns ``(volumes, None)``: synthesized here, so they ARE their own source.
+    """
+    with asection("Synthesizing stand-in channels (NOT real microscopy)"):
+        volumes = []
+        shape = (TARGET_SIZE, TARGET_SIZE, TARGET_SIZE)
+        grids = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
 
-                V = np.clip(V, 0, 1).astype(np.float32)
-                volumes.append(V)
-                aprint(f"  {ch_config['name']}: {V.shape}")
+        for ch_idx, ch_config in enumerate(CHANNELS):
+            V = np.zeros(shape, dtype=np.float32)
+            rng = np.random.default_rng(seed + ch_idx)  # reproducible per channel
+            for _ in range(10 + ch_idx * 5):
+                center = [rng.uniform(15, s - 15) for s in shape]
+                sigma = rng.uniform(4, 10)
+                amplitude = rng.uniform(0.5, 1.0)
+                dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
+                V += amplitude * np.exp(-dist_sq / (2 * sigma**2))
 
-            # Synthesized here, so these arrays ARE their own source.
-            return volumes, None
+            V = np.clip(V, 0, 1).astype(np.float32)
+            volumes.append(V)
+            aprint(f"  {ch_config['name']}: {V.shape} (synthetic)")
+
+        return volumes, None
 
 
 # =============================================================================
@@ -391,7 +414,12 @@ def fit_all_channels(volumes, source_dtype=None):
 
         for i, (volume, ch_config) in enumerate(zip(volumes, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = local_fit_path(DEMO_NAME, GSPLATS_FILES[i])
+            # Separate cache namespace under --synthetic: sharing it would let
+            # one offline run poison every later online run through the cache.
+            cache_name = (
+                f"synthetic_{GSPLATS_FILES[i]}" if SYNTHETIC else GSPLATS_FILES[i]
+            )
+            cache_file = local_fit_path(DEMO_NAME, cache_name)
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel(
@@ -483,9 +511,7 @@ def legend_css(colormap_name: str) -> str:
 def create_luxar_scene(gsplats_list, output_path: Path | None = None):
     """Create Luxar scene with per-channel gsplat layers."""
     if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_3d_blastocyst_multichannel.luxar.zarr"
-        )
+        output_path = get_demos_output_dir() / f"{SCENE_STEM}.luxar.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -510,13 +536,16 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
-                citation=DEMO_META["citation"],
+                # A DOI asserts provenance; synthetic blobs have none.
+                citation=None if SYNTHETIC else DEMO_META["citation"],
             )
             stamp_input_digests(scene)
 
             # Add scene metadata
             scene.attrs["title"] = (
-                "GSplats: Mouse Blastocyst, Two Channels (Lamin B1 + DAPI)"
+                "GSplats: SYNTHETIC two-channel stand-in (not microscopy)"
+                if SYNTHETIC
+                else "GSplats: Mouse Blastocyst, Two Channels (Lamin B1 + DAPI)"
             )
             scene.attrs["description"] = """
 Multi-Channel Gaussian Splatting — Mouse Blastocyst (E3.5)
@@ -586,7 +615,9 @@ Controls:
             # "Light-sheet microscopy", which is wrong for this image: IDR's
             # protocol annotation records a Leica SP8 point-scanning confocal.
             scene.add_text(
-                "Mouse Blastocyst • Lamin B1 + DAPI",
+                "SYNTHETIC stand-in • not microscopy"
+                if SYNTHETIC
+                else "Mouse Blastocyst • Lamin B1 + DAPI",
                 position=(0.02, 0.02),
                 font_size=0.048,
                 anchor="top-left",
@@ -595,8 +626,10 @@ Controls:
             )
             add_demo_caption(
                 scene,
-                f"Leica SP8 confocal • {len(gsplats_list)} channels • IDR idr0062",
-                DEMO_META.get("citation"),
+                f"SYNTHETIC data • {len(gsplats_list)} generated channels"
+                if SYNTHETIC
+                else f"Leica SP8 confocal • {len(gsplats_list)} channels • IDR idr0062",
+                None if SYNTHETIC else DEMO_META.get("citation"),
             )
 
             # Explanatory panel, placed below the title so the two don't overlap
@@ -679,9 +712,7 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = (
-        get_demos_output_dir() / "gsplats_3d_blastocyst_multichannel.luxar.zarr"
-    )
+    output_path = get_demos_output_dir() / f"{SCENE_STEM}.luxar.zarr"
 
     # Serve only mode
     if SERVE_ONLY:
@@ -705,7 +736,10 @@ def main():
         # --recompute path (or no data to be had): download raw data, fit from
         # scratch, and cache the fits in the local-fit namespace.
         warn_if_no_cuda_gpu()
-        volumes, source_dtype = load_multichannel_data()
+        if SYNTHETIC:
+            volumes, source_dtype = synthesize_channel_volumes()
+        else:
+            volumes, source_dtype = load_multichannel_data()
 
         if len(volumes) < 2:
             aprint("Error: Need at least 2 channels for this demo")
