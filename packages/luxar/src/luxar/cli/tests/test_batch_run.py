@@ -162,9 +162,18 @@ def test_resume_warns_when_completed_tiles_predate_weighting(
     ) in output
 
 
-def test_resume_warns_when_completed_tiles_use_different_occupancy_weights(
+@pytest.mark.parametrize(
+    ("fresh_weights", "warns"),
+    [
+        ([[2.0, 4.0]], True),
+        ([[1.0 + 5e-10, 2.0 - 5e-10]], False),
+    ],
+)
+def test_resume_compares_completed_tile_occupancy_weights_with_tolerance(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    fresh_weights: list[list[float]],
+    warns: bool,
 ) -> None:
     from luxar.cli.gsplat_ops.batch.run_orchestration import (
         _refuse_resume_grid_mismatch,
@@ -195,15 +204,17 @@ def test_resume_warns_when_completed_tiles_use_different_occupancy_weights(
     tile_path.mkdir(parents=True)
     fresh = BatchManifest(
         **common,
-        tile_occupancy_weights=[[2.0, 4.0]],
+        tile_occupancy_weights=fresh_weights,
     )
 
     _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
 
-    assert (
+    warning = (
         "1 completed tile planned with different occupancy weights will keep its "
         "existing seed budget. Pass --no-resume to refit every tile."
-    ) in capsys.readouterr().out
+    )
+    output = capsys.readouterr().out
+    assert (warning in output) is warns
 
 
 @pytest.mark.parametrize(
