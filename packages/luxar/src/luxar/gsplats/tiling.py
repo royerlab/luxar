@@ -97,7 +97,7 @@ def compute_tile_specs(
     tile_size: int | Sequence[int],
     overlap: int | Sequence[int],
     *,
-    fold_slivers: bool = False,
+    fold_slivers: bool = True,
 ) -> list[TileSpec]:
     """Compute a deterministic grid of overlapping tiles covering a volume.
 
@@ -105,7 +105,11 @@ def compute_tile_specs(
     are clamped to the volume boundary and may be smaller than ``tile_size``.
     With ``fold_slivers=True``, a trailing tile whose unique coverage is smaller
     than the overlap is folded into its predecessor instead of creating an
-    overlap-dominated sliver.
+    overlap-dominated sliver. That predecessor then spans up to
+    ``tile_size + overlap - 1`` voxels on the folded axis — a folded tile is the
+    one case where a tile is BIGGER than ``tile_size``, so size it for peak
+    memory accordingly: 256/32 reaches 287 (1.41x the voxels of a full tile in
+    3D), 256/64 reaches 319 (1.93x), 24/8 reaches 31 (2.16x).
     Each tile stores its actual overlap with neighbors (which may differ from
     the ``overlap`` parameter at volume edges) to ensure correct windowing.
 
@@ -120,6 +124,15 @@ def compute_tile_specs(
         Must satisfy ``0 <= overlap <= tile_size // 2`` on each axis.
         Overlaps larger than half the tile size cause triple tile overlap,
         which breaks the Hann partition-of-unity guarantee.
+    fold_slivers : bool, default True
+        Fold a trailing sliver into its predecessor. **Defaults to the FOLDED
+        grid** (#2838): it is the grid every Luxar producer builds — the
+        sequential and ``-j N`` ``fit --tiling uniform`` paths, a hand-run
+        ``fit --tile k/M``, and ``batch-fit`` — so pairing this function with
+        :func:`~luxar.gsplats.fit_tiled_gsplats.fit_tile` by hand reproduces
+        exactly the grid those commands fit and merge. Pass ``False`` only to
+        rebuild the historical unfolded grid of a store written before #2838
+        (a legacy ``batch-fit`` manifest records which one it planned).
 
     Returns
     -------

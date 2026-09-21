@@ -53,9 +53,10 @@ tile size linear at fixed density. Largest-remainder rounding preserves K whenev
 K can give every non-empty tile one seed; otherwise each non-empty tile gets one.
 When exact plan-time counts cannot be handed to workers, every task derives the
 same M from the volume, grid, resolved floor, and Hann-window skip predicate. A
-float ratio is scale-free and applied per tile unchanged. Under **content** tiling `--seeds` is ignored:
-tasks are emitted as `--tiling content --plan … --plan-box k` and each box takes
-its budget from the shared density plan.
+float ratio is scale-free and applied per tile unchanged. Under **content**
+tiling `--seeds` is ignored: tasks are emitted as
+`--tiling content --plan … --plan-box k` and each box takes its budget from the
+shared density plan.
 
 `--floor` (default `auto`, same as `fit`/`cal`): subtract a background floor /
 DC-offset (clip at 0) before normalization, so amplitudes are background-relative.

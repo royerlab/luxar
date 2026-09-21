@@ -202,7 +202,9 @@ result.save("tiled_output.gsplats.zarr")
 ```python
 from luxar.gsplats import compute_tile_specs, fit_tile
 
-# 1. Compute tile grid (deterministic, identical on all workers)
+# 1. Compute tile grid (deterministic, identical on all workers).
+#    `fold_slivers` defaults to True, so this is the same grid `fit_tiled`,
+#    `fit --tiling uniform`, `fit --tile k/M` and `batch-fit` all build.
 specs = compute_tile_specs(volume.shape, tile_size=256, overlap=32)
 
 # 2. Fit a single tile (e.g., on a Slurm job array)
@@ -215,7 +217,7 @@ merged = GSplatData.concatenate(all_tile_results)
 **Tiling module** (`tiling.py`):
 
 - `TileSpec` -- Frozen dataclass describing one tile: grid index, slices, origin, shape, border flags, and actual per-axis overlap with neighbors.
-- `compute_tile_specs(volume_shape, tile_size, overlap)` -- Deterministic grid of overlapping tiles in row-major order. Edge tiles are clamped to volume boundaries.
+- `compute_tile_specs(volume_shape, tile_size, overlap, *, fold_slivers=True)` -- Deterministic grid of overlapping tiles in row-major order. Edge tiles are clamped to volume boundaries. `fold_slivers=True` (the default, #2838) folds an overlap-dominated trailing tile into its predecessor, which can then span up to `tile_size + overlap - 1` voxels; it is the grid every Luxar producer builds, so pairing this with `fit_tile` reproduces exactly what the CLI fits and merges. Pass `False` only to rebuild a pre-#2838 store's unfolded grid.
 - `cosine_window(spec)` -- Builds an nD separable Hann apodization window from a `TileSpec`. Two adjacent windows sum to exactly 1.0 in the overlap zone (partition-of-unity property).
 - `grid_bsp_tree(specs, *, scale=None)` -- Serialized `bsp_tree` over a uniform tile grid, so the viewer paints tile-parts back-to-front instead of by centroid (#1555). `scale` is a per-axis, finite and strictly positive factor mapping the specs' voxel frame onto the frame the splats actually live in (see below).
 - `resolve_grid_scale(ndim, *, downscale_factors=None, voxel_size=None, output_space="real")` -- Builds that `scale`. The two terms COMPOSE: a `--downscale` grid is computed on the decimated shape while the workers rescale their splats back to full resolution, and a `voxel_size` fit with `output_space="real"` emits physical centers. Returns `None` when both are no-ops (#1587). Raises on an `output_space` outside `("real", "voxel")` -- silently reading a typo as "voxel" would drop the spacing term, which is the very mismatch this closes -- on a `voxel_size` that is neither a scalar nor length-`ndim`, and on a resolved factor that is not finite and positive (a YAML `.nan` passes the fitter's own `<= 0` test and would otherwise become a `NaN` split plane). Every producer of a uniform tile grid's `bsp_tree` goes through it: `fit_tiled`, `dispatch_parallel_tiled`, and the `batch-fit` planner (which resolves the workers' `--preset`/`--config` once and records the answer as the manifest's `grid_scale`, for the merge to read).
@@ -1026,10 +1028,12 @@ above.
 - `voxel_size`: Physical voxel spacing (optional), forwarded to per-tile fitting.
 - `output_space`: `"real"` or `"voxel"` coordinate space for output centers.
 - `verbose`: Print per-tile progress (default: True).
+- `fold_tile_slivers`: Fold an overlap-dominated trailing tile into its predecessor. Defaults to `True` (#2838): there is exactly one uniform grid, shared by this function, `fit --tiling uniform` (sequential and `-j N`), the `fit --tile k/M` worker and every `batch-fit` producer. **This changed the output of existing library callers** — on `(108, 1352, 532)` at `tile_size=512, overlap=32` the grid is 3 tiles where it used to be 6, so the same call fits different regions with different per-tile budgets. Pass `False` to reproduce a historical grid.
+- `tile_seed_counts`: Optional exact non-negative integer count per resolved tile. This overrides `seeds` tile by tile and is how the CLI carries occupancy-weighted whole-volume budgets into the sequential loop. A `0` means "this tile holds no signal": the tile is not fitted at all and contributes a 0-splat placeholder, the in-process mirror of an `--allow-empty-tile` batch worker's `.empty` marker.
 - `source_shape` / `source_dtype`: Grid and stored element type of the ACQUISITION, when `volume` is already a preprocessed copy of it (a caller that decimated before tiling must declare the grid, or the merged result records the working copy as its source). Taken explicitly rather than through `**fit_kwargs` because they describe the MERGED result and are applied at the merge: forwarded to the tiles, each would claim the whole acquisition as its own crop's source. `source_shape=None` measures `volume`, which is right whenever nothing was preprocessed.
 - `**fit_kwargs`: All parameters from `fit_gaussian_splats` (seeds, n_iters, device, etc.)
 
-`seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. This differs from the CLI, where `--seeds` **is** a whole-volume budget that `luxar gsplat fit` divides by the non-empty tile count before calling this function (`cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles`). If you are fitting at a K\* from `gsplat cal` (see the calibration sections above), divide it yourself — or pass a float compression ratio, which is scale-free and needs no adjustment.
+`seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. The CLI instead computes occupancy-weighted `tile_seed_counts` from its whole-volume `--seeds K` budget. A direct Python caller can pass the same kind of per-tile sequence explicitly; otherwise divide a calibrated K\* itself, or pass a float compression ratio, which is scale-free and needs no adjustment.
 
 **Merged quality metrics:** per-region scores describe apodized tile crops or halo-padded content boxes and do not compose into the merged result, so uniform and content-planned merges render the reconstruction against the whole volume and attach `psnr_db` / `ssim` / `mse` / `foreground_*` to the merged result (#1669, #1703, #1733, #1858). The CLI save path publishes that block at the archive root; a library caller that writes a returned partition node directly must pass its `meta["fit_stats"]` through `split_fitting_info` to `write_gsplats_tree`. A partition is rendered as the sum of its surviving parts, exactly as the parts compose, without flattening the splats: uniform tiles retain overlapping Hann-apodized contributions, while content boxes retain only splats centered in disjoint cores. Before scoring, the selected volume is shifted to `clip(V - image_min, 0, None)`, the background-relative basis reconstructed by the merged fit and used by the non-tiled path and `gsplat compare` (#1173). Scoring materializes the whole reference on the host (the fit itself may only read it region by region) and renders on the resolved torch device, so admission checks both resources: the host copies stay under half of free physical RAM and the render/metric peak stays under half of free CUDA memory, each held under a 24 GiB ceiling. Concurrent local batch workers divide the default host allowance across the whole run and the default CUDA allowance across the workers on their card. `LUXAR_TILED_QUALITY_MAX_GB` overrides both checks (`0` declines outright, an unreadable value falls back with a note). Over budget, or on a failure, it says so even when `verbose=False` — an archive that silently carries no PSNR is the failure this exists to end.
 
@@ -1058,8 +1062,8 @@ Scale-hierarchical detection via optimized image decomposition.
 
 ### Tiling Functions
 
-#### `compute_tile_specs(volume_shape, tile_size, overlap)`
-Compute a deterministic grid of overlapping tiles covering a volume. Returns a list of `TileSpec` in row-major order (identical inputs always produce identical output).
+#### `compute_tile_specs(volume_shape, tile_size, overlap, *, fold_slivers=True)`
+Compute a deterministic grid of overlapping tiles covering a volume. Returns a list of `TileSpec` in row-major order (identical inputs always produce identical output). `fold_slivers` defaults to `True` (#2838) — the one uniform grid `fit_tiled`, `fit --tiling uniform`, `fit --tile k/M` and `batch-fit` share, so a hand-rolled `compute_tile_specs` + `fit_tile` loop tiles the volume exactly as the CLI does. On `(108, 1352, 532)` at `tile_size=512, overlap=32` that is 3 tiles, not the 6 the unfolded grid gives. Pass `fold_slivers=False` only to reproduce a grid planned before #2838.
 
 #### `cosine_window(spec)`
 Build an nD cosine (Hann) apodization window for a tile. Boundary faces stay at 1.0; interior faces are tapered over the actual overlap with the neighboring tile.

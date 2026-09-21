@@ -22,7 +22,7 @@ from luxar.gsplats.lod._kernels import (
     sqrt_det_from_cholesky,
     template_squared_norm_torch,
 )
-from luxar.gsplats.lod._substitutive import _TINY
+from luxar.gsplats.lod._substitutive import _TINY, chromatic_affinity
 from luxar.gsplats.lod._substitutive.warm_start import _morton_order
 from luxar.gsplats.utils.alpha import ALPHA_CLAMP
 
@@ -232,6 +232,9 @@ def _score_and_pick(
     mu_bar: torch.Tensor,
     Sigma_bar: torch.Tensor,
     cand: torch.Tensor,
+    color_features: Optional[torch.Tensor] = None,
+    bin_colors: Optional[torch.Tensor] = None,
+    color_weight: float = 0.0,
     *,
     chunk: int = 50_000,
 ) -> torch.Tensor:
@@ -257,6 +260,11 @@ def _score_and_pick(
         ones = torch.ones(b, C, dtype=dt, device=device)
         Kij = gaussian_pair_inner_product_torch(mu_i, Sig_i, a_i, mu_c, Sig_c, ones)
         score = Kij / norm[cb]  # (b, C)
+        if color_features is not None and bin_colors is not None and color_weight > 0:
+            color_distance_sq = (
+                (color_features[s:e].unsqueeze(1) - bin_colors[cb]) ** 2
+            ).sum(dim=-1)
+            score = score * chromatic_affinity(color_distance_sq, color_weight)
         pick = score.argmax(dim=1)  # (b,)
         out[s:e] = cb[torch.arange(b, device=device), pick]
     return out
@@ -272,6 +280,8 @@ def _cost_increment_lloyd_vectorized(
     iterations: int,
     candidate_bins_k: int,
     device: torch.device,
+    color_features: Optional[torch.Tensor] = None,
+    color_weight: float = 0.0,
 ) -> torch.Tensor:
     """Vectorised, monotone cost-aware Lloyd refinement.
 
@@ -311,21 +321,46 @@ def _cost_increment_lloyd_vectorized(
 
     def projection_energy(
         assign: torch.Tensor,
-    ) -> tuple[float, torch.Tensor, torch.Tensor]:
-        mu_bar, Sigma_bar, _inter, inner, norm_sq, _ = _segment_templates(
+    ) -> tuple[float, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        mu_bar, Sigma_bar, _inter, inner, norm_sq, weights = _segment_templates(
             centres, L, amps, assign, M, Sigma=Sigma, sqrt_det=sqrt_det
         )
-        P = (inner * inner / norm_sq.clamp_min(_TINY)).sum()
-        return float(P), mu_bar, Sigma_bar
+        projection = inner * inner / norm_sq.clamp_min(_TINY)
+        bin_colors = None
+        if color_features is not None and color_weight > 0.0:
+            bin_colors = torch.zeros(
+                M,
+                color_features.shape[1],
+                dtype=color_features.dtype,
+                device=device,
+            )
+            bin_colors.index_add_(0, assign, weights.unsqueeze(-1) * color_features)
+            color_delta = color_features - bin_colors[assign]
+            color_variance = torch.zeros(M, dtype=centres.dtype, device=device)
+            color_variance.index_add_(
+                0, assign, weights * (color_delta * color_delta).sum(dim=-1)
+            )
+            projection = projection * chromatic_affinity(color_variance, color_weight)
+        return float(projection.sum()), mu_bar, Sigma_bar, bin_colors
 
-    best_P, mu_bar, Sigma_bar = projection_energy(assignments)
+    best_P, mu_bar, Sigma_bar, bin_colors = projection_energy(assignments)
 
     for _ in range(int(iterations)):
         # Candidate bins = current bins of this splat's curve neighbours
         # (+ its own bin, which is included since a splat neighbours itself).
         cand = assignments[nbr_splats]  # (N, 2w+1)
-        new_assign = _score_and_pick(centres, Sigma, amps, mu_bar, Sigma_bar, cand)
-        P_new, mu_bar_new, Sigma_bar_new = projection_energy(new_assign)
+        new_assign = _score_and_pick(
+            centres,
+            Sigma,
+            amps,
+            mu_bar,
+            Sigma_bar,
+            cand,
+            color_features=color_features,
+            bin_colors=bin_colors,
+            color_weight=color_weight,
+        )
+        P_new, mu_bar_new, Sigma_bar_new, bin_colors_new = projection_energy(new_assign)
         # Accept only a strict improvement (monotone refinement). The relative
         # 1e-9 margin is calibrated for the deterministic float64 CPU path
         # (the supported/verified path — see make_substitutive_lod, which
@@ -341,6 +376,7 @@ def _cost_increment_lloyd_vectorized(
             best_P = P_new
             assignments = new_assign
             mu_bar, Sigma_bar = mu_bar_new, Sigma_bar_new
+            bin_colors = bin_colors_new
         else:
             break
     return assignments

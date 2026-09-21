@@ -7,14 +7,15 @@ from types import ModuleType
 
 import pytest
 
+GENERATOR_PATH = (
+    Path(__file__).resolve().parents[5]
+    / "packages/luxar-viewer/scripts/generate-lod-visual-ab-fixture.py"
+)
+
 
 def _load_generator() -> ModuleType:
-    script = (
-        Path(__file__).resolve().parents[5]
-        / "packages/luxar-viewer/scripts/generate-lod-visual-ab-fixture.py"
-    )
     spec = importlib.util.spec_from_file_location(
-        "generate_lod_visual_ab_fixture", script
+        "generate_lod_visual_ab_fixture", GENERATOR_PATH
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -38,6 +39,50 @@ def test_reads_level_counts_from_both_zarr_formats(
             )
 
     assert generator.read_level_element_counts(tmp_path) == [4096, 16384]
+
+
+def test_reads_counts_for_a_named_gsplat_node(tmp_path: Path) -> None:
+    generator = _load_generator()
+    for level, count in enumerate((1024, 4096)):
+        centers = tmp_path / "gsplats_chromatic" / f"child_{level}" / "centers"
+        centers.mkdir(parents=True)
+        (centers / "zarr.json").write_text(
+            json.dumps({"node_type": "array", "shape": [count, 3]})
+        )
+
+    assert generator.read_level_element_counts(
+        tmp_path, "gsplats_chromatic", "centers"
+    ) == [1024, 4096]
+
+
+def test_reads_count_from_array_reference_metadata(tmp_path: Path) -> None:
+    generator = _load_generator()
+    centers = tmp_path / "gsplats_spatial" / "child_0" / "centers"
+    centers.mkdir(parents=True)
+    (centers / "zarr.json").write_text(
+        json.dumps(
+            {
+                "node_type": "array",
+                "shape": [0, 3],
+                "attributes": {
+                    "encoding": {
+                        "name": "array_ref",
+                        "original_shape": [4096, 3],
+                    }
+                },
+            }
+        )
+    )
+
+    assert generator.read_level_element_counts(
+        tmp_path, "gsplats_spatial", "centers"
+    ) == [4096]
+
+
+def test_gsplat_fixture_interleaves_hues_below_splat_scale() -> None:
+    generator = _load_generator()
+
+    assert 3 * generator.GSPLAT_HUE_OFFSET_SCALE < generator.GSPLAT_SPLAT_SIGMA
 
 
 def test_rejects_fixture_without_readable_levels(tmp_path: Path) -> None:

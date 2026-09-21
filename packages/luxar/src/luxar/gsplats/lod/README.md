@@ -59,20 +59,22 @@ in CPython).
 
 ```python
 from luxar.gsplats.lod import (
-    make_additive_lod, make_substitutive_lod, make_lod_pyramid,
+    make_additive_lod,
+    make_substitutive_lod,
+    make_lod_pyramid,
 )
 from luxar.gsplats.gsplat_data import GSplatData
 
-data = GSplatData.load("fit.gsplats.zarr")          # bare leaf
+data = GSplatData.load("fit.gsplats.zarr")  # bare leaf
 
 # ── Additive: same N splats, prefix-monotone
-ladder = make_additive_lod(data, n_lods=4)          # GSplatData with 4-sublod additive ladder
-ladder.save("additive_lod.gsplats.zarr")            # v3.4 leaf with additive_<i>/ subgroups
+ladder = make_additive_lod(data, n_lods=4)  # GSplatData with 4-sublod additive ladder
+ladder.save("additive_lod.gsplats.zarr")  # v3.4 leaf with additive_<i>/ subgroups
 
 # ── Substitutive: ceil(N/K^L) splats per level, replacement hierarchy
 pyramid = make_substitutive_lod(data, compression_factor=4, levels=3)
 # pyramid is a GSplatData with 4 substitutive levels (index 0 = finest)
-pyramid.save("substitutive_pyramid.gsplats.zarr")   # v3.4 kind=lod group
+pyramid.save("substitutive_pyramid.gsplats.zarr")  # v3.4 kind=lod group
 for s, lev in enumerate(pyramid.substitutive_levels):
     print(f"level {s}: {lev.n_splats_total} splats, K={lev.compression_factor}")
 
@@ -80,8 +82,9 @@ for s, lev in enumerate(pyramid.substitutive_levels):
 # `coarsen_dims` lists the center-column indices coarsening may merge over;
 # the complement becomes hard grouping barriers (a categorical / timepoint /
 # channel axis), so coarse splats never blend across them. None = all dims.
-barrier = make_substitutive_lod(data4d, compression_factor=4, levels=3,
-                                coarsen_dims=[1, 2, 3])   # group by dim 0
+barrier = make_substitutive_lod(
+    data4d, compression_factor=4, levels=3, coarsen_dims=[1, 2, 3]
+)  # group by dim 0
 # In the scene API (add_points/add_lines/add_gsplats_from_data) the default is
 # Auto: coarsen the displayed dims, group by the non-displayed dims — so nD
 # scenes are barrier-correct without specifying anything. The standalone
@@ -91,10 +94,11 @@ barrier = make_substitutive_lod(data4d, compression_factor=4, levels=3,
 # ── Full pyramid: substitutive (outer) × additive (inner) in one call
 full = make_lod_pyramid(
     data,
-    compression_factor=4, levels=3,     # substitutive axis (4 levels)
-    n_additive_lods=4,                  # additive axis (4 sublods per level)
+    compression_factor=4,
+    levels=3,  # substitutive axis (4 levels)
+    n_additive_lods=4,  # additive axis (4 sublods per level)
 )
-full.save("pyramid.gsplats.zarr")       # v3.4 kind=lod group of additive-ladder leaves
+full.save("pyramid.gsplats.zarr")  # v3.4 kind=lod group of additive-ladder leaves
 ```
 
 ## API
@@ -412,6 +416,7 @@ make_substitutive_lod(
     method: str = "auto",               # see "Substitutive methods" below
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
+    color_weight: float = 0.0,           # API-only; ~0.1–1 greedy, ~1–10 Lloyd
     coverage_inflation: float = 3.0,    # anti-grid inter-spread widening (1.0 = off)
     conserve_mass: bool = True,         # per-level (per-barrier-group) DC conservation
     refine: str = "none",               # "l2" = post-merge L2 refit per level
@@ -597,8 +602,14 @@ For the **lifted points/lines LOD path** (and any caller passing
 further: each bin's amplitude is set to exactly its members' summed
 `a·|det L|` mass on the final (inflated, ridged) covariance instead of the
 L²-optimal projection. Per-bin per-channel colored light is then conserved
-together with the mass-weighted mean colors (hue coherence across levels),
-and the global `conserve_mass` rescale becomes a near-no-op safety net.
+together with the mass-weighted mean colors. Set the API-only `color_weight`
+knob to discourage cross-hue bins when spatial overlap alone would blend
+colors. Its scale is method-specific because greedy compares cluster pairs
+while Lloyd compares members and bin centroids: roughly `0.1`–`1` spans a
+soft-to-strong preference for greedy, versus `1`–`10` for Lloyd. Since `auto`
+may use both methods in one ladder, pin an explicit method when consistent
+chromatic strength matters. There is no `--color-weight` CLI or `RecipeParams`
+field today. The global `conserve_mass` rescale becomes a near-no-op safety net.
 The default stays `amplitude="l2"` for fitted volumetric gsplats.
 
 ### Substitutive methods

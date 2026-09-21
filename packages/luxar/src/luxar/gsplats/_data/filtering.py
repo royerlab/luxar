@@ -307,6 +307,7 @@ _STRUCTURE_SCOPED_STATS_KEYS = (
     "method",
     "n_substitutive_levels",
     "coverage_inflation",
+    "color_weight",
     "conserve_mass",
     "refine",
     "refine_iters",

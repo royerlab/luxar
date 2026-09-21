@@ -405,6 +405,41 @@ def test_fit_tiled_resolves_a_declined_range_once_for_the_grid(monkeypatch):
     assert len(calls) == 1
 
 
+def test_fit_tiled_honours_an_upstream_declined_range(monkeypatch):
+    """A range the CALLER already declined must not be measured again (#2838).
+
+    The occupancy scan (``_weighted_uniform_seed_counts``) resolves the shared
+    scale in order to weigh the tiles and marks it ``_norm_range_resolved``; when
+    ``_tile_norm_range`` declines, the answer it records is ``None``. ``fit_tiled``
+    tested ``norm_range is None`` BEFORE consulting that marker, so it re-read the
+    volume and printed the decline a second time — the one case the marker exists
+    to distinguish from "nobody has looked yet".
+    """
+    from luxar.gsplats import fit_tiled_gsplats as ftg
+
+    calls: list = []
+
+    def _counting(volume, fit_kwargs, applied_floor, verbose=False):
+        calls.append(applied_floor)
+        return None
+
+    monkeypatch.setattr(ftg, "_tile_norm_range", _counting)
+
+    vol = np.zeros((8, 64, 64), dtype=np.float32)
+    ftg.fit_tiled(
+        vol,
+        tile_size=32,
+        overlap=0,
+        floor="none",
+        seeds=10,
+        n_iters=1,
+        verbose=False,
+        norm_range=None,
+        _norm_range_resolved=True,
+    )
+    assert calls == []
+
+
 def test_supplied_raw_range_is_shifted_to_the_floor_subtracted_tile_basis():
     """Batch workers receive raw units; tile fitting consumes post-floor units."""
     from luxar.gsplats import fit_tiled_gsplats as ftg

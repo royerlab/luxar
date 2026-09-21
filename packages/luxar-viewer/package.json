@@ -124,7 +124,7 @@
     "@zarrita/storage": "^0.2.0",
     "comlink": "^4.4.2",
     "fflate": "^0.8.3",
-    "mediabunny": "^1.57.0",
+    "mediabunny": "^1.58.0",
     "zarrita": "^0.7.5"
   },
   "devDependencies": {
@@ -143,7 +143,7 @@
     "globals": "^17.12.0",
     "jsdom": "~30.0.1",
     "knip": "^6.36.0",
-    "prettier": "^3.9.7",
+    "prettier": "^3.9.8",
     "tsx": "^4.23.13",
     "typedoc": "^0.28.20",
     "typescript": "~5.9.3",

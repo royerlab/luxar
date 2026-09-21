@@ -365,6 +365,17 @@ class TestBuildWorkerCmd:
         assert "--allow-empty-tile" not in self._cmd()
         assert "--allow-empty-tile" in self._cmd(allow_empty_tile=True)
 
+    def test_forwards_folded_grid_and_exact_tile_seed_count(self) -> None:
+        cmd = self._cmd(fold_tile_slivers=True, tile_seed_count=37)
+
+        assert "--fold-tile-slivers" in cmd
+        assert cmd[cmd.index("--tile-seed-count") + 1] == "37"
+
+    def test_grid_geometry_is_always_stated_explicitly(self) -> None:
+        """The worker folds by default (#2838), so silence is not "unfolded"."""
+        assert "--fold-tile-slivers" in self._cmd()
+        assert "--no-fold-tile-slivers" in self._cmd(fold_tile_slivers=False)
+
     def test_quiet_and_cull_disabled(self) -> None:
         cmd = self._cmd()
         assert "--quiet" in cmd

@@ -194,6 +194,7 @@ On write, the system validates:
 - Categorical dims get `permutation` param
 - Permutation is valid (correct length, each index once)
 - Scale is non-zero
+- Scale and offset are finite
 - No mixing of affine and permutation params on a single dimension
 
 ## 7. Hierarchical Composition
@@ -404,13 +405,13 @@ The per-point cost is dominated by the existing slicing pass. The nD transform a
 ## 11. Edge Cases
 
 ### 11.1 Scale = 0
-Collapses a dimension. All points project to the same value (`offset`). Valid but likely unintentional — emit a warning.
+Rejected at validation time. Zero scale is not a supported transform.
 
 ### 11.2 Negative Scale
 Flips the dimension. Valid — reverses the ordering. Bounds computation handles min/max swap.
 
 ### 11.3 Fractional Scale on Discrete Dimensions
-`scale=0.5` on a discrete dimension means indices 0,1,2,3 become 0,1,1,2 (after rounding). Valid but lossy — emit a warning about information loss.
+`scale=0.5` on a discrete dimension means indices 0,1,2,3 become 0,1,1,2 (after rounding). Valid and lossy; no warning is emitted.
 
 ### 11.4 Permutation on Non-Categorical Dimension
 Rejected at validation time. Permutations only apply to categorical dimensions.

@@ -26,8 +26,13 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod import make_substitutive_lod
 from luxar.gsplats.lod._kernels import bin_squared_norm_torch
 from luxar.gsplats.lod._substitutive.greedy import _merge_two_clusters
+from luxar.gsplats.lod._substitutive.kmeans_lloyd import _score_and_pick
 from luxar.gsplats.lod._substitutive.warm_start import _morton_partition
-from luxar.gsplats.lod.substitutive import merge_to_count, resolved_merge_coarsen_dims
+from luxar.gsplats.lod.substitutive import (
+    _chromatic_features,
+    merge_to_count,
+    resolved_merge_coarsen_dims,
+)
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
 # ─────────────────────────────────────────────────────────────────────
@@ -2578,3 +2583,118 @@ def test_unlabeled_substitutive_default_path_is_byte_stable() -> None:
             dtype=np.float32,
         ),
     )
+
+
+def _interleaved_colour_pairs() -> GSplatData:
+    count = 800
+    rng = np.random.default_rng(7)
+    centers = rng.uniform(-1.0, 1.0, (count, 3)).astype(np.float32)
+    cholesky = np.tile(
+        np.array([0.05, 0.0, 0.05, 0.0, 0.0, 0.05], dtype=np.float32),
+        (count, 1),
+    )
+    colors = np.zeros((count, 3), dtype=np.float32)
+    colors[: count // 2, 0] = 1.0
+    colors[count // 2 :, 2] = 1.0
+    return GSplatData(
+        centers=centers,
+        amplitudes=np.ones(count, dtype=np.float32),
+        cholesky_factors=cholesky,
+        colors=colors,
+    )
+
+
+def _mixed_colour_fraction(colors: np.ndarray) -> float:
+    rgb = np.asarray(colors)[:, :3]
+    return float(np.mean(np.minimum(rgb[:, 0], rgb[:, 2]) > 0.05))
+
+
+@pytest.mark.parametrize(
+    ("method", "color_weight"),
+    [("greedy", 0.5), ("kmeans_lloyd", 8.0)],
+)
+def test_chromatic_cost_changes_merge_to_count_partition(
+    method: str, color_weight: float
+) -> None:
+    data = _interleaved_colour_pairs()
+
+    spatial = merge_to_count(data, n_target=200, method=method, device="cpu")
+    chromatic = merge_to_count(
+        data,
+        n_target=200,
+        method=method,
+        color_weight=color_weight,
+        device="cpu",
+    )
+
+    assert _mixed_colour_fraction(np.asarray(spatial.colors)) > 0.7
+    assert _mixed_colour_fraction(np.asarray(chromatic.colors)) < 0.1
+
+
+def test_black_has_neutral_chromaticity() -> None:
+    features = _chromatic_features(
+        torch.tensor([[0, 0, 0], [255, 0, 0]], dtype=torch.uint8)
+    )
+
+    assert torch.allclose(features[0], torch.full((3,), 1.0 / 3.0, dtype=torch.float64))
+    assert torch.equal(features[1], torch.tensor([1.0, 0.0, 0.0], dtype=torch.float64))
+
+
+def test_chromatic_cost_changes_full_ladder_partition() -> None:
+    out = make_substitutive_lod(
+        _interleaved_colour_pairs(),
+        compression_factor=2,
+        levels=1,
+        method="greedy",
+        color_weight=100.0,
+        device="cpu",
+    )
+
+    coarse = out.at_substitutive(1).flattened()
+    assert _mixed_colour_fraction(np.asarray(coarse.colors)) < 0.01
+    assert out.stats["color_weight"] == 100.0
+
+
+def test_lloyd_assignment_uses_chromatic_affinity_when_requested() -> None:
+    centers = torch.zeros((1, 3), dtype=torch.float64)
+    sigma = torch.eye(3, dtype=torch.float64).reshape(1, 3, 3)
+    amps = torch.ones(1, dtype=torch.float64)
+    bin_centers = torch.zeros((2, 3), dtype=torch.float64)
+    bin_sigma = torch.eye(3, dtype=torch.float64).repeat(2, 1, 1)
+    candidates = torch.tensor([[0, 1]], dtype=torch.int64)
+    red = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float64)
+    bin_colors = torch.tensor([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=torch.float64)
+
+    spatial = _score_and_pick(centers, sigma, amps, bin_centers, bin_sigma, candidates)
+    chromatic = _score_and_pick(
+        centers,
+        sigma,
+        amps,
+        bin_centers,
+        bin_sigma,
+        candidates,
+        color_features=red,
+        bin_colors=bin_colors,
+        color_weight=10.0,
+    )
+
+    assert spatial.item() == 0
+    assert chromatic.item() == 1
+
+
+@pytest.mark.parametrize("color_weight", [-1.0, np.nan, np.inf])
+def test_chromatic_cost_rejects_invalid_weights(color_weight: float) -> None:
+    with pytest.raises(ValueError, match="color_weight must be finite"):
+        merge_to_count(
+            _interleaved_colour_pairs(),
+            n_target=2,
+            color_weight=color_weight,
+            device="cpu",
+        )
+
+
+def test_chromatic_cost_requires_colors() -> None:
+    with pytest.raises(ValueError, match="requires per-splat colors"):
+        make_substitutive_lod(
+            _make_isotropic_3d(8), levels=1, color_weight=1.0, device="cpu"
+        )

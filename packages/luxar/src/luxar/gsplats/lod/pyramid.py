@@ -43,6 +43,7 @@ def make_lod_pyramid(
     substitutive_method: SubstitutiveMethodName = "auto",
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
+    color_weight: float = 0.0,
     coverage_inflation: float = 3.0,
     conserve_mass: bool = True,
     refine: str = "none",
@@ -78,7 +79,7 @@ def make_lod_pyramid(
     compression_factor, levels
         Substitutive axis parameters (passed to
         :func:`make_substitutive_lod`).
-    substitutive_method, lloyd_iterations, candidate_bins_k, coverage_inflation, refine, refine_iters, volume, volume_axes, device
+    substitutive_method, lloyd_iterations, candidate_bins_k, color_weight, coverage_inflation, refine, refine_iters, volume, volume_axes, device
         Substitutive axis algorithm parameters (``coverage_inflation`` is the
         anti-grid inter-spread widening; ``refine="l2"`` post-optimizes each
         level under the closed-form mixture L²; ``refine="volume"`` warm-start
@@ -127,6 +128,7 @@ def make_lod_pyramid(
         method=substitutive_method,
         lloyd_iterations=lloyd_iterations,
         candidate_bins_k=candidate_bins_k,
+        color_weight=color_weight,
         coverage_inflation=coverage_inflation,
         conserve_mass=conserve_mass,
         refine=refine,  # type: ignore[arg-type]

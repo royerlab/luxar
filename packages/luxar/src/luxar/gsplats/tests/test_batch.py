@@ -821,21 +821,29 @@ class TestSlurmGen:
 
 class TestTilingIntegration:
     def test_tile_count_matches_compute_tile_specs(self) -> None:
-        """Verify that batch plan always uses compute_tile_specs for tile count,
-        even when volume_shape == tile_size (overlap creates extra tiles)."""
+        """Verify that batch plan always uses compute_tile_specs for tile count.
+
+        The counts here are the FOLDED grid's — the primitive's default since
+        #2838 and what the planner has always asked for explicitly, so the two
+        now agree by construction. A volume exactly one tile wide no longer
+        becomes a 2x2x2 grid of overlap slivers: the stride puts a second start
+        at 96 whose unique coverage is 0 voxels, and folding absorbs it.
+        """
         from luxar.gsplats.tiling import compute_tile_specs
 
-        # Volume exactly equal to tile size — overlap still creates a 2x2x2 grid
+        # Volume exactly equal to tile size — the sliver row is folded away
         specs = compute_tile_specs((128, 128, 128), 128, 32)
-        assert len(specs) > 1, f"Expected >1 tiles due to overlap, got {len(specs)}"
+        assert len(specs) == 1
+        unfolded = compute_tile_specs((128, 128, 128), 128, 32, fold_slivers=False)
+        assert len(unfolded) == 8
 
         # Volume smaller than tile size — always 1 tile
         specs = compute_tile_specs((64, 64, 64), 128, 32)
         assert len(specs) == 1
 
-        # Volume much larger — many tiles
+        # Volume much larger — many tiles (5 per axis folded, 6 unfolded)
         specs = compute_tile_specs((512, 512, 512), 128, 32)
-        assert len(specs) > 1
+        assert len(specs) == 125
 
 
 # ====================================================================
@@ -4003,7 +4011,16 @@ class TestUniformSlotBspTreeFrame:
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.tiling import compute_tile_specs
 
-        n_tiles = len(compute_tile_specs(cls.SPATIAL_SHAPE, cls.TILE_SIZE, cls.OVERLAP))
+        # `fold_slivers=False` to match `BatchManifest.fold_tile_slivers`'s own
+        # default (what a manifest written before #2838 deserializes to), which
+        # is the grid every consumer of this hand-built manifest rebuilds. The
+        # primitive itself now folds by default, so leaving it out would record
+        # an `n_tiles` no consumer agrees with.
+        n_tiles = len(
+            compute_tile_specs(
+                cls.SPATIAL_SHAPE, cls.TILE_SIZE, cls.OVERLAP, fold_slivers=False
+            )
+        )
         return BatchManifest(
             mode="uniform",
             spatial_shape=cls.SPATIAL_SHAPE,

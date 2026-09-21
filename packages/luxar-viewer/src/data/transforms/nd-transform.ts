@@ -185,7 +185,7 @@ export function invertNdTransformForQuery(
       const offset = entry.offset ?? 0.0;
 
       if (scale === 0) {
-        // Scale=0 collapses all values — can't invert, skip
+        // Authoring validation rejects this; skip malformed inputs defensively.
         continue;
       }
 

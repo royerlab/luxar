@@ -104,7 +104,7 @@ def _parse_tile_worker_metadata(
     tile_volume_shape: Optional[str],
     tile_nonempty_count: Optional[int],
     tile_seed_count: Optional[int],
-    fold_tile_slivers: bool,
+    fold_tile_slivers: Optional[bool],
 ) -> "tuple[Optional[tuple[slice, ...]], Optional[tuple[int, ...]]]":
     region = _parse_tile_region(tile_region)
     shape = _parse_tile_volume_shape(tile_volume_shape)
@@ -118,10 +118,18 @@ def _parse_tile_worker_metadata(
         raise typer.BadParameter("--tile-nonempty-count must be positive")
     if tile_seed_count is not None and tile_seed_count < 0:
         raise typer.BadParameter("--tile-seed-count must be non-negative")
-    if tile_seed_count is not None and region is None:
-        raise typer.BadParameter("--tile-seed-count requires --tile-region")
-    if fold_tile_slivers and tile is None:
-        raise typer.BadParameter("--fold-tile-slivers requires --tile")
+    # A per-tile count needs a tile, not necessarily a tile-local READ plan:
+    # `batch-fit` pairs it with --tile-region, but the direct `fit -j` parent
+    # hands its workers an exact count while each still reads the whole volume.
+    if tile_seed_count is not None and tile is None:
+        raise typer.BadParameter("--tile-seed-count requires --tile")
+    # Tri-state since #2838: unset means "fold", which is what every other
+    # producer does. Only an EXPLICIT flag is a usage error off the --tile path,
+    # where there is no grid choice left to make.
+    if fold_tile_slivers is not None and tile is None:
+        raise typer.BadParameter(
+            "--fold-tile-slivers/--no-fold-tile-slivers requires --tile"
+        )
     return region, shape
 
 
@@ -317,7 +325,10 @@ def run_fit_volume(
     tile_size: int = typer.Option(
         256,
         "--tile-size",
-        help="Tile size in voxels (per axis)",
+        help="Tile size in voxels (per axis). A trailing sliver is folded into "
+        "its neighbour, so one tile per axis can span up to "
+        "tile_size + overlap - 1 voxels (256/32 -> 287, i.e. 1.41x the voxels "
+        "of a full tile in 3D); size this for that worst case.",
         rich_help_panel="Tiling",
     ),
     tile_overlap: int = typer.Option(
@@ -342,7 +353,20 @@ def run_fit_volume(
     tile_seed_count: Optional[int] = typer.Option(
         None, "--tile-seed-count", hidden=True
     ),
-    fold_tile_slivers: bool = typer.Option(False, "--fold-tile-slivers", hidden=True),
+    fold_tile_slivers: Optional[bool] = typer.Option(
+        None, "--fold-tile-slivers/--no-fold-tile-slivers", hidden=True
+    ),
+    floor_resolved: bool = typer.Option(
+        False,
+        "--floor-resolved",
+        hidden=True,
+        help="The numeric --floor on this command line is a LEVEL a parent "
+        "already resolved against the whole volume, not a user request — apply "
+        "it verbatim instead of re-guarding it against this worker's sub-volume "
+        "(#1174/#2838). Read by single-tile mode (every `-j N` and batch-fit "
+        "worker); inert elsewhere and for a non-numeric --floor, which is "
+        "guarded wherever it first becomes a level.",
+    ),
     jobs: str = typer.Option(
         "1",
         "--jobs",
@@ -480,7 +504,8 @@ def run_fit_volume(
     saturation_exponent: float = typer.Option(
         0.44,
         "--saturation-exponent",
-        help="Sub-linear exponent alpha (K~feat^alpha).",
+        help="Sub-linear exponent alpha (K~feat^alpha) for content planning "
+        "and occupancy-weighted uniform integer seed budgets.",
         rich_help_panel="Content-aware tiling",
     ),
     saturation_cap: Optional[int] = typer.Option(
@@ -789,6 +814,7 @@ def run_fit_volume(
                 feature_threshold=feature_threshold,
                 feature_metric=feature_metric,
                 target_features=target_features,
+                saturation_exponent=saturation_exponent,
                 plan_only=plan_only,
                 plan_box=plan_box,
                 progressive=progressive,
@@ -952,8 +978,14 @@ def run_fit_volume(
                     full_volume_shape=parsed_tile_volume_shape,
                     nonempty_tiles=tile_nonempty_count,
                     tile_seed_count=tile_seed_count,
-                    fold_tile_slivers=fold_tile_slivers,
+                    # Unset folds: the `--tile k/M` worker must build the same
+                    # grid the sequential, -j N and batch-fit producers do, or
+                    # M itself means something different here (#2838).
+                    fold_tile_slivers=(
+                        True if fold_tile_slivers is None else fold_tile_slivers
+                    ),
                     preselected_tile=parsed_tile_region is not None,
+                    floor_resolved=floor_resolved,
                 )
 
             elif tiled:

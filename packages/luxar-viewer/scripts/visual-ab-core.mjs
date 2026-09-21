@@ -211,6 +211,39 @@ export function evaluateThresholds(score, thresholds) {
   return { pass: Object.values(checks).every(Boolean), checks };
 }
 
+export function evaluateLowerIsBetterComparisons(results, comparisons) {
+  const byId = new Map(results.map((result) => [result.id, result]));
+  return comparisons.map((comparison) => {
+    const better = byId.get(comparison.better);
+    const worse = byId.get(comparison.worse);
+    const betterValue = better?.score?.[comparison.metric];
+    const worseValue = worse?.score?.[comparison.metric];
+    if (!Number.isFinite(betterValue) || !Number.isFinite(worseValue)) {
+      throw new Error(`comparison ${comparison.id} references a missing numeric score`);
+    }
+    const betterReference = better.score.blownPixelFraction?.reference;
+    const worseReference = worse.score.blownPixelFraction?.reference;
+    if (
+      !Number.isFinite(betterReference) ||
+      !Number.isFinite(worseReference) ||
+      betterReference !== worseReference
+    ) {
+      throw new Error(
+        `comparison ${comparison.id} requires matching finest references for ` +
+          `${comparison.better} and ${comparison.worse}`
+      );
+    }
+    const improvement = worseValue - betterValue;
+    return {
+      ...comparison,
+      betterValue,
+      worseValue,
+      improvement,
+      pass: improvement >= comparison.minImprovement,
+    };
+  });
+}
+
 /** Validate capture health and additive-light conservation for one A/B pair. */
 export function evaluateCaptureChecks(reference, candidate, thresholds) {
   const meanLumaRatio = reference.meanLuma > 0 ? candidate.meanLuma / reference.meanLuma : 0;

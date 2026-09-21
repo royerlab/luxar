@@ -145,7 +145,7 @@ describe('invertNdTransformForQuery', () => {
     expect(result.tolerance[0]).toBe(1e10);
   });
 
-  it('should skip scale=0 (cannot invert)', () => {
+  it('defensively skips scale=0, which authoring rejects', () => {
     const ndTransform: NdTransformMap = {
       Time: { scale: 0, offset: 50.0 },
     };
@@ -156,7 +156,7 @@ describe('invertNdTransformForQuery', () => {
       dims(['X', 'Y', 'Z', 'Time']),
       [0, 1, 2]
     );
-    // Unchanged — scale=0 is not invertible
+    // Unchanged — malformed zero scale is skipped defensively
     expect(result.slicePosition[3]).toBe(50);
     expect(result.tolerance[3]).toBe(5);
   });
@@ -357,8 +357,8 @@ describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
     expect(result.slicePosition[3]).toBe(5);
   });
 
-  it('skips the dimension when scale === 0 (cannot invert)', () => {
-    // Source guard: if (scale === 0) continue;
+  it('defensively skips scale=0, which authoring rejects', () => {
+    // Malformed zero scale is skipped rather than divided through
     const ndTransform: NdTransformMap = {
       Time: { scale: 0, offset: 10 },
     };
