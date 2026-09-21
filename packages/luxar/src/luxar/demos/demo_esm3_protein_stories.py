@@ -722,9 +722,9 @@ AMBISONIC_BED_SPREAD_DEG = 50.0
 # without one the original MP3 plays as is.
 AMBIENT_BED_LOOP_CROSSFADE_S = 15.0
 
-# Narration is synthesised at BUILD time (OpenAI TTS when a key is present, the
-# macOS system voice otherwise; a Linux box without a key builds silently) and
-# cached under this demo's own cache dir, keyed by (engine, voice, text).
+# Narration is synthesised at BUILD time (the macOS system voice when available,
+# OpenAI TTS only when LUXAR_NARRATION_ENGINE=openai explicitly selects it;
+# otherwise the build warns and stays silent) and cached by (engine, voice, text).
 NARRATION_CACHE_DIR = (
     Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "narration"
 )
