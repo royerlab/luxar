@@ -58,7 +58,9 @@ maximum mean CIE76 DeltaE, and maximum increase in full-resolution blown-pixel
 fraction. The finest arm must also contain a recorded minimum fraction of blown
 pixels so the clipping check cannot silently become inert. A threshold change
 should include the old and new measured values in the PR description and refresh
-the recorded provenance.
+the recorded provenance. The top-level `comparisons` array records cross-bench
+margins; re-derive those margins alongside the per-bench values whenever the
+fixture or thresholds change.
 
 ## Build
 
