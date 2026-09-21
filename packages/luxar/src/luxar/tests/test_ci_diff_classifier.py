@@ -1969,7 +1969,7 @@ print-launcher-pkg-config-path:
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
-    """CI and the make target check Darwin without slowing every commit."""
+    """CI checks the platform and version edges without slowing every commit."""
     with (REPO / "pyproject.toml").open("rb") as stream:
         scripts = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"]["scripts"]
     lint_commands = scripts["lint"]
@@ -2002,7 +2002,7 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     lint_steps = [step for step in ci_steps if step.get("run") == "hatch run lint"]
     assert len(lint_steps) == 1
 
-    required_scripts = {"type-check", "type-check-darwin"}
+    required_scripts = {"type-check", "type-check-darwin", "type-check-py314"}
     assert required_scripts <= set(lint_commands)
     assert {f"$(HATCH) run {script}" for script in required_scripts} <= make_commands
 
@@ -2031,6 +2031,11 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     assert darwin_options["--platform"] == "darwin"
     assert darwin_options["--cache-dir"] == ".mypy_cache/darwin"
     assert darwin_targets == host_targets
+
+    py314_options, py314_targets = parse_mypy_command(scripts["type-check-py314"])
+    assert py314_options["--python-version"] == "3.14"
+    assert py314_options["--cache-dir"] == ".mypy_cache/py314"
+    assert py314_targets == host_targets
 
 
 def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
