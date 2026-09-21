@@ -61,6 +61,8 @@ import {
   type ExampleFixtureStatus,
 } from '../../../tools/example-fixture-freshness';
 
+export type { ExampleFixtureStatus } from '../../../tools/example-fixture-freshness';
+
 /** Annotation type that opts a spec out of the auto console-error check. */
 export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
 

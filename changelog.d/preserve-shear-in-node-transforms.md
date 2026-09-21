@@ -16,7 +16,7 @@ rotation matrix that round trip must fail, and against the old code it succeeded
 to 1.1e-16.
 
 Two supporting fixes came out of running that suite. Playwright's example
-fixture status is tri-state but reached the workers as a single stale/not-stale
+fixture status is four-state but reached the workers as a single stale/not-stale
 boolean, so a checkout with no `datasets/examples` at all looked healthy and
 every spec that needed one died on a bare 45 s readiness timeout with no stated
 cause; `missing` is now its own state carrying the directory and the remedy.

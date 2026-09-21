@@ -4,7 +4,7 @@ Focused modules split out from the `NodeFactory` orchestrator one level
 up at `rendering/node-factory.ts`. The orchestrator owns its caches,
 the picking-system reference, and the public per-type entry points
 (`createPointsNode`, `createLinesNode`, `createGSplatsNode`); these
-helpers own the work — input validation, transform decomposition, and
+helpers own the work — input validation, transform application, and
 per-geometry mesh / material construction.
 
 Every helper here is pure over its arguments (aside from `log.*` side
