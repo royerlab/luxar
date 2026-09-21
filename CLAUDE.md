@@ -492,12 +492,13 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # reports): a tiled fit DIVIDES it across the tiles that survive the resolved
 # floor plus Hann window instead of giving each tile the full count. The grid is
 # unified but the WEIGHTING is not. `fit --tiling uniform` (sequential and the
-# `-j N` parent) and `batch-fit` divide K OCCUPANCY-WEIGHTED (saturated
-# Hann-weighted foreground per tile), so a busy tile gets more than a
-# nearly-empty one. Two paths stay EQUAL-SHARE: a hand-run `fit --tile k/M`
-# (no parent to hand it a count; scanning the volume per worker is the cost the
-# plan exists to avoid), and a `batch-fit` plan that cannot resolve tile-local
-# reads (`--downscale`, `--denoise`, a deferred or volume-derived floor, no
+# `-j N` parent) and `batch-fit` divide K OCCUPANCY-WEIGHTED (Hann-weighted
+# tile size scaled by the saturated foreground fraction), so a busy tile gets
+# more than a nearly-empty one. Two paths stay EQUAL-SHARE: a hand-run
+# `fit --tile k/M` (no parent to hand it a count; scanning the volume per worker
+# is the cost the plan exists to avoid), and a `batch-fit` plan that cannot
+# resolve tile-local reads (`--downscale`, `--denoise`, a deferred or
+# volume-derived floor, no
 # plan-resolved `--norm-range`) or — Slurm only — whose inline seed table would
 # be too big for the script, so the same plan can allocate differently locally
 # and on Slurm. Either way every non-empty tile gets at least 1, and K below the

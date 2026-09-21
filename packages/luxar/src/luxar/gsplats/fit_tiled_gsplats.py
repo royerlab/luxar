@@ -63,15 +63,17 @@ def tile_occupancy_weight(
     signal_threshold: float = _TILE_SIGNAL_EPS,
     saturation_exponent: float = 1.0,
 ) -> float:
-    """Return a saturated Hann-weighted foreground count for one uniform tile."""
+    """Return Hann-weighted tile size scaled by saturated foreground fraction."""
     windowed = tile_data * window
     if not tile_has_signal(windowed):
         return 0.0
     occupied = tile_data >= max(float(signal_threshold), _TILE_SIGNAL_EPS)
+    hann_voxels = float(np.sum(window, dtype=np.float64))
     foreground = float(np.sum(window, where=occupied, dtype=np.float64))
     if foreground > 0.0:
-        return float(foreground ** float(saturation_exponent))
-    return 1.0
+        foreground_fraction = foreground / hann_voxels
+        return float(hann_voxels * foreground_fraction ** float(saturation_exponent))
+    return float(hann_voxels * (1.0 / hann_voxels) ** float(saturation_exponent))
 
 
 def count_nonempty_tiles(
@@ -116,7 +118,7 @@ def uniform_tile_occupancy_weights(
     signal_threshold: float,
     saturation_exponent: float,
 ) -> list[float]:
-    """Measure saturated Hann-weighted occupancy for a uniform tile grid."""
+    """Measure normalized Hann-weighted occupancy for a uniform tile grid."""
     weights: list[float] = []
     for spec in specs:
         tile_data = np.asarray(volume[spec.slices], dtype=np.float32)

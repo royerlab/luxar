@@ -373,9 +373,9 @@ which case you are in:
 
 * ``--tiling uniform`` launched as one command — the sequential in-process
   path, or a ``-j N`` parent and its workers — weights the split by
-  **occupancy**: the parent measures saturated Hann-weighted foreground per
-  tile once and hands each tile its exact count, so a busy tile gets more than
-  a barely occupied one.
+  **occupancy**: the parent scales each tile's Hann-weighted size by its
+  saturated foreground fraction, so a busy tile gets more than a barely
+  occupied one.
 * ``batch-fit`` weights it the same way *when the plan can resolve tile-local
   reads*. It falls back to the equal share when it cannot: under
   ``--downscale`` or ``--denoise``, with a deferred or volume-derived floor, or

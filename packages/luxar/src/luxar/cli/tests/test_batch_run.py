@@ -191,6 +191,61 @@ def test_resume_warns_when_completed_tiles_predate_weighting(
 
 
 @pytest.mark.parametrize(
+    ("fresh_weights", "warns"),
+    [
+        ([[2.0, 4.0]], True),
+        ([[1.0 + 5e-10, 2.0 - 5e-10]], False),
+    ],
+)
+def test_resume_compares_completed_tile_occupancy_weights_with_tolerance(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    fresh_weights: list[list[float]],
+    warns: bool,
+) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 0, 2, "tile0.gsplats.zarr", 0.0)
+    common = {
+        "mode": "uniform",
+        "spatial_shape": (16, 16, 24),
+        "tile_size": 16,
+        "tile_overlap": 4,
+        "n_tiles": 2,
+        "fold_tile_slivers": False,
+    }
+    existing = BatchManifest(
+        **common,
+        jobs=[job],
+        tile_occupancy_weights=[[1.0, 2.0]],
+    )
+    save_manifest(existing, output_dir)
+    tile_path = output_dir / "tiles" / job.output_filename
+    tile_path.mkdir(parents=True)
+    fresh = BatchManifest(
+        **common,
+        tile_occupancy_weights=fresh_weights,
+    )
+
+    _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+
+    warning = (
+        "1 completed tile planned with different occupancy weights will keep its "
+        "existing seed budget. Pass --no-resume to refit every tile."
+    )
+    output = capsys.readouterr().out
+    assert (warning in output) is warns
+
+
+@pytest.mark.parametrize(
     ("existing_mode", "fresh_mode"),
     [("content", "content"), ("uniform", "content")],
 )
@@ -1091,14 +1146,19 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     assert manifest.fold_tile_slivers is True
     assert manifest.tile_nonempty_counts == [2]
     assert manifest.tile_occupancy_weights == [
-        [pytest.approx(64.0**0.44), 0.0, 0.0, 1.0]
+        [
+            pytest.approx(4096.0 * (64.0 / 4096.0) ** 0.44),
+            0.0,
+            0.0,
+            pytest.approx(1024.0 * (1.0 / 1024.0) ** 0.44),
+        ]
     ]
     argv = build_task_fit_argv(
         manifest, manifest.jobs[3], tmp_path / "tile.gsplats.zarr", argv0=[]
     )
     assert argv[argv.index("--tile-region") + 1] == "0:16,16:24,16:24"
     assert argv[argv.index("--tile-nonempty-count") + 1] == "2"
-    assert argv[argv.index("--tile-seed-count") + 1] == "14"
+    assert argv[argv.index("--tile-seed-count") + 1] == "7"
     output = capsys.readouterr().out
     assert "occupancy-weighted across 4 grid tiles" in output
     assert "exact per-tile counts resolved at plan time" in output
