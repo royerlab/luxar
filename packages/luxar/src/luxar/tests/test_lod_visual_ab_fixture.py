@@ -80,10 +80,9 @@ def test_reads_count_from_array_reference_metadata(tmp_path: Path) -> None:
 
 
 def test_gsplat_fixture_interleaves_hues_below_splat_scale() -> None:
-    source = GENERATOR_PATH.read_text()
+    generator = _load_generator()
 
-    assert "hue_offset = (gsplat_hue - 1.5) * 0.002" in source
-    assert "[0.045, 0.0, 0.045" in source
+    assert 3 * generator.GSPLAT_HUE_OFFSET_SCALE < generator.GSPLAT_SPLAT_SIGMA
 
 
 def test_rejects_fixture_without_readable_levels(tmp_path: Path) -> None:

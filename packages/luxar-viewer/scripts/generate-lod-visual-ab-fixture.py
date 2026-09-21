@@ -12,6 +12,9 @@ from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler, Viewer
 from luxar._zarr_compat import read_array_meta
 from luxar.encoding import EncodingMode
 
+GSPLAT_HUE_OFFSET_SCALE = 0.002
+GSPLAT_SPLAT_SIGMA = 0.045
+
 
 def read_level_element_counts(
     output: Path, node_name: str = "points_additive", array_name: str = "positions"
@@ -131,7 +134,7 @@ def build_fixture(output: Path) -> None:
             (gsplat_sample + 0.5) / (gsplat_count // 4)
         )
         gsplat_angle = gsplat_radius * 1.8
-        hue_offset = (gsplat_hue - 1.5) * 0.002
+        hue_offset = (gsplat_hue - 1.5) * GSPLAT_HUE_OFFSET_SCALE
         gsplat_centers = np.column_stack(
             [
                 (gsplat_radius + hue_offset) * np.cos(gsplat_angle),
@@ -145,7 +148,10 @@ def build_fixture(output: Path) -> None:
         )
         gsplat_colors = palette[gsplat_hue]
         gsplat_cholesky = np.tile(
-            np.array([0.045, 0.0, 0.045, 0.0, 0.0, 0.045], dtype=np.float32),
+            np.array(
+                [GSPLAT_SPLAT_SIGMA, 0.0, GSPLAT_SPLAT_SIGMA, 0.0, 0.0, GSPLAT_SPLAT_SIGMA],
+                dtype=np.float32,
+            ),
             (gsplat_count, 1),
         )
         scene.add_gsplats(
