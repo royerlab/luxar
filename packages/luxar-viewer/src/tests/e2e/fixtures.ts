@@ -56,7 +56,10 @@
 
 import { test as base } from '@playwright/test';
 import { StorageKeys } from '../../utils/storage-keys';
-import { EXAMPLE_DATASETS_STATUS_ENV } from '../../../tools/example-fixture-freshness';
+import {
+  EXAMPLE_DATASETS_STATUS_ENV,
+  type ExampleFixtureStatus,
+} from '../../../tools/example-fixture-freshness';
 
 /** Annotation type that opts a spec out of the auto console-error check. */
 export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
@@ -160,7 +163,7 @@ export function unexpectedConsoleErrors(
  */
 export function exampleDatasetFailureWarning(
   status: string | undefined,
-  examplesStatus: string | undefined
+  examplesStatus: ExampleFixtureStatus | undefined
 ): string | undefined {
   if (status !== 'failed' && status !== 'timedOut') return undefined;
   const remedy = 'run "make run-examples" from the repository root.';
@@ -222,7 +225,7 @@ export const test = base.extend({
 
       const examplesWarning = exampleDatasetFailureWarning(
         testInfo.status,
-        process.env[EXAMPLE_DATASETS_STATUS_ENV]
+        process.env[EXAMPLE_DATASETS_STATUS_ENV] as ExampleFixtureStatus | undefined
       );
       if (examplesWarning) console.warn(`\n⚠️  ${examplesWarning}\n`);
 
