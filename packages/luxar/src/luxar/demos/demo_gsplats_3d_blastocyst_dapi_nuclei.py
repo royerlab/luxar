@@ -813,6 +813,23 @@ def resolve_gsplats() -> list[GSplatData] | None:
     name, a missing packaged manifest or an in-repo copy failing its sha256 are
     faults, and must not be disguised as a routine multi-minute refit.
     """
+    if SYNTHETIC:
+        # NEVER consult the manifest under --synthetic. It resolves the pinned
+        # REAL artifact, and main() reaches here before anything else looks at
+        # the flag — so on any machine that can reach the record (or has the
+        # cache warm) the real microscopy was returned and then published under
+        # the synthetic identity: citation stripped, title saying "not
+        # microscopy", and the real artifact's sha256 stamped in as an input
+        # digest. That is the provenance defect this demo was fixed for,
+        # pointing the other way. It also meant --synthetic did not work
+        # offline, which is its entire purpose.
+        #
+        # Only the synthetic namespace is consulted, and only when not
+        # recomputing; otherwise the caller synthesizes and fits.
+        if RECOMPUTE:
+            return None
+        return load_local_fit_gsplats_at([LOCAL_FIT], label=f"{DEMO_NAME} (synthetic)")
+
     try:
         precomputed = load_dataset_gsplats(
             DEMO_NAME,

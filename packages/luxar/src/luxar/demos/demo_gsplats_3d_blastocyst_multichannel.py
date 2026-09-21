@@ -204,6 +204,11 @@ GSPLATS_FILES = [
     "blastocyst_ch0.gsplats.zarr.zip",
     "blastocyst_ch1.gsplats.zarr.zip",
 ]
+# The synthetic cache names, defined ONCE. The writer and the reader derived
+# them separately before, so the writer stored synthetic_* and the reader asked
+# for the real names: the synthetic cache was write-only and every --synthetic
+# run refit from scratch.
+SYNTHETIC_GSPLATS_FILES = [f"synthetic_{name}" for name in GSPLATS_FILES]
 
 # Parse command-line flags
 FLAGS = parse_demo_flags()
@@ -416,10 +421,10 @@ def fit_all_channels(volumes, source_dtype=None):
             ch_name = ch_config["name"]
             # Separate cache namespace under --synthetic: sharing it would let
             # one offline run poison every later online run through the cache.
-            cache_name = (
-                f"synthetic_{GSPLATS_FILES[i]}" if SYNTHETIC else GSPLATS_FILES[i]
+            cache_file = local_fit_path(
+                DEMO_NAME,
+                (SYNTHETIC_GSPLATS_FILES if SYNTHETIC else GSPLATS_FILES)[i],
             )
-            cache_file = local_fit_path(DEMO_NAME, cache_name)
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel(
@@ -687,6 +692,16 @@ def resolve_gsplats() -> list[GSplatData] | None:
     name, a missing packaged manifest or an in-repo copy failing its sha256 are
     faults, and must not be disguised as a routine multi-minute refit.
     """
+    if SYNTHETIC:
+        # See the DAPI sibling: consulting the manifest here returned the real
+        # pinned artifact and published it under the synthetic identity. Read
+        # only the synthetic namespace, and read the SAME names fit_all_channels
+        # writes — this previously wrote synthetic_*.zarr.zip and read back the
+        # real names, so the synthetic cache was write-only and every run refit.
+        if RECOMPUTE:
+            return None
+        return load_local_fit_gsplats(DEMO_NAME, SYNTHETIC_GSPLATS_FILES)
+
     try:
         precomputed = load_dataset_gsplats(
             DEMO_NAME,
