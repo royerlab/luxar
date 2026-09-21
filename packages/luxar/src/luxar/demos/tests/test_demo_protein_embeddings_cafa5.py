@@ -778,6 +778,23 @@ def test_accessions_refuse_an_object_array(tmp_path) -> None:
         load_accessions(path)
 
 
+def test_accessions_refuse_a_bare_pickle_without_unsafe_advice(tmp_path) -> None:
+    import pickle
+
+    marker = tmp_path / "executed"
+
+    class Exploit:
+        def __reduce__(self):
+            return (pathlib.Path.touch, (marker,))
+
+    path = tmp_path / "train_ids.npy"
+    path.write_bytes(pickle.dumps(Exploit()))
+
+    with pytest.raises(ValueError, match="refusing to unpickle downloaded file"):
+        load_accessions(path)
+    assert not marker.exists(), "the payload ran — the restriction is not holding"
+
+
 def test_a_malicious_accessions_pickle_is_refused_not_executed(tmp_path) -> None:
     """The reason this loader exists.
 

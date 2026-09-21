@@ -345,7 +345,7 @@ def load_accessions(ids_file: Path) -> list[str]:
     try:
         array = np.atleast_1d(np.load(ids_file, allow_pickle=False))
     except ValueError as error:
-        if "Object arrays cannot be loaded" not in str(error):
+        if "allow_pickle" not in str(error):
             raise
         raise ValueError(
             "the bundle's accessions file is not a plain string array; refusing "
