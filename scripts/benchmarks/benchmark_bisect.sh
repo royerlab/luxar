@@ -41,6 +41,8 @@ BUILD_SCRIPT_REL="packages/luxar/src/luxar/gsplats/models/gsplats/cuda/build.py"
 CUDA_DIR_REL="packages/luxar/src/luxar/gsplats/models/gsplats/cuda"
 
 # Commits to benchmark (oldest to newest) - all commits touching CUDA code
+# These SHAs predate the September 2026 git history rewrite and no longer
+# resolve in this repository; they are kept for reference only. Do not re-derive.
 COMMITS=(
     "f8a1ebb:feat: add CUDA backend for gsplats"
     "922493e:fix(cuda): fix build system after make clean-cuda"
