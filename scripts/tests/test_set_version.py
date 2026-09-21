@@ -458,6 +458,8 @@ def _run_release_preflight(
     repository: str = "UNSET",
     organization: str = "UNSET",
     repository_direct: str | None = None,
+    changelog_state: str = "ready",
+    check: bool = True,
 ) -> tuple[str, list[str]]:
     repo = tmp_path / "release-repo"
     (repo / "scripts").mkdir(parents=True)
@@ -470,6 +472,21 @@ def _run_release_preflight(
     (repo / "packages/luxar/src/luxar/__init__.py").write_text(
         '__version__ = "2099.01.01"\n'
     )
+    # These tests assert the preflight reaches the npm section, which only
+    # happens on a tree that is actually ready to tag. Since the preflight now
+    # gates on release-prep state, the fixture has to model a folded changelog:
+    # no pending fragments, and a CHANGELOG naming the version being released.
+    # `changelog_state` lets the two gate tests below break exactly one half.
+    if changelog_state != "no-changelog":
+        (repo / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [2099.01.01]\n\nFixture release section.\n"
+            if changelog_state != "uncut"
+            else "# Changelog\n\n## [Unreleased]\n\nFixture.\n"
+        )
+    (repo / "changelog.d").mkdir()
+    (repo / "changelog.d/README.md").write_text("fragments live here\n")
+    if changelog_state == "pending-fragments":
+        (repo / "changelog.d/1234.md").write_text("#### A fragment\n\nBody.\n")
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -567,10 +584,50 @@ else:
         env=env,
         text=True,
         capture_output=True,
-        check=True,
+        check=check,
     )
     calls = gh_log.read_text().splitlines() if gh_log.exists() else []
-    return result.stdout, calls
+    return result.stdout + result.stderr, calls
+
+
+def test_release_preflight_refuses_unfolded_changelog_fragments(tmp_path: Path) -> None:
+    """A pending fragment means `make changelog` was never run.
+
+    Before this gate the preflight would tag happily with every fragment still
+    unfolded, publishing a release whose CHANGELOG.md does not describe it. The
+    real tree had 588 pending when the gate was written.
+    """
+    output, _ = _run_release_preflight(
+        tmp_path, changelog_state="pending-fragments", check=False
+    )
+
+    assert "unfolded fragment" in output
+    assert "make changelog" in output
+    # It must stop, not warn and continue into the publish plan.
+    assert "6. Plan" not in output
+
+
+def test_release_preflight_refuses_a_changelog_that_omits_the_version(
+    tmp_path: Path,
+) -> None:
+    """Folding the fragments is not the same as cutting the release section.
+
+    The two halves fail independently: fragments can be folded without the cut
+    (this case), and the cut can be made before a late fragment lands.
+    """
+    output, _ = _run_release_preflight(tmp_path, changelog_state="uncut", check=False)
+
+    assert "does not name version 2099.01.01" in output
+    assert "make changelog-release" in output
+    assert "6. Plan" not in output
+
+
+def test_release_preflight_reports_a_missing_changelog(tmp_path: Path) -> None:
+    output, _ = _run_release_preflight(
+        tmp_path, changelog_state="no-changelog", check=False
+    )
+
+    assert "CHANGELOG.md is missing" in output
 
 
 def test_release_preflight_honors_environment_precedence(tmp_path: Path) -> None:
