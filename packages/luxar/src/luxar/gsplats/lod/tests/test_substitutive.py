@@ -2609,8 +2609,13 @@ def _mixed_colour_fraction(colors: np.ndarray) -> float:
     return float(np.mean(np.minimum(rgb[:, 0], rgb[:, 2]) > 0.05))
 
 
-@pytest.mark.parametrize("method", ["greedy", "kmeans_lloyd"])
-def test_chromatic_cost_changes_merge_to_count_partition(method: str) -> None:
+@pytest.mark.parametrize(
+    ("method", "color_weight"),
+    [("greedy", 0.5), ("kmeans_lloyd", 8.0)],
+)
+def test_chromatic_cost_changes_merge_to_count_partition(
+    method: str, color_weight: float
+) -> None:
     data = _interleaved_colour_pairs()
 
     spatial = merge_to_count(data, n_target=200, method=method, device="cpu")
@@ -2618,7 +2623,7 @@ def test_chromatic_cost_changes_merge_to_count_partition(method: str) -> None:
         data,
         n_target=200,
         method=method,
-        color_weight=8.0,
+        color_weight=color_weight,
         device="cpu",
     )
 
