@@ -447,18 +447,17 @@ describe('NodeFactory', () => {
   });
 
   describe('applyTransform', () => {
+    // These assert on `object.matrix`, not on position/quaternion/scale. The
+    // transform is installed as a full affine matrix precisely so that shear
+    // survives (see the shear case below), and TRS is no longer populated.
     it('should apply identity transform without changing object', () => {
       const object = new THREE.Object3D();
       const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
       factory.applyTransform(object, identity);
 
-      expect(object.position.x).toBe(0);
-      expect(object.position.y).toBe(0);
-      expect(object.position.z).toBe(0);
-      expect(object.scale.x).toBe(1);
-      expect(object.scale.y).toBe(1);
-      expect(object.scale.z).toBe(1);
+      expect(Array.from(object.matrix.elements)).toEqual(identity);
+      expect(object.matrixAutoUpdate).toBe(false);
     });
 
     it('should apply translation correctly', () => {
@@ -468,9 +467,12 @@ describe('NodeFactory', () => {
 
       factory.applyTransform(object, translation);
 
-      expect(object.position.x).toBe(5);
-      expect(object.position.y).toBe(10);
-      expect(object.position.z).toBe(15);
+      expect(Array.from(object.matrix.elements)).toEqual(translation);
+      // The world matrix must be refreshed, not left stale: with
+      // matrixAutoUpdate off nothing else marks it dirty, and the pick nodes
+      // snapshot matrixWorld by value.
+      const origin = new THREE.Vector3(0, 0, 0).applyMatrix4(object.matrixWorld);
+      expect([origin.x, origin.y, origin.z]).toEqual([5, 10, 15]);
     });
 
     it('should apply scale correctly', () => {
@@ -480,9 +482,47 @@ describe('NodeFactory', () => {
 
       factory.applyTransform(object, scale);
 
-      expect(object.scale.x).toBe(2);
-      expect(object.scale.y).toBe(3);
-      expect(object.scale.z).toBe(4);
+      expect(Array.from(object.matrix.elements)).toEqual(scale);
+      const p = new THREE.Vector3(1, 1, 1).applyMatrix4(object.matrixWorld);
+      expect([p.x, p.y, p.z]).toEqual([2, 3, 4]);
+    });
+
+    it('should preserve shear, which a TRS decomposition cannot represent', () => {
+      const object = new THREE.Object3D();
+      // Column-major. Linear block shears x by y: (x, y, z) -> (x + y, y, z).
+      // Decomposing this into position/quaternion/scale loses the off-diagonal
+      // term and silently returns different geometry -- measured before the
+      // fix, (0,1,0) came back as (0.5, 1.319, 0) instead of (1,1,0).
+      const shear = [1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+      factory.applyTransform(object, shear);
+
+      expect(Array.from(object.matrix.elements)).toEqual(shear);
+
+      const p = new THREE.Vector3(0, 1, 0).applyMatrix4(object.matrixWorld);
+      expect(p.x).toBeCloseTo(1, 10);
+      expect(p.y).toBeCloseTo(1, 10);
+      expect(p.z).toBeCloseTo(0, 10);
+    });
+
+    it('should preserve a rotate-then-non-uniform-scale composition', () => {
+      // The idiom `compose(rotate_y(30), scale(1.5, 0.8, 1.2))` is advertised by
+      // luxar.transforms and authored by examples/transform_example.py. R·S with
+      // non-uniform S is not expressible as Q·S', so it is a genuine shear.
+      const object = new THREE.Object3D();
+      const composed = new THREE.Matrix4()
+        .makeRotationY(Math.PI / 6)
+        .multiply(new THREE.Matrix4().makeScale(1.5, 0.8, 1.2));
+
+      factory.applyTransform(object, Array.from(composed.elements));
+
+      const probe = new THREE.Vector3(1, 1, 1);
+      const viaViewer = probe.clone().applyMatrix4(object.matrixWorld);
+      const viaAuthored = probe.clone().applyMatrix4(composed);
+
+      expect(viaViewer.x).toBeCloseTo(viaAuthored.x, 10);
+      expect(viaViewer.y).toBeCloseTo(viaAuthored.y, 10);
+      expect(viaViewer.z).toBeCloseTo(viaAuthored.z, 10);
     });
 
     it('should throw on invalid transform length', () => {

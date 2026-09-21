@@ -33,10 +33,13 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
 
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points' || obj.type === 'Group') {
-          const localPos = obj.position.toArray();
+          // Local translation comes from the matrix, not `.position`: node
+          // transforms are installed as a full affine matrix (so shear
+          // survives) and TRS is left unpopulated.
+          const e = obj.matrix.elements;
+          const localPos = [e[12], e[13], e[14]];
 
-          // Get world position by cloning position and using getWorldPosition
-          const worldPosVec = obj.position.clone();
+          const worldPosVec = new (obj.position.constructor as any)();
           obj.getWorldPosition(worldPosVec);
 
           results.push({
@@ -64,10 +67,16 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
         Math.abs(child.localPos[1] - child.worldPos[1]) > 0.01 ||
         Math.abs(child.localPos[2] - child.worldPos[2]) > 0.01;
 
-      // This indicates parent transform is being applied
-      // Note: May be false if parent has no transform (identity)
-      // Just verify we can query world positions successfully
-      expect(typeof localDiffersFromWorld).toBe('boolean');
+      // The previous assertion here was `expect(typeof x).toBe('boolean')`,
+      // which is true of any boolean and therefore tested nothing. A child's
+      // world position must at minimum be finite and derived from the parent
+      // chain; whether it DIFFERS from local depends on the fixture, so that
+      // stays a soft signal rather than a hard assertion.
+      expect(child.worldPos.every((v) => Number.isFinite(v))).toBe(true);
+      expect(parent.worldPos.every((v) => Number.isFinite(v))).toBe(true);
+      if (parent.localPos.some((v) => Math.abs(v) > 0.01)) {
+        expect(localDiffersFromWorld).toBe(true);
+      }
     } else {
       // If no clear parent-child found, just verify hierarchy exists
       expect(positions.length).toBeGreaterThan(0);
@@ -103,57 +112,65 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
     await page.goto(`/?src=${TRANSFORM_DATASET}&debug`);
     await waitForLuxarReady(page);
 
-    // Find rotated object
+    // Read the MATRIX, not position/quaternion/scale: authored node transforms
+    // are installed as a full affine matrix so shear survives, which leaves the
+    // TRS fields at their defaults. Reading `obj.rotation` here would report no
+    // rotation on a correctly-rotated node.
     const rotatedObject = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
 
       let rotated: any = null;
       debug.scene.traverse((obj: any) => {
         if (obj.name && obj.name.includes('Rotated')) {
-          rotated = {
-            name: obj.name,
-            rotation: obj.rotation.toArray().slice(0, 3), // [x, y, z] (ignore order)
-            quaternion: obj.quaternion.toArray(),
-          };
+          rotated = { name: obj.name, matrix: Array.from(obj.matrix.elements) };
         }
       });
 
       return rotated;
     });
 
-    if (rotatedObject) {
-      // Verify rotation is not identity (at least one axis has rotation)
-      const hasRotation = rotatedObject.rotation.some((r: number) => Math.abs(r) > 0.01);
-      expect(hasRotation).toBe(true);
-    }
+    // Fail if the fixture node is absent — an `if (obj)` guard would turn a
+    // missing node into a silent pass, which is how this class of test rots.
+    expect(rotatedObject, 'no node named *Rotated* in the scene').not.toBeNull();
+
+    // The 3x3 linear block must not be the identity.
+    const m = rotatedObject.matrix;
+    const linear = [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]];
+    const identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    const hasRotation = linear.some((v: number, i: number) => Math.abs(v - identity[i]) > 0.01);
+    expect(hasRotation).toBe(true);
   });
 
   test('should apply scale transforms correctly', async ({ page }) => {
     await page.goto(`/?src=${TRANSFORM_DATASET}&debug`);
     await waitForLuxarReady(page);
 
-    // Find scaled object
+    // Matrix, not `.scale` — see the rotation test above.
     const scaledObject = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
 
       let scaled: any = null;
       debug.scene.traverse((obj: any) => {
         if (obj.name && obj.name.includes('Scaled')) {
-          scaled = {
-            name: obj.name,
-            scale: obj.scale.toArray(),
-          };
+          scaled = { name: obj.name, matrix: Array.from(obj.matrix.elements) };
         }
       });
 
       return scaled;
     });
 
-    if (scaledObject) {
-      // Verify scale is not identity [1, 1, 1]
-      const hasScale = scaledObject.scale.some((s: number) => Math.abs(s - 1.0) > 0.01);
-      expect(hasScale).toBe(true);
-    }
+    expect(scaledObject, 'no node named *Scaled* in the scene').not.toBeNull();
+
+    // Column norms of the 3x3 linear block are the axis scale factors, and they
+    // stay correct under shear (unlike reading `.scale`, which is unpopulated).
+    const m = scaledObject.matrix;
+    const axisLengths = [
+      Math.hypot(m[0], m[1], m[2]),
+      Math.hypot(m[4], m[5], m[6]),
+      Math.hypot(m[8], m[9], m[10]),
+    ];
+    const hasScale = axisLengths.some((s: number) => Math.abs(s - 1.0) > 0.01);
+    expect(hasScale).toBe(true);
   });
 
   test('should compose translate + rotate + scale transforms', async ({ page }) => {
@@ -167,15 +184,14 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
       let complex: any = null;
       debug.scene.traverse((obj: any) => {
         if (obj.name && obj.name.includes('Complex')) {
-          // Use obj.position.clone() to create a new Vector3 and getWorldPosition
-          const worldPos = obj.position.clone();
+          // getWorldPosition reads matrixWorld, so it is correct either way; the
+          // argument is only a scratch vector.
+          const worldPos = new (obj.position.constructor as any)();
           obj.getWorldPosition(worldPos);
 
           complex = {
             name: obj.name,
-            position: obj.position.toArray(),
-            rotation: obj.rotation.toArray().slice(0, 3),
-            scale: obj.scale.toArray(),
+            matrix: Array.from(obj.matrix.elements),
             worldPosition: [worldPos.x, worldPos.y, worldPos.z],
           };
         }
@@ -184,15 +200,15 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
       return complex;
     });
 
-    if (complexObject) {
-      // Verify object has non-identity transforms
-      const hasTransform =
-        complexObject.position.some((p: number) => Math.abs(p) > 0.01) ||
-        complexObject.rotation.some((r: number) => Math.abs(r) > 0.01) ||
-        complexObject.scale.some((s: number) => Math.abs(s - 1.0) > 0.01);
+    expect(complexObject, 'no node named *Complex* in the scene').not.toBeNull();
 
-      expect(hasTransform).toBe(true);
-    }
+    // A composed translate+rotate+scale must differ from the identity somewhere
+    // in the full 4x4 — checked on the matrix, since TRS is not populated.
+    const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const hasTransform = complexObject.matrix.some(
+      (v: number, i: number) => Math.abs(v - identity[i]) > 0.01
+    );
+    expect(hasTransform).toBe(true);
   });
 });
 
@@ -293,15 +309,13 @@ test.describe('Transform Hierarchy - Edge Cases', () => {
 
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points' || obj.type === 'Group') {
-          // Check if local position, rotation, scale are all identity
-          const hasIdentity =
-            obj.position.length() < 0.01 &&
-            Math.abs(obj.rotation.toArray()[0]) < 0.01 &&
-            Math.abs(obj.rotation.toArray()[1]) < 0.01 &&
-            Math.abs(obj.rotation.toArray()[2]) < 0.01 &&
-            Math.abs(obj.scale.x - 1.0) < 0.01 &&
-            Math.abs(obj.scale.y - 1.0) < 0.01 &&
-            Math.abs(obj.scale.z - 1.0) < 0.01;
+          // Identity is checked on the local MATRIX. Checking position/rotation/
+          // scale would report identity for every authored node, since node
+          // transforms are installed as a full matrix and leave TRS unpopulated
+          // — i.e. the old form silently became always-true.
+          const e = obj.matrix.elements;
+          const ident = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+          const hasIdentity = ident.every((v, i) => Math.abs(e[i] - v) < 0.01);
 
           results.push({
             name: obj.name,

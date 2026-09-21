@@ -264,7 +264,14 @@ describe('commitMeshGeometry', () => {
       transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1],
     };
     const mesh = createEmptyMeshNode('/surface', withTransform, loader, null);
-    expect(mesh.position.toArray()).toEqual([5, 6, 7]);
+    // Asserted through the matrix rather than `.position`: applyTransform now
+    // installs the full affine matrix so that shear survives, and deliberately
+    // leaves position/quaternion/scale unpopulated.
+    expect(Array.from(mesh.matrix.elements)).toEqual(withTransform.transform);
+    // And the transform actually reaches world space — the world matrix must be
+    // refreshed, not left stale behind `matrixAutoUpdate = false`.
+    const origin = new THREE.Vector3(0, 0, 0).applyMatrix4(mesh.matrixWorld);
+    expect(origin.toArray()).toEqual([5, 6, 7]);
   });
 
   it('installs authored per-vertex colors so the mesh actually displays them', async () => {
