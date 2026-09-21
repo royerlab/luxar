@@ -89,8 +89,7 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
     expect(inconsistent, 'nodes whose world matrix disagrees with their parent').toEqual([]);
 
     // Guard against the check above passing vacuously on a flat scene: the
-    // fixture must actually contain a node sitting under a displaced ancestor,
-    // and that node's world origin must not be its local one.
+    // fixture must actually contain a node sitting under a displaced ancestor.
     const displaced = nodes.filter(
       (n) => n.parentWorldPos !== null && n.parentWorldPos.some((v) => Math.abs(v) > 0.01)
     );
