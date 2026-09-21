@@ -179,11 +179,10 @@ TAG="v$VERSION"
 ok "release version: $VERSION  →  tag: $TAG"
 
 # Python, viewer, and citation metadata must describe the same release, or a
-# published artifact would carry a version that disagrees with the release tag.
+# published artifact would carry inconsistent version metadata.
 if command -v python3 >/dev/null 2>&1; then
-  # --expect-tag folds the tag into the same gate. The tag is what actually
-  # triggers publishing, so it is the one representation that must agree with
-  # the other three -- and until now nothing compared CITATION.cff to it at all.
+  # The tag is derived from VERSION just above, so --expect-tag is a restatement
+  # here. Its independent check matters in the tag-triggered publish workflows.
   python3 scripts/check_version_consistency.py --expect-tag "$TAG" \
     || die "Release version mismatch. Run 'make set-version DATE=$VERSION' and promote it first."
   ok "Python, viewer, citation, and tag versions are consistent"
@@ -256,10 +255,16 @@ else
   if ! PROTECTION_RAW="$(gh api "repos/$SLUG/branches/$BRANCH/protection/required_status_checks" \
                            --jq '.contexts[]?' 2>"$PROT_ERR")"; then
     _msg="$(head -3 "$PROT_ERR" | tr '\n' ' ')"; rm -f "$PROT_ERR"
+    if [[ "$_msg" == *"HTTP 403"* ]]; then
+      _hint="This endpoint requires admin on the repository; re-run with an admin token."
+    elif [[ "$_msg" == *"HTTP 404"* ]]; then
+      _hint="No classic branch protection was found for this branch; check repository rulesets."
+    else
+      _hint="Check the GitHub response and retry."
+    fi
     die "cannot read branch protection for $BRANCH on $SLUG: ${_msg:-no error output}
-  This endpoint requires admin on the repository; a token without it returns 403.
-  Re-run with an admin token. SKIP_CI_CHECK=1 bypasses the whole gate, but then
-  you are tagging a commit nothing has verified."
+  $_hint SKIP_CI_CHECK=1 bypasses the whole gate, but then you are tagging a
+  commit nothing has verified."
   fi
   rm -f "$PROT_ERR"
 
@@ -279,16 +284,22 @@ else
   # (`npm_variable_at` at the top of this file already paginates — §5 did not.)
   # --paginate + --jq runs the filter PER PAGE, so ask for a stream of objects
   # (JSON Lines) rather than an array: concatenated arrays are not valid JSON.
+  CHECKS_ERR="$(mktemp)"
   if ! CHECKS_JSON="$(gh api "repos/$SLUG/commits/$REMOTE_SHA/check-runs" --paginate \
-                        --jq '.check_runs[] | {name, conclusion, status}' 2>/dev/null)"; then
-    die "cannot read check-runs for ${REMOTE_SHA:0:12} on $SLUG.
+                        --jq '.check_runs[] | {name, conclusion, status}' 2>"$CHECKS_ERR")"; then
+    _msg="$(head -3 "$CHECKS_ERR" | tr '\n' ' ')"; rm -f "$CHECKS_ERR"
+    die "cannot read check-runs for ${REMOTE_SHA:0:12} on $SLUG: ${_msg:-no error output}
   Refusing to treat an unreadable CI state as a green one."
   fi
+  rm -f "$CHECKS_ERR"
+  STATUS_ERR="$(mktemp)"
   if ! STATUS_JSON="$(gh api "repos/$SLUG/commits/$REMOTE_SHA/status" --paginate \
-                        --jq '.statuses[] | {context: .context, state: .state}' 2>/dev/null)"; then
-    die "cannot read commit statuses for ${REMOTE_SHA:0:12} on $SLUG.
+                        --jq '.statuses[] | {context: .context, state: .state}' 2>"$STATUS_ERR")"; then
+    _msg="$(head -3 "$STATUS_ERR" | tr '\n' ' ')"; rm -f "$STATUS_ERR"
+    die "cannot read commit statuses for ${REMOTE_SHA:0:12} on $SLUG: ${_msg:-no error output}
   Refusing to treat an unreadable CI state as a green one."
   fi
+  rm -f "$STATUS_ERR"
 
   # name -> conclusion for check-runs, falling back to context -> state for the
   # legacy commit-status API. A check that exists but has not finished reports
@@ -303,10 +314,12 @@ runs = [json.loads(l) for l in sys.stdin if l.strip()]
 hit = [r for r in runs if r["name"] == want]
 if not hit:
     print("MISSING")
-elif hit[0]["status"] != "completed":
+elif any(r["status"] != "completed" for r in hit):
     print("PENDING")
+elif any(r["conclusion"] != "success" for r in hit):
+    print(next((r["conclusion"] or "PENDING" for r in hit if r["conclusion"] != "success"), "PENDING"))
 else:
-    print(hit[0]["conclusion"] or "PENDING")
+    print("success")
 ' "$name")" || c=MISSING
     if [[ "$c" == "MISSING" ]]; then
       c="$(printf '%s\n' "$STATUS_JSON" | python3 -c '

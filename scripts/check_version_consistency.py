@@ -10,11 +10,10 @@ in CI, ``hatch run check``, and the release preflight. The viewer bundle needs
 no fourth copy: Vite reads ``package.json`` at build time and injects it as
 ``VIEWER_VERSION`` (``packages/luxar-viewer/src/version.ts``).
 
-With ``--expect-tag v<version>`` the git tag joins the comparison. Publishing
-is tag-triggered, so the tag is what actually selects the released version —
-yet both publish workflows re-derived the tag/version agreement in hand-rolled
-shell, and NOTHING checked ``CITATION.cff`` against the tag at all. Passing the
-tag through here puts all four representations behind one gate.
+With ``--expect-tag v<version>`` an independently supplied git tag joins the
+comparison. The publish workflows are the intended callers because their tag
+comes from the triggering ref. The release preflight also passes its derived
+tag as a restatement of the tree version.
 
 Exit code 0 if consistent, 1 if they disagree (with a clear diff), 2 on a
 read/parse error or a malformed ``--expect-tag``.
@@ -106,8 +105,8 @@ def _check_expected_tag(expect_tag: str, py_version: str) -> int:
 
 def main(argv: Sequence[str] = ()) -> int:
     # argv defaults to EMPTY, not sys.argv: `main()` is called directly by
-    # scripts/tests/test_set_version.py (and by `hatch run check`), where
-    # sys.argv holds the caller's own flags and argparse would exit 2 on them.
+    # scripts/tests/test_set_version.py, where sys.argv holds pytest's flags and
+    # argparse would exit 2 on them.
     # The CLI entry point below passes sys.argv[1:] explicitly.
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(

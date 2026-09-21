@@ -48,6 +48,23 @@ CFF_VERSION_LINE_RE = re.compile(r"^version:[^\S\r\n]*.*$", re.MULTILINE)
 CFF_DATE_LINE_RE = re.compile(r"^date-released:[^\S\r\n]*.*$", re.MULTILINE)
 
 
+def _package_payload(semver: str) -> tuple[str | None, object | None] | None:
+    if not PKG_JSON.exists():
+        return None, None
+    try:
+        data = json.loads(PKG_JSON.read_text())
+    except json.JSONDecodeError as exc:
+        print(
+            f"error: cannot parse {PKG_JSON.relative_to(REPO)}: {exc}\n"
+            "  Nothing has been written; fix the JSON and re-run.",
+            file=sys.stderr,
+        )
+        return None
+    old_version = data.get("version")
+    data["version"] = semver
+    return json.dumps(data, indent=2) + "\n", old_version
+
+
 def main(argv: list[str]) -> int:
     version = argv[1] if len(argv) > 1 else datetime.date.today().strftime("%Y.%m.%d")
     if not CALVER_RE.match(version):
@@ -104,22 +121,10 @@ def main(argv: list[str]) -> int:
 
     # --- viewer package.json (semver-normalized: strip leading zeros) ---
     semver = ".".join(str(int(p)) for p in version.split("."))
-    pkg_payload = None
-    pkg_old = None
-    if PKG_JSON.exists():
-        try:
-            data = json.loads(PKG_JSON.read_text())
-        except json.JSONDecodeError as exc:
-            print(
-                f"error: cannot parse {PKG_JSON.relative_to(REPO)}: {exc}\n"
-                "  Nothing has been written; fix the JSON and re-run.",
-                file=sys.stderr,
-            )
-            return 1
-        pkg_old = data.get("version")
-        data["version"] = semver
-        # Preserve 2-space indentation and trailing newline (matches the repo).
-        pkg_payload = json.dumps(data, indent=2) + "\n"
+    package = _package_payload(semver)
+    if package is None:
+        return 1
+    pkg_payload, pkg_old = package
 
     # --- CITATION.cff substitutions (validated above; computed here) ---
     cff_payload = None
