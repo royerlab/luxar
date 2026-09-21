@@ -16,5 +16,12 @@ the public import path ``luxar.gsplats.lod.substitutive`` stays a file.
 
 from __future__ import annotations
 
+import torch
+
 # Numerical floor for divisions by per-bin mass / template norm.
 _TINY = 1e-30
+
+
+def chromatic_affinity(distance_sq: torch.Tensor, color_weight: float) -> torch.Tensor:
+    """Return the shared exponential affinity for squared chromatic distance."""
+    return torch.exp(-color_weight * distance_sq)

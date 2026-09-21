@@ -10,6 +10,7 @@ import {
   captureCanvasImage,
   captureStableImage,
   evaluateCaptureChecks,
+  evaluateLowerIsBetterComparisons,
   evaluateThresholds,
   scoreImagePair,
 } from './visual-ab-core.mjs';
@@ -178,7 +179,15 @@ async function readSelection(page, lodGroup, activeLevel) {
   }
 }
 
-async function captureLevel(browser, bench, fixtureBench, label, expectedLevel, query) {
+async function captureLevel(
+  browser,
+  bench,
+  fixtureBench,
+  allLodGroups,
+  label,
+  expectedLevel,
+  query
+) {
   const page = await browser.newPage({ viewport });
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -228,6 +237,14 @@ async function captureLevel(browser, bench, fixtureBench, label, expectedLevel, 
       );
     }
     const selection = await readSelection(page, bench.lodGroup, expectedLevel);
+    await page.evaluate(
+      ({ activeGroup, lodGroups }) => {
+        window.__luxarDebug?.scene?.traverse((object) => {
+          if (lodGroups.includes(object.name)) object.visible = object.name === activeGroup;
+        });
+      },
+      { activeGroup: bench.lodGroup, lodGroups: allLodGroups }
+    );
     const canvas = page.locator('canvas#app');
     const image = await captureStableImage(
       async () => {
@@ -237,6 +254,16 @@ async function captureLevel(browser, bench, fixtureBench, label, expectedLevel, 
       },
       { minCaptures: 8 }
     );
+    const visibleGroups = await page.evaluate((lodGroups) => {
+      const visible = [];
+      window.__luxarDebug?.scene?.traverse((object) => {
+        if (lodGroups.includes(object.name) && object.visible) visible.push(object.name);
+      });
+      return visible;
+    }, allLodGroups);
+    if (visibleGroups.length !== 1 || visibleGroups[0] !== bench.lodGroup) {
+      throw new Error(`${label} isolation changed during capture: ${visibleGroups.join(', ')}`);
+    }
     return { label, ...selection, pageErrors, ...image };
   } finally {
     await page.close();
@@ -274,6 +301,7 @@ try {
   if (fixtureMetadata.schemaVersion !== 1 || !Array.isArray(fixtureMetadata.benches)) {
     throw new Error('unsupported fixture-metadata.json schema');
   }
+  const allLodGroups = fixtureMetadata.benches.map((bench) => bench.lodGroup);
   await assertPortFree(viewerPort, 'viewer');
   await assertPortFree(dataPort, 'data');
   const viewerServer = spawnServer(
@@ -323,6 +351,7 @@ try {
         browser,
         bench,
         fixtureBench,
+        allLodGroups,
         'finest',
         bench.finestLevel,
         'lodFinest'
@@ -331,6 +360,7 @@ try {
         browser,
         bench,
         fixtureBench,
+        allLodGroups,
         'coarse',
         bench.coarseLevel,
         'lodBias=0.000001'
@@ -389,6 +419,20 @@ try {
       });
       console.error(`\n${bench.id} failed:`, error);
     }
+  }
+  const comparisons = evaluateLowerIsBetterComparisons(
+    summary.benches,
+    thresholdsDocument.comparisons ?? []
+  );
+  summary.comparisons = comparisons;
+  for (const comparison of comparisons) {
+    console.log(
+      `\n=== ${comparison.id} ===\n` +
+        `${comparison.metric} improvement=${comparison.improvement.toFixed(3)} ` +
+        `(minimum ${comparison.minImprovement.toFixed(3)})  ` +
+        `${comparison.pass ? 'PASS' : 'FAIL'}`
+    );
+    if (!comparison.pass) failed = true;
   }
 } catch (error) {
   failed = true;

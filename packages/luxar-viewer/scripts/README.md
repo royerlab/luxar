@@ -50,7 +50,9 @@ recorded coarse and finest levels at the same pinned camera with LOD fading and
 stream-energy compensation disabled, and writes PNGs plus `summary.json` under
 `test-results/lod-visual-ab/`. The command is deliberately opt-in and separate
 from `test:perf:e2e`: it gates image similarity, not timing. Thresholds are
-recorded for Linux Chromium, so the command refuses other platforms.
+recorded for Linux Chromium, so the command refuses other platforms. Multi-bench
+fixtures hide every non-active LOD group during capture so each score measures
+only the named geometry.
 
 Each `(geometry, blending mode)` bench owns its thresholds in
 `lod-visual-ab-thresholds.json`: minimum SSIM and coarse/finest mean-luma ratio,
@@ -58,7 +60,9 @@ maximum mean CIE76 DeltaE, and maximum increase in full-resolution blown-pixel
 fraction. The finest arm must also contain a recorded minimum fraction of blown
 pixels so the clipping check cannot silently become inert. A threshold change
 should include the old and new measured values in the PR description and refresh
-the recorded provenance.
+the recorded provenance. The top-level `comparisons` array records cross-bench
+margins; re-derive those margins alongside the per-bench values whenever the
+fixture or thresholds change.
 
 ## Build
 
