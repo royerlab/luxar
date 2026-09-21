@@ -11,7 +11,7 @@
     {
       "label": "tribolium",
       "status": "failed",
-      "error": "CalledProcessError(137, ['hatch', 'run', 'luxar', 'gsplat', 'cal', '/tmp/luxar-cal-scratch/tribolium_embryo__tribolium.npy', '/home/royer/luxar-recal/scripts/calibration_results/tribolium_embryo/tribolium_embryo__tribolium.json', '--preset', 'n2s', '--n-grid', '10', '--k-min', '2000', '--k-max', '1000000', '--progression', 'exp', '--quiet'])"
+      "error": "CalledProcessError(137, ['hatch', 'run', 'luxar', 'gsplat', 'cal', '/tmp/luxar-cal-scratch/tribolium_embryo__tribolium.npy', '.../scripts/calibration_results/tribolium_embryo/tribolium_embryo__tribolium.json', '--preset', 'n2s', '--n-grid', '10', '--k-min', '2000', '--k-max', '1000000', '--progression', 'exp', '--quiet'])"
     }
   ],
   "comment": "Light-sheet Tribolium embryo (large)"

@@ -54,5 +54,5 @@ The parts where a security issue is most plausible:
 ## Supported versions
 
 Luxar is pre-1.0 and released as CalVer. Only the most recent release is
-supported: fixes land on `main` and go out in the next release rather than
+supported: fixes land on `dev` and go out in the next release rather than
 being backported.

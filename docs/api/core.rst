@@ -14,6 +14,22 @@ Scene
    :undoc-members:
    :show-inheritance:
 
+Node
+----
+
+.. autoclass:: luxar.core.Node
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Group
+-----
+
+.. autoclass:: luxar.core.Group
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Points
 ------
 

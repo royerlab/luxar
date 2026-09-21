@@ -608,10 +608,12 @@ class Group(Node):
             bus: ``"ambient"`` (default) / ``"voice"`` / ``"effects"``. The
                 voice bus ducks ambient while it plays.
             fade_in_ms, fade_out_ms: Ramp lengths on the audible edge, ``>= 0``.
-            distance_model, ref_distance, max_distance, rolloff, cone_inner_deg,
-                cone_outer_deg, cone_outer_gain, orientation: ``PannerNode``
-                knobs (spatial only). Distances left ``None`` default in the
-                viewer from the scene scale (``scale/20`` and ``scale``).
+            distance_model, ref_distance, max_distance, rolloff:
+                ``PannerNode`` distance knobs (spatial only). Distances left
+                ``None`` default in the viewer from the scene scale
+                (``scale/20`` and ``scale``).
+            cone_inner_deg, cone_outer_deg, cone_outer_gain, orientation:
+                ``PannerNode`` directional-cone knobs (spatial only).
             license, attribution, source_url: REQUIRED provenance for the clip
                 (e.g. ``"CC0"``, the author, the URL it came from).
             parent: Parent node (default: this group).

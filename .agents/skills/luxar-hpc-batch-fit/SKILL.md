@@ -99,7 +99,7 @@ luxar gsplat benchmark --list                    # show profiled GPUs
 
 The local Mac cannot reach Bruno directly — relay through `obsidian`
 (`Mac → obsidian → Bruno`); obsidian connects non-interactively
-(`ssh loic.royer@login.bruno.czbiohub.org`). Typical loop, from a Bruno login node:
+(`ssh <user>@<bruno-login-host>`). Typical loop, from a Bruno login node:
 
 ```bash
 luxar gsplat batch-fit submit /hpc/projects/<grp>/data.zarr out/ -p gpu --tiling content --cal cal.json

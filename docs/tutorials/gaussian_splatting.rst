@@ -51,9 +51,10 @@ When to Use Gaussian Splats
 
 .. note::
 
-   Gaussian splatting requires optional dependencies (PyTorch, SciPy). Install them with::
+   Gaussian splatting requires optional dependencies (PyTorch, SciPy). This
+   tutorial also uses scikit-image only for its sample image. Install them with::
 
-      pip install 'luxar[gsplats]'
+      pip install 'luxar[gsplats]' scikit-image
 
 Basic Gaussian Splat Fitting
 -----------------------------
@@ -197,7 +198,7 @@ Loss Functions
 * Good for noisy images
 * **Recommended** for most cases
 
-**L2 Loss** (Mean Squared Error):
+**MSE Loss** (L2 / Mean Squared Error):
 
 .. math::
 
@@ -212,20 +213,20 @@ Loss Functions
    # L1 for noisy microscopy
    result_l1 = fit_gaussian_splats(image, loss_type="l1")
 
-   # L2 for clean synthetic data
-   result_l2 = fit_gaussian_splats(image, loss_type="l2")
+   # MSE (L2) for clean synthetic data
+   result_l2 = fit_gaussian_splats(image, loss_type="mse")
 
 Advanced: Dynamic Operations
 -----------------------------
 
-**Concept**: Add/remove splats during optimization for better fit
+**Concept**: Relocate weak splats during optimization for better coverage
 
-**Motivation**: Fixed number of splats may be suboptimal:
+**Motivation**: A fixed splat budget can be poorly placed:
 
-* Too few: Can't represent fine details
-* Too many: Overfitting, slow rendering
+* Weak splats linger in low-signal regions
+* High-residual regions stay under-resolved
 
-**Solution**: Dynamic splat management
+**Solution**: Fixed-pool relocation
 
 .. code-block:: python
 

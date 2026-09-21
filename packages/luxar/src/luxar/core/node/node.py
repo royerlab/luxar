@@ -1160,6 +1160,7 @@ class Node:
 
         Args:
             value: Blending mode string. Valid modes:
+
                 - "normal": Standard alpha blending (semi-transparent)
                 - "additive": Classic additive blending, ignores depth (renders on top)
                 - "max": Maximum of source and destination (brightest wins)

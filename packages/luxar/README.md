@@ -53,13 +53,13 @@ with LuxarZarrCompiler("my_dataset.luxar.zarr") as compiler:
 
     # Add hierarchical organization
     group = scene.add_group("Experiment1")
-    scene.add_points("Measurement", positions2, colors2, parent=group)
+    scene.add_points("Measurement", positions, colors=colors, parent=group)
 
 # Finalize (consolidates metadata for fast loading)
 # Context manager handles finalization automatically
 
 # Serve for visualization
-# luxar serve my_dataset.luxar.zarr
+# luxar serve my_dataset.luxar.zarr --viewer
 ```
 
 ## 🏗️ Architecture
@@ -102,20 +102,21 @@ Each node can have:
 
 ### Data Format
 
-Luxar uses Zarr v2 format for maximum compatibility:
+Luxar writes Zarr v3 by default and reads both v2 and v3. A v3 store looks like:
 
 ```
 dataset.luxar.zarr/
-├── .zattrs                    # Scene metadata
-├── .zgroup                    # Zarr group marker
+├── zarr.json                  # Scene metadata and group marker
 ├── node_name/
-│   ├── .zattrs               # Node attributes
-│   ├── .zgroup               # Group marker
+│   ├── zarr.json             # Node attributes and group marker
 │   ├── positions/            # Geometry data
-│   │   ├── .zarray          # Array metadata
-│   │   └── 0.0.0            # Chunks
+│   │   ├── zarr.json        # Array metadata
+│   │   └── c/0/0            # Chunk data
 │   └── colors/
-└── .zmetadata                # Consolidated metadata
+│       ├── zarr.json        # Array metadata
+│       └── c/0/0            # Chunk data
+└── another_node/
+    └── zarr.json
 ```
 
 ## 🌟 nD Visualization Features
