@@ -201,22 +201,26 @@ def test_tile_occupancy_weight_keeps_homogeneous_density_size_independent() -> N
     from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
     from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
 
-    small_window = np.ones(8, dtype=np.float32)
-    large_window = np.ones(16, dtype=np.float32)
+    specs = compute_tile_specs(
+        (40, 256, 256), tile_size=160, overlap=32, fold_slivers=True
+    )
+    windows = [cosine_window(spec) for spec in specs]
+    hann_voxels = [float(np.sum(window, dtype=np.float64)) for window in windows]
     weights = [
         tile_occupancy_weight(
-            np.ones_like(window),
+            np.ones(spec.shape, dtype=np.float32),
             window,
             signal_threshold=0.1,
             saturation_exponent=0.44,
         )
-        for window in (small_window, large_window)
+        for spec, window in zip(specs, windows, strict=True)
     ]
 
-    assert weights == pytest.approx([8.0, 16.0])
-    counts = allocate_weighted_integer_seeds(2400, weights)
-    assert counts == (800, 1600)
-    assert counts[0] / small_window.sum() == counts[1] / large_window.sum()
+    counts = allocate_weighted_integer_seeds(2_400_000, weights)
+    densities = [
+        count / voxels for count, voxels in zip(counts, hann_voxels, strict=True)
+    ]
+    assert max(densities) / min(densities) == pytest.approx(1.0, rel=1e-9)
 
 
 def test_tile_occupancy_weight_preserves_calibrated_exponent_at_equal_size() -> None:
@@ -251,15 +255,12 @@ def test_tile_occupancy_weight_distinguishes_empty_and_dim_tiles() -> None:
         )
         == 0.0
     )
-    assert (
-        tile_occupancy_weight(
-            np.full(3, 0.05, dtype=np.float32),
-            window,
-            signal_threshold=0.1,
-            saturation_exponent=0.5,
-        )
-        == 1.0
-    )
+    assert tile_occupancy_weight(
+        np.full(3, 0.05, dtype=np.float32),
+        window,
+        signal_threshold=0.1,
+        saturation_exponent=0.5,
+    ) == pytest.approx(1.75 * (1.0 / 1.75) ** 0.5)
 
 
 def test_tile_occupancy_weight_preserves_hann_taper() -> None:
