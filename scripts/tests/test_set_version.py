@@ -533,6 +533,8 @@ if endpoint.endswith("/check-runs"):
     if ci_result == "checks-error":
         print("gh: rate limit exceeded (HTTP 403)", file=sys.stderr)
         raise SystemExit(1)
+    if ci_result == "green-status":
+        raise SystemExit(0)
     status = "in_progress" if ci_result == "pending-check" else "completed"
     conclusion = "null" if status != "completed" else '"success"'
     print('{"name":"python-tests (3.12)","conclusion":' + conclusion + ',"status":"' + status + '"}')
@@ -540,6 +542,8 @@ if endpoint.endswith("/check-runs"):
         print('{"name":"python-tests (3.12)","conclusion":"failure","status":"completed"}')
     raise SystemExit(0)
 if endpoint.endswith("/status"):
+    if ci_result == "green-status":
+        print('{"context":"python-tests (3.12)","state":"success"}')
     raise SystemExit(0)
 if endpoint == "repos/royerlab/luxar/actions/variables/ENABLE_NPM_PUBLISH":
     setting = os.environ.get(
@@ -703,6 +707,17 @@ def test_release_preflight_fails_closed_on_unverified_ci(
 
     assert message in output
     assert returncode != 0
+
+
+def test_release_preflight_accepts_green_legacy_commit_status(tmp_path: Path) -> None:
+    output, _, returncode = _run_release_preflight(
+        tmp_path, ci_result="green-status", check=False
+    )
+
+    assert "python-tests (3.12): success" in output
+    assert "all required checks green" in output
+    assert "DRY RUN complete" in output
+    assert returncode == 0
 
 
 def test_release_preflight_honors_environment_precedence(tmp_path: Path) -> None:

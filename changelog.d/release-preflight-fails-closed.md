@@ -14,7 +14,8 @@ carry no information. The check-runs read also gained `--paginate`: the default
 page holds 30 and this repo exceeds it, so a required check could fall off the
 end (`npm_variable_at` in the same file already paginated). A queued required
 check now reports PENDING and fails the gate instead of being filtered out as
-"not completed".
+"not completed". When several check-runs carry the same required name, every
+one of them must be successful before that requirement is green.
 
 `release.sh` also never mentioned the changelog, so it would tag with every
 fragment still unfolded — 588 of them at the time of writing — shipping a
