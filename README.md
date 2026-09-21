@@ -84,7 +84,7 @@ is the slow exception).
 
 - Python 3.12+ (usually pre-installed on Linux/macOS)
 - Modern browser with WebGL 2.0
-- **Gaussian-splat _fitting_** runs on the CPU out of the box; it is much faster on an NVIDIA **CUDA GPU** (see `make build-cuda`) or Apple **MPS**, but neither is required. _Viewing_ splats in the browser needs no GPU setup at all.
+- **Gaussian-splat _fitting_** runs on the CPU; it is much faster on an NVIDIA **CUDA GPU** (see `make build-cuda`). Apple **MPS** is also supported, but neither GPU backend is required. _Viewing_ splats in the browser needs no GPU setup at all.
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 
 ### Install and Run Demos
