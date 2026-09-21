@@ -116,6 +116,30 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Refuse a bootstrap attempt in SECONDS, not after a full build. npm
+      # cannot stage a brand-new package, so on an unpublished name `npm stage
+      # publish` fails — and it would fail at the very end, after Rust,
+      # wasm-pack, pnpm install and the library build, with the tag already
+      # pushed and spent. This needs nothing from the build, so it runs first.
+      # 404 is the only "absent" answer acted on; any other curl outcome is
+      # treated as reachable-but-unknown and left to npm, so a registry blip
+      # cannot block a release.
+      - name: Refuse to stage a package that does not exist yet
+        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && vars.ENABLE_NPM_PUBLISH == 'true'
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+                    https://registry.npmjs.org/@luxar%2Fviewer || echo 000)"
+          if [ "$code" = "404" ]; then
+            echo "::error::@luxar/viewer does not exist on npm, and staging cannot create it."
+            echo "::error::The FIRST release must be a local, token-authenticated 'npm publish'"
+            echo "::error::(Step 2 in this file's header). Bootstrap that, attach the trusted"
+            echo "::error::publisher, and only then set ENABLE_NPM_PUBLISH=true."
+            exit 1
+          fi
+          echo "@luxar/viewer exists on the registry (HTTP $code) — staging is possible."
+
+
       - name: Set up Rust (for WASM build)
         # Explicit channel for the same reason as ci.yml and publish.yml: the
         # action is SHA-pinned, so `# stable` in the ref is a comment, not a
@@ -224,22 +248,6 @@ jobs:
         # on the command line means two places to keep in agreement.
         run: |
           set -euo pipefail
-          # Refuse BEFORE staging if the package does not exist. npm cannot
-          # stage a brand-new package, so on an unpublished name `npm stage
-          # publish` fails — after the tag has already been pushed and spent.
-          # Checking the registry first turns that into an actionable refusal
-          # that names the bootstrap route. 404 is the only "absent" answer we
-          # act on; any other failure is treated as reachable-but-unknown and
-          # left to npm itself, so a registry blip cannot block a release.
-          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
-                    https://registry.npmjs.org/@luxar%2Fviewer || echo 000)"
-          if [ "$code" = "404" ]; then
-            echo "::error::@luxar/viewer does not exist on npm, and staging cannot create it."
-            echo "::error::The FIRST release must be a local, token-authenticated 'npm publish'"
-            echo "::error::(Step 2 in this file's header). Bootstrap that, attach the trusted"
-            echo "::error::publisher, and only then set ENABLE_NPM_PUBLISH=true."
-            exit 1
-          fi
           npm stage publish
           echo "::notice::@luxar/viewer staged, NOT published. Approve it to make it installable:" \
                "npm stage list @luxar/viewer && npm stage approve <stage-id> (2FA required)."

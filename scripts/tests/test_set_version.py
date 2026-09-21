@@ -907,7 +907,7 @@ def test_release_preflight_matches_case_insensitive_workflow_comparison(
     output, _, _ = _run_release_preflight(tmp_path, repository="True")
 
     assert "ENABLE_NPM_PUBLISH=True from repository" in output
-    assert "the tag WILL publish @luxar/viewer" in output
+    assert "the tag WILL stage @luxar/viewer" in output
 
 
 def test_release_preflight_does_not_trim_the_switch_value(tmp_path: Path) -> None:
@@ -921,7 +921,7 @@ def test_release_preflight_reads_shared_organization_variable(tmp_path: Path) ->
     output, calls, _ = _run_release_preflight(tmp_path, organization="true")
 
     assert "ENABLE_NPM_PUBLISH=true from organization" in output
-    assert "the tag WILL publish @luxar/viewer" in output
+    assert "the tag WILL stage @luxar/viewer" in output
     assert calls == [
         "repos/royerlab/luxar/environments/npm/variables",
         "repos/royerlab/luxar/actions/variables",
@@ -937,7 +937,7 @@ def test_release_preflight_does_not_turn_a_failed_second_get_into_off(
     )
 
     assert "ENABLE_NPM_PUBLISH=true from repository" in output
-    assert "the tag WILL publish @luxar/viewer" in output
+    assert "the tag WILL stage @luxar/viewer" in output
     assert calls == [
         "repos/royerlab/luxar/environments/npm/variables",
         "repos/royerlab/luxar/actions/variables",

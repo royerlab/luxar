@@ -139,7 +139,7 @@ if [[ -f "$WORKFLOW_NPM" ]] && git ls-files --error-unmatch "$WORKFLOW_NPM" >/de
     NPM_SWITCH_NORMALIZED="$(printf '%s\tvalue-end' "$NPM_SWITCH" | tr '[:upper:]' '[:lower:]')"
     NPM_SWITCH_NORMALIZED="${NPM_SWITCH_NORMALIZED%$'\t'value-end}"
     if [[ "$NPM_SWITCH_NORMALIZED" == "true" ]]; then
-      ok "npm workflow committed, ENABLE_NPM_PUBLISH=$NPM_SWITCH from $NPM_SOURCE — the tag WILL publish @luxar/viewer"
+      ok "npm workflow committed, ENABLE_NPM_PUBLISH=$NPM_SWITCH from $NPM_SOURCE — the tag WILL stage @luxar/viewer (manual 2FA approval publishes it)"
     else
       warn "npm workflow committed, but ENABLE_NPM_PUBLISH='$NPM_SWITCH' from $NPM_SOURCE (not 'true') — the tag will NOT publish to npm."
     fi
@@ -349,7 +349,8 @@ cat <<EOF
   Will create annotated tag ${BLD}$TAG${NC} at ${REMOTE_SHA:0:12} on $BRANCH
   and push it to $REMOTE, which triggers:
     $WORKFLOW  →  build viewer+wheel (Linux/OIDC)  →  publish ${BLD}luxar $VERSION${NC} to PyPI.
-    $WORKFLOW_NPM  →  build lib bundle  →  publish ${BLD}@luxar/viewer${NC} to npm (if configured).
+    $WORKFLOW_NPM  →  build lib bundle  →  STAGE ${BLD}@luxar/viewer${NC} on npm (if configured).
+      Staged is NOT published: run ${BLD}npm stage approve <id>${NC} (2FA) to make it installable.
   Confirm the Apple-silicon native backend release verification ran for ${REMOTE_SHA:0:12}.
   This is the real, public, irreversible release (PyPI/npm versions cannot be reused).
 EOF

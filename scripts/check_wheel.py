@@ -38,6 +38,9 @@ out of agreement with the thing it is guarding:
    useless.
 4. **No member over PyPI's 100 MB per-file limit**, which rejects the upload
    after the release has otherwise succeeded.
+5. **The wheel itself under PyPI's 100 MB limit.** PyPI applies the cap to the
+   uploaded FILE, and the realistic breach here is thousands of small payloads
+   with nothing individually large — which check 4 cannot see.
 5. **The viewer dist is bundled** (``luxar/_viewer_dist/``), mirroring the check
    ``publish.yml`` already performs — kept so this gate is a superset of the
    release-time one rather than a divergent second opinion.
