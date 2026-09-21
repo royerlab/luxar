@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -75,6 +76,33 @@ def _refuse_resume_grid_mismatch(
         aprint(
             f"Warning: {completed_count} completed {tile_word} predating occupancy "
             "weighting will keep equal-share budgets. "
+            f"{legacy_weight_help}."
+        )
+    elif (
+        existing.tile_occupancy_weights is not None
+        and fresh.tile_occupancy_weights is not None
+        and (
+            len(existing.tile_occupancy_weights) != len(fresh.tile_occupancy_weights)
+            or any(
+                len(old_row) != len(new_row)
+                or any(
+                    not math.isclose(old_weight, new_weight)
+                    for old_weight, new_weight in zip(old_row, new_row, strict=True)
+                )
+                for old_row, new_row in zip(
+                    existing.tile_occupancy_weights,
+                    fresh.tile_occupancy_weights,
+                    strict=True,
+                )
+            )
+        )
+    ):
+        tile_word = "tile" if completed_count == 1 else "tiles"
+        budget_word = "budget" if completed_count == 1 else "budgets"
+        owner_word = "its" if completed_count == 1 else "their"
+        aprint(
+            f"Warning: {completed_count} completed {tile_word} planned with different "
+            f"occupancy weights will keep {owner_word} existing seed {budget_word}. "
             f"{legacy_weight_help}."
         )
 

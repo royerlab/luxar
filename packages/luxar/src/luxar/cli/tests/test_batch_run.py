@@ -162,6 +162,50 @@ def test_resume_warns_when_completed_tiles_predate_weighting(
     ) in output
 
 
+def test_resume_warns_when_completed_tiles_use_different_occupancy_weights(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from luxar.cli.gsplat_ops.batch.run_orchestration import (
+        _refuse_resume_grid_mismatch,
+    )
+    from luxar.gsplats.batch.manifest import (
+        BatchJob,
+        BatchManifest,
+        save_manifest,
+    )
+
+    output_dir = tmp_path / "out"
+    job = BatchJob(0, 0, 0, 2, "tile0.gsplats.zarr", 0.0)
+    common = {
+        "mode": "uniform",
+        "spatial_shape": (16, 16, 24),
+        "tile_size": 16,
+        "tile_overlap": 4,
+        "n_tiles": 2,
+        "fold_tile_slivers": False,
+    }
+    existing = BatchManifest(
+        **common,
+        jobs=[job],
+        tile_occupancy_weights=[[1.0, 2.0]],
+    )
+    save_manifest(existing, output_dir)
+    tile_path = output_dir / "tiles" / job.output_filename
+    tile_path.mkdir(parents=True)
+    fresh = BatchManifest(
+        **common,
+        tile_occupancy_weights=[[2.0, 4.0]],
+    )
+
+    _refuse_resume_grid_mismatch(output_dir, fresh, resume=True)
+
+    assert (
+        "1 completed tile planned with different occupancy weights will keep its "
+        "existing seed budget. Pass --no-resume to refit every tile."
+    ) in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("existing_mode", "fresh_mode"),
     [("content", "content"), ("uniform", "content")],
