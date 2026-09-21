@@ -26,7 +26,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_ALLOWED_CONSOLE_ERRORS,
-  staleExampleDatasetFailureWarning,
+  exampleDatasetFailureWarning,
   unexpectedConsoleErrors,
   type CapturedConsoleError,
 } from '../../e2e/fixtures';
@@ -41,19 +41,34 @@ function pageError(text: string): CapturedConsoleError {
   return { kind: 'pageerror', text };
 }
 
-describe('staleExampleDatasetFailureWarning', () => {
+describe('exampleDatasetFailureWarning', () => {
   it.each(['failed', 'timedOut'] as const)(
     'adds an actionable reminder to a %s spec when examples are stale',
     (status) => {
-      expect(staleExampleDatasetFailureWarning(status, true)).toBe(
+      expect(exampleDatasetFailureWarning(status, 'stale')).toBe(
         'Example datasets are stale. If this spec reads datasets/examples, run "make run-examples" from the repository root.'
       );
     }
   );
 
+  // The case that went silent and cost nine specs a bare 45 s readiness
+  // timeout each, with the page showing only "Unable to Load Dataset".
+  it('names ungenerated examples as the cause of a failure', () => {
+    expect(exampleDatasetFailureWarning('timedOut', 'missing')).toBe(
+      'Example datasets have not been generated, so every spec that reads datasets/examples fails on a bare readiness timeout. To fix, run "make run-examples" from the repository root.'
+    );
+  });
+
+  it('hedges rather than asserts when freshness could not be checked', () => {
+    expect(exampleDatasetFailureWarning('failed', 'unavailable')).toBe(
+      'Example dataset freshness could not be verified. If this spec reads datasets/examples, run "make run-examples" from the repository root.'
+    );
+  });
+
   it('stays silent for passing specs and current examples', () => {
-    expect(staleExampleDatasetFailureWarning('passed', true)).toBeUndefined();
-    expect(staleExampleDatasetFailureWarning('failed', false)).toBeUndefined();
+    expect(exampleDatasetFailureWarning('passed', 'stale')).toBeUndefined();
+    expect(exampleDatasetFailureWarning('passed', 'missing')).toBeUndefined();
+    expect(exampleDatasetFailureWarning('failed', undefined)).toBeUndefined();
   });
 });
 

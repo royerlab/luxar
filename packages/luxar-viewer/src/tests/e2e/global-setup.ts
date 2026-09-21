@@ -34,6 +34,7 @@ import {
   checkExampleFixtureFreshness,
   exposeExampleFixtureFreshnessToWorkers,
   reportExampleFixtureFreshness,
+  type ExampleFixtureFreshness,
 } from '../../../tools/example-fixture-freshness';
 import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
 import { areFixturesStale } from '../../../tools/fixture-freshness';
@@ -169,10 +170,12 @@ export default async function globalSetup(config: FullConfig) {
   // Check 1: Verify examples directory exists
   if (!fs.existsSync(examplesDir)) {
     datasetWarnings.push('examples directory missing');
-    exposeExampleFixtureFreshnessToWorkers({ status: 'unavailable' });
-    console.warn(`⚠️  Examples directory not found: ${examplesDir}`);
-    console.warn('   Run "make run-examples" to generate test datasets');
-    console.warn('   Tests requiring example datasets will fail.\n');
+    // `missing`, not `unavailable`: this is a certainty with an exact remedy,
+    // and — unlike the old boolean — it now reaches the workers, so a spec that
+    // dies on a readiness timeout says why instead of just how long it waited.
+    const absent: ExampleFixtureFreshness = { status: 'missing', detail: examplesDir };
+    exposeExampleFixtureFreshnessToWorkers(absent);
+    reportExampleFixtureFreshness(absent);
     // Don't throw - allow tests that don't need examples to run
     // (e.g., basic-rendering, viewer-initialization, test-fixtures, geometry-types)
   } else {

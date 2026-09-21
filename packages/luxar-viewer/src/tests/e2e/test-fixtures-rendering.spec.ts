@@ -243,20 +243,25 @@ test.describe('Test Fixture Rendering', () => {
       );
       if (!childPoints) return null;
 
+      // Local translation comes from the MATRIX, not `.position`. Authored node
+      // transforms are installed as a full affine matrix so shear survives
+      // (see rendering/node-factory/transforms.ts), which leaves the TRS
+      // fields at their defaults — reading `.position` here reported (0,0,0)
+      // for a correctly-transformed node. The sibling transform-hierarchy spec
+      // was updated for this; this one was missed.
+      const localTranslation = (obj: any) => ({
+        x: obj.matrix.elements[12],
+        y: obj.matrix.elements[13],
+        z: obj.matrix.elements[14],
+      });
+
       return {
-        parentPosition: {
-          x: parentGroup.position.x,
-          y: parentGroup.position.y,
-          z: parentGroup.position.z,
-        },
-        childLocalPosition: {
-          x: childPoints.position.x,
-          y: childPoints.position.y,
-          z: childPoints.position.z,
-        },
-        // Get world position of child using position.clone() instead of THREE.Vector3
+        parentPosition: localTranslation(parentGroup),
+        childLocalPosition: localTranslation(childPoints),
+        // World position is read from matrixWorld by getWorldPosition, so it is
+        // correct either way; the argument is only a scratch vector.
         childWorldPosition: (() => {
-          const worldPos = childPoints.position.clone();
+          const worldPos = new (childPoints.position.constructor as any)();
           childPoints.getWorldPosition(worldPos);
           return { x: worldPos.x, y: worldPos.y, z: worldPos.z };
         })(),
