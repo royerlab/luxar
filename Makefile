@@ -2960,7 +2960,11 @@ shell:  ## Enter Hatch development shell
 # binary, and bypass OIDC. See scripts/release.sh for the full preflight.
 .PHONY: build set-version release-check release publish publish-test
 
-build: build-viewer  ## Build wheel + sdist (builds the viewer first so it is bundled)
+build: build-viewer  ## Build wheel + sdist locally (the sdist is NOT publishable — see below)
+	@# The sdist this also produces cannot be installed: a wheel built from it
+	@# fails in hatch_build.py because it carries no viewer dist. publish.yml
+	@# builds `-t wheel` and refuses to upload a tarball; never `twine upload
+	@# dist/*` by hand from here.
 	$(HATCH) build
 
 set-version:  ## Set release version in code (DATE=YYYY.MM.DD, default today); commit via PR
