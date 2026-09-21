@@ -2026,15 +2026,21 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
             options[option] = arguments.pop(0)
         return options, arguments
 
-    _, host_targets = parse_mypy_command(scripts["type-check"])
+    host_options, host_targets = parse_mypy_command(scripts["type-check"])
+    assert host_options == {}
+
     darwin_options, darwin_targets = parse_mypy_command(scripts["type-check-darwin"])
-    assert darwin_options["--platform"] == "darwin"
-    assert darwin_options["--cache-dir"] == ".mypy_cache/darwin"
+    assert darwin_options == {
+        "--platform": "darwin",
+        "--cache-dir": ".mypy_cache/darwin",
+    }
     assert darwin_targets == host_targets
 
     py314_options, py314_targets = parse_mypy_command(scripts["type-check-py314"])
-    assert py314_options["--python-version"] == "3.14"
-    assert py314_options["--cache-dir"] == ".mypy_cache/py314"
+    assert py314_options == {
+        "--python-version": "3.14",
+        "--cache-dir": ".mypy_cache/py314",
+    }
     assert py314_targets == host_targets
 
 
