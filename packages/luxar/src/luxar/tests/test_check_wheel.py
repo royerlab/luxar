@@ -235,6 +235,38 @@ def test_the_pypi_limit_is_the_real_one() -> None:
     assert checker.PYPI_MAX_FILE_BYTES == 100 * 1024 * 1024
 
 
+def test_a_wheel_over_the_upload_limit_is_caught(tmp_path: Path, monkeypatch) -> None:
+    """The limit PyPI actually enforces is on the UPLOADED FILE.
+
+    The per-member check cannot see this case, and this case is the realistic
+    one for Luxar: thousands of small test payloads and demo assets summing
+    past the cap with nothing individually large. Before this check, such a
+    wheel passed every gate and was rejected by PyPI after the tag had been
+    pushed — by which time the version is spent.
+    """
+    # Below the ~700-byte fixture wheel, so the comparison actually trips.
+    # The real constant is asserted separately below.
+    monkeypatch.setattr(checker, "PYPI_MAX_DIST_BYTES", 100)
+    report = _inspect(tmp_path, dict(_GOOD_MEMBERS))
+
+    assert report.dist_too_large
+    assert report.problems() >= 1
+    # The per-member check must stay silent: no single member is large.
+    assert report.oversized == []
+
+
+def test_a_wheel_inside_the_upload_limit_is_not_flagged(tmp_path: Path) -> None:
+    report = _inspect(tmp_path, dict(_GOOD_MEMBERS))
+
+    assert not report.dist_too_large
+    assert report.dist_bytes is not None and report.dist_bytes > 0
+
+
+def test_the_pypi_upload_limit_is_the_real_one() -> None:
+    """The monkeypatch above would hide a wrong constant."""
+    assert checker.PYPI_MAX_DIST_BYTES == 100 * 1024 * 1024
+
+
 def test_a_missing_viewer_dist_is_caught(tmp_path: Path) -> None:
     """Mirrors the check publish.yml already makes, so this is a superset."""
     members = {k: v for k, v in _GOOD_MEMBERS.items() if "_viewer_dist" not in k}

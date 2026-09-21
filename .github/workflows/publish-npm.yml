@@ -42,12 +42,32 @@
 #          Workflow filename    : publish-npm.yml
 #          Environment          : npm        (optional but recommended)
 #
+#   3b. STAGED PUBLISHING IS THE DEFAULT NOW, AND THIS WORKFLOW RELIES ON IT.
+#      npm changed the default on 2026-09-03: a trusted publisher created after
+#      that date may `npm stage publish`, while direct `npm publish` is opt-in
+#      per configuration. Luxar has never published to npm, so the publisher
+#      created in Step 3 lands under the NEW default and a plain `npm publish`
+#      would fail on permissions. Rather than opting into direct publish, this
+#      workflow stages — which is also npm's own recommendation, and puts a
+#      human 2FA gate in front of an irreversible publish.
+#      LEAVE "allow direct publish" OFF on the trusted publisher.
+#
+#      After the tag job stages the release, promote it yourself:
+#          npm stage list @luxar/viewer        # find the stage id
+#          npm stage view <stage-id>           # inspect what CI produced
+#          npm stage approve <stage-id>        # 2FA; this is what makes it public
+#      Until you approve, nothing is installable — a staged version is NOT
+#      published. (`npm stage publish` itself needs no 2FA, which is why CI can
+#      run it.) Requires npm >= 11.15.0 and Node >= 22.14.0; both are pinned in
+#      the job below.
+#
 #   4. SWITCH CI TO TOKEN-LESS + TURN IT ON:
 #      - Create a GitHub environment named `npm` (Settings -> Environments),
 #        ideally restricted to `v*` tags.
 #      - DELETE the `NPM_TOKEN` secret — with the trusted publisher configured and
-#        `id-token: write` present, `npm publish` mints a short-lived credential
-#        via OIDC automatically (the empty NODE_AUTH_TOKEN below is harmless).
+#        `id-token: write` present, `npm stage publish` mints a short-lived
+#        credential via OIDC automatically (the empty NODE_AUTH_TOKEN below is
+#        harmless).
 #      - Flip the repo variable `ENABLE_NPM_PUBLISH` to `true` (Settings ->
 #        Secrets and variables -> Actions -> Variables). This is the master
 #        switch: until it is `true`, tag pushes build + pack but DO NOT publish,
@@ -86,8 +106,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Rust (for WASM build)
+        # Explicit channel for the same reason as ci.yml and publish.yml: the
+        # action is SHA-pinned, so `# stable` in the ref is a comment, not a
+        # channel.
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          toolchain: 1.92.0
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
@@ -111,9 +135,27 @@ jobs:
           cache: pnpm
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
-      # `--provenance` and OIDC trusted publishing require a recent npm CLI.
-      - name: Upgrade npm CLI
-        run: npm install -g npm@latest
+      # OIDC trusted publishing, provenance and `npm stage` all need a recent
+      # npm CLI. Pinned rather than `@latest` for the same reason the Rust
+      # toolchain and wasm-pack are pinned: a release must not be built by a
+      # toolchain nobody chose. 11.15.0 is the floor for staged publishing.
+      - name: Install the pinned npm CLI
+        run: |
+          set -euo pipefail
+          npm install -g npm@11.15.0
+          npm --version
+          node --version
+          # Fail here, loudly, rather than at the staging step: if the pin ever
+          # slips below the staged-publishing floor, `npm stage` does not exist
+          # and the error would arrive only after the tag had been pushed.
+          # Compared numerically with sort -V rather than probing `--help`,
+          # whose exit code is not a reliable "does this subcommand exist".
+          need=11.15.0
+          have="$(npm --version)"
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n1)" != "$need" ]; then
+            echo "::error::npm $have is below $need, which is the floor for staged publishing (npm stage)"
+            exit 1
+          fi
 
       - name: Verify tag matches viewer package version
         if: startsWith(github.ref, 'refs/tags/')
@@ -149,17 +191,29 @@ jobs:
       # and auth are set up. Flip it on (Settings -> Variables -> ENABLE_NPM_PUBLISH
       # = true) once the one-time setup in the header is done. Until then, tag
       # pushes still build + pack (validating the tarball) without publishing.
-      - name: Publish to npm (provenance)
+      - name: Stage the npm release (approval is manual — see the header)
         if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && vars.ENABLE_NPM_PUBLISH == 'true'
         working-directory: packages/luxar-viewer
-        run: npm publish --provenance --access public
+        # STAGES, does not publish. Trusted publishers created after 2026-09-03
+        # default to stage-only, so `npm publish` would fail on permissions —
+        # and staging is npm's recommendation regardless, since it puts a 2FA
+        # review in front of an irreversible publish.
+        #
+        # No --provenance/--access flags: package.json already sets
+        # publishConfig.provenance=true and access=public, and duplicating them
+        # on the command line means two places to keep in agreement.
+        run: |
+          set -euo pipefail
+          npm stage publish
+          echo "::notice::@luxar/viewer staged, NOT published. Approve it to make it installable:" \
+               "npm stage list @luxar/viewer && npm stage approve <stage-id> (2FA required)."
         env:
           # Honored when present (token auth). Leave the secret unset once a
           # trusted publisher is configured and OIDC takes over.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Note — npm publish gated off
+      - name: Note — npm staging gated off
         if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && vars.ENABLE_NPM_PUBLISH != 'true'
         run: |
-          echo "::notice::npm publish skipped (built + packed only). Set repo variable" \
+          echo "::notice::npm staging skipped (built + packed only). Set repo variable" \
                "ENABLE_NPM_PUBLISH=true after configuring npm auth (see workflow header)."

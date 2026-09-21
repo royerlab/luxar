@@ -45,8 +45,15 @@ jobs:
           python-version: "3.12"
 
       - name: Set up Rust (for WASM build)
+        # Pinned to a SHA, so the toolchain channel must be given explicitly —
+        # the same reasoning (and the same version) as ci.yml. Without it this
+        # step resolved the toolchain implicitly, so the artifact that actually
+        # ships was built by a step configured differently from the one CI
+        # tests. Keep in sync with ci.yml and
+        # packages/luxar-viewer/src/wasm/rust/rust-toolchain.toml.
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          toolchain: 1.92.0
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
@@ -69,18 +76,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
-      - name: Verify tag matches package version
+      - name: Verify tag matches package, viewer and citation versions
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
-          PKG_VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' packages/luxar/src/luxar/__init__.py)"
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          echo "Package __version__ = $PKG_VERSION"
-          echo "Git tag (sans 'v')  = $TAG_VERSION"
-          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::Tag '$GITHUB_REF_NAME' does not match package version '$PKG_VERSION'. Bump __version__ (CalVer = release day) and re-tag."
-            exit 1
-          fi
+          # Was a hand-rolled __version__ comparison that checked ONE of the
+          # four representations. The shared gate checks all of them, so a tag
+          # can no longer ship with package.json or CITATION.cff disagreeing —
+          # nothing validated the citation against the tag before.
+          python scripts/check_version_consistency.py --expect-tag "$GITHUB_REF_NAME"
 
       - name: Build viewer (WASM + dist bundled into the wheel)
         run: |
@@ -96,8 +100,35 @@ jobs:
       - name: Install build backend
         run: python -m pip install --upgrade hatch
 
-      - name: Build wheel + sdist
-        run: hatch build
+      - name: Build wheel (no sdist — see below)
+        run: |
+          set -euo pipefail
+          # WHEEL ONLY. The sdist is not merely "degraded" without the viewer,
+          # it cannot be installed at all: the wheel build hook raises
+          # FileNotFoundError at hatch_build.py:37 when
+          # packages/luxar-viewer/dist/index.html is absent, and the sdist does
+          # not carry it. Measured: `python -m build --wheel` on the unpacked
+          # sdist fails outright, so publishing it gives `pip install
+          # --no-binary` a confusing hard failure instead of a package.
+          #
+          # Note the lever is `-t wheel`, NOT deleting [tool.hatch.build.targets.sdist]
+          # from pyproject.toml: hatchling builds an sdist by default, so
+          # removing that section would produce a LARGER one, not none.
+          hatch build -t wheel
+
+      - name: Assert no sdist is staged for upload
+        run: |
+          set -euo pipefail
+          # Fail-closed companion to the step above: if a future change
+          # reintroduces `hatch build`, the unusable sdist would be uploaded
+          # again by `path: dist/` without anything going red.
+          if compgen -G 'dist/*.tar.gz' > /dev/null; then
+            echo "::error::an sdist is present in dist/ — it cannot be installed (see the build step) and must not be published"
+            ls -l dist/
+            exit 1
+          fi
+          echo "dist/ holds wheels only:"
+          ls -l dist/
 
       - name: Inspect wheel
         run: |
