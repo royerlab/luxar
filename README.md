@@ -84,7 +84,7 @@ is the slow exception).
 
 - Python 3.12+ (usually pre-installed on Linux/macOS)
 - Modern browser with WebGL 2.0
-- **Gaussian-splat _fitting_** also needs an NVIDIA **CUDA GPU** (see `make build-cuda`); _viewing_ splats in the browser does not.
+- **Gaussian-splat _fitting_** runs on the CPU out of the box; it is much faster on an NVIDIA **CUDA GPU** (see `make build-cuda`) or Apple **MPS**, but neither is required. _Viewing_ splats in the browser needs no GPU setup at all.
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 
 ### Install and Run Demos
@@ -93,6 +93,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
+hatch shell             # Activate the environment `setup-dev` created
 luxar demo              # Browse the 90 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
