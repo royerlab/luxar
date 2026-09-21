@@ -24,7 +24,7 @@ Decisions taken (owner, 2026-09-06):
 | Assets | Stored in the zarr as opaque files, like overlay images. |
 | Autoplay rule | Both: Chrome kiosk flag when available, a one-time "tap to enable sound" gate as fallback. |
 | Data model | A first-class `sound` node type (`scene.add_sound`), nD position, slab visibility, transforms. |
-| Narration | Text-to-speech at scene build time: OpenAI TTS when a key is present, else macOS `say`, else warn. |
+| Narration | Text-to-speech at scene build time: auto-detect macOS `say`; use OpenAI TTS only when explicitly selected with `LUXAR_NARRATION_ENGINE=openai` or `engine="openai"`; otherwise warn. |
 | Ambient / cluster clips | Recorded CC0 clips (Freesound and the like), licence recorded per node. |
 | Default | Authored per scene; viewer default ON with a mute control shown only when the scene has sound nodes. |
 | Extras | Recording panel captures audio; ambisonic (first-order) beds rotating with the camera — decoded by a dependency-free native graph, NOT Omnitone (Phase 4 decision: Omnitone decodes to binaural only, wrong on room speakers; fetches HRIRs from a CDN at runtime, impossible on an offline kiosk; unmaintained). |
