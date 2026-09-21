@@ -164,16 +164,19 @@ def _effective_cpu_count() -> int:
         count = process_cpu_count()
         if count is not None:
             return max(1, int(count))
-    # Reached via getattr for the same reason as `process_cpu_count` above:
-    # `os.sched_getaffinity` is Linux-only, so on macOS mypy fails the whole
-    # pre-commit hook with attr-defined here even though the call was already
-    # guarded at runtime. Looking it up dynamically states the platform
-    # conditionality once, in a way both mypy and the reader can follow.
+    # Same idiom as the `process_cpu_count` lookup above, different
+    # conditionality: that one is version-gated (`os.process_cpu_count` is
+    # 3.13+, which mypy flags on every platform at this project's
+    # python_version), while `os.sched_getaffinity` is platform-gated — it is
+    # Linux-only, so on macOS mypy failed the whole pre-commit hook with
+    # attr-defined even though the call was already guarded at runtime.
+    # Looking it up dynamically states that conditionality once, in a way both
+    # mypy and the reader can follow.
     sched_getaffinity = getattr(os, "sched_getaffinity", None)
     if sched_getaffinity is not None:
         try:
             return max(1, len(sched_getaffinity(0)))
-        except OSError:  # pragma: no cover - platform
+        except OSError:
             pass
     return max(1, os.cpu_count() or 1)
 
