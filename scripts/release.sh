@@ -179,11 +179,13 @@ TAG="v$VERSION"
 ok "release version: $VERSION  →  tag: $TAG"
 
 # Python, viewer, and citation metadata must describe the same release, or a
-# published artifact would carry a version that disagrees with the release tag.
+# published artifact would carry inconsistent version metadata.
 if command -v python3 >/dev/null 2>&1; then
-  python3 scripts/check_version_consistency.py \
+  # The tag is derived from VERSION just above, so --expect-tag is a restatement
+  # here. Its independent check matters in the tag-triggered publish workflows.
+  python3 scripts/check_version_consistency.py --expect-tag "$TAG" \
     || die "Release version mismatch. Run 'make set-version DATE=$VERSION' and promote it first."
-  ok "Python, viewer, and citation versions are consistent"
+  ok "Python, viewer, citation, and tag versions are consistent"
 else
   warn "python3 not found; skipped release version-consistency check"
 fi
@@ -202,53 +204,147 @@ if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$TAG" >/dev/null 2>&1; 
 fi
 ok "tag $TAG is free (local + remote)"
 
-# ---- 5. main CI is green -----------------------------------------------------
-step "5. CI status on $REMOTE/$BRANCH"
+# ---- 5. changelog state -----------------------------------------------------
+step "5. Changelog state"
+# Release prep is `make changelog` -> `make set-version` -> `make changelog-release`,
+# and nothing verified that any of it had happened. The script could tag with
+# every fragment still unfolded, shipping a CHANGELOG.md that does not mention
+# the version being released. Both halves are checked because they fail
+# independently: fragments can be folded without the release cut, and the cut
+# can be made before a late fragment lands.
+PENDING_FRAGMENTS=0
+if [[ -d changelog.d ]]; then
+  for _f in changelog.d/*.md; do
+    [[ -e "$_f" ]] || continue
+    [[ "$(basename "$_f")" == "README.md" ]] && continue
+    PENDING_FRAGMENTS=$((PENDING_FRAGMENTS + 1))
+  done
+fi
+if [[ $PENDING_FRAGMENTS -gt 0 ]]; then
+  die "changelog.d/ still holds $PENDING_FRAGMENTS unfolded fragment(s).
+  Run 'make changelog' to fold them into CHANGELOG.md, then 'make set-version DATE=$VERSION'
+  and 'make changelog-release' to cut the section. Preview either with the -draft variants."
+fi
+ok "changelog.d/ is empty (all fragments folded)"
+
+[[ -f CHANGELOG.md ]] || die "CHANGELOG.md is missing."
+if ! grep -q "\[$VERSION\]\|## $VERSION" CHANGELOG.md; then
+  die "CHANGELOG.md does not name version $VERSION.
+  The fragments are folded but the release cut has not been made: run 'make changelog-release'
+  (it names the cut after __version__, so run it AFTER 'make set-version')."
+fi
+ok "CHANGELOG.md names $VERSION"
+
+# ---- 6. main CI is green -----------------------------------------------------
+step "6. CI status on $REMOTE/$BRANCH"
 if [[ "${SKIP_CI_CHECK:-0}" == "1" ]]; then
   warn "SKIP_CI_CHECK=1 — NOT verifying CI. You are tagging an unverified commit."
 else
   # Pull the *required* contexts straight from branch protection, then assert
   # each is success on this exact SHA. Robust against added/renamed checks.
-  # NB: macOS ships bash 3.2 (no `mapfile`), so read into the array manually.
+  #
+  # Every read below is REQUIRED to succeed. This endpoint needs admin on the
+  # repository, so a token without it 403s here as a matter of course — and the
+  # old code swallowed that with `|| true`, left REQUIRED empty, and dropped to a
+  # fallback that only inspected already-completed check-runs. Two silent API
+  # failures (protection + check-runs, both plausible under one expired token)
+  # therefore produced a PASSING gate that had examined nothing at all. "Could
+  # not check" is not "nothing to check": the same three-state discipline
+  # resolve_npm_switch already applies above.
+  PROT_ERR="$(mktemp)"
+  if ! PROTECTION_RAW="$(gh api "repos/$SLUG/branches/$BRANCH/protection/required_status_checks" \
+                           --jq '.contexts[]?' 2>"$PROT_ERR")"; then
+    _msg="$(head -3 "$PROT_ERR" | tr '\n' ' ')"; rm -f "$PROT_ERR"
+    if [[ "$_msg" == *"HTTP 403"* ]]; then
+      _hint="This endpoint requires admin on the repository; re-run with an admin token."
+    elif [[ "$_msg" == *"HTTP 404"* ]]; then
+      _hint="No classic branch protection was found for this branch; check repository rulesets."
+    else
+      _hint="Check the GitHub response and retry."
+    fi
+    die "cannot read branch protection for $BRANCH on $SLUG: ${_msg:-no error output}
+  $_hint SKIP_CI_CHECK=1 bypasses the whole gate, but then you are tagging a
+  commit nothing has verified."
+  fi
+  rm -f "$PROT_ERR"
+
+  # macOS ships bash 3.2 (no `mapfile`), so read into the array manually.
   REQUIRED=()
   while IFS= read -r _line; do
     [[ -n "$_line" ]] && REQUIRED+=("$_line")
-  done < <(gh api "repos/$SLUG/branches/$BRANCH/protection/required_status_checks" \
-             --jq '.contexts[]?' 2>/dev/null || true)
+  done <<< "$PROTECTION_RAW"
   if [[ ${#REQUIRED[@]} -eq 0 ]]; then
-    warn "no required status checks found on branch protection — falling back to 'all check-runs must pass'."
+    die "branch protection on $BRANCH lists no required status checks.
+  There is nothing to verify, so a green result here would carry no information."
   fi
-  # name -> conclusion for check-runs, and context -> state for legacy statuses
-  CHECKS_JSON="$(gh api "repos/$SLUG/commits/$REMOTE_SHA/check-runs" --jq '[.check_runs[] | {name, conclusion, status}]' 2>/dev/null || echo '[]')"
-  STATUS_JSON="$(gh api "repos/$SLUG/commits/$REMOTE_SHA/status"     --jq '[.statuses[]  | {context: .context, state: .state}]' 2>/dev/null || echo '[]')"
+  ok "branch protection requires ${#REQUIRED[@]} context(s)"
 
-  conclusion_of() { # $1=check name -> prints success|<other>|MISSING
+  # --paginate, because the default page holds 30 check-runs and this repo
+  # routinely exceeds that; a required check past the cut read as MISSING.
+  # (`npm_variable_at` at the top of this file already paginates — §5 did not.)
+  # --paginate + --jq runs the filter PER PAGE, so ask for a stream of objects
+  # (JSON Lines) rather than an array: concatenated arrays are not valid JSON.
+  CHECKS_ERR="$(mktemp)"
+  if ! CHECKS_JSON="$(gh api "repos/$SLUG/commits/$REMOTE_SHA/check-runs" --paginate \
+                        --jq '.check_runs[] | {name, conclusion, status}' 2>"$CHECKS_ERR")"; then
+    _msg="$(head -3 "$CHECKS_ERR" | tr '\n' ' ')"; rm -f "$CHECKS_ERR"
+    die "cannot read check-runs for ${REMOTE_SHA:0:12} on $SLUG: ${_msg:-no error output}
+  Refusing to treat an unreadable CI state as a green one."
+  fi
+  rm -f "$CHECKS_ERR"
+  STATUS_ERR="$(mktemp)"
+  if ! STATUS_JSON="$(gh api "repos/$SLUG/commits/$REMOTE_SHA/status" --paginate \
+                        --jq '.statuses[] | {context: .context, state: .state}' 2>"$STATUS_ERR")"; then
+    _msg="$(head -3 "$STATUS_ERR" | tr '\n' ' ')"; rm -f "$STATUS_ERR"
+    die "cannot read commit statuses for ${REMOTE_SHA:0:12} on $SLUG: ${_msg:-no error output}
+  Refusing to treat an unreadable CI state as a green one."
+  fi
+  rm -f "$STATUS_ERR"
+
+  # name -> conclusion for check-runs, falling back to context -> state for the
+  # legacy commit-status API. A check that exists but has not finished reports
+  # PENDING, which is not success and so fails the gate: a queued required check
+  # means the commit is not verified yet, not that it passed.
+  conclusion_of() { # $1=check name -> success|<conclusion>|PENDING|MISSING
     local name="$1" c
-    c="$(echo "$CHECKS_JSON" | python3 -c "import sys,json; n=sys.argv[1]; d=json.load(sys.stdin); m=[x for x in d if x['name']==n]; print(m[0]['conclusion'] if m and m[0]['status']=='completed' else ('PENDING' if m else 'MISSING'))" "$name" 2>/dev/null || echo MISSING)"
+    c="$(printf '%s\n' "$CHECKS_JSON" | python3 -c '
+import sys, json
+want = sys.argv[1]
+runs = [json.loads(l) for l in sys.stdin if l.strip()]
+hit = [r for r in runs if r["name"] == want]
+if not hit:
+    print("MISSING")
+elif any(r["status"] != "completed" for r in hit):
+    print("PENDING")
+elif any(r["conclusion"] != "success" for r in hit):
+    print(next((r["conclusion"] or "PENDING" for r in hit if r["conclusion"] != "success"), "PENDING"))
+else:
+    print("success")
+' "$name")" || c=MISSING
     if [[ "$c" == "MISSING" ]]; then
-      c="$(echo "$STATUS_JSON" | python3 -c "import sys,json; n=sys.argv[1]; d=json.load(sys.stdin); m=[x for x in d if x['context']==n]; print(m[0]['state'] if m else 'MISSING')" "$name" 2>/dev/null || echo MISSING)"
+      c="$(printf '%s\n' "$STATUS_JSON" | python3 -c '
+import sys, json
+want = sys.argv[1]
+sts = [json.loads(l) for l in sys.stdin if l.strip()]
+hit = [x for x in sts if x["context"] == want]
+print(hit[0]["state"] if hit else "MISSING")
+' "$name")" || c=MISSING
     fi
     echo "$c"
   }
 
   FAILED=0
-  if [[ ${#REQUIRED[@]} -gt 0 ]]; then
-    for chk in "${REQUIRED[@]}"; do
-      res="$(conclusion_of "$chk")"
-      if [[ "$res" == "success" ]]; then ok "  $chk: success"
-      else warn "  $chk: $res"; FAILED=1; fi
-    done
-  else
-    # fallback: any non-success completed check fails the gate
-    bad="$(echo "$CHECKS_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('\n'.join(f\"{x['name']}:{x['conclusion']}\" for x in d if x['status']=='completed' and x['conclusion'] not in ('success','neutral','skipped')))" 2>/dev/null || true)"
-    [[ -n "$bad" ]] && { warn "failing checks: $bad"; FAILED=1; }
-  fi
+  for chk in "${REQUIRED[@]}"; do
+    res="$(conclusion_of "$chk")"
+    if [[ "$res" == "success" ]]; then ok "  $chk: success"
+    else warn "  $chk: $res"; FAILED=1; fi
+  done
   [[ $FAILED -eq 0 ]] || die "CI on $REMOTE/$BRANCH is not green for ${REMOTE_SHA:0:12}. Wait for it, fix it, or (last resort) SKIP_CI_CHECK=1."
   ok "all required checks green on ${REMOTE_SHA:0:12}"
 fi
 
-# ---- 6. summary + confirm + act ----------------------------------------------
-step "6. Plan"
+# ---- 7. summary + confirm + act ----------------------------------------------
+step "7. Plan"
 cat <<EOF
   Will create annotated tag ${BLD}$TAG${NC} at ${REMOTE_SHA:0:12} on $BRANCH
   and push it to $REMOTE, which triggers:
@@ -274,7 +370,7 @@ else
   [[ "$reply" == "$TAG" ]] || die "aborted (got '$reply')."
 fi
 
-step "7. Tag & push"
+step "8. Tag & push"
 git tag -a "$TAG" -m "Luxar $VERSION" "$LOCAL_SHA"
 ok "created $TAG"
 git push "$REMOTE" "refs/tags/$TAG"

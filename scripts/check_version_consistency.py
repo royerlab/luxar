@@ -10,15 +10,22 @@ in CI, ``hatch run check``, and the release preflight. The viewer bundle needs
 no fourth copy: Vite reads ``package.json`` at build time and injects it as
 ``VIEWER_VERSION`` (``packages/luxar-viewer/src/version.ts``).
 
+With ``--expect-tag v<version>`` an independently supplied git tag joins the
+comparison. The publish workflows are the intended callers because their tag
+comes from the triggering ref. The release preflight also passes its derived
+tag as a restatement of the tree version.
+
 Exit code 0 if consistent, 1 if they disagree (with a clear diff), 2 on a
-read/parse error.
+read/parse error or a malformed ``--expect-tag``.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
@@ -71,10 +78,52 @@ def _read_python_version() -> str | None:
     return py_version
 
 
-def main() -> int:
+def _check_expected_tag(expect_tag: str, py_version: str) -> int:
+    """Compare a release tag against the package version. 0 ok, 1 mismatch, 2 malformed."""
+    if not expect_tag.startswith("v"):
+        print(
+            f"error: --expect-tag {expect_tag!r} does not start with 'v'; "
+            "release tags are 'v<version>' (e.g. v2026.06.05)",
+            file=sys.stderr,
+        )
+        return 2
+    tag_version = expect_tag[1:]
+    if tag_version != py_version:
+        print(
+            "Version mismatch between the release tag and the Python package:\n"
+            f"  tag                      = {expect_tag!r}  "
+            f"(-> version {tag_version!r})\n"
+            f"  Python  __version__      = {py_version!r}\n"
+            "The tag selects what gets published, so this disagreement would ship "
+            f"a wrong version. Run `make set-version DATE={tag_version}` and promote "
+            "it, or tag the version the tree actually declares.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def main(argv: Sequence[str] = ()) -> int:
+    # argv defaults to EMPTY, not sys.argv: `main()` is called directly by
+    # scripts/tests/test_set_version.py, where sys.argv holds pytest's flags and
+    # argparse would exit 2 on them.
+    # The CLI entry point below passes sys.argv[1:] explicitly.
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument(
+        "--expect-tag",
+        metavar="vX.Y.Z",
+        help="also require this release tag to match the package version",
+    )
+    args = ap.parse_args(list(argv))
+
     py_version = _read_python_version()
     if py_version is None:
         return 2
+
+    if args.expect_tag is not None:
+        rc = _check_expected_tag(args.expect_tag, py_version)
+        if rc != 0:
+            return rc
 
     try:
         pkg = json.loads(PKG_JSON.read_text())
@@ -132,12 +181,15 @@ def main() -> int:
         )
         return 1
 
-    print(
+    summary = (
         f"versions consistent: Python {py_version} == viewer {viewer_version} "
         f"== citation {cff_version} ({cff_date})"
     )
+    if args.expect_tag is not None:
+        summary += f" == tag {args.expect_tag}"
+    print(summary)
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

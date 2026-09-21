@@ -15,6 +15,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import Mock
@@ -458,7 +459,10 @@ def _run_release_preflight(
     repository: str = "UNSET",
     organization: str = "UNSET",
     repository_direct: str | None = None,
-) -> tuple[str, list[str]]:
+    changelog_state: str = "ready",
+    ci_result: str | None = None,
+    check: bool = True,
+) -> tuple[str, list[str], int]:
     repo = tmp_path / "release-repo"
     (repo / "scripts").mkdir(parents=True)
     (repo / ".github/workflows").mkdir(parents=True)
@@ -470,10 +474,29 @@ def _run_release_preflight(
     (repo / "packages/luxar/src/luxar/__init__.py").write_text(
         '__version__ = "2099.01.01"\n'
     )
+    # These tests assert the preflight reaches the npm section, which only
+    # happens on a tree that is actually ready to tag. Since the preflight now
+    # gates on release-prep state, the fixture has to model a folded changelog:
+    # no pending fragments, and a CHANGELOG naming the version being released.
+    # `changelog_state` lets the two gate tests below break exactly one half.
+    if changelog_state != "no-changelog":
+        (repo / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [2099.01.01]\n\nFixture release section.\n"
+            if changelog_state != "uncut"
+            else "# Changelog\n\n## [Unreleased]\n\nFixture.\n"
+        )
+    (repo / "changelog.d").mkdir()
+    (repo / "changelog.d/README.md").write_text("fragments live here\n")
+    if changelog_state == "pending-fragments":
+        (repo / "changelog.d/1234.md").write_text("#### A fragment\n\nBody.\n")
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "python3").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "python3").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = scripts/check_version_consistency.py ]; then exit 0; fi\n'
+        'exec "$REAL_PYTHON" "$@"\n'
+    )
     (bin_dir / "python3").chmod(0o755)
     gh_log = tmp_path / "gh-calls.log"
     (bin_dir / "gh").write_text(
@@ -497,6 +520,31 @@ settings = {
     "repos/royerlab/luxar/actions/variables": "NPM_REPO_RESULT",
     "repos/royerlab/luxar/actions/organization-variables": "NPM_ORG_RESULT",
 }
+ci_result = os.environ.get("CI_RESULT")
+if endpoint.endswith("/protection/required_status_checks"):
+    if ci_result == "protection-error":
+        print("gh: Forbidden (HTTP 403)", file=sys.stderr)
+        raise SystemExit(1)
+    if ci_result == "empty-protection":
+        raise SystemExit(0)
+    print("python-tests (3.12)")
+    raise SystemExit(0)
+if endpoint.endswith("/check-runs"):
+    if ci_result == "checks-error":
+        print("gh: rate limit exceeded (HTTP 403)", file=sys.stderr)
+        raise SystemExit(1)
+    if ci_result == "green-status":
+        raise SystemExit(0)
+    status = "in_progress" if ci_result == "pending-check" else "completed"
+    conclusion = "null" if status != "completed" else '"success"'
+    print('{"name":"python-tests (3.12)","conclusion":' + conclusion + ',"status":"' + status + '"}')
+    if ci_result == "duplicate-failure":
+        print('{"name":"python-tests (3.12)","conclusion":"failure","status":"completed"}')
+    raise SystemExit(0)
+if endpoint.endswith("/status"):
+    if ci_result == "green-status":
+        print('{"context":"python-tests (3.12)","state":"success"}')
+    raise SystemExit(0)
 if endpoint == "repos/royerlab/luxar/actions/variables/ENABLE_NPM_PUBLISH":
     setting = os.environ.get(
         "NPM_REPO_DIRECT_RESULT", os.environ.get("NPM_REPO_RESULT", "UNSET")
@@ -556,9 +604,13 @@ else:
             "NPM_REPO_RESULT": repository,
             "NPM_ORG_RESULT": organization,
             "PATH": f"{bin_dir}:{env['PATH']}",
-            "SKIP_CI_CHECK": "1",
+            "REAL_PYTHON": sys.executable,
         }
     )
+    if ci_result is None:
+        env["SKIP_CI_CHECK"] = "1"
+    else:
+        env["CI_RESULT"] = ci_result
     if repository_direct is not None:
         env["NPM_REPO_DIRECT_RESULT"] = repository_direct
     result = subprocess.run(
@@ -567,14 +619,129 @@ else:
         env=env,
         text=True,
         capture_output=True,
-        check=True,
+        check=check,
     )
     calls = gh_log.read_text().splitlines() if gh_log.exists() else []
-    return result.stdout, calls
+    return result.stdout + result.stderr, calls, result.returncode
+
+
+def test_release_preflight_accepts_a_folded_changelog(tmp_path: Path) -> None:
+    """The green path, which the three refusal tests below do NOT pin.
+
+    Without this, a gate that died unconditionally would keep every negative
+    test passing — the failure mode those tests exist to prevent, inverted. It
+    also pins that a bare README.md in changelog.d is not counted as a pending
+    fragment, which is the one piece of the counting loop with a special case.
+    """
+    output, _, returncode = _run_release_preflight(tmp_path)
+
+    # Exit code too, now the helper reports it: printing the ticks and then
+    # failing later would satisfy the string assertions alone.
+    assert returncode == 0
+    assert "changelog.d/ is empty (all fragments folded)" in output
+    assert "CHANGELOG.md names 2099.01.01" in output
+    # It must get PAST the gate, not merely print the ticks.
+    assert "7. Plan" in output
+    assert "DRY RUN complete" in output
+
+
+def test_release_preflight_refuses_unfolded_changelog_fragments(tmp_path: Path) -> None:
+    """A pending fragment means `make changelog` was never run.
+
+    Before this gate the preflight would tag happily with every fragment still
+    unfolded, publishing a release whose CHANGELOG.md does not describe it. The
+    real tree had 588 pending when the gate was written.
+    """
+    output, _, returncode = _run_release_preflight(
+        tmp_path, changelog_state="pending-fragments", check=False
+    )
+
+    assert "unfolded fragment" in output
+    assert "make changelog" in output
+    # It must stop, not warn and continue into the publish plan.
+    assert returncode != 0
+
+
+def test_release_preflight_refuses_a_changelog_that_omits_the_version(
+    tmp_path: Path,
+) -> None:
+    """Folding the fragments is not the same as cutting the release section.
+
+    The two halves fail independently: fragments can be folded without the cut
+    (this case), and the cut can be made before a late fragment lands.
+    """
+    output, _, returncode = _run_release_preflight(
+        tmp_path, changelog_state="uncut", check=False
+    )
+
+    assert "does not name version 2099.01.01" in output
+    assert "make changelog-release" in output
+    assert returncode != 0
+
+
+def test_release_preflight_reports_a_missing_changelog(tmp_path: Path) -> None:
+    output, _, returncode = _run_release_preflight(
+        tmp_path, changelog_state="no-changelog", check=False
+    )
+
+    assert "CHANGELOG.md is missing" in output
+    assert returncode != 0
+
+
+@pytest.mark.parametrize(
+    ("ci_result", "message"),
+    [
+        ("protection-error", "cannot read branch protection"),
+        ("empty-protection", "lists no required status checks"),
+        ("checks-error", "cannot read check-runs"),
+        ("pending-check", "python-tests (3.12): PENDING"),
+        ("duplicate-failure", "python-tests (3.12): failure"),
+    ],
+)
+def test_release_preflight_fails_closed_on_unverified_ci(
+    tmp_path: Path, ci_result: str, message: str
+) -> None:
+    output, _, returncode = _run_release_preflight(
+        tmp_path, ci_result=ci_result, check=False
+    )
+
+    assert message in output
+    assert returncode != 0
+
+
+def test_release_preflight_accepts_a_green_check_run(tmp_path: Path) -> None:
+    """The check-run-backed green path — five of main's six required contexts.
+
+    Its sibling below covers the legacy commit-status fallback, which is the
+    path taken when /check-runs reports nothing. That one cannot reach
+    `conclusion_of`'s check-run success branch at all, so without this test
+    the branch judging most real required contexts green was unpinned: change
+    that branch to print anything but "success" and the whole preflight suite
+    still passed. The two paths are independent and both need a green case.
+    """
+    output, _, returncode = _run_release_preflight(
+        tmp_path, ci_result="green", check=False
+    )
+
+    assert "python-tests (3.12): success" in output
+    assert "all required checks green" in output
+    assert "DRY RUN complete" in output
+    assert returncode == 0
+
+
+def test_release_preflight_accepts_green_legacy_commit_status(tmp_path: Path) -> None:
+    output, _, returncode = _run_release_preflight(
+        tmp_path, ci_result="green-status", check=False
+    )
+
+    assert "python-tests (3.12): success" in output
+    assert "all required checks green" in output
+    assert "DRY RUN complete" in output
+    assert returncode == 0
 
 
 def test_release_preflight_honors_environment_precedence(tmp_path: Path) -> None:
-    output, calls = _run_release_preflight(
+    output, calls, _ = _run_release_preflight(
         tmp_path, environment="false", repository="true", organization="true"
     )
 
@@ -585,7 +752,7 @@ def test_release_preflight_honors_environment_precedence(tmp_path: Path) -> None
 
 
 def test_release_preflight_surfaces_native_backend_verification(tmp_path: Path) -> None:
-    output, _ = _run_release_preflight(tmp_path)
+    output, _, _ = _run_release_preflight(tmp_path)
 
     assert re.search(
         r"Confirm the Apple-silicon native backend release verification ran for "
@@ -737,21 +904,21 @@ def test_required_nlm_cuda_gate_accepts_an_available_backend(
 def test_release_preflight_matches_case_insensitive_workflow_comparison(
     tmp_path: Path,
 ) -> None:
-    output, _ = _run_release_preflight(tmp_path, repository="True")
+    output, _, _ = _run_release_preflight(tmp_path, repository="True")
 
     assert "ENABLE_NPM_PUBLISH=True from repository" in output
     assert "the tag WILL publish @luxar/viewer" in output
 
 
 def test_release_preflight_does_not_trim_the_switch_value(tmp_path: Path) -> None:
-    output, _ = _run_release_preflight(tmp_path, repository="true\n")
+    output, _, _ = _run_release_preflight(tmp_path, repository="true\n")
 
     assert "the tag will NOT publish to npm" in output
     assert "the tag WILL publish" not in output
 
 
 def test_release_preflight_reads_shared_organization_variable(tmp_path: Path) -> None:
-    output, calls = _run_release_preflight(tmp_path, organization="true")
+    output, calls, _ = _run_release_preflight(tmp_path, organization="true")
 
     assert "ENABLE_NPM_PUBLISH=true from organization" in output
     assert "the tag WILL publish @luxar/viewer" in output
@@ -765,7 +932,7 @@ def test_release_preflight_reads_shared_organization_variable(tmp_path: Path) ->
 def test_release_preflight_does_not_turn_a_failed_second_get_into_off(
     tmp_path: Path,
 ) -> None:
-    output, calls = _run_release_preflight(
+    output, calls, _ = _run_release_preflight(
         tmp_path, repository="true", repository_direct="ERROR"
     )
 
@@ -792,7 +959,7 @@ def test_release_preflight_reports_lookup_failures_as_unknown(
     organization: str,
     failed_level: str,
 ) -> None:
-    output, _ = _run_release_preflight(
+    output, _, _ = _run_release_preflight(
         tmp_path,
         environment=environment,
         repository=repository,
@@ -806,7 +973,7 @@ def test_release_preflight_reports_lookup_failures_as_unknown(
 
 
 def test_release_preflight_distinguishes_unset_from_unreadable(tmp_path: Path) -> None:
-    output, _ = _run_release_preflight(tmp_path)
+    output, _, _ = _run_release_preflight(tmp_path)
 
     assert "ENABLE_NPM_PUBLISH is UNSET" in output
     assert "the FIRST publish must be a manual" in output

@@ -629,6 +629,10 @@ _NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS = {
         "test_set_version.py writes a fixture workflow at this path"
     ),
     "CHANGELOG.md": "read by a whole-tree prose vocabulary scan",
+    "changelog.d/README.md": (
+        "test_set_version.py writes a fixture README at this path, to prove the "
+        "preflight's changelog gate does not count it as a pending fragment"
+    ),
     "packages/luxar-viewer/playwright.gallery.config.ts": (
         "test_check_tile_staleness.py writes a fixture file at this path"
     ),
