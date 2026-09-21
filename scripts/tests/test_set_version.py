@@ -621,6 +621,26 @@ else:
     return result.stdout + result.stderr, calls, result.returncode
 
 
+def test_release_preflight_accepts_a_folded_changelog(tmp_path: Path) -> None:
+    """The green path, which the three refusal tests below do NOT pin.
+
+    Without this, a gate that died unconditionally would keep every negative
+    test passing — the failure mode those tests exist to prevent, inverted. It
+    also pins that a bare README.md in changelog.d is not counted as a pending
+    fragment, which is the one piece of the counting loop with a special case.
+    """
+    output, _, returncode = _run_release_preflight(tmp_path)
+
+    # Exit code too, now the helper reports it: printing the ticks and then
+    # failing later would satisfy the string assertions alone.
+    assert returncode == 0
+    assert "changelog.d/ is empty (all fragments folded)" in output
+    assert "CHANGELOG.md names 2099.01.01" in output
+    # It must get PAST the gate, not merely print the ticks.
+    assert "7. Plan" in output
+    assert "DRY RUN complete" in output
+
+
 def test_release_preflight_refuses_unfolded_changelog_fragments(tmp_path: Path) -> None:
     """A pending fragment means `make changelog` was never run.
 
