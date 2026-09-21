@@ -253,7 +253,7 @@ def inspect_wheel(wheel_path: Path, project_root: Path) -> WheelReport:
         )
 
         report.oversized = sorted(
-            f"{i.filename} ({i.file_size / 1e6:.1f} MB)"
+            f"{i.filename} ({i.file_size / 1048576:.1f} MiB)"
             for i in infos
             if i.file_size > PYPI_MAX_FILE_BYTES
         )
@@ -304,7 +304,8 @@ def _problem_sections(
             "ran without `git lfs pull`.",
         ),
         (
-            f"{len(report.oversized)} member(s) exceed PyPI's 100 MB per-file "
+            f"{len(report.oversized)} member(s) exceed PyPI's "
+            f"{PYPI_MAX_FILE_BYTES / 1048576:.0f} MiB per-file "
             "limit, which rejects the upload:",
             report.oversized,
             "",
@@ -318,13 +319,20 @@ def _problem_sections(
                 # 1024, which is MiB, and printing decimal MB beside it was
                 # two different units in one sentence.
                 [
+                    # Exact bytes alongside the rounded figure: at
+                    # PYPI_MAX_DIST_BYTES + 1 the rounded form reads
+                    # "100.0 MiB (limit 100 MiB)", which looks like it is not
+                    # over. The byte counts are what make the failure legible
+                    # at the boundary, which is the only place it is confusing.
                     f"{report.dist_bytes / 1048576:.1f} MiB "
-                    f"(limit {PYPI_MAX_DIST_BYTES / 1048576:.0f} MiB)"
+                    f"({report.dist_bytes:,} B) exceeds "
+                    f"{PYPI_MAX_DIST_BYTES / 1048576:.0f} MiB "
+                    f"({PYPI_MAX_DIST_BYTES:,} B)"
                 ]
                 if report.dist_too_large
                 else []
             ),
-            "The per-file check above passes when nothing single member is "
+            "The per-file check above passes when no single member is "
             "large, which is exactly how this wheel would breach the cap: "
             "thousands of small test payloads and demo assets. Drop payload "
             "from the wheel rather than raising anything.",

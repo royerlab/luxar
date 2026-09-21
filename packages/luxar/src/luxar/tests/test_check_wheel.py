@@ -308,9 +308,13 @@ def test_main_exits_1_and_names_an_oversized_wheel(
     The report-level test proves the flag flips; this proves the gate actually
     fails the build and says something the operator can act on.
     """
-    monkeypatch.setattr(checker, "PYPI_MAX_DIST_BYTES", 100)
+    # A limit of 100 bytes made both sides render "0.0 MiB", so the message
+    # could have been arbitrarily wrong and still matched. Patch the limit just
+    # below the fixture's real size instead, so the printed figures are the
+    # ones an operator would actually read.
     root = _make_project(tmp_path)
     wheel = _make_wheel(tmp_path, dict(_GOOD_MEMBERS))
+    monkeypatch.setattr(checker, "PYPI_MAX_DIST_BYTES", wheel.stat().st_size - 1)
 
     code = checker.main([str(wheel), "--project-root", str(root)])
 
@@ -324,6 +328,9 @@ def test_main_exits_1_and_names_an_oversized_wheel(
     assert "upload limit" in out
     assert "MiB" in out
     assert "MB " not in out.replace("MiB", ""), "decimal MB leaked back in"
+    # Exact bytes, so a boundary failure cannot read as "at the limit".
+    assert f"{wheel.stat().st_size:,} B" in out
+    assert f"{wheel.stat().st_size - 1:,} B" in out
     # The per-member section must stay silent: no member is large.
     assert "member(s) exceed" not in out
 
