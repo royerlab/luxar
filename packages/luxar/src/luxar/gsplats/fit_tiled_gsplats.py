@@ -118,7 +118,7 @@ def uniform_tile_occupancy_weights(
     signal_threshold: float,
     saturation_exponent: float,
 ) -> list[float]:
-    """Measure saturated Hann-weighted occupancy for a uniform tile grid."""
+    """Measure normalized Hann-weighted occupancy for a uniform tile grid."""
     weights: list[float] = []
     for spec in specs:
         tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
