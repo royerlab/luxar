@@ -198,7 +198,7 @@ Loss Functions
 * Good for noisy images
 * **Recommended** for most cases
 
-**L2 Loss** (Mean Squared Error):
+**MSE Loss** (L2 / Mean Squared Error):
 
 .. math::
 
