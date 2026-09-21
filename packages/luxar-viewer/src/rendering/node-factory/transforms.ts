@@ -16,8 +16,8 @@ import { validateTransformFormat } from './validation';
  *
  * The matrix is installed DIRECTLY rather than decomposed. `Matrix4.decompose()`
  * factors into position / quaternion / scale, and TRS cannot represent SHEAR —
- * so a composition as ordinary as `rotate ∘ non-uniform-scale` (which
- * `luxar.transforms.compose` advertises, and which
+ * so applying a non-uniform scale after a rotation (which
+ * `luxar.transforms.compose` supports, and which
  * `packages/luxar/examples/transform_example.py` authors) came back altered.
  * Measured before this change: the authored matrix
  * `[[1,1,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]` should send `(0,1,0)` to `(1,1,0)`;

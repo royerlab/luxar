@@ -507,12 +507,12 @@ describe('NodeFactory', () => {
 
     it('should preserve a rotate-then-non-uniform-scale composition', () => {
       // The idiom `compose(rotate_y(30), scale(1.5, 0.8, 1.2))` is advertised by
-      // luxar.transforms and authored by examples/transform_example.py. R·S with
-      // non-uniform S is not expressible as Q·S', so it is a genuine shear.
+      // luxar.transforms and authored by examples/transform_example.py. Its S·R
+      // matrix is not expressible as Q·S', so it is a genuine shear.
       const object = new THREE.Object3D();
       const composed = new THREE.Matrix4()
-        .makeRotationY(Math.PI / 6)
-        .multiply(new THREE.Matrix4().makeScale(1.5, 0.8, 1.2));
+        .makeScale(1.5, 0.8, 1.2)
+        .multiply(new THREE.Matrix4().makeRotationY(Math.PI / 6));
 
       factory.applyTransform(object, Array.from(composed.elements));
 
