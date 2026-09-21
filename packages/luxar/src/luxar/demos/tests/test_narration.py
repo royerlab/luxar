@@ -45,13 +45,28 @@ def test_resolve_engine_prefers_the_explicit_choice_then_env_then_detection(
     assert resolve_engine("say") == "say"  # explicit beats env
 
     monkeypatch.delenv(NARRATION_ENGINE_ENV)
+    # An ambient OPENAI_API_KEY must NOT select the paid engine. It is present
+    # on many developer machines for unrelated reasons, and auto-selecting it
+    # spent someone else's money without a decision being made.
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert resolve_engine() is None
+    # ...but an explicit request still works, key or no key.
+    assert resolve_engine("openai") == "openai"
+    monkeypatch.setenv(NARRATION_ENGINE_ENV, "openai")
     assert resolve_engine() == "openai"
+    monkeypatch.delenv(NARRATION_ENGINE_ENV)
+
     monkeypatch.delenv("OPENAI_API_KEY")
     monkeypatch.setattr(
         "luxar.demos._narration.shutil.which", lambda name: f"/usr/bin/{name}"
     )
     assert resolve_engine() == "say"
+
+    # The local engine is chosen even with a key present: free beats paid when
+    # nobody asked for paid.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert resolve_engine() == "say"
+    monkeypatch.delenv("OPENAI_API_KEY")
 
     with pytest.raises(ValueError, match="Unknown narration engine"):
         resolve_engine("espeak")
@@ -62,7 +77,11 @@ def test_synthesise_caches_by_engine_voice_and_text(tmp_path, monkeypatch) -> No
     calls: list[tuple[str, str, Path]] = []
     engines = _fake_engines(calls)
 
-    clip = synthesise("Hello  world.", "alloy", tmp_path, engines=engines)
+    # engine="openai" is explicit: the key alone no longer selects the paid
+    # engine, and this test is about cache keying, not engine detection.
+    clip = synthesise(
+        "Hello  world.", "alloy", tmp_path, engine="openai", engines=engines
+    )
     assert clip is not None and clip.suffix == ".mp3"
     assert clip.read_bytes().endswith(b"Hello world.")  # whitespace normalised
     assert len(calls) == 1
@@ -71,12 +90,16 @@ def test_synthesise_caches_by_engine_voice_and_text(tmp_path, monkeypatch) -> No
     assert provenance == {"engine": "openai", "voice": "alloy", "text": "Hello world."}
 
     # Same text → cache hit, no synthesis.
-    again = synthesise("Hello world.", "alloy", tmp_path, engines=engines)
+    again = synthesise(
+        "Hello world.", "alloy", tmp_path, engine="openai", engines=engines
+    )
     assert again == clip
     assert len(calls) == 1
 
     # A different voice or text or engine is a different clip.
-    other = synthesise("Hello world.", "nova", tmp_path, engines=engines)
+    other = synthesise(
+        "Hello world.", "nova", tmp_path, engine="openai", engines=engines
+    )
     assert other != clip and len(calls) == 2
     said = synthesise("Hello world.", "alloy", tmp_path, engine="say", engines=engines)
     assert said is not None and said.suffix == ".m4a" and len(calls) == 3

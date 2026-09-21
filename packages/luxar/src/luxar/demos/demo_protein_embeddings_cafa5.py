@@ -122,6 +122,7 @@ DEMO_META = {
 import gzip
 import json
 import os
+import pickle  # noqa: S403 - read ONLY through _AccessionUnpickler below
 import sys
 import tempfile
 import time
@@ -133,6 +134,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
+import numpy.lib.format as npy_format
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -340,6 +342,74 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
 # =============================================================================
 
 
+class _AccessionUnpickler(pickle.Unpickler):
+    """An unpickler that can rebuild a numpy string array and nothing else.
+
+    ``train_ids.npy`` is an object array, so reading it needs pickle, and pickle
+    on a third-party file is arbitrary code execution: the CAFA5 bundle is
+    fetched from a Kaggle dataset that its owner can replace at any time, and
+    the download is checked for size, not content. ``np.load(...,
+    allow_pickle=True)`` would run whatever that file says to run, before a
+    single accession is read.
+
+    Restricting ``find_class`` keeps the legitimate payload working — the
+    accessions are strings in a numpy array, which needs only the reconstruction
+    primitives below — while a pickle referencing ``os.system``, ``subprocess``
+    or any other global raises instead of executing. This is a containment
+    boundary, not a guarantee about the file's contents: it stops code
+    execution, it does not make an untrusted array trustworthy.
+    """
+
+    #: (module, name) pairs required to rebuild ``ndarray`` of ``str``.
+    #: ``numpy._core`` is the numpy>=2 spelling; both are listed because a
+    #: pickle written by either major version must still load.
+    _ALLOWED = frozenset(
+        {
+            ("numpy", "ndarray"),
+            ("numpy", "dtype"),
+            ("numpy.core.multiarray", "_reconstruct"),
+            ("numpy._core.multiarray", "_reconstruct"),
+        }
+    )
+
+    def find_class(self, module: str, name: str):  # noqa: D102 - see class docstring
+        if (module, name) in self._ALLOWED:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(
+            f"refusing to unpickle {module}.{name} while reading accessions from "
+            f"a downloaded file; only numpy array reconstruction is permitted"
+        )
+
+
+def load_accessions(ids_file: Path) -> list[str]:
+    """Read UniProt accessions from a bundle ``.npy``, without running its code.
+
+    Tries the no-pickle path first: a fixed-width string array (``<U10`` and
+    friends) needs no pickle at all, and then nothing from the file is ever
+    executed. Only an object array falls through to the restricted unpickler
+    above.
+    """
+    try:
+        return [str(x) for x in np.load(ids_file, allow_pickle=False)]
+    except ValueError:
+        pass  # object array — needs pickle, so read it under restriction
+
+    with ids_file.open("rb") as fh:
+        version = npy_format.read_magic(fh)
+        if version == (1, 0):
+            shape, _fortran, dtype = npy_format.read_array_header_1_0(fh)
+        elif version == (2, 0):
+            shape, _fortran, dtype = npy_format.read_array_header_2_0(fh)
+        else:
+            raise ValueError(f"unsupported .npy version {version} in {ids_file}")
+        if not dtype.hasobject:  # pragma: no cover - allow_pickle=False handled it
+            raise ValueError(f"unexpected non-object dtype {dtype} in {ids_file}")
+        array = _AccessionUnpickler(fh).load()
+
+    aprint(f"  (object array read under a restricted unpickler: {shape[0]:,} ids)")
+    return [str(x) for x in array]
+
+
 def select_bundle_files(data_dir: Path) -> tuple[Path, Path | None]:
     """Resolve the CAFA5 bundle's embeddings file and its matching accessions.
 
@@ -418,7 +488,7 @@ def load_protein_embeddings(
         # Load protein IDs (UniProt accessions — what the cluster naming needs)
         if ids_file is not None:
             aprint(f"Loading protein IDs: {ids_file.name}")
-            protein_ids = [str(x) for x in np.load(ids_file, allow_pickle=True)]
+            protein_ids = load_accessions(ids_file)
             aprint(f"✓ Loaded {len(protein_ids):,} protein IDs")
         else:
             # No accessions means no naming: say so rather than letting the

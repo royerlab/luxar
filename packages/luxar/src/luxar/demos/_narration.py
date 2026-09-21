@@ -68,8 +68,11 @@ def resolve_engine(engine: Optional[str] = None) -> Optional[str]:
                 f"{sorted(ENGINE_EXTENSIONS)} or 'none'"
             )
         return choice
-    if os.environ.get("OPENAI_API_KEY"):
-        return "openai"
+    # Deliberately NOT auto-selected from OPENAI_API_KEY. That key is ambient
+    # on many developer machines for unrelated reasons, and picking it up here
+    # silently billed a paid endpoint the moment a demo generated narration —
+    # someone else's money, spent without a decision. The paid path now needs
+    # an explicit request: pass engine="openai" or set the engine env var.
     if shutil.which("say") and shutil.which("afconvert"):
         return "say"
     return None
