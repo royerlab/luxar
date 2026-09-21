@@ -3,15 +3,11 @@
  * contract of `applyTransform`, as opposed to the matrix it installs.
  *
  * `applyTransform` turns `matrixAutoUpdate` OFF (so a directly-installed
- * matrix, shear included, is never recomposed from TRS) and then forces one
- * world-matrix update. That combination is safe only because the root
- * `THREE.Scene` keeps its own `matrixAutoUpdate`, so the renderer's
- * `scene.updateMatrixWorld()` re-dirties the root each frame and cascades
- * `force = true` through the whole tree. Nothing in the viewer disables that,
- * and these tests exist to make the dependency explicit: anything that stops
- * the cascade — clearing the scene's auto-update, or setting
- * `matrixWorldAutoUpdate = false` on a node — silently freezes every
- * transformed node at the world matrix it had when its transform was applied.
+ * matrix, shear included, is never recomposed from TRS), forces one synchronous
+ * world-matrix update for creation-time consumers, and leaves the world matrix
+ * dirty so on-demand updates can re-resolve it after parenting. The renderer's
+ * `scene.updateMatrixWorld()` also cascades `force = true` through the whole
+ * tree each frame; these tests pin both update paths.
  *
  * Every test applies the transform BEFORE `add()`, matching what
  * `load-scene-nodes.ts` actually does (`applyTransform(group, ...)` and only
@@ -100,5 +96,20 @@ describe('applyTransform — world-matrix propagation after parenting', () => {
     applyTransform(object, translation(7, 8, 9));
 
     expect(Array.from(object.matrixWorld.elements)).toEqual(translation(7, 8, 9));
+  });
+
+  it('re-resolves bounds against a parent added after the transform', () => {
+    const parent = new THREE.Group();
+    parent.position.x = 100;
+    parent.updateMatrixWorld(true);
+
+    const child = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
+    applyTransform(child, translation(0, 0, 0));
+    parent.add(child);
+
+    const bounds = new THREE.Box3().setFromObject(child);
+
+    expect(bounds.min.toArray()).toEqual([99, -1, -1]);
+    expect(bounds.max.toArray()).toEqual([101, 1, 1]);
   });
 });

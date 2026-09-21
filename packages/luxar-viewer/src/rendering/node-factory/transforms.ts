@@ -31,10 +31,11 @@ import { validateTransformFormat } from './validation';
  * gsplat covariance congruence Σ' = A Σ Aᵀ, which is already general-linear and so
  * is correct under shear the moment the matrix survives to the GPU.
  *
- * `updateMatrixWorld(true)` is load-bearing: with `matrixAutoUpdate` off, three.js
- * no longer recomposes `matrix` from TRS, and nothing else would mark
- * `matrixWorld` stale — so the world matrix would never refresh. This mirrors
- * `core/layer/luxar-layer.ts`, which already installs an arbitrary 4×4 this way.
+ * `updateMatrixWorld(true)` keeps the world matrix synchronously readable by
+ * creation-time consumers. The following `matrixWorldNeedsUpdate` assignment is
+ * equally important: loaders attach nodes after applying their transform, so a
+ * later on-demand `updateWorldMatrix()` must re-resolve the matrix against the
+ * real parent. The renderer's scene update clears that flag on the next frame.
  */
 export function applyTransform(object: THREE.Object3D, transform: readonly number[]): void {
   if (transform.length !== 16) {
@@ -47,4 +48,5 @@ export function applyTransform(object: THREE.Object3D, transform: readonly numbe
   object.matrixAutoUpdate = false;
   object.matrix.fromArray(transform as number[]);
   object.updateMatrixWorld(true);
+  object.matrixWorldNeedsUpdate = true;
 }
