@@ -338,10 +338,41 @@ def test_linux_available_memory_parses_memavailable_kib(monkeypatch) -> None:
 
 def test_effective_cpu_count_uses_affinity(monkeypatch) -> None:
     monkeypatch.delattr(device_mod.os, "process_cpu_count", raising=False)
-    monkeypatch.setattr(device_mod.os, "sched_getaffinity", lambda pid: {2, 3, 4})
+    # raising=False because `os.sched_getaffinity` is Linux-only: without it
+    # this test did not exercise the affinity path on macOS, it ERRORED on the
+    # setattr before reaching the assertion.
+    monkeypatch.setattr(
+        device_mod.os, "sched_getaffinity", lambda pid: {2, 3, 4}, raising=False
+    )
     monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 64)
 
     assert device_mod._effective_cpu_count() == 3
+
+
+def test_effective_cpu_count_falls_back_without_affinity(monkeypatch) -> None:
+    """The macOS path: neither helper exists, so cpu_count decides.
+
+    This is the platform the repo is developed on and it had no coverage —
+    the affinity test above could not run here at all.
+    """
+    monkeypatch.delattr(device_mod.os, "process_cpu_count", raising=False)
+    monkeypatch.delattr(device_mod.os, "sched_getaffinity", raising=False)
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 64)
+
+    assert device_mod._effective_cpu_count() == 64
+
+
+def test_effective_cpu_count_survives_an_affinity_error(monkeypatch) -> None:
+    """A present-but-failing sched_getaffinity must not propagate."""
+    monkeypatch.delattr(device_mod.os, "process_cpu_count", raising=False)
+
+    def _boom(pid: int) -> set[int]:
+        raise OSError("no affinity for you")
+
+    monkeypatch.setattr(device_mod.os, "sched_getaffinity", _boom, raising=False)
+    monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 12)
+
+    assert device_mod._effective_cpu_count() == 12
 
 
 def test_cpu_auto_accounts_for_intraop_threads(monkeypatch) -> None:
