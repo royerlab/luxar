@@ -14,6 +14,8 @@
  * 4. Transform updates propagate correctly
  */
 
+import * as THREE from 'three';
+
 import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForNextRender } from './helpers';
 
@@ -26,60 +28,78 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
     await page.goto(`/?src=${HIERARCHY_DATASET}&debug`);
     await waitForLuxarReady(page);
 
-    // Get world positions of objects in hierarchy
-    const positions = await page.evaluate(() => {
+    // For every node, recompute the world origin from its PARENT's world matrix
+    // and its own local matrix, and compare against what three.js reports. That
+    // is the composition this test is named for, and it catches the failure
+    // mode that matters here: a child whose `matrixWorld` went stale and no
+    // longer reflects its parent. Reading `.position` would not work — node
+    // transforms are installed as a full affine matrix so shear survives, which
+    // leaves the TRS fields at their defaults.
+    const nodes = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      const results: Array<{ name: string; localPos: number[]; worldPos: number[] }> = [];
+      const results: Array<{
+        name: string;
+        parentName: string | null;
+        parentWorldPos: number[] | null;
+        worldPos: number[];
+        expectedWorldPos: number[] | null;
+      }> = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType === 'points' || obj.type === 'Group') {
-          // Local translation comes from the matrix, not `.position`: node
-          // transforms are installed as a full affine matrix (so shear
-          // survives) and TRS is left unpopulated.
-          const e = obj.matrix.elements;
-          const localPos = [e[12], e[13], e[14]];
+        if (obj.userData?.nodeType !== 'points' && obj.type !== 'Group') return;
 
-          const worldPosVec = new (obj.position.constructor as any)();
-          obj.getWorldPosition(worldPosVec);
+        const worldPosVec = new (obj.position.constructor as any)();
+        obj.getWorldPosition(worldPosVec);
 
-          results.push({
-            name: obj.name,
-            localPos,
-            worldPos: [worldPosVec.x, worldPosVec.y, worldPosVec.z],
-          });
+        let parentWorldPos: number[] | null = null;
+        let expectedWorldPos: number[] | null = null;
+        if (obj.parent) {
+          const pw = new (obj.position.constructor as any)();
+          pw.setFromMatrixPosition(obj.parent.matrixWorld);
+          parentWorldPos = [pw.x, pw.y, pw.z];
+
+          // parent.matrixWorld ∘ (local translation)
+          const expected = new (obj.position.constructor as any)();
+          expected.setFromMatrixPosition(obj.matrix);
+          expected.applyMatrix4(obj.parent.matrixWorld);
+          expectedWorldPos = [expected.x, expected.y, expected.z];
         }
+
+        results.push({
+          name: obj.name,
+          parentName: obj.parent?.name ?? null,
+          parentWorldPos,
+          worldPos: [worldPosVec.x, worldPosVec.y, worldPosVec.z],
+          expectedWorldPos,
+        });
       });
 
       return results;
     });
 
-    expect(positions.length).toBeGreaterThan(0);
+    expect(nodes.length).toBeGreaterThan(0);
 
-    // Find objects in hierarchy
-    const parent = positions.find((p) => p.name.includes('Galaxy') || p.name === 'Parent');
-    const child = positions.find((p) => p.name.includes('SolarSystem') || p.name.includes('Child'));
+    // Every parented node must agree with its own parent.
+    const inconsistent = nodes
+      .filter((n) => n.expectedWorldPos !== null)
+      .filter((n) =>
+        n.worldPos.some((v, i) => Math.abs(v - (n.expectedWorldPos as number[])[i]) > 1e-4)
+      )
+      .map((n) => `${n.name}: world ${n.worldPos} != parent∘local ${n.expectedWorldPos}`);
+    expect(inconsistent, 'nodes whose world matrix disagrees with their parent').toEqual([]);
 
-    // If we have a parent→child relationship, verify composition
-    if (parent && child) {
-      // Child's world position should differ from local position if parent has transform
-      const localDiffersFromWorld =
-        Math.abs(child.localPos[0] - child.worldPos[0]) > 0.01 ||
-        Math.abs(child.localPos[1] - child.worldPos[1]) > 0.01 ||
-        Math.abs(child.localPos[2] - child.worldPos[2]) > 0.01;
-
-      // The previous assertion here was `expect(typeof x).toBe('boolean')`,
-      // which is true of any boolean and therefore tested nothing. A child's
-      // world position must at minimum be finite and derived from the parent
-      // chain; whether it DIFFERS from local depends on the fixture, so that
-      // stays a soft signal rather than a hard assertion.
-      expect(child.worldPos.every((v) => Number.isFinite(v))).toBe(true);
-      expect(parent.worldPos.every((v) => Number.isFinite(v))).toBe(true);
-      if (parent.localPos.some((v) => Math.abs(v) > 0.01)) {
-        expect(localDiffersFromWorld).toBe(true);
-      }
-    } else {
-      // If no clear parent-child found, just verify hierarchy exists
-      expect(positions.length).toBeGreaterThan(0);
+    // Guard against the check above passing vacuously on a flat scene: the
+    // fixture must actually contain a node sitting under a displaced ancestor,
+    // and that node's world origin must not be its local one.
+    const displaced = nodes.filter(
+      (n) => n.parentWorldPos !== null && n.parentWorldPos.some((v) => Math.abs(v) > 0.01)
+    );
+    expect(
+      displaced.length,
+      'fixture has no node under a translated ancestor, so composition was never exercised'
+    ).toBeGreaterThan(0);
+    for (const n of displaced) {
+      expect(n.worldPos.every((v) => Number.isFinite(v))).toBe(true);
     }
   });
 
@@ -209,6 +229,33 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
       (v: number, i: number) => Math.abs(v - identity[i]) > 0.01
     );
     expect(hasTransform).toBe(true);
+
+    // The assertion that actually discriminates, and the only one in this file
+    // that does. `transform_example.py` authors this node as
+    // `rotate_y(30)` THEN a non-uniform scale — i.e. S·R, which TRS cannot
+    // represent. So decomposing the delivered matrix and recomposing it must
+    // NOT round-trip: if it did, the matrix reaching the renderer would already
+    // have been flattened to position/quaternion/scale, which is exactly the
+    // corruption this file's fix removes.
+    //
+    // Everything else here is a "not the identity" check and stays green
+    // against the decomposing implementation — verified by reverting
+    // `transforms.ts` and watching all nine tests pass. Without this block the
+    // suite is a regression net, not evidence.
+    const authored = new THREE.Matrix4().fromArray(complexObject.matrix);
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    authored.decompose(position, quaternion, scale);
+    const roundTripped = new THREE.Matrix4().compose(position, quaternion, scale);
+
+    const worstElement = Math.max(
+      ...authored.elements.map((v, i) => Math.abs(v - roundTripped.elements[i]))
+    );
+    expect(
+      worstElement,
+      'the delivered matrix survives a TRS round trip, so shear was already lost'
+    ).toBeGreaterThan(1e-3);
   });
 });
 

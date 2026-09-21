@@ -2,10 +2,28 @@ import { execFileSync } from 'node:child_process';
 
 // Keep synchronized with scripts/run_examples.py; the Python test enforces this contract.
 const STALE_EXIT_CODE = 3;
-export const EXAMPLE_DATASETS_STALE_ENV = 'LUXAR_E2E_EXAMPLES_STALE';
+export const EXAMPLE_DATASETS_STATUS_ENV = 'LUXAR_E2E_EXAMPLES_STATUS';
+
+/**
+ * How much this run can vouch for `datasets/examples`.
+ *
+ * FOUR states, not two, and the distinction is load-bearing. The wire to the
+ * Playwright workers used to be a single `LUXAR_E2E_EXAMPLES_STALE=1` boolean,
+ * so everything that was not *stale* — including a checkout where
+ * `datasets/examples` does not exist at all — reached the workers looking
+ * exactly like a healthy run. The observed cost: nine `transform-hierarchy`
+ * specs failed with bare 45 s `waitForLuxarReady` timeouts, the page showing
+ * only "Unable to Load Dataset", and nothing anywhere said the real cause was
+ * a fixture directory that had never been generated.
+ *
+ * "Cannot vouch for it" has to be its own value, or it reads as "fine".
+ * `missing` and `unavailable` are kept apart because one is a certainty we can
+ * give an exact remedy for and the other is an unanswered question.
+ */
+export type ExampleFixtureStatus = 'current' | 'stale' | 'missing' | 'unavailable';
 
 export interface ExampleFixtureFreshness {
-  status: 'current' | 'stale' | 'unavailable';
+  status: ExampleFixtureStatus;
   detail?: string;
 }
 
@@ -48,10 +66,13 @@ export function exposeExampleFixtureFreshnessToWorkers(
   freshness: ExampleFixtureFreshness,
   environment: Record<string, string | undefined> = process.env
 ): void {
-  if (freshness.status === 'stale') {
-    environment[EXAMPLE_DATASETS_STALE_ENV] = '1';
+  // Only `current` clears the variable. Every other status — including the two
+  // that mean "unverified" — is forwarded verbatim, so a worker can tell them
+  // apart instead of inferring health from an absent flag.
+  if (freshness.status === 'current') {
+    delete environment[EXAMPLE_DATASETS_STATUS_ENV];
   } else {
-    delete environment[EXAMPLE_DATASETS_STALE_ENV];
+    environment[EXAMPLE_DATASETS_STATUS_ENV] = freshness.status;
   }
 }
 
@@ -62,6 +83,15 @@ export function reportExampleFixtureFreshness(
   if (freshness.status === 'current') {
     reporter.log('✅ Example datasets match the current fixture producer');
     return false;
+  }
+
+  if (freshness.status === 'missing') {
+    reporter.warn('⚠️  Example datasets have not been generated.');
+    if (freshness.detail) reporter.warn(`   Expected them at: ${freshness.detail}`);
+    reporter.warn('   Run "make run-examples" from the repository root to generate them.');
+    reporter.warn('   Every spec that reads datasets/examples will fail until you do.');
+    reporter.warn('   Continuing so specs that do not read example datasets can still run.\n');
+    return true;
   }
 
   if (freshness.status === 'stale') {

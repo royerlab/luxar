@@ -97,14 +97,36 @@ describe('reportExampleFixtureFreshness', () => {
 });
 
 describe('Playwright stale-example integration', () => {
-  it('exports only the stale verdict to Playwright workers', () => {
+  it('forwards every non-current verdict to Playwright workers, distinguishably', () => {
     const environment: Record<string, string | undefined> = {};
 
-    exposeExampleFixtureFreshnessToWorkers({ status: 'stale' }, environment);
-    expect(environment.LUXAR_E2E_EXAMPLES_STALE).toBe('1');
+    // The regression this pins: under the old boolean wire, `missing` and
+    // `unavailable` both cleared the variable and so were indistinguishable
+    // from `current`. A checkout with no examples at all looked healthy.
+    for (const status of ['stale', 'missing', 'unavailable'] as const) {
+      exposeExampleFixtureFreshnessToWorkers({ status }, environment);
+      expect(environment.LUXAR_E2E_EXAMPLES_STATUS).toBe(status);
+    }
 
     exposeExampleFixtureFreshnessToWorkers({ status: 'current' }, environment);
-    expect(environment.LUXAR_E2E_EXAMPLES_STALE).toBeUndefined();
+    expect(environment.LUXAR_E2E_EXAMPLES_STATUS).toBeUndefined();
+  });
+
+  it('names the directory and the remedy when examples were never generated', () => {
+    const reporter = { log: vi.fn(), warn: vi.fn() };
+
+    expect(
+      reportExampleFixtureFreshness(
+        { status: 'missing', detail: '/repo/datasets/examples' },
+        reporter
+      )
+    ).toBe(true);
+    expect(reporter.log).not.toHaveBeenCalled();
+    expect(reporter.warn).toHaveBeenCalledWith('⚠️  Example datasets have not been generated.');
+    expect(reporter.warn).toHaveBeenCalledWith('   Expected them at: /repo/datasets/examples');
+    expect(reporter.warn).toHaveBeenCalledWith(
+      '   Run "make run-examples" from the repository root to generate them.'
+    );
   });
 
   it('keeps global setup on the warning path without a stale-data throw', () => {

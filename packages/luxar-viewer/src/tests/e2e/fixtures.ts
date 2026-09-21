@@ -56,7 +56,7 @@
 
 import { test as base } from '@playwright/test';
 import { StorageKeys } from '../../utils/storage-keys';
-import { EXAMPLE_DATASETS_STALE_ENV } from '../../../tools/example-fixture-freshness';
+import { EXAMPLE_DATASETS_STATUS_ENV } from '../../../tools/example-fixture-freshness';
 
 /** Annotation type that opts a spec out of the auto console-error check. */
 export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
@@ -144,12 +144,36 @@ export function unexpectedConsoleErrors(
   return captured.filter((entry) => !allowed.some((pattern) => pattern.test(entry.text)));
 }
 
-export function staleExampleDatasetFailureWarning(
+/**
+ * The one line that turns "this spec timed out" into "this spec had nothing to
+ * load". Attached to a failing spec when the run could not vouch for
+ * `datasets/examples`.
+ *
+ * Takes the STATUS, not a stale/not-stale boolean. Under the boolean a missing
+ * fixture directory was indistinguishable from a healthy one, so the worst of
+ * the three unhealthy states was the only one that stayed silent — see the
+ * `ExampleFixtureStatus` docblock in `tools/example-fixture-freshness.ts`.
+ *
+ * @param status - Playwright's `testInfo.status` for the finished spec
+ * @param examplesStatus - The forwarded `ExampleFixtureStatus`, if any
+ * @returns An actionable reminder, or undefined when there is nothing to add
+ */
+export function exampleDatasetFailureWarning(
   status: string | undefined,
-  examplesAreStale: boolean
+  examplesStatus: string | undefined
 ): string | undefined {
-  if (!examplesAreStale || (status !== 'failed' && status !== 'timedOut')) return undefined;
-  return 'Example datasets are stale. If this spec reads datasets/examples, run "make run-examples" from the repository root.';
+  if (status !== 'failed' && status !== 'timedOut') return undefined;
+  const remedy = 'run "make run-examples" from the repository root.';
+  switch (examplesStatus) {
+    case 'stale':
+      return `Example datasets are stale. If this spec reads datasets/examples, ${remedy}`;
+    case 'missing':
+      return `Example datasets have not been generated, so every spec that reads datasets/examples fails on a bare readiness timeout. To fix, ${remedy}`;
+    case 'unavailable':
+      return `Example dataset freshness could not be verified. If this spec reads datasets/examples, ${remedy}`;
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -196,11 +220,11 @@ export const test = base.extend({
     try {
       await use(page);
 
-      const staleExamplesWarning = staleExampleDatasetFailureWarning(
+      const examplesWarning = exampleDatasetFailureWarning(
         testInfo.status,
-        process.env[EXAMPLE_DATASETS_STALE_ENV] === '1'
+        process.env[EXAMPLE_DATASETS_STATUS_ENV]
       );
-      if (staleExamplesWarning) console.warn(`\n⚠️  ${staleExamplesWarning}\n`);
+      if (examplesWarning) console.warn(`\n⚠️  ${examplesWarning}\n`);
 
       // Skip the assertion if the spec opted out via annotation.
       const annotated = testInfo.annotations.some((a) => a.type === ALLOW_CONSOLE_ERRORS);
