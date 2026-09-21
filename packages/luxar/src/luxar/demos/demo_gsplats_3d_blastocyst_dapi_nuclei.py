@@ -832,16 +832,30 @@ def resolve_gsplats() -> list[GSplatData] | None:
     return precomputed
 
 
-def main():
-    """Main demo execution."""
-    aprint("=" * 70)
-    aprint("GSplats Demo: Mouse Blastocyst DAPI-Stained Nuclei")
-    aprint("=" * 70)
+def announce_data_provenance() -> None:
+    """Say, up front, whether this run is real microscopy or a stand-in."""
     if SYNTHETIC:
         aprint("⚠ SYNTHETIC MODE — procedurally generated stand-in nuclei.")
         aprint("  This is NOT microscopy and the scene carries no citation.")
     else:
         aprint("Real microscopy data + Gaussian Splatting + Web visualization")
+
+
+def acquire_volume():
+    """Return ``(volume, acquisition)`` from IDR, or synthesize under --synthetic.
+
+    The one place the choice is made, so `main` carries no branch for it and
+    the two sources cannot be confused at the call site.
+    """
+    return synthesize_nuclei_volume() if SYNTHETIC else load_dapi_data()
+
+
+def main():
+    """Main demo execution."""
+    aprint("=" * 70)
+    aprint("GSplats Demo: Mouse Blastocyst DAPI-Stained Nuclei")
+    aprint("=" * 70)
+    announce_data_provenance()
     aprint("")
 
     # Determine output path
@@ -870,10 +884,7 @@ def main():
         # --recompute path (or no data to be had): download raw data, fit from
         # scratch, and cache the fit under LOCAL_FIT.
         warn_if_no_cuda_gpu()
-        if SYNTHETIC:
-            volume, acquisition = synthesize_nuclei_volume()
-        else:
-            volume, acquisition = load_dapi_data()
+        volume, acquisition = acquire_volume()
         gsplats_data_original = fit_dapi_gsplats(volume, acquisition)
 
     # Optional round-trip visualisation (before centering/scaling transforms)

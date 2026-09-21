@@ -703,6 +703,14 @@ def resolve_gsplats() -> list[GSplatData] | None:
     return precomputed
 
 
+def acquire_volumes():
+    """Return ``(volumes, source_dtype)`` from IDR, or synthesize under --synthetic.
+
+    The one place the choice is made, so `main` carries no branch for it.
+    """
+    return synthesize_channel_volumes() if SYNTHETIC else load_multichannel_data()
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
@@ -736,10 +744,7 @@ def main():
         # --recompute path (or no data to be had): download raw data, fit from
         # scratch, and cache the fits in the local-fit namespace.
         warn_if_no_cuda_gpu()
-        if SYNTHETIC:
-            volumes, source_dtype = synthesize_channel_volumes()
-        else:
-            volumes, source_dtype = load_multichannel_data()
+        volumes, source_dtype = acquire_volumes()
 
         if len(volumes) < 2:
             aprint("Error: Need at least 2 channels for this demo")
