@@ -5,7 +5,8 @@ new wave of demos to them without breaking anything.
 
 This is an operational document. It records the architecture, the publish
 sequence, and — most importantly — the failure modes that produce a *plausible
-wrong answer* rather than an error. No credentials appear here; they live on the operator's machine.
+wrong answer* rather than an error. No credentials appear here; they live on
+the operator's machine.
 The publishing harness named below (`gen_landing.py`, `snapshot_hashes.py`,
 `compare_snapshot.py`, and the upload script) also lives outside this
 repository on that machine.
