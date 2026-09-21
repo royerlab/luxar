@@ -129,8 +129,11 @@ describe('visual A/B scoring', () => {
   it('passes a lower-is-better comparison on the recorded margin boundary', () => {
     const comparisons = evaluateLowerIsBetterComparisons(
       [
-        { id: 'chromatic', score: { meanDeltaE: 2 } },
-        { id: 'spatial', score: { meanDeltaE: 5 } },
+        {
+          id: 'chromatic',
+          score: { meanDeltaE: 2, blownPixelFraction: { reference: 0.01 } },
+        },
+        { id: 'spatial', score: { meanDeltaE: 5, blownPixelFraction: { reference: 0.01 } } },
       ],
       [
         {
@@ -149,8 +152,11 @@ describe('visual A/B scoring', () => {
   it('rejects a lower-is-better comparison below the recorded margin', () => {
     const comparisons = evaluateLowerIsBetterComparisons(
       [
-        { id: 'chromatic', score: { meanDeltaE: 4.5 } },
-        { id: 'spatial', score: { meanDeltaE: 5 } },
+        {
+          id: 'chromatic',
+          score: { meanDeltaE: 4.5, blownPixelFraction: { reference: 0.01 } },
+        },
+        { id: 'spatial', score: { meanDeltaE: 5, blownPixelFraction: { reference: 0.01 } } },
       ],
       [
         {
@@ -164,6 +170,32 @@ describe('visual A/B scoring', () => {
     );
 
     expect(comparisons[0]).toMatchObject({ improvement: 0.5, pass: false });
+  });
+
+  it('rejects a comparison between different finest references', () => {
+    expect(() =>
+      evaluateLowerIsBetterComparisons(
+        [
+          {
+            id: 'chromatic',
+            score: { meanDeltaE: 2, blownPixelFraction: { reference: 0.01 } },
+          },
+          {
+            id: 'spatial',
+            score: { meanDeltaE: 5, blownPixelFraction: { reference: 0.02 } },
+          },
+        ],
+        [
+          {
+            id: 'chromatic-improves-colour',
+            better: 'chromatic',
+            worse: 'spatial',
+            metric: 'meanDeltaE',
+            minImprovement: 1,
+          },
+        ]
+      )
+    ).toThrow(/chromatic.*spatial/);
   });
 
   it('fails capture checks when additive light falls below the recorded ratio', () => {

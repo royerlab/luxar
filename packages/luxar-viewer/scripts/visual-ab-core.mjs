@@ -221,6 +221,18 @@ export function evaluateLowerIsBetterComparisons(results, comparisons) {
     if (!Number.isFinite(betterValue) || !Number.isFinite(worseValue)) {
       throw new Error(`comparison ${comparison.id} references a missing numeric score`);
     }
+    const betterReference = better.score.blownPixelFraction?.reference;
+    const worseReference = worse.score.blownPixelFraction?.reference;
+    if (
+      !Number.isFinite(betterReference) ||
+      !Number.isFinite(worseReference) ||
+      betterReference !== worseReference
+    ) {
+      throw new Error(
+        `comparison ${comparison.id} requires matching finest references for ` +
+          `${comparison.better} and ${comparison.worse}`
+      );
+    }
     const improvement = worseValue - betterValue;
     return {
       ...comparison,
