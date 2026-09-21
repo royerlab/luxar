@@ -7,7 +7,11 @@
 #
 # The wheel force-includes packages/luxar-viewer/dist (see [tool.hatch...
 # force-include] in pyproject.toml), so the viewer is built BEFORE `hatch build`.
-# Wheels are the supported artifact; the sdist is provenance-only (no viewer).
+# Only the WHEEL is built and published. The sdist is neither: a wheel built
+# from it fails, because the build hook requires the viewer dist and the sdist
+# does not carry it, so publishing one would offer an artifact that cannot be
+# installed. The build step uses `-t wheel` and a following step refuses to
+# upload any tarball.
 # Native launchers are host-specific and intentionally NOT bundled — the wheel
 # stays py3-none-any and `luxar export --native` tells users to build them.
 #
