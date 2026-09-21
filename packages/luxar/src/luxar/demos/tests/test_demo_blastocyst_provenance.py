@@ -166,15 +166,38 @@ def test_synthetic_scene_publishes_no_real_provenance(stem, tmp_path) -> None:
         published = overlays
     else:
         published = f"{attrs['description']}\n{overlays}"
+    # POSITIVE assertion first, because it is the one that cannot rot. The
+    # negative list below only forbids tokens someone thought to enumerate, so
+    # new prose is unguarded by construction: the first version of this test
+    # forbade "Leica SP8"/"idr0062"/the DOI and none of those appear in the
+    # multichannel explanatory panel or the DAPI caption, so reverting either
+    # `if SYNTHETIC` left all ten tests green while the synthetic scene
+    # republished "Mouse blastocyst (E3.5)… Lamin B1…" and "Confocal
+    # microscopy • DAPI-labelled nuclei". Requiring the text to SAY it is
+    # synthetic cannot be defeated by adding prose, only by deleting this line.
+    assert any(
+        marker in published for marker in ("SYNTHETIC", "Procedurally generated")
+    ), f"synthetic scene's visible text never says so: {published[:300]!r}"
+
     for borrowed_claim in (
+        # Provenance of the real dataset.
         "Leica SP8",
         "idr0062",
         "10.1371/journal.pbio.3000388",
         "CC BY",
         "ab16048",
         "immunostain",
+        # Specimen and biology claims. These are what the panel and caption
+        # actually said, and what the list above failed to catch.
+        "Mouse blastocyst",
+        "E3.5",
+        "Lamin B1",
+        "Confocal microscopy",
+        "DAPI-labelled",
     ):
-        assert borrowed_claim not in published
+        assert borrowed_claim not in published, (
+            f"synthetic scene asserts {borrowed_claim!r}, which describes the real specimen"
+        )
 
 
 def test_synthetic_volumes_are_reproducible_and_declare_no_acquisition() -> None:
