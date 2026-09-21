@@ -25,9 +25,12 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import numpy as np
 import pytest
+import zarr
 
 from luxar.demos import DatasetUnavailable
+from luxar.gsplats.gsplat_data import GSplatData
 
 DEMOS = Path(__file__).resolve().parent.parent
 DAPI = "demo_gsplats_3d_blastocyst_dapi_nuclei"
@@ -49,6 +52,28 @@ def _load(stem: str, argv: list[str]) -> ModuleType:
         return module
     finally:
         sys.argv = saved
+
+
+def _tiny_gsplat_data(seed: int = 0) -> GSplatData:
+    """A handful of valid splats, sufficient to compile either scene offline."""
+    rng = np.random.default_rng(seed)
+    return GSplatData(
+        centers=rng.uniform(-4.0, 4.0, (8, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, 8).astype(np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (8, 1)).astype(np.float32),
+    )
+
+
+def _overlay_text(root: zarr.Group) -> str:
+    """Return every authored text overlay as one string."""
+    parts: list[str] = []
+    overlays = root.get("overlays")
+    if overlays is not None:
+        parts.extend(
+            str(dict(overlays[name].attrs).get("text", ""))
+            for name in overlays.group_keys()
+        )
+    return "\n".join(parts)
 
 
 @pytest.mark.parametrize(
@@ -102,13 +127,54 @@ def test_multichannel_reads_back_the_cache_it_writes() -> None:
     so the synthetic cache was write-only and every run refit from scratch.
     """
     module = _load(MULTI, ["--synthetic"])
+    written: list[Path] = []
+    read: list[str] = []
 
-    assert module.SYNTHETIC_GSPLATS_FILES == [
-        f"synthetic_{name}" for name in module.GSPLATS_FILES
-    ]
-    assert all(
-        name not in module.GSPLATS_FILES for name in module.SYNTHETIC_GSPLATS_FILES
-    )
+    def fake_fit_channel(_volume, _channel_name, cache_file, source_dtype=None):
+        written.append(cache_file)
+        return object()
+
+    def fake_load_local_fit(_demo_name, names):
+        read.extend(names)
+        return None
+
+    module.fit_channel = fake_fit_channel
+    module.load_local_fit_gsplats = fake_load_local_fit
+
+    module.fit_all_channels([object(), object()])
+    assert module.resolve_gsplats() is None
+
+    assert [path.name for path in written] == read
+
+
+@pytest.mark.parametrize("stem", [DAPI, MULTI])
+def test_synthetic_scene_publishes_no_real_provenance(stem, tmp_path) -> None:
+    module = _load(stem, ["--synthetic"])
+    output = tmp_path / f"{stem}.luxar.zarr"
+    splats = _tiny_gsplat_data()
+    scene_input = [splats, _tiny_gsplat_data(seed=1)] if stem == MULTI else splats
+
+    scene_path = module.create_luxar_scene(scene_input, output)
+    root = zarr.open_group(str(scene_path), mode="r")
+    attrs = dict(root.attrs)
+    overlays = _overlay_text(root)
+
+    assert attrs.get("citation") is None
+    assert "SYNTHETIC" in attrs["title"]
+    if stem == DAPI:
+        assert "deliberately NOT attached" in attrs["description"]
+        published = overlays
+    else:
+        published = f"{attrs['description']}\n{overlays}"
+    for borrowed_claim in (
+        "Leica SP8",
+        "idr0062",
+        "10.1371/journal.pbio.3000388",
+        "CC BY",
+        "ab16048",
+        "immunostain",
+    ):
+        assert borrowed_claim not in published
 
 
 def test_synthetic_volumes_are_reproducible_and_declare_no_acquisition() -> None:

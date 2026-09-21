@@ -88,6 +88,7 @@ Options:
     --no-napari:      Skip napari visualization (useful for headless/CI)
     --serve-only:     Skip fitting, just serve existing scene
     --show-roundtrip: Show matplotlib comparison of original vs reconstructed volumes
+    --synthetic:      Use clearly labelled procedural stand-in channels, not microscopy
 
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
@@ -159,8 +160,7 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
-TARGET_SIZE = 256  # Only used by the synthetic fallback (edge cube size when
-# the IDR load fails); the real path loads at native resolution (no resample).
+TARGET_SIZE = 256  # Edge length of explicitly requested synthetic volumes.
 TIME_POINT = 0  # First time point
 
 # Channel configuration with colors.
@@ -252,9 +252,7 @@ def load_multichannel_data():
     Returns:
         tuple: ``(volumes, source_dtype)`` -- one volume per channel, and the
         element type the store holds, to be declared to the fit so compression is
-        quoted against the acquisition and not the float32 working copy. The
-        dtype is ``None`` on the synthetic fallback path, whose arrays are built
-        here and so are their own source.
+        quoted against the acquisition and not the float32 working copy.
 
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Blin et al., Lowell lab (University of Edinburgh)
@@ -552,7 +550,29 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
                 if SYNTHETIC
                 else "GSplats: Mouse Blastocyst, Two Channels (Lamin B1 + DAPI)"
             )
-            scene.attrs["description"] = """
+            if SYNTHETIC:
+                scene.attrs["description"] = """
+Synthetic Multi-Channel Gaussian Splats — NOT Microscopy
+========================================================
+
+This scene contains two procedurally generated intensity volumes fitted as
+Gaussian splats. Nothing here was measured, no biological specimen or imaging
+instrument is represented, and the channels do not correspond to stains,
+antibodies or molecular structures.
+
+It exists only to exercise the multi-channel fitting, layering and rendering
+pipeline without network access. Run without --synthetic for the real dataset.
+
+Toggle layers in the viewer (press L) to inspect the generated channels.
+
+Controls:
+- Mouse drag to rotate
+- Scroll to zoom
+- Right-click drag to pan
+- 'C' to toggle fly controls
+                """
+            else:
+                scene.attrs["description"] = """
 Multi-Channel Gaussian Splatting — Mouse Blastocyst (E3.5)
 ===========================================================
 
@@ -584,7 +604,7 @@ Controls:
 - Scroll to zoom
 - Right-click drag to pan
 - 'C' to toggle fly controls
-            """
+                """
 
             # Add each channel as a separate layer
             for i, (gsplats, ch_config) in enumerate(
@@ -640,15 +660,25 @@ Controls:
             # Explanatory panel, placed below the title so the two don't overlap
             # — same slot and styling as the LOD demos' panel.
             scene.add_text(
-                "Mouse blastocyst (E3.5). Two channels, fitted\n"
-                "independently, shown as toggleable layers.\n"
-                "Lamin B1 is a nuclear LAMINA protein, so it\n"
-                "draws the envelope AROUND each nucleus; DAPI\n"
-                "binds DNA and FILLS it. Densely packed nuclei\n"
-                "merge in the DAPI channel but stay separable\n"
-                "in the envelope one — which is why this image\n"
-                "is a nuclear-segmentation benchmark.\n"
-                "Press L for the Layers panel.",
+                (
+                    "Procedurally generated intensity blobs.\n"
+                    "Two independent channels are shown as\n"
+                    "toggleable layers for pipeline testing.\n"
+                    "Nothing here was measured and neither\n"
+                    "channel represents a stain, antibody,\n"
+                    "specimen or biological structure.\n"
+                    "Press L for the Layers panel."
+                    if SYNTHETIC
+                    else "Mouse blastocyst (E3.5). Two channels, fitted\n"
+                    "independently, shown as toggleable layers.\n"
+                    "Lamin B1 is a nuclear LAMINA protein, so it\n"
+                    "draws the envelope AROUND each nucleus; DAPI\n"
+                    "binds DNA and FILLS it. Densely packed nuclei\n"
+                    "merge in the DAPI channel but stay separable\n"
+                    "in the envelope one — which is why this image\n"
+                    "is a nuclear-segmentation benchmark.\n"
+                    "Press L for the Layers panel."
+                ),
                 position=(0.02, 0.10),
                 font_size=0.020,
                 font="mono",
@@ -666,7 +696,11 @@ Controls:
             start_y = 0.94 - spacing * (len(gsplats_list) - 1)
             for i, ch_config in enumerate(CHANNELS[: len(gsplats_list)]):
                 scene.add_text(
-                    f"● {ch_config['name']}: {ch_config['blurb']}",
+                    (
+                        f"● Generated channel {i + 1}: procedural intensity blobs"
+                        if SYNTHETIC
+                        else f"● {ch_config['name']}: {ch_config['blurb']}"
+                    ),
                     position=(0.02, start_y + spacing * i),
                     font_size=0.020,
                     font="mono",
@@ -685,12 +719,11 @@ Controls:
 
 
 def resolve_gsplats() -> list[GSplatData] | None:
-    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+    """Resolve the selected mode's fit cache, or return None to build it.
 
-    Only ``DatasetUnavailable`` falls through to the local door — the narrow
-    "these bytes are not obtainable from anywhere yet" case. An unknown file
-    name, a missing packaged manifest or an in-repo copy failing its sha256 are
-    faults, and must not be disguised as a routine multi-minute refit.
+    Synthetic mode consults only its local namespace. Real mode tries the
+    manifest before this machine's earlier refit; only ``DatasetUnavailable``
+    falls through to that local door. Manifest/configuration faults still raise.
     """
     if SYNTHETIC:
         # See the DAPI sibling: consulting the manifest here returned the real
@@ -726,12 +759,21 @@ def acquire_volumes():
     return synthesize_channel_volumes() if SYNTHETIC else load_multichannel_data()
 
 
+def announce_data_provenance() -> None:
+    """Say, up front, whether this run is real microscopy or a stand-in."""
+    if SYNTHETIC:
+        aprint("⚠ SYNTHETIC MODE — procedurally generated stand-in channels.")
+        aprint("  This is NOT microscopy and the scene carries no citation.")
+    else:
+        aprint("Per-channel fitting + colormap layers + Web visualization")
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
     aprint("GSplats Demo: Multi-Channel Mouse Blastocyst (Lamin B1 + DAPI)")
     aprint("=" * 70)
-    aprint("Per-channel fitting + colormap layers + Web visualization")
+    announce_data_provenance()
     aprint("")
 
     # Determine output path

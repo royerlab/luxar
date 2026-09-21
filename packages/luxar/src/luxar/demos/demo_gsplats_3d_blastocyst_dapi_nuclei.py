@@ -113,6 +113,7 @@ Options:
     --no-napari:      Skip napari visualization (useful for headless/CI)
     --serve-only:     Skip fitting, just serve existing scene
     --show-roundtrip: Show matplotlib comparison of original vs reconstructed volume
+    --synthetic:      Use clearly labelled procedural stand-in nuclei, not microscopy
 
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
@@ -252,11 +253,9 @@ def load_dapi_data():
     ORIGINAL stored channel -- the grid and element type it was acquired at, and
     what it OCCUPIES in the store (compressed), which are different numbers and
     give different compression ratios. ``stored_bytes`` is ``None`` when the
-    store cannot report a size, and ``acquisition`` itself is ``None`` when the
-    array was synthesized here and so is its own
-    source. The fit stamps the acquisition rather than the working copy, or the
-    compression ratio it publishes would be quoted against a downscaled float32
-    copy of the data instead of the data.
+    store cannot report a size. The fit stamps the acquisition rather than the
+    working copy, or the compression ratio it publishes would be quoted against
+    a downscaled float32 copy of the data instead of the data.
 
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Blin et al., Lowell lab (University of Edinburgh)
@@ -342,10 +341,9 @@ def load_dapi_data():
             # paper that is the worst failure mode available, so acquisition
             # errors now stop the demo.
             #
-            # DatasetUnavailable rather than a bare raise: it is the narrow
-            # exception this demo's own resolver already handles (see
-            # resolve_gsplats below), so the failure lands on the established
-            # path instead of a traceback.
+            # DatasetUnavailable rather than a bare raise gives callers a
+            # distinct acquisition failure to handle. main intentionally lets
+            # it propagate so the command exits non-zero rather than fabricating.
             raise DatasetUnavailable(
                 f"could not load IDR idr0062 image 6001240 from {ZARR_URL}: {exc}. "
                 "Check the network and that `fsspec` is installed. To render "
@@ -806,12 +804,11 @@ def serve_scene(scene_path):
 
 
 def resolve_gsplats() -> list[GSplatData] | None:
-    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+    """Resolve the selected mode's fit cache, or return None to build it.
 
-    Only ``DatasetUnavailable`` falls through to the local door — the narrow
-    "these bytes are not obtainable from anywhere yet" case. An unknown file
-    name, a missing packaged manifest or an in-repo copy failing its sha256 are
-    faults, and must not be disguised as a routine multi-minute refit.
+    Synthetic mode consults only its local namespace. Real mode tries the
+    manifest before this machine's earlier refit; only ``DatasetUnavailable``
+    falls through to that local door. Manifest/configuration faults still raise.
     """
     if SYNTHETIC:
         # NEVER consult the manifest under --synthetic. It resolves the pinned

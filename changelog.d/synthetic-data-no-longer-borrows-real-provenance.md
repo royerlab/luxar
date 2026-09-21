@@ -11,12 +11,12 @@ nothing in the published scene did.
 Measured on the unmodified code with the source unreachable: it returns a
 128³ volume and the scene publishes it under doi:10.1371/journal.pbio.3000388.
 
-Acquisition failures now raise `DatasetUnavailable`, the narrow exception these
-demos' own resolvers already handle. Procedural data is reachable only through
-an explicit `--synthetic` flag, which switches the whole identity of the run
+Acquisition failures now raise `DatasetUnavailable` and stop the demo rather
+than fabricating a replacement. Procedural data is reachable only through an
+explicit `--synthetic` flag, which switches the whole identity of the run
 together: its own cache file, its own scene name, a title and caption that say
-SYNTHETIC, a description stating nothing is measured, and **no citation** —
-a DOI asserts provenance rather than decorating a scene. The separate cache
+SYNTHETIC, a description stating nothing is measured, and **no citation** — a
+DOI asserts provenance rather than decorating a scene. The separate cache
 matters on its own: sharing one let a single offline run poison every later
 online run.
 
