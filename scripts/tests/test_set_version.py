@@ -709,6 +709,26 @@ def test_release_preflight_fails_closed_on_unverified_ci(
     assert returncode != 0
 
 
+def test_release_preflight_accepts_a_green_check_run(tmp_path: Path) -> None:
+    """The check-run-backed green path — five of main's six required contexts.
+
+    Its sibling below covers the legacy commit-status fallback, which is the
+    path taken when /check-runs reports nothing. That one cannot reach
+    `conclusion_of`'s check-run success branch at all, so without this test
+    the branch judging most real required contexts green was unpinned: change
+    that branch to print anything but "success" and the whole preflight suite
+    still passed. The two paths are independent and both need a green case.
+    """
+    output, _, returncode = _run_release_preflight(
+        tmp_path, ci_result="green", check=False
+    )
+
+    assert "python-tests (3.12): success" in output
+    assert "all required checks green" in output
+    assert "DRY RUN complete" in output
+    assert returncode == 0
+
+
 def test_release_preflight_accepts_green_legacy_commit_status(tmp_path: Path) -> None:
     output, _, returncode = _run_release_preflight(
         tmp_path, ci_result="green-status", check=False
