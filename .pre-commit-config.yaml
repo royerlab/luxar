@@ -67,7 +67,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy (luxar package)
-        entry: hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py
+        entry: hatch run type-check
         language: system
         types: [python]
         pass_filenames: false
