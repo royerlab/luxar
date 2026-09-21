@@ -51,9 +51,10 @@ When to Use Gaussian Splats
 
 .. note::
 
-   Gaussian splatting requires optional dependencies (PyTorch, SciPy), and this tutorial's sample image uses scikit-image (the ``demos`` extra). Install them with::
+   Gaussian splatting requires optional dependencies (PyTorch, SciPy). This
+   tutorial also uses scikit-image only for its sample image. Install them with::
 
-      pip install 'luxar[gsplats,demos]'
+      pip install 'luxar[gsplats]' scikit-image
 
 Basic Gaussian Splat Fitting
 -----------------------------
