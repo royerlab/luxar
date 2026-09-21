@@ -41,7 +41,7 @@ out of agreement with the thing it is guarding:
 5. **The wheel itself under PyPI's 100 MB limit.** PyPI applies the cap to the
    uploaded FILE, and the realistic breach here is thousands of small payloads
    with nothing individually large — which check 4 cannot see.
-5. **The viewer dist is bundled** (``luxar/_viewer_dist/``), mirroring the check
+6. **The viewer dist is bundled** (``luxar/_viewer_dist/``), mirroring the check
    ``publish.yml`` already performs — kept so this gate is a superset of the
    release-time one rather than a divergent second opinion.
 
@@ -312,7 +312,13 @@ def _problem_sections(
         (
             "the wheel itself exceeds PyPI's 100 MB upload limit:",
             (
-                [f"{report.dist_bytes / 1e6:.1f} MB (limit 100.0 MB)"]
+                # MiB on both sides: the constant is 100 * 1024 * 1024, so
+                # labelling it "100.0 MB" beside a decimal-MB size was two
+                # different units in one sentence.
+                [
+                    f"{report.dist_bytes / 1048576:.1f} MiB "
+                    f"(limit {PYPI_MAX_DIST_BYTES / 1048576:.0f} MiB)"
+                ]
                 if report.dist_too_large
                 else []
             ),
@@ -347,7 +353,9 @@ def _print_report(report: WheelReport, wheel_path: Path, entries: int) -> int:
     aprint("📦 WHEEL CONTENTS")
     aprint("=" * 70)
     size_note = (
-        f", {report.dist_bytes / 1e6:.1f} MB" if report.dist_bytes is not None else ""
+        f", {report.dist_bytes / 1048576:.1f} MiB"
+        if report.dist_bytes is not None
+        else ""
     )
     aprint(f"🔢 {wheel_path.name}: {entries} members{size_note}")
 

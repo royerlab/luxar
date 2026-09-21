@@ -300,6 +300,27 @@ def test_a_missing_wheel_is_an_error(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_main_exits_1_and_names_an_oversized_wheel(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch
+) -> None:
+    """Drive the whole-wheel check through main(), as this file does for the others.
+
+    The report-level test proves the flag flips; this proves the gate actually
+    fails the build and says something the operator can act on.
+    """
+    monkeypatch.setattr(checker, "PYPI_MAX_DIST_BYTES", 100)
+    root = _make_project(tmp_path)
+    wheel = _make_wheel(tmp_path, dict(_GOOD_MEMBERS))
+
+    code = checker.main([str(wheel), "--project-root", str(root)])
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "exceeds PyPI's 100 MB upload limit" in out
+    # The per-member section must stay silent: no member is large.
+    assert "member(s) exceed" not in out
+
+
 def test_main_exits_1_and_names_the_dropped_package(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

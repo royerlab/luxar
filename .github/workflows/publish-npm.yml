@@ -201,23 +201,15 @@ jobs:
             exit 1
           fi
 
-      - name: Verify tag matches viewer package version
+      - name: Verify tag matches package, viewer and citation versions
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
-          PKG_VERSION="$(node -p "require('./packages/luxar-viewer/package.json').version")"
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          # The tag is zero-padded CalVer (v2026.06.29) but package.json is semver
-          # (no leading zeros: 2026.6.29). Normalize the tag the SAME way
-          # `make set-version` (scripts/set_version.py) does before comparing.
-          EXPECTED="$(node -e "console.log(process.argv[1].split('.').map(Number).join('.'))" "$TAG_VERSION")"
-          echo "package.json version    = $PKG_VERSION"
-          echo "tag normalized to semver = $EXPECTED   (from $GITHUB_REF_NAME)"
-          if [ "$PKG_VERSION" != "$EXPECTED" ]; then
-            echo "::error::Tag '$GITHUB_REF_NAME' (-> $EXPECTED) does not match viewer version '$PKG_VERSION'. Run 'make set-version DATE=YYYY.MM.DD' and re-tag."
-            exit 1
-          fi
-
+          # Was a hand-rolled node one-liner that re-derived the CalVer ->
+          # semver normalisation and compared ONE representation. This PR's
+          # point is one gate instead of four, so the npm job uses the same
+          # shared check as publish.yml and the release preflight.
+          python3 scripts/check_version_consistency.py --expect-tag "$GITHUB_REF_NAME"
       - name: Install dependencies
         working-directory: packages/luxar-viewer
         run: pnpm install --frozen-lockfile
