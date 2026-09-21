@@ -149,7 +149,14 @@ def build_fixture(output: Path) -> None:
         gsplat_colors = palette[gsplat_hue]
         gsplat_cholesky = np.tile(
             np.array(
-                [GSPLAT_SPLAT_SIGMA, 0.0, GSPLAT_SPLAT_SIGMA, 0.0, 0.0, GSPLAT_SPLAT_SIGMA],
+                [
+                    GSPLAT_SPLAT_SIGMA,
+                    0.0,
+                    GSPLAT_SPLAT_SIGMA,
+                    0.0,
+                    0.0,
+                    GSPLAT_SPLAT_SIGMA,
+                ],
                 dtype=np.float32,
             ),
             (gsplat_count, 1),
