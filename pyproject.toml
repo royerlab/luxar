@@ -454,9 +454,14 @@ lint = [
     "ruff format --check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     "check-complexity",
     "check-lint-ratchet",
-    "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py",
-    "mypy --platform darwin --cache-dir .mypy_cache/darwin packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
+    "type-check",
+    "type-check-darwin"
 ]
+type-check = "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
+# Cross-platform fixes must work in both passes: use dynamic lookup as in
+# `gsplats/utils/device.py` or file-scope `warn-unreachable=False` as in
+# `gsplats/models/gsplats/metal/__init__.py`; a bare ignore fails on the host.
+type-check-darwin = "mypy --platform darwin --cache-dir .mypy_cache/darwin packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
 # Enforce layer direction: the full `Subpackage layering` stack, plus the three
 # narrower `forbidden` contracts.

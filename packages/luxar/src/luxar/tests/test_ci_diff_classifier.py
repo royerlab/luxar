@@ -1967,20 +1967,17 @@ print-launcher-pkg-config-path:
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     """CI and the make target check Darwin without slowing every commit."""
     with (REPO / "pyproject.toml").open("rb") as stream:
-        lint_commands = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"][
-            "scripts"
-        ]["lint"]
+        scripts = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"]["scripts"]
+    lint_commands = scripts["lint"]
 
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     make_recipe = re.search(
         r"^type-check-python:.*\n((?:\t.+\n)+)", makefile, flags=re.MULTILINE
     )
     assert make_recipe is not None
-    make_commands = [
-        line.removeprefix("\t")
-        for line in make_recipe.group(1).splitlines()
-        if "mypy" in line
-    ]
+    make_commands = {
+        line.removeprefix("\t") for line in make_recipe.group(1).splitlines()
+    }
 
     precommit = yaml.safe_load(
         (REPO / ".pre-commit-config.yaml").read_text(encoding="utf-8")
@@ -1991,7 +1988,9 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
 
     claude = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
     claude_command = re.search(
-        r"^hatch run mypy .+  # Type check$", claude, flags=re.MULTILINE
+        r"^hatch run mypy .+  # Type check \(host only\)$",
+        claude,
+        flags=re.MULTILINE,
     )
     assert claude_command is not None
 
@@ -1999,43 +1998,35 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     lint_steps = [step for step in ci_steps if step.get("run") == "hatch run lint"]
     assert len(lint_steps) == 1
 
-    pyproject_commands = [
-        command for command in lint_commands if command.startswith("mypy ")
-    ]
-    commands = {
-        "pyproject.toml": pyproject_commands[0],
-        "Makefile": make_commands[0],
-        ".pre-commit-config.yaml": next(
-            hook["entry"] for hook in precommit_hooks if hook.get("id") == "mypy"
-        ),
-        "CLAUDE.md": claude_command.group(0).removesuffix("  # Type check"),
-    }
+    required_scripts = {"type-check", "type-check-darwin"}
+    assert required_scripts <= set(lint_commands)
+    assert {f"$(HATCH) run {script}" for script in required_scripts} <= make_commands
 
-    targets = {}
-    for source, command in commands.items():
-        arguments = shlex.split(command)
-        mypy_index = arguments.index("mypy")
-        targets[source] = arguments[mypy_index + 1 :]
-
-    assert len({tuple(paths) for paths in targets.values()}) == 1, (
-        f"mypy target lists diverged: {targets}"
+    precommit_command = next(
+        hook["entry"] for hook in precommit_hooks if hook.get("id") == "mypy"
     )
+    assert precommit_command == "hatch run type-check"
 
-    assert len(pyproject_commands) == len(make_commands) == 2
-    darwin_commands = {
-        "pyproject.toml": pyproject_commands[1],
-        "Makefile": make_commands[1],
-    }
-    for source, command in darwin_commands.items():
+    documented_command = claude_command.group(0).removesuffix(
+        "  # Type check (host only)"
+    )
+    assert documented_command == f"hatch run {scripts['type-check']}"
+
+    def parse_mypy_command(command: str) -> tuple[dict[str, str], list[str]]:
         arguments = shlex.split(command)
-        mypy_index = arguments.index("mypy")
-        assert arguments[mypy_index + 1 : mypy_index + 5] == [
-            "--platform",
-            "darwin",
-            "--cache-dir",
-            ".mypy_cache/darwin",
-        ], f"{source} does not isolate the Darwin mypy pass"
-        assert arguments[mypy_index + 5 :] == targets[source]
+        assert arguments.pop(0) == "mypy"
+        options = {}
+        while arguments and arguments[0].startswith("--"):
+            option = arguments.pop(0)
+            assert arguments, f"missing value for {option}"
+            options[option] = arguments.pop(0)
+        return options, arguments
+
+    _, host_targets = parse_mypy_command(scripts["type-check"])
+    darwin_options, darwin_targets = parse_mypy_command(scripts["type-check-darwin"])
+    assert darwin_options["--platform"] == "darwin"
+    assert darwin_options["--cache-dir"] == ".mypy_cache/darwin"
+    assert darwin_targets == host_targets
 
 
 def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
