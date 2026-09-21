@@ -139,7 +139,6 @@ jobs:
           fi
           echo "@luxar/viewer exists on the registry (HTTP $code) — staging is possible."
 
-
       - name: Set up Rust (for WASM build)
         # Explicit channel for the same reason as ci.yml and publish.yml: the
         # action is SHA-pinned, so `# stable` in the ref is a comment, not a
@@ -210,6 +209,7 @@ jobs:
           # point is one gate instead of four, so the npm job uses the same
           # shared check as publish.yml and the release preflight.
           python3 scripts/check_version_consistency.py --expect-tag "$GITHUB_REF_NAME"
+
       - name: Install dependencies
         working-directory: packages/luxar-viewer
         run: pnpm install --frozen-lockfile

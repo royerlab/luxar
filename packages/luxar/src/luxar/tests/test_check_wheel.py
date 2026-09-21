@@ -316,7 +316,14 @@ def test_main_exits_1_and_names_an_oversized_wheel(
 
     assert code == 1
     out = capsys.readouterr().out
-    assert "exceeds PyPI's 100 MB upload limit" in out
+    # Assert the NUMBERS, not just the heading: the heading survives a wrong
+    # limit or a wrong size, which is how the MB/MiB contradiction lived
+    # through two rounds. 100 bytes is the patched limit; the fixture wheel is
+    # ~700 bytes, so both render as 0.0 MiB — assert the limit token and the
+    # units, which is what the operator reads.
+    assert "upload limit" in out
+    assert "MiB" in out
+    assert "MB " not in out.replace("MiB", ""), "decimal MB leaked back in"
     # The per-member section must stay silent: no member is large.
     assert "member(s) exceed" not in out
 

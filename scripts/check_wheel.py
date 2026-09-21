@@ -310,11 +310,13 @@ def _problem_sections(
             "",
         ),
         (
-            "the wheel itself exceeds PyPI's 100 MB upload limit:",
+            f"the wheel itself exceeds PyPI's "
+            f"{PYPI_MAX_DIST_BYTES / 1048576:.0f} MiB upload limit:",
             (
-                # MiB on both sides: the constant is 100 * 1024 * 1024, so
-                # labelling it "100.0 MB" beside a decimal-MB size was two
-                # different units in one sentence.
+                # Both the heading and this line derive from the constant,
+                # so the units cannot drift apart again: it is 100 * 1024 *
+                # 1024, which is MiB, and printing decimal MB beside it was
+                # two different units in one sentence.
                 [
                     f"{report.dist_bytes / 1048576:.1f} MiB "
                     f"(limit {PYPI_MAX_DIST_BYTES / 1048576:.0f} MiB)"
