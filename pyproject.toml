@@ -454,7 +454,8 @@ lint = [
     "ruff format --check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     "check-complexity",
     "check-lint-ratchet",
-    "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
+    "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py",
+    "mypy --platform darwin --cache-dir .mypy_cache/darwin packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
 # Enforce layer direction: the full `Subpackage layering` stack, plus the three

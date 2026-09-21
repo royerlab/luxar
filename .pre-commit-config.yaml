@@ -61,8 +61,8 @@ repos:
           ]
         additional_dependencies: ["bandit[toml]"]
 
-  # mypy runs against the real project environment so imports resolve. Uses the
-  # same invocation as `make type-check-python` / CI.
+  # mypy runs against the real project environment so imports resolve. Keep the
+  # commit hook host-only; `make type-check-python` / CI also run a Darwin pass.
   - repo: local
     hooks:
       - id: mypy
