@@ -160,6 +160,36 @@ class TestGeologPerchannelRoundtrip:
         np.testing.assert_array_equal(decoded[:, 2], 0.0)
         assert enc["col_lo"][2] == 0.0 and enc["col_hi"][2] == 0.0
 
+    def test_metadata_ignores_libm_ulp(self, monkeypatch):
+        colors = np.array(
+            [[1e-5, 0.2, 3.0], [2e-3, 4.0, 900.0], [0.3, 25.0, 1e5]],
+            dtype=np.float32,
+        )
+        baseline_group = memory_group()
+        ArrayEncoder()._encode_geolog_perchannel(baseline_group, "c", colors, 16)
+        baseline = dict(baseline_group["c"].attrs["encoding"])
+        baseline_codes = np.asarray(baseline_group["c"])
+        original_log = np.log
+
+        def perturbed_log(values):
+            return np.nextafter(original_log(values), np.inf)
+
+        monkeypatch.setattr(np, "log", perturbed_log)
+        perturbed_group = memory_group()
+        ArrayEncoder()._encode_geolog_perchannel(perturbed_group, "c", colors, 16)
+        perturbed = dict(perturbed_group["c"].attrs["encoding"])
+
+        assert perturbed == baseline
+        np.testing.assert_array_equal(np.asarray(perturbed_group["c"]), baseline_codes)
+
+    def test_scales_are_canonical_float64_values(self):
+        colors = np.array([[1e-5, 0.2], [3.0, 1e5]], dtype=np.float32)
+        lo, hi = ArrayEncoder._perchannel_geolog_scales(colors)
+
+        assert lo.dtype == hi.dtype == np.float64
+        np.testing.assert_array_equal(lo, lo.astype(np.float32).astype(np.float64))
+        np.testing.assert_array_equal(hi, hi.astype(np.float32).astype(np.float64))
+
 
 class TestDecoderValidation:
     def _corrupt(self, patch):

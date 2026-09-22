@@ -298,12 +298,9 @@ def test_linear_viewer_affine_bound_over_code_space(
         assert float(np.max(decoded - exact)) <= allowance
 
 
-@pytest.mark.parametrize(
-    ("lo", "hi", "minimum_upward"),
-    [(1e5, 1.05e5, 0.08), (1000.0, 1000.5, 0.0001)],
-)
-def test_positive_scalar_slack_bounds_geolog_viewer_anchor_rounding(
-    lo: float, hi: float, minimum_upward: float
+@pytest.mark.parametrize(("lo", "hi"), [(1e5, 1.05e5), (1000.0, 1000.5)])
+def test_positive_scalar_slack_bounds_geolog_with_canonical_anchors(
+    lo: float, hi: float
 ) -> None:
     data = np.geomspace(lo, hi, 2000, dtype=np.float64)
     encoder = ArrayEncoder()
@@ -331,11 +328,42 @@ def test_positive_scalar_slack_bounds_geolog_viewer_anchor_rounding(
     assert metadata["name"] == "geolog_scalar_uint16"
     decoded = _viewer_geolog_decode(np.asarray(encoded[:]), metadata)
     upward = decoded.astype(np.float64) - data
-    assert float(upward.max()) > minimum_upward
+    assert float(upward.max()) > 0.0
     assert float(upward.max()) <= slack
 
 
-def test_positive_scalar_slack_bounds_degenerate_geolog_viewer_anchor() -> None:
+def test_positive_scalar_slack_bounds_geolog_lower_anchor_rounding() -> None:
+    data = np.geomspace(1e-4 / 1.00005, 1e-4, 2000, dtype=np.float64)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data,
+        EncodingMode.AUTO,
+        positive_scalar_encoding="linear",
+        positive_scalar_bits=8,
+        allow_lut=False,
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        positive_scalar_encoding="linear",
+        positive_scalar_bits=8,
+        allow_lut=False,
+        deduplicate=False,
+    )
+    assert group["s"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
+    decoded = ArrayDecoder().decode(group["s"], group).astype(np.float64)
+    upward = decoded - data
+    assert float(upward.max()) > 0.0
+    assert float(upward.max()) <= slack
+
+
+def test_positive_scalar_slack_bounds_degenerate_geolog_canonical_anchor() -> None:
     data = np.array([0.0] * 500 + [123456.0] * 500, dtype=np.float64)
     encoder = ArrayEncoder()
     slack = encoder.positive_scalar_round_trip_slack(
