@@ -1165,6 +1165,46 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     assert "each worker resolves the exact non-empty count" not in output
 
 
+def test_batch_plan_uses_one_occupancy_mode_across_slices(tmp_path: Path) -> None:
+    from luxar.gsplats.fit_tiled_gsplats import (
+        uniform_tile_occupancy_weight_candidates,
+    )
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    full = np.zeros((2, 16, 16, 64), dtype=np.float32)
+    for tile_index, occupied in enumerate((1, 4, 9, 16)):
+        start = tile_index * 16
+        full[0, 0, 0, start : start + occupied] = 0.8 + 0.05 * tile_index
+    for tile_index in range(3):
+        start = tile_index * 16
+        full[1, 0, 0, start : start + 16] = 0.05
+    full[1, 0, 0, 48:64] = 0.5
+    full[1, 0, 0, 48] = 1.0
+    src = tmp_path / "movie.zarr"
+    _write_timelapse(src, full)
+    specs = compute_tile_specs(full.shape[1:], 16, 0, fold_slivers=True)
+    mass_0, foreground_0 = uniform_tile_occupancy_weight_candidates(
+        full[0], specs, None, intensity_scale=1.0, saturation_exponent=0.44
+    )
+    mass_1, foreground_1 = uniform_tile_occupancy_weight_candidates(
+        full[1], specs, None, intensity_scale=1.0, saturation_exponent=0.44
+    )
+    assert foreground_0 is not None
+    assert foreground_0 != pytest.approx(mass_0)
+    assert foreground_1 is None
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        seeds="100",
+        tile_size=16,
+        tile_overlap=0,
+    ).manifest
+
+    np.testing.assert_allclose(manifest.tile_occupancy_weights, [mass_0, mass_1])
+
+
 def test_batch_plan_defers_invalid_seeds_to_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

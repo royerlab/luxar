@@ -496,12 +496,13 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # tile weighs `Hann voxels x (mean above-floor intensity / ceiling)^alpha` — its
 # Hann-weighted intensity MASS above the resolved floor, saturated by
 # `--saturation-exponent`. The historical 10%-of-ceiling foreground weights
-# are retained only when their per-tile distribution correlates >= 0.95 with
-# the mass weights (the sparse blastocyst case); otherwise mass prevents a hot
-# voxel from making whole tiles of dim nuclei look empty (1-38 seeds of 32,000
-# for tiles holding up to 6% of the intensity; a 7-14 dB loss). In mass mode a
-# tile holding
-# >= 1/4 of the equal MASS share never gets < 1/4 of the equal SEED share
+# are retained only when every normalized foreground-weight share is within two
+# percentage points of its mass-weight share (the sparse blastocyst case); otherwise
+# mass prevents a hot voxel from
+# making whole tiles of dim nuclei look empty (1-38 seeds of 32,000 for tiles
+# holding up to 6% of the intensity; a 7-14 dB loss). One batch plan uses one
+# rule across all `(t, c)` slices. In mass mode, a tile holding >= 1/4 of the
+# equal MASS share never gets < 1/4 of the equal SEED share
 # (`MIN_TILE_SEED_SHARE_FRACTION`). Two paths stay EQUAL-SHARE: a hand-run
 # `fit --tile k/M` (no parent to hand it a count; scanning the volume per worker
 # is the cost the plan exists to avoid), and a `batch-fit` plan that cannot

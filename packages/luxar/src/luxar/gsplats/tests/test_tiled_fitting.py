@@ -581,10 +581,35 @@ def test_uniform_tile_weights_keep_sparse_step_rule_when_it_tracks_mass() -> Non
     assert allocate_weighted_integer_seeds(320, weights) == (36, 67, 95, 122)
 
 
-@pytest.mark.slow  # ~35s: two real 40-iteration CPU fits
+def test_uniform_tile_weights_reject_threshold_empty_starvation_proxy() -> None:
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
+
+    volume = np.zeros((1, 9, 16), dtype=np.float32)
+    for tile_index, occupied in enumerate(range(2, 10)):
+        volume[0, tile_index, :occupied] = 0.05
+    volume[0, 8, :] = 0.5
+    volume[0, 8, 0] = 1.0
+    specs = compute_tile_specs(volume.shape, tile_size=(1, 1, 16), overlap=0)
+
+    weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        None,
+        intensity_scale=1.0,
+        saturation_exponent=0.44,
+    )
+    counts = allocate_weighted_integer_seeds(3200, weights)
+
+    assert len(set(counts[:8])) == 8
+    assert counts[:8] == tuple(sorted(counts[:8]))
+    assert counts[-1] < sum(counts) / 2
+
+
+@pytest.mark.slow  # ~70s: four real 40-iteration CPU fits
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
-def test_mass_weighting_keeps_haze_amplitudes_below_equal_share_disparity() -> None:
-    """Regression for the haze/blob volume that motivated occupancy weighting."""
+def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
+    """Characterize the haze/blob tradeoff against this fixture's equal split."""
     from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
     from luxar.gsplats.fit_tiled_gsplats import (
         fit_tile,
@@ -620,24 +645,30 @@ def test_mass_weighting_keeps_haze_amplitudes_below_equal_share_disparity() -> N
     counts = allocate_weighted_integer_seeds(600, weights)
     assert counts == (359, 241)
 
-    mean_amplitudes = []
-    for spec, count in zip(specs, counts, strict=True):
-        result = fit_tile(
-            volume,
-            spec,
-            seeds=count,
-            n_iters=40,
-            floor="none",
-            norm_range=(float(volume.min()), float(volume.max())),
-            device="cpu",
-            cull_retention=0.95,
-            verbose=False,
-            output_space="voxel",
-        )
-        mean_amplitudes.append(float(np.mean(result.amplitudes)))
+    def disparity(seed_counts: tuple[int, ...]) -> float:
+        mean_amplitudes = []
+        for spec, count in zip(specs, seed_counts, strict=True):
+            result = fit_tile(
+                volume,
+                spec,
+                seeds=count,
+                n_iters=40,
+                floor="none",
+                norm_range=(float(volume.min()), float(volume.max())),
+                device="cpu",
+                cull_retention=0.95,
+                verbose=False,
+                output_space="voxel",
+            )
+            mean_amplitudes.append(float(np.mean(result.amplitudes)))
+        return max(mean_amplitudes) / min(mean_amplitudes)
 
-    disparity = max(mean_amplitudes) / min(mean_amplitudes)
-    assert disparity < 5.0  # equal-share baseline: 6.14x
+    selected_disparity = disparity(counts)
+    equal_disparity = disparity((300, 300))
+
+    assert selected_disparity == pytest.approx(4.39, abs=0.15)
+    assert equal_disparity == pytest.approx(3.98, abs=0.15)
+    assert selected_disparity > equal_disparity
 
 
 class TestCosineWindow:

@@ -384,9 +384,11 @@ def _uniform_tile_occupancy_weights(
     applied_floor: Optional[float],
     intensity_scale: float,
     saturation_exponent: float,
-) -> List[float]:
-    """Measure one slice's adaptive mass/foreground occupancy tile by tile."""
-    from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
+) -> tuple[List[float], "Optional[List[float]]"]:
+    """Measure one slice's mass and compatible foreground weight candidates."""
+    from luxar.gsplats.fit_tiled_gsplats import (
+        uniform_tile_occupancy_weight_candidates,
+    )
 
     view = _pinned_slice_volume(
         input_path,
@@ -398,7 +400,7 @@ def _uniform_tile_occupancy_weights(
         channel_shape=channel_shape,
         spatial_shape=spatial_shape,
     )
-    return uniform_tile_occupancy_weights(
+    return uniform_tile_occupancy_weight_candidates(
         view,
         specs,
         applied_floor,
@@ -484,7 +486,9 @@ def _planned_uniform_tile_local_metadata(
     pairs = [(timepoint, channel) for timepoint in t_indices for channel in c_indices]
     max_workers = min(8, len(pairs))
     counts = [len(specs)] * len(pairs)
-    weights = [[1.0] * len(specs) for _ in pairs]
+    candidates: list[tuple[List[float], Optional[List[float]]]] = [
+        ([1.0] * len(specs), None) for _ in pairs
+    ]
     with asection(
         f"Scanning uniform tile occupancy across {len(pairs)} slices "
         f"({max_workers} parallel)"
@@ -512,12 +516,21 @@ def _planned_uniform_tile_local_metadata(
             }
             for completed, future in enumerate(as_completed(futures), start=1):
                 row_index, timepoint, channel = futures[future]
-                weights[row_index] = future.result()
-                counts[row_index] = sum(weight > 0.0 for weight in weights[row_index])
+                candidates[row_index] = future.result()
                 aprint(
                     f"Tile occupancy: {completed}/{len(pairs)} "
                     f"(T={timepoint}, C={channel})"
                 )
+    use_foreground = all(
+        foreground_weights is not None for _, foreground_weights in candidates
+    )
+    weights = [
+        foreground_weights
+        if use_foreground and foreground_weights is not None
+        else mass_weights
+        for mass_weights, foreground_weights in candidates
+    ]
+    counts = [sum(weight > 0.0 for weight in row) for row in weights]
     return True, counts, weights
 
 

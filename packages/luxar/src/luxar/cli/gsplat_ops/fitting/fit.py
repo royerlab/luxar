@@ -507,8 +507,9 @@ def run_fit_volume(
         help="Sub-linear exponent alpha (K~feat^alpha) for content planning "
         "and the split of a uniform integer --seeds budget: each non-empty "
         "tile weighs Hann voxels x (mean above-floor intensity / ceiling)^alpha "
-        "unless the legacy foreground weights track mass at >= 0.95 correlation; "
-        "in mass mode, a tile "
+        "unless every normalized foreground-weight share stays within two "
+        "percentage points of its mass-weight share and threshold-empty tiles "
+        "hold <= 10% of the intensity mass; in mass mode, a tile "
         "holding >= 1/4 of the equal mass share never gets < 1/4 of the equal "
         "seed share.",
         rich_help_panel="Content-aware tiling",

@@ -69,7 +69,8 @@ MIN_TILE_SEED_SHARE_FRACTION = 0.25
 # keeps the sparse blastocyst gain without letting a hot voxel make whole tiles
 # of dim structure look empty (#2871).
 _FOREGROUND_THRESHOLD_FRACTION = 0.1
-_MIN_FOREGROUND_MASS_CORRELATION = 0.95
+_MAX_FOREGROUND_MASS_SHARE_DIFFERENCE = 0.02
+_MAX_FOREGROUND_FALLBACK_MASS_SHARE = 0.1
 
 
 def resolve_tile_intensity_scale(
@@ -136,12 +137,10 @@ def tile_occupancy_weight(
 
     ``tile_data`` is floor-subtracted (background at zero), so its Hann-weighted
     sum is the tile's intensity MASS above the fitter's resolved floor. The
-    weight is threshold-free: it used to count voxels above a fixed fraction of
-    the volume maximum, which on a light-sheet volume whose maximum is a hot
-    spot left whole tiles of dim nuclei with no "foreground" voxel and the
-    smallest positive weight (1-38 seeds of a 32,000 budget for tiles holding
-    up to 6% of the intensity). Mass makes a dim tile proportional instead of
-    binary. See :func:`occupancy_weight_from_mass` for the formula.
+    mass weight replaces the historical fixed-threshold proxy unless that proxy
+    closely matches the mass shares across the grid and its no-foreground
+    fallback covers little total mass. See :func:`occupancy_weight_from_mass`
+    for the formula.
     """
     return occupancy_weight_from_mass(
         tile_windowed_mass(tile_data, window),
@@ -158,23 +157,28 @@ def _foreground_occupancy_weight(
     mass: float,
     intensity_scale: float,
     saturation_exponent: float,
-) -> float:
+) -> tuple[float, bool]:
     """Return the historical thresholded foreground weight for one tile."""
     if mass <= 0.0:
-        return 0.0
+        return 0.0, True
     hann_voxels = float(np.sum(window, dtype=np.float64))
     threshold = max(
         _FOREGROUND_THRESHOLD_FRACTION * float(intensity_scale), _TILE_SIGNAL_EPS
     )
     foreground = float(np.sum(window, where=tile_data >= threshold, dtype=np.float64))
     fraction = foreground / hann_voxels if foreground > 0.0 else 1.0 / hann_voxels
-    return float(hann_voxels * fraction ** float(saturation_exponent))
+    return float(hann_voxels * fraction ** float(saturation_exponent)), foreground > 0.0
 
 
 def _foreground_weights_track_mass(
-    mass_weights: Sequence[float], foreground_weights: Sequence[float]
+    mass_weights: Sequence[float],
+    foreground_weights: Sequence[float],
+    *,
+    fallback_mass_share: float,
 ) -> bool:
     """Whether the sparse-step proxy agrees closely enough to preserve it."""
+    if fallback_mass_share > _MAX_FOREGROUND_FALLBACK_MASS_SHARE:
+        return False
     mass = np.asarray(mass_weights, dtype=np.float64)
     foreground = np.asarray(foreground_weights, dtype=np.float64)
     if mass.size < 2 or foreground.size != mass.size:
@@ -186,15 +190,8 @@ def _foreground_weights_track_mass(
         return False
     mass = mass / float(np.sum(mass))
     foreground = foreground / float(np.sum(foreground))
-    if np.allclose(mass, foreground):
-        return True
-    if float(np.std(mass)) <= _TILE_SIGNAL_EPS:
-        return False
-    if float(np.std(foreground)) <= _TILE_SIGNAL_EPS:
-        return False
-    correlation = float(np.corrcoef(mass, foreground)[0, 1])
     return bool(
-        np.isfinite(correlation) and correlation >= _MIN_FOREGROUND_MASS_CORRELATION
+        np.max(np.abs(mass - foreground)) <= _MAX_FOREGROUND_MASS_SHARE_DIFFERENCE
     )
 
 
@@ -277,7 +274,7 @@ def count_nonempty_tiles(
     return len(specs)
 
 
-def uniform_tile_occupancy_weights(
+def uniform_tile_occupancy_weight_candidates(
     volume: Any,
     specs: Sequence[TileSpec],
     applied_floor: "float | None",
@@ -285,22 +282,22 @@ def uniform_tile_occupancy_weights(
     intensity_scale: float = 1.0,
     saturation_exponent: float,
     min_share_fraction: float = MIN_TILE_SEED_SHARE_FRACTION,
-) -> list[float]:
-    """Measure adaptive mass/foreground occupancy for a uniform tile grid.
+) -> tuple[list[float], "list[float] | None"]:
+    """Measure mass weights and an optional compatible foreground alternative.
 
     Each tile weighs ``hann_voxels * (mass / hann_voxels / intensity_scale) **
     saturation_exponent`` (:func:`occupancy_weight_from_mass`) over its
     floor-subtracted, Hann-windowed data. The historical 10%-of-ceiling
-    foreground weights are retained only when their per-tile distribution has
-    at least 0.95 Pearson correlation with the mass weights; otherwise
-    :func:`floor_tile_seed_shares` guarantees a tile holding at least
-    ``min_share_fraction`` of the equal mass share at least that fraction of
-    the equal seed share. An empty tile weighs zero. A grid with no signal
-    anywhere returns equal weights, the safe divisor of
-    :func:`count_nonempty_tiles`.
+    foreground weights are eligible only when every normalized foreground-weight
+    share is within two percentage points of its mass-weight share and tiles
+    using the no-foreground fallback hold at most 10% of the total intensity
+    mass. Otherwise mass mode applies :func:`floor_tile_seed_shares`. An empty
+    tile weighs zero. A grid with no signal anywhere returns equal mass weights,
+    the safe divisor of :func:`count_nonempty_tiles`.
     """
     mass_weights: list[float] = []
     foreground_weights: list[float] = []
+    fallback_mass = 0.0
     masses: list[float] = []
     for spec in specs:
         tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
@@ -317,22 +314,50 @@ def uniform_tile_occupancy_weights(
                 saturation_exponent=saturation_exponent,
             )
         )
-        foreground_weights.append(
-            _foreground_occupancy_weight(
-                tile_data,
-                window,
-                mass=mass,
-                intensity_scale=intensity_scale,
-                saturation_exponent=saturation_exponent,
-            )
+        foreground_weight, has_foreground = _foreground_occupancy_weight(
+            tile_data,
+            window,
+            mass=mass,
+            intensity_scale=intensity_scale,
+            saturation_exponent=saturation_exponent,
         )
+        foreground_weights.append(foreground_weight)
+        if mass > 0.0 and not has_foreground:
+            fallback_mass += mass
     if not any(weight > 0.0 for weight in mass_weights):
-        return [1.0] * len(specs)
-    if _foreground_weights_track_mass(mass_weights, foreground_weights):
-        return foreground_weights
-    return floor_tile_seed_shares(
+        return [1.0] * len(specs), None
+    use_foreground = _foreground_weights_track_mass(
+        mass_weights,
+        foreground_weights,
+        fallback_mass_share=fallback_mass / float(sum(masses)),
+    )
+    mass_weights = floor_tile_seed_shares(
         mass_weights, masses, min_share_fraction=min_share_fraction
     )
+    if use_foreground:
+        return mass_weights, foreground_weights
+    return mass_weights, None
+
+
+def uniform_tile_occupancy_weights(
+    volume: Any,
+    specs: Sequence[TileSpec],
+    applied_floor: "float | None",
+    *,
+    intensity_scale: float = 1.0,
+    saturation_exponent: float,
+    min_share_fraction: float = MIN_TILE_SEED_SHARE_FRACTION,
+) -> list[float]:
+    """Measure one grid's selected adaptive mass/foreground occupancy weights."""
+    mass_weights, foreground_weights = uniform_tile_occupancy_weight_candidates(
+        volume,
+        specs,
+        applied_floor,
+        intensity_scale=intensity_scale,
+        saturation_exponent=saturation_exponent,
+        min_share_fraction=min_share_fraction,
+    )
+    return foreground_weights if foreground_weights is not None else mass_weights
 
 
 def _validate_tile_seed_counts(

@@ -379,9 +379,11 @@ which case you are in:
   ``--saturation-exponent``, so a busy tile gets more than a barely occupied
   one and a *dim* tile of real structure gets a proportional budget rather
   than a token one. The earlier 10%-of-ceiling foreground weights are retained
-  only when their per-tile distribution correlates at least 0.95 with mass,
+  only when every normalized foreground-weight share is within two percentage points
+  of its mass-weight share,
   preserving sparse step-like data without letting a hot voxel starve dim
-  tiles. In mass mode, a tile holding at least a quarter of the equal mass
+  tiles. A batch plan uses one rule for every selected slice. In mass mode, a
+  tile holding at least a quarter of the equal mass
   share is never budgeted below a quarter of the equal seed share.
 * ``batch-fit`` weights it the same way *when the plan can resolve tile-local
   reads*. It falls back to the equal share when it cannot: under
