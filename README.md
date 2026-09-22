@@ -837,6 +837,17 @@ bugs in [Issues](https://github.com/royerlab/luxar/issues), and report
 vulnerabilities privately as described in [SECURITY.md](SECURITY.md). The project
 follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
 
+**Contribute with a coding agent.** Working through a coding agent such as
+[Claude Code](https://claude.com/claude-code) is *highly* recommended: the
+repository is built for it. [CLAUDE.md](CLAUDE.md) (mirrored as
+[AGENTS.md](AGENTS.md) for other agents) carries the working knowledge of the
+project, from the build and test commands to the format, the gotchas, and the
+conventions every check enforces, and the [agent skills](#ai-agent-skills) below
+teach an agent the Luxar workflows themselves. An agent that has read those
+files gets a change through `make check-all` and `make test-all` far faster than
+a newcomer reading the same 1,600 lines by hand, and a PR opened that way is
+held to exactly the same review as any other.
+
 ---
 
 ## AI agent skills
