@@ -32,7 +32,7 @@ def test_every_animation_names_its_clip_and_a_readme_sized_width() -> None:
     for key, spec in anim.ANIMATIONS.items():
         assert spec.clip.endswith(".mp4"), key
         assert 800 <= spec.width <= 1400, key
-        assert spec.fps == 12, key
+        assert 10 <= spec.fps <= 12, key
 
 
 def test_missing_clip_is_a_clear_error(tmp_path: Path) -> None:

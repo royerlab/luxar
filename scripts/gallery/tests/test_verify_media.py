@@ -31,8 +31,13 @@ def test_committed_manifest_is_consistent_with_readme() -> None:
     )
 
     assert base_url == "https://data.luxarviewer.dev/media"
-    assert len(entries) == 63  # 29 tiles x 2 variants + 5 README assets
-    assert len({entry.key for entry in entries}) == 63
+    manifest = _manifest()
+    expected = 2 * len(manifest["tiles"]) + sum(
+        len(v) for v in manifest["assets"].values()
+    )
+    assert len(manifest["tiles"]) == 29
+    assert len(entries) == expected
+    assert len({entry.key for entry in entries}) == expected
 
 
 @pytest.mark.parametrize(

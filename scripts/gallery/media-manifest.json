@@ -450,6 +450,14 @@
         "key": "91044ca3c0ca2b00.png",
         "sha256": "91044ca3c0ca2b008a9d0fa9f6b59027055400589a29aa15fb3faaae063e65d6"
       }
+    },
+    "volume-to-scene": {
+      "webp": {
+        "bytes": 5027320,
+        "content_type": "image/webp",
+        "key": "3f4df30e7f4b4a4a.webp",
+        "sha256": "3f4df30e7f4b4a4afcf519fff16e27b836019982020b903d655a1a573c232dfc"
+      }
     }
   },
   "superseded": {
@@ -474,6 +482,11 @@
         "key": "07ee0acd82c15511.png",
         "was": "architecture-light, first cut",
         "replaced_by": "91044ca3c0ca2b00.png"
+      },
+      {
+        "key": "39ec101479baf65d.webp",
+        "was": "volume-to-scene cut from social clip d03 (viewer first, no napari)",
+        "replaced_by": "3f4df30e7f4b4a4a.webp"
       }
     ]
   }

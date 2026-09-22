@@ -385,6 +385,12 @@ about 7 bytes per splat on disk. They then
 render in any WebGL2 browser: no 3D textures, no ray-marching, and no CUDA
 on the viewing machine.
 
+<p align="center">
+  <img src="https://data.luxarviewer.dev/media/3f4df30e7f4b4a4a.webp" alt="From a light-sheet stack to splats: the raw volume in napari, luxar gsplat fit converging in a terminal with its PSNR curve, a short Python script, and the fitted embryo opening in the browser" width="100%">
+  <br>
+  <sub>A raw <em>Drosophila</em> light-sheet stack in napari, <code>luxar gsplat fit</code> converging (training PSNR plotted as it runs), a dozen lines of Python to compile the scene, and the result opening in the browser. Excerpts of <a href="https://demos.luxarviewer.dev/v/01/">Supplementary Video 1</a>.</sub>
+</p>
+
 This is lossy, so fidelity is measured rather than asserted. Across a 17-volume
 microscopy benchmark (4–107 M voxels; spinning-disk, confocal, light-sheet and iSIM),
 fits at each volume's cross-validated splat budget land between 26 and 67 dB PSNR at
