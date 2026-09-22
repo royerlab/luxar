@@ -485,7 +485,6 @@ def _planned_uniform_tile_local_metadata(
     intensity_scale = resolve_tile_intensity_scale(norm_range, applied_floor)
     pairs = [(timepoint, channel) for timepoint in t_indices for channel in c_indices]
     max_workers = min(8, len(pairs))
-    counts = [len(specs)] * len(pairs)
     candidates: list[tuple[List[float], Optional[List[float]]]] = [
         ([1.0] * len(specs), None) for _ in pairs
     ]
