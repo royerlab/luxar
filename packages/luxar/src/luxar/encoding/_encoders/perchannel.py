@@ -475,10 +475,11 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             or bits == 0
             or (mode == EncodingMode.AUTO and positive_scalar_bits == 8)
         )
-        stored_grid_slack = 0.0
+        rounding_slack = 0.0
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
-            min_log = float(np.float32(np.log(nonzero.min())))
+            min_val = float(nonzero.min())
+            min_log = float(np.float32(np.log(min_val)))
             max_log = float(np.float32(np.log(nonzero.max())))
             quant_bits = (
                 8 if mode == EncodingMode.MEMORY or positive_scalar_bits == 8 else 16
@@ -494,9 +495,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                     decoded_min = float(np.float32(np.exp(min_log)))
                     decoded_max = float(np.float32(np.exp(max_log)))
                 if np.isfinite(decoded_min) and np.isfinite(decoded_max):
-                    stored_grid_slack = max(
+                    rounding_slack = max(
                         0.0,
-                        decoded_min - float(nonzero.min()),
+                        decoded_min - min_val,
                         decoded_max - max_val,
                     )
         else:
@@ -507,7 +508,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             # With u = eps32 / 2, the viewer's six staged f32 roundings are
             # bounded by u * (min + max + 4 * span). The decode ULP below pays
             # 2u * max, leaving 3u * span = 1.5 * eps32 * span here.
-            stored_grid_slack = 1.5 * span * float(np.finfo(np.float32).eps)
+            rounding_slack = 1.5 * span * float(np.finfo(np.float32).eps)
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
 
@@ -521,7 +522,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         decode_ulp = max(max_val * decode_eps, decode_floor)
         return float(
             min(
-                slack + decode_ulp + stored_grid_slack,
+                slack + decode_ulp + rounding_slack,
                 float(np.finfo(np.float64).max),
             )
         )
