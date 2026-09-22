@@ -207,11 +207,14 @@ digest). Storage layout counts as identity because the viewer caches encoded
 chunks keyed by chunk index, so a re-chunked store — or one renamed, or one
 compressed with a different codec — must not share its input's hash; the
 per-array attrs count because that is where the `encoding` document lives, which
-is what turns the stored ints back into scientific values. The hash is distinct
-per save because the per-save `timestamp` folds in — the web viewer's persistent
-cache compares it to invalidate when a file is regenerated in place. The
-historical `[N, M_i]` matrix is just the "full pyramid" shape expressed as a node
-tree.
+is what turns the stored ints back into scientific values. Finite floats in
+hashed group attrs are persisted at 12 significant decimal digits before the
+digest is computed; array attrs are hashed exactly as written because their
+numeric values are part of the decoder contract and must be stabilized by the
+encoder. The hash is distinct per save because the per-save `timestamp` folds in
+— the web viewer's persistent cache compares it to invalidate when a file is
+regenerated in place. The historical `[N, M_i]` matrix is just the "full pyramid"
+shape expressed as a node tree.
 
 A producer may also attach root `dimension_metadata`, an ordered list aligned
 with the columns of `centers`. Each entry carries a dimension `name`, `unit`, and

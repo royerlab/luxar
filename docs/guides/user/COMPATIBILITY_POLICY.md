@@ -109,13 +109,15 @@ because a change would silently invalidate data or caches already in the wild:
   chunk **bytes**, the codec **identifiers** and their configuration, the array
   metadata, the node attributes except the hash itself and the software version
   that wrote it, and the plain payload files a node declares. Before hashing,
-  every finite float nested in a hashed attribute document is persisted at 12
-  significant decimal digits. That write-time canonicalization makes the final
-  store and digest portable across libm/BLAS builds without changing the frozen
-  input set. Introducing it intentionally causes one global cache cold start;
-  the inputs and canonicalization rule are frozen from that point onward. The
-  viewer validates its persistent cache against this hash, so a later change to
-  either would either serve stale chunks or discard every warm cache on earth.
+  every finite float nested in a hashed group attribute document is persisted
+  at 12 significant decimal digits. That write-time canonicalization absorbs
+  platform drift below roughly 1e-12 relative without changing the frozen input
+  set; exact array encoding attributes remain the producer's responsibility.
+  Published stores and their warm caches are untouched until a scene is
+  recompiled and republished. The inputs and canonicalization rule are frozen
+  from that point onward. The viewer validates its persistent cache against this
+  hash, so a later change to either would either serve stale chunks or discard
+  every warm cache on earth.
   (Re-chunking a store *does* change its hash — different chunk keys cover
   different rows — which is why `luxar optimize` tells you to publish under a
   new URL prefix.)

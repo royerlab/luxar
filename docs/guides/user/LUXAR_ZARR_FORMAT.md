@@ -213,7 +213,7 @@ The root group's attributes contain scene-wide configuration:
 | `type` | all | `"scene"`. |
 | `luxar_software_version` | 0.2+ | The `luxar.__version__` that wrote the store. Provenance only — **excluded from `content_hash`** by both hashers, so two releases compiling the same scene agree on the digest and a `luxar optimize` restamp never churns viewer caches. |
 | `luxar_version` | 0.1 only | The legacy version key. Read as a fallback when `format_version` is absent; never written by a current compiler. |
-| `content_hash` | all | Portable post-order xxhash64 build identity for the store: array bytes, storage identity, attrs (minus this key and `luxar_software_version`) and child digests, computed by `io/_compiler/finalize/hashing.py`. Every finite float nested in hashed attrs is persisted at 12 significant decimal digits before hashing, so equivalent builds agree across libm/BLAS implementations. The viewer validates its cache against it. |
+| `content_hash` | all | Portable post-order xxhash64 build identity for the store: array bytes, storage identity, attrs (minus this key and `luxar_software_version`) and child digests, computed by `io/_compiler/finalize/hashing.py`. Every finite float nested in hashed **group** attrs is persisted at 12 significant decimal digits before hashing, absorbing platform drift below roughly 1e-12 relative; larger differences and exact array encoding attrs must be stabilized by their producers. The viewer validates its cache against it. |
 | `scene_dimensions` | all | The nD dimension table (below). |
 
 No `timestamp` is written on a scene: the digest must be reproducible across

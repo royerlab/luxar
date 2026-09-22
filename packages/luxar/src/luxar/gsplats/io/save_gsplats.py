@@ -546,7 +546,10 @@ def _stamp_content_hash(root: zarr.Group) -> str:
 
     import xxhash
 
-    from luxar.io._compiler.finalize.hashing import _canonicalized_attrs, codec_ids
+    from luxar.io._compiler.finalize.hashing import (
+        _canonicalized_group_attrs,
+        codec_ids,
+    )
 
     def hash_group(group: zarr.Group) -> str:
         hasher = xxhash.xxh64()
@@ -556,9 +559,7 @@ def _stamp_content_hash(root: zarr.Group) -> str:
             # `shards` needs no defensive access and why the codec ids are
             # derived format-agnostically.
             shards = arr.shards
-            arr_attrs = json.dumps(
-                _canonicalized_attrs(arr), sort_keys=True, default=str
-            )
+            arr_attrs = json.dumps(dict(arr.attrs), sort_keys=True, default=str)
             # A SHARDED array's whole pipeline nests inside the single top-level
             # `ShardingCodec`, so the ids alone read `["sharding_indexed"]` and
             # say nothing about the inner codecs or the shard index. Expand it,
@@ -574,7 +575,9 @@ def _stamp_content_hash(root: zarr.Group) -> str:
                 f"{codec_ids(arr.metadata)}:{pipeline}:{arr_attrs}".encode()
             )
         attrs = {
-            k: v for k, v in _canonicalized_attrs(group).items() if k != "content_hash"
+            k: v
+            for k, v in _canonicalized_group_attrs(group).items()
+            if k != "content_hash"
         }
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
         # The child's NAME, not just its digest: a node's own digest does not
