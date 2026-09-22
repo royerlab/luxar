@@ -52,10 +52,10 @@ with nothing to install. Already have a scene? Open it in the hosted viewer at
 
 Everything expensive happens before anyone opens a browser. The compiler orders
 each node along a space-filling curve (a mesh has none: it loads whole), cuts it
-into chunks of about 64 KB,
-compresses them, writes an nD spatial index and levels of detail, and, for image
-volumes, runs the Gaussian fit. The viewer's job is reduced to fetching the
-chunks a view needs and drawing them, so what remains at exploration time is
+into chunks of about 64 KB, compresses them, writes an nD spatial index and
+levels of detail, and, for image volumes, runs the Gaussian fit. The viewer's
+job is reduced to fetching the chunks a view needs and drawing them, so what
+remains at exploration time is
 bounded by your graphics card, your screen, and your network link rather than
 by the size or format of the file.
 
@@ -762,16 +762,17 @@ render-and-readback call takes (milliseconds; the 60 FPS budget is 16.7):
 | 1M | 3.31 | 4.98 | 8.64 |
 | 10M | — | 18.8 | 19.4 |
 
-At ten million elements the call runs 12 to 16% over budget, and at that
-element density lowering the render resolution does not help (the cost tracks
-elements per pixel, not pixels), which is what the projected-density guard below
-is for. Typical scenes are lighter than these synthetic sweeps: the fifteen demo scenes of the
-same sweep all hold 60 FPS, the heaviest, a 2.2M-splat time-lapse frame, in 5.6
-ms. Very large overdraw-bound scenes such as a 29.6M-splat whole-slide image are
-thinned by the projected-density guard (on by default). Load time is dominated
-by transfer and decode, so it follows your link and cache state rather than the
-element count. The whole-slide and Apple M4 Max measurements, and the method,
-are in the [viewer performance audit](docs/guides/developer/VIEWER_PERFORMANCE_AUDIT_2026_09.md).
+At ten million elements the call runs 12 to 16% over budget, and at that element
+density lowering the render resolution does not help (the cost tracks elements
+per pixel, not pixels), which is what the projected-density guard below is for.
+Typical scenes are lighter than these synthetic sweeps: the fifteen demo scenes
+of the same sweep all hold 60 FPS, the heaviest, a 2.2M-splat time-lapse frame,
+in 5.6 ms. Very large overdraw-bound scenes such as a 29.6M-splat whole-slide
+image are thinned by the projected-density guard (on by default). Load time is
+dominated by transfer and decode, so it follows your link and cache state rather
+than the element count. The whole-slide and Apple M4 Max measurements, and the
+method, are in the [viewer performance
+audit](docs/guides/developer/VIEWER_PERFORMANCE_AUDIT_2026_09.md).
 
 **Architecture.** Luxar is two code bases that never import each other. The
 Python package authors, fits, and compiles; the TypeScript viewer streams and
