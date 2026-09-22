@@ -20,7 +20,10 @@ content for hours), and a re-cut gets a new URL automatically. This script:
 ``--record NAME`` also writes the entry into ``scripts/gallery/media-manifest.json``
 under ``assets/NAME`` (one file at a time; a second variant of the same name is
 merged, not replaced), which ``verify_media.py`` requires: every README media
-URL must be listed there, and vice versa.
+URL must be listed there, and vice versa. ``--record-by-stem`` does the same for
+every file, naming each entry after the file stem; the generators emit stems
+that are the asset names (``hero-drosophila.webp`` -> ``assets/hero-drosophila``),
+so ``make publish-readme-media`` records as it uploads.
 
 Two properties worth keeping deliberately. The 64-bit key truncation fails
 closed: on a collision ``exists_remote`` reports "already hosted", nothing is
@@ -164,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.record and len(args.files) != 1:
         parser.error("--record takes exactly one file")
+    if args.record and args.record_by_stem:
+        parser.error("--record and --record-by-stem are exclusive")
 
     if not args.dry_run and shutil.which("rclone") is None:
         raise SystemExit(
@@ -183,8 +188,8 @@ def main(argv: list[str] | None = None) -> int:
             state = "uploaded"
         url = verify(key, digest, size)
         print(f"{path.name:32s} {state:15s} {url}  ({size:,} B, verified)")
-        if args.record:
-            record(args.record, key, digest, size)
+        if args.record or args.record_by_stem:
+            record(args.record or path.stem, key, digest, size)
     return 0
 
 

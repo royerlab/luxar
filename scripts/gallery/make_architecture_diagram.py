@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import math
 import random  # decorative jitter only  # nosec B311
+import shutil
 import subprocess  # nosec B404: shells out to rsvg-convert with a fixed argv
 import sys
 from dataclasses import dataclass
@@ -637,22 +638,8 @@ def code_line(d, t, x, y, line, size=10.5):
 # --- the drawing --------------------------------------------------------------
 
 
-def build(t: Theme) -> dw.Drawing:
-    d = dw.Drawing(W, H, origin=(0, 0))
-    d.append(dw.Rectangle(0, 0, W, H, fill=t.bg))
-
-    gap = 28
-    widths = [268, 262, 292, 306]
-    x0 = (W - (sum(widths) + 3 * gap)) / 2
-    top, ch = 22, 440
-    xs = []
-    x = x0
-    for w in widths:
-        xs.append(x)
-        x += w + gap
-
+def _column_describe(d, t, x, w, top, ch):
     # ---- 1. describe in Python
-    x, w = xs[0], widths[0]
     card(
         d,
         t,
@@ -707,8 +694,9 @@ def build(t: Theme) -> dw.Drawing:
         g(d, t, gx, top + 386, 28)
         text(d, gx + 14, top + 386 + 28 + 13, lab, 9.5, t.muted, anchor="middle")
 
+
+def _column_compile(d, t, x, w, top, ch):
     # ---- 2. compile once
-    x, w = xs[1], widths[1]
     card(
         d, t, x, top, w, ch, "2  Compile once", "The expensive work, done ahead of time"
     )
@@ -755,8 +743,9 @@ def build(t: Theme) -> dw.Drawing:
         family=MONO,
     )
 
+
+def _column_archive(d, t, x, w, top, ch):
     # ---- 3. the archive
-    x, w = xs[2], widths[2]
     card(
         d,
         t,
@@ -832,8 +821,9 @@ def build(t: Theme) -> dw.Drawing:
         family=MONO,
     )
 
+
+def _column_explore(d, t, x, w, top, ch):
     # ---- 4. explore in the browser
-    x, w = xs[3], widths[3]
     card(
         d,
         t,
@@ -867,6 +857,28 @@ def build(t: Theme) -> dw.Drawing:
         family=MONO,
     )
 
+
+def build(t: Theme) -> dw.Drawing:
+    d = dw.Drawing(W, H, origin=(0, 0))
+    d.append(dw.Rectangle(0, 0, W, H, fill=t.bg))
+
+    gap = 28
+    widths = [268, 262, 292, 306]
+    x0 = (W - (sum(widths) + 3 * gap)) / 2
+    top, ch = 22, 440
+    xs = []
+    x = x0
+    for w in widths:
+        xs.append(x)
+        x += w + gap
+
+    for column, (x, w) in zip(
+        (_column_describe, _column_compile, _column_archive, _column_explore),
+        zip(xs, widths, strict=True),
+        strict=True,
+    ):
+        column(d, t, x, w, top, ch)
+
     # ---- arrows between stages and the closing line
     ym = top + 40
     for i in range(3):
@@ -894,9 +906,294 @@ def build(t: Theme) -> dw.Drawing:
     return d
 
 
+LAYERS_W, LAYERS_H = 1240, 760
+
+
+def module_rows(d, t, x, y, rows, row_h=50, label_w=118):
+    """Rows of ``module`` + title + one or two description lines; returns the next y."""
+    for k, (mod, title, desc) in enumerate(rows):
+        yy = y + k * row_h
+        text(d, x, yy, mod, 11, t.accent, family=MONO)
+        text(d, x + label_w, yy, title, 12, t.text, "bold")
+        for n, line in enumerate(desc.split("\n")):
+            text(d, x + label_w, yy + 15 + n * 13, line, 9.6, t.muted)
+    return y + len(rows) * row_h
+
+
+def section(d, t, x, y, label):
+    text(d, x, y, label.upper(), 9.5, t.faint, "bold")
+    return y + 20
+
+
+def build_layers(t: Theme) -> dw.Drawing:
+    w_all, h_all = LAYERS_W, LAYERS_H
+    d = dw.Drawing(w_all, h_all, origin=(0, 0))
+    d.append(dw.Rectangle(0, 0, w_all, h_all, fill=t.bg))
+    top, ch, gap = 22, 660, 24
+    wl, wm, wr = 440, 210, 518
+    x0 = (w_all - (wl + wm + wr + 2 * gap)) / 2
+    xl, xm, xr = x0, x0 + wl + gap, x0 + wl + gap + wm + gap
+
+    card(
+        d,
+        t,
+        xl,
+        top,
+        wl,
+        ch,
+        "luxar  ·  Python package",
+        "authoring, fitting and compilation",
+    )
+    y = section(d, t, xl + 18, top + 78, "Author")
+    y = module_rows(
+        d,
+        t,
+        xl + 18,
+        y + 8,
+        [
+            (
+                "core/",
+                "Scene graph",
+                "Scene, Group, Points, Lines, GSplats, Mesh;\nDimensions, transforms, layers, appearance",
+            ),
+            (
+                "core/",
+                "Annotations",
+                "text, image, video and HTML overlays;\nsound nodes; story waypoints",
+            ),
+        ],
+    )
+    y = section(d, t, xl + 18, y + 4, "Fit")
+    y = module_rows(
+        d,
+        t,
+        xl + 18,
+        y + 8,
+        [
+            (
+                "gsplats/",
+                "Gaussian splats",
+                "cal → fit → lod; CUDA and MPS kernels;\ntiled, batch and Slurm fitting",
+            ),
+            (
+                "mesh/",
+                "Meshes",
+                "import PLY/OBJ/STL/VTP/glTF; decimation,\nmesh LOD, physical materials",
+            ),
+        ],
+    )
+    y = section(d, t, xl + 18, y + 4, "Compile")
+    y = module_rows(
+        d,
+        t,
+        xl + 18,
+        y + 8,
+        [
+            (
+                "io/",
+                "Compiler",
+                "Hilbert or Morton ordering, chunking, nD spatial\nindex, LOD ladders, Zarr v2 and v3",
+            ),
+            (
+                "encoding/",
+                "Codes",
+                "semantic types, uint16 / uint8 quantisation,\nwidth-aware Blosc-zstd",
+            ),
+        ],
+    )
+    y = section(d, t, xl + 18, y + 4, "Run and share")
+    module_rows(
+        d,
+        t,
+        xl + 18,
+        y + 8,
+        [
+            (
+                "cli/",
+                "Command line",
+                "luxar demo · serve · export · optimize ·\ngsplat · mesh · env",
+            ),
+            (
+                "control/",
+                "Remote control",
+                "drive a running viewer from Python\nover a WebSocket",
+            ),
+            (
+                "demos/",
+                "Demos",
+                "90 bundled demos; data pinned by SHA-256\nand fetched on demand",
+            ),
+        ],
+    )
+
+    card(d, t, xm, top, wm, ch, ".luxar.zarr", "the contract between the two")
+    tree = [
+        ("scene.luxar.zarr/", t.text, True),
+        ("├─ zarr.json", t.text, False),
+        ("├─ nuclei/", t.text, False),
+        ("│  ├─ centers …", t.muted, False),
+        ("│  ├─ chunk_bounds", t.muted, False),
+        ("│  └─ additive_0…3", t.muted, False),
+        ("├─ cells/  tracks/", t.text, False),
+        ("└─ overlays/", t.text, False),
+    ]
+    for k, (ln, col, bold) in enumerate(tree):
+        text(
+            d,
+            xm + 18,
+            top + 84 + k * 15.5,
+            ln,
+            10,
+            col,
+            "bold" if bold else "normal",
+            family=MONO,
+        )
+    y = top + 84 + len(tree) * 15.5 + 18
+    for line in [
+        "a directory of chunk files,",
+        "or one .zarr.zip read by",
+        "byte range",
+        "",
+        "served by any static host:",
+        "luxar serve, a lab server,",
+        "object storage, GitHub Pages,",
+        "an exported folder",
+        "",
+        "opened by URL:",
+    ]:
+        text(d, xm + 18, y, line, 10.5, t.muted)
+        y += 15
+    text(d, xm + 18, y, "luxarviewer.dev/?src=…", 10, t.accent, family=MONO)
+    for k, g in enumerate([glyph_hilbert, glyph_squeeze, glyph_bounds, glyph_lod]):
+        g(d, t, xm + 22 + k * 48, top + ch - 110, 28)
+    text(
+        d,
+        xm + wm / 2,
+        top + ch - 62,
+        "ordered · compressed · indexed · laddered",
+        9.2,
+        t.muted,
+        anchor="middle",
+    )
+    text(
+        d,
+        xm + 18,
+        top + ch - 16,
+        "spec: LUXAR_ZARR_FORMAT.md",
+        9.5,
+        t.accent,
+        family=MONO,
+    )
+
+    card(
+        d,
+        t,
+        xr,
+        top,
+        wr,
+        ch,
+        "luxar-viewer  ·  TypeScript",
+        "streams and renders; npm @luxar/viewer, luxarviewer.dev",
+    )
+    module_rows(
+        d,
+        t,
+        xr + 18,
+        top + 88,
+        [
+            (
+                "core/",
+                "LuxarApp",
+                "the embeddable app and its API: camera, layers,\ndimensions, events; story tours and remote control",
+            ),
+            (
+                "ui/ themes/",
+                "Interface",
+                "rail and panels: layers, dimension navigation,\nmonitor, recording, help; four themes",
+            ),
+            (
+                "controls/ input/",
+                "Navigation",
+                "orbit, fly and ortho cameras;\nkeyboard, mouse and touch",
+            ),
+            (
+                "rendering/ scene/",
+                "Rendering",
+                "Three.js on WebGL2 or WebGPU; HDR pipeline;\nsix blending modes; LOD selection by screen area",
+            ),
+            (
+                "workers/ wasm/",
+                "Compute",
+                "background decode; Rust kernels for nD\nprojection, effective radii, Mahalanobis distance",
+            ),
+            (
+                "data/ cache/",
+                "Streaming",
+                "Zarr client, spatial queries, prefetch;\nS-cache, L0, L1 and L2 (OPFS) cache tiers",
+            ),
+            (
+                "config/",
+                "Configuration",
+                "URL parameters, settings sections,\ndensity guard, adaptive resolution",
+            ),
+            (
+                "audio/",
+                "Sound",
+                "ambient beds, positional sources and narration\ncued by the hidden dimensions",
+            ),
+        ],
+        row_h=54,
+        label_w=132,
+    )
+    text(
+        d,
+        xr + 18,
+        top + ch - 40,
+        "Also shipped: luxar export writes viewer + data as an offline folder, and",
+        9.8,
+        t.muted,
+    )
+    text(
+        d,
+        xr + 18,
+        top + ch - 26,
+        "luxar-launcher (Go) wraps that folder as a native macOS or Linux app.",
+        9.8,
+        t.muted,
+    )
+
+    ym = top + 40
+    arrow(d, t, xl + wl + 4, ym, xm - 4, ym, 1.8)
+    arrow(d, t, xm + wm + 4, ym, xr - 4, ym, 1.8)
+    text(
+        d,
+        w_all / 2,
+        h_all - 36,
+        "Two code bases, one file format between them.",
+        13,
+        t.text,
+        "bold",
+        anchor="middle",
+    )
+    text(
+        d,
+        w_all / 2,
+        h_all - 16,
+        "The Python side does the expensive work once; the viewer only ever reads chunks, so it runs anywhere a browser does.",
+        12,
+        t.muted,
+        anchor="middle",
+        italic=True,
+    )
+    return d
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--which", choices=["pipeline", "layers", "both"], default="both"
     )
     parser.add_argument("--theme", choices=["dark", "light", "both"], default="both")
     parser.add_argument(
@@ -904,30 +1201,38 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-o", "--out", type=Path, default=Path("architecture"))
     args = parser.parse_args(argv)
+    if shutil.which("rsvg-convert") is None:
+        raise SystemExit("rsvg-convert is not on PATH (brew install librsvg)")
     args.out.mkdir(parents=True, exist_ok=True)
     themes = (
         [DARK, LIGHT]
         if args.theme == "both"
         else [DARK if args.theme == "dark" else LIGHT]
     )
-    for t in themes:
-        svg = args.out / f"luxar-architecture-{t.name}.svg"
-        png = args.out / f"luxar-architecture-{t.name}.png"
-        build(t).save_svg(str(svg))
-        subprocess.run(  # nosec B603, B607: fixed argv, tool from PATH
-            [
-                "rsvg-convert",
-                "-w",
-                str(int(W * args.scale)),
-                "-h",
-                str(int(H * args.scale)),
-                "-o",
-                str(png),
-                str(svg),
-            ],
-            check=True,
-        )
-        print(f"{png} ({png.stat().st_size / 1024:.0f} KB)")
+    figures = {
+        "pipeline": (build, W, H, "luxar-architecture"),
+        "layers": (build_layers, LAYERS_W, LAYERS_H, "luxar-layers"),
+    }
+    for which in list(figures) if args.which == "both" else [args.which]:
+        builder, width, height, stem = figures[which]
+        for t in themes:
+            svg = args.out / f"{stem}-{t.name}.svg"
+            png = args.out / f"{stem}-{t.name}.png"
+            builder(t).save_svg(str(svg))
+            subprocess.run(  # nosec B603, B607: fixed argv, tool from PATH
+                [
+                    "rsvg-convert",
+                    "-w",
+                    str(int(width * args.scale)),
+                    "-h",
+                    str(int(height * args.scale)),
+                    "-o",
+                    str(png),
+                    str(svg),
+                ],
+                check=True,
+            )
+            print(f"{png} ({png.stat().st_size / 1024:.0f} KB)")
     return 0
 
 

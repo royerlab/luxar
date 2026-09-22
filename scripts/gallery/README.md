@@ -15,8 +15,8 @@ the best for the README gallery (TODO **R19**).
 | `verify_media.py` | Checks manifest/README consistency offline, then optionally fetches every hosted object and verifies its content type, byte count, and SHA-256 digest. |
 | `publish_media.py` | Hosts README/gallery media on `data.luxarviewer.dev/media` by content hash (`sha256[:16].<ext>`): skips keys that already exist (never overwrites), uploads with rclone, verifies each URL back by content type, size and digest; `--record NAME` writes the entry under `assets/NAME` in `media-manifest.json`, which the README bijection check requires. |
 | `make_social_preview.py` | Composes the 1280x640 social-preview banner (four scene panels, scrim, wordmark) that heads the README and goes into GitHub's Settings -> Social preview. Output is deliberately uncommitted: publish it with `publish_media.py --record social-preview` (the README embed) and upload the same file to GitHub by hand. |
-| `make_architecture_diagram.py` | Draws the "how Luxar works" diagram (drawsvg -> SVG -> PNG via rsvg-convert) in GitHub's dark and light palettes; the README embeds both through a `<picture>` element. Published like the banner (`--record architecture-dark` / `architecture-light`). |
-| `make_readme_animations.py` | Cuts the README's looping WebP recordings (hero, quick start) from the release social-kit clips (`LUXAR_SOCIAL_KIT`); published like the banner (`--record hero-drosophila` / `quickstart-cloud`). |
+| `make_architecture_diagram.py` | Draws the "how Luxar works" pipeline and the Architecture layers diagram (drawsvg -> SVG -> PNG via rsvg-convert), each in GitHub's dark and light palettes; the README embeds them through `<picture>` elements. Published like the banner (`--record architecture-dark` etc.). |
+| `make_readme_animations.py` | Cuts the README's looping WebP recordings (hero, quick start, stack-to-splats, LOD recipes) from the release social-kit clips (`LUXAR_SOCIAL_KIT`) and timed excerpts of the uncarded supplementary-video masters (`LUXAR_SUPP_VIDEOS`); published like the banner (`--record hero-drosophila` etc.). |
 | `../../packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts` | Playwright capture: auto-center + fill-to-frame, auto-exposure, orbit, still + video. |
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
 | `../../packages/luxar-viewer/src/tests/screenshots/crop-policy.ts` | The under-fill and border-lit (**cropped subject**) verdicts + warning floors, split out of the spec so they are unit-testable without a browser (`src/tests/unit/gallery-{underfill,crop}-policy.test.ts`). |
@@ -293,17 +293,20 @@ bandwidth is metered; a hosted object costs nothing per clone):
 | Asset | Script | Source |
 |---|---|---|
 | Social-preview banner, 1280x640 (README header; also Settings -> Social preview) | `make_social_preview.py` | gallery tiles (`media-manifest.json`) plus two hosted viewer frames |
-| "How Luxar works" diagram, dark + light | `make_architecture_diagram.py` | drawn with drawsvg, rasterised with rsvg-convert |
-| Hero recording (Drosophila gastrulation) and quick-start recording | `make_readme_animations.py` | the release social kit's 1080p clips on the shared drive (`LUXAR_SOCIAL_KIT`) |
+| "How Luxar works" pipeline and the Architecture layers diagram, each dark + light | `make_architecture_diagram.py` | drawn with drawsvg, rasterised with rsvg-convert |
+| Looping recordings: hero (Drosophila gastrulation), quick start, stack-to-splats, LOD recipes | `make_readme_animations.py` | the release social kit's 1080p clips (`LUXAR_SOCIAL_KIT`) and the uncarded supplementary-video masters (`LUXAR_SUPP_VIDEOS`) |
 
 `make generate-readme-assets` builds all of them into `build/readme-assets/`;
-`make publish-readme-media` uploads whatever is not yet hosted with
-`publish_media.py --record <name>` (key = `sha256[:16].<ext>`, never overwritten,
-verified back over HTTPS by content type, size and hash), records each entry
-under `assets/` in `media-manifest.json`, and prints the URLs to paste into the
-README. `verify_media.py` (and the viewer's `gallery-selection` test) require an
+`make publish-readme-media` uploads whatever is not yet hosted (key =
+`sha256[:16].<ext>`, never overwritten, verified back over HTTPS by content
+type, size and hash), records each object under `assets/<file stem>` in
+`media-manifest.json` (the generators name files after their asset), and prints
+the URLs to paste into the README. `verify_media.py` (and the viewer's `gallery-selection` test) require an
 exact match between the README's hosted URLs and the manifest, so an asset that
 is embedded but not recorded fails CI. A re-cut therefore gets a new URL; the old object stays, because the
 edge cache ignores origin cache-control and an in-place replacement would serve
-stale bytes for hours. Every script reproduces the hosted object byte for byte
-from its documented inputs (the hero WebP and the banner were checked this way).
+stale bytes for hours. The banner and the recordings reproduce the hosted
+objects byte for byte from their documented inputs (a slow test asserts it for
+the hero); the diagrams depend on the macOS fonts they were authored with, so a
+rebuild elsewhere renders the same content with different metrics and a
+different hash. The hosted files are the reference.

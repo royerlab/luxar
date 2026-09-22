@@ -85,18 +85,9 @@ def _require_readme_bijection(
         )
 
 
-def validated_entries(
-    manifest: dict[str, Any], readme: str
-) -> tuple[str, list[MediaEntry]]:
-    """Return validated media entries and require an exact README URL bijection."""
-    base_url = manifest.get("base_url")
-    if not isinstance(base_url, str) or urlsplit(base_url).scheme != "https":
-        raise VerificationError("media manifest base_url must be an HTTPS URL")
-    base_url = base_url.rstrip("/")
-    tiles = manifest.get("tiles")
+def _tile_entries(tiles: object) -> list[MediaEntry]:
     if not isinstance(tiles, dict) or not tiles:
         raise VerificationError("media manifest tiles must be a non-empty object")
-
     entries: list[MediaEntry] = []
     for demo_id, variants in tiles.items():
         if not isinstance(demo_id, str) or not isinstance(variants, dict):
@@ -105,13 +96,15 @@ def validated_entries(
             raise VerificationError(f"{demo_id}: expected webp and webm variants")
         for variant, raw_entry in variants.items():
             entries.append(_validated_entry(demo_id, variant, raw_entry))
+    return entries
 
-    # README assets that are not gallery tiles (banner, diagram, screen
-    # recordings): any subset of the known variants, one entry per file.
-    extras = manifest.get("assets", {})
-    if not isinstance(extras, dict):
+
+def _asset_entries(assets: object) -> list[MediaEntry]:
+    """README media that is not a gallery tile (banner, diagrams, recordings)."""
+    if not isinstance(assets, dict):
         raise VerificationError("media manifest assets must be an object")
-    for name, variants in extras.items():
+    entries: list[MediaEntry] = []
+    for name, variants in assets.items():
         if not isinstance(name, str) or not isinstance(variants, dict) or not variants:
             raise VerificationError(
                 "media manifest assets must map names to non-empty objects"
@@ -122,7 +115,19 @@ def validated_entries(
             )
         for variant, raw_entry in variants.items():
             entries.append(_validated_entry(name, variant, raw_entry))
+    return entries
 
+
+def validated_entries(
+    manifest: dict[str, Any], readme: str
+) -> tuple[str, list[MediaEntry]]:
+    """Return validated media entries and require an exact README URL bijection."""
+    base_url = manifest.get("base_url")
+    if not isinstance(base_url, str) or urlsplit(base_url).scheme != "https":
+        raise VerificationError("media manifest base_url must be an HTTPS URL")
+    base_url = base_url.rstrip("/")
+    entries = _tile_entries(manifest.get("tiles"))
+    entries += _asset_entries(manifest.get("assets", {}))
     _require_readme_bijection(base_url, entries, readme)
     return base_url, entries
 

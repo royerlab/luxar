@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cut the README's looping animations (WebP) from the release screen recordings.
 
-The README embeds two animations, both served from ``data.luxarviewer.dev/media``
+The README embeds four animations, all served from ``data.luxarviewer.dev/media``
 by content hash rather than committed to git:
 
 * ``hero``        the Drosophila gastrulation recording (social clip ``d01``),
@@ -9,7 +9,10 @@ by content hash rather than committed to git:
                   playing in the viewer (social clip ``d36``),
 * ``volume``      a light-sheet stack in napari, ``luxar gsplat fit`` running in
                   a terminal with its PSNR curve, then the fitted splats in the
-                  viewer: four excerpts of Supplementary Video 1's master.
+                  viewer: four excerpts of Supplementary Video 1's master,
+* ``lod``         the six ``lod --recipe`` topologies built from one Tribolium
+                  fit, side by side and up close: excerpts of Supplementary
+                  Video 7's master.
 
 The sources are the release social kit's 1080p H.264 clips on the shared drive
 (``Shared drives/royerlab/Projects/luxar/social_media_release/clips/
@@ -19,7 +22,7 @@ video masters (``luxar-paper/supp_videos/final/uncarded/``;
 ``LUXAR_SUPP_VIDEOS`` or ``--supp-dir``), from which timed excerpts are
 concatenated. Output is a looping WebP sized for a README column.
 
-    hatch run python scripts/gallery/make_readme_animations.py -o out/            # both
+    hatch run python scripts/gallery/make_readme_animations.py -o out/            # all
     hatch run python scripts/gallery/make_readme_animations.py hero -o out/        # one
     hatch run python scripts/gallery/publish_media.py out/*.webp                    # host them
 
@@ -77,6 +80,17 @@ ANIMATIONS = {
         # napari stack; fit console with the PSNR curve; the script; the viewer opens
         segments=((6.0, 5.0), (24.0, 8.0), (67.0, 3.0), (82.0, 9.0)),
     ),
+    "lod": Animation(
+        "lod-recipes",
+        "SuppVideo07_lod_recipes.mp4",
+        1000,
+        fps=10,
+        quality=48,
+        source="supp",
+        # the six recipes side by side; the levels column swapping coarse to fine;
+        # the tiles column; the adaptive column close up; back to the row
+        segments=((0.0, 5.0), (12.0, 6.0), (45.0, 5.0), (99.0, 6.0), (118.0, 4.0)),
+    ),
 }
 
 
@@ -100,7 +114,7 @@ def encode(source: Path, out: Path, spec: Animation) -> None:
         "-loop", "0", "-c:v", "libwebp", "-quality", str(spec.quality),
         "-compression_level", "6", str(out),
     ]  # fmt: skip
-    subprocess.run(cmd, check=True)  # nosec B603, B607: fixed argv, tool from PATH
+    subprocess.run(cmd, check=True)  # nosec B603: fixed argv, no shell
 
 
 def main(argv: list[str] | None = None) -> int:

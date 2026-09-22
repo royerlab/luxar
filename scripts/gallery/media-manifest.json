@@ -458,6 +458,30 @@
         "key": "3f4df30e7f4b4a4a.webp",
         "sha256": "3f4df30e7f4b4a4afcf519fff16e27b836019982020b903d655a1a573c232dfc"
       }
+    },
+    "lod-recipes": {
+      "webp": {
+        "bytes": 2285532,
+        "content_type": "image/webp",
+        "key": "8b1592c0e9cc72fa.webp",
+        "sha256": "8b1592c0e9cc72fa7e7e67b937189046b931921a0b391848ad90b9dcb4192938"
+      }
+    },
+    "layers-dark": {
+      "png": {
+        "bytes": 520868,
+        "content_type": "image/png",
+        "key": "7be8aedb71f7d2dc.png",
+        "sha256": "7be8aedb71f7d2dc5e0d6de83ff753cb6847246b96fc6641b0151a03fd111e6b"
+      }
+    },
+    "layers-light": {
+      "png": {
+        "bytes": 525413,
+        "content_type": "image/png",
+        "key": "e6f5d569fc19c1d6.png",
+        "sha256": "e6f5d569fc19c1d6efc34969b669c9a7468744ec7408156ed17be238e0da9ad0"
+      }
     }
   },
   "superseded": {
@@ -487,6 +511,21 @@
         "key": "39ec101479baf65d.webp",
         "was": "volume-to-scene cut from social clip d03 (viewer first, no napari)",
         "replaced_by": "3f4df30e7f4b4a4a.webp"
+      }
+    ]
+  },
+  "sources": {
+    "note": "Hosted inputs of generated assets (not embedded in the README, so outside the bijection). Kept for reproducibility; never overwrite.",
+    "objects": [
+      {
+        "key": "2bc40436c253b2be.png",
+        "used_by": "social-preview",
+        "what": "Cosmicflows-4 Laniakea viewer frame (panel 2)"
+      },
+      {
+        "key": "023168eeb5de26d0.png",
+        "used_by": "social-preview",
+        "what": "Drosophila gastrulation viewer frame (panel 3)"
       }
     ]
   }

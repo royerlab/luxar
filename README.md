@@ -112,7 +112,11 @@ the same `luxar demo` commands apply. Some demos need extra packages;
 `luxar demo run cloud` builds a convective cloud, a 4D point cloud that evolves over
 a time axis, and opens it in the viewer, where the time slider plays it back:
 
-<p align="center"><img src="https://data.luxarviewer.dev/media/b6d1359e5db8850e.webp" alt="Quick start recording: pip install luxar and luxar demo run cloud typed in a terminal, then the evolving cloud playing in the Luxar viewer" width="100%"></p>
+<p align="center">
+  <img src="https://data.luxarviewer.dev/media/b6d1359e5db8850e.webp" alt="Quick start recording: pip install luxar and luxar demo run cloud typed in a terminal, then the evolving cloud playing in the Luxar viewer" width="100%">
+  <br>
+  <sub>The post-release flow in one take: <code>pip install luxar</code>, then <code>luxar demo run cloud</code>. From a checkout today, the commands above do the same.</sub>
+</p>
 
 #### Browsing the catalogue
 
@@ -255,8 +259,9 @@ headers, so test before linking to it.
 
 Object stores bill and throttle per request, and most generated stores land far
 below the 64 KB chunk target (the demo corpus averages 5 KB per file), so re-chunk
-before publishing with `luxar optimize` and pick the profile by access pattern: `local` (64 KB) when the viewer will slice
-into a large node, `hosting` or `archive` when it loads the node whole. Re-chunking
+before publishing with `luxar optimize` and pick the profile by access pattern:
+`local` (64 KB) when the viewer will slice into a large node, `hosting` or
+`archive` when it loads the node whole. Re-chunking
 one demo to the 64 KB profile cut a cold load from 9,390 requests to 2,348. The
 re-chunked store carries a new content hash, so publish it under a new URL prefix
 rather than over the old one, or warm viewer caches will serve stale chunks; the
@@ -479,6 +484,12 @@ The recipes are named by intent and ordered by dataset scale:
 | `tiles` | spatial tiles, each with its own ladder | large scene at one scale |
 | `overview` | instant coarse overview, fine tiles on zoom | huge scene, "see everything first" |
 | `adaptive` | tiles where every tile picks its own level | largest scenes, locally adaptive |
+
+<p align="center">
+  <img src="https://data.luxarviewer.dev/media/8b1592c0e9cc72fa.webp" alt="The six LOD recipes built from one Tribolium fit, shown side by side as six embryos, then up close: the levels column swapping from its coarse level to its finest as the camera approaches, the tiles column, and the adaptive column" width="100%">
+  <br>
+  <sub>One <em>Tribolium</em> fit, six topologies side by side (<code>flat</code>, <code>stream</code>, <code>levels</code>, <code>tiles</code>, <code>overview</code>, <code>adaptive</code>), each column coloured by the part or level it is drawn from; the data-loading monitor counts what is resident as the camera dollies in. <a href="https://demos.luxarviewer.dev/d/gsplats_recipes_tribolium">Open the demo</a> or watch <a href="https://demos.luxarviewer.dev/v/07/">Supplementary Video 7</a>.</sub>
+</p>
 
 Apart from `flat`, every recipe carries a progressive streaming ladder by default:
 splats are reordered so that early prefixes carry as much of the signal as possible,
@@ -802,7 +813,7 @@ render-and-readback call, in milliseconds; the vsync budget at 60 FPS is 16.7 ms
 | 1M | 3.31 | 4.98 | 8.64 |
 | 10M | — | 18.8 | 19.4 |
 
-At ten million elements the call runs 13–16% over the budget; the viewer's adaptive
+At ten million elements the call runs 12–16% over the budget; the viewer's adaptive
 DPR (on by default, and pinned for these measurements) buys the frame rate back by
 downscaling the render buffer. Typical scenes are lighter than these synthetic
 sweeps: the fifteen demo scenes of the same study all hold 60 FPS, the heaviest, a
@@ -829,31 +840,55 @@ See [Zarr Format Specification](docs/guides/user/LUXAR_ZARR_FORMAT.md) for compl
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Python Layer (luxar)                                               │
-├─────────────────────────────────────────────────────────────────────┤
-│  core/          Scene graph: Scene, Points, Lines, GSplats, Mesh   │
-│  io/            Zarr compilation with spatial ordering              │
-│  encoding/      Semantic types, quantization, compression           │
-│  validation/    Input validation and type checking                  │
-│  gsplats/       Gaussian splatting fitting and I/O                  │
-│  cli/           Command-line interface                              │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ Zarr Archive
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  TypeScript Layer (luxar-viewer)                                    │
-├─────────────────────────────────────────────────────────────────────┤
-│  data/          Zarr loading, spatial queries, caching              │
-│  rendering/     WebGL/WebGPU materials, HDR pipeline, post-processing│
-│  scene/         THREE.js scene management                           │
-│  controls/      Orbit/Fly navigation, keyboard input                │
-│  ui/            Panels, sliders, debug console                      │
-│  wasm/          Rust-compiled performance-critical functions        │
-│  workers/       Background data processing                          │
-└─────────────────────────────────────────────────────────────────────┘
-```
+Luxar is two code bases that never import each other. The Python package
+authors, fits and compiles; the TypeScript viewer streams and renders; the
+`.luxar.zarr` archive is the only contract between them. Anything that can
+write that archive (today: the Python compiler) feeds anything that can read
+it (the hosted viewer, an offline export, an embedded `@luxar/viewer`, a native
+launcher).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://data.luxarviewer.dev/media/7be8aedb71f7d2dc.png">
+  <img alt="Luxar architecture: the Python package (scene graph, annotations, Gaussian-splat and mesh fitting, compiler and encoding, CLI, remote control, demos), the .luxar.zarr archive in the middle served by any static host, and the TypeScript viewer (LuxarApp, interface, navigation, rendering, compute, streaming, configuration, sound) plus the export folder and native launcher" src="https://data.luxarviewer.dev/media/e6f5d569fc19c1d6.png" width="100%">
+</picture>
+
+**Python side.** `core/` is the scene graph a user builds: nodes for the four
+geometry types, groups with transforms, `Dimensions` that declare every axis
+with its unit and extent, per-node appearance, and annotations (text, image,
+video and HTML overlays, sound, story waypoints). `gsplats/` turns image volumes
+into that geometry: cross-validated calibration, the fitter with its CUDA and
+Apple-MPS kernels, tiled and multi-GPU batch fitting, and the LOD recipes.
+`mesh/` imports and decimates surfaces. `io/` is the compiler: it orders every
+node along a space-filling curve, chunks it to about 64 KB, writes the nD
+spatial index and the LOD ladders, and emits Zarr format 3 (reading both 2 and
+3); `encoding/` decides how each attribute is quantised and compressed. `cli/`
+exposes all of it, `control/` drives a running viewer from Python, and `demos/`
+holds the 90 bundled demos whose data is pinned by digest and fetched on demand.
+
+**The archive.** A directory of small chunk files, or a single zip read by byte
+range. It carries its own metadata (dimensions, node tree, chunk bounds, ladder
+energies), so no server code is needed: `luxar serve` for a laptop, a lab web
+server, object storage, GitHub Pages or an exported folder all serve it the same
+way, and the viewer opens it from a URL. The format is specified in
+[LUXAR_ZARR_FORMAT.md](docs/guides/user/LUXAR_ZARR_FORMAT.md); the fitted-splat
+container in [GSPLATS_ZARR_FORMAT.md](docs/specs/GSPLATS_ZARR_FORMAT.md).
+
+**Viewer side.** From the bottom up: `data/` and `cache/` are the Zarr client,
+the spatial queries that turn a view into chunk requests, prefetch, and four
+cache tiers (in-memory S-cache, L0, L1 and an OPFS-backed L2 that survives a
+reload). `workers/` decode off the main thread and call Rust kernels in `wasm/`
+for the nD projection, effective radii and Mahalanobis tests, with a TypeScript
+reference implementation for scenes above 16 dimensions. `rendering/` and
+`scene/` draw with Three.js on WebGL2 or WebGPU through an HDR pipeline with six
+blending modes, choosing levels of detail by projected screen area. `controls/`
+and `input/` implement orbit, fly and ortho cameras for mouse, keyboard and
+touch; `ui/` and `themes/` are the rail and its panels; `config/` holds the URL
+parameters and settings, including the density guard and adaptive resolution;
+`audio/` plays sound cued by the hidden dimensions. `core/` ties these into
+`LuxarApp`, the object a page embeds and scripts. Two more consumers sit beside
+the browser: `luxar export` writes the viewer and the data as an offline folder,
+and `packages/luxar-launcher` (Go) wraps that folder as a double-clickable
+macOS or Linux app.
 
 ---
 
@@ -1009,7 +1044,8 @@ layout and how to add a new skill.
 | [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md) | How the two sites above are hosted and published |
 | [Python Package README](packages/luxar/README.md) | Full Python API documentation |
 | [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md) | Navigating a scene: camera, nD slicing, panels, keyboard |
-| [CLI Reference](docs/guides/user/CLI_REFERENCE.md) | Every `luxar` command and flag |
+| [CLI Reference](docs/guides/user/CLI_REFERENCE.md) | Every `luxar` command, what it is for and where its guide lives; `--help` lists the flags |
+| [CLI package README](packages/luxar/src/luxar/cli/README.md) | Per-command options and runnable examples for the fitting pipeline (`cal`, `fit`, `lod`, `batch-fit`) |
 | [Viewer README](packages/luxar-viewer/README.md) | Viewer features and configuration |
 | [Zarr Format Spec](docs/guides/user/LUXAR_ZARR_FORMAT.md) | Complete data format specification |
 | [GSplats Format Spec](docs/specs/GSPLATS_ZARR_FORMAT.md) | The `.gsplats.zarr` fitted-splat container and its LOD node tree |
