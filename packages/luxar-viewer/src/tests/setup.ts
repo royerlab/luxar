@@ -28,7 +28,7 @@ import { __setMinInstanceCapacityForTesting } from '../rendering/gpu-buffer-pool
 // `__setMinInstanceCapacityForTesting(null)` in a try/finally.
 __setMinInstanceCapacityForTesting(0);
 
-// Vitest 4 constructs mocks via `Reflect.construct(implementation, ...)`, which
+// Vitest constructs mocks via `Reflect.construct(implementation, ...)`, which
 // throws `TypeError: ... is not a constructor` when the implementation is an
 // arrow function (arrows have no [[Construct]] internal method). Many existing
 // tests — including `vi.mock(modulePath)` auto-mocks and `vi.fn(arrow)` /
