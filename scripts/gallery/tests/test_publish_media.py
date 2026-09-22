@@ -111,6 +111,7 @@ def test_cli_dry_run_and_record_by_stem_parse_and_derive_names(
     manifest_path = tmp_path / "media-manifest.json"
     manifest_path.write_text(json.dumps({"base_url": pub.BASE_URL, "tiles": {}}))
     monkeypatch.setattr(pub, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(pub.shutil, "which", lambda name: "/usr/bin/rclone")
     monkeypatch.setattr(pub, "exists_remote", lambda key: True)
     monkeypatch.setattr(
         pub, "verify", lambda key, digest, size: f"{pub.BASE_URL}/{key}"

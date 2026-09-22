@@ -133,6 +133,12 @@ def test_the_real_readme_has_no_relative_link_left_after_rewriting() -> None:
     )
     assert relative.findall(text) == []
     assert REPO_BLOB_URL + "ACKNOWLEDGMENTS.md" in text
+    # Forms the hook does NOT rewrite, so they must not appear with a relative
+    # target at all: a relative ``srcset`` or a reference-style definition would
+    # pass the hook, pass the wheel check and ship as a dead link on PyPI.
+    raw = (PROJECT_ROOT / "README.md").read_text()
+    assert re.findall(r'srcset="(?!https?://)[^"]+"', raw) == []
+    assert re.findall(r"^\[[^\]]+\]:\s+(?!https?://|#)\S+", raw, re.M) == []
 
 
 def test_pyproject_wires_the_metadata_hook() -> None:

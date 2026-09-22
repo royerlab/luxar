@@ -51,7 +51,8 @@ with nothing to install. Already have a scene? Open it in the hosted viewer at
 ## How it works
 
 Everything expensive happens before anyone opens a browser. The compiler orders
-each node along a space-filling curve, cuts it into chunks of about 64 KB,
+each node along a space-filling curve (a mesh has none: it loads whole), cuts it
+into chunks of about 64 KB,
 compresses them, writes an nD spatial index and levels of detail, and, for image
 volumes, runs the Gaussian fit. The viewer's job is reduced to fetching the
 chunks a view needs and drawing them, so what remains at exploration time is
@@ -264,7 +265,7 @@ short credit; full citations and licenses are in
 
 ### Earth & geoscience
 
-| [![Global Earthquakes — USGS on the globe](https://data.luxarviewer.dev/media/dc4b3e44dcac6de8.webp)](https://data.luxarviewer.dev/media/d05c55e7ede7ca65.webm) | [![Rivers of Earth — topography + river networks](https://data.luxarviewer.dev/media/62f7ac63f2a7055a.webp)](https://data.luxarviewer.dev/media/acc224755930426d.webm) | |
+| [![Global Earthquakes — USGS on the globe](https://data.luxarviewer.dev/media/dc4b3e44dcac6de8.webp)](https://data.luxarviewer.dev/media/d05c55e7ede7ca65.webm) | [![Rivers of Earth — topography + river networks](https://data.luxarviewer.dev/media/62f7ac63f2a7055a.webp)](https://data.luxarviewer.dev/media/acc224755930426d.webm) |
 |:--:|:--:|
 | **[Global Earthquakes](https://demos.luxarviewer.dev/d/earthquakes)**<br>USGS on the globe<br><sub>USGS catalog; NASA Blue Marble</sub> | **[Rivers of Earth](https://demos.luxarviewer.dev/d/global_rivers_earth)**<br>topography + river networks<br><sub>HydroSHEDS + NOAA NCEI</sub> |
 
@@ -704,19 +705,29 @@ documents how the demo corpus itself is served.
 | `?debug` | Expose `window.__luxarDebug` |
 | `?noCache`, `?clearCache`, `?noPrefetch` | Disable the cache tiers, clear the persistent cache, disable prefetch |
 
-Luxar needs WebGL2. The end-to-end smoke suite passes on Playwright's Chromium,
-Firefox, and WebKit engines (engine by engine in the
-[viewer README](packages/luxar-viewer/README.md#browser-compatibility)); WebKit
-runs without the persistent (OPFS) cache tier, so Safari and the native launcher
-keep chunks in memory only (the cache panel shows the
-[opfs-unavailable badge](packages/luxar-viewer/src/cache/README.md#cache-status-badges)).
-Playwright's WebKit is not Safari, so Safari and Edge themselves are untested;
-real phones and tablets are supported but unmeasured, and touch input (one- and two-finger orbit, pinch, twist, tap-to-pick, long-press
-menus) is exercised by an emulated mobile suite. If a scene stays empty, check
-the browser console: a CORS error means the host is refusing the data (see
-[Sharing and hosting](#sharing-and-hosting-a-scene)); a 404 means the URL is
-wrong. The panels, the camera modes, and every shortcut are described in the
-[Viewer Guide](docs/guides/user/VIEWER_GUIDE.md).
+If a scene stays empty, check the browser console: a CORS error means the host
+is refusing the data (see [Sharing and hosting](#sharing-and-hosting-a-scene)); a
+404 means the URL is wrong. The panels, the camera modes, and every shortcut are
+described in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md).
+
+### Browser Compatibility
+
+Luxar needs WebGL2; WebGPU is opt-in with `?renderer=webgpu` and falls back to
+WebGL2 when no adapter is available. The build targets `esnext` with no
+`browserslist`, so there is no version floor to quote, only what has been run.
+The end-to-end smoke subset passes on Playwright's three bundled engines:
+
+| Engine | Smoke subset | Notes |
+|--------|--------------|-------|
+| Chromium | pass | Persistent (OPFS) cache tier active |
+| Firefox | pass | Persistent (OPFS) cache tier active |
+| WebKit | pass | Runs without the persistent cache tier, so Safari and the native launcher keep chunks in memory only (the cache panel shows the [opfs-unavailable badge](packages/luxar-viewer/src/cache/README.md#cache-status-badges)) |
+
+Playwright's WebKit is not Safari, so Safari and Edge themselves are untested,
+and real phones and tablets are supported but unmeasured; touch input (one- and
+two-finger orbit, pinch, twist, tap-to-pick, long-press menus) is exercised by
+an emulated mobile suite. The dated run and how to reproduce it are in the
+[viewer README](packages/luxar-viewer/README.md#browser-compatibility).
 
 ---
 
@@ -751,9 +762,10 @@ render-and-readback call takes (milliseconds; the 60 FPS budget is 16.7):
 | 1M | 3.31 | 4.98 | 8.64 |
 | 10M | — | 18.8 | 19.4 |
 
-At ten million elements the call runs 12 to 16% over budget; adaptive DPR, on by
-default, buys the frame rate back by downscaling the render buffer. Typical
-scenes are lighter than these synthetic sweeps: the fifteen demo scenes of the
+At ten million elements the call runs 12 to 16% over budget, and at that
+element density lowering the render resolution does not help (the cost tracks
+elements per pixel, not pixels), which is what the projected-density guard below
+is for. Typical scenes are lighter than these synthetic sweeps: the fifteen demo scenes of the
 same sweep all hold 60 FPS, the heaviest, a 2.2M-splat time-lapse frame, in 5.6
 ms. Very large overdraw-bound scenes such as a 29.6M-splat whole-slide image are
 thinned by the projected-density guard (on by default). Load time is dominated
@@ -780,7 +792,8 @@ video and HTML overlays, sound, story waypoints). `gsplats/` turns image volumes
 into that geometry: cross-validated calibration, the fitter with its CUDA and
 Apple-MPS kernels, tiled and multi-GPU batch fitting, and the LOD recipes.
 `mesh/` imports and decimates surfaces. `io/` is the compiler: it orders every
-node along a space-filling curve, chunks it to about 64 KB, writes the nD
+node along a space-filling curve (a mesh has none and loads whole), chunks it to
+about 64 KB, writes the nD
 spatial index and the LOD ladders, and emits Zarr format 3 (reading both 2 and
 3); `encoding/` decides how each attribute is quantized and compressed. `cli/`
 exposes all of it, `control/` drives a running viewer from Python, and `demos/`

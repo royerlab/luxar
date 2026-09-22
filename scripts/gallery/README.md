@@ -294,7 +294,7 @@ bandwidth is metered; a hosted object costs nothing per clone):
 |---|---|---|
 | Social-preview banner, 1280x640 (README header; also Settings -> Social preview) | `make_social_preview.py` | gallery tiles (`media-manifest.json`) plus two hosted viewer frames |
 | "How Luxar works" pipeline and the Architecture layers diagram, each dark + light | `make_architecture_diagram.py` | drawn with drawsvg, rasterised with rsvg-convert |
-| Looping recordings: hero (Drosophila gastrulation), quick start, stack-to-splats, LOD recipes | `make_readme_animations.py` | the release social kit's 1080p clips (`LUXAR_SOCIAL_KIT`) and the uncarded supplementary-video masters (`LUXAR_SUPP_VIDEOS`) |
+| Looping recordings: hero (Drosophila gastrulation), quick start, stack-to-splats, LOD recipes, nD navigation | `make_readme_animations.py` | the release social kit's 1080p clips (`LUXAR_SOCIAL_KIT`) and the uncarded supplementary-video masters (`LUXAR_SUPP_VIDEOS`) |
 
 `make generate-readme-assets` builds all of them into `build/readme-assets/`;
 `make publish-readme-media` uploads whatever is not yet hosted (key =

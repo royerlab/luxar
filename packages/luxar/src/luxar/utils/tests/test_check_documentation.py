@@ -60,7 +60,7 @@ def _markdown_section(path: Path, heading: str) -> str:
 @pytest.mark.parametrize(
     ("relative_path", "heading"),
     [
-        ("README.md", "## Data Format"),
+        ("README.md", "## Data format, performance, and architecture"),
         ("docs/guides/user/LUXAR_ZARR_FORMAT.md", "## Format Structure"),
         ("docs/specs/GSPLATS_ZARR_FORMAT.md", "## Zarr Structure"),
     ],

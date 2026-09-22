@@ -76,6 +76,7 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
     assert "10.1016/j.cub.2019.08.060" not in readme
     assert "10.1016/j.cub.2019.08.060" not in credits
     assert "Notch-mediated" not in readme
+    assert "Notch-mediated" not in credits
 
     for dataset_name in (
         "gsplats_4d_drosophila_embryogenesis",

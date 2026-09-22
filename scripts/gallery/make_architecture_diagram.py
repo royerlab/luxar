@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Draw the README's "how Luxar works" diagram (SVG via drawsvg, PNG via rsvg-convert).
+"""Draw the README's two diagrams (SVG via drawsvg, PNG via rsvg-convert).
 
-Four stages left to right: describe the scene in Python, compile it once,
-the ``.luxar.zarr`` archive on any static host, explore it in the browser.
-The diagram is drawn twice, for GitHub's dark and light themes, and the README
-embeds both through a ``<picture>`` element. Fonts are named exactly as
-``fc-list`` reports them so rsvg-convert resolves them.
+``--which pipeline`` (the default, ``build()``) is the "how Luxar works" figure:
+four stages left to right, describe the scene in Python, compile it once, the
+``.luxar.zarr`` archive on any static host, explore it in the browser.
+``--which layers`` (``build_layers()``) is the Architecture figure: the Python
+package's modules on the left, the viewer's on the right, the archive between
+them. Each is drawn twice, for GitHub's dark and light themes, and the README
+embeds both through a ``<picture>`` element.
 
-    hatch run python scripts/gallery/make_architecture_diagram.py -o out/   # dark + light PNG + SVG
+The published PNGs were authored on macOS with "Helvetica Neue" and "Menlo";
+rsvg-convert resolves whatever fontconfig offers, so a rebuild on another
+machine renders the same content with different fonts and a different hash.
+Treat the hosted files as the reference and re-publish only from a Mac.
+
+    hatch run python scripts/gallery/make_architecture_diagram.py -o out/                 # pipeline, dark + light
+    hatch run python scripts/gallery/make_architecture_diagram.py --which layers -o out/  # architecture layers
     hatch run python scripts/gallery/make_architecture_diagram.py --theme dark --scale 2 -o out/
 
 The PNGs are named after their manifest asset (``architecture-dark.png``,
