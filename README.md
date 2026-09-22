@@ -6,11 +6,8 @@
 
 **High-performance n-dimensional scientific visualization.**
 
-<p align="center">
-  <a href="https://demos.luxarviewer.dev/d/gsplats_4d_drosophila_embryogenesis"><img src="https://data.luxarviewer.dev/media/4a0c1a68d18e092e.webp" alt="Drosophila gastrulation: 500 light-sheet timepoints fitted as Gaussian splats, streamed and played in the Luxar viewer" width="100%"></a>
-  <br>
-  <sub>A <em>Drosophila</em> embryo through gastrulation: 500 light-sheet timepoints, 256K Gaussian splats each, streamed from static hosting and played in the browser (<a href="https://demos.luxarviewer.dev/d/gsplats_4d_drosophila_embryogenesis">open it live</a>; recording by the Keller lab, HHMI Janelia).</sub>
-</p>
+![Luxar: n-dimensional scientific data, compiled and explored in the browser. Points, lines, Gaussian splats, meshes.](https://data.luxarviewer.dev/media/558d5db88635bec2.png)
+
 
 Luxar makes large scientific datasets explorable in a web browser. You describe a
 scene in Python — **points**, **lines**, **Gaussian splats**, and **triangle
@@ -38,6 +35,12 @@ the 90 bundled), no install. Or open your own data in the hosted viewer:
 [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
 [Live Demos](https://demos.luxarviewer.dev) | [Docs Site](https://royerlab.github.io/luxar/) | [Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
+
+<p align="center">
+  <a href="https://demos.luxarviewer.dev/d/gsplats_4d_drosophila_embryogenesis"><img src="https://data.luxarviewer.dev/media/4a0c1a68d18e092e.webp" alt="Drosophila gastrulation: 500 light-sheet timepoints fitted as Gaussian splats, streamed and played in the Luxar viewer" width="100%"></a>
+  <br>
+  <sub>A <em>Drosophila</em> embryo through gastrulation: 500 light-sheet timepoints, 256K Gaussian splats each, streamed from static hosting and played in the browser (<a href="https://demos.luxarviewer.dev/d/gsplats_4d_drosophila_embryogenesis">open it live</a>; recording by the Keller lab, HHMI Janelia).</sub>
+</p>
 
 ---
 
