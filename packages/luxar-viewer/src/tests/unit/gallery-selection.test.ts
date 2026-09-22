@@ -151,4 +151,17 @@ describe('gallery selection', () => {
       /scripts\/gallery\/media-manifest\.json.*base_url/
     );
   });
+
+  it('accepts hosted README assets that are not tiles (banner, diagram, recordings)', () => {
+    const base = MEDIA_MANIFEST.base_url as string;
+    const assetKeys = Object.values(MEDIA_MANIFEST.assets ?? {}).flatMap((variants) =>
+      Object.values(variants).map((entry) => entry.key)
+    );
+    expect(assetKeys.length).toBeGreaterThan(0);
+    const readme = [...assetKeys, 'd9d1994630f8b126.webp']
+      .map((key) => `${base}/${key}`)
+      .join('\n');
+    const selection = resolveGalleryOnly('readme', readme, MANIFEST_IDS, MEDIA_KEYS, base);
+    expect(selection.wantedIds).toEqual(new Set(['atp_synthase']));
+  });
 });

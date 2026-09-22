@@ -58,11 +58,18 @@ DEFAULT_PANELS = (
 TITLE = "Luxar"
 TAGLINE = "n-dimensional scientific data, compiled and explored in the browser"
 TYPES = "points  ·  lines  ·  gaussian splats  ·  meshes"
-FONT_CANDIDATES = (
-    ("/System/Library/Fonts/Helvetica.ttc", 1, 0),
-    ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0, 0),
-    ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 0, 0),
-    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0, 0),
+# Bold and regular faces are separate lists: a bold-only file must never be
+# picked for the regular weight (it would set the tagline in bold and overrun the
+# scrim on a machine without the macOS fonts).
+BOLD_FONTS = (
+    ("/System/Library/Fonts/Helvetica.ttc", 1),
+    ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0),
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 0),
+)
+REGULAR_FONTS = (
+    ("/System/Library/Fonts/Helvetica.ttc", 0),
+    ("/System/Library/Fonts/Supplemental/Arial.ttf", 0),
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0),
 )
 
 
@@ -121,11 +128,9 @@ def cover_crop(
 
 
 def font(size: int, bold: bool = True) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    for path, bold_index, regular_index in FONT_CANDIDATES:
+    for path, index in BOLD_FONTS if bold else REGULAR_FONTS:
         try:
-            return ImageFont.truetype(
-                path, size, index=bold_index if bold else regular_index
-            )
+            return ImageFont.truetype(path, size, index=index)
         except OSError:
             continue
     return ImageFont.load_default()

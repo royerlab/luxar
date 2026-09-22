@@ -3,6 +3,10 @@
 [![CI](https://github.com/royerlab/luxar/actions/workflows/ci.yml/badge.svg)](https://github.com/royerlab/luxar/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
+[![PyPI](https://img.shields.io/pypi/v/luxar?label=PyPI)](https://pypi.org/project/luxar/)
+[![npm](https://img.shields.io/npm/v/%40luxar%2Fviewer?label=npm%20%40luxar%2Fviewer)](https://www.npmjs.com/package/@luxar/viewer)
+[![Docs](https://img.shields.io/badge/docs-royerlab.github.io%2Fluxar-blue)](https://royerlab.github.io/luxar/)
+[![Live demos](https://img.shields.io/badge/live%20demos-demos.luxarviewer.dev-7c3aed)](https://demos.luxarviewer.dev)
 
 **High-performance n-dimensional scientific visualization.**
 
@@ -14,8 +18,8 @@ scene in Python — **points**, **lines**, **Gaussian splats**, and **triangle
 meshes**, in as many dimensions as your data actually has — and Luxar *compiles*
 it into a chunked, spatially indexed Zarr archive. A GPU viewer then streams that
 archive and renders it. The expensive work happens once, at compile time; what
-remains during exploration is bounded by your graphics card rather than by your
-file format.
+remains during exploration is bounded by your graphics card, your screen and your
+network link, not by the size or format of the file.
 
 Three ideas carry most of the design:
 
@@ -51,17 +55,10 @@ frame. Luxar moves that work out of the interaction loop: spatial ordering,
 chunking, compression, level-of-detail, and — for image volumes — the Gaussian fit
 itself all happen ahead of time, so the browser is left with little to do but draw.
 
-```
-┌─────────────────────┐         ┌──────────────────────┐
-│   Python/NumPy      │         │   Web Browser        │
-│   Scientific Data   │         │   GPU Rendering      │
-│                     │         │                      │
-│ ┌─────────────────┐ │         │ ┌──────────────────┐ │
-│ │  Luxar Core     │ │  Zarr   │ │  Luxar Viewer    │ │
-│ │  (Compiler)     ├─┼────────►┼─┤  (Renderer)      │ │
-│ └─────────────────┘ │         │ └──────────────────┘ │
-└─────────────────────┘         └──────────────────────┘
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://data.luxarviewer.dev/media/7083a0ba46783a40.png">
+  <img alt="How Luxar works: describe a scene in Python, compile it once into a chunked, indexed .luxar.zarr archive, host the archive on any static file server, explore it in any browser" src="https://data.luxarviewer.dev/media/07ee0acd82c15511.png" width="100%">
+</picture>
 
 Because the archive is self-describing and chunked, the same output serves every
 consumer: `luxar serve` for local exploration, a static file host for sharing, or a
@@ -112,10 +109,10 @@ compiler and CLI without a checkout (add `"luxar[gsplats]"` to fit volumes), and
 the same `luxar demo` commands apply. Some demos need extra packages;
 `luxar demo deps --install` fetches what a demo reports missing.
 
-That last command builds a convective cloud, a 4D point cloud that evolves over a
-time axis, and opens it in the viewer, where the time slider plays it back:
+`luxar demo run cloud` builds a convective cloud, a 4D point cloud that evolves over
+a time axis, and opens it in the viewer, where the time slider plays it back:
 
-![Quick start: two commands, then the evolving cloud playing in the Luxar viewer](https://data.luxarviewer.dev/media/ac2a260943794358.webp)
+<p align="center"><img src="https://data.luxarviewer.dev/media/b6d1359e5db8850e.webp" alt="Quick start recording: pip install luxar and luxar demo run cloud typed in a terminal, then the evolving cloud playing in the Luxar viewer" width="100%"></p>
 
 #### Browsing the catalogue
 
@@ -256,9 +253,9 @@ An archive of record such as Zenodo is the right place to deposit a scene for
 citation; whether it can also serve it to the viewer depends on its CORS and range
 headers, so test before linking to it.
 
-Object stores bill and throttle per request, and a store fresh from the compiler
-is chunked for local reads, so re-chunk before publishing with `luxar optimize`
-and pick the profile by access pattern: `local` (64 KB) when the viewer will slice
+Object stores bill and throttle per request, and most generated stores land far
+below the 64 KB chunk target (the demo corpus averages 5 KB per file), so re-chunk
+before publishing with `luxar optimize` and pick the profile by access pattern: `local` (64 KB) when the viewer will slice
 into a large node, `hosting` or `archive` when it loads the node whole. Re-chunking
 one demo to the 64 KB profile cut a cold load from 9,390 requests to 2,348. The
 re-chunked store carries a new content hash, so publish it under a new URL prefix
@@ -554,8 +551,9 @@ scene.add_lines(
 
 ### Gaussian Splats
 
-Oriented Gaussian functions — Luxar's volume-rendering primitive. Fitting requires
-`pip install "luxar[gsplats]"`; viewing does not.
+Oriented Gaussian functions — Luxar's volume-rendering primitive. Fitting needs the
+`gsplats` extra (`pip install -e ".[gsplats]"` from a checkout, `pip install
+"luxar[gsplats]"` once released); viewing does not.
 
 ```python
 from luxar.gsplats import fit_gaussian_splats
@@ -803,9 +801,10 @@ DPR (on by default, and pinned for these measurements) buys the frame rate back 
 downscaling the render buffer. Typical scenes are lighter than these synthetic
 sweeps: the fifteen demo scenes of the same study all hold 60 FPS, the heaviest, a
 2.2M-splat time-lapse frame, in 5.6 ms. Whole-slide and other very large splat
-scenes sit well above the budget at full resolution and rely on adaptive DPR: on an
-Apple M4 Max at a 1600×1000 canvas, the 29.6M-splat CMU-1 slide renders in about
-108 ms per frame at DPR 1.0 ([viewer performance audit](docs/guides/developer/VIEWER_PERFORMANCE_AUDIT_2026_09.md)). Frame rate
+scenes are overdraw-bound at full resolution, and the projected-density guard (on
+by default) thins them: before it shipped, the 29.6M-splat CMU-1 slide measured about
+108 ms per frame at DPR 1.0 on an Apple M4 Max at a 1600×1000 canvas
+([viewer performance audit](docs/guides/developer/VIEWER_PERFORMANCE_AUDIT_2026_09.md)). Frame rate
 is GPU-, resolution- and geometry-dependent, so treat
 these as one reference point rather than a guarantee. Load time is dominated by
 transfer and decode, so it tracks your link and cache state rather than element
@@ -923,8 +922,8 @@ with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene.add_mesh(name, vertices, faces, normals=..., normal_dims=..., colors=...)
     scene.add_group(name, transform=..., opacity=...)
 
-    # Gaussian splatting (embedding an existing fit works on a plain
-    # `pip install luxar`; producing one — `luxar gsplat fit` — needs luxar[gsplats])
+    # Gaussian splatting (embedding an existing fit needs no extra;
+    # producing one — `luxar gsplat fit` — needs the gsplats extra)
     scene.add_gsplats_from_data(name, gsplat_result)
     scene.add_gsplats_from_file(name, "file.gsplats.zarr")
 ```
@@ -1271,10 +1270,28 @@ BSD-3-Clause License. See [LICENSE](LICENSE) for details.
 
 ## Citation
 
+Two things can be cited. For the **software** (this repository, whichever
+version you used):
+
 ```bibtex
 @software{luxar2026,
   title = {Luxar: High-Performance n-Dimensional Scientific Visualization},
   author = {Royer, Lo{\"i}c A. and the Luxar contributors},
+  year = {2026},
+  url = {https://github.com/royerlab/luxar}
+}
+```
+
+For the **method and the benchmarks** (Gaussian-splat fitting of microscopy
+volumes, blind-spot cross-validation of the splat budget, the streaming viewer),
+cite the preprint:
+
+```bibtex
+@article{royer2026luxar,
+  title = {Luxar: Gaussian splatting for microscopy and scalable interactive web
+           visualisation of multidimensional scientific data},
+  author = {Royer, Lo{\"i}c A.},
+  journal = {bioRxiv},
   year = {2026},
   url = {https://github.com/royerlab/luxar}
 }

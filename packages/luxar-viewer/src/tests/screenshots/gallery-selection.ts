@@ -19,7 +19,7 @@ const README_GALLERY_PATH = /docs\/images\/readme\/gallery\/([A-Za-z0-9_-]+)\.(?
 
 function hostedGalleryPattern(baseUrl: string): RegExp {
   const escapedBaseUrl = baseUrl.replace(/\/+$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`${escapedBaseUrl}/([A-Za-z0-9_-]+\\.(?:webp|webm))\\b`, 'g');
+  return new RegExp(`${escapedBaseUrl}/([A-Za-z0-9_-]+\\.(?:webp|webm|png))\\b`, 'g');
 }
 
 export interface GallerySelection {
@@ -62,7 +62,7 @@ export function resolveGalleryOnly(
       for (const match of readmeSource.matchAll(hostedGalleryPattern(mediaBaseUrl))) {
         const id = mediaKeyToId.get(match[1]);
         if (id === undefined) unmappedKeys.push(match[1]);
-        else readmeIds.add(id);
+        else if (id !== '') readmeIds.add(id); // '' marks a README asset that is not a tile
       }
     }
     if (unmappedKeys.length > 0) {
@@ -88,14 +88,25 @@ export function resolveGalleryOnly(
   return { wantedIds, unknownTokens: [...unknownTokens] };
 }
 
-/** Build the key -> id index from a parsed `media-manifest.json`. */
+/**
+ * Build the key -> id index from a parsed `media-manifest.json`.
+ *
+ * Tile keys map to their demo id. Keys under `assets` (the banner, the
+ * architecture diagram, the screen recordings) are README media that is not a
+ * tile: they map to the empty string so the README scrape recognises them
+ * without trying to capture a demo for them.
+ */
 export function mediaKeyIndex(manifest: {
   base_url?: string;
   tiles?: Record<string, Record<string, { key: string }>>;
+  assets?: Record<string, Record<string, { key: string }>>;
 }): Map<string, string> {
   const index = new Map<string, string>();
   for (const [id, variants] of Object.entries(manifest.tiles ?? {})) {
     for (const entry of Object.values(variants)) index.set(entry.key, id);
+  }
+  for (const variants of Object.values(manifest.assets ?? {})) {
+    for (const entry of Object.values(variants)) index.set(entry.key, '');
   }
   return index;
 }

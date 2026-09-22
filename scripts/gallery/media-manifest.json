@@ -1,7 +1,7 @@
 {
   "base_url": "https://data.luxarviewer.dev/media",
   "generated": "2026-09-02T16:16:51Z",
-  "note": "Content-addressed gallery media for the root README. Keys are the first 16 hex chars of the file's sha256, so a URL names its bytes and a pin cannot rot. This file is also the provenance record: it is the only way to answer what the README's media looked like at a given commit once the tiles no longer live in the repo.",
+  "note": "Content-addressed gallery media for the root README. Keys are the first 16 hex chars of the file's sha256, so a URL names its bytes and a pin cannot rot. This file is also the provenance record: it is the only way to answer what the README's media looked like at a given commit once the tiles no longer live in the repo. The assets section lists the hosted media that is not a gallery tile (banner, diagram, screen recordings), produced by scripts/gallery/make_*.py and published with publish_media.py --record NAME (which writes the entry under assets/NAME).",
   "tiles": {
     "atp_synthase": {
       "webm": {
@@ -407,6 +407,48 @@
         "content_type": "image/webp",
         "key": "773fce285f464bbc.webp",
         "sha256": "773fce285f464bbc1d7c3dd8b22c39e7647028be8766bb152843d9845ce27796"
+      }
+    }
+  },
+  "assets": {
+    "hero-drosophila": {
+      "webp": {
+        "bytes": 4018788,
+        "content_type": "image/webp",
+        "key": "4a0c1a68d18e092e.webp",
+        "sha256": "4a0c1a68d18e092ed7767b14eab09ca139791af7326aa9da8b57176e78185ce2"
+      }
+    },
+    "quickstart-cloud": {
+      "webp": {
+        "bytes": 2313292,
+        "content_type": "image/webp",
+        "key": "b6d1359e5db8850e.webp",
+        "sha256": "b6d1359e5db8850e6f756c2dd59fccdcc936d3b253a7b38047aa58ea796b4ad5"
+      }
+    },
+    "social-preview": {
+      "png": {
+        "bytes": 756827,
+        "content_type": "image/png",
+        "key": "558d5db88635bec2.png",
+        "sha256": "558d5db88635bec21140e16600092415105ad91c4b79dcf0c2aaf4930e746117"
+      }
+    },
+    "architecture-dark": {
+      "png": {
+        "bytes": 522518,
+        "content_type": "image/png",
+        "key": "7083a0ba46783a40.png",
+        "sha256": "7083a0ba46783a401bb99fad9912a741fc444104268ab796b1b2ee0418e6ed4f"
+      }
+    },
+    "architecture-light": {
+      "png": {
+        "bytes": 522718,
+        "content_type": "image/png",
+        "key": "07ee0acd82c15511.png",
+        "sha256": "07ee0acd82c1551105aa3b238c0ea475433c077f0ca8346efdb696f52a3404e8"
       }
     }
   }

@@ -31,8 +31,8 @@ def test_committed_manifest_is_consistent_with_readme() -> None:
     )
 
     assert base_url == "https://data.luxarviewer.dev/media"
-    assert len(entries) == 58
-    assert len({entry.key for entry in entries}) == 58
+    assert len(entries) == 63  # 29 tiles x 2 variants + 5 README assets
+    assert len({entry.key for entry in entries}) == 63
 
 
 @pytest.mark.parametrize(
@@ -138,3 +138,21 @@ def test_response_metadata_accepts_exact_match(variant: str, content_type: str) 
         ),
         _entry(variant),
     )
+
+
+def test_assets_section_accepts_png_but_tiles_still_need_both_variants() -> None:
+    manifest = _manifest()
+    readme = (REPO_ROOT / "README.md").read_text()
+    banner = manifest["assets"]["social-preview"]["png"]
+    assert banner["content_type"] == "image/png"
+    assert banner["key"].endswith(".png") and banner["key"] in readme
+
+    broken = copy.deepcopy(manifest)
+    del broken["tiles"]["atp_synthase"]["webm"]
+    with pytest.raises(verify.VerificationError, match="expected webp and webm"):
+        verify.validated_entries(broken, readme)
+
+    unknown = copy.deepcopy(manifest)
+    unknown["assets"]["social-preview"] = {"gif": banner}
+    with pytest.raises(verify.VerificationError, match="unknown media variant"):
+        verify.validated_entries(unknown, readme)
