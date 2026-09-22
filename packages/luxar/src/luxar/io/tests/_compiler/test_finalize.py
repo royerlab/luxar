@@ -737,6 +737,44 @@ def test_compute_content_hashes_changes_with_per_array_attrs() -> None:
     assert compute_content_hashes(lo) != compute_content_hashes(hi)
 
 
+def test_compute_content_hashes_canonicalizes_ulp_perturbed_group_attrs() -> None:
+    """Platform-last-bit drift in authored metadata must not change store identity."""
+    camera_x = 1.23456789012345
+
+    def stamped(direction: float) -> tuple[str, dict[str, Any]]:
+        root = _leaf_store()
+        root.attrs["viewer_config"] = {
+            "camera": {"position": [np.nextafter(camera_x, direction), 2.0, 3.0]}
+        }
+        content_hash = compute_content_hashes(root)
+        return content_hash, dict(root.attrs)["viewer_config"]
+
+    lower = stamped(-np.inf)
+    upper = stamped(np.inf)
+
+    assert lower == upper
+    assert lower[1]["camera"]["position"][0] == float(f"{camera_x:.12g}")
+
+
+def test_compute_content_hashes_preserves_exact_array_attrs() -> None:
+    """Hashing must not rewrite producer-owned decoder metadata."""
+    rail = 1.23456789012345
+    root = _leaf_store(
+        array_attrs={
+            "encoding": {
+                "name": "linear_perchannel_u16",
+                "col_lo": [rail],
+                "col_hi": [2.0],
+                "bits": 16,
+            }
+        }
+    )
+
+    compute_content_hashes(root)
+
+    assert dict(root["leaf/positions"].attrs)["encoding"]["col_lo"] == [rail]
+
+
 def test_compute_content_hashes_changes_with_shape_at_identical_bytes() -> None:
     """A reshape is visible even though ``tobytes()`` is identical.
 

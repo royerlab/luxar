@@ -404,8 +404,11 @@ class TestWrittenDatasetContract:
         axis = axis_world_values(grid)[planes]
         assert wdim["name"] == "w"
         assert wdim["discrete"] is True
-        assert wdim["step"] == step
-        assert wdim["range"] == [float(axis[0]), float(axis[-1])]
+        assert wdim["step"] == float(f"{step:.12g}")
+        assert wdim["range"] == [
+            float(f"{axis[0]:.12g}"),
+            float(f"{axis[-1]:.12g}"),
+        ]
         assert len(planes) > 2, "test grid too small to exercise the slider"
 
         root = zarr.open_group(out, mode="r")

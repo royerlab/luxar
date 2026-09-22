@@ -218,7 +218,7 @@ def test_create_luxar_scene_preserves_partition_structure(tmp_path: Path) -> Non
     stored = root["drosophila_nuclei"]
     assert stored.attrs["kind"] == "partition"
     assert stored.attrs["blending_mode"] == "volumetric"
-    assert stored.attrs["opacity"] == _demo.GSPLAT_OPACITY
+    assert stored.attrs["opacity"] == float(f"{_demo.GSPLAT_OPACITY:.12g}")
     assert stored.attrs["intensity"] == pytest.approx(1.0 / _demo.DISPLAY_WINDOW_TOP)
     assert stored.attrs["layer"] is True
     assert set(stored.group_keys()) == {"part_0", "part_1"}

@@ -89,6 +89,8 @@ from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 import zarr
 from arbol import aprint
 
+from .hashing import ATTR_FLOAT_SIGNIFICANT_DIGITS
+
 #: The reference window carried down a structure: ``(lo, hi)``.
 _Window = Tuple[float, float]
 
@@ -178,17 +180,19 @@ class _Progress:
             self.extreme = ratio
 
 
-def _finite(value: object) -> Optional[float]:
-    """``value`` as a finite float, or ``None`` (covers bools, strings, NaN)."""
+def _gridded(value: object) -> Optional[float]:
+    """``value`` on the persisted float grid, or ``None`` if it is not finite."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     fv = float(value)
-    return fv if math.isfinite(fv) else None
+    if not math.isfinite(fv):
+        return None
+    return float(f"{fv:.{ATTR_FLOAT_SIGNIFICANT_DIGITS}g}")
 
 
 def _count(value: object) -> int:
     """``value`` as a non-negative splat count, or ``0``."""
-    fv = _finite(value)
+    fv = _gridded(value)
     if fv is None or fv < 0.0:
         return 0
     return int(fv)
@@ -212,10 +216,26 @@ def _window_of(attrs: dict) -> Tuple[Optional[float], Optional[float]]:
     raw = attrs.get("amplitude_data_range")
     if not isinstance(raw, (list, tuple)) or len(raw) != 2:
         return None, None
-    lo, hi = _finite(raw[0]), _finite(raw[1])
+    lo, hi = _gridded(raw[0]), _gridded(raw[1])
     if lo is None or hi is None:
         return None, None
     return lo, hi
+
+
+def _stored_window_of(attrs: dict) -> Tuple[Optional[float], Optional[float]]:
+    """The exact finite window stored in ``attrs``, without grid rounding."""
+    raw = attrs.get("amplitude_data_range")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return None, None
+    values: List[float] = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None, None
+        fv = float(value)
+        if not math.isfinite(fv):
+            return None, None
+        values.append(fv)
+    return values[0], values[1]
 
 
 def _child_nodes(group: "zarr.Group") -> List[Tuple[str, "zarr.Group", dict]]:
@@ -255,7 +275,7 @@ def _ordered_children(
 ) -> List[Tuple[str, "zarr.Group", dict]]:
     """Scene-node children in canonical index, numeric-name, then name order."""
     kids = _child_nodes(group)
-    indices = [_finite(attrs.get("child_index")) for _, _, attrs in kids]
+    indices = [_gridded(attrs.get("child_index")) for _, _, attrs in kids]
     if kids and all(i is not None for i in indices):
         order: List[float] = [i for i in indices if i is not None]
         return [kid for _, kid in sorted(zip(order, kids), key=lambda p: p[0])]
@@ -383,8 +403,8 @@ def _combine(parts: Sequence[_Summary]) -> _Summary:
 
 def _leaf_summary(attrs: dict) -> _Summary:
     """Summary of one ``type == "gsplats"`` leaf from its attrs."""
-    mass = _finite(attrs.get("amplitude_mass"))
-    mwma = _finite(attrs.get("amplitude_mass_weighted_mean"))
+    mass = _gridded(attrs.get("amplitude_mass"))
+    mwma = _gridded(attrs.get("amplitude_mass_weighted_mean"))
     lo, hi = _window_of(attrs)
     # "The statistics are PRESENT", not "the mass is positive": a legitimately
     # mass-less leaf (all-zero amplitudes) is stamped ``0.0`` / ``0.0``, and
@@ -486,10 +506,12 @@ def _stamp(group: "zarr.Group", window: _Window) -> int:
     attrs = dict(group.attrs)
     if "amplitude_data_range" not in attrs:
         return 0
-    lo, hi = float(window[0]), float(window[1])
+    lo, hi = (
+        float(f"{float(value):.{ATTR_FLOAT_SIGNIFICANT_DIGITS}g}") for value in window
+    )
     if not (math.isfinite(lo) and math.isfinite(hi) and lo < hi):
         return 0
-    if _window_of(attrs) == (lo, hi):
+    if _stored_window_of(attrs) == (lo, hi):
         return 0
     group.attrs["amplitude_data_range"] = [lo, hi]
     return 1

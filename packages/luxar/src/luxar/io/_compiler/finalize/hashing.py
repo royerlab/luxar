@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import xxhash
 import zarr
@@ -21,10 +22,10 @@ from luxar._zarr_compat import (
 from luxar.typing_utils._format_contract import SOFTWARE_VERSION_ATTR
 from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 
-# Root/group attrs that are NOT part of a node's content digest. Shared by this
-# compile-time walk and `luxar optimize`'s streaming twin
-# (`io/optimize.py::_compute_content_hashes_streaming`) so the two can never
-# disagree on what the digest covers:
+# Shared hash contract for the compile-time walk, `luxar optimize`'s streaming
+# twin, and the standalone GSplat stamper: group attrs use the float grid below;
+# array attrs remain exact producer-owned decoder metadata. The two scene hashers
+# additionally share these exclusions so they cannot disagree on group content:
 #
 # * `content_hash` — the digest itself (self-reference).
 # * `luxar_software_version` — the `luxar.__version__` that wrote the store.
@@ -33,6 +34,12 @@ from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 #   not churn every viewer's OPFS cache. Pinned by
 #   `io/tests/test_hash_reproducibility.py`.
 HASH_EXCLUDED_ATTRS: frozenset[str] = frozenset({"content_hash", SOFTWARE_VERSION_ATTR})
+
+# Group metadata can inherit last-bit drift from reductions and transcendental
+# functions. Twelve significant decimal digits absorb differences below roughly
+# 1e-12 relative. Larger drift is a producer bug to stabilize where the value is
+# derived; array encoding attrs are never rounded here.
+ATTR_FLOAT_SIGNIFICANT_DIGITS = 12
 
 # Attr keys whose value is the filename of a plain (non-zarr) payload file stored
 # *inside* the group's own directory. Such files have no chunk grid and no zarr
@@ -61,6 +68,51 @@ _ZARR_METADATA_DOCS: frozenset[str] = frozenset(
 _ZARR_METADATA_DOCS_LOWERCASED: frozenset[str] = frozenset(
     name.lower() for name in _ZARR_METADATA_DOCS
 )
+
+
+def _canonicalize_attr_value(value: Any) -> tuple[Any, bool]:
+    """Return ``value`` with every finite float rounded to the metadata grid."""
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return value, False
+        canonical = float(f"{value:.{ATTR_FLOAT_SIGNIFICANT_DIGITS}g}")
+        # Hex comparison preserves the sign distinction between 0.0 and -0.0.
+        return canonical, canonical.hex() != value.hex()
+    if isinstance(value, dict):
+        changed = False
+        canonical_dict: dict[Any, Any] = {}
+        for key, item in value.items():
+            canonical_item, item_changed = _canonicalize_attr_value(item)
+            canonical_dict[key] = canonical_item
+            changed = changed or item_changed
+        return canonical_dict, changed
+    if isinstance(value, list):
+        changed = False
+        canonical_list: list[Any] = []
+        for item in value:
+            canonical_item, item_changed = _canonicalize_attr_value(item)
+            canonical_list.append(canonical_item)
+            changed = changed or item_changed
+        return canonical_list, changed
+    if isinstance(value, tuple):
+        changed = False
+        canonical_items: list[Any] = []
+        for item in value:
+            canonical_item, item_changed = _canonicalize_attr_value(item)
+            canonical_items.append(canonical_item)
+            changed = changed or item_changed
+        return tuple(canonical_items), changed
+    return value, False
+
+
+def _canonicalized_group_attrs(group: zarr.Group) -> dict[str, Any]:
+    """Persist and return the canonical form of one hashed group attrs document."""
+    attrs = dict(group.attrs)
+    canonical, changed = _canonicalize_attr_value(attrs)
+    canonical_attrs = cast(dict[str, Any], canonical)
+    if changed:
+        group.attrs.update(canonical_attrs)
+    return canonical_attrs
 
 
 def _is_safe_payload_name(filename: str) -> bool:
@@ -209,10 +261,9 @@ def _storage_identity(name: str, dataset: zarr.Array) -> dict[str, Any]:
         "chunks": list(dataset.chunks),
         "dtype": str(dataset.dtype),
         "shards": list(shards) if shards is not None else None,
-        # One term, serialized exactly the way the group attrs are. No
-        # `content_hash` to exclude here (only groups carry one), and nothing
-        # writes an array attr after the stamp — finalize() back-fills GROUP
-        # attrs only, all of it before the hash — so this input is stable.
+        # Array attrs are exact producer-owned decoder metadata. Unlike authored
+        # group attrs they are never canonicalized by a hasher; producers must
+        # stabilize derived encoding values before writing them.
         "attrs": json.dumps(dict(dataset.attrs), sort_keys=True, default=str),
         "codec_ids": codec_ids(dataset.metadata),
     }
@@ -284,7 +335,9 @@ def compute_content_hashes(store: zarr.Group) -> str:
         # 2. Hash metadata, minus the digest itself and the provenance-only
         #    software stamp (see HASH_EXCLUDED_ATTRS).
         attrs = {
-            k: v for k, v in dict(group.attrs).items() if k not in HASH_EXCLUDED_ATTRS
+            k: v
+            for k, v in _canonicalized_group_attrs(group).items()
+            if k not in HASH_EXCLUDED_ATTRS
         }
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
 

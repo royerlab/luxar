@@ -617,7 +617,7 @@ class TestBuildScene:
             assert tract.attrs["layer"] is True
             assert tract.attrs["blending_mode"] == "additive"
             assert tract.attrs["opacity"] == _demo.LINE_OPACITY
-            assert tract.attrs["intensity"] == _demo.LINE_INTENSITY
+            assert tract.attrs["intensity"] == float(f"{_demo.LINE_INTENSITY:.12g}")
 
             levels = self._levels(tract)
             assert len(levels) == len(expected_counts)

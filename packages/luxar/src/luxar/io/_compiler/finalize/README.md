@@ -33,13 +33,14 @@ deterministic order:
 
 1. for every array (`array_keys()` sorted), its **storage identity** as sorted
    JSON, then its **decoded values** (`dataset[:].tobytes()`). The identity is
-   `name`/`shape`/`chunks`/`dtype`/shard shape, the array's own `attrs`, and its
-   codec **ids** (`codec_ids`, derived at either on-disk format) — plus the full
-   codec pipeline (`codecs`) when the array is sharded. `_storage_identity` is
-   where the reasoning lives: why layout and codec identity count as identity,
-   why the per-array `encoding` attrs do, and why codec settings deliberately do
-   not.
-2. the group's attrs as sorted JSON, **excluding** `HASH_EXCLUDED_ATTRS`: the
+   `name`/`shape`/`chunks`/`dtype`/shard shape, the array's own `attrs` hashed
+   verbatim as exact producer-owned decoder metadata, and its codec **ids**
+   (`codec_ids`, derived at either on-disk format) — plus the full codec pipeline
+   (`codecs`) when the array is sharded. `_storage_identity` is where the
+   reasoning lives: why layout and codec identity count as identity, why the
+   per-array `encoding` attrs do, and why codec settings deliberately do not.
+2. the group's attrs as sorted JSON after finite floats are persisted on the
+   12-significant-digit metadata grid, **excluding** `HASH_EXCLUDED_ATTRS`: the
    existing `content_hash` (self-reference) and the root's
    `luxar_software_version` stamp (provenance, not content — two Luxar releases
    compiling the same scene must agree on the digest, and an `optimize`
@@ -53,9 +54,9 @@ deterministic order:
    not carry it, so digests alone left a renamed child invisible to every
    ancestor.
 
-The resulting hex digest is written back into the group's `content_hash`
-attribute, and the root digest is returned. xxhash64 is chosen for speed over
-cryptographic strength.
+The canonical group attrs and resulting hex digest are written back, the latter
+in the group's `content_hash` attribute, and the root digest is returned.
+xxhash64 is chosen for speed over cryptographic strength.
 
 Payload files are non-zarr blobs written straight into a group's directory —
 an overlay image (`overlays/<name>/image.png`, named by the group's `image_file`

@@ -213,17 +213,17 @@ The root group's attributes contain scene-wide configuration:
 | `type` | all | `"scene"`. |
 | `luxar_software_version` | 0.2+ | The `luxar.__version__` that wrote the store. Provenance only — **excluded from `content_hash`** by both hashers, so two releases compiling the same scene agree on the digest and a `luxar optimize` restamp never churns viewer caches. |
 | `luxar_version` | 0.1 only | The legacy version key. Read as a fallback when `format_version` is absent; never written by a current compiler. |
-| `content_hash` | all | Post-order xxhash64 digest of the store: array bytes, storage identity, attrs (minus this key and `luxar_software_version`) and child digests, computed by `io/_compiler/finalize/hashing.py`. The viewer validates its cache against it. |
+| `content_hash` | all | Post-order xxhash64 build identity for the store: array bytes, storage identity, attrs (minus this key and `luxar_software_version`) and child digests, computed by `io/_compiler/finalize/hashing.py`. Every finite float nested in hashed **group** attrs is persisted at 12 significant decimal digits before hashing, absorbing platform drift below roughly 1e-12 relative; larger differences and exact array encoding attrs must be stabilized by their producers. The viewer validates its cache against it. |
 | `scene_dimensions` | all | The nD dimension table (below). |
 
 No `timestamp` is written on a scene: the digest must be reproducible across
-two compiles of the same script in the same environment. Geometric-log scalar
-and per-channel companded rails are stored at float32 precision, covariance
-certificates at four significant digits, and fitted coordinate-grid steps at
-twelve significant digits, removing ordinary libm/reduction last-bit drift from
-those derived values. Other derived floating-point attributes (for example a
-computed camera pose) can still differ across platforms, so `content_hash` is
-not yet a cross-machine build identity.
+two compiles of the same script. Geometric-log scalar and per-channel companded
+rails are stored at float32 precision, covariance certificates at four
+significant digits, and fitted coordinate-grid steps at twelve significant
+digits. Those producer rules, together with the group-attribute grid above,
+suppress the observed libm/reduction drift while keeping exact array decoder
+metadata intact; larger differences remain producer defects and can still
+change the digest.
 
 ```javascript
 {

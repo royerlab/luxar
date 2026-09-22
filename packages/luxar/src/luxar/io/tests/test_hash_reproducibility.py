@@ -89,6 +89,31 @@ def test_streaming_hasher_matches_the_compiler_and_ignores_the_stamp(
     assert _compute_content_hashes_streaming(root) == original
 
 
+def test_streaming_hasher_canonicalizes_ulp_perturbed_float_attrs(
+    tmp_path: Path,
+) -> None:
+    """The optimize restamp persists the same portable metadata as compilation."""
+    source = tmp_path / "source.luxar.zarr"
+    _compile(source)
+    camera_x = 1.23456789012345
+
+    def stamped(name: str, direction: float) -> tuple[str, dict[str, object]]:
+        path = tmp_path / name
+        shutil.copytree(source, path)
+        root = open_group(path, mode="r+")
+        root.attrs["viewer_config"] = {
+            "camera": {"position": [np.nextafter(camera_x, direction), 2.0, 3.0]}
+        }
+        content_hash = _compute_content_hashes_streaming(root)
+        return content_hash, dict(open_group(path, mode="r").attrs)["viewer_config"]
+
+    lower = stamped("lower.luxar.zarr", -np.inf)
+    upper = stamped("upper.luxar.zarr", np.inf)
+
+    assert lower == upper
+    assert lower[1]["camera"]["position"][0] == float(f"{camera_x:.12g}")
+
+
 def test_the_format_header_itself_is_hashed(tmp_path: Path) -> None:
     """Only the software stamp is excluded: ``format_version`` is content."""
     path = tmp_path / "scene.luxar.zarr"

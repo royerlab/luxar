@@ -546,7 +546,10 @@ def _stamp_content_hash(root: zarr.Group) -> str:
 
     import xxhash
 
-    from luxar.io._compiler.finalize.hashing import codec_ids
+    from luxar.io._compiler.finalize.hashing import (
+        _canonicalized_group_attrs,
+        codec_ids,
+    )
 
     def hash_group(group: zarr.Group) -> str:
         hasher = xxhash.xxh64()
@@ -571,7 +574,11 @@ def _stamp_content_hash(root: zarr.Group) -> str:
                 f"{tuple(shards) if shards is not None else None}:{arr.dtype}:"
                 f"{codec_ids(arr.metadata)}:{pipeline}:{arr_attrs}".encode()
             )
-        attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
+        attrs = {
+            k: v
+            for k, v in _canonicalized_group_attrs(group).items()
+            if k != "content_hash"
+        }
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
         # The child's NAME, not just its digest: a node's own digest does not
         # carry its name, so hashing digests alone left a renamed child group

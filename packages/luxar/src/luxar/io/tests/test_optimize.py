@@ -517,6 +517,27 @@ class TestRoundTrip:
         optimize_store(scene, dst)
         assert_attrs_identical(scene, dst)
 
+    def test_verify_preserves_noncanonical_array_encoding_attrs(
+        self, scene: Path, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "src.luxar.zarr"
+        dst = tmp_path / "out.luxar.zarr"
+        shutil.copytree(scene, src)
+        root = open_group(src, mode="r+")
+        encoding = dict(root["cloud/positions"].attrs["encoding"])
+        rail = np.nextafter(float(encoding["col_lo"][0]), np.inf)
+        encoding["col_lo"] = [rail, *encoding["col_lo"][1:]]
+        root["cloud/positions"].attrs["encoding"] = encoding
+
+        optimize_store(src, dst, verify=True)
+
+        assert (
+            dict(open_group(dst, mode="r")["cloud/positions"].attrs)["encoding"][
+                "col_lo"
+            ][0]
+            == rail
+        )
+
     def test_additive_ladder(self, ladder_scene: Path, tmp_path: Path) -> None:
         dst = tmp_path / "out.luxar.zarr"
         optimize_store(ladder_scene, dst, verify=True)
