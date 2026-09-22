@@ -309,5 +309,186 @@
     "description_chars": 3824,
     "zenodo_modified": "2026-09-19T04:51:47.049762+00:00"
   },
-  "_captured_utc": "2026-09-22T13:41:44Z"
+  "benchmark-volumes": {
+    "deposition": "22820799",
+    "doi": "10.5281/zenodo.22820799",
+    "title": "Luxar benchmark volumes: sixteen of the seventeen microscopy volumes analysed in the Luxar manuscript (as consumed by the analyses)",
+    "license": "cc-by-sa-4.0",
+    "version": "1.0.1",
+    "language": null,
+    "publication_date": "2026-09-17",
+    "keywords": [
+      "light-sheet microscopy",
+      "Gaussian splatting",
+      "benchmark",
+      "3D microscopy",
+      "zebrafish",
+      "Drosophila",
+      "neuromast",
+      "reproducibility",
+      "iSIM",
+      "instant structured illumination microscopy",
+      "spinning-disk confocal",
+      "OpenCell",
+      "FlyLight",
+      "Tribolium",
+      "C. elegans",
+      "confocal microscopy",
+      "OME-TIFF"
+    ],
+    "creators": [
+      {
+        "name": "Royer, Loïc A.",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      },
+      {
+        "name": "Lange, Merlin",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      },
+      {
+        "name": "Jacobo, Adrian",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      },
+      {
+        "name": "Keller, Philipp J.",
+        "affiliation": "HHMI Janelia Research Campus"
+      }
+    ],
+    "contributors": null,
+    "related_identifiers": [
+      {
+        "identifier": "10.5281/zenodo.21912279",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.21912281",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.21912283",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22118694",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.17867/10000125",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.6460303",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.5270323",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "https://github.com/royerlab/luxar",
+        "relation": "isSupplementTo",
+        "scheme": "url"
+      },
+      {
+        "identifier": "10.1126/science.abi6983",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      }
+    ],
+    "notes": null,
+    "custom": null,
+    "submitted": true,
+    "description_sha256": "97cfcada907af729714e045f272903f1314f720585c2fdd2b9d1c5b7034cc724",
+    "description_chars": 16208,
+    "zenodo_modified": "2026-09-18T05:58:58.920373+00:00"
+  },
+  "supplementary-videos": {
+    "deposition": "22825093",
+    "doi": "10.5281/zenodo.22825093",
+    "title": "Luxar supplementary videos: seventeen screen recordings of the interactive viewer",
+    "license": "cc-by-sa-4.0",
+    "version": "1.0.0",
+    "language": null,
+    "publication_date": "2026-09-18",
+    "keywords": [
+      "Gaussian splats",
+      "Gaussian splatting",
+      "WebGL",
+      "interactive visualization",
+      "level of detail",
+      "light-sheet microscopy",
+      "nD visualization",
+      "scientific visualization",
+      "screen recording",
+      "supplementary video"
+    ],
+    "creators": [
+      {
+        "name": "Royer, Loïc A.",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      }
+    ],
+    "contributors": null,
+    "related_identifiers": [
+      {
+        "identifier": "https://github.com/royerlab/luxar",
+        "relation": "isSupplementTo",
+        "scheme": "url"
+      },
+      {
+        "identifier": "10.5281/zenodo.21912279",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.21912281",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.21912283",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22118694",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22682969",
+        "relation": "references",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1038/s41467-022-32595-4",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1126/science.abi6983",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1126/science.abm9506",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      }
+    ],
+    "notes": null,
+    "custom": null,
+    "submitted": true,
+    "description_sha256": "376fcc51e1654ee6cd2a406be3988bde3da9d5ab822347a3441620b1b1071e4b",
+    "description_chars": 22042,
+    "zenodo_modified": "2026-09-21T19:14:30.103580+00:00"
+  },
+  "_captured_utc": "2026-09-22T16:08:50Z"
 }

@@ -49,9 +49,32 @@ FIELDS = (
 )
 
 
+# Records that are NOT demo datasets, so they have no entry in the demo manifest —
+# but whose descriptions are hand-written on Zenodo and exist nowhere else, which is
+# the same exposure this directory removes for the four manifest records.
+# `zenodo_record` is a VERSION id, matching the manifest's own convention: publish a
+# new version and this needs the same repin the manifest entries get.
+EXTRA_RECORDS: dict[str, dict[str, Any]] = {
+    "benchmark-volumes": {
+        "zenodo_record": "22820799",
+        "zenodo_doi": "10.5281/zenodo.22820799",
+    },
+    "supplementary-videos": {
+        "zenodo_record": "22825093",
+        "zenodo_doi": "10.5281/zenodo.22825093",
+    },
+}
+
+
 def records() -> dict[str, dict[str, Any]]:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    return manifest["records"]
+    overlap = set(manifest["records"]) & set(EXTRA_RECORDS)
+    if overlap:
+        raise SystemExit(
+            "record defined twice — move it out of EXTRA_RECORDS now that the "
+            f"manifest carries it: {sorted(overlap)}"
+        )
+    return {**manifest["records"], **EXTRA_RECORDS}
 
 
 def fetch(
@@ -67,7 +90,7 @@ def fetch(
     last: Exception | None = None
     for attempt in range(6):
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=60) as response:  # nosec B310
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             if exc.code != 429 and exc.code < 500:
