@@ -451,5 +451,20 @@
         "sha256": "07ee0acd82c1551105aa3b238c0ea475433c077f0ca8346efdb696f52a3404e8"
       }
     }
+  },
+  "superseded": {
+    "note": "Hosted objects no longer referenced by the README, kept in place on purpose (an in-place delete or overwrite races the edge cache). Not part of the README/manifest bijection; listed so an orphan audit does not mistake them for garbage.",
+    "objects": [
+      {
+        "key": "ac2a260943794358.webp",
+        "was": "quickstart-cloud at 800 px",
+        "replaced_by": "b6d1359e5db8850e.webp"
+      },
+      {
+        "key": "8ff0ed51b0987403.png",
+        "was": "social-preview with the spiral-galaxy and CT panels",
+        "replaced_by": "558d5db88635bec2.png"
+      }
+    ]
   }
 }

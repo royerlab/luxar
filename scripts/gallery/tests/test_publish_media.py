@@ -70,3 +70,29 @@ def test_committed_assets_are_hash_named_and_match_their_digest() -> None:
             assert entry["key"] == f"{entry['sha256'][:16]}.{variant}", name
             assert entry["content_type"] == pub.CONTENT_TYPES[variant], name
             assert entry["bytes"] > 0, name
+
+
+def test_record_merges_variants_under_one_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = tmp_path / "media-manifest.json"
+    manifest_path.write_text(
+        json.dumps({"base_url": "https://data.luxarviewer.dev/media", "tiles": {}})
+    )
+    monkeypatch.setattr(pub, "MANIFEST_PATH", manifest_path)
+    pub.record("demo-clip", f"{'a' * 16}.webp", "a" * 64, 1)
+    pub.record("demo-clip", f"{'b' * 16}.webm", "b" * 64, 2)
+    assert set(json.loads(manifest_path.read_text())["assets"]["demo-clip"]) == {
+        "webp",
+        "webm",
+    }
+
+
+def test_superseded_objects_are_recorded_outside_the_bijection() -> None:
+    manifest = json.loads(
+        (Path(__file__).parents[1] / "media-manifest.json").read_text()
+    )
+    live = {e["key"] for v in manifest["assets"].values() for e in v.values()}
+    for obj in manifest["superseded"]["objects"]:
+        assert obj["key"] not in live
+        assert obj["replaced_by"] in live

@@ -18,8 +18,18 @@ content for hours), and a re-cut gets a new URL automatically. This script:
     hatch run python scripts/gallery/publish_media.py --record social-preview out/banner.png
 
 ``--record NAME`` also writes the entry into ``scripts/gallery/media-manifest.json``
-under ``assets/NAME`` (one file at a time), which ``verify_media.py`` requires:
-every README media URL must be listed there, and vice versa.
+under ``assets/NAME`` (one file at a time; a second variant of the same name is
+merged, not replaced), which ``verify_media.py`` requires: every README media
+URL must be listed there, and vice versa.
+
+Two properties worth keeping deliberately. The 64-bit key truncation fails
+closed: on a collision ``exists_remote`` reports "already hosted", nothing is
+uploaded, and ``verify`` then rejects the mismatch ("served bytes differ"), so
+the existence check alone must never be trusted. And verification is a GET,
+not a HEAD: the CDN caches only GETs, so a HEAD would be blind to exactly the
+staleness this guards against. A superseded object is left in place and listed
+under ``superseded`` in the manifest (outside the bijection) so an orphan audit
+does not mistake it for garbage.
 """
 
 from __future__ import annotations
@@ -31,6 +41,7 @@ import shutil
 import subprocess  # nosec B404: shells out to rclone with a fixed argv
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 REMOTE = "r2:luxar-demos/media"
@@ -88,13 +99,26 @@ def upload(path: Path, key: str) -> None:
 
 def verify(key: str, digest: str, size: int) -> str:
     url = f"{BASE_URL}/{key}"
+    # The User-Agent is load-bearing: the CDN answers a UA-less urllib request
+    # with 403, which would read as a hosting fault. Acceptance is per host
+    # (Zenodo, for one, rejects "Mozilla/5.0"), so re-test before pointing this
+    # at another origin. The request-side Cache-Control is not a purge; the edge
+    # may still serve a cached copy, which is harmless for content-addressed bytes.
     request = Request(
         url,
         headers={"User-Agent": "LuxarPublishMedia/1.0", "Cache-Control": "no-cache"},
     )
-    with urlopen(request, timeout=120) as response:  # nosec B310 - https URL built from BASE_URL
-        body = response.read()
-        content_type = response.headers.get("Content-Type", "")
+    try:
+        with urlopen(request, timeout=120) as response:  # nosec B310 - https URL built from BASE_URL
+            body = response.read()
+            content_type = response.headers.get("Content-Type", "")
+    except HTTPError as exc:
+        raise SystemExit(
+            f"{url}: HTTP {exc.code}. The object may be in the bucket while the edge "
+            "serves a stale response (the cache rule ignores origin cache-control and "
+            f"the TTL is days). Check `rclone lsf {REMOTE}/{key}` before assuming the "
+            "upload failed."
+        ) from exc
     expected_type = CONTENT_TYPES[key.rsplit(".", 1)[1]]
     problems = []
     if not content_type.startswith(expected_type):
@@ -112,13 +136,11 @@ def record(name: str, key: str, digest: str, size: int) -> None:
     """Upsert a README media entry into the media manifest."""
     manifest = json.loads(MANIFEST_PATH.read_text())
     variant = key.rsplit(".", 1)[1]
-    manifest.setdefault("assets", {})[name] = {
-        variant: {
-            "bytes": size,
-            "content_type": CONTENT_TYPES[variant],
-            "key": key,
-            "sha256": digest,
-        }
+    manifest.setdefault("assets", {}).setdefault(name, {})[variant] = {
+        "bytes": size,
+        "content_type": CONTENT_TYPES[variant],
+        "key": key,
+        "sha256": digest,
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n")
     print(
