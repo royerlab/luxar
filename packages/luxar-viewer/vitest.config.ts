@@ -77,6 +77,9 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary'],
       reportsDirectory: './coverage',
+      // With `include` limited to `src/**/*.ts`, `src/tests/**` and `**/*.d.ts`
+      // are the live exclusions. `**/*.config.*` currently matches nothing;
+      // the other directories sit outside that tree. Keep directory forms recursive.
       exclude: [
         'node_modules/**',
         'src/tests/**',
