@@ -12,7 +12,7 @@ REPO = Path(__file__).resolve().parents[5]
 
 
 def test_python_lint_restores_every_mypy_cache_with_exact_invalidation() -> None:
-    """The one lint leg caches host, platform, and version-pinned mypy state."""
+    """The one lint leg caches the root containing every declared mypy pass."""
     workflow = yaml.safe_load(
         (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     )

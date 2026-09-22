@@ -657,7 +657,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Restore mypy caches
+      - name: Cache mypy state
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
