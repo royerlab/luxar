@@ -19,9 +19,9 @@
  * It also closes a fail-open hole that vitest itself does not: a glob key
  * matching zero files yields pct `"Unknown"`, and `"Unknown" < 86` is `false`,
  * so a renamed directory silently turns its gate into one that inspects
- * nothing. Verified empirically against vitest 4.1.10. Every glob key is
- * therefore asserted to match at least one file and each configured metric is
- * asserted to have at least one countable item.
+ * nothing. Verified empirically against Vitest 4.1.10 and 5.0.1. Every glob
+ * key is therefore asserted to match at least one file and each configured
+ * metric is asserted to have at least one countable item.
  *
  * Usage: node scripts/check-coverage-slack.mjs [--max-slack N] [--summary PATH] [--print]
  * Reads the `json-summary` reporter output that `pnpm test:coverage` emits.
@@ -136,8 +136,9 @@ export function validateRecorded(thresholds, recorded) {
  * Compare every floor against the measurement.
  *
  * Returns `{ failures, warnings, rows }`. Failures include malformed recorded
- * baselines, excessive slack, and the holes vitest leaves open: a glob that
- * matched nothing or a configured glob metric with no countable items.
+ * baselines, excessive slack, and the holes vitest leaves open: excluded test
+ * helpers entering the source pool, a glob that matched nothing, or a
+ * configured glob metric with no countable items.
  */
 export function evaluate(summary, thresholds, recorded, options) {
   const { viewerRoot, maxSlack, maxErosion } = options;
@@ -146,6 +147,15 @@ export function evaluate(summary, thresholds, recorded, options) {
   const failures = validateRecorded(thresholds, recorded);
   const warnings = [];
   const rows = [];
+
+  const includedTestHelpers = [...files.keys()].filter((key) => key.startsWith('src/tests/'));
+  if (includedTestHelpers.length > 0) {
+    failures.push(
+      `coverage summary includes ${includedTestHelpers.length} file(s) under src/tests/. ` +
+        'coverage.exclude must keep test helpers out of the measured source pool; ' +
+        "use an explicit recursive glob such as 'src/tests/**'."
+    );
+  }
 
   for (const [key, value] of Object.entries(thresholds)) {
     const glob = isGlobKey(key);
