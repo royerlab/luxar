@@ -36,3 +36,10 @@ version with 2FA. The npm CLI is pinned (11.15.0, the staged-publishing floor)
 instead of floating on `@latest`, and the job fails early if that floor is not
 met rather than at publish time. `--provenance`/`--access` are dropped from the
 command line, since `publishConfig` already sets both.
+
+Staging cannot bootstrap, which is the part that would have bitten hardest.
+npm cannot stage a package that does not exist, and `@luxar/viewer` has never
+been published, so the very first release must be a local, token-authenticated
+`npm publish` — it cannot come from CI at all. The workflow now checks the
+registry and refuses in seconds, naming that route, rather than discovering it
+after the tag has been pushed and spent.

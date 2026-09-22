@@ -223,16 +223,20 @@ def test_an_oversized_member_is_caught(tmp_path: Path, monkeypatch) -> None:
     """
     monkeypatch.setattr(checker, "PYPI_MAX_FILE_BYTES", 1024)
     members = dict(_GOOD_MEMBERS)
-    members["luxar/core/big.bin"] = b"\x00" * 4096
+    # 4 MiB exactly: renders "4.0 MiB" binary but "4.2 MB" decimal,
+    # so the assertion below distinguishes the divisor, not just the label.
+    members["luxar/core/big.bin"] = b"\x00" * (4 * 1024 * 1024)
 
     report = _inspect(tmp_path, members)
 
     assert [n.split(" (")[0] for n in report.oversized] == ["luxar/core/big.bin"]
-    # Guard the UNIT too. PYPI_MAX_FILE_BYTES is binary (100 * 1024 * 1024),
-    # so a decimal-MB rendering here is the same contradiction the whole-wheel
-    # message carried for two rounds — and until now only that one was tested,
-    # so reverting this half went unnoticed.
-    assert report.oversized[0].endswith(" MiB)"), report.oversized[0]
+    # Guard the unit AND the arithmetic. PYPI_MAX_FILE_BYTES is binary
+    # (100 * 1024 * 1024), so a decimal-MB rendering is the same contradiction
+    # the whole-wheel message carried for two rounds. Asserting only the "MiB"
+    # label would still pass if the divisor were 1e6 — half the defect — so
+    # pin the printed VALUE: 4096 bytes is 0.0 MiB, but it is 0.0 MB too, so
+    # use a size where the two differ visibly.
+    assert report.oversized[0] == "luxar/core/big.bin (4.0 MiB)", report.oversized[0]
 
 
 def test_the_pypi_limit_is_the_real_one() -> None:

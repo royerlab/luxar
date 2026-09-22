@@ -1,7 +1,10 @@
 # Pin the Rust toolchain for reproducible WASM codegen across machines and CI.
 # rustup auto-installs this toolchain + target on the first cargo invocation in
-# this directory. Keep in sync with the `toolchain:` input in
-# .github/workflows/ci.yml and the wasm-pack version pinned in the Makefile.
+# this directory. Keep in sync with the `toolchain:` input in ALL THREE
+# workflows that build the WASM — .github/workflows/ci.yml, publish.yml and
+# publish-npm.yml — and with the wasm-pack version pinned in the Makefile.
+# The two publish workflows gained that input when they stopped resolving the
+# channel implicitly; a SHA-pinned dtolnay/rust-toolchain needs it stated.
 [toolchain]
 channel = "1.92.0"
 targets = ["wasm32-unknown-unknown"]
