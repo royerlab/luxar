@@ -1185,10 +1185,14 @@ jobs:
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         working-directory: ${{ github.workspace }}
         # Identical to publish.yml's build, so this gate proves the artifact the
-        # release actually produces rather than a lookalike.
+        # release actually produces rather than a lookalike. That identity is
+        # the whole point, so it tracks publish.yml's switch to wheel-only:
+        # `hatch build` here would have gone on producing an sdist the release
+        # no longer makes, and the comment above would have quietly stopped
+        # being true.
         run: |
           python -m pip install --upgrade hatch
-          hatch build
+          hatch build -t wheel
 
       - name: Inspect the wheel contents
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -1196,7 +1200,8 @@ jobs:
         # Asserts package completeness against the source tree, that every
         # `exclude` pattern in pyproject was honoured, that no Git-LFS pointer
         # stub shipped in place of data, that nothing exceeds PyPI's 100 MB
-        # per-file limit, and that the viewer dist is bundled. All derived from
+        # per-file limit, that the wheel ITSELF is under that limit, and that
+        # the viewer dist is bundled. All derived from
         # the repository, so the gate cannot drift from what it guards.
         run: |
           set -euo pipefail

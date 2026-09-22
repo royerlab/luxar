@@ -306,11 +306,23 @@ path = "hatch_build.py"
 [tool.hatch.build.targets.wheel.force-include]
 "packages/luxar-viewer/dist" = "luxar/_viewer_dist"
 
-# NOTE: wheels are the supported distribution artifact. The sdist does NOT
-# contain the prebuilt viewer dist (force-included into the wheel above), so a
-# source-only `pip install` (no wheel) produces a degraded package — the bundled
-# web viewer and `luxar export --native` launchers will be missing. Always
-# publish/install wheels for end users; the sdist is for provenance only.
+# NOTE: the wheel is the ONLY published distribution artifact, and the sdist
+# below is deliberately not uploaded (publish.yml builds with `-t wheel` and
+# asserts no tarball is staged).
+#
+# This note used to say a source-only install produced a "degraded package"
+# missing the viewer. That is wrong, and optimistically so: the wheel build
+# hook RAISES when packages/luxar-viewer/dist/index.html is absent
+# (hatch_build.py), and the sdist does not carry that directory, so building a
+# wheel from the sdist fails outright. Measured — `python -m build --wheel` on
+# the unpacked sdist dies with FileNotFoundError. So `pip install --no-binary`
+# does not yield a reduced package, it fails, and publishing the sdist would
+# only offer users an artifact that cannot be installed.
+#
+# The target is kept configured rather than deleted on purpose: hatchling
+# builds an sdist by DEFAULT, so removing this section would produce a larger
+# one, not none. Source provenance lives in the Git tag and the archived
+# record, not on PyPI.
 [tool.hatch.build.targets.sdist]
 packages = ["packages/luxar/src/luxar"]
 include = [
@@ -514,7 +526,8 @@ check-scene-credits = "python scripts/check_scene_credits.py {args}"
 check-complexity = "python scripts/check_complexity.py {args}"
 # Inspect a BUILT wheel: package completeness against the source tree, the
 # pyproject excludes honoured, no Git-LFS pointer stubs, no member over PyPI's
-# 100 MB limit, viewer dist bundled. Deliberately NOT in `check-static` — it
+# 100 MB limit, the wheel ITSELF under that limit, viewer dist bundled.
+# Deliberately NOT in `check-static` — it
 # needs `hatch build` to have run, and `make build-viewer` before that. CI runs
 # it in `wheel-viewer`, where the dist already exists.
 #   make build-viewer && hatch build && hatch run check-wheel dist/luxar-*.whl

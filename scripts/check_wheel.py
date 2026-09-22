@@ -38,7 +38,10 @@ out of agreement with the thing it is guarding:
    useless.
 4. **No member over PyPI's 100 MB per-file limit**, which rejects the upload
    after the release has otherwise succeeded.
-5. **The viewer dist is bundled** (``luxar/_viewer_dist/``), mirroring the check
+5. **The wheel itself under PyPI's 100 MB limit.** PyPI applies the cap to the
+   uploaded FILE, and the realistic breach here is thousands of small payloads
+   with nothing individually large — which check 4 cannot see.
+6. **The viewer dist is bundled** (``luxar/_viewer_dist/``), mirroring the check
    ``publish.yml`` already performs — kept so this gate is a superset of the
    release-time one rather than a divergent second opinion.
 
@@ -73,6 +76,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 #: PyPI rejects any single file in a distribution above this size.
 PYPI_MAX_FILE_BYTES = 100 * 1024 * 1024
 
+#: PyPI applies its size limit to the UPLOADED FILE, not to the members inside
+#: it. The per-member check below cannot catch the way this project would
+#: realistically breach it — thousands of small files (test payloads, demo
+#: assets, the viewer dist) summing past the cap with nothing individually
+#: large. Checked against the wheel's own size on disk, which is what gets
+#: uploaded, rather than the sum of member sizes, which ignores compression.
+PYPI_MAX_DIST_BYTES = 100 * 1024 * 1024
+
 #: The first bytes of a Git-LFS pointer stub.
 LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
 
@@ -95,7 +106,14 @@ class WheelReport:
     excluded_present: list[str] = field(default_factory=list)
     lfs_pointers: list[str] = field(default_factory=list)
     oversized: list[str] = field(default_factory=list)
+    #: Size of the wheel file itself, in bytes; ``None`` when not measured.
+    dist_bytes: int | None = None
     missing_viewer_dist: bool = False
+
+    @property
+    def dist_too_large(self) -> bool:
+        """True when the wheel as uploaded would exceed PyPI's limit."""
+        return self.dist_bytes is not None and self.dist_bytes > PYPI_MAX_DIST_BYTES
 
     def problems(self) -> int:
         """Total number of distinct problems."""
@@ -104,6 +122,7 @@ class WheelReport:
             + len(self.excluded_present)
             + len(self.lfs_pointers)
             + len(self.oversized)
+            + int(self.dist_too_large)
             + int(self.missing_viewer_dist)
         )
 
@@ -234,7 +253,7 @@ def inspect_wheel(wheel_path: Path, project_root: Path) -> WheelReport:
         )
 
         report.oversized = sorted(
-            f"{i.filename} ({i.file_size / 1e6:.1f} MB)"
+            f"{i.filename} ({i.file_size / 1048576:.1f} MiB)"
             for i in infos
             if i.file_size > PYPI_MAX_FILE_BYTES
         )
@@ -248,6 +267,8 @@ def inspect_wheel(wheel_path: Path, project_root: Path) -> WheelReport:
         report.missing_viewer_dist = not any(
             name.startswith(f"{WHEEL_ROOT}/_viewer_dist/") for name in names
         )
+
+    report.dist_bytes = wheel_path.stat().st_size
 
     return report
 
@@ -283,10 +304,38 @@ def _problem_sections(
             "ran without `git lfs pull`.",
         ),
         (
-            f"{len(report.oversized)} member(s) exceed PyPI's 100 MB per-file "
+            f"{len(report.oversized)} member(s) exceed PyPI's "
+            f"{PYPI_MAX_FILE_BYTES / 1048576:.0f} MiB per-file "
             "limit, which rejects the upload:",
             report.oversized,
             "",
+        ),
+        (
+            f"the wheel itself exceeds PyPI's "
+            f"{PYPI_MAX_DIST_BYTES / 1048576:.0f} MiB upload limit:",
+            (
+                # Both the heading and this line derive from the constant,
+                # so the units cannot drift apart again: it is 100 * 1024 *
+                # 1024, which is MiB, and printing decimal MB beside it was
+                # two different units in one sentence.
+                [
+                    # Exact bytes alongside the rounded figure: at
+                    # PYPI_MAX_DIST_BYTES + 1 the rounded form reads
+                    # "100.0 MiB (limit 100 MiB)", which looks like it is not
+                    # over. The byte counts are what make the failure legible
+                    # at the boundary, which is the only place it is confusing.
+                    f"{report.dist_bytes / 1048576:.1f} MiB "
+                    f"({report.dist_bytes:,} B) exceeds "
+                    f"{PYPI_MAX_DIST_BYTES / 1048576:.0f} MiB "
+                    f"({PYPI_MAX_DIST_BYTES:,} B)"
+                ]
+                if report.dist_too_large
+                else []
+            ),
+            "The per-file check above passes when no single member is "
+            "large, which is exactly how this wheel would breach the cap: "
+            "thousands of small test payloads and demo assets. Drop payload "
+            "from the wheel rather than raising anything.",
         ),
     ]
     return [s for s in sections if s[1]]
@@ -313,7 +362,12 @@ def _print_report(report: WheelReport, wheel_path: Path, entries: int) -> int:
     aprint("=" * 70)
     aprint("📦 WHEEL CONTENTS")
     aprint("=" * 70)
-    aprint(f"🔢 {wheel_path.name}: {entries} members")
+    size_note = (
+        f", {report.dist_bytes / 1048576:.1f} MiB"
+        if report.dist_bytes is not None
+        else ""
+    )
+    aprint(f"🔢 {wheel_path.name}: {entries} members{size_note}")
 
     for heading, items, hint in _problem_sections(report):
         _print_section(heading, items, hint)

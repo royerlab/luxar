@@ -30,9 +30,10 @@
 #          cd packages/luxar-viewer
 #          pnpm run ci:release              # builds dist/lib (sourcemap-free)
 #          npm publish --access public      # creates @luxar/viewer
-#      (Or in CI: add a Granular Access Token as the `NPM_TOKEN` secret on the
-#      `npm` environment — this workflow already wires NODE_AUTH_TOKEN to it —
-#      set ENABLE_NPM_PUBLISH=true, and push a tag.)
+#      There is deliberately no CI route for this step. This workflow stages,
+#      and staging cannot create a package that does not exist yet (see 3b), so
+#      flipping ENABLE_NPM_PUBLISH to bootstrap would fail after the tag was
+#      spent. Bootstrap locally, then turn CI on.
 #
 #   3. CONFIGURE THE TRUSTED PUBLISHER (the OIDC part). On
 #      npmjs.com/package/@luxar/viewer -> Settings tab -> "Trusted
@@ -42,12 +43,42 @@
 #          Workflow filename    : publish-npm.yml
 #          Environment          : npm        (optional but recommended)
 #
+#   3b. STAGING CANNOT BOOTSTRAP. THE FIRST RELEASE IS A DIRECT, LOCAL PUBLISH.
+#      npm changed the default on 2026-09-03: a trusted publisher created after
+#      that date may `npm stage publish`, while direct `npm publish` is opt-in
+#      per configuration. Luxar has never published, so the publisher created in
+#      Step 3 lands under the NEW default and a plain `npm publish` from CI
+#      would fail on permissions. Hence this workflow stages — which is also
+#      npm's own recommendation, and puts a human 2FA gate in front of an
+#      irreversible publish. LEAVE "allow direct publish" OFF.
+#
+#      BUT STAGING CANNOT CREATE THE PACKAGE. npm's prerequisites are explicit:
+#      "The package already exists on the npm registry — you cannot stage a
+#      brand-new package." @luxar/viewer currently 404s on the registry, so the
+#      FIRST release must be the local, token-authenticated `npm publish` in
+#      Step 2 above. Do NOT bootstrap by flipping ENABLE_NPM_PUBLISH and pushing
+#      a tag: that runs the one command which cannot create the package, and it
+#      fails after the tag is already spent. The job below refuses to start in
+#      that state rather than discovering it at publish time.
+#
+#      So the order is: Step 2 (local `npm publish`, creates the package) ->
+#      Step 3 (attach the trusted publisher) -> Step 4 (flip the switch). From
+#      the SECOND release onward this workflow stages, and you promote:
+#          npm stage list @luxar/viewer        # find the stage id
+#          npm stage view <stage-id>           # inspect what CI produced
+#          npm stage approve <stage-id>        # 2FA; this is what makes it public
+#      Until you approve, nothing is installable — a staged version is NOT
+#      published. (`npm stage publish` itself needs no 2FA, which is why CI can
+#      run it.) Requires npm >= 11.15.0 and Node >= 22.14.0; the job below pins
+#      npm and floor-checks both.
+#
 #   4. SWITCH CI TO TOKEN-LESS + TURN IT ON:
 #      - Create a GitHub environment named `npm` (Settings -> Environments),
 #        ideally restricted to `v*` tags.
 #      - DELETE the `NPM_TOKEN` secret — with the trusted publisher configured and
-#        `id-token: write` present, `npm publish` mints a short-lived credential
-#        via OIDC automatically (the empty NODE_AUTH_TOKEN below is harmless).
+#        `id-token: write` present, `npm stage publish` mints a short-lived
+#        credential via OIDC automatically (the empty NODE_AUTH_TOKEN below is
+#        harmless).
 #      - Flip the repo variable `ENABLE_NPM_PUBLISH` to `true` (Settings ->
 #        Secrets and variables -> Actions -> Variables). This is the master
 #        switch: until it is `true`, tag pushes build + pack but DO NOT publish,
@@ -85,9 +116,36 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Refuse a bootstrap attempt in SECONDS, not after a full build. npm
+      # cannot stage a brand-new package, so on an unpublished name `npm stage
+      # publish` fails — and it would fail at the very end, after Rust,
+      # wasm-pack, pnpm install and the library build, with the tag already
+      # pushed and spent. This needs nothing from the build, so it runs first.
+      # 404 is the only "absent" answer acted on; any other curl outcome is
+      # treated as reachable-but-unknown and left to npm, so a registry blip
+      # cannot block a release.
+      - name: Refuse to stage a package that does not exist yet
+        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && vars.ENABLE_NPM_PUBLISH == 'true'
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+                    https://registry.npmjs.org/@luxar%2Fviewer || echo 000)"
+          if [ "$code" = "404" ]; then
+            echo "::error::@luxar/viewer does not exist on npm, and staging cannot create it."
+            echo "::error::The FIRST release must be a local, token-authenticated 'npm publish'"
+            echo "::error::(Step 2 in this file's header). Bootstrap that, attach the trusted"
+            echo "::error::publisher, and only then set ENABLE_NPM_PUBLISH=true."
+            exit 1
+          fi
+          echo "@luxar/viewer exists on the registry (HTTP $code) — staging is possible."
+
       - name: Set up Rust (for WASM build)
+        # Explicit channel for the same reason as ci.yml and publish.yml: the
+        # action is SHA-pinned, so `# stable` in the ref is a comment, not a
+        # channel.
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          toolchain: 1.92.0
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
@@ -111,26 +169,46 @@ jobs:
           cache: pnpm
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
-      # `--provenance` and OIDC trusted publishing require a recent npm CLI.
-      - name: Upgrade npm CLI
-        run: npm install -g npm@latest
+      # OIDC trusted publishing, provenance and `npm stage` all need a recent
+      # npm CLI. Pinned rather than `@latest` for the same reason the Rust
+      # toolchain and wasm-pack are pinned: a release must not be built by a
+      # toolchain nobody chose. 11.15.0 is the floor for staged publishing.
+      - name: Install the pinned npm CLI
+        run: |
+          set -euo pipefail
+          npm install -g npm@11.15.0
+          npm --version
+          node --version
+          # Fail here, loudly, rather than at the staging step: if the pin ever
+          # slips below the staged-publishing floor, `npm stage` does not exist
+          # and the error would arrive only after the tag had been pushed.
+          # Compared numerically with sort -V rather than probing `--help`,
+          # whose exit code is not a reliable "does this subcommand exist".
+          need=11.15.0
+          have="$(npm --version)"
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n1)" != "$need" ]; then
+            echo "::error::npm $have is below $need, which is the floor for staged publishing (npm stage)"
+            exit 1
+          fi
+          # Node is NOT pinned -- `node-version: 22` floats the whole 22.x line --
+          # so the floor is checked rather than assumed. 22.14.0 is npm's
+          # documented minimum for staged publishing.
+          need_node=22.14.0
+          have_node="$(node --version | tr -d v)"
+          if [ "$(printf '%s\n%s\n' "$need_node" "$have_node" | sort -V | head -n1)" != "$need_node" ]; then
+            echo "::error::Node $have_node is below $need_node, the floor for staged publishing"
+            exit 1
+          fi
 
-      - name: Verify tag matches viewer package version
+      - name: Verify tag matches package, viewer and citation versions
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
-          PKG_VERSION="$(node -p "require('./packages/luxar-viewer/package.json').version")"
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          # The tag is zero-padded CalVer (v2026.06.29) but package.json is semver
-          # (no leading zeros: 2026.6.29). Normalize the tag the SAME way
-          # `make set-version` (scripts/set_version.py) does before comparing.
-          EXPECTED="$(node -e "console.log(process.argv[1].split('.').map(Number).join('.'))" "$TAG_VERSION")"
-          echo "package.json version    = $PKG_VERSION"
-          echo "tag normalized to semver = $EXPECTED   (from $GITHUB_REF_NAME)"
-          if [ "$PKG_VERSION" != "$EXPECTED" ]; then
-            echo "::error::Tag '$GITHUB_REF_NAME' (-> $EXPECTED) does not match viewer version '$PKG_VERSION'. Run 'make set-version DATE=YYYY.MM.DD' and re-tag."
-            exit 1
-          fi
+          # Was a hand-rolled node one-liner that re-derived the CalVer ->
+          # semver normalisation and compared ONE representation. This PR's
+          # point is one gate instead of four, so the npm job uses the same
+          # shared check as publish.yml and the release preflight.
+          python3 scripts/check_version_consistency.py --expect-tag "$GITHUB_REF_NAME"
 
       - name: Install dependencies
         working-directory: packages/luxar-viewer
@@ -149,17 +227,29 @@ jobs:
       # and auth are set up. Flip it on (Settings -> Variables -> ENABLE_NPM_PUBLISH
       # = true) once the one-time setup in the header is done. Until then, tag
       # pushes still build + pack (validating the tarball) without publishing.
-      - name: Publish to npm (provenance)
+      - name: Stage the npm release (approval is manual — see the header)
         if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && vars.ENABLE_NPM_PUBLISH == 'true'
         working-directory: packages/luxar-viewer
-        run: npm publish --provenance --access public
+        # STAGES, does not publish. Trusted publishers created after 2026-09-03
+        # default to stage-only, so `npm publish` would fail on permissions —
+        # and staging is npm's recommendation regardless, since it puts a 2FA
+        # review in front of an irreversible publish.
+        #
+        # No --provenance/--access flags: package.json already sets
+        # publishConfig.provenance=true and access=public, and duplicating them
+        # on the command line means two places to keep in agreement.
+        run: |
+          set -euo pipefail
+          npm stage publish
+          echo "::notice::@luxar/viewer staged, NOT published. Approve it to make it installable:" \
+               "npm stage list @luxar/viewer && npm stage approve <stage-id> (2FA required)."
         env:
           # Honored when present (token auth). Leave the secret unset once a
           # trusted publisher is configured and OIDC takes over.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Note — npm publish gated off
+      - name: Note — npm staging gated off
         if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && vars.ENABLE_NPM_PUBLISH != 'true'
         run: |
-          echo "::notice::npm publish skipped (built + packed only). Set repo variable" \
+          echo "::notice::npm staging skipped (built + packed only). Set repo variable" \
                "ENABLE_NPM_PUBLISH=true after configuring npm auth (see workflow header)."
