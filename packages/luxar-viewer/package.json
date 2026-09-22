@@ -1,6 +1,6 @@
 {
   "name": "@luxar/viewer",
-  "version": "2026.6.5",
+  "version": "2026.9.22",
   "description": "GPU-accelerated WebGL renderer for nD scientific datasets",
   "license": "BSD-3-Clause",
   "publishConfig": {
