@@ -78,8 +78,8 @@ class TestTheKioskPairing:
 
         This is the case that killed the first attempt at this fix, which
         resolved the bind to ONE address and baked it into the allow-regex: a
-        development Mac with Wi-Fi on 10.0.0.55 and Ethernet on 10.0.0.146
-        would then refuse whichever one the route probe did not name. The
+        machine holding one address on Wi-Fi and another on Ethernet would
+        then refuse whichever one the route probe did not name. The
         check compares against the ``Host`` that actually arrived, so both
         work and no address has to be guessed.
         """

@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import pathlib
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +26,7 @@ from luxar.demos.demo_protein_embeddings_cafa5 import (
     UNNAMED_CLUSTER_LABEL,
     disambiguate_cluster_names,
     enriched_cluster_names,
+    load_accessions,
     load_cached_umap,
     select_bundle_files,
 )
@@ -220,6 +222,31 @@ class TestUmapCache:
         np.save(ids_path, np.array(["P1", "P2", "P3"]))
 
         assert load_cached_umap(cache, legacy_ids_path=ids_path) is None
+
+    def test_legacy_cache_refuses_a_pickled_accessions_file(
+        self, tmp_path: Path
+    ) -> None:
+        import pickle
+
+        marker = tmp_path / "executed"
+
+        class Exploit:
+            def __reduce__(self):
+                return (pathlib.Path.touch, (marker,))
+
+        ids_path = tmp_path / "train_ids.npy"
+        with ids_path.open("wb") as fh:
+            np.lib.format.write_array_header_1_0(
+                fh, {"descr": "|O", "fortran_order": False, "shape": (1,)}
+            )
+            pickle.dump(Exploit(), fh)
+
+        cache = tmp_path / "legacy.npz"
+        np.savez(cache, positions=np.zeros((1, 3), dtype=np.float32))
+
+        with pytest.raises(ValueError, match="refusing to unpickle downloaded file"):
+            load_cached_umap(cache, legacy_ids_path=ids_path)
+        assert not marker.exists(), "the legacy repair path executed the payload"
 
     def test_mismatched_stored_accessions_are_rejected(self, tmp_path: Path) -> None:
         """A cache whose two arrays disagree cannot be trusted to pair up.
@@ -721,3 +748,77 @@ class TestSyntheticAccessions:
         )
 
         assert names == ["Cluster 0", "Cluster 1"]
+
+
+# --------------------------------------------------------------------------- #
+# Accession loading must not execute the bundle's code
+# --------------------------------------------------------------------------- #
+
+
+def test_accessions_load_from_a_fixed_width_array_without_pickle(tmp_path) -> None:
+    """The no-pickle path: nothing from the file is ever executed."""
+    path = tmp_path / "train_ids.npy"
+    np.save(path, np.array(["P12345", "Q67890", "A0A123"], dtype="<U10"))
+
+    assert load_accessions(path) == ["P12345", "Q67890", "A0A123"]
+
+
+def test_accessions_load_from_a_scalar_fixed_width_array(tmp_path) -> None:
+    path = tmp_path / "train_ids.npy"
+    np.save(path, np.array("P12345", dtype="<U10"))
+
+    assert load_accessions(path) == ["P12345"]
+
+
+def test_accessions_refuse_an_object_array(tmp_path) -> None:
+    path = tmp_path / "train_ids.npy"
+    np.save(path, np.array(["P12345", "Q67890"], dtype=object), allow_pickle=True)
+
+    with pytest.raises(ValueError, match="refusing to unpickle downloaded file"):
+        load_accessions(path)
+
+
+def test_accessions_refuse_a_bare_pickle_without_unsafe_advice(tmp_path) -> None:
+    import pickle
+
+    marker = tmp_path / "executed"
+
+    class Exploit:
+        def __reduce__(self):
+            return (pathlib.Path.touch, (marker,))
+
+    path = tmp_path / "train_ids.npy"
+    path.write_bytes(pickle.dumps(Exploit()))
+
+    with pytest.raises(ValueError, match="refusing to unpickle downloaded file"):
+        load_accessions(path)
+    assert not marker.exists(), "the payload ran — the restriction is not holding"
+
+
+def test_a_malicious_accessions_pickle_is_refused_not_executed(tmp_path) -> None:
+    """The reason this loader exists.
+
+    The CAFA5 bundle comes from a Kaggle dataset its owner can replace at any
+    time, and the download is verified by size, not content. ``np.load(...,
+    allow_pickle=True)`` on that file runs whatever it says to run; this exact
+    payload executes if a caller enables pickle. The loader refuses the object
+    array instead, before any accession is read.
+    """
+    import pickle
+
+    marker = tmp_path / "executed"
+
+    class Exploit:
+        def __reduce__(self):
+            return (pathlib.Path.touch, (marker,))
+
+    path = tmp_path / "train_ids.npy"
+    with path.open("wb") as fh:
+        np.lib.format.write_array_header_1_0(
+            fh, {"descr": "|O", "fortran_order": False, "shape": (1,)}
+        )
+        pickle.dump(Exploit(), fh)
+
+    with pytest.raises(ValueError, match="refusing to unpickle downloaded file"):
+        load_accessions(path)
+    assert not marker.exists(), "the payload ran — the restriction is not holding"

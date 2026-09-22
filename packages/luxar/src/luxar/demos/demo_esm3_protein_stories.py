@@ -48,10 +48,11 @@ Touch panel (off by default):
 
 Sound (``docs/guides/specs/SOUND_SPEC.md``): a CC0 ambient bed plays under the
 whole tour and each story is narrated on arrival. Narration is synthesised when
-the scene is BUILT — OpenAI TTS when ``OPENAI_API_KEY`` is set, the macOS
-system voice otherwise, silence (with a warning) on a box with neither — and
-cached under ``~/.cache/luxar/esm3_protein_stories/narration``. ``--no-audio``
-skips the whole layer (no download, no synthesis).
+the scene is BUILT — the macOS system voice when available, OpenAI TTS only
+when ``LUXAR_NARRATION_ENGINE=openai`` explicitly selects it (with
+``OPENAI_API_KEY`` authenticating the request), otherwise silence with a
+warning — and cached under ``~/.cache/luxar/esm3_protein_stories/narration``.
+``--no-audio`` skips the whole layer (no download, no synthesis).
 
 Requires the base demo's cache (``~/.cache/luxar/esm3_swissprot``: the UMAP
 positions and the metadata). Run ``luxar demo run esm3_protein_landscape``
@@ -721,9 +722,9 @@ AMBISONIC_BED_SPREAD_DEG = 50.0
 # without one the original MP3 plays as is.
 AMBIENT_BED_LOOP_CROSSFADE_S = 15.0
 
-# Narration is synthesised at BUILD time (OpenAI TTS when a key is present, the
-# macOS system voice otherwise; a Linux box without a key builds silently) and
-# cached under this demo's own cache dir, keyed by (engine, voice, text).
+# Narration is synthesised at BUILD time (the macOS system voice when available,
+# OpenAI TTS only when LUXAR_NARRATION_ENGINE=openai explicitly selects it;
+# otherwise the build warns and stays silent) and cached by (engine, voice, text).
 NARRATION_CACHE_DIR = (
     Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "narration"
 )
