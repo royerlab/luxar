@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import create_array, memory_group
+from luxar.encoding._encoders import base as base_encoder_module
+from luxar.encoding._encoders import cholesky as cholesky_encoder_module
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -98,6 +100,34 @@ class TestCholeskyOffdiag:
             assert np.mean(np.sign(decoded[nz]) == np.sign(off[nz])) > 0.99
 
 
+@pytest.mark.parametrize(
+    "semantic_type,signed",
+    [
+        (SemanticType.CHOLESKY_DIAG, False),
+        (SemanticType.CHOLESKY_OFFDIAG, True),
+    ],
+)
+def test_log_perchannel_metadata_ignores_libm_ulp(
+    monkeypatch, semantic_type, signed
+) -> None:
+    rng = np.random.default_rng(2855)
+    data = rng.uniform(0.4, 18.0, size=(400, 3)).astype(np.float32)
+    if signed:
+        data *= rng.choice(np.array([-1.0, 1.0], dtype=np.float32), data.shape)
+
+    _, baseline, baseline_codes = _roundtrip(data, semantic_type, EncodingMode.MEMORY)
+    original_log1p = base_encoder_module.np.log1p
+
+    def perturbed_log1p(values):
+        return np.nextafter(original_log1p(values), np.inf)
+
+    monkeypatch.setattr(base_encoder_module.np, "log1p", perturbed_log1p)
+    _, perturbed, perturbed_codes = _roundtrip(data, semantic_type, EncodingMode.MEMORY)
+
+    assert perturbed == baseline
+    np.testing.assert_array_equal(perturbed_codes, baseline_codes)
+
+
 class TestEdgeCases:
     def test_constant_column(self):
         const = np.full((100, 2), 3.0, np.float32)
@@ -173,8 +203,8 @@ class TestEdgeCases:
         diag[::5] = 0.0
         _, enc, _ = _roundtrip(diag, SemanticType.CHOLESKY_DIAG, EncodingMode.MEMORY)
         nz = diag[diag[:, 0] > 0, 0]
-        expected_lo = np.log1p(float(nz.min()))
-        expected_hi = np.log1p(float(nz.max()))
+        expected_lo = float(np.float32(np.log1p(float(nz.min()))))
+        expected_hi = float(np.float32(np.log1p(float(nz.max()))))
         assert enc["col_lo"][0] == pytest.approx(expected_lo, rel=1e-12)
         assert enc["col_hi"][0] == pytest.approx(expected_hi, rel=1e-12)
         assert enc["col_lo"][0] > 1.0  # far from the zero anchor
@@ -222,6 +252,56 @@ class TestEncodeCholeskySplit:
         # array's own standard encoding fields (self-contained decode).
         decoded = ArrayDecoder().decode(g["cholesky_factors_diag"], g)
         assert np.abs(decoded - diag).max() / np.ptp(diag) < 1e-2
+
+    def test_certificate_metadata_ignores_reduction_ulp(self, monkeypatch):
+        diag, off = self._make(n=800, seed=2855)
+        baseline_group = self._encode(diag, off, EncodingMode.AUTO)
+        baseline = dict(baseline_group["cholesky_factors_diag"].attrs["encoding"])[
+            "certificate"
+        ]
+        original_percentile = cholesky_encoder_module.np.percentile
+
+        def perturbed_percentile(values, percentile):
+            return np.nextafter(original_percentile(values, percentile), np.inf)
+
+        monkeypatch.setattr(
+            cholesky_encoder_module.np, "percentile", perturbed_percentile
+        )
+        perturbed_group = self._encode(diag, off, EncodingMode.AUTO)
+        perturbed = dict(perturbed_group["cholesky_factors_diag"].attrs["encoding"])[
+            "certificate"
+        ]
+
+        assert perturbed == baseline
+
+    def test_rounded_certificate_value_drives_tier_decision(self, monkeypatch):
+        monkeypatch.setattr(
+            cholesky_encoder_module.np,
+            "percentile",
+            lambda values, percentile: 0.05000000001,
+        )
+        diag, off = self._make(n=800, seed=2855)
+        group = self._encode(diag, off, EncodingMode.AUTO)
+        certificate = dict(group["cholesky_factors_diag"].attrs["encoding"])[
+            "certificate"
+        ]
+
+        assert certificate["value"] == 0.05
+        assert certificate["tier"] == "u8"
+
+    @pytest.mark.parametrize(
+        "measured,expected",
+        [(0.05000000001, 0.05), (0.05001, 0.05001)],
+    )
+    def test_certificate_value_is_rounded_before_threshold_decision(
+        self, measured, expected
+    ):
+        got = ArrayEncoder._relf_p95(
+            np.zeros((1, 1), dtype=np.float64),
+            np.ones(1, dtype=np.float64),
+            np.array([[measured]], dtype=np.float64),
+        )
+        assert got == expected
 
     def test_auto_escalates_to_u16_on_stretched_range(self):
         # A few huge-sigma outliers stretch every column's log range so the
@@ -379,7 +459,7 @@ class TestEncodeCholeskySplit:
         sq = sigma_via_trils(diag_q, off_q)
         num = np.linalg.norm(sq - s0, axis=1)
         den = np.maximum(np.linalg.norm(s0, axis=1), 1e-30)
-        expected = float(np.percentile(num / den, 95))
+        expected = float(f"{np.percentile(num / den, 95):.4g}")
 
         got = ArrayEncoder._cov_relf_p95(diag, diag_q, off, off_q, 3)
         np.testing.assert_allclose(got, expected, rtol=1e-12)

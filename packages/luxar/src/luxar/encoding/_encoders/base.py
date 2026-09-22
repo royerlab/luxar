@@ -382,7 +382,7 @@ class BaseEncoderMixin:
                 raw_hi[c] = float(nz.max())
         lo = BaseEncoderMixin._perchannel_log_forward(raw_lo[None, :], signed=signed)
         hi = BaseEncoderMixin._perchannel_log_forward(raw_hi[None, :], signed=signed)
-        return lo[0], hi[0]
+        return lo[0].astype(np.float32), hi[0].astype(np.float32)
 
     @staticmethod
     def _quantize_perchannel_zero_level(
@@ -460,7 +460,7 @@ class BaseEncoderMixin:
             if pos.size:
                 lo[c] = float(np.log(float(pos.min())))
                 hi[c] = float(np.log(float(pos.max())))
-        return lo, hi
+        return lo.astype(np.float32), hi.astype(np.float32)
 
     def _write_float(
         self,

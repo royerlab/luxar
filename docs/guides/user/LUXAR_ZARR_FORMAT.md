@@ -217,7 +217,12 @@ The root group's attributes contain scene-wide configuration:
 | `scene_dimensions` | all | The nD dimension table (below). |
 
 No `timestamp` is written on a scene: the digest must be reproducible across
-two compiles of the same script.
+two compiles of the same script in the same environment. Companded encoder
+rails are stored at float32 precision and covariance certificates at four
+significant digits, while fitted coordinate-grid steps use twelve significant
+digits, to remove ordinary libm/reduction last-bit drift. Other derived
+floating-point attributes (for example a computed camera pose) can still differ
+across platforms, so `content_hash` is not yet a cross-machine build identity.
 
 ```javascript
 {

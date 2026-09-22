@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import memory_group
+from luxar.encoding._encoders import base as base_encoder_module
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -159,6 +160,28 @@ class TestGeologPerchannelRoundtrip:
         decoded, enc, _ = _encode_color(colors, EncodingMode.AUTO)
         np.testing.assert_array_equal(decoded[:, 2], 0.0)
         assert enc["col_lo"][2] == 0.0 and enc["col_hi"][2] == 0.0
+
+    def test_metadata_ignores_libm_ulp(self, monkeypatch):
+        colors = np.array(
+            [[1e-5, 0.2, 3.0], [2e-3, 4.0, 900.0], [0.3, 25.0, 1e5]],
+            dtype=np.float32,
+        )
+        baseline_group = memory_group()
+        ArrayEncoder()._encode_geolog_perchannel(baseline_group, "c", colors, 16)
+        baseline = dict(baseline_group["c"].attrs["encoding"])
+        baseline_codes = np.asarray(baseline_group["c"])
+        original_log = base_encoder_module.np.log
+
+        def perturbed_log(values):
+            return np.nextafter(original_log(values), np.inf)
+
+        monkeypatch.setattr(base_encoder_module.np, "log", perturbed_log)
+        perturbed_group = memory_group()
+        ArrayEncoder()._encode_geolog_perchannel(perturbed_group, "c", colors, 16)
+        perturbed = dict(perturbed_group["c"].attrs["encoding"])
+
+        assert perturbed == baseline
+        np.testing.assert_array_equal(np.asarray(perturbed_group["c"]), baseline_codes)
 
 
 class TestDecoderValidation:

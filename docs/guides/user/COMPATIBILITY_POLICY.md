@@ -113,7 +113,10 @@ because a change would silently invalidate data or caches already in the wild:
   change to what feeds it would either serve stale chunks or discard every
   warm cache on earth. (Re-chunking a store *does* change its hash — different
   chunk keys cover different rows — which is why `luxar optimize` tells you to
-  publish under a new URL prefix.)
+  publish under a new URL prefix.) Reproducibility is guaranteed for repeated
+  compiles in the same environment, not across platforms: encoder rails and
+  covariance certificates are canonicalized enough to suppress their observed
+  last-bit drift, while other derived floating-point attributes can still vary.
 - **The legacy scene header key.** Published, immutable scene records carry
   `luxar_version: "0.1"`. Readers keep accepting that spelling for the 0.1
   format forever; it is the one deprecation with no removal date.

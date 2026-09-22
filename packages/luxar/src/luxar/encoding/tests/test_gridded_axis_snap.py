@@ -18,6 +18,7 @@ import pytest
 import zarr
 
 from luxar.encoding import EncodingMode
+from luxar.encoding._encoders.perchannel import _gridded_step_from_uniques
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.semantic_types import SemanticType
@@ -95,6 +96,26 @@ def test_the_snap_is_what_makes_it_exact(tmp_path) -> None:
     """Guard against the test above passing for some unrelated reason."""
     data = _stacked()
     assert _was_snapped(_encode(tmp_path, data), data)
+
+
+def test_long_time_axis_uses_portable_step_and_still_round_trips(tmp_path) -> None:
+    uniq = np.float32(1000.0) + np.arange(1000, dtype=np.float32) * np.float32(0.1)
+    lo = float(uniq[0])
+    extent = float(uniq[-1] - uniq[0])
+    offsets = uniq - lo
+    coarsest = float(np.diff(uniq).min())
+    rung = np.round(offsets / coarsest)
+    raw_step = float(rung @ offsets / (rung @ rung))
+
+    result = _gridded_step_from_uniques(uniq, lo, extent, 65_535.0)
+    assert result is not None
+    step, n_unique = result
+    assert step == float(f"{raw_step:.12g}")
+    assert step == float(f"{np.nextafter(raw_step, np.inf):.12g}")
+    assert n_unique == len(uniq)
+
+    back = _roundtrip(tmp_path, uniq[:, None])
+    np.testing.assert_array_equal(back[:, 0], uniq)
 
 
 @pytest.mark.parametrize(
