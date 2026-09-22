@@ -89,6 +89,8 @@ from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 import zarr
 from arbol import aprint
 
+from .hashing import ATTR_FLOAT_SIGNIFICANT_DIGITS
+
 #: The reference window carried down a structure: ``(lo, hi)``.
 _Window = Tuple[float, float]
 
@@ -179,11 +181,13 @@ class _Progress:
 
 
 def _finite(value: object) -> Optional[float]:
-    """``value`` as a finite float, or ``None`` (covers bools, strings, NaN)."""
+    """``value`` on the persisted float grid, or ``None`` if it is not finite."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     fv = float(value)
-    return fv if math.isfinite(fv) else None
+    if not math.isfinite(fv):
+        return None
+    return float(f"{fv:.{ATTR_FLOAT_SIGNIFICANT_DIGITS}g}")
 
 
 def _count(value: object) -> int:
@@ -216,6 +220,22 @@ def _window_of(attrs: dict) -> Tuple[Optional[float], Optional[float]]:
     if lo is None or hi is None:
         return None, None
     return lo, hi
+
+
+def _stored_window_of(attrs: dict) -> Tuple[Optional[float], Optional[float]]:
+    """The exact finite window stored in ``attrs``, without grid rounding."""
+    raw = attrs.get("amplitude_data_range")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return None, None
+    values: List[float] = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None, None
+        fv = float(value)
+        if not math.isfinite(fv):
+            return None, None
+        values.append(fv)
+    return values[0], values[1]
 
 
 def _child_nodes(group: "zarr.Group") -> List[Tuple[str, "zarr.Group", dict]]:
@@ -486,10 +506,12 @@ def _stamp(group: "zarr.Group", window: _Window) -> int:
     attrs = dict(group.attrs)
     if "amplitude_data_range" not in attrs:
         return 0
-    lo, hi = float(window[0]), float(window[1])
+    lo, hi = (
+        float(f"{float(value):.{ATTR_FLOAT_SIGNIFICANT_DIGITS}g}") for value in window
+    )
     if not (math.isfinite(lo) and math.isfinite(hi) and lo < hi):
         return 0
-    if _window_of(attrs) == (lo, hi):
+    if _stored_window_of(attrs) == (lo, hi):
         return 0
     group.attrs["amplitude_data_range"] = [lo, hi]
     return 1
