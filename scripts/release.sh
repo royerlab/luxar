@@ -88,8 +88,10 @@ if command -v curl >/dev/null 2>&1; then
   esac
 fi
 
-# The npm viewer publish is also tag-triggered on v*, but publish-npm.yml gates
-# the actual `npm publish` on ENABLE_NPM_PUBLISH from the job's vars context.
+# The npm viewer release is also tag-triggered on v*, but publish-npm.yml gates
+# the actual `npm stage publish` on ENABLE_NPM_PUBLISH from the job's vars
+# context. It STAGES: a maintainer then runs `npm stage approve` with 2FA, and
+# nothing is installable until they do.
 # GitHub resolves that context environment -> repository -> organization and
 # compares strings case-insensitively, so the preflight must do the same. The
 # three states stay distinct: "off" and "could not check" are different answers.

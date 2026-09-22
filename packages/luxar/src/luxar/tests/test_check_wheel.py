@@ -228,6 +228,11 @@ def test_an_oversized_member_is_caught(tmp_path: Path, monkeypatch) -> None:
     report = _inspect(tmp_path, members)
 
     assert [n.split(" (")[0] for n in report.oversized] == ["luxar/core/big.bin"]
+    # Guard the UNIT too. PYPI_MAX_FILE_BYTES is binary (100 * 1024 * 1024),
+    # so a decimal-MB rendering here is the same contradiction the whole-wheel
+    # message carried for two rounds — and until now only that one was tested,
+    # so reverting this half went unnoticed.
+    assert report.oversized[0].endswith(" MiB)"), report.oversized[0]
 
 
 def test_the_pypi_limit_is_the_real_one() -> None:
@@ -250,7 +255,7 @@ def test_a_wheel_over_the_upload_limit_is_caught(tmp_path: Path, monkeypatch) ->
     report = _inspect(tmp_path, dict(_GOOD_MEMBERS))
 
     assert report.dist_too_large
-    assert report.problems() >= 1
+    assert report.problems() == 1  # exactly this one, per this file's convention
     # The per-member check must stay silent: no single member is large.
     assert report.oversized == []
 
@@ -322,9 +327,10 @@ def test_main_exits_1_and_names_an_oversized_wheel(
     out = capsys.readouterr().out
     # Assert the NUMBERS, not just the heading: the heading survives a wrong
     # limit or a wrong size, which is how the MB/MiB contradiction lived
-    # through two rounds. 100 bytes is the patched limit; the fixture wheel is
-    # ~700 bytes, so both render as 0.0 MiB — assert the limit token and the
-    # units, which is what the operator reads.
+    # through two rounds. The limit is patched to one byte below the fixture's
+    # real size, so the exact byte counts below are the ones an operator would
+    # read — an earlier version patched it to 100 bytes, where both sides
+    # rendered "0.0 MiB" and any wrong figure would still have matched.
     assert "upload limit" in out
     assert "MiB" in out
     assert "MB " not in out.replace("MiB", ""), "decimal MB leaked back in"
