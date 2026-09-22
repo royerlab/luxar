@@ -657,6 +657,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Restore mypy caches
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .mypy_cache
+          # pyproject.toml contains the mypy pin and the complete dependency set.
+          # Use no restore prefix: changed type-checker inputs must start clean.
+          key: ${{ runner.os }}-mypy-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+
       - name: Install Hatch
         if: needs.changes.outputs.dom_py != 'false'
         # Install Hatch ON the matrix interpreter. Hatch builds an environment
