@@ -143,11 +143,12 @@ class BatchManifest:
     plans persist the corresponding per-tile weights alongside these counts.
     """
     tile_occupancy_weights: Optional[List[List[float]]] = None
-    """One mass-weighted tile occupancy row per selected ``(t, c)`` slice.
+    """One adaptive mass/foreground weight row per selected ``(t, c)`` slice.
 
-    Weights already carry the minimum-share floor
-    (:func:`luxar.gsplats.fit_tiled_gsplats.floor_tile_seed_shares`), so a
-    proportional integer allocation of a row is the final per-tile budget.
+    Mass-mode rows already carry the minimum-share floor
+    (:func:`luxar.gsplats.fit_tiled_gsplats.floor_tile_seed_shares`); sparse
+    foreground-mode rows preserve the historical weights. A proportional
+    integer allocation of either row is the final per-tile budget.
     """
     plan_path: Optional[str] = None
     """``content`` mode: path to the shared ``FitPlan`` JSON (relative to

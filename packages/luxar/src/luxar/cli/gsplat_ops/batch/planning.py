@@ -385,7 +385,7 @@ def _uniform_tile_occupancy_weights(
     intensity_scale: float,
     saturation_exponent: float,
 ) -> List[float]:
-    """Measure one slice's mass-weighted tile occupancy tile by tile."""
+    """Measure one slice's adaptive mass/foreground occupancy tile by tile."""
     from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
 
     view = _pinned_slice_volume(

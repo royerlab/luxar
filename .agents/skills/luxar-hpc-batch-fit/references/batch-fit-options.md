@@ -42,12 +42,13 @@ scale; a config-supplied `voxel_size` takes precedence over discovered spacing.
 
 Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 (t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
-volume's non-empty tiles by Hann-weighted intensity MASS instead of fitting
-K per tile, so each timepoint/channel tracks K rather than K x the grid size. The
-weight is `Hann voxels × (mean above-floor intensity / ceiling)^saturation_exponent`
-— threshold-free, so a dim tile of real structure is proportional rather than
-falling to a token budget (the retired 10%-of-max foreground predicate did that
-on hot-spot-normalised light-sheet data): homogeneous content gets the same
+volume's non-empty tiles with a mass-first adaptive rule instead of fitting K
+per tile, so each timepoint/channel tracks K rather than K x the grid size. The
+default weight is `Hann voxels × (mean above-floor intensity / ceiling)^saturation_exponent`;
+the historical 10%-of-ceiling foreground weights are retained only when their
+per-tile distribution correlates at least 0.95 with mass. This preserves sparse
+step-like data while a dim tile of real structure on hot-spot-normalised data is
+proportional rather than falling to a token budget: homogeneous content gets the same
 splat density in differently-sized tiles, while the calibrated exponent still
 controls relative density between equally-sized tiles. A tile holding at least a
 quarter of the equal mass share is never budgeted below a quarter of the equal

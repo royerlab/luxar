@@ -492,15 +492,15 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # reports): a tiled fit DIVIDES it across the tiles that survive the resolved
 # floor plus Hann window instead of giving each tile the full count. The grid is
 # unified but the WEIGHTING is not. `fit --tiling uniform` (sequential and the
-# `-j N` parent) and `batch-fit` divide K MASS-WEIGHTED: each tile weighs
-# `Hann voxels x (mean above-floor intensity / ceiling)^alpha` — its
+# `-j N` parent) and `batch-fit` divide K with a MASS-FIRST adaptive rule: each
+# tile weighs `Hann voxels x (mean above-floor intensity / ceiling)^alpha` — its
 # Hann-weighted intensity MASS above the resolved floor, saturated by
-# `--saturation-exponent` — so a busy tile gets more than a nearly-empty one
-# and a DIM tile of real structure is proportional, not binary. It is
-# threshold-free on purpose: the retired "voxels above 10% of max" predicate
-# left whole tiles of dim nuclei with NO foreground voxel on a light-sheet
-# volume whose max is a hot spot (1-38 seeds of 32,000 for tiles holding up to
-# 6% of the intensity; the tiled fit lost 7-14 dB). Backstop: a tile holding
+# `--saturation-exponent`. The historical 10%-of-ceiling foreground weights
+# are retained only when their per-tile distribution correlates >= 0.95 with
+# the mass weights (the sparse blastocyst case); otherwise mass prevents a hot
+# voxel from making whole tiles of dim nuclei look empty (1-38 seeds of 32,000
+# for tiles holding up to 6% of the intensity; a 7-14 dB loss). In mass mode a
+# tile holding
 # >= 1/4 of the equal MASS share never gets < 1/4 of the equal SEED share
 # (`MIN_TILE_SEED_SHARE_FRACTION`). Two paths stay EQUAL-SHARE: a hand-run
 # `fit --tile k/M` (no parent to hand it a count; scanning the volume per worker

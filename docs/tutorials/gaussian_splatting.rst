@@ -374,15 +374,15 @@ which case you are in:
 
 * ``--tiling uniform`` launched as one command — the sequential in-process
   path, or a ``-j N`` parent and its workers — weights the split by
-  **intensity mass**: each tile weighs its Hann-weighted size times its mean
+  **mass-first adaptive occupancy**: each tile initially weighs its Hann-weighted size times its mean
   above-floor intensity (as a fraction of the shared ceiling) raised to
   ``--saturation-exponent``, so a busy tile gets more than a barely occupied
   one and a *dim* tile of real structure gets a proportional budget rather
-  than a token one. No threshold is involved: an earlier rule counted voxels
-  above 10% of the volume maximum, which on a light-sheet volume whose maximum
-  is a hot spot starved whole tiles of dim nuclei. As a backstop, a tile
-  holding at least a quarter of the equal mass share is never budgeted below
-  a quarter of the equal seed share.
+  than a token one. The earlier 10%-of-ceiling foreground weights are retained
+  only when their per-tile distribution correlates at least 0.95 with mass,
+  preserving sparse step-like data without letting a hot voxel starve dim
+  tiles. In mass mode, a tile holding at least a quarter of the equal mass
+  share is never budgeted below a quarter of the equal seed share.
 * ``batch-fit`` weights it the same way *when the plan can resolve tile-local
   reads*. It falls back to the equal share when it cannot: under
   ``--downscale`` or ``--denoise``, with a deferred or volume-derived floor, or

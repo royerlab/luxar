@@ -559,6 +559,28 @@ def test_uniform_tile_weights_do_not_starve_dim_structured_tiles() -> None:
     assert counts[hot[0]] / min(counts[i] for i in dim) < 2.0
 
 
+def test_uniform_tile_weights_keep_sparse_step_rule_when_it_tracks_mass() -> None:
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
+
+    volume = np.zeros((1, 4, 16), dtype=np.float32)
+    for tile_index, occupied in enumerate((1, 4, 9, 16)):
+        volume[0, tile_index, :occupied] = 0.8 + 0.05 * tile_index
+    specs = compute_tile_specs(volume.shape, tile_size=(1, 1, 16), overlap=0)
+
+    weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        None,
+        intensity_scale=1.0,
+        saturation_exponent=0.44,
+    )
+    expected = [16.0 * (occupied / 16.0) ** 0.44 for occupied in (1, 4, 9, 16)]
+
+    assert weights == pytest.approx(expected)
+    assert allocate_weighted_integer_seeds(320, weights) == (36, 67, 95, 122)
+
+
 @pytest.mark.slow  # ~35s: two real 40-iteration CPU fits
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
 def test_mass_weighting_keeps_haze_amplitudes_below_equal_share_disparity() -> None:
