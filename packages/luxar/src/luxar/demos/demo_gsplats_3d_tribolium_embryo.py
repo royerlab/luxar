@@ -21,7 +21,7 @@ Dataset:
 Source:  Cell Tracking Challenge (celltrackingchallenge.net)
 Zenodo:  https://zenodo.org/records/5270323
 Record:  GIANI Paper — Supplemental File 2
-Size:    2.6 GB download  /  3.3 GB uncompressed
+Size:    2.6 GB download  /  3.6 GB uncompressed
 Volume:  965 × 1871 × 991 voxels, isotropic 0.381 µm
 
 Imaging:

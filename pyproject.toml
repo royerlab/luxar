@@ -4,9 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "luxar"
-dynamic = ["version"]
+# `readme` is dynamic: README.md is served through the metadata hook in
+# hatch_build.py, which rewrites its relative links to absolute GitHub URLs so
+# they resolve on the PyPI page as well as in the repository.
+dynamic = ["version", "readme"]
 description = "High-performance nD scene compiler for arbitrary-sized scientific visualization with points, lines, surfaces, volumes and more."
-readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [
@@ -306,6 +308,10 @@ exclude = [
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
 
+# The README-as-long-description hook (see `dynamic` under [project]).
+[tool.hatch.metadata.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel.force-include]
 "packages/luxar-viewer/dist" = "luxar/_viewer_dist"
 
@@ -332,6 +338,8 @@ include = [
     "/packages/luxar/src/luxar",
     "/hatch_build.py",
     "/README.md",
+    "/ACKNOWLEDGMENTS.md",
+    "/CITATION.cff",
     "/LICENSE",
     "/CHANGELOG.md"
 ]

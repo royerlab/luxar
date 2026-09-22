@@ -19,7 +19,13 @@ if PROJECT_ROOT is None or not (PROJECT_ROOT / "hatch_build.py").is_file():
     )
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from hatch_build import LuxarBuildHook  # noqa: E402
+from hatch_build import (  # noqa: E402
+    REPO_BLOB_URL,
+    REPO_TREE_URL,
+    LuxarBuildHook,
+    LuxarMetadataHook,
+    absolutize_readme_links,
+)
 
 
 def make_hook(root: Path) -> LuxarBuildHook:
@@ -69,3 +75,73 @@ def test_unknown_build_version_is_rejected(tmp_path: Path) -> None:
     """Unexpected Hatchling build modes fail instead of bypassing validation."""
     with pytest.raises(ValueError, match=r"expected 'editable' or 'standard'"):
         make_hook(tmp_path).initialize("unexpected", {})
+
+
+# ---------------------------------------------------------------------------
+# The metadata hook: README links must survive the PyPI page
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("markdown", "expected"),
+    [
+        ("[a](LICENSE)", f"[a]({REPO_BLOB_URL}LICENSE)"),
+        ("[a](./CITATION.cff)", f"[a]({REPO_BLOB_URL}CITATION.cff)"),
+        (
+            "[a](docs/guides/user/VIEWER_GUIDE.md#cors)",
+            f"[a]({REPO_BLOB_URL}docs/guides/user/VIEWER_GUIDE.md#cors)",
+        ),
+        ("[a](.agents/skills/)", f"[a]({REPO_TREE_URL}.agents/skills/)"),
+        ('<a href="SECURITY.md">', f'<a href="{REPO_BLOB_URL}SECURITY.md">'),
+        ('<img src="docs/x.png">', f'<img src="{REPO_BLOB_URL}docs/x.png">'),
+        # Left alone: absolute, protocol-relative, anchors, mailto, data URIs.
+        ("[a](https://x.y/z)", "[a](https://x.y/z)"),
+        ('<img src="//cdn/x.png">', '<img src="//cdn/x.png">'),
+        ("[a](#gallery)", "[a](#gallery)"),
+        ('<a href="mailto:a@b.c">', '<a href="mailto:a@b.c">'),
+        (
+            '<img src="data:image/png;base64,AA">',
+            '<img src="data:image/png;base64,AA">',
+        ),
+    ],
+)
+def test_absolutize_readme_links(markdown: str, expected: str) -> None:
+    assert absolutize_readme_links(markdown) == expected
+
+
+def test_metadata_hook_serves_the_readme_with_absolute_links(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# T\n\nSee [the docs](docs/a.md).\n")
+    metadata: dict[str, object] = {}
+
+    LuxarMetadataHook(str(tmp_path), {}).update(metadata)
+
+    assert metadata == {
+        "readme": {
+            "content-type": "text/markdown",
+            "text": f"# T\n\nSee [the docs]({REPO_BLOB_URL}docs/a.md).\n",
+        }
+    }
+
+
+def test_the_real_readme_has_no_relative_link_left_after_rewriting() -> None:
+    """The regex the hook uses must cover every link form the README uses."""
+    import re  # noqa: PLC0415
+
+    text = absolutize_readme_links((PROJECT_ROOT / "README.md").read_text())
+    relative = re.compile(
+        r'(?:\]\(|\bhref="|\bsrc=")(?!(?:[a-z][a-z0-9+.-]*:|//|#))([^)"\s]+)'
+    )
+    assert relative.findall(text) == []
+    assert REPO_BLOB_URL + "ACKNOWLEDGMENTS.md" in text
+
+
+def test_pyproject_wires_the_metadata_hook() -> None:
+    """A static ``readme`` would silently bypass the hook."""
+    import tomllib  # noqa: PLC0415
+
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    assert "readme" in pyproject["project"]["dynamic"]
+    assert "readme" not in pyproject["project"]
+    assert pyproject["tool"]["hatch"]["metadata"]["hooks"]["custom"] == {
+        "path": "hatch_build.py"
+    }

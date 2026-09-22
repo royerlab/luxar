@@ -285,6 +285,65 @@ def test_a_missing_viewer_dist_is_caught(tmp_path: Path) -> None:
     assert report.missing_viewer_dist is True
 
 
+def _metadata_with_body(body: str) -> bytes:
+    return f"Name: luxar\nDescription-Content-Type: text/markdown\n\n{body}".encode()
+
+
+def test_a_relative_link_in_the_long_description_is_caught(tmp_path: Path) -> None:
+    """The PyPI page resolves relative links against itself; each one is a 404."""
+    members = dict(_GOOD_MEMBERS)
+    members["luxar-1.0.dist-info/METADATA"] = _metadata_with_body(
+        "[docs](docs/guide.md#anchor) [lic](LICENSE) "
+        '<a href="SECURITY.md">x</a> <img src="images/a.png">\n'
+    )
+
+    report = _inspect(tmp_path, members)
+
+    assert report.relative_links == [
+        "LICENSE",
+        "SECURITY.md",
+        "docs/guide.md#anchor",
+        "images/a.png",
+    ]
+    assert report.problems() == 4
+
+
+def test_absolute_links_anchors_and_uris_are_not_flagged(tmp_path: Path) -> None:
+    """Only targets PyPI would mis-resolve count; everything else is fine."""
+    members = dict(_GOOD_MEMBERS)
+    members["luxar-1.0.dist-info/METADATA"] = _metadata_with_body(
+        "[a](https://github.com/royerlab/luxar/blob/main/LICENSE) [b](#top) "
+        '<a href="mailto:x@y.z">m</a> <img src="//cdn/x.png"> '
+        '<img src="data:image/png;base64,AAAA">\n'
+        "Header-like text with a colon: but no link\n"
+    )
+
+    report = _inspect(tmp_path, members)
+
+    assert report.relative_links == []
+    assert report.problems() == 0
+
+
+def test_a_metadata_without_a_body_has_nothing_to_check(tmp_path: Path) -> None:
+    """``_GOOD_MEMBERS``' bare METADATA (headers only) must stay a sound wheel."""
+    assert _inspect(tmp_path, _GOOD_MEMBERS).relative_links == []
+
+
+def test_main_exits_1_and_names_a_relative_link(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _make_project(tmp_path)
+    members = dict(_GOOD_MEMBERS)
+    members["luxar-1.0.dist-info/METADATA"] = _metadata_with_body("[x](docs/x.md)\n")
+    wheel = _make_wheel(tmp_path, members)
+
+    code = checker.main([str(wheel), "--project-root", str(root)])
+
+    out = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert code == 1
+    assert "RELATIVE link" in out and "docs/x.md" in out
+
+
 def test_an_empty_wheel_is_an_error_not_a_pass(tmp_path: Path) -> None:
     """A truncated build must not satisfy every check vacuously.
 

@@ -35,7 +35,7 @@ Three ideas carry most of the design:
   a dimension with units and extent. Hidden axes become sliders and toggles, and
   geometry is sliced by nD proximity.
 - **Represent, don't rasterize.** An image volume is fitted with sparse oriented
-  Gaussians and shipped as geometry rather than voxels: a 3.3 GB light-sheet
+  Gaussians and shipped as geometry rather than voxels: a 3.6 GB light-sheet
   stack becomes 2 MB, a 400-timepoint time-lapse 81 MB.
 
 **[demos.luxarviewer.dev](https://demos.luxarviewer.dev)** hosts 88 live demos
@@ -142,10 +142,12 @@ geometry, what it needs, and whether you have already built it.
  ✓  2  asteroids_solar_system                  points+lines  300 MB
  ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
  • 15  desi_galaxies                           points        73 MB
+ ...
 
  MEDICAL ────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB
  • 29  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
+ ...
 
  SYNTHETIC ─────────────────────────────────────────────────────────── 18 demos
  ✓ 10  cloud                                   points
@@ -185,7 +187,6 @@ Kaggle credentials, or a file you supply.
 | `luxar demo cache list` | Inventory the demo caches under `~/.cache/luxar/`, with sizes and orphans |
 | `luxar demo cache clear <keys>` | Reclaim space — `--all` for everything, `--outputs` to drop generated scenes too, `--dry-run` to preview |
 
-
 Demos run as subprocesses, so `Ctrl-C` tears down the demo and the viewer it
 spawned. Every tile in the [Gallery](#gallery) is one of these demos; pick a key
 from `luxar demo` and `luxar demo run <key>` reproduces it locally.
@@ -222,7 +223,6 @@ with LuxarZarrCompiler("my_data.luxar.zarr") as compiler:
 
 ```
 
-
 ```bash
 luxar serve my_data.luxar.zarr --viewer --open   # data server + viewer, opens the browser
 luxar info my_data.luxar.zarr --stats            # what you compiled, including the chunk layout
@@ -244,7 +244,7 @@ video, or the title to open that scene live at
 short credit; full citations and licenses are in
 [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md). Tiles with no credit are synthetic.
 
-### Gaussian splats — microscopy, medical & astronomy
+### Gaussian splats: microscopy, medical, and astronomy
 
 | [![Cells3D — multichannel fluorescence](https://data.luxarviewer.dev/media/99b6a58b7ab89e70.webp)](https://data.luxarviewer.dev/media/cc4e61c71ee45989.webm) | [![Mouse Blastocyst — multichannel nuclei](https://data.luxarviewer.dev/media/68a7d25d2fcaa240.webp)](https://data.luxarviewer.dev/media/69c59ecd170fae0b.webm) | [![Zebrafish Neuromast — 4D timelapse](https://data.luxarviewer.dev/media/7d6cc6a57c5a5584.webp)](https://data.luxarviewer.dev/media/4e27c8ba7018ad0a.webm) |
 |:--:|:--:|:--:|
@@ -264,7 +264,7 @@ short credit; full citations and licenses are in
 
 ### Earth & geoscience
 
-| [![Global Earthquakes — USGS on the globe](https://data.luxarviewer.dev/media/dc4b3e44dcac6de8.webp)](https://data.luxarviewer.dev/media/d05c55e7ede7ca65.webm) | [![Rivers of Earth — topography + river networks](https://data.luxarviewer.dev/media/62f7ac63f2a7055a.webp)](https://data.luxarviewer.dev/media/acc224755930426d.webm) |
+| [![Global Earthquakes — USGS on the globe](https://data.luxarviewer.dev/media/dc4b3e44dcac6de8.webp)](https://data.luxarviewer.dev/media/d05c55e7ede7ca65.webm) | [![Rivers of Earth — topography + river networks](https://data.luxarviewer.dev/media/62f7ac63f2a7055a.webp)](https://data.luxarviewer.dev/media/acc224755930426d.webm) | |
 |:--:|:--:|
 | **[Global Earthquakes](https://demos.luxarviewer.dev/d/earthquakes)**<br>USGS on the globe<br><sub>USGS catalog; NASA Blue Marble</sub> | **[Rivers of Earth](https://demos.luxarviewer.dev/d/global_rivers_earth)**<br>topography + river networks<br><sub>HydroSHEDS + NOAA NCEI</sub> |
 
@@ -273,7 +273,7 @@ short credit; full citations and licenses are in
 | [![CAIDA — Internet AS topology](https://data.luxarviewer.dev/media/c3370e8b29dd5522.webp)](https://data.luxarviewer.dev/media/4d397bcf0404748e.webm) | [![HuRI — human interactome](https://data.luxarviewer.dev/media/8feb73b6cd217f65.webp)](https://data.luxarviewer.dev/media/129fa8a15eec01c1.webm) | [![Protein Landscape — CAFA5 embeddings](https://data.luxarviewer.dev/media/397b1162496bb4e9.webp)](https://data.luxarviewer.dev/media/44971e188a905b8c.webm) |
 |:--:|:--:|:--:|
 | **[CAIDA](https://demos.luxarviewer.dev/d/caida_as_topology)**<br>Internet AS topology<br><sub>CAIDA, UC San Diego</sub> | **[HuRI](https://demos.luxarviewer.dev/d/huri_interactome)**<br>human interactome<br><sub>Luck et al. 2020</sub> | **[Protein Landscape](https://demos.luxarviewer.dev/d/protein_landscape)**<br>CAFA5 embeddings<br><sub>CAFA5; Elnaggar et al. 2022</sub> |
-| [![Spotify — audio-feature embedding](https://data.luxarviewer.dev/media/531b5a277960ccae.webp)](https://data.luxarviewer.dev/media/c9e0e6b051b4e28f.webm) | [![Zebrahub — multiome embedding](https://data.luxarviewer.dev/media/773fce285f464bbc.webp)](https://data.luxarviewer.dev/media/3560cd22b27a75da.webm) |
+| [![Spotify — audio-feature embedding](https://data.luxarviewer.dev/media/531b5a277960ccae.webp)](https://data.luxarviewer.dev/media/c9e0e6b051b4e28f.webm) | [![Zebrahub — multiome embedding](https://data.luxarviewer.dev/media/773fce285f464bbc.webp)](https://data.luxarviewer.dev/media/3560cd22b27a75da.webm) | |
 | **[Spotify](https://demos.luxarviewer.dev/d/spotify_tracks)**<br>audio-feature embedding<br><sub>Spotify Web API</sub> | **[Zebrahub](https://demos.luxarviewer.dev/d/zebrahub_multiome)**<br>multiome embedding<br><sub>Kim et al. 2024</sub> |
 
 ### Synthetic & mathematical
@@ -283,9 +283,8 @@ short credit; full citations and licenses are in
 | **[Lorenz Attractor](https://demos.luxarviewer.dev/d/lorenz)**<br>chaotic dynamics | **[Rainbow Sphere](https://demos.luxarviewer.dev/d/rainbow_sphere)**<br>HDR Fibonacci sphere | **[Quantum Orbitals](https://demos.luxarviewer.dev/d/quantum_orbitals)**<br>hydrogen 2p_z |
 | [![Spiral Galaxy — barred multi-armed disk](https://data.luxarviewer.dev/media/c412a7b78b54f22a.webp)](https://data.luxarviewer.dev/media/8c78f4437882452c.webm) | [![Galaxy Simulation — density-wave spiral](https://data.luxarviewer.dev/media/9770a88b525190b5.webp)](https://data.luxarviewer.dev/media/6dea0c44152aa88f.webm) | [![Hilbert Curve — 3D space-filling](https://data.luxarviewer.dev/media/fd6783ee4a5019b8.webp)](https://data.luxarviewer.dev/media/ac0ca6cb3852e9c1.webm) |
 | **[Spiral Galaxy](https://demos.luxarviewer.dev/d/spiral_galaxy)**<br>barred multi-armed disk | **[Galaxy Simulation](https://demos.luxarviewer.dev/d/galaxy_simulation)**<br>density-wave spiral | **[Hilbert Curve](https://demos.luxarviewer.dev/d/hilbert_curve_3d)**<br>3D space-filling |
-| [![Particle Collision — physics event](https://data.luxarviewer.dev/media/f69a603488d5897e.webp)](https://data.luxarviewer.dev/media/5041a2035cbed16d.webm) | [![Ocean — bioluminescent jellyfish](https://data.luxarviewer.dev/media/da7d144cab71ac33.webp)](https://data.luxarviewer.dev/media/ca062349f7ed8b8d.webm) |
+| [![Particle Collision — physics event](https://data.luxarviewer.dev/media/f69a603488d5897e.webp)](https://data.luxarviewer.dev/media/5041a2035cbed16d.webm) | [![Ocean — bioluminescent jellyfish](https://data.luxarviewer.dev/media/da7d144cab71ac33.webp)](https://data.luxarviewer.dev/media/ca062349f7ed8b8d.webm) | |
 | **[Particle Collision](https://demos.luxarviewer.dev/d/collision)**<br>physics event | **[Ocean](https://demos.luxarviewer.dev/d/ocean)**<br>bioluminescent jellyfish |
-
 
 The curated set lives in `scripts/gallery/manifest.json` and `make generate-gallery`
 regenerates the media. A few heavy scenes (the DESI cosmic web, the Gaia
@@ -308,7 +307,7 @@ Empty space costs nothing, and what is left is small enough to stream:
 
 | Dataset | Source volume | Fitted representation |
 |---------|---------------|-----------------------|
-| **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 296,559 splats · **2.0 MB** |
+| **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.6 GB as TIFF) | 296,559 splats · **2.0 MB** |
 | **C. elegans embryo** — confocal, 400 timepoints | 400 × 41 × 512 × 512 = 4.3 G voxels | 5.64M splats · **81 MB** (about 200 KB per timepoint) |
 
 The *C. elegans* fit is fetched from the permissively licensed Zenodo demo record
@@ -347,7 +346,11 @@ MSE of a fit against its source.
 **Fitting hardware.** Fitting needs the `gsplats` extra (`pip install
 "luxar[gsplats]"`, or `pip install -e ".[gsplats]"` from a checkout). It runs on the CPU, and much faster on an NVIDIA
 GPU (`make build-cuda` compiles the CUDA kernels for your card; they cannot ship in
-the wheel) or on Apple silicon through MPS. Viewing never needs any of this.
+the wheel) or on Apple silicon through MPS. Seeding and the optional non-local-means
+denoising follow the same device choice. On a cluster, `make build-cuda SLURM=1`
+builds the extension on a GPU node; if a fit logs "GPU fitting will use slower
+PyTorch fallback", it still runs, just without the compiled kernels. Viewing never
+needs any of this.
 
 Every option, with examples, is in the
 [CLI package README](packages/luxar/src/luxar/cli/README.md); the fitting model
@@ -379,18 +382,24 @@ default: splats are reordered so that early prefixes carry as much of the signal
 as possible, so the first chunk to arrive is already a meaningful picture and
 later chunks refine it. Where levels replace each other, the viewer picks between
 them by the screen area the object occupies, a viewport fraction that needs no
-per-resolution tuning.
+per-resolution tuning: the finest level shows while the object fills at least
+half the screen, each halving of occupied area steps one level coarser, and the
+partition-bound recipes (`adaptive`, `overview`) anchor one step higher.
 
 ### Time-lapses are one dataset, not a folder of frames
 
 Each timepoint is fitted in 3D and the results are stacked onto a time axis:
-every splat gains a time coordinate, so a complete 4D acquisition (or 5D, adding
-channel or camera) lives in a single `.gsplats.zarr`. The viewer's time slider is
-ordinary nD slice navigation, and because splats are stored timepoint-major, each
-frame's splats are contiguous on disk: scrubbing fetches the chunks of the current
-frame and nothing else. Coarsening treats the time and channel axes as hard
-barriers, so a timepoint keeps its exact brightness at every level of detail and
-scrubbing never smears one frame into the next.
+every splat gains a time coordinate and a matching covariance entry (zero width
+for a discrete axis, a real extent if you want temporal spread), so a complete 4D
+acquisition (or 5D, adding channel or camera) lives in a single `.gsplats.zarr`.
+The viewer's time slider is ordinary nD slice navigation, and because splats are
+stored timepoint-major, each frame's splats are contiguous on disk: scrubbing
+fetches the chunks of the current frame and nothing else (at most the one chunk
+on a frame boundary carries a few splats of its neighbor). Coarsening treats the
+time and channel axes as hard barriers: coarse splats are never merged across
+them and mass is conserved per barrier group, so a timepoint keeps its exact
+brightness at every level of detail and scrubbing never smears one frame into
+the next.
 
 Fitting a whole time-lapse is one command, on whatever hardware you have:
 
@@ -454,7 +463,9 @@ between 26 and 67 dB PSNR at 6 to 340 times compression (median 99), where
 compression is the source volume at its stored bit depth over the stored splat
 archive. The benchmark, the cross-validation protocol, and the residual analysis
 are in the preprint (see [Citation](#citation)); `luxar gsplat compare` reports the
-same metrics for your own data.
+same metrics for your own data. The Tribolium fit above is a gigavoxel source
+outside the benchmark's per-volume range, so its ratio exceeds that ceiling; the
+*C. elegans* figure aggregates 400 timepoints of 10.7 M voxels each.
 
 ---
 
@@ -477,7 +488,6 @@ scene.add_points(
 )
 ```
 
-
 ### Lines
 
 Connected segments with per-vertex attributes: tracks, trajectories, skeletons.
@@ -490,7 +500,6 @@ scene.add_lines(
     colors=colors, # (N, 3) float32 - per-vertex colors
 )
 ```
-
 
 ### Gaussian splats
 
@@ -517,7 +526,6 @@ scene.add_mesh(
 )
 ```
 
-
 A mesh has no per-element size (its extent comes from its vertices) and renders
 with `opaque` blending by default, which makes it depth-correct without sorting.
 Normals are optional: omit them and the shader derives flat per-face normals;
@@ -533,10 +541,13 @@ luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr -L 4   # coarse levels
 luxar serve bunny_lod.luxar.zarr --viewer
 ```
 
-Meshes support spatial partitioning, decimated coarse levels, and a spatially
-coherent reveal ladder; an additive ladder over an arbitrary order and
-`volumetric` blending are refused with an explanation rather than degraded
-silently. The reasons are in the [mesh spec](docs/specs/MESH_NODE_SPEC.md).
+Meshes support spatial partitioning (`partition=`), decimated coarse levels
+(`substitutive_lod=`, built by `luxar.mesh.decimate`), and a spatially coherent
+reveal ladder (`additive_lod={"method": "radial"}`), though only one of the three
+per mesh; an additive ladder over an arbitrary order and `volumetric` blending
+are refused with an explanation rather than degraded silently (a `volumetric`
+inherited from a parent falls back to `opaque` with a warning). The reasons are
+in the [mesh spec](docs/specs/MESH_NODE_SPEC.md).
 
 ---
 
@@ -568,7 +579,6 @@ arm = parent.add_group("Arm")
 arm.transform = transforms.rotate_y(45)  # Relative to parent
 ```
 
-
 The separate `nd_transform` does the same for the non-displayed dimensions, so
 two datasets recorded on different clocks, sampling rates, or channel orders can
 be aligned in one scene instead of being resampled first. Continuous and discrete
@@ -585,7 +595,6 @@ group = scene.add_group(
 )
 group.add_points("cells", positions_5d)            # children inherit it
 ```
-
 
 The viewer applies these by inverse-transforming the query (slice position and
 tolerance) from world to local space once per view change rather than
@@ -612,10 +621,10 @@ dims = Dimensions([
 ])
 ```
 
-
 Points in nD are treated as hyperspheres: an element is visible in the current
 3D slice when its hypersphere intersects it, and for axes declared `spatial=True`
-its effective radius shrinks with distance from the slice. Every non-displayed
+(hidden axes default to non-spatial) its effective radius shrinks with distance
+`d` from the slice as `sqrt(r² - d²)`. Every non-displayed
 axis becomes a control in the viewer: a slider for continuous and discrete axes,
 a toggle or dropdown for categorical ones. Press `1` to `9` to select a hidden
 axis, `[` and `]` to step it, and `N` to open the dimension panel.
@@ -646,26 +655,30 @@ The host needs two things:
 
 Typical options, roughly from most to least convenient for scenes of a few GB:
 
-| Host | Why it works well | Watch out for |
-|---|---|---|
-| **Cloudflare R2** (what serves the demo corpus at `data.luxarviewer.dev`) | Object storage with no egress fees, a free tier of about 10 GB, public buckets, custom domains, and a CORS policy pasted in the dashboard. Reads are billed per request, so chunk size matters (see below). | Custom domain needs a Cloudflare-managed DNS zone. Check the free tier before publishing terabytes. |
-| **Amazon S3 / Google Cloud Storage** | Same static-object model; the S3 CORS JSON in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#your-host-must-allow-cross-origin-reads) applies to S3 and R2 as is, and GCS takes the equivalent through `gsutil cors set`. | Egress is billed per GB, which is the cost that grows with popularity. |
-| **GitHub Pages** | Free, versioned, zero setup for small scenes: commit the store to a `gh-pages` branch. CORS and byte ranges work out of the box. | Files above 100 MB are rejected and Git LFS objects are not served, so it suits scenes under a few hundred MB in total. Drop a `.nojekyll` file at the site root, or Jekyll strips the dotfiles a zarr-v2 store and `.luxar-index.json` depend on. |
-| **Your lab's web server** (nginx, Apache) | Data stays on infrastructure you control; an nginx snippet is in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#configuration-for-common-hosts). | You add the CORS and range headers yourself; institutional proxies sometimes strip `Range`. |
-| **No host at all** | `luxar export scene.luxar.zarr -o out/` writes the viewer plus a stdlib-only `serve.py`; from a source checkout, after `make build-launchers`, `--native macos` gives a double-clickable app ([Distributing scenes](docs/tutorials/distributing_scenes.rst)). | The recipient runs it locally; nothing is shareable as a link. |
+- **Cloudflare R2** (what serves the demo corpus at `data.luxarviewer.dev`): object storage with no egress fees, a free tier of about 10 GB, public buckets, custom domains, and a CORS policy pasted in the dashboard. Reads are billed per request, so chunk size matters (see below). Watch out: a custom domain needs a Cloudflare-managed DNS zone. Check the free tier before publishing terabytes.
+- **Amazon S3 / Google Cloud Storage**: same static-object model; the S3 CORS JSON in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#your-host-must-allow-cross-origin-reads) applies to S3 and R2 as is, and GCS takes the equivalent through `gsutil cors set`. Watch out: egress is billed per GB, which is the cost that grows with popularity.
+- **GitHub Pages**: free, versioned, zero setup for small scenes (commit the store to a `gh-pages` branch). CORS and byte ranges work out of the box. Watch out: files above 100 MB are rejected and Git LFS objects are not served, so it suits scenes under a few hundred MB in total. Drop a `.nojekyll` file at the site root, or Jekyll strips the dotfiles a zarr-v2 store and `.luxar-index.json` depend on.
+- **Your lab's web server** (nginx, Apache): data stays on infrastructure you control; an nginx snippet is in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#configuration-for-common-hosts). Watch out: you add the CORS and range headers yourself; institutional proxies sometimes strip `Range`.
+- **No host at all**: `luxar export scene.luxar.zarr -o out/` writes the viewer plus a stdlib-only `serve.py`; from a source checkout, after `make build-launchers`, `--native macos` gives a double-clickable app ([Distributing scenes](docs/tutorials/distributing_scenes.rst)). Watch out: the recipient runs it locally; nothing is shareable as a link.
+
+An archive of record such as Zenodo is the right place to deposit a scene for
+citation; whether it can also serve it to the viewer depends on its CORS and
+range headers, so test before linking to it.
 
 Object stores bill per request, and most generated stores land far below the
-64 KB chunk target, so run `luxar optimize` before publishing and pick the profile
-by access pattern: `local` when the viewer will slice into a large node,
+64 KB chunk target (the demo corpus averages 5 KB per file), so run
+[`luxar optimize`](docs/guides/user/CLI_REFERENCE.md#luxar-optimize) before
+publishing and pick the profile by access pattern: `local` when the viewer will slice into a large node,
 `hosting` or `archive` when it loads the node whole (one demo went from 9,390
 requests to 2,348 on a cold load). The re-chunked store carries a new content
 hash, so publish it under a new URL prefix rather than over the old one. To
 verify a host: `curl -sI -H "Origin: https://luxarviewer.dev" <URL>` should
 return an `access-control-allow-origin` header, and for a zipped store a ranged
-GET (`curl -s -o /dev/null -D - -H "Range: bytes=0-0" <URL>`) should answer `206`.
-The full host-by-host setup, the `.luxar-index.json` that makes a folder of
-scenes browsable, and the export and native-bundle paths are in
-[Distributing scenes](docs/tutorials/distributing_scenes.rst), the
+GET (`curl -s -o /dev/null -D - -H "Range: bytes=0-0" <URL>`) should answer `206`
+(a HEAD may legitimately answer `200`). The full host-by-host setup, the
+[`.luxar-index.json`](docs/guides/user/VIEWER_GUIDE.md#directory-listings-and-luxar-indexjson)
+that makes a folder of scenes browsable, and the export and native-bundle paths
+are in [Distributing scenes](docs/tutorials/distributing_scenes.rst), the
 [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#your-host-must-allow-cross-origin-reads),
 and the [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md), which
 documents how the demo corpus itself is served.
@@ -676,12 +689,12 @@ documents how the demo corpus itself is served.
 
 | Key or input | Action |
 |---|---|
-| Left drag, right drag | Rotate, pan (on macOS the default is left = rotate, right = pan; elsewhere the reverse; swap it in the Navigation panel) |
+| Left drag, right drag | Rotate, pan (the macOS default; the reverse elsewhere; swap them in the Navigation panel) |
 | Scroll, Shift + scroll, Ctrl/Cmd + scroll | Zoom, roll, field of view |
 | `V`, `F`, `Space` | Cycle orbit / fly / ortho, recenter, fullscreen |
 | `W A S D`, `Alt+W/S`, arrows, `Q/E`, `I` | Fly mode: move, up and down, look, roll, inertia |
 | `1` to `9`, `[` `]`, `N` | Select a hidden dimension, step it, dimension panel |
-| `L`, `R`, `M`, `T`, `P`, `O`, `H` | Layers, rendering, monitor, recording, performance, dataset browser, help |
+| `L`, `R`, `M`, `T`, `P`, `O`, `H` | Layers, rendering, monitor, recording, performance, dataset browser, help (`Ctrl+L`: debug console) |
 
 | URL parameter | Effect |
 |---|---|
@@ -692,10 +705,13 @@ documents how the demo corpus itself is served.
 | `?noCache`, `?clearCache`, `?noPrefetch` | Disable the cache tiers, clear the persistent cache, disable prefetch |
 
 Luxar needs WebGL2. The end-to-end smoke suite passes on Playwright's Chromium,
-Firefox, and WebKit engines; WebKit runs without the persistent (OPFS) cache
-tier, so Safari and the native launcher keep chunks in memory only. Safari and
-Edge themselves, and real phones and tablets, are supported but not benchmarked;
-touch input (one- and two-finger orbit, pinch, twist, tap-to-pick, long-press
+Firefox, and WebKit engines (engine by engine in the
+[viewer README](packages/luxar-viewer/README.md#browser-compatibility)); WebKit
+runs without the persistent (OPFS) cache tier, so Safari and the native launcher
+keep chunks in memory only (the cache panel shows the
+[opfs-unavailable badge](packages/luxar-viewer/src/cache/README.md#cache-status-badges)).
+Playwright's WebKit is not Safari, so Safari and Edge themselves are untested;
+real phones and tablets are supported but unmeasured, and touch input (one- and two-finger orbit, pinch, twist, tap-to-pick, long-press
 menus) is exercised by an emulated mobile suite. If a scene stays empty, check
 the browser console: a CORS error means the host is refusing the data (see
 [Sharing and hosting](#sharing-and-hosting-a-scene)); a 404 means the URL is
@@ -710,7 +726,7 @@ A scene is a Zarr store (format 3 by default; format 2 is read and can be
 written with `LUXAR_ZARR_FORMAT=2`) whose nodes carry their arrays, a spatial
 index, and optional LOD ladders:
 
-```
+```text
 scene.luxar.zarr/
 ├── zarr.json               # Scene attributes and consolidated metadata
 └── node_name/
@@ -721,13 +737,13 @@ scene.luxar.zarr/
     └── chunk_bounds/       # Spatial index for efficient queries
 ```
 
-
 The store is specified in [LUXAR_ZARR_FORMAT.md](docs/guides/user/LUXAR_ZARR_FORMAT.md)
 and the fitted-splat container in [GSPLATS_ZARR_FORMAT.md](docs/specs/GSPLATS_ZARR_FORMAT.md).
 
-**Rendering cost.** On an NVIDIA RTX 3070 at 1280×720, at the reference primitive
-size, one synchronized render-and-readback call takes (milliseconds; the 60 FPS
-budget is 16.7):
+**Rendering cost.** On an NVIDIA RTX 3070 at 1280×720, with adaptive DPR pinned
+to 1.0 and the primitives drawn at the reference size (4 px for points and
+splats, 1.5 px for lines) through the default HDR pipeline, one synchronized
+render-and-readback call takes (milliseconds; the 60 FPS budget is 16.7):
 
 | Elements | Lines | Points | Gaussian splats |
 |----------|-------|--------|-----------------|
@@ -735,12 +751,15 @@ budget is 16.7):
 | 1M | 3.31 | 4.98 | 8.64 |
 | 10M | — | 18.8 | 19.4 |
 
-The fifteen demo scenes of the same study all hold 60 FPS, the heaviest, a
-2.2M-splat time-lapse frame, in 5.6 ms. Very large overdraw-bound scenes such as a
-29.6M-splat whole-slide image are thinned by the projected-density guard (on by
-default). Load time is dominated by transfer and decode, so it follows your link
-and cache state rather than the element count. Measurements and method are in
-the [viewer performance audit](docs/guides/developer/VIEWER_PERFORMANCE_AUDIT_2026_09.md).
+At ten million elements the call runs 12 to 16% over budget; adaptive DPR, on by
+default, buys the frame rate back by downscaling the render buffer. Typical
+scenes are lighter than these synthetic sweeps: the fifteen demo scenes of the
+same sweep all hold 60 FPS, the heaviest, a 2.2M-splat time-lapse frame, in 5.6
+ms. Very large overdraw-bound scenes such as a 29.6M-splat whole-slide image are
+thinned by the projected-density guard (on by default). Load time is dominated
+by transfer and decode, so it follows your link and cache state rather than the
+element count. The whole-slide and Apple M4 Max measurements, and the method,
+are in the [viewer performance audit](docs/guides/developer/VIEWER_PERFORMANCE_AUDIT_2026_09.md).
 
 **Architecture.** Luxar is two code bases that never import each other. The
 Python package authors, fits, and compiles; the TypeScript viewer streams and
@@ -792,7 +811,6 @@ the browser: `luxar export` writes the viewer and the data as an offline folder,
 and `packages/luxar-launcher` (Go) wraps that folder as a double-clickable
 macOS or Linux app.
 
-
 ---
 
 ## Development and contributing
@@ -839,7 +857,6 @@ committed under [`.agents/skills/`](.agents/skills/) and symlinked into
 | [`luxar-data-loading`](.agents/skills/luxar-data-loading/SKILL.md) | Load an nD image/volume (`.zarr`/OME-Zarr/`.tiff`/`.npy`/`.npz`) — channel/timepoint/array-key selection and `--axes` overrides, with the RAM/axes pitfalls. |
 | [`luxar-export`](.agents/skills/luxar-export/SKILL.md) | Package a scene for sharing — a standalone offline folder (viewer + data + `serve.py`) or a native macOS/Linux app bundle. |
 
-
 ---
 
 ## Documentation
@@ -869,20 +886,18 @@ committed under [`.agents/skills/`](.agents/skills/) and symlinked into
 | [Build System](docs/guides/developer/BUILD_SYSTEM_SPEC.md) | Development environment setup |
 | [Project Statistics](stats/PROJECT_STATS.md) | Codebase size, language mix, test coverage, git activity (see [`project_stats.html`](stats/project_stats.html) for the styled report) |
 
-
 ---
 
 ## Acknowledgments
 
 Built with:
-Built with:
+
 - [Three.js](https://threejs.org/) - WebGL/WebGPU rendering
 - [Zarr](https://zarr.readthedocs.io/) / [Zarrita](https://github.com/manzt/zarrita.js) - Chunked array storage
 - [NumPy](https://numpy.org/) - Numerical computing
 - [PyTorch](https://pytorch.org/) - Gaussian-splat fitting
 - [FastAPI](https://fastapi.tiangolo.com/) - Data serving
 - [Vite](https://vitejs.dev/) - Frontend tooling
-
 
 Every demo renders openly shared scientific data, and each demo's docstring
 carries its full citation. The credits, licenses, and links for all of them are
@@ -920,7 +935,6 @@ The DOIs above are *concept* DOIs: they always resolve to the newest version of
 a record. Each individual version also has its own DOI, which is what to use
 when a result needs to be reproducible against exact bytes.
 
-
 ---
 
 ## Citation
@@ -930,8 +944,9 @@ the **software** (this repository, whichever version you used):
 
 ```bibtex
 @software{luxar2026,
-  title = {Luxar: High-Performance n-Dimensional Scientific Visualization},
-  author = {Royer, Lo{\"i}c A. and the Luxar contributors},
+  title = {Luxar: Gaussian splatting and interactive web visualization for
+           multidimensional scientific data},
+  author = {Royer, Lo{\"i}c A.},
   year = {2026},
   url = {https://github.com/royerlab/luxar}
 }
@@ -953,7 +968,11 @@ cite the preprint:
 ```
 
 If you use the demo datasets, cite the Zenodo record they came from as well as
-the upstream data (see [Where the demo data lives](#where-the-demo-data-lives)).
+the upstream data (see [Where the demo data lives](#where-the-demo-data-lives));
+each record's description names the upstream dataset per file. The splat fits
+are lossy representations built for visualization, not substitutes for source
+imagery in quantitative work, and the coordinate, label, and catalog files are
+derived analysis outputs.
 
 ---
 
