@@ -467,6 +467,8 @@ def test_cli_sequential_divisor_reuses_resolved_floor(
 def test_cli_sequential_divisor_uses_floor_shifted_intensity_scale(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
+
     seen: dict[str, Any] = {}
 
     def _fake_fit_tiled(volume: Any, **kwargs: Any) -> GSplatData:
@@ -481,7 +483,13 @@ def test_cli_sequential_divisor_uses_floor_shifted_intensity_scale(
         saturation_exponent: float,
     ) -> list[float]:
         seen["intensity_scale"] = intensity_scale
-        return [1.0] * len(specs)
+        return uniform_tile_occupancy_weights(
+            volume,
+            specs,
+            applied_floor,
+            intensity_scale=intensity_scale,
+            saturation_exponent=saturation_exponent,
+        )
 
     monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tiled", _fake_fit_tiled)
     monkeypatch.setattr(
