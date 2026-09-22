@@ -210,6 +210,47 @@ luxar serve my_data.luxar.zarr --profile 3g --viewer
 luxar export my_data.luxar.zarr -o my_export/
 ```
 
+### Hosting a scene on the web
+
+A compiled scene is a folder of static files (or a single `.luxar.zarr.zip`).
+Any host that serves static files over HTTPS can publish it; there is no server
+code to run. Upload the store, then share
+`https://luxarviewer.dev/?src=<URL of the store>`. The host needs two things:
+
+- **CORS.** The viewer page comes from `luxarviewer.dev` while the data comes from
+  your host, so the host must send `Access-Control-Allow-Origin` (`*` is fine for
+  public data). Without it the scene stays empty and the browser console shows
+  requests blocked by CORS policy, not a 404.
+- **Byte ranges, for zipped stores only.** A `.luxar.zarr.zip` is read in place with
+  `Range` requests, so the host must honour them, allow the `Range` request header
+  and expose `Content-Range`, `Content-Length`, `Accept-Ranges` and `ETag`. A directory
+  store uses plain GETs and needs only CORS.
+
+Typical options, roughly from most to least convenient for scenes of a few GB:
+
+| Host | Why it works well | Watch out for |
+|---|---|---|
+| **Cloudflare R2** (what [demos.luxarviewer.dev](https://demos.luxarviewer.dev) uses) | Object storage with no egress fees, a free tier of about 10 GB, public buckets, custom domains, and a CORS policy pasted in the dashboard. Reads are billed per request, so it pairs well with `luxar optimize --profile hosting`. | Custom domain needs a Cloudflare-managed DNS zone. Check the free tier before publishing terabytes. |
+| **Amazon S3 / Google Cloud Storage** | Same static-object model; the CORS JSON in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#your-host-must-allow-cross-origin-reads) applies as is. | Egress is billed per GB, which is the cost that grows with popularity. |
+| **GitHub Pages** | Free, versioned, zero setup for small scenes: commit the store to a `gh-pages` branch. CORS is on by default. | Files above 100 MB are rejected and Git LFS objects are not served, so it suits scenes under a few hundred MB in total. |
+| **Your lab's web server** (nginx, Apache) | Data stays on infrastructure you control; an nginx snippet is in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#configuration-for-common-hosts). | You add the CORS and range headers yourself; institutional proxies sometimes strip `Range`. |
+| **No host at all** | `luxar export scene.luxar.zarr -o out/` writes the viewer plus a stdlib-only `serve.py`; `--native macos` gives a double-clickable app. | The recipient runs it locally; nothing is shareable as a link. |
+
+An archive of record such as Zenodo is the right place to deposit a scene for
+citation; whether it can also serve it to the viewer depends on its CORS and range
+headers, so test before linking to it.
+
+Before publishing a large scene, run `luxar optimize scene.luxar.zarr out.luxar.zarr
+--profile hosting`: it re-chunks the store so an opening view costs hundreds of
+requests instead of thousands, which is what object stores bill for. To verify a
+host, request one chunk with `curl -sI -H "Origin: https://luxarviewer.dev" <URL>`
+and look for the `access-control-allow-origin` header; for a zipped store add
+`-H "Range: bytes=0-0"` and expect a `206`. A folder of scenes on a static host
+becomes browsable in the viewer's Dataset Browser through a hand-written
+`.luxar-index.json` ([Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#directory-listings-and-luxar-indexjson)).
+The demo corpus itself is hosted this way; its full setup, CORS checks and failure
+modes are in the [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md).
+
 From here: [Geometry Types](#geometry-types) for points, lines, splats, and meshes;
 [n-Dimensional Visualization](#n-dimensional-visualization) for 4D and beyond; and
 [Volume Rendering](#volume-rendering-with-gaussian-splats) if your data is an image
