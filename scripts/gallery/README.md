@@ -13,6 +13,10 @@ the best for the README gallery (TODO **R19**).
 | `generate_gallery_datasets.py` | Generates each demo's `.luxar.zarr` under `datasets/demos/` (idempotent; skips ones already present; best-effort), then runs the LOD-ladder and scene-credit auditors with `--require-scenes` against exactly the stores produced by that invocation. Both audits gate newly generated stores. A second report-only pass covers the complete local inventory, so already-present neighbours stay visible without gating a fresh store. A failed generated-store gate is not re-gated once that store is already present: fix it and regenerate with `--force` (or delete it), and require the direct pre-upload full-inventory audits to pass. `SCENE_AUDITOR_NAMES` is the single registration seam for future built-scene auditors and records whether each one gates generated output. A demo whose `DEMO_META` declares machine-local `local_data` (`manual-file` / `kaggle-auth` / `git-lfs`) is still run, but a **positive non-zero exit status** is reported in the soft `manual-data` bucket instead of failing the build — for `git-lfs`, only while one of its manifest-declared checkout payloads is missing or still an unpulled pointer. Record-backed downloads declare no local-data requirement and fail hard. A `timeout`, a `no-output` or a death by signal (negative return code) stays hard. One case remains hard on a cold checkout: `arxiv_papers_kaggle` can exhaust the per-demo timeout during its ~30 GB download. A demo listed in `UNBUILDABLE_IDS` is the third disposition: it is **never spawned at all** and lands in the soft `unbuildable` bucket, for a demo whose shipped input is known-broken and whose fallback would blow the timeout. The list is empty today (`gsplats_3d_visible_human_head` was removed once its colors sidecar was regenerated, #1670) and is meant to stay that way — delete an entry as soon as its input is fixed. |
 | `check_tile_staleness.py` | Report-only check for published README still/video pairs older than the gallery dataset/capture policies, their manifest-listed demo generator and directly imported private helpers, applicable `luxar.shading` production code, or their own manifest entry. Also reports manifest-recorded media sizes. Uses entry-specific blame in both manifests so editing one demo does not mark every tile stale. |
 | `verify_media.py` | Checks manifest/README consistency offline, then optionally fetches every hosted object and verifies its content type, byte count, and SHA-256 digest. |
+| `publish_media.py` | Hosts README/gallery media on `data.luxarviewer.dev/media` by content hash (`sha256[:16].<ext>`): skips keys that already exist (never overwrites), uploads with rclone, verifies each URL back by content type, size and digest; `--record NAME` writes the entry under `assets/NAME` in `media-manifest.json`, which the README bijection check requires. |
+| `make_social_preview.py` | Composes the 1280x640 social-preview banner (four scene panels, scrim, wordmark) that heads the README and goes into GitHub's Settings -> Social preview. Output is deliberately uncommitted: publish it with `publish_media.py --record social-preview` (the README embed) and upload the same file to GitHub by hand. |
+| `make_architecture_diagram.py` | Draws the "how Luxar works" pipeline and the Architecture layers diagram (drawsvg -> SVG -> PNG via rsvg-convert), each in GitHub's dark and light palettes; the README embeds them through `<picture>` elements. Published like the banner (`--record architecture-dark` etc.). |
+| `make_readme_animations.py` | Cuts the README's looping WebP recordings (hero, quick start, stack-to-splats, LOD recipes) from the release social-kit clips (`LUXAR_SOCIAL_KIT`) and timed excerpts of the uncarded supplementary-video masters (`LUXAR_SUPP_VIDEOS`); published like the banner (`--record hero-drosophila` etc.). |
 | `../../packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts` | Playwright capture: auto-center + fill-to-frame, auto-exposure, orbit, still + video. |
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
 | `../../packages/luxar-viewer/src/tests/screenshots/crop-policy.ts` | The under-fill and border-lit (**cropped subject**) verdicts + warning floors, split out of the spec so they are unit-testable without a browser (`src/tests/unit/gallery-{underfill,crop}-policy.test.ts`). |
@@ -279,3 +283,31 @@ says the requested one is busy, and prints
 `⚠️  Data port 9899 busy, using 9900 instead` — which `GALLERY_DEBUG=1` makes
 visible. If something really is on the port, free it or point the run elsewhere
 with `GALLERY_DATA_PORT`.
+
+## README assets (hosted media)
+
+The root README embeds media that is generated here and hosted on
+`data.luxarviewer.dev/media` by content hash rather than committed (git LFS
+bandwidth is metered; a hosted object costs nothing per clone):
+
+| Asset | Script | Source |
+|---|---|---|
+| Social-preview banner, 1280x640 (README header; also Settings -> Social preview) | `make_social_preview.py` | gallery tiles (`media-manifest.json`) plus two hosted viewer frames |
+| "How Luxar works" pipeline and the Architecture layers diagram, each dark + light | `make_architecture_diagram.py` | drawn with drawsvg, rasterised with rsvg-convert |
+| Looping recordings: hero (Drosophila gastrulation), quick start, stack-to-splats, LOD recipes, nD navigation | `make_readme_animations.py` | the release social kit's 1080p clips (`LUXAR_SOCIAL_KIT`) and the uncarded supplementary-video masters (`LUXAR_SUPP_VIDEOS`) |
+
+`make generate-readme-assets` builds all of them into `build/readme-assets/`;
+`make publish-readme-media` uploads whatever is not yet hosted (key =
+`sha256[:16].<ext>`, never overwritten, verified back over HTTPS by content
+type, size and hash), records each object under `assets/<file stem>` in
+`media-manifest.json` (the generators name their files after the asset:
+`social-preview.png`, `architecture-dark.png`, `hero-drosophila.webp`, ...), and prints
+the URLs to paste into the README. `verify_media.py` (and the viewer's `gallery-selection` test) require an
+exact match between the README's hosted URLs and the manifest, so an asset that
+is embedded but not recorded fails CI. A re-cut therefore gets a new URL; the old object stays, because the
+edge cache ignores origin cache-control and an in-place replacement would serve
+stale bytes for hours. The banner and the recordings reproduce the hosted
+objects byte for byte from their documented inputs (a slow test asserts it for
+the hero); the diagrams depend on the macOS fonts they were authored with, so a
+rebuild elsewhere renders the same content with different metrics and a
+different hash. The hosted files are the reference.

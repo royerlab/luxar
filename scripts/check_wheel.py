@@ -44,6 +44,14 @@ out of agreement with the thing it is guarding:
 6. **The viewer dist is bundled** (``luxar/_viewer_dist/``), mirroring the check
    ``publish.yml`` already performs — kept so this gate is a superset of the
    release-time one rather than a divergent second opinion.
+7. **The long description has no relative links.** ``README.md`` is the PyPI
+   page, and it links to ``docs/``, ``LICENSE`` and friends by relative path;
+   PyPI resolves those against ``pypi.org/project/luxar/`` — every one a 404.
+   The metadata hook in ``hatch_build.py`` rewrites them to absolute GitHub
+   URLs; this asserts on the built METADATA that it ran, because a hook that
+   silently stops being configured (``readme`` made static again, the hook
+   table dropped) produces a wheel that installs perfectly and a PyPI page
+   full of dead links.
 
 Usage::
 
@@ -97,6 +105,13 @@ PACKAGE_SRC_RELPATH = "packages/luxar/src/luxar"
 #: The wheel's top-level import package.
 WHEEL_ROOT = "luxar"
 
+#: A Markdown link target or HTML ``href``/``src`` in the long description that
+#: is neither absolute (a scheme or protocol-relative), an in-page anchor, nor a
+#: mailto/data URI — i.e. one PyPI would resolve against its own page.
+RELATIVE_LINK = re.compile(
+    r'(?:\]\(|\bhref="|\bsrc=")(?!(?:[a-z][a-z0-9+.-]*:|//|#))([^)"\s]+)'
+)
+
 
 @dataclass
 class WheelReport:
@@ -109,6 +124,8 @@ class WheelReport:
     #: Size of the wheel file itself, in bytes; ``None`` when not measured.
     dist_bytes: int | None = None
     missing_viewer_dist: bool = False
+    #: Relative link targets found in the METADATA long description.
+    relative_links: list[str] = field(default_factory=list)
 
     @property
     def dist_too_large(self) -> bool:
@@ -124,6 +141,7 @@ class WheelReport:
             + len(self.oversized)
             + int(self.dist_too_large)
             + int(self.missing_viewer_dist)
+            + len(self.relative_links)
         )
 
 
@@ -268,9 +286,32 @@ def inspect_wheel(wheel_path: Path, project_root: Path) -> WheelReport:
             name.startswith(f"{WHEEL_ROOT}/_viewer_dist/") for name in names
         )
 
+        report.relative_links = sorted(
+            set(relative_links_in_long_description(zf, names))
+        )
+
     report.dist_bytes = wheel_path.stat().st_size
 
     return report
+
+
+def relative_links_in_long_description(
+    zf: zipfile.ZipFile, names: list[str]
+) -> list[str]:
+    """Relative link targets in the wheel's METADATA body (the PyPI page)."""
+    metadata_names = [
+        n for n in names if n.endswith(".dist-info/METADATA") and n.count("/") == 1
+    ]
+    if not metadata_names:
+        return []
+    metadata = zf.read(metadata_names[0]).decode("utf-8", errors="replace")
+    # The long description is the body after the header block (RFC 822 style):
+    # headers, a blank line, then the README. A wheel with no description has
+    # no blank line, and nothing to check.
+    _, separator, body = metadata.partition("\n\n")
+    if not separator:
+        return []
+    return RELATIVE_LINK.findall(body)
 
 
 #: How many offending members to itemise before summarising the rest. A
@@ -336,6 +377,14 @@ def _problem_sections(
             "large, which is exactly how this wheel would breach the cap: "
             "thousands of small test payloads and demo assets. Drop payload "
             "from the wheel rather than raising anything.",
+        ),
+        (
+            f"{len(report.relative_links)} RELATIVE link(s) in the long "
+            "description, which PyPI resolves against its own page (404):",
+            report.relative_links,
+            "The metadata hook in hatch_build.py rewrites README links to "
+            "absolute GitHub URLs. Check that `readme` is still in `dynamic` "
+            "and [tool.hatch.metadata.hooks.custom] still points at it.",
         ),
     ]
     return [s for s in sections if s[1]]

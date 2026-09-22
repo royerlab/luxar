@@ -21,7 +21,8 @@ MANIFEST_PATH = REPO_ROOT / "scripts/gallery/media-manifest.json"
 README_PATH = REPO_ROOT / "README.md"
 TIMEOUT_SECONDS = 60
 USER_AGENT = "LuxarGalleryMediaAudit/1.0"
-CONTENT_TYPES = {"webm": "video/webm", "webp": "image/webp"}
+CONTENT_TYPES = {"webm": "video/webm", "webp": "image/webp", "png": "image/png"}
+TILE_VARIANTS = {"webm", "webp"}  # every gallery tile ships a still and an orbit video
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
@@ -73,7 +74,7 @@ def _require_readme_bijection(
 ) -> None:
     manifest_keys = Counter(entry.key for entry in entries)
     url_pattern = re.compile(
-        rf"{re.escape(base_url)}/([0-9a-f]{{16}}\.(?:webp|webm))\b"
+        rf"{re.escape(base_url)}/([0-9a-f]{{16}}\.(?:webp|webm|png))\b"
     )
     readme_keys = Counter(url_pattern.findall(readme))
     if readme_keys != manifest_keys:
@@ -84,6 +85,39 @@ def _require_readme_bijection(
         )
 
 
+def _tile_entries(tiles: object) -> list[MediaEntry]:
+    if not isinstance(tiles, dict) or not tiles:
+        raise VerificationError("media manifest tiles must be a non-empty object")
+    entries: list[MediaEntry] = []
+    for demo_id, variants in tiles.items():
+        if not isinstance(demo_id, str) or not isinstance(variants, dict):
+            raise VerificationError("media manifest tiles must map demo ids to objects")
+        if set(variants) != TILE_VARIANTS:
+            raise VerificationError(f"{demo_id}: expected webp and webm variants")
+        for variant, raw_entry in variants.items():
+            entries.append(_validated_entry(demo_id, variant, raw_entry))
+    return entries
+
+
+def _asset_entries(assets: object) -> list[MediaEntry]:
+    """README media that is not a gallery tile (banner, diagrams, recordings)."""
+    if not isinstance(assets, dict):
+        raise VerificationError("media manifest assets must be an object")
+    entries: list[MediaEntry] = []
+    for name, variants in assets.items():
+        if not isinstance(name, str) or not isinstance(variants, dict) or not variants:
+            raise VerificationError(
+                "media manifest assets must map names to non-empty objects"
+            )
+        if not set(variants) <= set(CONTENT_TYPES):
+            raise VerificationError(
+                f"{name}: unknown media variant in {sorted(variants)}"
+            )
+        for variant, raw_entry in variants.items():
+            entries.append(_validated_entry(name, variant, raw_entry))
+    return entries
+
+
 def validated_entries(
     manifest: dict[str, Any], readme: str
 ) -> tuple[str, list[MediaEntry]]:
@@ -92,19 +126,8 @@ def validated_entries(
     if not isinstance(base_url, str) or urlsplit(base_url).scheme != "https":
         raise VerificationError("media manifest base_url must be an HTTPS URL")
     base_url = base_url.rstrip("/")
-    tiles = manifest.get("tiles")
-    if not isinstance(tiles, dict) or not tiles:
-        raise VerificationError("media manifest tiles must be a non-empty object")
-
-    entries: list[MediaEntry] = []
-    for demo_id, variants in tiles.items():
-        if not isinstance(demo_id, str) or not isinstance(variants, dict):
-            raise VerificationError("media manifest tiles must map demo ids to objects")
-        if set(variants) != set(CONTENT_TYPES):
-            raise VerificationError(f"{demo_id}: expected webp and webm variants")
-        for variant, raw_entry in variants.items():
-            entries.append(_validated_entry(demo_id, variant, raw_entry))
-
+    entries = _tile_entries(manifest.get("tiles"))
+    entries += _asset_entries(manifest.get("assets", {}))
     _require_readme_bijection(base_url, entries, readme)
     return base_url, entries
 

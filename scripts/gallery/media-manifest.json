@@ -1,7 +1,7 @@
 {
   "base_url": "https://data.luxarviewer.dev/media",
   "generated": "2026-09-02T16:16:51Z",
-  "note": "Content-addressed gallery media for the root README. Keys are the first 16 hex chars of the file's sha256, so a URL names its bytes and a pin cannot rot. This file is also the provenance record: it is the only way to answer what the README's media looked like at a given commit once the tiles no longer live in the repo.",
+  "note": "Content-addressed gallery media for the root README. Keys are the first 16 hex chars of the file's sha256, so a URL names its bytes and a pin cannot rot. This file is also the provenance record: it is the only way to answer what the README's media looked like at a given commit once the tiles no longer live in the repo. The assets section lists the hosted media that is not a gallery tile (banner, diagram, screen recordings), produced by scripts/gallery/make_*.py and published with publish_media.py --record NAME (which writes the entry under assets/NAME).",
   "tiles": {
     "atp_synthase": {
       "webm": {
@@ -409,5 +409,142 @@
         "sha256": "773fce285f464bbc1d7c3dd8b22c39e7647028be8766bb152843d9845ce27796"
       }
     }
+  },
+  "assets": {
+    "hero-drosophila": {
+      "webp": {
+        "bytes": 4018788,
+        "content_type": "image/webp",
+        "key": "4a0c1a68d18e092e.webp",
+        "sha256": "4a0c1a68d18e092ed7767b14eab09ca139791af7326aa9da8b57176e78185ce2"
+      }
+    },
+    "quickstart-cloud": {
+      "webp": {
+        "bytes": 2313292,
+        "content_type": "image/webp",
+        "key": "b6d1359e5db8850e.webp",
+        "sha256": "b6d1359e5db8850e6f756c2dd59fccdcc936d3b253a7b38047aa58ea796b4ad5"
+      }
+    },
+    "social-preview": {
+      "png": {
+        "bytes": 756827,
+        "content_type": "image/png",
+        "key": "558d5db88635bec2.png",
+        "sha256": "558d5db88635bec21140e16600092415105ad91c4b79dcf0c2aaf4930e746117"
+      }
+    },
+    "architecture-dark": {
+      "png": {
+        "bytes": 518870,
+        "content_type": "image/png",
+        "key": "345632ca3a0ddb55.png",
+        "sha256": "345632ca3a0ddb5589ed33fd7eb543b8969061fecf6406aa0babc7822da14a1c"
+      }
+    },
+    "architecture-light": {
+      "png": {
+        "bytes": 519260,
+        "content_type": "image/png",
+        "key": "91044ca3c0ca2b00.png",
+        "sha256": "91044ca3c0ca2b008a9d0fa9f6b59027055400589a29aa15fb3faaae063e65d6"
+      }
+    },
+    "volume-to-scene": {
+      "webp": {
+        "bytes": 5027320,
+        "content_type": "image/webp",
+        "key": "3f4df30e7f4b4a4a.webp",
+        "sha256": "3f4df30e7f4b4a4afcf519fff16e27b836019982020b903d655a1a573c232dfc"
+      }
+    },
+    "lod-recipes": {
+      "webp": {
+        "bytes": 2285532,
+        "content_type": "image/webp",
+        "key": "8b1592c0e9cc72fa.webp",
+        "sha256": "8b1592c0e9cc72fa7e7e67b937189046b931921a0b391848ad90b9dcb4192938"
+      }
+    },
+    "layers-dark": {
+      "png": {
+        "bytes": 525703,
+        "content_type": "image/png",
+        "key": "ec82f918e644850d.png",
+        "sha256": "ec82f918e644850d1149652e3723abe0316cd6571f33e642760de469fa49f04b"
+      }
+    },
+    "layers-light": {
+      "png": {
+        "bytes": 530178,
+        "content_type": "image/png",
+        "key": "46c7ac9b26a6064a.png",
+        "sha256": "46c7ac9b26a6064a640458be10559f2328940b7288f87fad56c37dcfee2b627c"
+      }
+    },
+    "nd-navigation": {
+      "webp": {
+        "bytes": 2869216,
+        "content_type": "image/webp",
+        "key": "6b6795991f2b62b4.webp",
+        "sha256": "6b6795991f2b62b44d9eb2bd0891221b9d58f323eaa15b3e9cafcfbf97e180f7"
+      }
+    }
+  },
+  "superseded": {
+    "note": "Hosted objects no longer referenced by the README, kept in place on purpose (an in-place delete or overwrite races the edge cache). Not part of the README/manifest bijection; listed so an orphan audit does not mistake them for garbage.",
+    "objects": [
+      {
+        "key": "ac2a260943794358.webp",
+        "was": "quickstart-cloud at 800 px",
+        "replaced_by": "b6d1359e5db8850e.webp"
+      },
+      {
+        "key": "8ff0ed51b0987403.png",
+        "was": "social-preview with the spiral-galaxy and CT panels",
+        "replaced_by": "558d5db88635bec2.png"
+      },
+      {
+        "key": "7083a0ba46783a40.png",
+        "was": "architecture-dark, first cut",
+        "replaced_by": "345632ca3a0ddb55.png"
+      },
+      {
+        "key": "07ee0acd82c15511.png",
+        "was": "architecture-light, first cut",
+        "replaced_by": "91044ca3c0ca2b00.png"
+      },
+      {
+        "key": "39ec101479baf65d.webp",
+        "was": "volume-to-scene cut from social clip d03 (viewer first, no napari)",
+        "replaced_by": "3f4df30e7f4b4a4a.webp"
+      },
+      {
+        "key": "7be8aedb71f7d2dc.png",
+        "was": "layers-dark, first cut (mesh row claimed physical materials)",
+        "replaced_by": "ec82f918e644850d.png"
+      },
+      {
+        "key": "e6f5d569fc19c1d6.png",
+        "was": "layers-light, first cut",
+        "replaced_by": "46c7ac9b26a6064a.png"
+      }
+    ]
+  },
+  "sources": {
+    "note": "Hosted inputs of generated assets (not embedded in the README, so outside the bijection). Kept for reproducibility; never overwrite.",
+    "objects": [
+      {
+        "key": "2bc40436c253b2be.png",
+        "used_by": "social-preview",
+        "what": "Cosmicflows-4 Laniakea viewer frame (panel 2)"
+      },
+      {
+        "key": "023168eeb5de26d0.png",
+        "used_by": "social-preview",
+        "what": "Drosophila gastrulation viewer frame (panel 3)"
+      }
+    ]
   }
 }

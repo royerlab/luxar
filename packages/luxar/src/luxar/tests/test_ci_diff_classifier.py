@@ -392,6 +392,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "scripts/check_version_consistency.py pins it to the Python version",
     ),
     (
+        "ACKNOWLEDGMENTS.md",
+        "py",
+        "test_gen_data_manifest.py reads the Neuromast credit from it",
+    ),
+    (
         "CITATION.cff",
         "py",
         "scripts/check_version_consistency.py pins it to the Python version",
@@ -629,6 +634,10 @@ _NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS = {
         "test_set_version.py writes a fixture workflow at this path"
     ),
     "CHANGELOG.md": "read by a whole-tree prose vocabulary scan",
+    "LICENSE": "synthetic markdown link target inside test_check_wheel.py, never read",
+    "SECURITY.md": (
+        "synthetic markdown link target inside test_check_wheel.py, never read"
+    ),
     "changelog.d/README.md": (
         "test_set_version.py writes a fixture README at this path, to prove the "
         "preflight's changelog gate does not count it as a pending fragment"
