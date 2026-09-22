@@ -143,7 +143,12 @@ class BatchManifest:
     plans persist the corresponding per-tile weights alongside these counts.
     """
     tile_occupancy_weights: Optional[List[List[float]]] = None
-    """One Hann-weighted occupancy row per selected ``(t, c)`` slice."""
+    """One mass-weight row per selected ``(t, c)`` slice.
+
+    Rows already carry the minimum-share floor
+    (:func:`luxar.gsplats.fit_tiled_gsplats.floor_tile_seed_shares`). A
+    proportional integer allocation of each row is the final per-tile budget.
+    """
     plan_path: Optional[str] = None
     """``content`` mode: path to the shared ``FitPlan`` JSON (relative to
     ``output_dir``) every array task reads via ``fit --plan … --plan-box``."""

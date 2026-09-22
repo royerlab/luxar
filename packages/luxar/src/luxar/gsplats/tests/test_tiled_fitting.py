@@ -326,18 +326,20 @@ class TestComputeTileSpecs:
                 assert spec.overlap_high[0] == expected
 
 
-def test_tile_occupancy_weight_thresholds_and_saturates() -> None:
+def test_tile_occupancy_weight_uses_intensity_mass_not_a_threshold() -> None:
     from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
 
     tile = np.array([0.05, 1.0, 1.0], dtype=np.float32)
     window = np.array([0.25, 0.5, 1.0], dtype=np.float32)
 
+    # Hann size 1.75; windowed mass 0.0125 + 0.5 + 1.0; the dim voxel COUNTS.
+    mass = 0.05 * 0.25 + 0.5 + 1.0
     assert tile_occupancy_weight(
         tile,
         window,
-        signal_threshold=0.1,
+        intensity_scale=1.0,
         saturation_exponent=0.5,
-    ) == pytest.approx(1.75 * (1.5 / 1.75) ** 0.5)
+    ) == pytest.approx(1.75 * (mass / 1.75) ** 0.5)
 
 
 def test_tile_occupancy_weight_keeps_homogeneous_density_size_independent() -> None:
@@ -353,7 +355,7 @@ def test_tile_occupancy_weight_keeps_homogeneous_density_size_independent() -> N
         tile_occupancy_weight(
             np.ones(spec.shape, dtype=np.float32),
             window,
-            signal_threshold=0.1,
+            intensity_scale=1.0,
             saturation_exponent=0.44,
         )
         for spec, window in zip(specs, windows, strict=True)
@@ -375,10 +377,10 @@ def test_tile_occupancy_weight_preserves_calibrated_exponent_at_equal_size() -> 
     dense = np.r_[np.ones(8), np.zeros(8)].astype(np.float32)
 
     sparse_weight = tile_occupancy_weight(
-        sparse, window, signal_threshold=0.1, saturation_exponent=exponent
+        sparse, window, intensity_scale=1.0, saturation_exponent=exponent
     )
     dense_weight = tile_occupancy_weight(
-        dense, window, signal_threshold=0.1, saturation_exponent=exponent
+        dense, window, intensity_scale=1.0, saturation_exponent=exponent
     )
 
     assert dense_weight / sparse_weight == pytest.approx((8 / 2) ** exponent)
@@ -393,17 +395,19 @@ def test_tile_occupancy_weight_distinguishes_empty_and_dim_tiles() -> None:
         tile_occupancy_weight(
             np.zeros(3, dtype=np.float32),
             window,
-            signal_threshold=0.1,
+            intensity_scale=1.0,
             saturation_exponent=0.5,
         )
         == 0.0
     )
+    # A uniformly dim tile weighs by its mean intensity (5% of the ceiling),
+    # not by the smallest positive weight of a tile with "no foreground".
     assert tile_occupancy_weight(
         np.full(3, 0.05, dtype=np.float32),
         window,
-        signal_threshold=0.1,
+        intensity_scale=1.0,
         saturation_exponent=0.5,
-    ) == pytest.approx(1.75 * (1.0 / 1.75) ** 0.5)
+    ) == pytest.approx(1.75 * 0.05**0.5)
 
 
 def test_tile_occupancy_weight_preserves_hann_taper() -> None:
@@ -412,9 +416,269 @@ def test_tile_occupancy_weight_preserves_hann_taper() -> None:
     assert tile_occupancy_weight(
         np.array([1.0, 0.0, 0.0], dtype=np.float32),
         np.array([0.25, 0.5, 1.0], dtype=np.float32),
-        signal_threshold=0.1,
+        intensity_scale=1.0,
         saturation_exponent=1.0,
     ) == pytest.approx(0.25)
+
+
+def test_tile_occupancy_weight_scale_is_a_common_factor() -> None:
+    """The intensity ceiling moves every weight alike, never the split."""
+    from luxar.gsplats.fit_tiled_gsplats import tile_occupancy_weight
+
+    window = np.ones(8, dtype=np.float32)
+    tiles = [
+        np.r_[np.full(2, 0.3), np.zeros(6)].astype(np.float32),
+        np.r_[np.full(5, 0.9), np.zeros(3)].astype(np.float32),
+    ]
+    at_one = [
+        tile_occupancy_weight(t, window, intensity_scale=1.0, saturation_exponent=0.44)
+        for t in tiles
+    ]
+    at_ten = [
+        tile_occupancy_weight(t, window, intensity_scale=10.0, saturation_exponent=0.44)
+        for t in tiles
+    ]
+    assert at_one[1] / at_one[0] == pytest.approx(at_ten[1] / at_ten[0])
+    assert at_ten[0] / at_one[0] == pytest.approx(10.0**-0.44)
+
+
+def test_resolve_tile_intensity_scale_shifts_ceiling_by_floor() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import resolve_tile_intensity_scale
+
+    assert resolve_tile_intensity_scale((0.0, 10.0), None) == 10.0
+    assert resolve_tile_intensity_scale((0.0, 10.0), 4.0) == 6.0
+    assert resolve_tile_intensity_scale(None, 4.0) == 1.0
+    assert resolve_tile_intensity_scale((0.0, 3.0), 3.0) == 1.0
+
+
+def test_floor_tile_seed_shares_pins_only_tiles_of_non_trivial_mass() -> None:
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import floor_tile_seed_shares
+
+    # Four non-empty tiles (equal share 1/4; floor 1/16 of the budget). Tile 1
+    # holds 30% of the mass but was weighted to 1% (say, an exponent above 1);
+    # tile 2 holds 1% of the mass and 1% of the weight: a genuine sliver.
+    weights = [97.0, 1.0, 1.0, 1.0, 0.0]
+    masses = [0.69, 0.30, 0.01, 0.0, 0.0]
+    floored = floor_tile_seed_shares(weights, masses, min_share_fraction=0.25)
+
+    assert floored[4] == 0.0
+    assert sum(floored) == pytest.approx(sum(weights))
+    counts = allocate_weighted_integer_seeds(1600, floored)
+    assert counts[1] == 100  # exactly a quarter of the equal share (400)
+    assert counts[2] < 100 and counts[3] < 100  # trivial mass: never raised
+    assert counts[0] > counts[1]
+    assert counts[4] == 0
+    assert sum(counts) == 1600
+
+
+def test_floor_tile_seed_shares_is_a_no_op_when_nothing_is_starved() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import floor_tile_seed_shares
+
+    weights = [3.0, 2.0, 1.0, 0.0]
+    masses = [3.0, 2.0, 1.0, 0.0]
+    assert floor_tile_seed_shares(weights, masses) == pytest.approx(weights)
+
+
+def _hot_spot_plus_dim_nuclei_volume() -> np.ndarray:
+    """A min-max-normalised light-sheet look-alike: one hot spot, dim nuclei.
+
+    A 3x3 grid of 32-voxel tiles (no overlap). The centre tile carries a single
+    saturated voxel plus nuclei; six tiles carry only dim nuclei whose brightest
+    voxel is 5% of the maximum; two tiles are empty. Under the retired
+    10%-of-max foreground predicate the six dim tiles had no foreground voxel.
+    """
+    rng = np.random.default_rng(7)
+    volume = np.zeros((8, 96, 96), dtype=np.float32)
+    zz, yy, xx = np.mgrid[0:8, 0:32, 0:32]
+    for tile_y in range(3):
+        for tile_x in range(3):
+            if (tile_y, tile_x) in {(0, 0), (2, 2)}:
+                continue
+            tile = np.zeros((8, 32, 32), dtype=np.float32)
+            for _ in range(6):
+                cz, cy, cx = rng.uniform(1, 7), rng.uniform(4, 28), rng.uniform(4, 28)
+                blob = np.exp(
+                    -(
+                        (zz - cz) ** 2 / 2.0
+                        + (yy - cy) ** 2 / 6.0
+                        + (xx - cx) ** 2 / 6.0
+                    )
+                )
+                tile += (0.05 * blob).astype(np.float32)
+            volume[
+                :, tile_y * 32 : (tile_y + 1) * 32, tile_x * 32 : (tile_x + 1) * 32
+            ] = tile
+    volume[4, 48, 48] = 1.0  # the hot spot that sets the intensity ceiling
+    return volume
+
+
+def test_uniform_tile_weights_do_not_starve_dim_structured_tiles() -> None:
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import (
+        MIN_TILE_SEED_SHARE_FRACTION,
+        resolve_tile_intensity_scale,
+        uniform_tile_occupancy_weights,
+    )
+
+    volume = _hot_spot_plus_dim_nuclei_volume()
+    specs = compute_tile_specs(volume.shape, tile_size=(8, 32, 32), overlap=0)
+    assert len(specs) == 9
+    assert float(volume.max()) == 1.0
+    # The starvation precondition: no dim tile has a voxel above 10% of max.
+    dim = [i for i, s in enumerate(specs) if 0 < float(volume[s.slices].max()) < 0.1]
+    empty = [i for i, s in enumerate(specs) if float(volume[s.slices].max()) == 0.0]
+    hot = [i for i, s in enumerate(specs) if float(volume[s.slices].max()) == 1.0]
+    assert (len(dim), len(empty), len(hot)) == (6, 2, 1)
+
+    total = 3200
+    scale = resolve_tile_intensity_scale((0.0, 1.0), None)
+    weights = uniform_tile_occupancy_weights(
+        volume, specs, None, intensity_scale=scale, saturation_exponent=0.44
+    )
+    counts = allocate_weighted_integer_seeds(total, weights)
+    masses = np.array([float(volume[s.slices].sum(dtype=np.float64)) for s in specs])
+    shares = masses / masses.sum()
+
+    nonempty = len(dim) + len(hot)
+    equal_share = total / nonempty
+    floor_share = MIN_TILE_SEED_SHARE_FRACTION * equal_share
+    for i in dim:
+        assert shares[i] >= MIN_TILE_SEED_SHARE_FRACTION / nonempty
+        assert counts[i] >= floor_share, (i, counts[i], floor_share)
+        # Proportional, not binary: a dim tile's budget tracks its mass share
+        # within the saturation the exponent implies, never a token 1-2 seeds.
+        assert counts[i] > 0.5 * equal_share
+    for i in empty:
+        assert counts[i] == 0
+    assert sum(counts) == total
+    # Busy still wins: the hot tile holds the most mass and gets the most seeds.
+    assert counts[hot[0]] == max(counts)
+    assert shares[hot[0]] == max(shares)
+    # ... but by a saturated margin, not by the ~40x the binary predicate gave.
+    assert counts[hot[0]] / min(counts[i] for i in dim) < 2.0
+
+
+def test_uniform_tile_weights_use_mass_for_sparse_step_data() -> None:
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
+
+    volume = np.zeros((1, 4, 16), dtype=np.float32)
+    for tile_index, occupied in enumerate((1, 4, 9, 16)):
+        volume[0, tile_index, :occupied] = 0.8 + 0.05 * tile_index
+    specs = compute_tile_specs(volume.shape, tile_size=(1, 1, 16), overlap=0)
+
+    weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        None,
+        intensity_scale=1.0,
+        saturation_exponent=0.44,
+    )
+    expected = [
+        16.0 * (occupied * intensity / 16.0) ** 0.44
+        for occupied, intensity in zip(
+            (1, 4, 9, 16), (0.8, 0.85, 0.9, 0.95), strict=True
+        )
+    ]
+
+    assert weights == pytest.approx(expected)
+    assert allocate_weighted_integer_seeds(320, weights) == (34, 65, 95, 126)
+
+
+@pytest.mark.parametrize("threshold_spikes", [0, 1, 2])
+def test_uniform_tile_weights_ignore_uninformative_threshold_spikes(
+    threshold_spikes: int,
+) -> None:
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
+
+    volume = np.zeros((1, 65, 16), dtype=np.float32)
+    for tile_index in range(64):
+        volume[0, tile_index, :] = 0.01 + 0.001 * tile_index
+        if threshold_spikes:
+            volume[0, tile_index, 16 - threshold_spikes :] = 0.2
+    volume[0, 64, :] = 0.5
+    volume[0, 64, 0] = 1.0
+    specs = compute_tile_specs(volume.shape, tile_size=(1, 1, 16), overlap=0)
+
+    weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        None,
+        intensity_scale=1.0,
+        saturation_exponent=0.44,
+    )
+    counts = allocate_weighted_integer_seeds(32000, weights)
+
+    assert len(set(counts[:64])) == 64
+    assert counts[:64] == tuple(sorted(counts[:64]))
+    assert counts[-1] < sum(counts) / 2
+
+
+@pytest.mark.slow  # ~70s: four real 40-iteration CPU fits
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
+    """Characterize the haze/blob tradeoff against this fixture's equal split."""
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import (
+        fit_tile,
+        uniform_tile_occupancy_weights,
+    )
+
+    shape = (24, 24, 80)
+    volume = np.zeros(shape, dtype=np.float32)
+    volume[:, :, :36] = 0.05
+    zz, yy, xx = np.indices(shape)
+    for center, amplitude, sigma in (
+        ((8, 8, 52), 1.0, 2.0),
+        ((16, 16, 62), 0.9, 2.5),
+        ((8, 16, 72), 0.8, 1.8),
+        ((16, 7, 55), 0.7, 2.2),
+    ):
+        distance_squared = sum(
+            (axis - coordinate) ** 2
+            for axis, coordinate in zip((zz, yy, xx), center, strict=True)
+        )
+        volume += amplitude * np.exp(-distance_squared / (2 * sigma**2)).astype(
+            np.float32
+        )
+
+    specs = compute_tile_specs(shape, tile_size=48, overlap=8, fold_slivers=True)
+    weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        None,
+        intensity_scale=float(volume.max()),
+        saturation_exponent=0.44,
+    )
+    counts = allocate_weighted_integer_seeds(600, weights)
+    assert counts == (359, 241)
+
+    def disparity(seed_counts: tuple[int, ...]) -> float:
+        mean_amplitudes = []
+        for spec, count in zip(specs, seed_counts, strict=True):
+            result = fit_tile(
+                volume,
+                spec,
+                seeds=count,
+                n_iters=40,
+                floor="none",
+                norm_range=(float(volume.min()), float(volume.max())),
+                device="cpu",
+                cull_retention=0.95,
+                verbose=False,
+                output_space="voxel",
+            )
+            mean_amplitudes.append(float(np.mean(result.amplitudes)))
+        return max(mean_amplitudes) / min(mean_amplitudes)
+
+    selected_disparity = disparity(counts)
+    equal_disparity = disparity((300, 300))
+
+    assert selected_disparity == pytest.approx(4.39, abs=0.15)
+    assert equal_disparity == pytest.approx(3.98, abs=0.15)
+    assert selected_disparity > equal_disparity
 
 
 class TestCosineWindow:

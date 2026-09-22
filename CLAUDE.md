@@ -493,9 +493,15 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # reports): a tiled fit DIVIDES it across the tiles that survive the resolved
 # floor plus Hann window instead of giving each tile the full count. The grid is
 # unified but the WEIGHTING is not. `fit --tiling uniform` (sequential and the
-# `-j N` parent) and `batch-fit` divide K OCCUPANCY-WEIGHTED (Hann-weighted
-# tile size scaled by the saturated foreground fraction), so a busy tile gets
-# more than a nearly-empty one. Two paths stay EQUAL-SHARE: a hand-run
+# `-j N` parent) and `batch-fit` divide K by Hann-weighted above-floor intensity
+# mass. Each tile weighs
+# `Hann voxels x (mean above-floor intensity / ceiling)^alpha` — its
+# Hann-weighted intensity MASS above the resolved floor, saturated by
+# `--saturation-exponent`. This prevents a hot voxel from making whole tiles of
+# dim nuclei look empty (1-38 seeds of 32,000 for tiles holding up to 6% of the
+# intensity; a 7-14 dB loss). A tile holding >= 1/4 of the equal MASS share
+# never gets < 1/4 of the equal SEED share
+# (`MIN_TILE_SEED_SHARE_FRACTION`). Two paths stay EQUAL-SHARE: a hand-run
 # `fit --tile k/M` (no parent to hand it a count; scanning the volume per worker
 # is the cost the plan exists to avoid), and a `batch-fit` plan that cannot
 # resolve tile-local reads (`--downscale`, `--denoise`, a deferred or

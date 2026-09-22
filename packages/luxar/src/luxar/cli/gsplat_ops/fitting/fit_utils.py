@@ -537,7 +537,7 @@ def _weighted_uniform_seed_counts(
     fit_config: dict,
     saturation_exponent: float,
 ) -> "tuple[int, ...] | None":
-    """Resolve one exact occupancy-weighted count per uniform tile.
+    """Resolve one exact mass-weighted count per uniform tile.
 
     Resolves the background floor and the shared intensity scale IN
     ``fit_config`` (marked ``_floor_resolved`` / ``_norm_range_resolved``) on the
@@ -563,6 +563,7 @@ def _weighted_uniform_seed_counts(
     from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
     from luxar.gsplats.fit_tiled_gsplats import (
         _ensure_tile_norm_range,
+        resolve_tile_intensity_scale,
         uniform_tile_occupancy_weights,
     )
     from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
@@ -592,13 +593,13 @@ def _weighted_uniform_seed_counts(
         verbose=bool(fit_config.get("verbose", True)),
     )
     fit_config["_norm_range_resolved"] = True
-    norm_range = fit_config.get("norm_range")
-    signal_threshold = 0.0 if norm_range is None else 0.1 * float(norm_range[1])
+    # `_ensure_tile_norm_range` already shifted the range into the tile basis.
+    intensity_scale = resolve_tile_intensity_scale(fit_config.get("norm_range"), None)
     weights = uniform_tile_occupancy_weights(
         volume,
         specs,
         applied_floor,
-        signal_threshold=signal_threshold,
+        intensity_scale=intensity_scale,
         saturation_exponent=saturation_exponent,
     )
     counts = allocate_weighted_integer_seeds(parsed_seeds, weights)
