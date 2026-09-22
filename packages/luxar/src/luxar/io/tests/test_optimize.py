@@ -525,7 +525,7 @@ class TestRoundTrip:
         shutil.copytree(scene, src)
         root = open_group(src, mode="r+")
         encoding = dict(root["cloud/positions"].attrs["encoding"])
-        rail = 1.23456789012345
+        rail = np.nextafter(float(encoding["col_lo"][0]), np.inf)
         encoding["col_lo"] = [rail, *encoding["col_lo"][1:]]
         root["cloud/positions"].attrs["encoding"] = encoding
 
