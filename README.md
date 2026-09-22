@@ -90,21 +90,18 @@ is the slow exception).
 ### Install and Run Demos
 
 ```bash
-pip install luxar                 # Viewer, compiler and CLI; add "luxar[gsplats]" to fit volumes
-luxar demo                        # Browse the 90 bundled demos
-luxar demo run lorenz             # Run one — generates the data and opens the viewer
-```
-
-Some demos need extra packages (`luxar demo deps --install` fetches what a demo
-reports missing). To work on Luxar itself, or to run the demos from a checkout:
-
-```bash
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
 hatch shell             # Activate the environment `setup-dev` created
-luxar demo run lorenz   # Same commands as above
+luxar demo              # Browse the 90 bundled demos
+luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
+
+Once a release is published on PyPI, `pip install luxar` installs the viewer,
+compiler and CLI without a checkout (add `"luxar[gsplats]"` to fit volumes), and
+the same `luxar demo` commands apply. Some demos need extra packages;
+`luxar demo deps --install` fetches what a demo reports missing.
 
 That last command generates a Lorenz attractor and opens the viewer:
 
@@ -239,28 +236,37 @@ Typical options, roughly from most to least convenient for scenes of a few GB:
 
 | Host | Why it works well | Watch out for |
 |---|---|---|
-| **Cloudflare R2** (what [demos.luxarviewer.dev](https://demos.luxarviewer.dev) uses) | Object storage with no egress fees, a free tier of about 10 GB, public buckets, custom domains, and a CORS policy pasted in the dashboard. Reads are billed per request, so it pairs well with `luxar optimize --profile hosting`. | Custom domain needs a Cloudflare-managed DNS zone. Check the free tier before publishing terabytes. |
-| **Amazon S3 / Google Cloud Storage** | Same static-object model; the CORS JSON in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#your-host-must-allow-cross-origin-reads) applies as is. | Egress is billed per GB, which is the cost that grows with popularity. |
-| **GitHub Pages** | Free, versioned, zero setup for small scenes: commit the store to a `gh-pages` branch. CORS is on by default. | Files above 100 MB are rejected and Git LFS objects are not served, so it suits scenes under a few hundred MB in total. |
+| **Cloudflare R2** (what serves the demo corpus at `data.luxarviewer.dev`) | Object storage with no egress fees, a free tier of about 10 GB, public buckets, custom domains, and a CORS policy pasted in the dashboard. Reads are billed per request, so chunk size matters (see below). | Custom domain needs a Cloudflare-managed DNS zone. Check the free tier before publishing terabytes. |
+| **Amazon S3 / Google Cloud Storage** | Same static-object model; the S3 CORS JSON in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#your-host-must-allow-cross-origin-reads) applies to S3 and R2 as is, and GCS takes the equivalent through `gsutil cors set`. | Egress is billed per GB, which is the cost that grows with popularity. |
+| **GitHub Pages** | Free, versioned, zero setup for small scenes: commit the store to a `gh-pages` branch. CORS and byte ranges work out of the box. | Files above 100 MB are rejected and Git LFS objects are not served, so it suits scenes under a few hundred MB in total. Drop a `.nojekyll` file at the site root, or Jekyll strips the dotfiles a zarr-v2 store and `.luxar-index.json` depend on. |
 | **Your lab's web server** (nginx, Apache) | Data stays on infrastructure you control; an nginx snippet is in the [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#configuration-for-common-hosts). | You add the CORS and range headers yourself; institutional proxies sometimes strip `Range`. |
-| **No host at all** | `luxar export scene.luxar.zarr -o out/` writes the viewer plus a stdlib-only `serve.py`; `--native macos` gives a double-clickable app. | The recipient runs it locally; nothing is shareable as a link. |
+| **No host at all** | `luxar export scene.luxar.zarr -o out/` writes the viewer plus a stdlib-only `serve.py`; from a source checkout, after `make build-launchers`, `--native macos` gives a double-clickable app ([Distributing scenes](docs/tutorials/distributing_scenes.rst)). | The recipient runs it locally; nothing is shareable as a link. |
 
 An archive of record such as Zenodo is the right place to deposit a scene for
 citation; whether it can also serve it to the viewer depends on its CORS and range
 headers, so test before linking to it.
 
-Before publishing a large scene, run `luxar optimize scene.luxar.zarr out.luxar.zarr
---profile hosting`: it re-chunks the store so an opening view costs hundreds of
-requests instead of thousands, which is what object stores bill for. To verify a
-host, request one chunk with `curl -sI -H "Origin: https://luxarviewer.dev" <URL>`
-and look for the `access-control-allow-origin` header; for a zipped store add
-`-H "Range: bytes=0-0"` and expect a `206`. A folder of scenes on a static host
-becomes browsable in the viewer's Dataset Browser through a hand-written
-`.luxar-index.json` ([Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#directory-listings-and-luxar-indexjson)).
-The demo corpus itself is hosted this way; its full setup, CORS checks and failure
-modes are in the [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md), and
-[Distributing scenes](docs/tutorials/distributing_scenes.rst) covers exports, native
-bundles and sharing across operating systems.
+Object stores bill and throttle per request, and a store fresh from the compiler
+is chunked for local reads, so re-chunk before publishing with `luxar optimize`
+and pick the profile by access pattern: `local` (64 KB) when the viewer will slice
+into a large node, `hosting` or `archive` when it loads the node whole. Re-chunking
+one demo to the 64 KB profile cut a cold load from 9,390 requests to 2,348. The
+re-chunked store carries a new content hash, so publish it under a new URL prefix
+rather than over the old one, or warm viewer caches will serve stale chunks; the
+profile guidance is in the [CLI Reference](docs/guides/user/CLI_REFERENCE.md#luxar-optimize).
+To verify a host, request one chunk with
+`curl -sI -H "Origin: https://luxarviewer.dev" <URL>` and look for the
+`access-control-allow-origin` header; for a zipped store, make a ranged GET,
+`curl -s -o /dev/null -D - -H "Range: bytes=0-0" <URL>`, and expect a `206`
+(a HEAD may legitimately answer `200`). This is how the demo corpus is hosted: a
+public bucket of directory stores behind a CORS policy, with its full setup,
+checks and failure modes in the
+[Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md). A folder of
+scenes on a static host becomes browsable in the viewer's Dataset Browser through
+a hand-written `.luxar-index.json`
+([Viewer Guide](docs/guides/user/VIEWER_GUIDE.md#directory-listings-and-luxar-indexjson)),
+and [Distributing scenes](docs/tutorials/distributing_scenes.rst) covers exports,
+native bundles and sharing across operating systems.
 
 From here: [Geometry Types](#geometry-types) for points, lines, splats, and meshes;
 [n-Dimensional Visualization](#n-dimensional-visualization) for 4D and beyond; and
@@ -362,7 +368,7 @@ stream:
 | Dataset | Source volume | Fitted representation |
 |---------|---------------|-----------------------|
 | **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 296,559 splats · **2.0 MB** |
-| **C. elegans embryo** — confocal, 400 timepoints | 400 × 41 × 512 × 512 = 4.3 G voxels | 1.37M splats · **81 MB** (about 200 KB per timepoint) |
+| **C. elegans embryo** — confocal, 400 timepoints | 400 × 41 × 512 × 512 = 4.3 G voxels | 5.64M splats · **81 MB** (about 200 KB per timepoint) |
 
 The *C. elegans* fit is fetched from the permissively licensed Zenodo demo record
 (see [Where the demo data lives](#where-the-demo-data-lives)); the Tribolium fit is
@@ -692,8 +698,9 @@ and composition semantics.
 
 | Input | Action |
 |-------|--------|
-| Left drag / right drag | Rotate around the scene / pan. On macOS the default is left = rotate, right = pan ("natural drag"); elsewhere the reverse. Swap it in the Rendering panel |
+| Left drag / right drag | Rotate around the scene / pan. On macOS the default is left = rotate, right = pan ("natural drag"); elsewhere the reverse. Swap it in the Navigation panel (right-click the Navigation button in the rail) |
 | Scroll | Zoom |
+| Shift + scroll | Roll around the viewing axis |
 | Ctrl/Cmd + scroll | Change field of view |
 
 ### Fly Mode
@@ -783,9 +790,12 @@ render-and-readback call, in milliseconds; the vsync budget at 60 FPS is 16.7 ms
 
 At ten million elements the call runs 12–16% over the budget; the viewer's adaptive
 DPR (on by default, and pinned for these measurements) buys the frame rate back by
-downscaling the render buffer. Real scenes are lighter than these synthetic sweeps:
-all fifteen measured demo scenes hold 60 FPS, the heaviest, a 2.2M-splat time-lapse
-frame, in 5.6 ms. Frame rate is GPU-, resolution- and geometry-dependent, so treat
+downscaling the render buffer. Typical scenes are lighter than these synthetic
+sweeps: the fifteen demo scenes of the same study all hold 60 FPS, the heaviest, a
+2.2M-splat time-lapse frame, in 5.6 ms. Whole-slide and other very large splat
+scenes sit well above the budget at full resolution (the 29.6M-splat CMU-1 slide
+renders in about 108 ms per frame at DPR 1.0) and rely on adaptive DPR. Frame rate
+is GPU-, resolution- and geometry-dependent, so treat
 these as one reference point rather than a guarantee. Load time is dominated by
 transfer and decode, so it tracks your link and cache state rather than element
 count alone.
@@ -1218,11 +1228,11 @@ is credited on the recording itself:
 | Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
 | *Drosophila* embryogenesis (500 timepoints) | 1 file, 1.1 GiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
 
-These records cover 25 of the 31 datasets tracked by the data manifest. The other
-six (Gaia, IllustrisTNG, Acto3D, Tribolium, FlyLight MCFO, Dip-C) are built locally
-because redistribution is not permitted or not yet arranged, or because regeneration
-is cheap. The remaining demos fetch their catalogues straight from the upstream
-providers credited above.
+These records cover 25 of the 31 demo datasets. Those 31 are the datasets tracked
+by the data manifest; the other six (Gaia, IllustrisTNG, Acto3D, Tribolium, FlyLight
+MCFO, Dip-C) are built locally because redistribution is not permitted or not yet
+arranged, or because regeneration is cheap. The remaining demos fetch their
+catalogues straight from the upstream providers credited above.
 
 `luxar demo run <name>` resolves only what that demo needs, caches it under
 `~/.cache/luxar/`, and verifies every file against a SHA-256 recorded in
