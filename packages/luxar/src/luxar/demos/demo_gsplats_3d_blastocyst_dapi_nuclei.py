@@ -113,6 +113,7 @@ Options:
     --no-napari:      Skip napari visualization (useful for headless/CI)
     --serve-only:     Skip fitting, just serve existing scene
     --show-roundtrip: Show matplotlib comparison of original vs reconstructed volume
+    --synthetic:      Use clearly labelled procedural stand-in nuclei, not microscopy
 
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
@@ -220,6 +221,19 @@ SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 NO_NAPARI = "--no-napari" in sys.argv
 SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
+# Opt-in ONLY. Renders procedurally generated stand-in nuclei with no citation
+# and a scene that says so, for working offline or smoke-testing the pipeline.
+# It is never reached by a failure: an acquisition error raises.
+SYNTHETIC = "--synthetic" in sys.argv
+
+# A synthetic fit must never be mistaken for — or reused as — the real one, so
+# it gets its own cache file and its own scene name. Sharing LOCAL_FIT would
+# let one offline run poison every later online run through the cache.
+if SYNTHETIC:
+    LOCAL_FIT = local_fit_path(DEMO_NAME, "dapi_synthetic.gsplats.zarr.zip")
+    SCENE_STEM = "gsplats_3d_blastocyst_dapi_nuclei_SYNTHETIC"
+else:
+    SCENE_STEM = "gsplats_3d_blastocyst_dapi_nuclei"
 
 # Setup
 Arbol.max_depth = 3
@@ -239,11 +253,9 @@ def load_dapi_data():
     ORIGINAL stored channel -- the grid and element type it was acquired at, and
     what it OCCUPIES in the store (compressed), which are different numbers and
     give different compression ratios. ``stored_bytes`` is ``None`` when the
-    store cannot report a size, and ``acquisition`` itself is ``None`` when the
-    array was synthesized here and so is its own
-    source. The fit stamps the acquisition rather than the working copy, or the
-    compression ratio it publishes would be quoted against a downscaled float32
-    copy of the data instead of the data.
+    store cannot report a size. The fit stamps the acquisition rather than the
+    working copy, or the compression ratio it publishes would be quoted against
+    a downscaled float32 copy of the data instead of the data.
 
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Blin et al., Lowell lab (University of Edinburgh)
@@ -318,28 +330,56 @@ def load_dapi_data():
             aprint(f"✓ Acquisition: {acquisition[0]} {acquisition[1]}")
             return V, acquisition
 
-        except Exception as e:
-            aprint(f"⚠ Remote loading failed: {e}")
-            aprint("Creating synthetic fallback data...")
+        except Exception as exc:
+            # FAIL. This used to catch every exception and return fifteen
+            # random Gaussian blobs in place of the microscopy — while the
+            # scene went on to apply Blin et al.'s DOI, a CC BY 4.0 notice and
+            # a description of a Leica SP8 confocal acquisition to them. A
+            # download failure, a missing fsspec, or a decode error therefore
+            # produced fabricated imagery carrying real biological provenance,
+            # and only a console line said so. For a tool that accompanies a
+            # paper that is the worst failure mode available, so acquisition
+            # errors now stop the demo.
+            #
+            # DatasetUnavailable rather than a bare raise gives callers a
+            # distinct acquisition failure to handle. main intentionally lets
+            # it propagate so the command exits non-zero rather than fabricating.
+            raise DatasetUnavailable(
+                f"could not load IDR idr0062 image 6001240 from {ZARR_URL}: {exc}. "
+                "Check the network and that `fsspec` is installed. To render "
+                "procedurally generated stand-in nuclei instead, pass "
+                "--synthetic — that produces a clearly-labelled synthetic scene "
+                "with no citation, not a substitute for this dataset."
+            ) from exc
 
-            # Fallback: synthetic nuclei-like blobs
-            shape = (TARGET_SIZE, TARGET_SIZE, TARGET_SIZE)
-            V = np.zeros(shape, dtype=np.float32)
 
-            # Add nucleus-like blobs
-            for _ in range(15):
-                center = [np.random.uniform(10, s - 10) for s in shape]
-                sigma = np.random.uniform(4, 8)
-                amplitude = np.random.uniform(0.6, 1.0)
+def synthesize_nuclei_volume(seed: int = 0):
+    """Procedurally generate nucleus-like blobs. NOT microscopy.
 
-                grids = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
-                dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
-                V += amplitude * np.exp(-dist_sq / (2 * sigma**2))
+    Reachable only via ``--synthetic``. Everything downstream that would
+    otherwise assert provenance — citation, title, description, caption and the
+    cache path — is switched by the same flag, so this volume cannot end up
+    wearing the real dataset's identity.
 
-            V = np.clip(V, 0, 1).astype(np.float32)
-            aprint(f"✓ Fallback created: {V.shape}")
-            # Synthesized here, so this array IS the source: nothing to declare.
-            return V, None
+    Returns ``(volume, None)``: synthesized here, so this array IS its own
+    source and there is no acquisition to declare.
+    """
+    with asection("Synthesizing stand-in nuclei (NOT real microscopy)"):
+        rng = np.random.default_rng(seed)
+        shape = (TARGET_SIZE, TARGET_SIZE, TARGET_SIZE)
+        V = np.zeros(shape, dtype=np.float32)
+
+        grids = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
+        for _ in range(15):
+            center = [rng.uniform(10, s - 10) for s in shape]
+            sigma = rng.uniform(4, 8)
+            amplitude = rng.uniform(0.6, 1.0)
+            dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
+            V += amplitude * np.exp(-dist_sq / (2 * sigma**2))
+
+        V = np.clip(V, 0, 1).astype(np.float32)
+        aprint(f"✓ Synthetic volume: {V.shape} (seeded, reproducible)")
+        return V, None
 
 
 # =============================================================================
@@ -532,9 +572,7 @@ def add_volume_frame(scene, centers: np.ndarray) -> None:
 def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
     if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_3d_blastocyst_dapi_nuclei.luxar.zarr"
-        )
+        output_path = get_demos_output_dir() / f"{SCENE_STEM}.luxar.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -549,13 +587,36 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
-                citation=DEMO_META["citation"],
+                # No citation on a synthetic scene: Blin et al. did not
+                # produce these blobs, and a DOI is an assertion of
+                # provenance, not decoration.
+                citation=None if SYNTHETIC else DEMO_META["citation"],
             )
             stamp_input_digests(scene)
 
             # Add scene metadata
-            scene.attrs["title"] = "GSplats: Mouse Blastocyst, DAPI-Stained Nuclei"
-            scene.attrs["description"] = """
+            scene.attrs["title"] = (
+                "GSplats: SYNTHETIC stand-in nuclei (not microscopy)"
+                if SYNTHETIC
+                else "GSplats: Mouse Blastocyst, DAPI-Stained Nuclei"
+            )
+            if SYNTHETIC:
+                scene.attrs["description"] = """
+SYNTHETIC STAND-IN DATA - NOT MICROSCOPY
+========================================
+
+These Gaussian splats were fitted to fifteen procedurally generated
+nucleus-like blobs, not to any imaged specimen. Nothing here is measured, and
+no biological conclusion can be drawn from it.
+
+It exists so the fitting and rendering pipeline can be exercised without
+network access. The real demo loads IDR study idr0062, image 6001240
+(Blin et al. 2019, PLoS Biology, doi:10.1371/journal.pbio.3000388, CC BY 4.0);
+run without --synthetic for that. Those authors and that licence are
+deliberately NOT attached to this scene.
+            """
+            else:
+                scene.attrs["description"] = """
 3D Gaussian Splatting - Mouse Blastocyst (E3.5)
 ============================================
 
@@ -599,8 +660,13 @@ Controls:
             add_volume_frame(scene, gsplats_data.centers)
             add_demo_caption(
                 scene,
-                "Light-sheet microscopy • DAPI-labelled nuclei",
-                DEMO_META.get("citation"),
+                # Confocal, not light-sheet: idr0062 was imaged on a Leica
+                # SP8 (see the module docstring and the scene description).
+                # This caption is the one a viewer actually reads.
+                "SYNTHETIC data • procedurally generated, not microscopy"
+                if SYNTHETIC
+                else "Confocal microscopy • DAPI-labelled nuclei",
+                None if SYNTHETIC else DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")
@@ -738,13 +804,29 @@ def serve_scene(scene_path):
 
 
 def resolve_gsplats() -> list[GSplatData] | None:
-    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+    """Resolve the selected mode's fit cache, or return None to build it.
 
-    Only ``DatasetUnavailable`` falls through to the local door — the narrow
-    "these bytes are not obtainable from anywhere yet" case. An unknown file
-    name, a missing packaged manifest or an in-repo copy failing its sha256 are
-    faults, and must not be disguised as a routine multi-minute refit.
+    Synthetic mode consults only its local namespace. Real mode tries the
+    manifest before this machine's earlier refit; only ``DatasetUnavailable``
+    falls through to that local door. Manifest/configuration faults still raise.
     """
+    if SYNTHETIC:
+        # NEVER consult the manifest under --synthetic. It resolves the pinned
+        # REAL artifact, and main() reaches here before anything else looks at
+        # the flag — so on any machine that can reach the record (or has the
+        # cache warm) the real microscopy was returned and then published under
+        # the synthetic identity: citation stripped, title saying "not
+        # microscopy", and the real artifact's sha256 stamped in as an input
+        # digest. That is the provenance defect this demo was fixed for,
+        # pointing the other way. It also meant --synthetic did not work
+        # offline, which is its entire purpose.
+        #
+        # Only the synthetic namespace is consulted, and only when not
+        # recomputing; otherwise the caller synthesizes and fits.
+        if RECOMPUTE:
+            return None
+        return load_local_fit_gsplats_at([LOCAL_FIT], label=f"{DEMO_NAME} (synthetic)")
+
     try:
         precomputed = load_dataset_gsplats(
             DEMO_NAME,
@@ -764,18 +846,34 @@ def resolve_gsplats() -> list[GSplatData] | None:
     return precomputed
 
 
+def announce_data_provenance() -> None:
+    """Say, up front, whether this run is real microscopy or a stand-in."""
+    if SYNTHETIC:
+        aprint("⚠ SYNTHETIC MODE — procedurally generated stand-in nuclei.")
+        aprint("  This is NOT microscopy and the scene carries no citation.")
+    else:
+        aprint("Real microscopy data + Gaussian Splatting + Web visualization")
+
+
+def acquire_volume():
+    """Return ``(volume, acquisition)`` from IDR, or synthesize under --synthetic.
+
+    The one place the choice is made, so `main` carries no branch for it and
+    the two sources cannot be confused at the call site.
+    """
+    return synthesize_nuclei_volume() if SYNTHETIC else load_dapi_data()
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
     aprint("GSplats Demo: Mouse Blastocyst DAPI-Stained Nuclei")
     aprint("=" * 70)
-    aprint("Real microscopy data + Gaussian Splatting + Web visualization")
+    announce_data_provenance()
     aprint("")
 
     # Determine output path
-    output_path = (
-        get_demos_output_dir() / "gsplats_3d_blastocyst_dapi_nuclei.luxar.zarr"
-    )
+    output_path = get_demos_output_dir() / f"{SCENE_STEM}.luxar.zarr"
 
     # Serve only mode
     if SERVE_ONLY:
@@ -800,7 +898,7 @@ def main():
         # --recompute path (or no data to be had): download raw data, fit from
         # scratch, and cache the fit under LOCAL_FIT.
         warn_if_no_cuda_gpu()
-        volume, acquisition = load_dapi_data()
+        volume, acquisition = acquire_volume()
         gsplats_data_original = fit_dapi_gsplats(volume, acquisition)
 
     # Optional round-trip visualisation (before centering/scaling transforms)
