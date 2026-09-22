@@ -180,7 +180,7 @@ class _Progress:
             self.extreme = ratio
 
 
-def _finite(value: object) -> Optional[float]:
+def _gridded(value: object) -> Optional[float]:
     """``value`` on the persisted float grid, or ``None`` if it is not finite."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -192,7 +192,7 @@ def _finite(value: object) -> Optional[float]:
 
 def _count(value: object) -> int:
     """``value`` as a non-negative splat count, or ``0``."""
-    fv = _finite(value)
+    fv = _gridded(value)
     if fv is None or fv < 0.0:
         return 0
     return int(fv)
@@ -216,7 +216,7 @@ def _window_of(attrs: dict) -> Tuple[Optional[float], Optional[float]]:
     raw = attrs.get("amplitude_data_range")
     if not isinstance(raw, (list, tuple)) or len(raw) != 2:
         return None, None
-    lo, hi = _finite(raw[0]), _finite(raw[1])
+    lo, hi = _gridded(raw[0]), _gridded(raw[1])
     if lo is None or hi is None:
         return None, None
     return lo, hi
@@ -275,7 +275,7 @@ def _ordered_children(
 ) -> List[Tuple[str, "zarr.Group", dict]]:
     """Scene-node children in canonical index, numeric-name, then name order."""
     kids = _child_nodes(group)
-    indices = [_finite(attrs.get("child_index")) for _, _, attrs in kids]
+    indices = [_gridded(attrs.get("child_index")) for _, _, attrs in kids]
     if kids and all(i is not None for i in indices):
         order: List[float] = [i for i in indices if i is not None]
         return [kid for _, kid in sorted(zip(order, kids), key=lambda p: p[0])]
@@ -403,8 +403,8 @@ def _combine(parts: Sequence[_Summary]) -> _Summary:
 
 def _leaf_summary(attrs: dict) -> _Summary:
     """Summary of one ``type == "gsplats"`` leaf from its attrs."""
-    mass = _finite(attrs.get("amplitude_mass"))
-    mwma = _finite(attrs.get("amplitude_mass_weighted_mean"))
+    mass = _gridded(attrs.get("amplitude_mass"))
+    mwma = _gridded(attrs.get("amplitude_mass_weighted_mean"))
     lo, hi = _window_of(attrs)
     # "The statistics are PRESENT", not "the mass is positive": a legitimately
     # mass-less leaf (all-zero amplitudes) is stamped ``0.0`` / ``0.0``, and
