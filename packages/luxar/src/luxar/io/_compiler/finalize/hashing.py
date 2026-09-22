@@ -106,7 +106,7 @@ def _canonicalize_attr_value(value: Any) -> tuple[Any, bool]:
 
 
 def _canonicalized_group_attrs(group: zarr.Group) -> dict[str, Any]:
-    """Persist and return the portable form of one hashed group attrs document."""
+    """Persist and return the canonical form of one hashed group attrs document."""
     attrs = dict(group.attrs)
     canonical, changed = _canonicalize_attr_value(attrs)
     canonical_attrs = cast(dict[str, Any], canonical)
