@@ -400,8 +400,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         subnormal quantum of either dtype. The viewer additionally needs
         ``1.5 * span * eps32`` for its staged-float32 linear affine chain.
         Geometric-log anchors are already stored at float32 precision; their
-        remaining term is the upward displacement of ``exp(max_log)`` from the
-        authored maximum.
+        remaining term is the upward displacement of either decoded endpoint
+        from the authored minimum or maximum.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.
@@ -475,7 +475,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             or bits == 0
             or (mode == EncodingMode.AUTO and positive_scalar_bits == 8)
         )
-        viewer_rounding_slack = 0.0
+        stored_grid_slack = 0.0
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
             min_log = float(np.float32(np.log(nonzero.min())))
@@ -491,9 +491,14 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             slack = max_val * half_step
             if max_val <= float(np.finfo(np.float32).max):
                 with np.errstate(over="ignore"):
+                    decoded_min = float(np.float32(np.exp(min_log)))
                     decoded_max = float(np.float32(np.exp(max_log)))
-                if np.isfinite(decoded_max):
-                    viewer_rounding_slack = max(0.0, decoded_max - max_val)
+                if np.isfinite(decoded_min) and np.isfinite(decoded_max):
+                    stored_grid_slack = max(
+                        0.0,
+                        decoded_min - float(nonzero.min()),
+                        decoded_max - max_val,
+                    )
         else:
             min_val = float(np.min(arr))
             span = max_val - min_val
@@ -502,7 +507,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             # With u = eps32 / 2, the viewer's six staged f32 roundings are
             # bounded by u * (min + max + 4 * span). The decode ULP below pays
             # 2u * max, leaving 3u * span = 1.5 * eps32 * span here.
-            viewer_rounding_slack = 1.5 * span * float(np.finfo(np.float32).eps)
+            stored_grid_slack = 1.5 * span * float(np.finfo(np.float32).eps)
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
 
@@ -516,7 +521,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         decode_ulp = max(max_val * decode_eps, decode_floor)
         return float(
             min(
-                slack + decode_ulp + viewer_rounding_slack,
+                slack + decode_ulp + stored_grid_slack,
                 float(np.finfo(np.float64).max),
             )
         )

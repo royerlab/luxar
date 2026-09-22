@@ -332,6 +332,37 @@ def test_positive_scalar_slack_bounds_geolog_with_canonical_anchors(
     assert float(upward.max()) <= slack
 
 
+def test_positive_scalar_slack_bounds_geolog_lower_anchor_rounding() -> None:
+    data = np.geomspace(1e-4 / 1.00005, 1e-4, 2000, dtype=np.float64)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data,
+        EncodingMode.AUTO,
+        positive_scalar_encoding="linear",
+        positive_scalar_bits=8,
+        allow_lut=False,
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        positive_scalar_encoding="linear",
+        positive_scalar_bits=8,
+        allow_lut=False,
+        deduplicate=False,
+    )
+    assert group["s"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
+    decoded = ArrayDecoder().decode(group["s"], group).astype(np.float64)
+    upward = decoded - data
+    assert float(upward.max()) > 0.0
+    assert float(upward.max()) <= slack
+
+
 def test_positive_scalar_slack_bounds_degenerate_geolog_canonical_anchor() -> None:
     data = np.array([0.0] * 500 + [123456.0] * 500, dtype=np.float64)
     encoder = ArrayEncoder()
