@@ -24,8 +24,8 @@ from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 
 # Shared hash contract for the compile-time walk, `luxar optimize`'s streaming
 # twin, and the standalone GSplat stamper: group attrs use the float grid below;
-# array attrs remain exact producer-owned decoder metadata. These exclusions keep
-# all three from disagreeing on what group metadata the digest covers:
+# array attrs remain exact producer-owned decoder metadata. The two scene hashers
+# additionally share these exclusions so they cannot disagree on group content:
 #
 # * `content_hash` — the digest itself (self-reference).
 # * `luxar_software_version` — the `luxar.__version__` that wrote the store.
@@ -35,10 +35,10 @@ from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 #   `io/tests/test_hash_reproducibility.py`.
 HASH_EXCLUDED_ATTRS: frozenset[str] = frozenset({"content_hash", SOFTWARE_VERSION_ATTR})
 
-# Authored group metadata can inherit last-bit drift from reductions and
-# transcendental functions. Twelve significant decimal digits absorb differences
-# below roughly 1e-12 relative. Larger drift is a producer bug to stabilize where
-# the value is derived; array encoding attrs are never rounded here.
+# Group metadata can inherit last-bit drift from reductions and transcendental
+# functions. Twelve significant decimal digits absorb differences below roughly
+# 1e-12 relative. Larger drift is a producer bug to stabilize where the value is
+# derived; array encoding attrs are never rounded here.
 ATTR_FLOAT_SIGNIFICANT_DIGITS = 12
 
 # Attr keys whose value is the filename of a plain (non-zarr) payload file stored
