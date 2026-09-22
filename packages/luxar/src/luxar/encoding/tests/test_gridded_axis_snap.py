@@ -99,7 +99,10 @@ def test_the_snap_is_what_makes_it_exact(tmp_path) -> None:
 
 
 def test_long_time_axis_uses_portable_step_and_still_round_trips(tmp_path) -> None:
-    uniq = np.float64(1000.0) + np.arange(1000, dtype=np.float64) * np.float64(0.1)
+    authored = (
+        np.float64(1000.0) + np.arange(1000, dtype=np.float64) * np.float64(0.1)
+    ).astype(np.float32)
+    uniq = np.unique(authored.astype(np.float64))
     lo = float(uniq[0])
     extent = float(uniq[-1] - uniq[0])
     offsets = uniq - lo
@@ -116,7 +119,6 @@ def test_long_time_axis_uses_portable_step_and_still_round_trips(tmp_path) -> No
     assert step == float(f"{np.nextafter(raw_step, np.inf):.12g}")
     assert n_unique == len(uniq)
 
-    authored = uniq.astype(np.float32)
     back = _roundtrip(tmp_path, authored[:, None])
     np.testing.assert_array_equal(back[:, 0], authored)
 
