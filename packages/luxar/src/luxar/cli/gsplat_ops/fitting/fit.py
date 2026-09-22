@@ -505,7 +505,11 @@ def run_fit_volume(
         0.44,
         "--saturation-exponent",
         help="Sub-linear exponent alpha (K~feat^alpha) for content planning "
-        "and occupancy-weighted uniform integer seed budgets.",
+        "and the split of a uniform integer --seeds budget: each non-empty "
+        "tile weighs Hann voxels x (mean above-floor intensity / ceiling)^alpha "
+        "(threshold-free intensity mass, so dim structure counts), and a tile "
+        "holding >= 1/4 of the equal mass share never gets < 1/4 of the equal "
+        "seed share.",
         rich_help_panel="Content-aware tiling",
     ),
     saturation_cap: Optional[int] = typer.Option(

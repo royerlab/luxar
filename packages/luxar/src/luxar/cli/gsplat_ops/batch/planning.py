@@ -382,10 +382,10 @@ def _uniform_tile_occupancy_weights(
     channel_shape: Tuple[int, ...],
     spatial_shape: Tuple[int, ...],
     applied_floor: Optional[float],
-    signal_threshold: float,
+    intensity_scale: float,
     saturation_exponent: float,
 ) -> List[float]:
-    """Measure one slice's saturated foreground occupancy tile by tile."""
+    """Measure one slice's mass-weighted tile occupancy tile by tile."""
     from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
 
     view = _pinned_slice_volume(
@@ -402,7 +402,7 @@ def _uniform_tile_occupancy_weights(
         view,
         specs,
         applied_floor,
-        signal_threshold=signal_threshold,
+        intensity_scale=intensity_scale,
         saturation_exponent=saturation_exponent,
     )
 
@@ -478,7 +478,9 @@ def _planned_uniform_tile_local_metadata(
         None if planned_floor in (None, "none", "0", 0, 0.0) else float(planned_floor)
     )
     assert norm_range is not None
-    signal_threshold = 0.1 * max(0.0, float(norm_range[1]) - (applied_floor or 0.0))
+    from luxar.gsplats.fit_tiled_gsplats import resolve_tile_intensity_scale
+
+    intensity_scale = resolve_tile_intensity_scale(norm_range, applied_floor)
     pairs = [(timepoint, channel) for timepoint in t_indices for channel in c_indices]
     max_workers = min(8, len(pairs))
     counts = [len(specs)] * len(pairs)
@@ -503,7 +505,7 @@ def _planned_uniform_tile_local_metadata(
                     channel_shape=tuple(ome_info.channel_shape),
                     spatial_shape=tuple(spatial),
                     applied_floor=applied_floor,
-                    signal_threshold=signal_threshold,
+                    intensity_scale=intensity_scale,
                     saturation_exponent=saturation_exponent,
                 ): (row_index, timepoint, channel)
                 for row_index, (timepoint, channel) in enumerate(pairs)

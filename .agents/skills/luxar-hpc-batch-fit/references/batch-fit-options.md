@@ -42,12 +42,16 @@ scale; a config-supplied `voxel_size` takes precedence over discovered spacing.
 
 Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 (t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
-volume's non-empty tiles by Hann-weighted foreground occupancy instead of fitting
+volume's non-empty tiles by Hann-weighted intensity MASS instead of fitting
 K per tile, so each timepoint/channel tracks K rather than K x the grid size. The
-weight is `Hann voxels × foreground_fraction^saturation_exponent`: homogeneous
-content therefore gets the same splat density in differently-sized tiles, while
-the calibrated exponent still controls relative density between equally-sized
-tiles. An exponent fitted by `cal --fit-exponent` is measured across region scales
+weight is `Hann voxels × (mean above-floor intensity / ceiling)^saturation_exponent`
+— threshold-free, so a dim tile of real structure is proportional rather than
+falling to a token budget (the retired 10%-of-max foreground predicate did that
+on hot-spot-normalised light-sheet data): homogeneous content gets the same
+splat density in differently-sized tiles, while the calibrated exponent still
+controls relative density between equally-sized tiles. A tile holding at least a
+quarter of the equal mass share is never budgeted below a quarter of the equal
+seed share. An exponent fitted by `cal --fit-exponent` is measured across region scales
 on absolute feature counts; uniform weighting reuses it only for density, keeping
 tile size linear at fixed density. Largest-remainder rounding preserves K whenever
 K can give every non-empty tile one seed; otherwise each non-empty tile gets one.

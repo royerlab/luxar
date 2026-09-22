@@ -56,24 +56,130 @@ def tile_has_signal(tile_data: np.ndarray) -> bool:
     return not bool(tile_data.max() < _TILE_SIGNAL_EPS)
 
 
+# A tile holding at least this fraction of the EQUAL mass share (1/N of the
+# Hann-weighted above-floor intensity, N = non-empty tiles) is never budgeted
+# below the same fraction of the equal seed share (K/N), before integer
+# rounding. It is a backstop, not the allocation law: the mass weighting below
+# already scales a dim tile's budget with its content, and at the default
+# saturation exponent (0.44) the floor rarely binds.
+MIN_TILE_SEED_SHARE_FRACTION = 0.25
+
+
+def resolve_tile_intensity_scale(
+    norm_range: "Sequence[float] | None", applied_floor: "float | None"
+) -> float:
+    """The intensity ceiling ABOVE the floor that occupancy weights measure against.
+
+    A CLI/batch ``norm_range`` is expressed in raw input units while uniform
+    tiles see floor-subtracted data, so the ceiling is shifted by the floor
+    (the same basis :func:`_ensure_tile_norm_range` gives the tiles). With no
+    shared range — each tile derives its own scale — the weights fall back to
+    unit scale, which changes their magnitude but not the split, since the
+    allocation is proportional and every tile shares the constant.
+    """
+    if norm_range is None:
+        return 1.0
+    scale = float(norm_range[1]) - float(applied_floor or 0.0)
+    if not np.isfinite(scale) or scale <= _TILE_SIGNAL_EPS:
+        return 1.0
+    return scale
+
+
+def occupancy_weight_from_mass(
+    mass: float,
+    hann_voxels: float,
+    *,
+    intensity_scale: float = 1.0,
+    saturation_exponent: float = 1.0,
+) -> float:
+    """Weight one tile from its Hann-weighted above-floor intensity mass.
+
+    ``hann_voxels * (mass / hann_voxels / intensity_scale) ** alpha``: the
+    tile's Hann-weighted size times its saturated MEAN windowed intensity as a
+    fraction of the shared ceiling. Homogeneous content therefore gets the same
+    splat density in tiles of different sizes (the fraction cancels the size),
+    while between equal-size tiles the budgets stand in the ratio of their
+    masses to the power ``alpha``. A tile with no mass weighs zero and is
+    skipped.
+    """
+    if mass <= 0.0 or hann_voxels <= 0.0:
+        return 0.0
+    fraction = mass / hann_voxels / max(float(intensity_scale), _TILE_SIGNAL_EPS)
+    return float(hann_voxels * fraction ** float(saturation_exponent))
+
+
 def tile_occupancy_weight(
     tile_data: np.ndarray,
     window: np.ndarray,
     *,
-    signal_threshold: float = _TILE_SIGNAL_EPS,
+    intensity_scale: float = 1.0,
     saturation_exponent: float = 1.0,
 ) -> float:
-    """Return Hann-weighted tile size scaled by saturated foreground fraction."""
+    """Return Hann-weighted tile size scaled by saturated mean intensity.
+
+    ``tile_data`` is floor-subtracted (background at zero), so its Hann-weighted
+    sum is the tile's intensity MASS above the fitter's resolved floor. The
+    weight is threshold-free: it used to count voxels above a fixed fraction of
+    the volume maximum, which on a light-sheet volume whose maximum is a hot
+    spot left whole tiles of dim nuclei with no "foreground" voxel and the
+    smallest positive weight (1-38 seeds of a 32,000 budget for tiles holding
+    up to 6% of the intensity). Mass makes a dim tile proportional instead of
+    binary. See :func:`occupancy_weight_from_mass` for the formula.
+    """
     windowed = tile_data * window
     if not tile_has_signal(windowed):
         return 0.0
-    occupied = tile_data >= max(float(signal_threshold), _TILE_SIGNAL_EPS)
-    hann_voxels = float(np.sum(window, dtype=np.float64))
-    foreground = float(np.sum(window, where=occupied, dtype=np.float64))
-    if foreground > 0.0:
-        foreground_fraction = foreground / hann_voxels
-        return float(hann_voxels * foreground_fraction ** float(saturation_exponent))
-    return float(hann_voxels * (1.0 / hann_voxels) ** float(saturation_exponent))
+    return occupancy_weight_from_mass(
+        float(np.sum(windowed, dtype=np.float64)),
+        float(np.sum(window, dtype=np.float64)),
+        intensity_scale=intensity_scale,
+        saturation_exponent=saturation_exponent,
+    )
+
+
+def floor_tile_seed_shares(
+    weights: Sequence[float],
+    masses: Sequence[float],
+    *,
+    min_share_fraction: float = MIN_TILE_SEED_SHARE_FRACTION,
+) -> list[float]:
+    """Raise weights so no tile of non-trivial mass falls below the floor share.
+
+    With ``N`` non-empty tiles, a tile holding at least ``min_share_fraction /
+    N`` of the total mass is pinned at ``min_share_fraction / N`` of the budget
+    whenever its proportional share would be smaller; the remaining budget is
+    split proportionally among the others (water-filling, repeated until no
+    further tile drops below the floor, which is monotone and terminates within
+    ``N`` passes). The returned weights sum to the input sum, so their
+    magnitude stays in Hann-voxel units. Weights of zero stay zero; a tile
+    holding less than the trigger share is never raised, so slivers of nearly
+    nothing keep their small budgets.
+    """
+    n_positive = sum(weight > 0.0 for weight in weights)
+    total_mass = float(sum(masses))
+    total_weight = float(sum(weights))
+    if n_positive <= 1 or total_mass <= 0.0 or total_weight <= 0.0:
+        return [float(weight) for weight in weights]
+    floor_share = float(min_share_fraction) / n_positive
+    eligible = [
+        weight > 0.0 and mass / total_mass >= floor_share
+        for weight, mass in zip(weights, masses, strict=True)
+    ]
+    pinned = [False] * len(weights)
+    shares = [0.0] * len(weights)
+    for _ in range(len(weights)):
+        free = [i for i, w in enumerate(weights) if w > 0.0 and not pinned[i]]
+        free_weight = sum(weights[i] for i in free)
+        free_budget = 1.0 - floor_share * sum(pinned)
+        for i in free:
+            shares[i] = free_budget * weights[i] / free_weight if free_weight else 0.0
+        newly = [i for i in free if eligible[i] and shares[i] < floor_share]
+        if not newly:
+            break
+        for i in newly:
+            pinned[i] = True
+            shares[i] = floor_share
+    return [share * total_weight for share in shares]
 
 
 def count_nonempty_tiles(
@@ -115,24 +221,47 @@ def uniform_tile_occupancy_weights(
     specs: Sequence[TileSpec],
     applied_floor: "float | None",
     *,
-    signal_threshold: float,
+    intensity_scale: float = 1.0,
     saturation_exponent: float,
+    min_share_fraction: float = MIN_TILE_SEED_SHARE_FRACTION,
 ) -> list[float]:
-    """Measure normalized Hann-weighted occupancy for a uniform tile grid."""
+    """Measure mass-weighted occupancy for a uniform tile grid.
+
+    Each tile weighs ``hann_voxels * (mass / hann_voxels / intensity_scale) **
+    saturation_exponent`` (:func:`occupancy_weight_from_mass`) over its
+    floor-subtracted, Hann-windowed data, then :func:`floor_tile_seed_shares`
+    guarantees a tile holding at least ``min_share_fraction`` of the equal mass
+    share at least that fraction of the equal seed share. An empty tile weighs
+    zero. A grid with no signal anywhere returns equal weights, the safe
+    divisor of :func:`count_nonempty_tiles`.
+    """
     weights: list[float] = []
+    masses: list[float] = []
     for spec in specs:
         tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
         if applied_floor is not None:
             tile_data = np.clip(tile_data - applied_floor, 0.0, None)
+        window = cosine_window(spec)
+        windowed = tile_data * window
+        mass = (
+            float(np.sum(windowed, dtype=np.float64))
+            if tile_has_signal(windowed)
+            else 0.0
+        )
+        masses.append(mass)
         weights.append(
-            tile_occupancy_weight(
-                tile_data,
-                cosine_window(spec),
-                signal_threshold=signal_threshold,
+            occupancy_weight_from_mass(
+                mass,
+                float(np.sum(window, dtype=np.float64)),
+                intensity_scale=intensity_scale,
                 saturation_exponent=saturation_exponent,
             )
         )
-    return weights if any(weight > 0.0 for weight in weights) else [1.0] * len(specs)
+    if not any(weight > 0.0 for weight in weights):
+        return [1.0] * len(specs)
+    return floor_tile_seed_shares(
+        weights, masses, min_share_fraction=min_share_fraction
+    )
 
 
 def _validate_tile_seed_counts(
