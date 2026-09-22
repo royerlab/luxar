@@ -19,7 +19,7 @@ from its left (``@0``) or right (``@1``) side instead, e.g. ``file:frame.png@0.2
 The defaults reproduce the shipped banner; pass ``--panel`` four times to
 change the line-up and ``--scale 2`` for a 2560x1280 master.
 
-    hatch run python scripts/gallery/make_social_preview.py -o luxar-social-preview.png
+    hatch run python scripts/gallery/make_social_preview.py -o social-preview.png
     hatch run python scripts/gallery/make_social_preview.py \\
         --panel key:gsplats_3d_cells3d_multichannel \\
         --panel file:laniakea.png --panel file:drosophila.png \\
@@ -188,9 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         default=1,
         help="1 for 1280x640 (GitHub's size), 2 for a 2560x1280 master",
     )
-    parser.add_argument(
-        "-o", "--output", type=Path, default=Path("luxar-social-preview.png")
-    )
+    parser.add_argument("-o", "--output", type=Path, default=Path("social-preview.png"))
     args = parser.parse_args(argv)
 
     sources = args.panel or list(DEFAULT_PANELS)

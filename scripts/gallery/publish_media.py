@@ -164,6 +164,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME",
         help="also write the entry to media-manifest.json under assets/NAME (single file)",
     )
+    parser.add_argument(
+        "--record-by-stem",
+        action="store_true",
+        help="record every file under assets/<file stem> (what `make publish-readme-media` uses)",
+    )
     args = parser.parse_args(argv)
     if args.record and len(args.files) != 1:
         parser.error("--record takes exactly one file")

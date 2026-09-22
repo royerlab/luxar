@@ -10,8 +10,10 @@ embeds both through a ``<picture>`` element. Fonts are named exactly as
     hatch run python scripts/gallery/make_architecture_diagram.py -o out/   # dark + light PNG + SVG
     hatch run python scripts/gallery/make_architecture_diagram.py --theme dark --scale 2 -o out/
 
-The PNGs are hosted by content hash on data.luxarviewer.dev/media (like the
-gallery tiles) rather than committed.
+The PNGs are named after their manifest asset (``architecture-dark.png``,
+``layers-light.png``, ...) so ``publish_media.py --record-by-stem`` records them
+under the right name; they are hosted by content hash on
+data.luxarviewer.dev/media rather than committed.
 """
 
 # mypy: allow-untyped-calls, allow-untyped-defs
@@ -978,7 +980,7 @@ def build_layers(t: Theme) -> dw.Drawing:
             (
                 "mesh/",
                 "Meshes",
-                "import PLY/OBJ/STL/VTP/glTF; decimation,\nmesh LOD, physical materials",
+                "import PLY/OBJ/STL/VTP/glTF; decimation\nand mesh LOD; physical-material env maps in environment/",
             ),
         ],
     )
@@ -1021,7 +1023,7 @@ def build_layers(t: Theme) -> dw.Drawing:
             (
                 "demos/",
                 "Demos",
-                "90 bundled demos; data pinned by SHA-256\nand fetched on demand",
+                "90 bundled demos; hosted data pinned by\nSHA-256 and fetched on demand",
             ),
         ],
     )
@@ -1210,8 +1212,8 @@ def main(argv: list[str] | None = None) -> int:
         else [DARK if args.theme == "dark" else LIGHT]
     )
     figures = {
-        "pipeline": (build, W, H, "luxar-architecture"),
-        "layers": (build_layers, LAYERS_W, LAYERS_H, "luxar-layers"),
+        "pipeline": (build, W, H, "architecture"),
+        "layers": (build_layers, LAYERS_W, LAYERS_H, "layers"),
     }
     for which in list(figures) if args.which == "both" else [args.which]:
         builder, width, height, stem = figures[which]

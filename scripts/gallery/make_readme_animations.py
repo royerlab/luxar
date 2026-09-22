@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cut the README's looping animations (WebP) from the release screen recordings.
 
-The README embeds four animations, all served from ``data.luxarviewer.dev/media``
+The README embeds five animations, all served from ``data.luxarviewer.dev/media``
 by content hash rather than committed to git:
 
 * ``hero``        the Drosophila gastrulation recording (social clip ``d01``),
@@ -12,7 +12,9 @@ by content hash rather than committed to git:
                   viewer: four excerpts of Supplementary Video 1's master,
 * ``lod``         the six ``lod --recipe`` topologies built from one Tribolium
                   fit, side by side and up close: excerpts of Supplementary
-                  Video 7's master.
+                  Video 7's master,
+* ``ndnav``       the Dimension Navigation panel playing the time axis of the
+                  C. elegans recording: an excerpt of Supplementary Video 12.
 
 The sources are the release social kit's 1080p H.264 clips on the shared drive
 (``Shared drives/royerlab/Projects/luxar/social_media_release/clips/
@@ -90,6 +92,17 @@ ANIMATIONS = {
         # the six recipes side by side; the levels column swapping coarse to fine;
         # the tiles column; the adaptive column close up; back to the row
         segments=((0.0, 5.0), (12.0, 6.0), (45.0, 5.0), (99.0, 6.0), (118.0, 4.0)),
+    ),
+    "ndnav": Animation(
+        "nd-navigation",
+        "SuppVideo12_viewer_interface.mp4",
+        1000,
+        fps=10,
+        quality=48,
+        source="supp",
+        # the Dimension Navigation panel plays the time axis of the C. elegans
+        # recording: a handful of nuclei become a full embryo with its tracks
+        segments=((74.0, 20.0),),
     ),
 }
 

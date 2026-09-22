@@ -1637,7 +1637,7 @@ README_ASSETS_DIR ?= build/readme-assets
 
 generate-readme-banner:  ## Compose the 1280x640 social-preview banner (also the README header)
 	@mkdir -p $(README_ASSETS_DIR)
-	hatch run python scripts/gallery/make_social_preview.py -o $(README_ASSETS_DIR)/luxar-social-preview.png
+	hatch run python scripts/gallery/make_social_preview.py -o $(README_ASSETS_DIR)/social-preview.png
 
 generate-readme-diagram:  ## Draw the pipeline and layers diagrams, dark + light PNG (needs rsvg-convert)
 	hatch run python scripts/gallery/make_architecture_diagram.py -o $(README_ASSETS_DIR)

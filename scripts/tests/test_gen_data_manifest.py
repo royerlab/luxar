@@ -55,8 +55,14 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
     # source of the data.
     assert "unpublished" in neuromast
 
+    # The public dataset credits live in ACKNOWLEDGMENTS.md, which the README
+    # links from its Gallery and Acknowledgments sections.
     readme = (SCRIPT.parents[1] / "README.md").read_text(encoding="utf-8")
-    neuromast_credit = readme.split("- **Zebrafish Neuromast**", 1)[1].split("\n", 1)[0]
+    assert "](ACKNOWLEDGMENTS.md)" in readme
+    credits = (SCRIPT.parents[1] / "ACKNOWLEDGMENTS.md").read_text(encoding="utf-8")
+    neuromast_credit = credits.split("- **Zebrafish Neuromast**", 1)[1].split("\n", 1)[
+        0
+    ]
     assert "unpublished iSIM" in neuromast_credit
     assert "Mechanochemical symmetry breaking" in neuromast_credit
     assert "Nature Physics* 16:949-957" in neuromast_credit
@@ -68,6 +74,7 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
     # since either one alone still points a reader at the paper the data author
     # asked us to move off.
     assert "10.1016/j.cub.2019.08.060" not in readme
+    assert "10.1016/j.cub.2019.08.060" not in credits
     assert "Notch-mediated" not in readme
 
     for dataset_name in (

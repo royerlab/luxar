@@ -300,7 +300,8 @@ bandwidth is metered; a hosted object costs nothing per clone):
 `make publish-readme-media` uploads whatever is not yet hosted (key =
 `sha256[:16].<ext>`, never overwritten, verified back over HTTPS by content
 type, size and hash), records each object under `assets/<file stem>` in
-`media-manifest.json` (the generators name files after their asset), and prints
+`media-manifest.json` (the generators name their files after the asset:
+`social-preview.png`, `architecture-dark.png`, `hero-drosophila.webp`, ...), and prints
 the URLs to paste into the README. `verify_media.py` (and the viewer's `gallery-selection` test) require an
 exact match between the README's hosted URLs and the manifest, so an asset that
 is embedded but not recorded fails CI. A re-cut therefore gets a new URL; the old object stays, because the

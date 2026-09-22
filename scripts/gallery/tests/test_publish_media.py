@@ -96,3 +96,26 @@ def test_superseded_objects_are_recorded_outside_the_bijection() -> None:
     for obj in manifest["superseded"]["objects"]:
         assert obj["key"] not in live
         assert obj["replaced_by"] in live
+
+
+def test_cli_dry_run_and_record_by_stem_parse_and_derive_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    png = tmp_path / "hero-drosophila.png"
+    png.write_bytes(b"\x89PNG fake")
+    assert pub.main(["--dry-run", str(png)]) == 0
+    out = capsys.readouterr().out
+    assert "hero-drosophila.png" in out and ".png" in out
+    # --record-by-stem must parse and name the entry after the file stem; stub
+    # the network and rclone calls so the test stays offline.
+    manifest_path = tmp_path / "media-manifest.json"
+    manifest_path.write_text(json.dumps({"base_url": pub.BASE_URL, "tiles": {}}))
+    monkeypatch.setattr(pub, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(pub, "exists_remote", lambda key: True)
+    monkeypatch.setattr(
+        pub, "verify", lambda key, digest, size: f"{pub.BASE_URL}/{key}"
+    )
+    assert pub.main(["--record-by-stem", str(png)]) == 0
+    assert "hero-drosophila" in json.loads(manifest_path.read_text())["assets"]
+    with pytest.raises(SystemExit):
+        pub.main(["--record", "x", "--record-by-stem", str(png)])

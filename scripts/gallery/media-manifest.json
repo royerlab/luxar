@@ -469,18 +469,26 @@
     },
     "layers-dark": {
       "png": {
-        "bytes": 520868,
+        "bytes": 525703,
         "content_type": "image/png",
-        "key": "7be8aedb71f7d2dc.png",
-        "sha256": "7be8aedb71f7d2dc5e0d6de83ff753cb6847246b96fc6641b0151a03fd111e6b"
+        "key": "ec82f918e644850d.png",
+        "sha256": "ec82f918e644850d1149652e3723abe0316cd6571f33e642760de469fa49f04b"
       }
     },
     "layers-light": {
       "png": {
-        "bytes": 525413,
+        "bytes": 530178,
         "content_type": "image/png",
-        "key": "e6f5d569fc19c1d6.png",
-        "sha256": "e6f5d569fc19c1d6efc34969b669c9a7468744ec7408156ed17be238e0da9ad0"
+        "key": "46c7ac9b26a6064a.png",
+        "sha256": "46c7ac9b26a6064a640458be10559f2328940b7288f87fad56c37dcfee2b627c"
+      }
+    },
+    "nd-navigation": {
+      "webp": {
+        "bytes": 2869216,
+        "content_type": "image/webp",
+        "key": "6b6795991f2b62b4.webp",
+        "sha256": "6b6795991f2b62b44d9eb2bd0891221b9d58f323eaa15b3e9cafcfbf97e180f7"
       }
     }
   },
@@ -511,6 +519,16 @@
         "key": "39ec101479baf65d.webp",
         "was": "volume-to-scene cut from social clip d03 (viewer first, no napari)",
         "replaced_by": "3f4df30e7f4b4a4a.webp"
+      },
+      {
+        "key": "7be8aedb71f7d2dc.png",
+        "was": "layers-dark, first cut (mesh row claimed physical materials)",
+        "replaced_by": "ec82f918e644850d.png"
+      },
+      {
+        "key": "e6f5d569fc19c1d6.png",
+        "was": "layers-light, first cut",
+        "replaced_by": "46c7ac9b26a6064a.png"
       }
     ]
   },
