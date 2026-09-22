@@ -537,7 +537,7 @@ def _weighted_uniform_seed_counts(
     fit_config: dict,
     saturation_exponent: float,
 ) -> "tuple[int, ...] | None":
-    """Resolve one exact adaptive mass-weighted count per uniform tile.
+    """Resolve one exact mass-weighted count per uniform tile.
 
     Resolves the background floor and the shared intensity scale IN
     ``fit_config`` (marked ``_floor_resolved`` / ``_norm_range_resolved``) on the

@@ -143,7 +143,7 @@ class BatchManifest:
     plans persist the corresponding per-tile weights alongside these counts.
     """
     tile_occupancy_weights: Optional[List[List[float]]] = None
-    """One adaptive mass-weight row per selected ``(t, c)`` slice.
+    """One mass-weight row per selected ``(t, c)`` slice.
 
     Rows already carry the minimum-share floor
     (:func:`luxar.gsplats.fit_tiled_gsplats.floor_tile_seed_shares`). A

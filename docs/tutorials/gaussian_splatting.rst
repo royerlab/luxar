@@ -374,7 +374,7 @@ which case you are in:
 
 * ``--tiling uniform`` launched as one command — the sequential in-process
   path, or a ``-j N`` parent and its workers — weights the split by
-  **mass-first adaptive occupancy**: each tile initially weighs its Hann-weighted size times its mean
+  **mass weighting**: each tile weighs its Hann-weighted size times its mean
   above-floor intensity (as a fraction of the shared ceiling) raised to
   ``--saturation-exponent``, so a busy tile gets more than a barely occupied
   one and a *dim* tile of real structure gets a proportional budget rather
