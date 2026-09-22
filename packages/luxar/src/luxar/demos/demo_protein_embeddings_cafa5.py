@@ -340,6 +340,20 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
 # =============================================================================
 
 
+def load_accessions(ids_file: Path) -> list[str]:
+    """Read UniProt accessions from a downloaded plain-string ``.npy`` array."""
+    try:
+        array = np.atleast_1d(np.load(ids_file, allow_pickle=False))
+    except ValueError as error:
+        if "allow_pickle" not in str(error):
+            raise
+        raise ValueError(
+            "the bundle's accessions file is not a plain string array; refusing "
+            f"to unpickle downloaded file {ids_file}"
+        ) from error
+    return [str(x) for x in array]
+
+
 def select_bundle_files(data_dir: Path) -> tuple[Path, Path | None]:
     """Resolve the CAFA5 bundle's embeddings file and its matching accessions.
 
@@ -418,7 +432,7 @@ def load_protein_embeddings(
         # Load protein IDs (UniProt accessions — what the cluster naming needs)
         if ids_file is not None:
             aprint(f"Loading protein IDs: {ids_file.name}")
-            protein_ids = [str(x) for x in np.load(ids_file, allow_pickle=True)]
+            protein_ids = load_accessions(ids_file)
             aprint(f"✓ Loaded {len(protein_ids):,} protein IDs")
         else:
             # No accessions means no naming: say so rather than letting the
@@ -933,6 +947,7 @@ def load_cached_umap(
 
     with asection("Loading cached UMAP coordinates"):
         aprint(f"Cache: {cache_path}")
+        # This is the demo's own cache, written by reduce_embeddings_umap below.
         with np.load(cache_path, allow_pickle=True) as cached:
             positions = cached["positions"]
             stored_ids = (
@@ -958,7 +973,7 @@ def load_cached_umap(
         if legacy_ids_path is None or not legacy_ids_path.exists():
             aprint("⚠️  No source accessions available — recomputing UMAP")
             return None
-        recovered = [str(x) for x in np.load(legacy_ids_path, allow_pickle=True)]
+        recovered = load_accessions(legacy_ids_path)
         if len(recovered) != len(positions):
             aprint(
                 f"⚠️  {len(recovered):,} accessions vs {len(positions):,} cached "

@@ -93,7 +93,9 @@ dependencies = [
     "websockets>=13,<18",
     "arbol>=2025.2.27.2",
     "ansicolors>=1.1.8",
-    "requests>=2.31.0",
+    # >=2.32.4 for GHSA-9hjg-9r4m-mvj7: below it, a redirect could leak the
+    # .netrc credentials for the ORIGINAL host to the redirect target.
+    "requests>=2.32.4",
     "aiohttp>=3.9.0",
     "fsspec>=2023.1.0",
     "xxhash>=3.0.0",

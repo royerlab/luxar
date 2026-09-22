@@ -150,8 +150,8 @@ class _SameHostCORSMiddleware(CORSMiddleware):
     can hold several addresses on the same network, and a wildcard bind
     answers on all of them. Baking one guessed address into
     ``allow_origin_regex`` rejects a client that dialled a sibling address —
-    verified on a development Mac with Wi-Fi at ``10.0.0.55`` and Ethernet at
-    ``10.0.0.146``, where the route probe names only the second. Comparing
+    verified on a development Mac holding one address on Wi-Fi and another on
+    Ethernet, where the route probe names only one of them. Comparing
     against the ``Host`` the request actually carried needs no guess at all,
     and keeps working for an address added after startup.
 
