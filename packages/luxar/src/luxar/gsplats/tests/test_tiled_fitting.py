@@ -559,6 +559,65 @@ def test_uniform_tile_weights_do_not_starve_dim_structured_tiles() -> None:
     assert counts[hot[0]] / min(counts[i] for i in dim) < 2.0
 
 
+@pytest.mark.slow  # ~35s: two real 40-iteration CPU fits
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+def test_mass_weighting_keeps_haze_amplitudes_below_equal_share_disparity() -> None:
+    """Regression for the haze/blob volume that motivated occupancy weighting."""
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import (
+        fit_tile,
+        uniform_tile_occupancy_weights,
+    )
+
+    shape = (24, 24, 80)
+    volume = np.zeros(shape, dtype=np.float32)
+    volume[:, :, :36] = 0.05
+    zz, yy, xx = np.indices(shape)
+    for center, amplitude, sigma in (
+        ((8, 8, 52), 1.0, 2.0),
+        ((16, 16, 62), 0.9, 2.5),
+        ((8, 16, 72), 0.8, 1.8),
+        ((16, 7, 55), 0.7, 2.2),
+    ):
+        distance_squared = sum(
+            (axis - coordinate) ** 2
+            for axis, coordinate in zip((zz, yy, xx), center, strict=True)
+        )
+        volume += amplitude * np.exp(-distance_squared / (2 * sigma**2)).astype(
+            np.float32
+        )
+
+    specs = compute_tile_specs(shape, tile_size=48, overlap=8, fold_slivers=True)
+    weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        None,
+        intensity_scale=float(volume.max()),
+        saturation_exponent=0.44,
+    )
+    counts = allocate_weighted_integer_seeds(600, weights)
+    assert counts == (359, 241)
+
+    mean_amplitudes = []
+    for spec, count in zip(specs, counts, strict=True):
+        result = fit_tile(
+            volume,
+            spec,
+            seeds=count,
+            n_iters=40,
+            floor="none",
+            norm_range=(float(volume.min()), float(volume.max())),
+            device="cpu",
+            cull_retention=0.95,
+            verbose=False,
+            output_space="voxel",
+        )
+        mean_amplitudes.append(float(np.mean(result.amplitudes)))
+
+    disparity = max(mean_amplitudes) / min(mean_amplitudes)
+    assert disparity < 5.0  # equal-share baseline: 6.14x
+
+
 class TestCosineWindow:
     """Tests for cosine_window()."""
 
