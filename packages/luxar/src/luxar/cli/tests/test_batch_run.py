@@ -1165,10 +1165,8 @@ def test_batch_plan_records_uniform_tile_occupancy_for_workers(
     assert "each worker resolves the exact non-empty count" not in output
 
 
-def test_batch_plan_uses_one_occupancy_mode_across_slices(tmp_path: Path) -> None:
-    from luxar.gsplats.fit_tiled_gsplats import (
-        uniform_tile_occupancy_weight_candidates,
-    )
+def test_batch_plan_records_mass_weights_for_each_slice(tmp_path: Path) -> None:
+    from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
     from luxar.gsplats.tiling import compute_tile_specs
 
     full = np.zeros((2, 16, 16, 64), dtype=np.float32)
@@ -1183,15 +1181,12 @@ def test_batch_plan_uses_one_occupancy_mode_across_slices(tmp_path: Path) -> Non
     src = tmp_path / "movie.zarr"
     _write_timelapse(src, full)
     specs = compute_tile_specs(full.shape[1:], 16, 0, fold_slivers=True)
-    mass_0, foreground_0 = uniform_tile_occupancy_weight_candidates(
+    weights_0 = uniform_tile_occupancy_weights(
         full[0], specs, None, intensity_scale=1.0, saturation_exponent=0.44
     )
-    mass_1, foreground_1 = uniform_tile_occupancy_weight_candidates(
+    weights_1 = uniform_tile_occupancy_weights(
         full[1], specs, None, intensity_scale=1.0, saturation_exponent=0.44
     )
-    assert foreground_0 is not None
-    assert foreground_0 != pytest.approx(mass_0)
-    assert foreground_1 is None
 
     manifest = _plan(
         src,
@@ -1202,7 +1197,7 @@ def test_batch_plan_uses_one_occupancy_mode_across_slices(tmp_path: Path) -> Non
         tile_overlap=0,
     ).manifest
 
-    np.testing.assert_allclose(manifest.tile_occupancy_weights, [mass_0, mass_1])
+    np.testing.assert_allclose(manifest.tile_occupancy_weights, [weights_0, weights_1])
 
 
 def test_batch_plan_defers_invalid_seeds_to_workers(

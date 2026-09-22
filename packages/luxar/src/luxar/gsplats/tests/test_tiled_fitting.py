@@ -559,7 +559,7 @@ def test_uniform_tile_weights_do_not_starve_dim_structured_tiles() -> None:
     assert counts[hot[0]] / min(counts[i] for i in dim) < 2.0
 
 
-def test_uniform_tile_weights_keep_sparse_step_rule_when_it_tracks_mass() -> None:
+def test_uniform_tile_weights_use_mass_for_sparse_step_data() -> None:
     from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
     from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
 
@@ -575,26 +575,31 @@ def test_uniform_tile_weights_keep_sparse_step_rule_when_it_tracks_mass() -> Non
         intensity_scale=1.0,
         saturation_exponent=0.44,
     )
-    expected = [16.0 * (occupied / 16.0) ** 0.44 for occupied in (1, 4, 9, 16)]
+    expected = [
+        16.0 * (occupied * intensity / 16.0) ** 0.44
+        for occupied, intensity in zip(
+            (1, 4, 9, 16), (0.8, 0.85, 0.9, 0.95), strict=True
+        )
+    ]
 
     assert weights == pytest.approx(expected)
-    assert allocate_weighted_integer_seeds(320, weights) == (36, 67, 95, 122)
+    assert allocate_weighted_integer_seeds(320, weights) == (34, 65, 95, 126)
 
 
-@pytest.mark.parametrize("add_threshold_spikes", [False, True])
-def test_uniform_tile_weights_reject_uninformative_foreground_proxy(
-    add_threshold_spikes: bool,
+@pytest.mark.parametrize("threshold_spikes", [0, 1, 2])
+def test_uniform_tile_weights_ignore_uninformative_threshold_spikes(
+    threshold_spikes: int,
 ) -> None:
     from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
     from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
 
-    volume = np.zeros((1, 9, 16), dtype=np.float32)
-    for tile_index, occupied in enumerate(range(2, 10)):
-        volume[0, tile_index, :occupied] = 0.05
-        if add_threshold_spikes:
-            volume[0, tile_index, 15] = 0.2
-    volume[0, 8, :] = 0.5
-    volume[0, 8, 0] = 1.0
+    volume = np.zeros((1, 65, 16), dtype=np.float32)
+    for tile_index in range(64):
+        volume[0, tile_index, :] = 0.01 + 0.001 * tile_index
+        if threshold_spikes:
+            volume[0, tile_index, 16 - threshold_spikes :] = 0.2
+    volume[0, 64, :] = 0.5
+    volume[0, 64, 0] = 1.0
     specs = compute_tile_specs(volume.shape, tile_size=(1, 1, 16), overlap=0)
 
     weights = uniform_tile_occupancy_weights(
@@ -604,10 +609,10 @@ def test_uniform_tile_weights_reject_uninformative_foreground_proxy(
         intensity_scale=1.0,
         saturation_exponent=0.44,
     )
-    counts = allocate_weighted_integer_seeds(3200, weights)
+    counts = allocate_weighted_integer_seeds(32000, weights)
 
-    assert len(set(counts[:8])) == 8
-    assert counts[:8] == tuple(sorted(counts[:8]))
+    assert len(set(counts[:64])) == 64
+    assert counts[:64] == tuple(sorted(counts[:64]))
     assert counts[-1] < sum(counts) / 2
 
 

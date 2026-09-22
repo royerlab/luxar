@@ -384,10 +384,10 @@ def _uniform_tile_occupancy_weights(
     applied_floor: Optional[float],
     intensity_scale: float,
     saturation_exponent: float,
-) -> tuple[List[float], "Optional[List[float]]"]:
-    """Measure one slice's mass and compatible foreground weight candidates."""
+) -> List[float]:
+    """Measure one slice's mass weights."""
     from luxar.gsplats.fit_tiled_gsplats import (
-        uniform_tile_occupancy_weight_candidates,
+        uniform_tile_occupancy_weights,
     )
 
     view = _pinned_slice_volume(
@@ -400,7 +400,7 @@ def _uniform_tile_occupancy_weights(
         channel_shape=channel_shape,
         spatial_shape=spatial_shape,
     )
-    return uniform_tile_occupancy_weight_candidates(
+    return uniform_tile_occupancy_weights(
         view,
         specs,
         applied_floor,
@@ -485,9 +485,7 @@ def _planned_uniform_tile_local_metadata(
     intensity_scale = resolve_tile_intensity_scale(norm_range, applied_floor)
     pairs = [(timepoint, channel) for timepoint in t_indices for channel in c_indices]
     max_workers = min(8, len(pairs))
-    candidates: list[tuple[List[float], Optional[List[float]]]] = [
-        ([1.0] * len(specs), None) for _ in pairs
-    ]
+    weights: list[List[float]] = [[1.0] * len(specs) for _ in pairs]
     with asection(
         f"Scanning uniform tile occupancy across {len(pairs)} slices "
         f"({max_workers} parallel)"
@@ -515,20 +513,11 @@ def _planned_uniform_tile_local_metadata(
             }
             for completed, future in enumerate(as_completed(futures), start=1):
                 row_index, timepoint, channel = futures[future]
-                candidates[row_index] = future.result()
+                weights[row_index] = future.result()
                 aprint(
                     f"Tile occupancy: {completed}/{len(pairs)} "
                     f"(T={timepoint}, C={channel})"
                 )
-    use_foreground = all(
-        foreground_weights is not None for _, foreground_weights in candidates
-    )
-    weights = [
-        foreground_weights
-        if use_foreground and foreground_weights is not None
-        else mass_weights
-        for mass_weights, foreground_weights in candidates
-    ]
     counts = [sum(weight > 0.0 for weight in row) for row in weights]
     return True, counts, weights
 

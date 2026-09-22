@@ -537,7 +537,7 @@ def _weighted_uniform_seed_counts(
     fit_config: dict,
     saturation_exponent: float,
 ) -> "tuple[int, ...] | None":
-    """Resolve one exact adaptive mass/foreground count per uniform tile.
+    """Resolve one exact adaptive mass-weighted count per uniform tile.
 
     Resolves the background floor and the shared intensity scale IN
     ``fit_config`` (marked ``_floor_resolved`` / ``_norm_range_resolved``) on the
@@ -593,10 +593,6 @@ def _weighted_uniform_seed_counts(
         verbose=bool(fit_config.get("verbose", True)),
     )
     fit_config["_norm_range_resolved"] = True
-    # Mass is the default signal proxy. The old 10%-of-ceiling foreground split
-    # is retained only when its per-tile weights correlate >= 0.95 with mass,
-    # preserving sparse step-like data without starving hot-spot-normalised dim
-    # structure (see ``uniform_tile_occupancy_weights``).
     # `_ensure_tile_norm_range` already shifted the range into the tile basis.
     intensity_scale = resolve_tile_intensity_scale(fit_config.get("norm_range"), None)
     weights = uniform_tile_occupancy_weights(

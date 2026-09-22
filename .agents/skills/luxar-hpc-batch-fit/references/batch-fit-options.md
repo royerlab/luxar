@@ -45,11 +45,7 @@ Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 volume's non-empty tiles with a mass-first adaptive rule instead of fitting K
 per tile, so each timepoint/channel tracks K rather than K x the grid size. The
 default weight is `Hann voxels × (mean above-floor intensity / ceiling)^saturation_exponent`;
-the historical 10%-of-ceiling foreground weights are retained only when every
-normalized foreground-weight share is within two percentage points of its mass-weight share
-and tiles with at most one Hann-weighted above-threshold voxel hide at most 10% of the total intensity mass below the threshold. One plan uses that
-rule only if every selected `(t, c)` slice qualifies. This preserves sparse step-like data
-while a dim tile of real structure on hot-spot-normalised data is
+A dim tile of real structure on hot-spot-normalised data is therefore
 proportional rather than falling to a token budget: homogeneous content gets the same
 splat density in differently-sized tiles, while the calibrated exponent still
 controls relative density between equally-sized tiles. A tile holding at least a
