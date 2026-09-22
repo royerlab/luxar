@@ -437,18 +437,18 @@
     },
     "architecture-dark": {
       "png": {
-        "bytes": 522518,
+        "bytes": 518870,
         "content_type": "image/png",
-        "key": "7083a0ba46783a40.png",
-        "sha256": "7083a0ba46783a401bb99fad9912a741fc444104268ab796b1b2ee0418e6ed4f"
+        "key": "345632ca3a0ddb55.png",
+        "sha256": "345632ca3a0ddb5589ed33fd7eb543b8969061fecf6406aa0babc7822da14a1c"
       }
     },
     "architecture-light": {
       "png": {
-        "bytes": 522718,
+        "bytes": 519260,
         "content_type": "image/png",
-        "key": "07ee0acd82c15511.png",
-        "sha256": "07ee0acd82c1551105aa3b238c0ea475433c077f0ca8346efdb696f52a3404e8"
+        "key": "91044ca3c0ca2b00.png",
+        "sha256": "91044ca3c0ca2b008a9d0fa9f6b59027055400589a29aa15fb3faaae063e65d6"
       }
     }
   },
@@ -464,6 +464,16 @@
         "key": "8ff0ed51b0987403.png",
         "was": "social-preview with the spiral-galaxy and CT panels",
         "replaced_by": "558d5db88635bec2.png"
+      },
+      {
+        "key": "7083a0ba46783a40.png",
+        "was": "architecture-dark, first cut",
+        "replaced_by": "345632ca3a0ddb55.png"
+      },
+      {
+        "key": "07ee0acd82c15511.png",
+        "was": "architecture-light, first cut",
+        "replaced_by": "91044ca3c0ca2b00.png"
       }
     ]
   }

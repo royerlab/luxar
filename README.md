@@ -56,8 +56,8 @@ chunking, compression, level-of-detail, and — for image volumes — the Gaussi
 itself all happen ahead of time, so the browser is left with little to do but draw.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://data.luxarviewer.dev/media/7083a0ba46783a40.png">
-  <img alt="How Luxar works: describe a scene in Python, compile it once into a chunked, indexed .luxar.zarr archive, host the archive on any static file server, explore it in any browser" src="https://data.luxarviewer.dev/media/07ee0acd82c15511.png" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://data.luxarviewer.dev/media/345632ca3a0ddb55.png">
+  <img alt="How Luxar works: describe a scene in Python, compile it once into a chunked, indexed .luxar.zarr archive, host the archive on any static file server, explore it in any browser" src="https://data.luxarviewer.dev/media/91044ca3c0ca2b00.png" width="100%">
 </picture>
 
 Because the archive is self-describing and chunked, the same output serves every

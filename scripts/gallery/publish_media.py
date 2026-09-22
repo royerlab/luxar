@@ -144,7 +144,7 @@ def record(name: str, key: str, digest: str, size: int) -> None:
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n")
     print(
-        f"recorded readme/{name} -> {key} in {MANIFEST_PATH.relative_to(MANIFEST_PATH.parents[2])}"
+        f"recorded assets/{name} -> {key} in {MANIFEST_PATH.relative_to(MANIFEST_PATH.parents[2])}"
     )
 
 

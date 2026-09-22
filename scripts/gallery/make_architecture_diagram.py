@@ -715,7 +715,7 @@ def build(t: Theme) -> dw.Drawing:
     steps = [
         (
             glyph_hilbert,
-            "Order along a space-filling curve",
+            "Order on a space-filling curve",
             ["Hilbert or Morton: what is near in nD", "is near on disk"],
         ),
         (
@@ -749,7 +749,7 @@ def build(t: Theme) -> dw.Drawing:
         d,
         x + 18,
         top + ch - 16,
-        "LuxarZarrCompiler · gsplat cal → fit → lod",
+        "LuxarZarrCompiler · cal → fit → lod",
         10,
         t.accent,
         family=MONO,
@@ -845,9 +845,7 @@ def build(t: Theme) -> dw.Drawing:
         "Streams what the view needs, renders on the GPU",
     )
     bx, by, bw, bh = x + 18, top + 66, w - 36, 176
-    ix, iy, iw, ih = glyph_browser(
-        d, t, bx, by, bw, bh, "luxarviewer.dev/?src=<archive url>"
-    )
+    ix, iy, iw, ih = glyph_browser(d, t, bx, by, bw, bh, "luxarviewer.dev/?src=<url>")
     mini_scene(d, t, ix + 1, iy + 1, iw - 2, ih - 2)
     feats = [
         "fetches only the chunks in view, as you orbit",
