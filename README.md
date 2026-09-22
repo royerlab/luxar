@@ -6,6 +6,12 @@
 
 **High-performance n-dimensional scientific visualization.**
 
+<p align="center">
+  <a href="https://demos.luxarviewer.dev/d/gsplats_4d_drosophila_embryogenesis"><img src="https://data.luxarviewer.dev/media/4a0c1a68d18e092e.webp" alt="Drosophila gastrulation: 500 light-sheet timepoints fitted as Gaussian splats, streamed and played in the Luxar viewer" width="100%"></a>
+  <br>
+  <sub>A <em>Drosophila</em> embryo through gastrulation: 500 light-sheet timepoints, 256K Gaussian splats each, streamed from static hosting and played in the browser (<a href="https://demos.luxarviewer.dev/d/gsplats_4d_drosophila_embryogenesis">open it live</a>; recording by the Keller lab, HHMI Janelia).</sub>
+</p>
+
 Luxar makes large scientific datasets explorable in a web browser. You describe a
 scene in Python — **points**, **lines**, **Gaussian splats**, and **triangle
 meshes**, in as many dimensions as your data actually has — and Luxar *compiles*
@@ -95,7 +101,7 @@ cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
 hatch shell             # Activate the environment `setup-dev` created
 luxar demo              # Browse the 90 bundled demos
-luxar demo run lorenz   # Run one — generates the data and opens the viewer
+luxar demo run cloud    # Run one — generates the data and opens the viewer
 ```
 
 Once a release is published on PyPI, `pip install luxar` installs the viewer,
@@ -103,9 +109,10 @@ compiler and CLI without a checkout (add `"luxar[gsplats]"` to fit volumes), and
 the same `luxar demo` commands apply. Some demos need extra packages;
 `luxar demo deps --install` fetches what a demo reports missing.
 
-That last command generates a Lorenz attractor and opens the viewer:
+That last command builds a convective cloud, a 4D point cloud that evolves over a
+time axis, and opens it in the viewer, where the time slider plays it back:
 
-![Lorenz Attractor Demo](docs/images/readme/lorenz-demo.png)
+![Quick start: two commands, then the evolving cloud playing in the Luxar viewer](https://data.luxarviewer.dev/media/ac2a260943794358.webp)
 
 #### Browsing the catalogue
 
