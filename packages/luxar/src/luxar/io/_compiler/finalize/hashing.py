@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import xxhash
@@ -112,9 +112,10 @@ def _canonicalized_attrs(node: zarr.Group | zarr.Array) -> dict[str, Any]:
     """Persist and return the portable form of one hashed attrs document."""
     attrs = dict(node.attrs)
     canonical, changed = _canonicalize_attr_value(attrs)
+    canonical_attrs = cast(dict[str, Any], canonical)
     if changed:
-        node.attrs.update(canonical)
-    return canonical
+        node.attrs.update(canonical_attrs)
+    return canonical_attrs
 
 
 def _is_safe_payload_name(filename: str) -> bool:
