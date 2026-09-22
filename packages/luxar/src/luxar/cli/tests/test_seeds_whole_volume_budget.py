@@ -464,6 +464,63 @@ def test_cli_sequential_divisor_reuses_resolved_floor(
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_sequential_divisor_uses_floor_shifted_intensity_scale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def _fake_fit_tiled(volume: Any, **kwargs: Any) -> GSplatData:
+        return _one_splat_result()
+
+    def _record_weights(
+        volume: Any,
+        specs: Any,
+        applied_floor: Any,
+        *,
+        intensity_scale: float,
+        saturation_exponent: float,
+    ) -> list[float]:
+        seen["intensity_scale"] = intensity_scale
+        return [1.0] * len(specs)
+
+    monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tiled", _fake_fit_tiled)
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_tiled_gsplats.uniform_tile_occupancy_weights",
+        _record_weights,
+    )
+
+    volume = tmp_path / "floor-sparse.npy"
+    _make_floor_sparse_volume(volume)
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(volume),
+            str(tmp_path / "floor-sparse.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--flat",
+            "--floor",
+            "3",
+            "--norm-range",
+            "0,10",
+            "--seeds",
+            "200",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["intensity_scale"] == 7.0
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
 def test_cli_single_tile_worker_splits_seeds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

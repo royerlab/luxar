@@ -597,9 +597,8 @@ def _weighted_uniform_seed_counts(
     # the floor (see ``uniform_tile_occupancy_weights``). The old predicate,
     # "voxels above 10% of the ceiling", starved whole tiles of dim structure on
     # a volume whose maximum is a hot spot.
-    intensity_scale = resolve_tile_intensity_scale(
-        fit_config.get("norm_range"), applied_floor
-    )
+    # `_ensure_tile_norm_range` already shifted the range into the tile basis.
+    intensity_scale = resolve_tile_intensity_scale(fit_config.get("norm_range"), None)
     weights = uniform_tile_occupancy_weights(
         volume,
         specs,
