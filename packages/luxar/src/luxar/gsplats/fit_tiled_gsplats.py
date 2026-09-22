@@ -108,6 +108,14 @@ def occupancy_weight_from_mass(
     return float(hann_voxels * fraction ** float(saturation_exponent))
 
 
+def tile_windowed_mass(tile_data: np.ndarray, window: np.ndarray) -> float:
+    """Return one tile's Hann-weighted above-floor intensity mass."""
+    windowed = tile_data * window
+    if not tile_has_signal(windowed):
+        return 0.0
+    return float(np.sum(windowed, dtype=np.float64))
+
+
 def tile_occupancy_weight(
     tile_data: np.ndarray,
     window: np.ndarray,
@@ -126,11 +134,8 @@ def tile_occupancy_weight(
     up to 6% of the intensity). Mass makes a dim tile proportional instead of
     binary. See :func:`occupancy_weight_from_mass` for the formula.
     """
-    windowed = tile_data * window
-    if not tile_has_signal(windowed):
-        return 0.0
     return occupancy_weight_from_mass(
-        float(np.sum(windowed, dtype=np.float64)),
+        tile_windowed_mass(tile_data, window),
         float(np.sum(window, dtype=np.float64)),
         intensity_scale=intensity_scale,
         saturation_exponent=saturation_exponent,
@@ -242,12 +247,7 @@ def uniform_tile_occupancy_weights(
         if applied_floor is not None:
             tile_data = np.clip(tile_data - applied_floor, 0.0, None)
         window = cosine_window(spec)
-        windowed = tile_data * window
-        mass = (
-            float(np.sum(windowed, dtype=np.float64))
-            if tile_has_signal(windowed)
-            else 0.0
-        )
+        mass = tile_windowed_mass(tile_data, window)
         masses.append(mass)
         weights.append(
             occupancy_weight_from_mass(
