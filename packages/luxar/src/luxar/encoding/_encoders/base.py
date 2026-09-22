@@ -369,6 +369,9 @@ class BaseEncoderMixin:
         keeps peak memory at one column (the covariance certificate feeds
         full multi-million-row arrays through this). A column with no nonzero
         entries gets ``lo == hi == 0``.
+
+        The float32 round-trip canonicalizes the stored values for #2855 while
+        returning float64 so encoder replay uses the decoder's arithmetic.
         """
         x = np.asarray(data)
         n_cols = x.shape[1]
@@ -382,7 +385,10 @@ class BaseEncoderMixin:
                 raw_hi[c] = float(nz.max())
         lo = BaseEncoderMixin._perchannel_log_forward(raw_lo[None, :], signed=signed)
         hi = BaseEncoderMixin._perchannel_log_forward(raw_hi[None, :], signed=signed)
-        return lo[0].astype(np.float32), hi[0].astype(np.float32)
+        return (
+            lo[0].astype(np.float32).astype(np.float64),
+            hi[0].astype(np.float32).astype(np.float64),
+        )
 
     @staticmethod
     def _quantize_perchannel_zero_level(
@@ -449,6 +455,9 @@ class BaseEncoderMixin:
         range where true log stays uniform). A column with no positive
         entries gets ``lo == hi == 0`` (harmless: all its codes are the
         reserved zero level).
+
+        The float32 round-trip canonicalizes the stored values for #2855 while
+        returning float64 so encoder replay uses the decoder's arithmetic.
         """
         x = np.asarray(data)
         n_cols = x.shape[1]
@@ -460,7 +469,10 @@ class BaseEncoderMixin:
             if pos.size:
                 lo[c] = float(np.log(float(pos.min())))
                 hi[c] = float(np.log(float(pos.max())))
-        return lo.astype(np.float32), hi.astype(np.float32)
+        return (
+            lo.astype(np.float32).astype(np.float64),
+            hi.astype(np.float32).astype(np.float64),
+        )
 
     def _write_float(
         self,

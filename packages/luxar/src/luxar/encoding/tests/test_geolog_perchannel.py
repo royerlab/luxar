@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import memory_group
-from luxar.encoding._encoders import base as base_encoder_module
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -170,18 +169,26 @@ class TestGeologPerchannelRoundtrip:
         ArrayEncoder()._encode_geolog_perchannel(baseline_group, "c", colors, 16)
         baseline = dict(baseline_group["c"].attrs["encoding"])
         baseline_codes = np.asarray(baseline_group["c"])
-        original_log = base_encoder_module.np.log
+        original_log = np.log
 
         def perturbed_log(values):
             return np.nextafter(original_log(values), np.inf)
 
-        monkeypatch.setattr(base_encoder_module.np, "log", perturbed_log)
+        monkeypatch.setattr(np, "log", perturbed_log)
         perturbed_group = memory_group()
         ArrayEncoder()._encode_geolog_perchannel(perturbed_group, "c", colors, 16)
         perturbed = dict(perturbed_group["c"].attrs["encoding"])
 
         assert perturbed == baseline
         np.testing.assert_array_equal(np.asarray(perturbed_group["c"]), baseline_codes)
+
+    def test_scales_are_canonical_float64_values(self):
+        colors = np.array([[1e-5, 0.2], [3.0, 1e5]], dtype=np.float32)
+        lo, hi = ArrayEncoder._perchannel_geolog_scales(colors)
+
+        assert lo.dtype == hi.dtype == np.float64
+        np.testing.assert_array_equal(lo, lo.astype(np.float32).astype(np.float64))
+        np.testing.assert_array_equal(hi, hi.astype(np.float32).astype(np.float64))
 
 
 class TestDecoderValidation:

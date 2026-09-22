@@ -11,8 +11,6 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import create_array, memory_group
-from luxar.encoding._encoders import base as base_encoder_module
-from luxar.encoding._encoders import cholesky as cholesky_encoder_module
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -116,16 +114,25 @@ def test_log_perchannel_metadata_ignores_libm_ulp(
         data *= rng.choice(np.array([-1.0, 1.0], dtype=np.float32), data.shape)
 
     _, baseline, baseline_codes = _roundtrip(data, semantic_type, EncodingMode.MEMORY)
-    original_log1p = base_encoder_module.np.log1p
+    original_log1p = np.log1p
 
     def perturbed_log1p(values):
         return np.nextafter(original_log1p(values), np.inf)
 
-    monkeypatch.setattr(base_encoder_module.np, "log1p", perturbed_log1p)
+    monkeypatch.setattr(np, "log1p", perturbed_log1p)
     _, perturbed, perturbed_codes = _roundtrip(data, semantic_type, EncodingMode.MEMORY)
 
     assert perturbed == baseline
     np.testing.assert_array_equal(perturbed_codes, baseline_codes)
+
+
+def test_log_perchannel_scales_are_canonical_float64_values() -> None:
+    data = np.array([[0.4, 18.0], [1.2, 3.5]], dtype=np.float32)
+    lo, hi = ArrayEncoder._perchannel_log_scales(data, signed=False)
+
+    assert lo.dtype == hi.dtype == np.float64
+    np.testing.assert_array_equal(lo, lo.astype(np.float32).astype(np.float64))
+    np.testing.assert_array_equal(hi, hi.astype(np.float32).astype(np.float64))
 
 
 class TestEdgeCases:
@@ -259,14 +266,12 @@ class TestEncodeCholeskySplit:
         baseline = dict(baseline_group["cholesky_factors_diag"].attrs["encoding"])[
             "certificate"
         ]
-        original_percentile = cholesky_encoder_module.np.percentile
+        original_percentile = np.percentile
 
         def perturbed_percentile(values, percentile):
             return np.nextafter(original_percentile(values, percentile), np.inf)
 
-        monkeypatch.setattr(
-            cholesky_encoder_module.np, "percentile", perturbed_percentile
-        )
+        monkeypatch.setattr(np, "percentile", perturbed_percentile)
         perturbed_group = self._encode(diag, off, EncodingMode.AUTO)
         perturbed = dict(perturbed_group["cholesky_factors_diag"].attrs["encoding"])[
             "certificate"
@@ -275,11 +280,7 @@ class TestEncodeCholeskySplit:
         assert perturbed == baseline
 
     def test_rounded_certificate_value_drives_tier_decision(self, monkeypatch):
-        monkeypatch.setattr(
-            cholesky_encoder_module.np,
-            "percentile",
-            lambda values, percentile: 0.05000000001,
-        )
+        monkeypatch.setattr(np, "percentile", lambda *args, **kwargs: 0.05000000001)
         diag, off = self._make(n=800, seed=2855)
         group = self._encode(diag, off, EncodingMode.AUTO)
         certificate = dict(group["cholesky_factors_diag"].attrs["encoding"])[

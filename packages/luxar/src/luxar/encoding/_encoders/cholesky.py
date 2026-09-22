@@ -280,7 +280,11 @@ class CholeskyEncoderMixin(BaseEncoderMixin):
 
     @staticmethod
     def _relf_p95(s_ref: np.ndarray, den: np.ndarray, s_q: np.ndarray) -> float:
-        """p95 of per-row relative Frobenius error given flattened Σ matrices."""
+        """Canonical p95 of per-row relative Frobenius error for flattened Σ.
+
+        Four significant digits pin #2855's certificate metadata and ensure
+        the stored value is exactly the one used for the tier decision.
+        """
         num = np.linalg.norm(s_q - s_ref, axis=1)
         return float(f"{np.percentile(num / den, 95):.4g}")
 
