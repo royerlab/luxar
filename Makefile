@@ -706,6 +706,7 @@ lint-typescript:  ## Run ESLint on TypeScript code
 type-check-python:  ## Run mypy type checking on Python code
 	$(HATCH) run type-check
 	$(HATCH) run type-check-darwin
+	$(HATCH) run type-check-py314
 
 type-check-typescript:  ## Run TypeScript type checking
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \

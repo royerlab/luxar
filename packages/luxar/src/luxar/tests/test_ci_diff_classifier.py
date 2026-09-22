@@ -1969,10 +1969,17 @@ print-launcher-pkg-config-path:
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
-    """CI and the make target check Darwin without slowing every commit."""
+    """CI checks the platform and version edges without slowing every commit."""
     with (REPO / "pyproject.toml").open("rb") as stream:
-        scripts = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"]["scripts"]
+        pyproject = tomllib.load(stream)
+    scripts = pyproject["tool"]["hatch"]["envs"]["default"]["scripts"]
     lint_commands = scripts["lint"]
+    mypy_dependency = next(
+        dependency
+        for dependency in pyproject["project"]["optional-dependencies"]["dev"]
+        if dependency.startswith("mypy")
+    )
+    assert mypy_dependency == "mypy>=2.3,<2.4"
 
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     make_recipe = re.search(
@@ -2002,7 +2009,7 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     lint_steps = [step for step in ci_steps if step.get("run") == "hatch run lint"]
     assert len(lint_steps) == 1
 
-    required_scripts = {"type-check", "type-check-darwin"}
+    required_scripts = {"type-check", "type-check-darwin", "type-check-py314"}
     assert required_scripts <= set(lint_commands)
     assert {f"$(HATCH) run {script}" for script in required_scripts} <= make_commands
 
@@ -2016,21 +2023,44 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     )
     assert documented_command == f"hatch run {scripts['type-check']}"
 
-    def parse_mypy_command(command: str) -> tuple[dict[str, str], list[str]]:
+    def parse_mypy_command(
+        command: str,
+    ) -> tuple[dict[str, str], set[str], list[str]]:
         arguments = shlex.split(command)
         assert arguments.pop(0) == "mypy"
         options = {}
+        flags = set()
         while arguments and arguments[0].startswith("--"):
             option = arguments.pop(0)
-            assert arguments, f"missing value for {option}"
-            options[option] = arguments.pop(0)
-        return options, arguments
+            if arguments and not arguments[0].startswith("--"):
+                options[option] = arguments.pop(0)
+            else:
+                flags.add(option)
+        return options, flags, arguments
 
-    _, host_targets = parse_mypy_command(scripts["type-check"])
-    darwin_options, darwin_targets = parse_mypy_command(scripts["type-check-darwin"])
-    assert darwin_options["--platform"] == "darwin"
-    assert darwin_options["--cache-dir"] == ".mypy_cache/darwin"
+    host_options, host_flags, host_targets = parse_mypy_command(scripts["type-check"])
+    assert host_options == {}
+    assert host_flags == set()
+
+    darwin_options, darwin_flags, darwin_targets = parse_mypy_command(
+        scripts["type-check-darwin"]
+    )
+    assert darwin_options == {
+        "--platform": "darwin",
+        "--cache-dir": ".mypy_cache/darwin",
+    }
+    assert darwin_flags == set()
     assert darwin_targets == host_targets
+
+    py314_options, py314_flags, py314_targets = parse_mypy_command(
+        scripts["type-check-py314"]
+    )
+    assert py314_options == {
+        "--python-version": "3.14",
+        "--cache-dir": ".mypy_cache/py314",
+    }
+    assert py314_flags == {"--no-warn-unused-ignores"}
+    assert py314_targets == host_targets
 
 
 def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
