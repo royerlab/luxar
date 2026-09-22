@@ -2,5 +2,5 @@
 
 CI and `make type-check-python` now run an additional host-platform mypy pass
 pinned to Python 3.14, with an isolated cache. Together with the existing Python
-3.12 baseline, this brackets the supported interpreter range so newer-version
-typing regressions cannot silently bypass the runtime test matrix.
+3.12 baseline, this brackets the supported interpreter range for stdlib typeshed
+and Luxar's own version-conditional typing.

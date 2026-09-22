@@ -112,6 +112,7 @@ def test_the_source_gates_agree_with_the_floor(pyproject: str) -> None:
     """mypy and ruff judge the SOURCE, so both must target the floor, not newer.
 
     Targeting a newer version would let syntax through that the floor cannot run.
+    The additive mypy ceiling pass checks version edges without replacing this pin.
     """
     assert re.search(r'python_version\s*=\s*"' + FLOOR + '"', pyproject)
     assert re.search(

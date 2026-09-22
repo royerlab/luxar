@@ -694,11 +694,12 @@ jobs:
           hatch run python -m pip_audit --desc --skip-editable
         continue-on-error: true
 
-      # These gates judge the SOURCE, not the runtime (ruff target-version
-      # py312, mypy python_version 3.12), so they run once — on the 3.12 leg —
-      # while staying under the required `python-tests (3.12)` context. Invoke
-      # the declared aggregate instead of restating its members here: adding a
-      # ratchet or changing a target in `hatch run lint` must change CI too.
+      # These gates judge the SOURCE, not the runtime (ruff at py312; mypy at
+      # the host/Darwin platform and Python 3.12/3.14 version edges), so they run
+      # once — on the 3.12 leg — while staying under the required
+      # `python-tests (3.12)` context. Invoke the declared aggregate instead of
+      # restating its members here: adding a ratchet or changing a target in
+      # `hatch run lint` must change CI too.
       - name: Lint, format, ratchets, and mypy
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
         run: hatch run lint
