@@ -223,16 +223,57 @@ def test_an_oversized_member_is_caught(tmp_path: Path, monkeypatch) -> None:
     """
     monkeypatch.setattr(checker, "PYPI_MAX_FILE_BYTES", 1024)
     members = dict(_GOOD_MEMBERS)
-    members["luxar/core/big.bin"] = b"\x00" * 4096
+    # 4 MiB exactly: renders "4.0 MiB" binary but "4.2 MB" decimal,
+    # so the assertion below distinguishes the divisor, not just the label.
+    members["luxar/core/big.bin"] = b"\x00" * (4 * 1024 * 1024)
 
     report = _inspect(tmp_path, members)
 
     assert [n.split(" (")[0] for n in report.oversized] == ["luxar/core/big.bin"]
+    # Guard the unit AND the arithmetic. PYPI_MAX_FILE_BYTES is binary
+    # (100 * 1024 * 1024), so a decimal-MB rendering is the same contradiction
+    # the whole-wheel message carried for two rounds. Asserting only the "MiB"
+    # label would still pass if the divisor were 1e6 — half the defect — so
+    # pin the printed VALUE: 4096 bytes is 0.0 MiB, but it is 0.0 MB too, so
+    # use a size where the two differ visibly.
+    assert report.oversized[0] == "luxar/core/big.bin (4.0 MiB)", report.oversized[0]
 
 
 def test_the_pypi_limit_is_the_real_one() -> None:
     """The monkeypatch above would hide a wrong constant."""
     assert checker.PYPI_MAX_FILE_BYTES == 100 * 1024 * 1024
+
+
+def test_a_wheel_over_the_upload_limit_is_caught(tmp_path: Path, monkeypatch) -> None:
+    """The limit PyPI actually enforces is on the UPLOADED FILE.
+
+    The per-member check cannot see this case, and this case is the realistic
+    one for Luxar: thousands of small test payloads and demo assets summing
+    past the cap with nothing individually large. Before this check, such a
+    wheel passed every gate and was rejected by PyPI after the tag had been
+    pushed — by which time the version is spent.
+    """
+    # Below the ~700-byte fixture wheel, so the comparison actually trips.
+    # The real constant is asserted separately below.
+    monkeypatch.setattr(checker, "PYPI_MAX_DIST_BYTES", 100)
+    report = _inspect(tmp_path, dict(_GOOD_MEMBERS))
+
+    assert report.dist_too_large
+    assert report.problems() == 1  # exactly this one, per this file's convention
+    # The per-member check must stay silent: no single member is large.
+    assert report.oversized == []
+
+
+def test_a_wheel_inside_the_upload_limit_is_not_flagged(tmp_path: Path) -> None:
+    report = _inspect(tmp_path, dict(_GOOD_MEMBERS))
+
+    assert not report.dist_too_large
+    assert report.dist_bytes is not None and report.dist_bytes > 0
+
+
+def test_the_pypi_upload_limit_is_the_real_one() -> None:
+    """The monkeypatch above would hide a wrong constant."""
+    assert checker.PYPI_MAX_DIST_BYTES == 100 * 1024 * 1024
 
 
 def test_a_missing_viewer_dist_is_caught(tmp_path: Path) -> None:
@@ -266,6 +307,42 @@ def test_a_missing_wheel_is_an_error(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+
+def test_main_exits_1_and_names_an_oversized_wheel(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch
+) -> None:
+    """Drive the whole-wheel check through main(), as this file does for the others.
+
+    The report-level test proves the flag flips; this proves the gate actually
+    fails the build and says something the operator can act on.
+    """
+    # A limit of 100 bytes made both sides render "0.0 MiB", so the message
+    # could have been arbitrarily wrong and still matched. Patch the limit just
+    # below the fixture's real size instead, so the printed figures are the
+    # ones an operator would actually read.
+    root = _make_project(tmp_path)
+    wheel = _make_wheel(tmp_path, dict(_GOOD_MEMBERS))
+    monkeypatch.setattr(checker, "PYPI_MAX_DIST_BYTES", wheel.stat().st_size - 1)
+
+    code = checker.main([str(wheel), "--project-root", str(root)])
+
+    assert code == 1
+    out = capsys.readouterr().out
+    # Assert the NUMBERS, not just the heading: the heading survives a wrong
+    # limit or a wrong size, which is how the MB/MiB contradiction lived
+    # through two rounds. The limit is patched to one byte below the fixture's
+    # real size, so the exact byte counts below are the ones an operator would
+    # read — an earlier version patched it to 100 bytes, where both sides
+    # rendered "0.0 MiB" and any wrong figure would still have matched.
+    assert "upload limit" in out
+    assert "MiB" in out
+    assert "MB " not in out.replace("MiB", ""), "decimal MB leaked back in"
+    # Exact bytes, so a boundary failure cannot read as "at the limit".
+    assert f"{wheel.stat().st_size:,} B" in out
+    assert f"{wheel.stat().st_size - 1:,} B" in out
+    # The per-member section must stay silent: no member is large.
+    assert "member(s) exceed" not in out
 
 
 def test_main_exits_1_and_names_the_dropped_package(

@@ -113,6 +113,7 @@ def _gridded_step_from_uniques(
     ``uniq`` must be exactly ``np.unique(col)`` — sorted ascending, deduplicated
     — for the column the ``lo``/``extent`` were derived from.
     """
+    uniq = np.asarray(uniq, dtype=np.float64)
     if uniq.size < 2 or uniq.size > levels + 1:
         return None
     offsets = uniq - lo
@@ -124,7 +125,9 @@ def _gridded_step_from_uniques(
     rung = np.round(offsets / coarsest)
     if rung[0] != 0.0 or np.any(np.diff(rung) <= 0.0) or rung[-1] > levels:
         return None
-    step = float(rung @ offsets / (rung @ rung))
+    # Twelve significant digits pin #2855's reduction result before the same
+    # value decides snap eligibility and becomes stored coordinate metadata.
+    step = float(f"{rung @ offsets / (rung @ rung):.12g}")
     # `span` must be derived exactly as the quantizer will derive it from the
     # stored rails (`hi - lo`), not as `step * levels`: for a large `lo` the two
     # differ in the last bits, and this replay is only a guarantee if it is the
@@ -395,9 +398,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         The Python reader's final cast is covered by ``max_val`` times the
         wider epsilon of float32 and the authored dtype, floored at one
         subnormal quantum of either dtype. The viewer additionally needs
-        ``1.5 * span * eps32`` for its staged-float32 linear affine chain, or
-        ``max_val * eps32 * max(abs(min_log), abs(max_log))`` for the rounded
-        anchors used by its otherwise-float64 geometric-log reconstruction.
+        ``1.5 * span * eps32`` for its staged-float32 linear affine chain.
+        Geometric-log anchors are already stored at float32 precision; their
+        remaining term is the upward displacement of either decoded endpoint
+        from the authored minimum or maximum.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.
@@ -471,11 +475,12 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             or bits == 0
             or (mode == EncodingMode.AUTO and positive_scalar_bits == 8)
         )
-        viewer_rounding_slack = 0.0
+        rounding_slack = 0.0
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
-            min_log = float(np.log(nonzero.min()))
-            max_log = float(np.log(nonzero.max()))
+            min_val = float(nonzero.min())
+            min_log = float(np.float32(np.log(min_val)))
+            max_log = float(np.float32(np.log(nonzero.max())))
             quant_bits = (
                 8 if mode == EncodingMode.MEMORY or positive_scalar_bits == 8 else 16
             )
@@ -485,14 +490,16 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 float(np.expm1((max_log - min_log) / (2.0 * intervals))), 1.0
             )
             slack = max_val * half_step
-            # The viewer rounds both log anchors to f32 before its f64 affine
-            # reconstruction, perturbing the decoded exponent proportionally
-            # to the larger anchor magnitude.
-            viewer_rounding_slack = (
-                max_val
-                * float(np.finfo(np.float32).eps)
-                * max(abs(min_log), abs(max_log))
-            )
+            if max_val <= float(np.finfo(np.float32).max):
+                with np.errstate(over="ignore"):
+                    decoded_min = float(np.float32(np.exp(min_log)))
+                    decoded_max = float(np.float32(np.exp(max_log)))
+                if np.isfinite(decoded_min) and np.isfinite(decoded_max):
+                    rounding_slack = max(
+                        0.0,
+                        decoded_min - min_val,
+                        decoded_max - max_val,
+                    )
         else:
             min_val = float(np.min(arr))
             span = max_val - min_val
@@ -501,7 +508,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             # With u = eps32 / 2, the viewer's six staged f32 roundings are
             # bounded by u * (min + max + 4 * span). The decode ULP below pays
             # 2u * max, leaving 3u * span = 1.5 * eps32 * span here.
-            viewer_rounding_slack = 1.5 * span * float(np.finfo(np.float32).eps)
+            rounding_slack = 1.5 * span * float(np.finfo(np.float32).eps)
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
 
@@ -515,7 +522,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         decode_ulp = max(max_val * decode_eps, decode_floor)
         return float(
             min(
-                slack + decode_ulp + viewer_rounding_slack,
+                slack + decode_ulp + rounding_slack,
                 float(np.finfo(np.float64).max),
             )
         )
@@ -1035,8 +1042,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         original_dtype = str(data.dtype)
         x = np.asarray(data, dtype=np.float64)
         nz = x > 0
-        min_log = float(np.log(x[nz].min()))
-        max_log = float(np.log(x[nz].max()))
+        min_log = float(np.float32(np.log(x[nz].min())))
+        max_log = float(np.float32(np.log(x[nz].max())))
         codes = self._geolog_forward(x, bits, min_log, max_log)
         # Invariant, not a data property: the reserved zero level makes
         # nonzero -> 0 impossible; a violation would be an encoder bug.

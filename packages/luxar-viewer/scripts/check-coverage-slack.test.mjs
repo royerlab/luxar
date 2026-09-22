@@ -151,6 +151,23 @@ describe('evaluate', () => {
     expect(failures[0]).toMatch(/matched 0 files/);
   });
 
+  it('fails when test helpers enter the measured source pool', () => {
+    const dilutedSummary = {
+      total: entry(8980, 10_000),
+      [`${ROOT}/src/ui/a.ts`]: entry(8900, 9900),
+      [`${ROOT}/src/tests/helpers/a.ts`]: entry(80, 100),
+    };
+    const { failures } = evaluate(
+      dilutedSummary,
+      { lines: 88 },
+      { lines: 90 },
+      { viewerRoot: ROOT, maxSlack: 3, maxErosion: 1 }
+    );
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/coverage\.exclude/);
+    expect(failures[0]).toMatch(/src\/tests\/\*\*/);
+  });
+
   it('fails a glob metric that has zero countable items', () => {
     const zeroFunctions = {
       ...entry(90, 100),

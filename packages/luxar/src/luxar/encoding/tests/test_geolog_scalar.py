@@ -36,6 +36,23 @@ def _wide(n=50_000, lo=5e-4, hi=2e4, seed=0):
 
 
 class TestGeologRoundTrip:
+    def test_metadata_ignores_libm_ulp(self, monkeypatch):
+        data = np.array([0.0, 1e-6, 0.2, 3.0, 1e5], dtype=np.float32)
+        _, baseline, baseline_group = _roundtrip(data, positive_scalar_bits=16)
+        baseline_codes = np.asarray(baseline_group["a"])
+        assert baseline["min_log"] == float(np.float32(baseline["min_log"]))
+        assert baseline["max_log"] == float(np.float32(baseline["max_log"]))
+        original_log = np.log
+
+        def perturbed_log(values):
+            return np.nextafter(original_log(values), np.inf)
+
+        monkeypatch.setattr(np, "log", perturbed_log)
+        _, perturbed, perturbed_group = _roundtrip(data, positive_scalar_bits=16)
+
+        assert perturbed == baseline
+        np.testing.assert_array_equal(np.asarray(perturbed_group["a"]), baseline_codes)
+
     def test_auto_accepts_explicit_uint8_tier(self):
         data = np.geomspace(1.0, 1000.0, 10_000).astype(np.float32)
         _, default_enc, _ = _roundtrip(data)

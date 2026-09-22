@@ -93,7 +93,9 @@ dependencies = [
     "websockets>=13,<18",
     "arbol>=2025.2.27.2",
     "ansicolors>=1.1.8",
-    "requests>=2.31.0",
+    # >=2.32.4 for GHSA-9hjg-9r4m-mvj7: below it, a redirect could leak the
+    # .netrc credentials for the ORIGINAL host to the redirect target.
+    "requests>=2.32.4",
     "aiohttp>=3.9.0",
     "fsspec>=2023.1.0",
     "xxhash>=3.0.0",
@@ -152,7 +154,10 @@ dev = [
     # Keep in lockstep with `.pre-commit-config.yaml`'s ruff-pre-commit `rev`,
     # or the hook and the gate disagree about the same file.
     "ruff>=0.16,<0.17",
-    "mypy>=1.5.0",
+    # Pinned because mypy's bundled typeshed defines what all three typing gates
+    # accept; a new minor can otherwise turn an unrelated change red. The floor
+    # must include Python 3.14's stdlib types.
+    "mypy>=2.3,<2.4",
     "types-PyYAML>=6.0.12",
     "pre-commit>=3.3.0",
     "bandit[toml]>=1.7.5",
@@ -304,11 +309,23 @@ path = "hatch_build.py"
 [tool.hatch.build.targets.wheel.force-include]
 "packages/luxar-viewer/dist" = "luxar/_viewer_dist"
 
-# NOTE: wheels are the supported distribution artifact. The sdist does NOT
-# contain the prebuilt viewer dist (force-included into the wheel above), so a
-# source-only `pip install` (no wheel) produces a degraded package — the bundled
-# web viewer and `luxar export --native` launchers will be missing. Always
-# publish/install wheels for end users; the sdist is for provenance only.
+# NOTE: the wheel is the ONLY published distribution artifact, and the sdist
+# below is deliberately not uploaded (publish.yml builds with `-t wheel` and
+# asserts no tarball is staged).
+#
+# This note used to say a source-only install produced a "degraded package"
+# missing the viewer. That is wrong, and optimistically so: the wheel build
+# hook RAISES when packages/luxar-viewer/dist/index.html is absent
+# (hatch_build.py), and the sdist does not carry that directory, so building a
+# wheel from the sdist fails outright. Measured — `python -m build --wheel` on
+# the unpacked sdist dies with FileNotFoundError. So `pip install --no-binary`
+# does not yield a reduced package, it fails, and publishing the sdist would
+# only offer users an artifact that cannot be installed.
+#
+# The target is kept configured rather than deleted on purpose: hatchling
+# builds an sdist by DEFAULT, so removing this section would produce a larger
+# one, not none. Source provenance lives in the Git tag and the archived
+# record, not on PyPI.
 [tool.hatch.build.targets.sdist]
 packages = ["packages/luxar/src/luxar"]
 include = [
@@ -454,8 +471,18 @@ lint = [
     "ruff format --check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     "check-complexity",
     "check-lint-ratchet",
-    "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
+    "type-check",
+    "type-check-darwin",
+    "type-check-py314"
 ]
+type-check = "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
+# Cross-platform fixes must work in both passes: use dynamic lookup as in
+# `gsplats/utils/device.py` or file-scope `warn-unreachable=False` as in
+# `gsplats/models/gsplats/metal/__init__.py`; a bare ignore fails on the host.
+type-check-darwin = "mypy --platform darwin --cache-dir .mypy_cache/darwin packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
+# The floor decides whether an ignore is necessary. A newer typeshed may make a
+# floor-required ignore redundant, so the additive ceiling pass must not police it.
+type-check-py314 = "mypy --python-version 3.14 --no-warn-unused-ignores --cache-dir .mypy_cache/py314 packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
 # Enforce layer direction: the full `Subpackage layering` stack, plus the three
 # narrower `forbidden` contracts.
@@ -506,7 +533,8 @@ check-scene-credits = "python scripts/check_scene_credits.py {args}"
 check-complexity = "python scripts/check_complexity.py {args}"
 # Inspect a BUILT wheel: package completeness against the source tree, the
 # pyproject excludes honoured, no Git-LFS pointer stubs, no member over PyPI's
-# 100 MB limit, viewer dist bundled. Deliberately NOT in `check-static` — it
+# 100 MB limit, the wheel ITSELF under that limit, viewer dist bundled.
+# Deliberately NOT in `check-static` — it
 # needs `hatch build` to have run, and `make build-viewer` before that. CI runs
 # it in `wheel-viewer`, where the dist already exists.
 #   make build-viewer && hatch build && hatch run check-wheel dist/luxar-*.whl

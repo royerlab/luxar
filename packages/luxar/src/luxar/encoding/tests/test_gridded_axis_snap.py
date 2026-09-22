@@ -18,6 +18,7 @@ import pytest
 import zarr
 
 from luxar.encoding import EncodingMode
+from luxar.encoding._encoders.perchannel import _gridded_step_from_uniques
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.semantic_types import SemanticType
@@ -95,6 +96,54 @@ def test_the_snap_is_what_makes_it_exact(tmp_path) -> None:
     """Guard against the test above passing for some unrelated reason."""
     data = _stacked()
     assert _was_snapped(_encode(tmp_path, data), data)
+
+
+def test_long_time_axis_uses_portable_step_and_still_round_trips(tmp_path) -> None:
+    authored = (
+        np.float64(1000.0) + np.arange(1000, dtype=np.float64) * np.float64(0.1)
+    ).astype(np.float32)
+    uniq = np.unique(authored.astype(np.float64))
+    lo = float(uniq[0])
+    extent = float(uniq[-1] - uniq[0])
+    offsets = uniq - lo
+    coarsest = float(np.diff(uniq).min())
+    rung = np.round(offsets / coarsest)
+    rung_f64 = rung.astype(np.float64)
+    offsets_f64 = offsets.astype(np.float64)
+    raw_step = float(rung_f64 @ offsets_f64 / (rung_f64 @ rung_f64))
+
+    result = _gridded_step_from_uniques(uniq, lo, extent, 65_535.0)
+    assert result is not None
+    step, n_unique = result
+    assert step == float(f"{raw_step:.12g}")
+    assert step == float(f"{np.nextafter(raw_step, np.inf):.12g}")
+    assert n_unique == len(uniq)
+
+    back = _roundtrip(tmp_path, authored[:, None])
+    np.testing.assert_array_equal(back[:, 0], authored)
+
+
+def test_grid_step_is_independent_of_input_float_width() -> None:
+    col32 = (
+        1_533_291.9996785969 + np.arange(1510, dtype=np.float64) * 248.01550756409404
+    ).astype(np.float32)
+    lo = float(col32[0])
+    extent = float(col32[-1] - col32[0])
+
+    from_float32 = _gridded_step_from_uniques(col32, lo, extent, 65_535.0)
+    from_float64 = _gridded_step_from_uniques(
+        col32.astype(np.float64), lo, extent, 65_535.0
+    )
+
+    assert from_float32 == from_float64 == (248.015507189, len(col32))
+
+
+def test_ten_thousand_frame_axis_still_snaps_exactly(tmp_path) -> None:
+    frames = np.arange(10_000, dtype=np.float32)
+
+    result = _gridded_step_from_uniques(frames, 0.0, 9_999.0, 65_535.0)
+    assert result == (1.0, len(frames))
+    np.testing.assert_array_equal(_roundtrip(tmp_path, frames[:, None])[:, 0], frames)
 
 
 @pytest.mark.parametrize(

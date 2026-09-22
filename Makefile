@@ -704,7 +704,9 @@ lint-typescript:  ## Run ESLint on TypeScript code
 	cd packages/luxar-viewer && pnpm run lint
 
 type-check-python:  ## Run mypy type checking on Python code
-	$(HATCH) run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py
+	$(HATCH) run type-check
+	$(HATCH) run type-check-darwin
+	$(HATCH) run type-check-py314
 
 type-check-typescript:  ## Run TypeScript type checking
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -2960,7 +2962,11 @@ shell:  ## Enter Hatch development shell
 # binary, and bypass OIDC. See scripts/release.sh for the full preflight.
 .PHONY: build set-version release-check release publish publish-test
 
-build: build-viewer  ## Build wheel + sdist (builds the viewer first so it is bundled)
+build: build-viewer  ## Build wheel + sdist locally; only the WHEEL is publishable (a wheel built from the sdist fails)
+	@# The sdist this also produces cannot be installed: a wheel built from it
+	@# fails in hatch_build.py because it carries no viewer dist. publish.yml
+	@# builds `-t wheel` and refuses to upload a tarball; never `twine upload
+	@# dist/*` by hand from here.
 	$(HATCH) build
 
 set-version:  ## Set release version in code (DATE=YYYY.MM.DD, default today); commit via PR

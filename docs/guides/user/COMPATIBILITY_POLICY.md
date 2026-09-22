@@ -112,7 +112,10 @@ because a change would silently invalidate data or caches already in the wild:
   every finite float nested in a hashed group attribute document is persisted
   at 12 significant decimal digits. That write-time canonicalization absorbs
   platform drift below roughly 1e-12 relative without changing the frozen input
-  set; exact array encoding attributes remain the producer's responsibility.
+  set. Exact array encoding attributes remain the producer's responsibility:
+  companded rails are stored at float32 precision, covariance certificates at
+  four significant digits, and fitted coordinate-grid steps at twelve. Larger
+  differences remain producer defects rather than something the hasher hides.
   Published stores and their warm caches are untouched until a scene is
   recompiled and republished. The inputs and canonicalization rule are frozen
   from that point onward. The viewer validates its persistent cache against this

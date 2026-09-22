@@ -158,8 +158,11 @@ Standard wheel builds remain strict. `hatch build -t wheel` requires
 `packages/luxar-viewer/dist/index.html` and fails with an actionable
 `make build-viewer` message when it is absent. This prevents publishing a wheel
 without its bundled viewer while keeping clean-worktree development usable.
-The source distribution remains provenance-only: it includes the build hook but
-not the viewer artifact, so end users should install the published wheel.
+No source distribution is published. The one `hatch build` produces locally is
+not a reduced artifact either — it cannot be installed at all: it carries the
+build hook but not the viewer dist, and the hook raises without it, so building
+a wheel from the sdist fails outright. `publish.yml` builds `-t wheel` and
+refuses to upload a tarball.
 
 ### Native Launcher Setup Details
 
@@ -367,7 +370,7 @@ MIN_NODE_MINOR := 22
 
 | Command | Description |
 |---------|-------------|
-| `make build` | Build wheel + sdist (builds the viewer first so it is bundled) |
+| `make build` | Build wheel + sdist locally (builds the viewer first so it is bundled). Only the **wheel** is publishable — a wheel built from the sdist fails, since the sdist carries no viewer dist, so `publish.yml` builds `-t wheel` and refuses to upload a tarball. |
 | `make changelog-draft` | Preview the `changelog.d/` fold into `CHANGELOG.md`; changes nothing |
 | `make changelog` | Fold `changelog.d/*.md` fragments into `CHANGELOG.md` and delete them (`MONTH="August 2026"` pins the heading) |
 | `make set-version` | Set release version in code (`DATE=YYYY.MM.DD`, default today) |

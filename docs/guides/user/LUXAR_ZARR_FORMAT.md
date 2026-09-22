@@ -217,7 +217,13 @@ The root group's attributes contain scene-wide configuration:
 | `scene_dimensions` | all | The nD dimension table (below). |
 
 No `timestamp` is written on a scene: the digest must be reproducible across
-two compiles of the same script.
+two compiles of the same script. Geometric-log scalar and per-channel companded
+rails are stored at float32 precision, covariance certificates at four
+significant digits, and fitted coordinate-grid steps at twelve significant
+digits. Those producer rules, together with the group-attribute grid above,
+suppress the observed libm/reduction drift while keeping exact array decoder
+metadata intact; larger differences remain producer defects and can still
+change the digest.
 
 ```javascript
 {

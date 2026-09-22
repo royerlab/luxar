@@ -657,6 +657,16 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Keep this after checkout: its git clean removes gitignored cache directories.
+      - name: Restore mypy state
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .mypy_cache
+          # pyproject.toml contains the mypy configuration and dependency set.
+          key: ${{ runner.os }}-mypy-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-mypy-${{ matrix.python-version }}-
+
       - name: Install Hatch
         if: needs.changes.outputs.dom_py != 'false'
         # Install Hatch ON the matrix interpreter. Hatch builds an environment
@@ -694,14 +704,22 @@ jobs:
           hatch run python -m pip_audit --desc --skip-editable
         continue-on-error: true
 
-      # These gates judge the SOURCE, not the runtime (ruff target-version
-      # py312, mypy python_version 3.12), so they run once — on the 3.12 leg —
-      # while staying under the required `python-tests (3.12)` context. Invoke
-      # the declared aggregate instead of restating its members here: adding a
-      # ratchet or changing a target in `hatch run lint` must change CI too.
+      # These gates judge the SOURCE, not the runtime (ruff at py312; mypy at
+      # the host/Darwin platform and Python 3.12/3.14 version edges), so they run
+      # once — on the 3.12 leg — while staying under the required
+      # `python-tests (3.12)` context. Invoke the declared aggregate instead of
+      # restating its members here: adding a ratchet or changing a target in
+      # `hatch run lint` must change CI too.
       - name: Lint, format, ratchets, and mypy
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
         run: hatch run lint
+
+      - name: Save mypy state
+        if: always() && matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .mypy_cache
+          key: ${{ runner.os }}-mypy-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}-${{ github.sha }}
 
       - name: Layer check (import-linter)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
@@ -1168,10 +1186,14 @@ jobs:
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         working-directory: ${{ github.workspace }}
         # Identical to publish.yml's build, so this gate proves the artifact the
-        # release actually produces rather than a lookalike.
+        # release actually produces rather than a lookalike. That identity is
+        # the whole point, so it tracks publish.yml's switch to wheel-only:
+        # `hatch build` here would have gone on producing an sdist the release
+        # no longer makes, and the comment above would have quietly stopped
+        # being true.
         run: |
           python -m pip install --upgrade hatch
-          hatch build
+          hatch build -t wheel
 
       - name: Inspect the wheel contents
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -1179,7 +1201,8 @@ jobs:
         # Asserts package completeness against the source tree, that every
         # `exclude` pattern in pyproject was honoured, that no Git-LFS pointer
         # stub shipped in place of data, that nothing exceeds PyPI's 100 MB
-        # per-file limit, and that the viewer dist is bundled. All derived from
+        # per-file limit, that the wheel ITSELF is under that limit, and that
+        # the viewer dist is bundled. All derived from
         # the repository, so the gate cannot drift from what it guards.
         run: |
           set -euo pipefail
