@@ -698,7 +698,7 @@ and composition semantics.
 
 | Input | Action |
 |-------|--------|
-| Left drag / right drag | Rotate around the scene / pan. On macOS the default is left = rotate, right = pan ("natural drag"); elsewhere the reverse. Swap it in the Navigation panel (right-click the Navigation button in the rail) |
+| Left drag / right drag | Rotate around the scene / pan. On macOS the default is left = rotate, right = pan ("natural drag"); elsewhere the reverse. Swap it in the Navigation panel (right-click, or long-press, the Navigation button in the rail) |
 | Scroll | Zoom |
 | Shift + scroll | Roll around the viewing axis |
 | Ctrl/Cmd + scroll | Change field of view |
@@ -788,13 +788,14 @@ render-and-readback call, in milliseconds; the vsync budget at 60 FPS is 16.7 ms
 | 1M | 3.31 | 4.98 | 8.64 |
 | 10M | — | 18.8 | 19.4 |
 
-At ten million elements the call runs 12–16% over the budget; the viewer's adaptive
+At ten million elements the call runs 13–16% over the budget; the viewer's adaptive
 DPR (on by default, and pinned for these measurements) buys the frame rate back by
 downscaling the render buffer. Typical scenes are lighter than these synthetic
 sweeps: the fifteen demo scenes of the same study all hold 60 FPS, the heaviest, a
 2.2M-splat time-lapse frame, in 5.6 ms. Whole-slide and other very large splat
-scenes sit well above the budget at full resolution (the 29.6M-splat CMU-1 slide
-renders in about 108 ms per frame at DPR 1.0) and rely on adaptive DPR. Frame rate
+scenes sit well above the budget at full resolution and rely on adaptive DPR: on an
+Apple M4 Max at a 1600×1000 canvas, the 29.6M-splat CMU-1 slide renders in about
+108 ms per frame at DPR 1.0 ([viewer performance audit](docs/guides/developer/VIEWER_PERFORMANCE_AUDIT_2026_09.md)). Frame rate
 is GPU-, resolution- and geometry-dependent, so treat
 these as one reference point rather than a guarantee. Load time is dominated by
 transfer and decode, so it tracks your link and cache state rather than element
@@ -1020,7 +1021,7 @@ Gaussian splat fitting runs on CPU by default. For much faster fitting (often or
 
 ```bash
 # Install gsplats dependencies (PyTorch, scipy, etc.)
-pip install 'luxar[gsplats]'
+pip install -e ".[gsplats]"     # from a checkout; pip install "luxar[gsplats]" once released
 
 # For NVIDIA CUDA acceleration (optional, requires CUDA toolkit + GPU):
 make build-cuda
@@ -1051,7 +1052,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for HPC/Slurm build instruction
 **White screen in viewer**
 - Check browser console for errors
 - Prefer the canonical Zarr dataset URL spelling without a trailing slash
-- Ensure CORS headers if serving cross-domain
+- Ensure CORS headers if serving cross-domain (see [Hosting a scene on the web](#hosting-a-scene-on-the-web))
 
 **ImportError: No module named 'luxar'**
 ```bash
