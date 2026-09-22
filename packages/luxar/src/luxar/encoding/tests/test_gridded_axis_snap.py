@@ -105,7 +105,9 @@ def test_long_time_axis_uses_portable_step_and_still_round_trips(tmp_path) -> No
     offsets = uniq - lo
     coarsest = float(np.diff(uniq).min())
     rung = np.round(offsets / coarsest)
-    raw_step = float(rung @ offsets / (rung @ rung))
+    rung_f64 = rung.astype(np.float64)
+    offsets_f64 = offsets.astype(np.float64)
+    raw_step = float(rung_f64 @ offsets_f64 / (rung_f64 @ rung_f64))
 
     result = _gridded_step_from_uniques(uniq, lo, extent, 65_535.0)
     assert result is not None

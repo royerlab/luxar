@@ -124,7 +124,9 @@ def _gridded_step_from_uniques(
     rung = np.round(offsets / coarsest)
     if rung[0] != 0.0 or np.any(np.diff(rung) <= 0.0) or rung[-1] > levels:
         return None
-    step = float(f"{rung @ offsets / (rung @ rung):.12g}")
+    rung_f64 = rung.astype(np.float64)
+    offsets_f64 = offsets.astype(np.float64)
+    step = float(f"{rung_f64 @ offsets_f64 / (rung_f64 @ rung_f64):.12g}")
     # `span` must be derived exactly as the quantizer will derive it from the
     # stored rails (`hi - lo`), not as `step * levels`: for a large `lo` the two
     # differ in the last bits, and this replay is only a guarantee if it is the
