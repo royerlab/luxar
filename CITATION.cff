@@ -30,8 +30,8 @@ keywords:
 # package.json by `make set-version`, and gated by `hatch run check-versions`.
 # Zero-padded CalVer, matching the `v<version>` git tag; PyPI displays the same
 # release with leading zeros stripped.
-version: "2026.06.05"
-date-released: "2026-06-05"
+version: "2026.09.22"
+date-released: "2026-09-22"
 # ── TODO at launch (once the bioRxiv preprint is posted) ─────────────────────
 #   (`version:` / `date-released:` are stamped by `make set-version`.)
 #   * add the preprint as the preferred citation, e.g.:
