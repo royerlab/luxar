@@ -81,8 +81,10 @@ def resolve_tile_intensity_scale(
     tiles see floor-subtracted data, so the ceiling is shifted by the floor
     (the same basis :func:`_ensure_tile_norm_range` gives the tiles). With no
     shared range — each tile derives its own scale — the weights fall back to
-    unit scale, which changes their magnitude but not the split, since the
-    allocation is proportional and every tile shares the constant.
+    unit scale. Mass-only allocation is invariant to that common scale, but the
+    adaptive foreground compatibility check is not: its historical threshold
+    is 10% of this ceiling. CLI and batch callers therefore resolve one shared
+    range before measuring a multi-tile split.
     """
     if norm_range is None:
         return 1.0
