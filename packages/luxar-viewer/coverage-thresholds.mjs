@@ -16,8 +16,11 @@
  * Lowering a recorded value resets the erosion baseline, so call that decision
  * out in the PR rather than treating it as routine housekeeping.
  *
- * ## vitest 4 semantics — read before editing
+ * ## Vitest coverage semantics — read before editing
  *
+ * - Directory exclusions must be explicit globs (for example,
+ *   `src/tests/**`); bare directory forms do not exclude executed files in
+ *   Vitest 5.
  * - A glob key ADDS a stricter sub-gate. It never removes its files from the
  *   global pool; only `coverage.exclude` exempts anything.
  * - `perFile` is GLOBAL-only. Setting it would apply the global floor to each

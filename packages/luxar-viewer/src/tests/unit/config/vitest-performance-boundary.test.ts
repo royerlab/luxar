@@ -9,6 +9,9 @@ const wasmTestDirectory = new URL('../wasm/', import.meta.url);
 interface VitestConfigModule {
   default: {
     test?: {
+      coverage?: {
+        exclude?: unknown[];
+      };
       exclude?: unknown[];
       hookTimeout?: number;
       include?: unknown[];
@@ -63,4 +66,21 @@ describe('Vitest contention policy', () => {
       });
     }
   );
+});
+
+describe('Vitest coverage boundary', () => {
+  it('keeps non-source directories excluded with explicit globs', async () => {
+    const { default: config } = await vi.importActual<VitestConfigModule>(
+      '../../../../vitest.config'
+    );
+
+    expect(config.test?.coverage?.exclude).toEqual([
+      'node_modules/**',
+      'src/tests/**',
+      '**/*.d.ts',
+      '**/*.config.*',
+      'dist/**',
+      'public/wasm/**',
+    ]);
+  });
 });

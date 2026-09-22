@@ -78,12 +78,11 @@ export default defineConfig({
       reporter: ['text', 'json-summary'],
       reportsDirectory: './coverage',
       exclude: [
-        'node_modules/',
-        'src/tests/',
+        'node_modules/**',
+        'src/tests/**',
         '**/*.d.ts',
         '**/*.config.*',
-        '**/mockData/*',
-        'dist/',
+        'dist/**',
         // Exclude generated WASM glue. `public/wasm/` is .gitignored
         // and the contents are produced by the Rust wasm-pack build;
         // counting them inflates coverage by their accidental
@@ -92,7 +91,7 @@ export default defineConfig({
         // controlled, hand-written app code.
         'public/wasm/**',
       ],
-      // Vitest 4 removed `coverage.all`, and `include` defaults to "only files
+      // Vitest removed `coverage.all`, and `include` defaults to "only files
       // some test imported" -- which left 45 source files (including
       // core/app/options.ts at 191 LOC) outside every threshold, so adding a
       // brand-new untested module could RAISE the reported number. Naming the
@@ -100,9 +99,10 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       // Floors live in ./coverage-thresholds.mjs so that this config and
       // scripts/check-coverage-slack.mjs cannot drift apart. Read that file
-      // before editing a number — it documents the vitest 4 semantics that
-      // constrain the design (glob keys are additive-only; `perFile` and
-      // `autoUpdate` must stay unset; a zero-match glob passes silently).
+      // before editing a number — it documents the coverage semantics that
+      // constrain the design (exclusions must be globs; threshold glob keys
+      // are additive-only; `perFile` and `autoUpdate` must stay unset; a
+      // zero-match glob passes silently).
       thresholds: COVERAGE_THRESHOLDS,
     },
   },

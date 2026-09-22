@@ -19,9 +19,9 @@
  * It also closes a fail-open hole that vitest itself does not: a glob key
  * matching zero files yields pct `"Unknown"`, and `"Unknown" < 86` is `false`,
  * so a renamed directory silently turns its gate into one that inspects
- * nothing. Verified empirically against vitest 4.1.10. Every glob key is
- * therefore asserted to match at least one file and each configured metric is
- * asserted to have at least one countable item.
+ * nothing. Verified empirically against Vitest 4.1.10 and 5.0.1. Every glob
+ * key is therefore asserted to match at least one file and each configured
+ * metric is asserted to have at least one countable item.
  *
  * Usage: node scripts/check-coverage-slack.mjs [--max-slack N] [--summary PATH] [--print]
  * Reads the `json-summary` reporter output that `pnpm test:coverage` emits.
