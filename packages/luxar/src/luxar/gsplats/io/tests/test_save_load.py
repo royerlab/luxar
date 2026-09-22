@@ -445,6 +445,37 @@ class TestSaveGsplats:
 
         assert stamped(0.0) != stamped(0.25)
 
+    def test_stamped_content_hash_canonicalizes_float_attrs(self) -> None:
+        from luxar._zarr_compat import create_array, memory_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        value = 1.23456789012345
+
+        def stamped(direction: float) -> tuple[str, dict[str, object]]:
+            root = memory_group()
+            root.attrs["type"] = "gsplats"
+            array = create_array(
+                root,
+                "amplitudes",
+                data=np.arange(12, dtype=np.uint8),
+                chunks=(12,),
+                compressor=None,
+            )
+            array.attrs["encoding"] = {
+                "name": "bounded_scalar_uint8",
+                "min": np.nextafter(value, direction),
+                "max": 2.0,
+                "bits": 8,
+            }
+            content_hash = _stamp_content_hash(root)
+            return content_hash, dict(root["amplitudes"].attrs)["encoding"]
+
+        lower = stamped(-np.inf)
+        upper = stamped(np.inf)
+
+        assert lower == upper
+        assert lower[1]["min"] == float(f"{value:.12g}")
+
     def test_stamped_content_hash_changes_with_child_group_name(self) -> None:
         # A node's own digest does not carry its NAME, and the parent folded in
         # only its children's digests — so renaming a child part/level while

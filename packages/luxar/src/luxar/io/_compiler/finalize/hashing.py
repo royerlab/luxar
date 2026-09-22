@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterator
 from typing import Any
 
+import numpy as np
 import xxhash
 import zarr
 from arbol import aprint
@@ -34,6 +36,12 @@ from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 #   `io/tests/test_hash_reproducibility.py`.
 HASH_EXCLUDED_ATTRS: frozenset[str] = frozenset({"content_hash", SOFTWARE_VERSION_ATTR})
 
+# Float metadata is derived by reductions and transcendental functions whose last
+# bits can differ across libm/BLAS builds. Twelve significant decimal digits keep
+# far more precision than any authored display or quantization contract needs,
+# while making the final store and its content hash portable across platforms.
+ATTR_FLOAT_SIGNIFICANT_DIGITS = 12
+
 # Attr keys whose value is the filename of a plain (non-zarr) payload file stored
 # *inside* the group's own directory. Such files have no chunk grid and no zarr
 # metadata, so `array_keys()` and `group_keys()` are blind to them and their bytes
@@ -61,6 +69,52 @@ _ZARR_METADATA_DOCS: frozenset[str] = frozenset(
 _ZARR_METADATA_DOCS_LOWERCASED: frozenset[str] = frozenset(
     name.lower() for name in _ZARR_METADATA_DOCS
 )
+
+
+def _canonicalize_attr_value(value: Any) -> tuple[Any, bool]:
+    """Return ``value`` with every finite float rounded to the metadata grid."""
+    if isinstance(value, (float, np.floating)):
+        python_float = float(value)
+        if not math.isfinite(python_float):
+            return value, False
+        canonical = float(f"{python_float:.{ATTR_FLOAT_SIGNIFICANT_DIGITS}g}")
+        return canonical, canonical.hex() != python_float.hex() or not isinstance(
+            value, float
+        )
+    if isinstance(value, dict):
+        changed = False
+        canonical_dict: dict[Any, Any] = {}
+        for key, item in value.items():
+            canonical_item, item_changed = _canonicalize_attr_value(item)
+            canonical_dict[key] = canonical_item
+            changed = changed or item_changed
+        return canonical_dict, changed
+    if isinstance(value, list):
+        changed = False
+        canonical_list: list[Any] = []
+        for item in value:
+            canonical_item, item_changed = _canonicalize_attr_value(item)
+            canonical_list.append(canonical_item)
+            changed = changed or item_changed
+        return canonical_list, changed
+    if isinstance(value, tuple):
+        changed = False
+        canonical_items: list[Any] = []
+        for item in value:
+            canonical_item, item_changed = _canonicalize_attr_value(item)
+            canonical_items.append(canonical_item)
+            changed = changed or item_changed
+        return tuple(canonical_items), changed
+    return value, False
+
+
+def _canonicalized_attrs(node: zarr.Group | zarr.Array) -> dict[str, Any]:
+    """Persist and return the portable form of one hashed attrs document."""
+    attrs = dict(node.attrs)
+    canonical, changed = _canonicalize_attr_value(attrs)
+    if changed:
+        node.attrs.update(canonical)
+    return canonical
 
 
 def _is_safe_payload_name(filename: str) -> bool:
@@ -213,7 +267,7 @@ def _storage_identity(name: str, dataset: zarr.Array) -> dict[str, Any]:
         # `content_hash` to exclude here (only groups carry one), and nothing
         # writes an array attr after the stamp — finalize() back-fills GROUP
         # attrs only, all of it before the hash — so this input is stable.
-        "attrs": json.dumps(dict(dataset.attrs), sort_keys=True, default=str),
+        "attrs": json.dumps(_canonicalized_attrs(dataset), sort_keys=True, default=str),
         "codec_ids": codec_ids(dataset.metadata),
     }
     if shards is not None:
@@ -284,7 +338,9 @@ def compute_content_hashes(store: zarr.Group) -> str:
         # 2. Hash metadata, minus the digest itself and the provenance-only
         #    software stamp (see HASH_EXCLUDED_ATTRS).
         attrs = {
-            k: v for k, v in dict(group.attrs).items() if k not in HASH_EXCLUDED_ATTRS
+            k: v
+            for k, v in _canonicalized_attrs(group).items()
+            if k not in HASH_EXCLUDED_ATTRS
         }
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
 

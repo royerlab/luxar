@@ -125,6 +125,7 @@ from ._compiler.finalize.hashing import (
     _ZARR_METADATA_DOCS_LOWERCASED,
     HASH_EXCLUDED_ATTRS,
     PAYLOAD_FILE_ATTRS,
+    _canonicalized_attrs,
     _is_safe_payload_name,
     _payload_terms,
     _storage_identity,
@@ -1225,7 +1226,9 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
             hasher.update(json.dumps(identity, sort_keys=True, default=str).encode())
             _hash_array_streaming(hasher, dataset)
         attrs = {
-            k: v for k, v in dict(group.attrs).items() if k not in HASH_EXCLUDED_ATTRS
+            k: v
+            for k, v in _canonicalized_attrs(group).items()
+            if k not in HASH_EXCLUDED_ATTRS
         }
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
         for term in _payload_terms(group, attrs):

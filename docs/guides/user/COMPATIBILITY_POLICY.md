@@ -108,12 +108,17 @@ because a change would silently invalidate data or caches already in the wild:
   `luxar optimize` re-stamps) is a post-order xxhash64 over the zarr tree: the
   chunk **bytes**, the codec **identifiers** and their configuration, the array
   metadata, the node attributes except the hash itself and the software version
-  that wrote it, and the plain payload files a node declares. Those inputs are
-  frozen. The viewer validates its persistent cache against this hash, so a
-  change to what feeds it would either serve stale chunks or discard every
-  warm cache on earth. (Re-chunking a store *does* change its hash — different
-  chunk keys cover different rows — which is why `luxar optimize` tells you to
-  publish under a new URL prefix.)
+  that wrote it, and the plain payload files a node declares. Before hashing,
+  every finite float nested in a hashed attribute document is persisted at 12
+  significant decimal digits. That write-time canonicalization makes the final
+  store and digest portable across libm/BLAS builds without changing the frozen
+  input set. Introducing it intentionally causes one global cache cold start;
+  the inputs and canonicalization rule are frozen from that point onward. The
+  viewer validates its persistent cache against this hash, so a later change to
+  either would either serve stale chunks or discard every warm cache on earth.
+  (Re-chunking a store *does* change its hash — different chunk keys cover
+  different rows — which is why `luxar optimize` tells you to publish under a
+  new URL prefix.)
 - **The legacy scene header key.** Published, immutable scene records carry
   `luxar_version: "0.1"`. Readers keep accepting that spelling for the 0.1
   format forever; it is the one deprecation with no removal date.
