@@ -152,7 +152,10 @@ dev = [
     # Keep in lockstep with `.pre-commit-config.yaml`'s ruff-pre-commit `rev`,
     # or the hook and the gate disagree about the same file.
     "ruff>=0.16,<0.17",
-    "mypy>=1.5.0",
+    # Pinned because mypy's bundled typeshed defines what all three typing gates
+    # accept; a new minor can otherwise turn an unrelated change red. The floor
+    # must include Python 3.14's stdlib types.
+    "mypy>=2.3,<2.4",
     "types-PyYAML>=6.0.12",
     "pre-commit>=3.3.0",
     "bandit[toml]>=1.7.5",
@@ -463,7 +466,9 @@ type-check = "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/ch
 # `gsplats/utils/device.py` or file-scope `warn-unreachable=False` as in
 # `gsplats/models/gsplats/metal/__init__.py`; a bare ignore fails on the host.
 type-check-darwin = "mypy --platform darwin --cache-dir .mypy_cache/darwin packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
-type-check-py314 = "mypy --python-version 3.14 --cache-dir .mypy_cache/py314 packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
+# The floor decides whether an ignore is necessary. A newer typeshed may make a
+# floor-required ignore redundant, so the additive ceiling pass must not police it.
+type-check-py314 = "mypy --python-version 3.14 --no-warn-unused-ignores --cache-dir .mypy_cache/py314 packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/check_cadence_liveness.py"
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
 # Enforce layer direction: the full `Subpackage layering` stack, plus the three
 # narrower `forbidden` contracts.
