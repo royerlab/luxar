@@ -380,7 +380,9 @@ which case you are in:
   one and a *dim* tile of real structure gets a proportional budget rather
   than a token one. The earlier 10%-of-ceiling foreground weights are retained
   only when every normalized foreground-weight share is within two percentage points
-  of its mass-weight share,
+  of its mass-weight share and tiles with at most one Hann-weighted
+  above-threshold voxel hide at most 10% of the total intensity mass below the
+  threshold,
   preserving sparse step-like data without letting a hot voxel starve dim
   tiles. A batch plan uses one rule for every selected slice. In mass mode, a
   tile holding at least a quarter of the equal mass

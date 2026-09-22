@@ -508,8 +508,9 @@ def run_fit_volume(
         "and the split of a uniform integer --seeds budget: each non-empty "
         "tile weighs Hann voxels x (mean above-floor intensity / ceiling)^alpha "
         "unless every normalized foreground-weight share stays within two "
-        "percentage points of its mass-weight share and threshold-empty tiles "
-        "hold <= 10% of the intensity mass; in mass mode, a tile "
+        "percentage points of its mass-weight share and tiles with at most one "
+        "Hann-weighted above-threshold voxel hide <= 10% of the intensity mass "
+        "below the threshold; in mass mode, a tile "
         "holding >= 1/4 of the equal mass share never gets < 1/4 of the equal "
         "seed share.",
         rich_help_panel="Content-aware tiling",

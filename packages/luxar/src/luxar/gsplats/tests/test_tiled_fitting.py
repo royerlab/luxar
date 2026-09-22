@@ -581,13 +581,18 @@ def test_uniform_tile_weights_keep_sparse_step_rule_when_it_tracks_mass() -> Non
     assert allocate_weighted_integer_seeds(320, weights) == (36, 67, 95, 122)
 
 
-def test_uniform_tile_weights_reject_threshold_empty_starvation_proxy() -> None:
+@pytest.mark.parametrize("add_threshold_spikes", [False, True])
+def test_uniform_tile_weights_reject_uninformative_foreground_proxy(
+    add_threshold_spikes: bool,
+) -> None:
     from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
     from luxar.gsplats.fit_tiled_gsplats import uniform_tile_occupancy_weights
 
     volume = np.zeros((1, 9, 16), dtype=np.float32)
     for tile_index, occupied in enumerate(range(2, 10)):
         volume[0, tile_index, :occupied] = 0.05
+        if add_threshold_spikes:
+            volume[0, tile_index, 15] = 0.2
     volume[0, 8, :] = 0.5
     volume[0, 8, 0] = 1.0
     specs = compute_tile_specs(volume.shape, tile_size=(1, 1, 16), overlap=0)

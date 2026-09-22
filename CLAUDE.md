@@ -497,8 +497,9 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # Hann-weighted intensity MASS above the resolved floor, saturated by
 # `--saturation-exponent`. The historical 10%-of-ceiling foreground weights
 # are retained only when every normalized foreground-weight share is within two
-# percentage points of its mass-weight share (the sparse blastocyst case); otherwise
-# mass prevents a hot voxel from
+# percentage points of its mass-weight share and tiles with at most one
+# Hann-weighted above-threshold voxel hide <= 10% of the total intensity mass
+# below the threshold (the sparse blastocyst case); otherwise mass prevents a hot voxel from
 # making whole tiles of dim nuclei look empty (1-38 seeds of 32,000 for tiles
 # holding up to 6% of the intensity; a 7-14 dB loss). One batch plan uses one
 # rule across all `(t, c)` slices. In mass mode, a tile holding >= 1/4 of the
