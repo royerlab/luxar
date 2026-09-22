@@ -19,9 +19,12 @@ repos:
         # Preserve markdown hard line-breaks (trailing 2-space), matching the
         # `[*.md] trim_trailing_whitespace = false` rule in .editorconfig.
         args: ['--markdown-linebreak-ext=md']
-        exclude: '\.svg$'
+        # scripts/zenodo_record_text/*.html are byte-exact captures of the live
+        # Zenodo descriptions, compared by sha256 — reformatting them is
+        # corruption, not tidying. See that directory's README.
+        exclude: '(\.svg|scripts/zenodo_record_text/.*\.html)$'
       - id: end-of-file-fixer
-        exclude: '\.svg$'
+        exclude: '(\.svg|scripts/zenodo_record_text/.*\.html)$'
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
