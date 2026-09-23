@@ -502,6 +502,49 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     expect(h.engine.getState().playing).toEqual(['bed']);
   });
 
+  it('does not restore the gate when the scene is muted during a pending tap resume', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeSucceeds = false;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+
+    let resolveResume!: () => void;
+    const pendingResume = new Promise<void>((resolve) => {
+      resolveResume = resolve;
+    });
+    vi.spyOn(h.ctx, 'resume').mockReturnValue(pendingResume);
+    document.dispatchEvent(new Event('pointerdown'));
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+
+    h.engine.setMuted(true);
+    resolveResume();
+    await flush();
+    expect(h.engine.isMuted()).toBe(true);
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+  });
+
+  it('does not restore the gate when the engine is disposed during a pending tap resume', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeSucceeds = false;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+
+    let resolveResume!: () => void;
+    const pendingResume = new Promise<void>((resolve) => {
+      resolveResume = resolve;
+    });
+    vi.spyOn(h.ctx, 'resume').mockReturnValue(pendingResume);
+    document.dispatchEvent(new Event('pointerdown'));
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+
+    h.engine.dispose();
+    resolveResume();
+    await flush();
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+  });
+
   it('a muted scene never shows the gate', async () => {
     localStorage.setItem(StorageKeys.audio, JSON.stringify({ muted: true, masterGain: 0.8 }));
     const h = makeHarness('suspended');

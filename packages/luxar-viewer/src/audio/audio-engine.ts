@@ -466,15 +466,17 @@ export class AudioEngine {
       .resume()
       .then(() => {
         if (ctx.state === 'running') this.openGate();
-        else {
+        else if (!this.disposed && !this.muted && this.sceneEnabled) {
           this.gate.show();
           this.armGestureRetry();
         }
       })
       .catch((error) => {
         log.warning(Modules.AUDIO, 'AudioContext.resume() failed', error);
-        this.gate.show();
-        this.armGestureRetry();
+        if (!this.disposed && !this.muted && this.sceneEnabled) {
+          this.gate.show();
+          this.armGestureRetry();
+        }
       });
   }
 
