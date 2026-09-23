@@ -52,6 +52,10 @@ out of agreement with the thing it is guarding:
    silently stops being configured (``readme`` made static again, the hook
    table dropped) produces a wheel that installs perfectly and a PyPI page
    full of dead links.
+8. **Release links use the triggering tag.** On tag builds, every rewritten
+   repository link must embed ``GITHUB_REF_NAME``. This prevents a release from
+   freezing links to ``main`` or to a malformed tag while the wheel itself
+   remains otherwise sound.
 
 Usage::
 
@@ -62,6 +66,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import tomllib
@@ -112,6 +117,11 @@ RELATIVE_LINK = re.compile(
     r'(?:\]\(|\bhref="|\bsrc=")(?!(?:[a-z][a-z0-9+.-]*:|//|#))([^)"\s]+)'
 )
 
+#: The repository ref embedded by ``hatch_build.py`` in absolute README links.
+REPOSITORY_LINK_REF = re.compile(
+    r"https://github\.com/royerlab/luxar/(?:blob|tree)/([^/)\"\s]+)"
+)
+
 
 @dataclass
 class WheelReport:
@@ -126,6 +136,8 @@ class WheelReport:
     missing_viewer_dist: bool = False
     #: Relative link targets found in the METADATA long description.
     relative_links: list[str] = field(default_factory=list)
+    #: Repository refs in release links that differ from the triggering tag.
+    mismatched_repository_refs: list[str] = field(default_factory=list)
 
     @property
     def dist_too_large(self) -> bool:
@@ -142,6 +154,7 @@ class WheelReport:
             + int(self.dist_too_large)
             + int(self.missing_viewer_dist)
             + len(self.relative_links)
+            + len(self.mismatched_repository_refs)
         )
 
 
@@ -289,6 +302,15 @@ def inspect_wheel(wheel_path: Path, project_root: Path) -> WheelReport:
         report.relative_links = sorted(
             set(relative_links_in_long_description(zf, names))
         )
+        if os.environ.get("GITHUB_REF_TYPE") == "tag":
+            expected_ref = os.environ.get("GITHUB_REF_NAME", "")
+            report.mismatched_repository_refs = sorted(
+                {
+                    repository_ref
+                    for repository_ref in repository_refs_in_long_description(zf, names)
+                    if repository_ref != expected_ref
+                }
+            )
 
     report.dist_bytes = wheel_path.stat().st_size
 
@@ -299,19 +321,31 @@ def relative_links_in_long_description(
     zf: zipfile.ZipFile, names: list[str]
 ) -> list[str]:
     """Relative link targets in the wheel's METADATA body (the PyPI page)."""
+    return RELATIVE_LINK.findall(long_description(zf, names))
+
+
+def long_description(zf: zipfile.ZipFile, names: list[str]) -> str:
+    """The wheel's METADATA body, or an empty string when it has none."""
     metadata_names = [
         n for n in names if n.endswith(".dist-info/METADATA") and n.count("/") == 1
     ]
     if not metadata_names:
-        return []
+        return ""
     metadata = zf.read(metadata_names[0]).decode("utf-8", errors="replace")
     # The long description is the body after the header block (RFC 822 style):
     # headers, a blank line, then the README. A wheel with no description has
     # no blank line, and nothing to check.
     _, separator, body = metadata.partition("\n\n")
     if not separator:
-        return []
-    return RELATIVE_LINK.findall(body)
+        return ""
+    return body
+
+
+def repository_refs_in_long_description(
+    zf: zipfile.ZipFile, names: list[str]
+) -> list[str]:
+    """Repository refs embedded in absolute links in the METADATA body."""
+    return REPOSITORY_LINK_REF.findall(long_description(zf, names))
 
 
 #: How many offending members to itemise before summarising the rest. A
@@ -385,6 +419,13 @@ def _problem_sections(
             "The metadata hook in hatch_build.py rewrites README links to "
             "absolute GitHub URLs. Check that `readme` is still in `dynamic` "
             "and [tool.hatch.metadata.hooks.custom] still points at it.",
+        ),
+        (
+            f"{len(report.mismatched_repository_refs)} repository ref(s) in "
+            "the long description differ from the triggering tag:",
+            report.mismatched_repository_refs,
+            "Tag builds must freeze README links to GITHUB_REF_NAME. Check the "
+            "metadata hook's release-ref selection.",
         ),
     ]
     return [s for s in sections if s[1]]

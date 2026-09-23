@@ -12,11 +12,13 @@ against ``pypi.org/project/luxar/`` -- a 404 for every one of them. The hook
 rewrites those links to absolute GitHub URLs in the wheel's metadata only, so
 the README in the repository keeps its clean relative links (and GitHub keeps
 resolving them per branch) while the PyPI page works. ``scripts/check_wheel.py``
-asserts on the built wheel that no relative link survived.
+asserts on the built wheel that no relative link survived. Tag builds pin those
+URLs to the triggering tag; every other build points at ``main``.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -24,11 +26,8 @@ from typing import Any
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from hatchling.metadata.plugin.interface import MetadataHookInterface
 
-#: Where a relative README link points once it leaves the repository. ``main``
-#: rather than the release tag: local and editable builds carry versions whose
-#: tags may not exist yet, and the README on ``main`` is the one PyPI describes.
-REPO_BLOB_URL = "https://github.com/royerlab/luxar/blob/main/"
-REPO_TREE_URL = "https://github.com/royerlab/luxar/tree/main/"
+#: Repository used for absolute links in the PyPI long description.
+REPO_URL = "https://github.com/royerlab/luxar"
 
 #: A Markdown link target or an HTML ``href``/``src`` that is neither absolute
 #: (scheme or protocol-relative), an in-page anchor, nor a mailto/data URI.
@@ -37,18 +36,22 @@ _RELATIVE_LINK = re.compile(
 )
 
 
-def absolutize_readme_links(text: str) -> str:
+def absolutize_readme_links(text: str, *, repository_ref: str) -> str:
     """Rewrite relative links in Markdown text to absolute GitHub URLs.
 
     A trailing slash marks a directory and goes to ``tree/``; anything else goes
-    to ``blob/``, fragment preserved.
+    to ``blob/``, fragment preserved. ``repository_ref`` selects the branch or
+    tag embedded in those URLs.
     """
+
+    repo_blob_url = f"{REPO_URL}/blob/{repository_ref}/"
+    repo_tree_url = f"{REPO_URL}/tree/{repository_ref}/"
 
     def _rewrite(match: re.Match[str]) -> str:
         prefix, target = match.group(1), match.group(2)
         path, hash_sign, fragment = target.partition("#")
         path = path.removeprefix("./")
-        base = REPO_TREE_URL if path.endswith("/") else REPO_BLOB_URL
+        base = repo_tree_url if path.endswith("/") else repo_blob_url
         return f"{prefix}{base}{path}{hash_sign}{fragment}"
 
     return _RELATIVE_LINK.sub(_rewrite, text)
@@ -61,9 +64,17 @@ class LuxarMetadataHook(MetadataHookInterface):
 
     def update(self, metadata: dict[str, Any]) -> None:
         readme = Path(self.root) / "README.md"
+        repository_ref = (
+            os.environ.get("GITHUB_REF_NAME") or "main"
+            if os.environ.get("GITHUB_REF_TYPE") == "tag"
+            else "main"
+        )
         metadata["readme"] = {
             "content-type": "text/markdown",
-            "text": absolutize_readme_links(readme.read_text(encoding="utf-8")),
+            "text": absolutize_readme_links(
+                readme.read_text(encoding="utf-8"),
+                repository_ref=repository_ref,
+            ),
         }
 
 
