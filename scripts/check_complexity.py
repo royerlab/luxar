@@ -454,7 +454,7 @@ def evaluate_ratchet(
     2. ``moved`` pairs on the function NAME alone, so a genuinely new over-complex
        function is absorbed as a move if a baselined function with the same name
        and no lower complexity vanishes in the same run. The baseline really does
-       hold same-name buckets (``main`` appears nine times), so this is not
+       hold same-name buckets (``main`` appears six times), so this is not
        hypothetical: the claim "this is the same function, relocated" can be
        wrong. What is never wrong is the bound — a pair cannot increase total
        complexity debt, which is the guarantee this ratchet makes.
