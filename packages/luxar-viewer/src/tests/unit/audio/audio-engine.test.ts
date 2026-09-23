@@ -531,16 +531,16 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     h.engine.attachScene(h.root);
     await flush();
 
-    let resolveResume!: () => void;
-    const pendingResume = new Promise<void>((resolve) => {
-      resolveResume = resolve;
+    let rejectResume!: (error: Error) => void;
+    const pendingResume = new Promise<void>((_resolve, reject) => {
+      rejectResume = reject;
     });
     vi.spyOn(h.ctx, 'resume').mockReturnValue(pendingResume);
     document.dispatchEvent(new Event('pointerdown'));
     expect(document.querySelector('.luxar-audio-gate')).toBeNull();
 
     h.engine.dispose();
-    resolveResume();
+    rejectResume(new Error('resume blocked'));
     await flush();
     expect(document.querySelector('.luxar-audio-gate')).toBeNull();
   });
