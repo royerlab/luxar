@@ -368,10 +368,10 @@ export class SoundNode {
   /**
    * Forget any deferred waypoint trigger, without touching what is playing.
    *
-   * The engine calls this on every new waypoint event so at most ONE deferred
-   * trigger — the most recent — is ever waiting. Navigating N stops while the
-   * autoplay gate is shut otherwise leaves N clips armed, and opening the gate
-   * starts all N together.
+   * The engine calls this on every new waypoint event of this node's trigger
+   * kind, so at most ONE deferred trigger — the most recent — is ever waiting.
+   * Navigating N stops while the autoplay gate is shut otherwise leaves N clips
+   * armed, and opening the gate starts all N together.
    */
   clearDeferredTrigger(): void {
     for (const v of this.voices) v.pending = false;

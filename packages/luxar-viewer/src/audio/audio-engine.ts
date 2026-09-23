@@ -324,13 +324,12 @@ export class AudioEngine {
     if (this.disposed || this.nodes.size === 0) return;
     const dims = this.deps.getDims();
     const sceneGraph = this.deps.getSceneGraph();
-    // A new waypoint event supersedes every trigger still deferred behind a
-    // shut gate: when sound does start, the listener should hear where they
-    // ARE, not every stop they walked past on the way.
-    for (const node of this.nodes.values()) node.clearDeferredTrigger();
     let fired = 0;
     for (const node of this.nodes.values()) {
       if (node.attrs.trigger !== `on_${kind}`) continue;
+      // A new event supersedes older deferred triggers of the SAME kind. The
+      // paired arrive/depart event must not erase a clip that is still decoding.
+      node.clearDeferredTrigger();
       const rows = this.belongingRows(node, when, dims, sceneGraph);
       if (rows === undefined) continue;
       if (node.triggerFromWaypoint(kind, rows)) fired++;
@@ -465,7 +464,10 @@ export class AudioEngine {
     if (!ctx) return;
     void ctx
       .resume()
-      .then(() => this.openGate())
+      .then(() => {
+        if (ctx.state === 'running') this.openGate();
+        else this.armGestureRetry();
+      })
       .catch((error) => log.warning(Modules.AUDIO, 'AudioContext.resume() failed', error));
   }
 

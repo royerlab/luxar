@@ -243,6 +243,30 @@ describe('AudioEngine — slab, ducking and buses', () => {
     expect(h.engine.getState().playing).not.toContain('n2');
   });
 
+  it('an arrive event does not discard an on_depart clip still decoding', async () => {
+    const h = makeHarness();
+    let release!: () => void;
+    const clipReady = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const departing = soundPlaceholder('/bye', { trigger: 'on_depart', bus: 'voice' });
+    const desc = departing.userData.sound as SoundSourceDescriptor;
+    desc.readClip = async () => {
+      await clipReady;
+      return new Uint8Array([1, 2, 3, 4]);
+    };
+    h.root.add(departing);
+    h.engine.attachScene(h.root);
+
+    h.engine.notifyWaypoint('depart', { story: 0 });
+    h.engine.notifyWaypoint('arrive', { story: 1 });
+    release();
+    await flush();
+    vi.advanceTimersByTime(1);
+
+    expect(h.engine.getState().playing).toEqual(['bye']);
+  });
+
   it('setNodeMuted mutes one node by path or a whole subtree by ancestor, independently of the rail', async () => {
     const h = makeHarness();
     h.root.add(soundPlaceholder('/story/bed', { trigger: 'continuous' }));
@@ -455,6 +479,26 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     expect(h.engine.getState().state).toBe('running');
     // Both the bed AND the opening `once` narration start on the tap.
     expect(h.engine.getState().playing.sort()).toEqual(['bed', 'narr']);
+  });
+
+  it('keeps the gate closed when a tap resume resolves but the context stays suspended', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeSucceeds = false;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+
+    document.dispatchEvent(new Event('pointerdown'));
+    await flush();
+    expect(h.engine.isBlocked()).toBe(true);
+    expect(h.engine.getState().playing).toEqual([]);
+
+    h.ctx.resumeSucceeds = true;
+    document.dispatchEvent(new Event('keydown'));
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.isBlocked()).toBe(false);
+    expect(h.engine.getState().playing).toEqual(['bed']);
   });
 
   it('a muted scene never shows the gate', async () => {
