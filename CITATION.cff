@@ -33,19 +33,6 @@ keywords:
 version: "2026.09.22"
 date-released: "2026-09-22"
 doi: "10.5281/zenodo.22908222"
-# ── TODO at launch (once the bioRxiv preprint is posted) ─────────────────────
-#   (`version:` / `date-released:` are stamped by `make set-version`.)
-#   * add the preprint as the preferred citation, e.g.:
-#       preferred-citation:
-#         type: article
-#         title: "Luxar: Gaussian splatting and interactive web visualization for multidimensional scientific data"
-#         authors:
-#           - family-names: Royer
-#             given-names: "Loïc A."
-#             orcid: "https://orcid.org/0000-0002-9991-9724"
-#         year: 2026
-#         doi: "10.1101/XXXXXX"          # bioRxiv DOI
-#         journal: "bioRxiv"
 preferred-citation:
   type: article
   title: "Luxar: Gaussian splatting for microscopy and scalable interactive web visualisation of multidimensional scientific data"
