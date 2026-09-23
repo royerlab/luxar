@@ -8,8 +8,9 @@ baseline (``scripts/complexity_baseline.json``), but a function that is NEWLY
 over the limit — or an already-baselined one whose complexity INCREASED — fails
 the check. Paid-down debt and functions that merely MOVED (same name, no greater
 complexity, new file) also fail a full run until ``--update-baseline`` re-keys or
-tightens the baseline. Restricted runs keep those findings advisory because
-keys outside the explicit targets were not scanned.
+tightens the baseline. Restricted runs disable move pairing, so relocations are
+reported as new; paid-down or vanished keys remain advisory because keys outside
+the explicit targets were not scanned.
 
 Why a script instead of putting ``C901`` in ``[tool.ruff.lint] select``?
 ruff has no baseline mechanism. A bare ``select`` entry would fail on all
@@ -88,8 +89,9 @@ _UNSCANNED_RE = re.compile(r"Failed to lint ")
 class RatchetReport:
     """Classification of the current findings against the baseline.
 
-    Every changed bucket fails a full run. ``improved`` and ``moved`` remain
-    advisory on restricted runs, where omitted keys may simply be unscanned.
+    Every changed bucket fails a full run. Restricted runs disable move pairing,
+    so relocations are reported as ``new``; ``improved`` remains advisory because
+    omitted keys may simply be unscanned.
     """
 
     new: list[str] = field(default_factory=list)
@@ -435,11 +437,12 @@ def evaluate_ratchet(
     - ``moved``: a vanished baseline key paired one-to-one with a ``new`` key
       naming the same function at no greater complexity — a module move, with or
       without a tidy-up on the way (see ``_pair_moves``). A full run fails until
-      the baseline is regenerated to re-key it. Moves are advisory only when
-      ``pair_moves=False`` for a PARTIAL scan (explicit target paths): every
-      baseline key outside the scanned targets then looks vanished and would be
-      an eligible pairing candidate, so a genuinely new function could be
-      absorbed by a file that was never read.
+      the baseline is regenerated to re-key it. Move pairing is disabled when
+      ``pair_moves=False`` for a PARTIAL scan (explicit target paths), so a
+      relocation is reported as ``new`` rather than ``moved``: every baseline
+      key outside the scanned targets then looks vanished and would be an
+      eligible pairing candidate, so a genuinely new function could otherwise
+      be absorbed by a file that was never read.
     - ``improved``: a key that is strictly better (fewer entries or a lower
       complexity), plus unpaired keys that vanished entirely (fixed or deleted).
     - ``unchanged``: the rest (tolerated pre-existing debt).
