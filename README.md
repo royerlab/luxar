@@ -1,6 +1,6 @@
 # Luxar
 
-[![CI](https://github.com/royerlab/luxar/actions/workflows/ci.yml/badge.svg)](https://github.com/royerlab/luxar/actions/workflows/ci.yml)
+[![CI](https://github.com/royerlab/luxar/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/royerlab/luxar/actions/workflows/ci.yml?query=branch%3Adev)
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/luxar?label=PyPI)](https://pypi.org/project/luxar/)
