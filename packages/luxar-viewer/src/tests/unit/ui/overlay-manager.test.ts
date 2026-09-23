@@ -453,6 +453,70 @@ describe('OverlayManager.loadOverlays', () => {
     vi.restoreAllMocks();
   });
 
+  it('keeps the matte canvas through a fade and cancels disposal when shown again', async () => {
+    vi.useFakeTimers();
+    const matte = {
+      canvas: document.createElement('canvas'),
+      start: vi.fn(),
+      stop: vi.fn(),
+      dispose: vi.fn(),
+    };
+    matteFactory.mockReturnValue(matte);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const setStory = (value: number): void => {
+      mockDimsState.current = {
+        ndim: 2,
+        currentStep: [0, value],
+        displayed: [0],
+        metadata: [
+          { name: 'x', unit: '', scale: 1 },
+          { name: 'story', unit: '', scale: 1 },
+        ],
+      };
+      manager.updateVisibility();
+    };
+    setStory(0);
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          alpha_matte: 'stacked',
+          transition: 'fade',
+          transition_duration: 0.35,
+          visible_range: { story: 1 },
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+
+    setStory(1);
+    expect(matte.canvas.parentElement).not.toBeNull();
+    setStory(0);
+    expect(matte.dispose).not.toHaveBeenCalled();
+    expect(matte.canvas.parentElement).not.toBeNull();
+
+    vi.advanceTimersByTime(200);
+    setStory(1);
+    vi.advanceTimersByTime(200);
+    expect(matte.dispose).not.toHaveBeenCalled();
+    expect(matteFactory).toHaveBeenCalledTimes(1);
+
+    setStory(0);
+    vi.advanceTimersByTime(349);
+    expect(matte.dispose).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    expect(matte.canvas.parentElement).toBeNull();
+
+    mockDimsState.current = null;
+    matteFactory.mockReset();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
   it('holds one compositor at a time across a long tour of stacked clips', async () => {
     // The regression this pins: nineteen turntables, each keeping a WebGL
     // context for the session, passed the browser's cap and the renderer was

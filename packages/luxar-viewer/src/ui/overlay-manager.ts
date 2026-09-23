@@ -214,10 +214,10 @@ export class OverlayManager {
    * A tour with more stacked clips than that cap (nineteen turntables, against
    * a cap around sixteen) therefore lost the renderer partway through when each
    * clip kept a context for the session. So a compositor is built when its clip
-   * is shown and destroyed, canvas and all, when the clip is hidden: see
-   * {@link showMatte} and {@link hideMatte}. The canvas cannot be kept and
-   * merely emptied — `WEBGL_lose_context` is not reversible by asking that same
-   * canvas for a context again, which silently leaves a dead one behind.
+   * is shown and destroyed, canvas and all, once its hide transition completes:
+   * see {@link showMatte} and {@link scheduleMatteHide}. The canvas cannot be
+   * kept and merely emptied — `WEBGL_lose_context` is not reversible by asking
+   * that same canvas for a context again, which silently leaves a dead one behind.
    */
   private matteCompositors = new Map<string, VideoMatteCompositor>();
   /** What {@link showMatte} needs to rebuild a compositor for a clip. */
@@ -225,6 +225,8 @@ export class OverlayManager {
     string,
     { el: HTMLDivElement; video: HTMLVideoElement; config: OverlayConfig }
   >();
+  /** Fade-out timers that hand matte contexts back after the canvas disappears. */
+  private matteHideTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Clips whose compositor could not read them: show the raw clip, never retry. */
   private matteAbandoned = new Set<string>();
   private baseUrl = '';
@@ -558,6 +560,8 @@ export class OverlayManager {
   dispose(): void {
     sceneDimsManager.removeListener(this.boundDimChangeHandler);
 
+    for (const timer of this.matteHideTimers.values()) clearTimeout(timer);
+    this.matteHideTimers.clear();
     for (const matte of this.matteCompositors.values()) matte.dispose();
     this.matteCompositors.clear();
     this.matteSpecs.clear();
@@ -756,6 +760,11 @@ export class OverlayManager {
    * story step.
    */
   private showMatte(name: string): VideoMatteCompositor | undefined {
+    const hideTimer = this.matteHideTimers.get(name);
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      this.matteHideTimers.delete(name);
+    }
     const live = this.matteCompositors.get(name);
     if (live) return live;
     const spec = this.matteSpecs.get(name);
@@ -805,12 +814,35 @@ export class OverlayManager {
     matte.canvas.remove();
   }
 
+  /** Keep the last composited frame alive until a CSS fade has completed. */
+  private scheduleMatteHide(name: string, delayMs: number): void {
+    const pending = this.matteHideTimers.get(name);
+    if (pending) clearTimeout(pending);
+    if (delayMs <= 0) {
+      this.matteHideTimers.delete(name);
+      this.hideMatte(name);
+      return;
+    }
+    if (!this.matteCompositors.has(name)) return;
+    const timer = setTimeout(() => {
+      if (this.matteHideTimers.get(name) !== timer) return;
+      this.matteHideTimers.delete(name);
+      this.hideMatte(name);
+    }, delayMs);
+    this.matteHideTimers.set(name, timer);
+  }
+
   /**
    * The compositor could not read the video (a tainted cross-origin clip):
    * drop the canvas and show the raw clip — colour over matte, visible rather
    * than a blank square — and say why, once.
    */
   private abandonMatte(name: string, video: HTMLVideoElement, error: unknown): void {
+    const hideTimer = this.matteHideTimers.get(name);
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      this.matteHideTimers.delete(name);
+    }
     const matte = this.matteCompositors.get(name);
     if (!matte) return;
     this.matteCompositors.delete(name);
@@ -873,7 +905,11 @@ export class OverlayManager {
     // A stacked-matte clip gets its compositor (and its WebGL context) only
     // while it is on screen; see the note on `matteCompositors`.
     if (visible) this.showMatte(name)?.start();
-    else this.hideMatte(name);
+    else {
+      const config = this.configs.get(name);
+      const delayMs = config?.transition === 'fade' ? config.transition_duration * 1000 : 0;
+      this.scheduleMatteHide(name, delayMs);
+    }
     if (visible) {
       video.preload = 'auto';
       if (video.paused && video.dataset.autoplay === '1') {
