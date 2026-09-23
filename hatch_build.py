@@ -17,6 +17,7 @@ asserts on the built wheel that no relative link survived.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -24,9 +25,8 @@ from typing import Any
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from hatchling.metadata.plugin.interface import MetadataHookInterface
 
-#: Where a relative README link points once it leaves the repository. ``main``
-#: rather than the release tag: local and editable builds carry versions whose
-#: tags may not exist yet, and the README on ``main`` is the one PyPI describes.
+#: Where a relative README link points outside a tagged release build. Local and
+#: editable builds carry versions whose tags may not exist yet.
 REPO_BLOB_URL = "https://github.com/royerlab/luxar/blob/main/"
 REPO_TREE_URL = "https://github.com/royerlab/luxar/tree/main/"
 
@@ -37,18 +37,21 @@ _RELATIVE_LINK = re.compile(
 )
 
 
-def absolutize_readme_links(text: str) -> str:
+def absolutize_readme_links(text: str, *, repository_ref: str = "main") -> str:
     """Rewrite relative links in Markdown text to absolute GitHub URLs.
 
     A trailing slash marks a directory and goes to ``tree/``; anything else goes
     to ``blob/``, fragment preserved.
     """
 
+    repo_blob_url = f"https://github.com/royerlab/luxar/blob/{repository_ref}/"
+    repo_tree_url = f"https://github.com/royerlab/luxar/tree/{repository_ref}/"
+
     def _rewrite(match: re.Match[str]) -> str:
         prefix, target = match.group(1), match.group(2)
         path, hash_sign, fragment = target.partition("#")
         path = path.removeprefix("./")
-        base = REPO_TREE_URL if path.endswith("/") else REPO_BLOB_URL
+        base = repo_tree_url if path.endswith("/") else repo_blob_url
         return f"{prefix}{base}{path}{hash_sign}{fragment}"
 
     return _RELATIVE_LINK.sub(_rewrite, text)
@@ -61,9 +64,17 @@ class LuxarMetadataHook(MetadataHookInterface):
 
     def update(self, metadata: dict[str, Any]) -> None:
         readme = Path(self.root) / "README.md"
+        repository_ref = (
+            os.environ.get("GITHUB_REF_NAME", f"v{metadata['version']}")
+            if os.environ.get("GITHUB_REF_TYPE") == "tag"
+            else "main"
+        )
         metadata["readme"] = {
             "content-type": "text/markdown",
-            "text": absolutize_readme_links(readme.read_text(encoding="utf-8")),
+            "text": absolutize_readme_links(
+                readme.read_text(encoding="utf-8"),
+                repository_ref=repository_ref,
+            ),
         }
 
 

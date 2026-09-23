@@ -109,17 +109,44 @@ def test_absolutize_readme_links(markdown: str, expected: str) -> None:
     assert absolutize_readme_links(markdown) == expected
 
 
-def test_metadata_hook_serves_the_readme_with_absolute_links(tmp_path: Path) -> None:
-    (tmp_path / "README.md").write_text("# T\n\nSee [the docs](docs/a.md).\n")
-    metadata: dict[str, object] = {}
+@pytest.mark.parametrize(
+    ("ref_type", "ref_name", "expected_ref"),
+    [
+        ("tag", "v2026.09.22", "v2026.09.22"),
+        ("tag", None, "v2026.9.22"),
+        ("branch", "dev", "main"),
+    ],
+)
+def test_metadata_hook_serves_the_readme_with_absolute_links(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ref_type: str,
+    ref_name: str | None,
+    expected_ref: str,
+) -> None:
+    (tmp_path / "README.md").write_text(
+        "# T\n\nSee [the docs](docs/a.md) and [skills](.agents/skills/).\n"
+    )
+    metadata: dict[str, object] = {"version": "2026.9.22"}
+    monkeypatch.setenv("GITHUB_REF_TYPE", ref_type)
+    if ref_name is None:
+        monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_REF_NAME", ref_name)
 
     LuxarMetadataHook(str(tmp_path), {}).update(metadata)
 
     assert metadata == {
+        "version": "2026.9.22",
         "readme": {
             "content-type": "text/markdown",
-            "text": f"# T\n\nSee [the docs]({REPO_BLOB_URL}docs/a.md).\n",
-        }
+            "text": (
+                "# T\n\nSee [the docs](https://github.com/royerlab/luxar/"
+                f"blob/{expected_ref}/docs/a.md) and "
+                "[skills](https://github.com/royerlab/luxar/"
+                f"tree/{expected_ref}/.agents/skills/).\n"
+            ),
+        },
     }
 
 
