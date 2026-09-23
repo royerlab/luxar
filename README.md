@@ -984,11 +984,12 @@ volumes, blind-spot cross-validation of the splat budget, the streaming viewer),
 cite the preprint:
 
 ```bibtex
-@article{royer2026luxar,
+@misc{royer2026luxar,
   title = {Luxar: Gaussian splatting for microscopy and scalable interactive web
            visualisation of multidimensional scientific data},
   author = {Royer, Lo{\"i}c A.},
   year = {2026},
+  publisher = {Zenodo},
   doi = {10.5281/zenodo.22912049},
   url = {https://doi.org/10.5281/zenodo.22912049},
   note = {Preprint on Zenodo}
