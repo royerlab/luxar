@@ -495,6 +495,7 @@ describe('OverlayManager.loadOverlays', () => {
     setStory(1);
     expect(matte.canvas.parentElement).not.toBeNull();
     setStory(0);
+    expect(matte.stop).toHaveBeenCalledTimes(1);
     expect(matte.dispose).not.toHaveBeenCalled();
     expect(matte.canvas.parentElement).not.toBeNull();
 
@@ -505,7 +506,9 @@ describe('OverlayManager.loadOverlays', () => {
     expect(matteFactory).toHaveBeenCalledTimes(1);
 
     setStory(0);
-    vi.advanceTimersByTime(349);
+    vi.advanceTimersByTime(200);
+    manager.updateVisibility();
+    vi.advanceTimersByTime(149);
     expect(matte.dispose).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(matte.dispose).toHaveBeenCalledTimes(1);
@@ -517,68 +520,79 @@ describe('OverlayManager.loadOverlays', () => {
     vi.useRealTimers();
   });
 
-  it('holds one compositor at a time across a long tour of stacked clips', async () => {
-    // The regression this pins: nineteen turntables, each keeping a WebGL
-    // context for the session, passed the browser's cap and the renderer was
-    // the context it evicted.
-    const built: { canvas: HTMLCanvasElement; disposed: boolean }[] = [];
-    matteFactory.mockImplementation(() => {
-      const entry = { canvas: document.createElement('canvas'), disposed: false };
-      built.push(entry);
-      return {
-        canvas: entry.canvas,
-        start: vi.fn(),
-        stop: vi.fn(),
-        dispose: vi.fn(() => {
-          entry.disposed = true;
-        }),
+  it.each([
+    ['none', 0],
+    ['fade', 350],
+  ] as const)(
+    'holds one compositor at a time across a long tour of stacked clips with %s transitions',
+    async (transition, hideDelayMs) => {
+      vi.useFakeTimers();
+      // The regression this pins: nineteen turntables, each keeping a WebGL
+      // context for the session, passed the browser's cap and the renderer was
+      // the context it evicted.
+      const built: { canvas: HTMLCanvasElement; disposed: boolean }[] = [];
+      matteFactory.mockImplementation(() => {
+        const entry = { canvas: document.createElement('canvas'), disposed: false };
+        built.push(entry);
+        return {
+          canvas: entry.canvas,
+          start: vi.fn(),
+          stop: vi.fn(),
+          dispose: vi.fn(() => {
+            entry.disposed = true;
+          }),
+        };
+      });
+      vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+      vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+      const stops = 19;
+      const setStory = (value: number): void => {
+        mockDimsState.current = {
+          ndim: 2,
+          currentStep: [0, value],
+          displayed: [0],
+          metadata: [
+            { name: 'x', unit: '', scale: 1 },
+            { name: 'story', unit: '', scale: 1 },
+          ],
+        };
+        manager.updateVisibility();
       };
-    });
-    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
-    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
-    const stops = 19;
-    const setStory = (value: number): void => {
-      mockDimsState.current = {
-        ndim: 2,
-        currentStep: [0, value],
-        displayed: [0],
-        metadata: [
-          { name: 'x', unit: '', scale: 1 },
-          { name: 'story', unit: '', scale: 1 },
-        ],
-      };
-      manager.updateVisibility();
-    };
-    setStory(0);
-    await manager.loadOverlays(
-      Array.from({ length: stops }, (_, k) =>
-        makeTextOverlay({
-          name: `turntable-${k + 1}`,
-          type: 'overlay_video',
-          video_file: 'video.webm',
-          alpha_matte: 'stacked',
-          size: [0.26, null],
-          visible_range: { story: k + 1 },
-        })
-      ),
-      'https://example.com/scene.luxar.zarr/'
-    );
+      setStory(0);
+      await manager.loadOverlays(
+        Array.from({ length: stops }, (_, k) =>
+          makeTextOverlay({
+            name: `turntable-${k + 1}`,
+            type: 'overlay_video',
+            video_file: 'video.webm',
+            alpha_matte: 'stacked',
+            size: [0.26, null],
+            transition,
+            transition_duration: 0.35,
+            visible_range: { story: k + 1 },
+          })
+        ),
+        'https://example.com/scene.luxar.zarr/'
+      );
 
-    for (let step = 1; step <= stops; step++) {
-      setStory(step);
-      const live = built.filter((b) => !b.disposed);
-      expect(live).toHaveLength(1);
-      expect(document.querySelectorAll('.luxar-overlay--video canvas')).toHaveLength(1);
+      for (let step = 1; step <= stops; step++) {
+        setStory(step);
+        vi.advanceTimersByTime(hideDelayMs);
+        const live = built.filter((b) => !b.disposed);
+        expect(live).toHaveLength(1);
+        expect(document.querySelectorAll('.luxar-overlay--video canvas')).toHaveLength(1);
+      }
+      // One built per stop visited, and all but the current one handed back.
+      expect(built).toHaveLength(stops);
+      expect(built.filter((b) => b.disposed)).toHaveLength(stops - 1);
+
+      manager.dispose();
+      mockDimsState.current = null;
+      matteFactory.mockReset();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
     }
-    // One built per stop visited, and all but the current one handed back.
-    expect(built).toHaveLength(stops);
-    expect(built.filter((b) => b.disposed)).toHaveLength(stops - 1);
-
-    manager.dispose();
-    mockDimsState.current = null;
-    matteFactory.mockReset();
-    vi.restoreAllMocks();
-  });
+  );
 
   it.each([
     ['same-origin directory', `${window.location.origin}/scene.luxar.zarr/`, false],
