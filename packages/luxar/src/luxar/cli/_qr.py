@@ -608,7 +608,7 @@ def qr_ascii(matrix: list[list[bool]], *, border: int = 2, invert: bool = False)
 
 
 def qr_png_bytes(matrix: list[list[bool]], *, scale: int = 8, border: int = 4) -> bytes:
-    """The matrix as a 1-bit greyscale PNG.
+    """The matrix as an 8-bit greyscale PNG.
 
     Written by hand from zlib and struct rather than with Pillow, for the same
     reason the encoder is hand-rolled: this runs in the exported folder, where

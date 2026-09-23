@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
+import io
 import socket
 import stat
 import subprocess
@@ -18,7 +20,7 @@ import pytest
 import zarr
 from typer.testing import CliRunner
 
-from luxar import Dimensions, LuxarZarrCompiler
+from luxar import Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
 from luxar.cli import app
 from luxar.cli import export as export_module
 from luxar.cli import main as main_module
@@ -33,6 +35,7 @@ from luxar.cli.export import (
     export_scene,
     read_scene_facts,
 )
+from luxar.core.viewer_config import Chapter, ControlPanelConfig
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -912,6 +915,68 @@ def test_the_serve_script_defaults_follow_the_scene() -> None:
     assert "HAS_CONTROL_PANEL = False" in export_module._get_serve_script_content(
         "data"
     )
+
+
+def test_panel_serve_script_runs_its_defaults_and_writes_the_qr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the generated module rather than only its substituted text."""
+    _generate_serve_script(
+        tmp_path,
+        "data",
+        facts=SceneFacts(has_control_panel=True),
+    )
+    export_module._copy_qr_module(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    spec = importlib.util.spec_from_file_location(
+        "exported_panel_serve", tmp_path / "serve.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    args = module._parse_args([])
+    assert args.control is True
+    assert args.host == "0.0.0.0"
+    ascii_stdout = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+    monkeypatch.setattr(sys, "stdout", ascii_stdout)
+    module.print_control_qr("http://192.168.1.42:8000/viewer/control.html")
+    assert (tmp_path / "control-qr.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_scene_facts_read_a_compiler_written_control_panel(tmp_path: Path) -> None:
+    """Pin the actual on-disk keys shared by the compiler and exporter."""
+    store = tmp_path / "panel.luxar.zarr"
+    dimensions = Dimensions(
+        [
+            Dimension(
+                "story",
+                range=(0, 2),
+                step=1,
+                display=False,
+                discrete=True,
+                categories=["Overview", "One", "Two"],
+            ),
+            Dimension("x"),
+        ]
+    )
+    panel = ControlPanelConfig(
+        chapter_dimension="story",
+        chapters={1: Chapter(label="One"), 2: Chapter(label="Two")},
+    )
+    with LuxarZarrCompiler(store) as compiler:
+        compiler.create_scene(
+            dimensions=dimensions,
+            viewer_config=ViewerConfig(control_panel=panel),
+        )
+
+    facts = read_scene_facts(store)
+    assert facts.has_control_panel is True
+    assert facts.chapter_dimension == "story"
+    assert facts.chapter_count == 2
+    assert facts.panel_tiles == 3
+    assert facts.dimensions == ("story", "x")
+    assert facts.displayed == ("x",)
 
 
 def test_the_readme_leads_with_kiosk_mode_only_for_a_panel_scene(

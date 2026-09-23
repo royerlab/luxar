@@ -892,8 +892,11 @@ def print_control_qr(url: str) -> None:
         matrix = qr_matrix(url)
     except Exception:  # noqa: BLE001 - a QR is a convenience, never the gate
         return
-    print()
-    print(qr_ascii(matrix, border=2))
+    try:
+        print()
+        print(qr_ascii(matrix, border=2))
+    except (OSError, UnicodeError):
+        pass
     try:
         target = SCRIPT_DIR / "control-qr.png"
         target.write_bytes(qr_png_bytes(matrix, scale=8, border=4))
