@@ -366,3 +366,36 @@ def test_prefilter_cube_preserves_detail_for_prime_sized_faces() -> None:
     assert filtered[2].min() < 0.01
     assert filtered[2].mean() < 0.3
     assert filtered[3].max() < 1e-3
+
+
+def test_principal_frame_stands_the_bulky_end_up() -> None:
+    """A phage must hang head up, legs down — and not by luck.
+
+    An eigenvector's sign is undetermined, so standing a structure on its long
+    axis still leaves which way up to numerical accident. The bulkier half is
+    put at +y, which for a virion is the capsid.
+    """
+    np = pytest.importorskip("numpy")
+    from luxar.demos._clay_renderer import principal_frame
+
+    rng = np.random.default_rng(0)
+    head = rng.normal(size=(4000, 3)) * np.array([3.0, 3.0, 3.0])  # bulky capsid
+    tail = np.stack(
+        [
+            rng.normal(size=300) * 0.4,
+            np.linspace(-6.0, -26.0, 300),  # a thin stalk going one way
+            rng.normal(size=300) * 0.4,
+        ],
+        axis=1,
+    )
+    cloud = np.vstack([head, tail])
+
+    for flip in (1.0, -1.0):  # the answer must not depend on input handedness
+        centre, rot = principal_frame(cloud * np.array([1.0, flip, 1.0]))
+        placed = (cloud * np.array([1.0, flip, 1.0]) - centre) @ rot.T
+        head_y = placed[: len(head), 1].mean()
+        tail_y = placed[len(head) :, 1].mean()
+        assert head_y > tail_y, "the bulky end must sit above the thin one"
+        # And the long axis really is vertical: the stalk spans y, not x or z.
+        spans = np.ptp(placed[len(head) :], axis=0)
+        assert spans[1] == pytest.approx(max(spans), rel=0.2)

@@ -27,6 +27,11 @@ export const RAIL_ICONS: Record<string, string> = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
   audioMuted:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9.5l5 5"/><path d="M20.5 9.5l-5 5"/></svg>',
+  // Blocked: the speaker with a "tap here" dot rather than a slash. Muted is
+  // the listener's choice; blocked is the browser's, and a slash would read as
+  // the same thing.
+  audioBlocked:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><circle cx="18" cy="12" r="3.2"/><path d="M18 10.4v1.6"/><path d="M18 13.6v.1"/></svg>',
   recording:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>',
   screenshot:

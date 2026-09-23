@@ -20,6 +20,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import type { VideoMatteCompositor } from '../../../ui/video-matte';
 import { OverlayManager, FONT_PRESETS } from '../../../ui/overlay-manager';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../../../data/loaders';
 import { log, Modules } from '../../../utils/log';
@@ -339,21 +341,34 @@ describe('OverlayManager.loadOverlays', () => {
     pausedSpy.mockRestore();
   });
 
-  it('shows a compositor canvas for a stacked-alpha-matte clip and drives it with visibility', async () => {
+  it('builds the compositor canvas only while a stacked-matte clip is on screen', async () => {
     // jsdom has no WebGL, so substitute a compositor and check the manager's
-    // side of the contract: the canvas is what shows
-    // and is sized, the <video> stays as a hidden frame source, start/stop
-    // follow the overlay's visibility, and dispose releases the compositor.
-    const matte = {
-      canvas: document.createElement('canvas'),
-      start: vi.fn(),
-      stop: vi.fn(),
-      dispose: vi.fn(),
+    // side of the contract: the canvas is what shows and is sized, the <video>
+    // stays as a hidden frame source, and — the part that matters at scale —
+    // the compositor exists only while the clip is visible. Each one owns a
+    // WebGL context, browsers cap live contexts and evict the OLDEST (the
+    // scene's own renderer), so a nineteen-stop tour cannot hold one per stop.
+    // Typed as the real interface with Mock-typed members: `vi.fn()` alone
+    // widens to a callable-or-constructable mock, which does not satisfy
+    // `() => void` and fails `tsc` even though it runs fine.
+    type MockedMatte = VideoMatteCompositor & {
+      start: Mock<() => void>;
+      stop: Mock<() => void>;
+      dispose: Mock<() => void>;
     };
+    const makeMatte = (): MockedMatte => ({
+      canvas: document.createElement('canvas'),
+      start: vi.fn<() => void>(),
+      stop: vi.fn<() => void>(),
+      dispose: vi.fn<() => void>(),
+    });
+    const built: ReturnType<typeof makeMatte>[] = [];
     let firstFrame: (() => void) | undefined;
-    matteFactory.mockImplementationOnce((_video, opts) => {
+    matteFactory.mockImplementation((_video, opts) => {
+      const m = makeMatte();
       firstFrame = opts?.onFirstFrame;
-      return matte;
+      built.push(m);
+      return m;
     });
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
@@ -388,40 +403,196 @@ describe('OverlayManager.loadOverlays', () => {
 
     const el = document.querySelector('.luxar-overlay--video') as HTMLDivElement;
     const video = el.querySelector('video') as HTMLVideoElement;
+    // NOTHING is built at load: a clip never shown costs no context.
+    expect(matteFactory).not.toHaveBeenCalled();
+    expect(el.querySelector('canvas')).toBeNull();
+    // WebGL must be allowed to read the clip when the store is on another origin.
+    expect(video.crossOrigin).toBe('anonymous');
+    // The video is the hidden frame source, never the sized element.
+    expect(video.classList.contains('luxar-overlay__matte-source')).toBe(true);
+    expect(video.style.width).toBe('');
+
+    setStory(2);
     expect(matteFactory).toHaveBeenCalledWith(
       video,
       expect.objectContaining({ onFailure: expect.any(Function) })
     );
-    // WebGL must be allowed to read the clip when the store is on another origin.
-    expect(video.crossOrigin).toBe('anonymous');
+    const matte = built[0];
     expect(el.contains(matte.canvas)).toBe(true);
-    // The canvas is the sized, shown element; the video is the hidden source.
+    expect(matte.start).toHaveBeenCalledTimes(1);
+    // The canvas is the sized, shown element.
     expect(matte.canvas.style.width).toBe('26vw');
     expect(matte.canvas.style.height).toBe('auto');
-    expect(video.style.width).toBe('');
-    expect(video.classList.contains('luxar-overlay__matte-source')).toBe(true);
     // The poster sits behind the canvas until the first frame is drawn — as a
     // background IMAGE only: the colour stays untouched (and the stylesheet
     // pins it transparent) so the page's black `canvas` rule cannot show.
     expect(matte.canvas.style.backgroundImage).toContain('poster.png');
     expect(matte.canvas.style.backgroundColor).toBe('');
-    video.dispatchEvent(new Event('playing'));
-    expect(matte.canvas.style.backgroundImage).toContain('poster.png');
     firstFrame!();
     expect(matte.canvas.style.backgroundImage).toBe('none');
     expect(matte.canvas.style.backgroundColor).toBe('');
 
-    expect(matte.start).not.toHaveBeenCalled();
-    setStory(2);
-    expect(matte.start).toHaveBeenCalledTimes(1);
+    // Leaving the stop DESTROYS it, canvas and all, so the context goes back.
     setStory(0);
-    expect(matte.stop).toHaveBeenCalled();
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    expect(matte.canvas.parentElement).toBeNull();
+    expect(el.querySelector('canvas')).toBeNull();
+
+    // Coming back builds a FRESH one rather than reusing the dead canvas:
+    // `WEBGL_lose_context` is not reversible on the same canvas.
+    setStory(2);
+    expect(built).toHaveLength(2);
+    expect(built[1]).not.toBe(matte);
+    expect(built[1].start).toHaveBeenCalledTimes(1);
+    expect(el.contains(built[1].canvas)).toBe(true);
 
     manager.dispose();
-    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    expect(built[1].dispose).toHaveBeenCalledTimes(1);
     mockDimsState.current = null;
+    matteFactory.mockReset();
     vi.restoreAllMocks();
   });
+
+  it('keeps the matte canvas through a fade and cancels disposal when shown again', async () => {
+    vi.useFakeTimers();
+    const matte = {
+      canvas: document.createElement('canvas'),
+      start: vi.fn(),
+      stop: vi.fn(),
+      dispose: vi.fn(),
+    };
+    matteFactory.mockReturnValue(matte);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const setStory = (value: number): void => {
+      mockDimsState.current = {
+        ndim: 2,
+        currentStep: [0, value],
+        displayed: [0],
+        metadata: [
+          { name: 'x', unit: '', scale: 1 },
+          { name: 'story', unit: '', scale: 1 },
+        ],
+      };
+      manager.updateVisibility();
+    };
+    setStory(0);
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          alpha_matte: 'stacked',
+          transition: 'fade',
+          transition_duration: 0.35,
+          visible_range: { story: 1 },
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+
+    setStory(1);
+    expect(matte.canvas.parentElement).not.toBeNull();
+    setStory(0);
+    expect(matte.stop).toHaveBeenCalledTimes(1);
+    expect(matte.dispose).not.toHaveBeenCalled();
+    expect(matte.canvas.parentElement).not.toBeNull();
+
+    vi.advanceTimersByTime(200);
+    setStory(1);
+    vi.advanceTimersByTime(200);
+    expect(matte.dispose).not.toHaveBeenCalled();
+    expect(matteFactory).toHaveBeenCalledTimes(1);
+
+    setStory(0);
+    vi.advanceTimersByTime(200);
+    manager.updateVisibility();
+    vi.advanceTimersByTime(149);
+    expect(matte.dispose).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    expect(matte.canvas.parentElement).toBeNull();
+
+    mockDimsState.current = null;
+    matteFactory.mockReset();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ['none', 0],
+    ['fade', 350],
+  ] as const)(
+    'holds one compositor at a time across a long tour of stacked clips with %s transitions',
+    async (transition, hideDelayMs) => {
+      vi.useFakeTimers();
+      // The regression this pins: nineteen turntables, each keeping a WebGL
+      // context for the session, passed the browser's cap and the renderer was
+      // the context it evicted.
+      const built: { canvas: HTMLCanvasElement; disposed: boolean }[] = [];
+      matteFactory.mockImplementation(() => {
+        const entry = { canvas: document.createElement('canvas'), disposed: false };
+        built.push(entry);
+        return {
+          canvas: entry.canvas,
+          start: vi.fn(),
+          stop: vi.fn(),
+          dispose: vi.fn(() => {
+            entry.disposed = true;
+          }),
+        };
+      });
+      vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+      vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+      const stops = 19;
+      const setStory = (value: number): void => {
+        mockDimsState.current = {
+          ndim: 2,
+          currentStep: [0, value],
+          displayed: [0],
+          metadata: [
+            { name: 'x', unit: '', scale: 1 },
+            { name: 'story', unit: '', scale: 1 },
+          ],
+        };
+        manager.updateVisibility();
+      };
+      setStory(0);
+      await manager.loadOverlays(
+        Array.from({ length: stops }, (_, k) =>
+          makeTextOverlay({
+            name: `turntable-${k + 1}`,
+            type: 'overlay_video',
+            video_file: 'video.webm',
+            alpha_matte: 'stacked',
+            size: [0.26, null],
+            transition,
+            transition_duration: 0.35,
+            visible_range: { story: k + 1 },
+          })
+        ),
+        'https://example.com/scene.luxar.zarr/'
+      );
+
+      for (let step = 1; step <= stops; step++) {
+        setStory(step);
+        vi.advanceTimersByTime(hideDelayMs);
+        const live = built.filter((b) => !b.disposed);
+        expect(live).toHaveLength(1);
+        expect(document.querySelectorAll('.luxar-overlay--video canvas')).toHaveLength(1);
+      }
+      // One built per stop visited, and all but the current one handed back.
+      expect(built).toHaveLength(stops);
+      expect(built.filter((b) => b.disposed)).toHaveLength(stops - 1);
+
+      manager.dispose();
+      mockDimsState.current = null;
+      matteFactory.mockReset();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  );
 
   it.each([
     ['same-origin directory', `${window.location.origin}/scene.luxar.zarr/`, false],

@@ -203,12 +203,30 @@ Browsers refuse to start an `AudioContext` without a user gesture on the page.
 - **Kiosk**: launch Chrome with `--autoplay-policy=no-user-gesture-required`
   (documented next to the kiosk block in `REMOTE_CONTROL_SPEC.md` §4.3). The
   context starts on load.
-- **Fallback**: if the context is `suspended` after load, the engine shows a
+- **Fallback**: if the context is not `running` after load, the engine shows a
   minimal "Tap to enable sound" gate (an overlay, dismissed by the first
   pointer or key event anywhere), resumes the context, and only then starts
   `continuous` nodes — and re-runs the rising edges from a silent baseline, so
   an opening `once` narration is not lost to the tap (Phase 1 clarification). The remote API reports `audio.state` so a controller can
   tell the display needs its tap.
+- The overlay is decided from `context.state`, NOT from the outcome of
+  `resume()`: a context held by an autoplay policy may leave that promise
+  unsettled, so a `.then()`/`.catch()` is not a reliable place to decide
+  anything.
+- The gate is not one-shot. It also opens from `onstatechange` reaching
+  `running`, from a one-shot pointer/key listener that retries the resume, and
+  from `enableSound()`. Without those the context stays suspended for the whole
+  session unless the listener happens to toggle the mute.
+- **Blocked is not muted.** `isBlocked()` — sound wanted, context not running —
+  is reported separately from `isMuted()`, and the rail's Sound button renders
+  it as a third state whose click resumes the context rather than toggling a
+  mute the listener never set.
+- **At most one deferred waypoint trigger per trigger kind.** A trigger that cannot
+  start while the gate is shut is held, and superseded by the next waypoint
+  event of the same kind. An arrival therefore does not discard the departure
+  trigger from the same transition. Replacing the prior trigger prevents a
+  listener who walks N stops before sound starts from hearing all N clips at
+  once when it does.
 
 ### 4.5 Remote API (extends `REMOTE_CONTROL_SPEC.md`)
 

@@ -203,6 +203,13 @@ export class FakeAudioContext {
   resumeCalls = 0;
   /** What `resume()` does: flip to running (default) or stay suspended. */
   resumeSucceeds = true;
+  /**
+   * Leave the `resume()` promise UNSETTLED, which is what a real context
+   * blocked by an autoplay policy does — it neither resolves nor rejects until
+   * the policy is satisfied. A mock that always settles makes every
+   * `.then()`/`.catch()` path look reachable when it is not.
+   */
+  resumeNeverSettles = false;
   decodeCalls = 0;
 
   constructor(initialState: 'suspended' | 'running' = 'running') {
@@ -236,9 +243,21 @@ export class FakeAudioContext {
     this.decodeCalls++;
     return new FakeAudioBuffer(2);
   }
-  async resume(): Promise<void> {
+  resume(): Promise<void> {
     this.resumeCalls++;
+    if (this.resumeNeverSettles) return new Promise<void>(() => undefined);
     if (this.resumeSucceeds && this.state === 'suspended') {
+      this.state = 'running';
+      this.onstatechange?.();
+    }
+    return Promise.resolve();
+  }
+
+  /** The browser letting the context through later (a gesture satisfied the policy). */
+  unblock(): void {
+    this.resumeNeverSettles = false;
+    this.resumeSucceeds = true;
+    if (this.state === 'suspended') {
       this.state = 'running';
       this.onstatechange?.();
     }

@@ -42,8 +42,10 @@ Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
 
 At the default 900 frames that is 0.4° per frame, a slow 30 s turn at 30 fps
 (the owner found one turn in 6 s far too fast). Renders are keyed by
-``(pdb_id, STYLE_VERSION, frames, size, colour)``; bump ``STYLE_VERSION`` when
-the look changes and ``MESH_VERSION`` when the surface export changes.
+``(pdb_id, STYLE_VERSION, MESH_VERSION, frames, size, colour)``; bump
+``STYLE_VERSION`` when the look changes and ``MESH_VERSION`` when the surface
+export changes. Either invalidates the rendered video, because the video is a
+function of both.
 """
 
 from __future__ import annotations
@@ -83,7 +85,7 @@ from luxar.demos._clay_renderer import (
 #: and reflection) — the env digest is in the key, the WEIGHTS are not.
 STYLE_VERSION = 8
 #: Bump when the PyMOL surface export changes so cached meshes are recomputed.
-MESH_VERSION = 2
+MESH_VERSION = 4
 DEFAULT_FRAMES = 900
 DEFAULT_FPS = 30
 # 768 px covers the overlay's ~26% of a 4K kiosk width (~1000 px) at a 1.3x
@@ -103,7 +105,45 @@ RGB = tuple[float, float, float]
 RCSB_FILE_URL = "https://files.rcsb.org/download/{pdb_id}.pdb"
 #: The mmCIF fallback for entries too large for the legacy PDB format.
 RCSB_CIF_URL = "https://files.rcsb.org/download/{pdb_id}.cif"
+#: The BIOLOGICAL ASSEMBLY, tried before either file above. A deposit's
+#: asymmetric unit is a crystallographic bookkeeping unit, not a molecule: it
+#: can hold several copies of the complex (4OO8 packs two whole Cas9-RNA-DNA
+#: complexes) or a fraction of one (8RUC is half a RuBisCO, 1U94 one protomer
+#: of a six-subunit RecA filament). Assembly 1 is what the depositors say the
+#: molecule IS, so it is what a turntable should turn. Audited over all twenty
+#: entries on 2026-09-16: three disagreed with their asymmetric unit, all three
+#: in a way the story's own text noticed and the picture did not.
+RCSB_ASSEMBLY_URL = "https://files.rcsb.org/download/{pdb_id}-assembly1.cif"
 RCSB_ENTRY_URL = "https://data.rcsb.org/rest/v1/core/entry/{pdb_id}"
+
+#: Residue names removed before the surface is computed: solvent additives,
+#: cryoprotectants and buffer ions that are in a deposit because of how the
+#: crystal was grown, not because they are part of the molecule. Water and
+#: hydrogens are handled by PyMOL's own `solvent` / `hydro` selections.
+#:
+#: Deliberately SHORT, and deliberately keeps every metal and cofactor. A
+#: longer list would start deleting chemistry: the magnesium in RuBisCO's
+#: active site, the sodium in an ABC transporter, the zinc in the nisin
+#: cyclase and the iron of a reaction centre are all "ions" and all part of
+#: the enzyme. Phosphate is kept for the same reason — it is buffer in one
+#: entry and substrate in the next, and the renderer cannot tell.
+CRYSTALLISATION_ADDITIVES = (
+    "ACT",  # acetate
+    "BME",  # beta-mercaptoethanol
+    "CIT",  # citrate
+    "DMS",  # dimethyl sulfoxide
+    "EDO",  # ethylene glycol
+    "EPE",  # HEPES
+    "FMT",  # formate
+    "GOL",  # glycerol
+    "IMD",  # imidazole
+    "MES",  # MES buffer
+    "MPD",  # 2-methyl-2,4-pentanediol
+    "PEG",  # polyethylene glycol fragment
+    "PG4",  # PEG fragment
+    "SO4",  # sulfate
+    "TRS",  # Tris
+)
 
 PYMOL_INSTALL_HINT = (
     "PyMOL open-source is not on PyPI. Install it with one of:\n"
@@ -191,12 +231,25 @@ def cache_key(
     ``env_digest`` is :func:`environment_digest` of the baked environment the
     clay was lit with (empty when it was rendered under the studio lights alone),
     so a re-baked scene re-renders its turntables.
+
+    :data:`MESH_VERSION` is part of the key, because a render is a function of
+    the GEOMETRY as much as of the look. It used to be absent, and that was a
+    trap: bumping MESH_VERSION recomputed every surface and then served the
+    cached WebM built from the old ones, so a corrected structure appeared to
+    change nothing. The only clue was a docstring asking you to remember to
+    bump both.
     """
-    parts = f"{pdb_id.upper()}|{style_version}|{frames}|{size}|{color_hex(color)}"
+    parts = (
+        f"{pdb_id.upper()}|{style_version}|m{MESH_VERSION}|"
+        f"{frames}|{size}|{color_hex(color)}"
+    )
     if env_digest:
         parts += f"|env:{env_digest}"
     digest = hashlib.sha1(parts.encode()).hexdigest()
-    return f"{pdb_id.upper()}_v{style_version}_{frames}f_{size}px_{digest[:8]}"
+    return (
+        f"{pdb_id.upper()}_v{style_version}m{MESH_VERSION}_"
+        f"{frames}f_{size}px_{digest[:8]}"
+    )
 
 
 def environment_digest(faces: Optional[np.ndarray]) -> str:
@@ -277,10 +330,26 @@ def surface_quality_for(n_atoms: int) -> int:
 def pymol_surface_script(pdb_path: Path, mesh_dir: Path, *, quality: int) -> str:
     """The PyMOL Python script that exports the molecular surface, per chain.
 
-    Solvent and hydrogens are removed, then for every chain of the polymer the
-    surface of THAT chain alone is shown and saved as ``chain_<i>.obj`` (PyMOL's
-    OBJ export writes whatever is drawn, with no colours, so per-chain colouring
-    means per-chain files). ``chains.json`` lists the chain ids in file order.
+    Solvent, hydrogens and crystallisation additives are removed, then for
+    every chain the surface of THAT chain alone is shown and saved as
+    ``chain_<i>.obj`` (PyMOL's OBJ export writes whatever is drawn, with no
+    colours, so per-chain colouring means per-chain files). ``chains.json``
+    lists the chain ids in file order.
+
+    **Everything that is part of the molecule is drawn, not just the polymer.**
+    An earlier version enumerated ``mol and polymer`` and drew ``polymer and
+    chain X``, which silently dropped every cofactor and ligand — the four
+    hemes of hemoglobin, photosystem II's Mn4CaO5 cluster and its chlorophylls,
+    the PLP that does the decarboxylation, the catalytic zinc of the nisin
+    cyclase, the glycan shield of the spike, and the propionate a panel called
+    the odorant it was holding. Chains are enumerated over the non-solvent
+    selection too, so a ligand deposited on its own chain id still gets a mesh
+    rather than vanishing.
+
+    :data:`CRYSTALLISATION_ADDITIVES` is removed first. Completeness means the
+    molecule, not the drop it was grown in: glycerol, sulfate and the rest are
+    in the file because of how the crystal was made, and drawing them puts
+    blobs on the clay that are not part of anything.
     """
     return "\n".join(
         [
@@ -289,12 +358,22 @@ def pymol_surface_script(pdb_path: Path, mesh_dir: Path, *, quality: int) -> str
             f"cmd.load({str(pdb_path)!r}, 'mol')",
             "cmd.remove('solvent')",
             "cmd.remove('hydro')",
+            f"cmd.remove('resn {'+'.join(sorted(CRYSTALLISATION_ADDITIVES))}')",
+            # PyMOL sets the `ignore` flag on non-polymer atoms, and a flagged
+            # atom takes no part in the SURFACE even when it is selected and
+            # shown. Clearing it is what actually puts the ligands in the
+            # mesh; without it, `not solvent` merely selects them and the
+            # surface still traces the protein alone. Verified by geometry
+            # rather than by atom count: with the flag cleared, hemoglobin's
+            # chain A loses 2,574 vertices, because the heme fills the pocket
+            # whose concave lining used to be surfaced.
+            "cmd.flag('ignore', 'not solvent', 'clear')",
             "cmd.hide('everything')",
             f"cmd.set('surface_quality', {int(quality)})",
-            "chains = cmd.get_chains('mol and polymer') or ['']",
+            "chains = cmd.get_chains('mol and not solvent') or ['']",
             "for i, chain in enumerate(chains):",
             "    cmd.hide('everything')",
-            "    cmd.show('surface', \"polymer and chain '%s'\" % chain)",
+            "    cmd.show('surface', \"not solvent and chain '%s'\" % chain)",
             f"    cmd.save({str(mesh_dir)!r} + '/chain_%d.obj' % i)",
             f"with open({str(mesh_dir)!r} + '/chains.json', 'w') as f:",
             "    json.dump(chains, f)",
@@ -319,25 +398,41 @@ def fetch_pdb(pdb_id: str, cache_dir: Path) -> tuple[Path, str]:
     """
     pdb_id = pdb_id.upper()
     cache_dir.mkdir(parents=True, exist_ok=True)
+    asm_path = cache_dir / f"{pdb_id}-assembly1.cif"
     pdb_path = cache_dir / f"{pdb_id}.pdb"
     cif_path = cache_dir / f"{pdb_id}.cif"
     meta_path = cache_dir / f"{pdb_id}.json"
-    if cif_path.exists():
-        pdb_path = cif_path
-    elif not pdb_path.exists():
-        try:
-            with urllib.request.urlopen(
-                RCSB_FILE_URL.format(pdb_id=pdb_id), timeout=60
-            ) as r:  # noqa: S310
-                pdb_path.write_bytes(r.read())
-        except urllib.error.HTTPError as e:
-            if e.code != 404:
-                raise
-            with urllib.request.urlopen(
-                RCSB_CIF_URL.format(pdb_id=pdb_id), timeout=60
-            ) as r:  # noqa: S310
-                cif_path.write_bytes(r.read())
-            pdb_path = cif_path
+    # Assembly 1 first (see RCSB_ASSEMBLY_URL), then the legacy PDB, then the
+    # entry mmCIF. The legacy format cannot hold the large cryo-EM assemblies
+    # a "show the whole machine" story wants, so a 404 there falls through too.
+    # The assembly is tried even when a legacy file is already cached, or a
+    # cache written before MESH_VERSION 3 would keep serving its asymmetric
+    # unit forever: the old file exists, so a plain `elif not exists()` would
+    # never look for the better one. Only a cached ASSEMBLY short-circuits.
+    if not asm_path.exists():
+        for url, dest in (
+            (RCSB_ASSEMBLY_URL, asm_path),
+            (RCSB_FILE_URL, pdb_path),
+            (RCSB_CIF_URL, cif_path),
+        ):
+            if dest is not asm_path and dest.exists():
+                break  # a legacy file we already have, and no assembly served
+            try:
+                with urllib.request.urlopen(
+                    url.format(pdb_id=pdb_id), timeout=120
+                ) as r:  # noqa: S310
+                    dest.write_bytes(r.read())
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                continue
+            break
+    for candidate in (asm_path, cif_path, pdb_path):
+        if candidate.exists():
+            pdb_path = candidate
+            break
+    else:
+        raise RuntimeError(f"RCSB served no structure file for {pdb_id}")
     if not meta_path.exists():
         try:
             with urllib.request.urlopen(
@@ -387,6 +482,28 @@ def structure_atoms(pdb_id: str, cache_dir: Path) -> int:
         return sum(1 for line in f if line.startswith((b"ATOM", b"HETATM")))
 
 
+def obj_has_geometry(path: Path) -> bool:
+    """Whether an OBJ holds at least one vertex and one face.
+
+    Cheaper than :func:`~luxar.demos._clay_renderer.load_obj`, which parses
+    the whole file and raises on an empty one. A chain can be non-empty in
+    atoms and still surface to nothing — a lone ion, or a fragment PyMOL
+    declines — and that must not abort the pass.
+    """
+    if not path.exists():
+        return False
+    has_v = has_f = False
+    with path.open() as fh:
+        for line in fh:
+            if not has_v and line.startswith("v "):
+                has_v = True
+            elif not has_f and line.startswith("f "):
+                has_f = True
+            if has_v and has_f:
+                return True
+    return False
+
+
 def export_surface_meshes(
     pdb_id: str,
     cache_dir: Path,
@@ -423,6 +540,23 @@ def export_surface_meshes(
     missing = [p.name for p in objs if not p.exists()]
     if missing:
         raise RuntimeError(f"PyMOL exported no surface for {pdb_id}: {missing}")
+    # A chain may carry atoms and still produce no triangles — a lone ion, or
+    # a fragment PyMOL declines to surface. Skip it rather than raise: this
+    # used to abort the whole pass, and one glycan chain of 6VXX cost the
+    # ELEVEN structures queued behind it their turntables while the build
+    # still exited 0, because turntables are optional and the failure was
+    # swallowed upstream.
+    empty = [o for o in objs if not obj_has_geometry(o)]
+    if empty:
+        aprint(
+            f"{pdb_id}: {len(empty)} of {len(objs)} chains produced no surface "
+            f"({', '.join(o.stem for o in empty[:4])}…); skipping those"
+        )
+        for o in empty:
+            o.unlink()
+        objs = [o for o in objs if o not in set(empty)]
+    if not objs:
+        raise RuntimeError(f"PyMOL surfaced no chain of {pdb_id}")
     # PyMOL can only write OBJ text (tens of MB per chain); keep the meshes as
     # compressed float32 arrays instead, a tenth of the size and quicker to load.
     paths = []

@@ -628,7 +628,10 @@ def export(
                 overwrite=overwrite,
             )
             aprint(f"Exported to {result}")
-            aprint(f"To view: cd {result} && python serve.py")
+            # `python3`, not `python`: stock macOS and most Linux distros ship
+            # no `python` on PATH. The generated README names the command too,
+            # and the two must agree.
+            aprint(f"To view: cd {result} && python3 serve.py")
 
         if open_browser:
             import subprocess

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ESM Protein Universe — twelve stories across 7.7 million protein clusters.
+"""ESM Protein Universe — twenty stories across 7.7 million protein clusters.
 
 The big-map sibling of ``demo_esm3_protein_stories``. Every point is one of
 7.7 million CLUSTERS of proteins from the ESM Atlas (Candido et al., bioRxiv
@@ -9,14 +9,37 @@ from any organism grown in a lab — grouped by the features a protein language
 model (ESM C) sees in them (Jaccard ≥ 0.6 to the cluster centre in
 sparse-autoencoder feature space) and laid out by 3D UMAP. A point is a cluster
 of at least fifty members; the 7.7 million together stand for 817 million
-proteins. A hidden ``story`` dimension walks through twelve stops: seven protein families
-carried over from the Swiss-Prot tour (hemoglobin, photosystem II, Hsp70, the
-viral spike, ATP synthase, RuBisCO, RecA), three stories only this map can tell
-(the ABC-transporter spur flung off the cloud, the dark proteome, the phage
-universe), and two more families whose knots are sharp here (beta-lactamases,
-CRISPR-Cas). Each stop flies the camera to the family's densest knot, lights
-its members, blows a soap bubble around them, shows a panel of sourced facts
-and a spinning representative structure, and is narrated on arrival.
+proteins. A hidden ``story`` dimension walks through twenty stops in five movements
+(see ``TOUR_ORDER``, which is the narrative order and deliberately not the
+order the stories are authored in below): the machinery every cell runs on
+(hemoglobin, photosystem II, RuBisCO, ATP synthase, Hsp70, RecA); the map's
+own geography (the ABC-transporter spur flung off the cloud, the dark
+proteome, the phage universe); the arms race (the viral spike, CRISPR-Cas,
+the jumping-gene nucleases TnpB and Fanzor that its editors grew out of,
+beta-lactamases, the lanthipeptide antibiotics); life at the edges and the
+senses (ice-binding proteins, the hyperthermophile's reverse gyrase, and the
+three unrelated receptor families with which vertebrates, insects and
+nematodes each invented smell); and a closer, the gut tyrosine decarboxylase
+that destroys the Parkinson's drug levodopa.
+
+Most stops fly the camera to the family's densest knot, light its members,
+blow a soap bubble around them, show a panel of sourced facts and a spinning
+representative structure, and are narrated on arrival. Three are framed
+differently — see the constellations below — and one is not a knot at all.
+
+Three stops are CONSTELLATIONS. A family rarely occupies one spot here, and
+for the globins, the photosynthetic reaction centres and the lanthipeptide
+machinery the split is the story — so instead of cutting one knot, those
+stops light every place the family occupies, join the places with a spanning
+tree of bright lines, and pull the camera back to hold the whole figure. A
+constellation has no soap bubble; the two are mutually exclusive (see
+:attr:`UniverseStory.constellation`).
+
+One stop is deliberately not a knot either. Tyrosine decarboxylase does not
+form a family in this map — its 52 clusters lie scattered across the whole
+cloud inside a much larger fold — so it is authored as a ``scatter`` story
+that lights every one of them and makes the absence of a knot the point (see
+:attr:`UniverseStory.scatter`).
 
 What changes against the Swiss-Prot tour, and why:
 
@@ -75,15 +98,24 @@ from __future__ import annotations
 
 DEMO_META = {
     "key": "esm_protein_universe",
-    "title": "ESM Protein Universe — twelve stories across 7.7 million protein clusters",
+    "title": (
+        "ESM Protein Universe — twenty stories across 7.7 million protein clusters"
+    ),
     "description": (
         "The ESM Atlas cluster map (Candido et al. 2026): a 3D UMAP of 7.7 "
         "million protein clusters drawn from 6.8 billion sequences, most of them "
         "environmental, with a hidden story dimension: "
-        "twelve stops — seven classic families, the ABC-transporter spur, the dark "
-        "proteome, the phage universe, beta-lactamases and CRISPR-Cas — each with "
-        "a fly-to waypoint, a highlight, a soap bubble, a turning structure and a "
-        "narrated panel of researched facts."
+        "twenty stops in a narrative order — six classic families, then the "
+        "ABC-transporter spur, the dark proteome and the phage universe, then "
+        "the arms race from viral surface proteins through CRISPR-Cas and the "
+        "jumping-gene nucleases it grew out of to beta-lactamases and the "
+        "lanthipeptide antibiotics, then life in ice and in boiling water and "
+        "three separate inventions of smell, and last a gut enzyme that eats "
+        "a Parkinson's drug — each with "
+        "a fly-to waypoint, a highlight, a turning structure and a narrated "
+        "panel of researched facts. Most are framed close on one knot inside "
+        "a soap bubble; three are framed wide as constellations, where the "
+        "places one family occupies are lit and joined by lines."
     ),
     "category": "embeddings",
     "geometry": "points",
@@ -139,7 +171,12 @@ from luxar.core.viewer_config import (
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import control_serve_args, launch_viewer, parse_path_arg
+from luxar.demos import (
+    bake_scene_environment,
+    control_serve_args,
+    launch_viewer,
+    parse_path_arg,
+)
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._dependencies import require_module
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -489,11 +526,17 @@ class UniverseStory(Story):
 
     pfam: tuple[str, ...] = ()
     region: str | None = None
-    #: Keep only clusters whose dominant phylum falls in these landscape palette
-    #: groups (see :func:`phylum_group`). Hemoglobin needs it: the globin family
-    #: forms two knots of equal size, one bacterial and one animal, and the
-    #: purity-weighted seed lands on the bacterial one — which would make a
-    #: story titled "the molecule of breath" light flavohemoglobins.
+    #: Keep only clusters whose dominant phylum falls in these landscape
+    #: palette groups (see :func:`phylum_group`), before the knot seed is
+    #: picked. The lever for a family whose PUREST knot is not the one the
+    #: story is about: hemoglobin was the case — the globin family forms two
+    #: knots of equal size, one bacterial and one animal, and the
+    #: purity-weighted seed lands on the bacterial one, which would have made
+    #: a story titled "the molecule of breath" light flavohemoglobins. That
+    #: story is now a constellation and lights both, so no shipped story sets
+    #: this today; it stays because the failure it fixes is a property of the
+    #: seed rule, not of that one family. Refused on a constellation, which
+    #: cuts no knot.
     groups: tuple[str, ...] = ()
     #: Light and frame the WHOLE selection rather than its densest knot: a story
     #: about the map itself (a quarter of it is dark; half a million clusters
@@ -506,6 +549,55 @@ class UniverseStory(Story):
     #: straight away from the centre, so the default pose looks down its length
     #: and foreshortens an 18-unit streak into a dot.
     side_on: bool = False
+    #: A ``whole`` story whose selection is SMALL and spread over the map rather
+    #: than a region of it (tyrosine decarboxylase: 52 clusters, half a map
+    #: apart). The point of such a story is how few and how scattered its
+    #: members are, so every one must be individually visible — which the
+    #: region stories' sub-pixel markers are not (see
+    #: :data:`SCATTER_HIGHLIGHT_RADIUS`). Requires ``whole``.
+    scatter: bool = False
+
+    #: Tell this story as a CONSTELLATION: light every place the family
+    #: occupies, join them with a spanning tree of bright lines, and frame the
+    #: whole figure from far enough out that all of it is in shot (Alex Rives's
+    #: suggestion, 2026-09-17, in the shape the owner asked for on
+    #: 2026-09-16). A different mode of story, not a decoration on the knot
+    #: one: there is no knot cut and no bubble, and the lit nodes ARE the line
+    #: endpoints — see :func:`constellation_of`.
+    #:
+    #: Reserved for families whose split MEANS something, because the lines
+    #: assert that it does. Three qualify on this map and are measured in
+    #: their panels: the globins (animal oxygen carriers against bacterial
+    #: nitric-oxide detoxifiers), the photosynthetic reaction centres (D1, D2
+    #: and the purple-bacterial L/M chains) and the lanthipeptide machinery
+    #: (dehydratase, cyclase, immunity, precursor). The three smell families
+    #: were tried and dropped: their places are the same protein in several
+    #: spots, so a line between them says nothing the bubble does not.
+    constellation: bool = False
+
+    def __post_init__(self) -> None:
+        if self.constellation and not self.pfam:
+            raise ValueError(
+                f"story {self.key!r}: constellation needs a pfam selector — the "
+                "line means 'same Pfam family', so there must be one"
+            )
+        if self.constellation and (self.whole or self.scatter or self.side_on):
+            raise ValueError(
+                f"story {self.key!r}: constellation is its own framing mode and "
+                "cannot be combined with whole/scatter/side_on"
+            )
+        if self.constellation and self.groups:
+            raise ValueError(
+                f"story {self.key!r}: constellation cannot take a groups filter — "
+                "the figure is the whole family in every place it sits, and "
+                "`groups` exists to bias the KNOT seed, which a constellation "
+                "does not cut"
+            )
+        if self.scatter and not self.whole:
+            raise ValueError(
+                f"story {self.key!r}: scatter=True needs whole=True — a scatter "
+                "story is about every member, so it takes no knot cut"
+            )
 
 
 VALID_REGIONS = ("spur", "dark", "phage")
@@ -572,10 +664,10 @@ HIGHLIGHT_INTENSITY = 0.4
 HIGHLIGHT_REFERENCE_MEMBERS = 300
 
 
-def highlight_intensity(n_members: int) -> float:
-    """Per-node highlight intensity for a knot of ``n_members`` clusters."""
+def highlight_intensity(n_members: int, *, base: float = HIGHLIGHT_INTENSITY) -> float:
+    """Per-node highlight intensity for a highlight of ``n_members`` clusters."""
     ratio = HIGHLIGHT_REFERENCE_MEMBERS / max(n_members, HIGHLIGHT_REFERENCE_MEMBERS)
-    return HIGHLIGHT_INTENSITY * ratio**0.5
+    return base * ratio**0.5
 
 
 BUBBLE_MIN_RADIUS = 0.2
@@ -591,6 +683,274 @@ WHOLE_HIGHLIGHT_INTENSITY = 0.35
 #: proteome's 2.03M arrived, then nothing. At overview distance the points are
 #: sub-pixel anyway, so one in seven draws the same shadow as all of them.
 WHOLE_HIGHLIGHT_MAX_POINTS = 300_000
+#: A SCATTER story (see :attr:`UniverseStory.scatter`) lights a few dozen
+#: clusters spread over the map, and its point is that the specks are visible
+#: at all — so each marker is sized well above the region stories' one pixel.
+#: Sized from the framing, not by eye: a scatter has ``frame_fraction >= 1``
+#: and so frames the whole cloud, 38.0 units out for the tyrosine
+#: decarboxylase stop, where the 63° cinematic lens spans 2·38·tan(31.5°) ≈
+#: 46.6 world units of frame height. A marker of this radius therefore spans
+#: 2·0.11/46.6 ≈ 0.5% of the frame — about 5 px on a 1080p display, against
+#: the backdrop's sub-pixel 0.004.
+#:
+#: DO NOT read "countable" into that. An earlier version of this comment
+#: computed the same number against a 15-unit framing and claimed 13 px, and
+#: also implied the visitor can count the members. Measured 2026-09-16 on the
+#: shipped selector: the 52 clusters have a median NEAREST-neighbour distance
+#: of 0.022 units, a fifth of this radius, so they draw as 13 blobs — two of
+#: them merged clumps of 21 and 13 markers. No radius fixes that (resolving a
+#: 0.022 gap needs a marker smaller than a knot's, invisible at 38 units), so
+#: the panel describes the blobs instead of promising a count.
+SCATTER_HIGHLIGHT_RADIUS = 0.11
+#: Below the knot intensity: a scatter marker covers ~700x the pixels of a
+#: backdrop point, and the cinematic bloom saturates fat bright highlights.
+SCATTER_HIGHLIGHT_INTENSITY = 0.25
+#: A scatter story carries hover labels (its members are few and worth
+#: reading); a region story's hundreds of thousands do not. This cap is the
+#: line between the two — see :func:`_member_details`.
+LABELLED_MEMBER_CAP = 2_000
+
+
+#: A family's members are grouped into PLACES by single-linkage at this
+#: radius — the same scale a knot lives at (see FAMILY_RADIUS), so "a place"
+#: means "what the tour would frame as one knot". A place is what the
+#: constellation lights and what its lines join.
+CONSTELLATION_RADIUS = 0.3
+#: Only places with at least this many clusters become a node. Measured over
+#: the three shipped constellations: at 10 a family shows 4-8 places, which
+#: reads as a figure; every family has a long tail of singletons that would
+#: turn the map into a hairball (the globins alone break into 40 components,
+#: 4 of them above 10).
+CONSTELLATION_MIN_MEMBERS = 10
+#: Share of the frame HEIGHT the figure spans at its waypoint. Lower than the
+#: tour's 0.46 on purpose: a constellation is framed to be read whole, and the
+#: distance below is computed against `r_max` so that it still fits when
+#: auto-rotate swings the camera to its least favourable angle — at 0.46 the
+#: worst angle put the outermost node on the frame edge.
+CONSTELLATION_FRAME_FRACTION = 0.40
+#: Node marker radius, as a fraction of the figure's own `r_max`. Scaling with
+#: the figure rather than fixing a world size is what makes one number work
+#: for all three: the camera distance is also proportional to `r_max`, so a
+#: proportional marker subtends a CONSTANT angle. At this value a marker spans
+#: 2·0.013/(2/0.40) ≈ 0.5% of the frame height — about 6 px on a 1080p
+#: display, against the backdrop's sub-pixel 0.004 — so a place of a hundred
+#: clusters reads as one glowing bead rather than as haze. HALVED from 0.026
+#: on the owner's review of the first build ("the nodes are too big by a
+#: factor 2 perhaps"); halving the radius also quarters the number of markers
+#: stacked on a pixel, which is what was blowing the bead cores out to white.
+CONSTELLATION_MARKER_FRAC = 0.013
+#: Base intensity of those beads, dimmed by the usual square-root rule. Well
+#: below the knot's 0.4: the markers are still an order of magnitude bigger
+#: than a knot's and overlap heavily inside a place, so the summed additive
+#: light at a bead's centre is what sets the exposure, not this number alone.
+#: Lowered from 0.35 with the marker halving above, on the owner's review of
+#: the first build ("perhaps a tad bit too bright") — at 0.35 the bead cores
+#: clipped to white and lost the story's hue, which the halo alone carried.
+CONSTELLATION_HIGHLIGHT_INTENSITY = 0.22
+#: Line half-width as a fraction of `r_max`, i.e. ~0.38 of the marker radius:
+#: thin enough to read as a thread strung between beads rather than as a rod.
+#: Tracks CONSTELLATION_MARKER_FRAC — halved with it, or the threads would
+#: have come out nearly as thick as the beads they join.
+CONSTELLATION_LINE_WIDTH_FRAC = 0.005
+#: Floor on that width, sized like the backdrop point radius: below this a
+#: thread disappears into the cloud whatever the figure's own scale says.
+CONSTELLATION_LINE_MIN_WIDTH = 0.02
+#: How far the line colour is pushed towards white: `c + (1 - c)·whiten`. The
+#: owner's brief — "light up brightly nearly white but perhaps hold some of
+#: the hue of the story". At 0.72 a saturated story colour keeps a clear tint
+#: while every channel sits above 0.7, so the line reads as light.
+CONSTELLATION_LINE_WHITEN = 0.72
+#: Brighter than the beads it joins, unlike the knot stories' annotation
+#: lines: in a constellation the figure IS the subject, and the lines are what
+#: makes it one figure rather than four blobs.
+CONSTELLATION_LINE_INTENSITY = 0.5
+
+
+@dataclass(frozen=True)
+class Constellation:
+    """The places a family occupies, joined into one figure.
+
+    ``places`` are index arrays into the map (one per place with at least
+    :data:`CONSTELLATION_MIN_MEMBERS` clusters), ``centroids`` their means,
+    ``edges`` an ``(E, 2)`` minimum spanning tree over those centroids, and
+    ``members`` the sorted union — the clusters the story lights.
+
+    The three geometries matter together. ``centre`` is the bounding-box
+    centre of ``members`` and is what the camera targets; ``r_max`` is the
+    furthest member from it, which bounds the figure's apparent radius from
+    EVERY direction and so survives auto-rotate; ``view`` is the figure's
+    thinnest principal axis, signed away from the map's centre, which is the
+    one direction that sees the figure spread rather than end-on.
+
+    **A line joins two places of the same Pfam family.** That is a homology
+    statement by construction — a Pfam family is built from one seed
+    alignment. It is NOT a path, a distance, or an evolutionary trajectory;
+    UMAP positions are not metric, so the straight segment carries no
+    information beyond joining its ends. A minimum spanning tree rather than
+    every pair: it is the fewest and shortest lines that still make the places
+    one figure, and E = places - 1 stays legible.
+
+    Deliberately NOT the ESM Atlas preprint's own edge metric (Jaccard over
+    max-pooled SAE features, "same family" at >= 0.6): measured on this tour's
+    families, no two different places come close to that bar — the vertebrate
+    and worm chemoreceptor knots reach 0.38, photosystem II's D1 and D2 only
+    0.27, against a 0.18 random-pair baseline. A feature line would therefore
+    either draw nothing at the calibrated threshold, or assert a relation the
+    preprint's own calibration calls unremarkable.
+    """
+
+    places: tuple[np.ndarray, ...]
+    centroids: np.ndarray
+    edges: np.ndarray
+    members: np.ndarray
+    centre: np.ndarray
+    r_max: float
+    view: np.ndarray
+
+
+def single_linkage_places(
+    positions: np.ndarray,
+    mask: np.ndarray,
+    *,
+    min_members: int = CONSTELLATION_MIN_MEMBERS,
+    radius: float = CONSTELLATION_RADIUS,
+) -> list[np.ndarray]:
+    """Index arrays of the places a masked selection occupies, largest first."""
+    spatial = require_module("scipy.spatial")
+    csgraph = require_module("scipy.sparse.csgraph")
+    sparse = require_module("scipy.sparse")
+    idx = np.flatnonzero(mask)
+    if len(idx) < 2:
+        return []
+    tree = spatial.cKDTree(positions[idx])
+    pairs = np.asarray(list(tree.query_pairs(radius)), dtype=np.int64)
+    if len(pairs) == 0:
+        labels = np.arange(len(idx))
+    else:
+        graph = sparse.coo_matrix(
+            (np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])),
+            shape=(len(idx), len(idx)),
+        )
+        _, labels = csgraph.connected_components(graph, directed=False)
+    sizes = np.bincount(labels)
+    keep = [c for c in np.flatnonzero(sizes >= min_members)]
+    keep.sort(key=lambda c: int(sizes[c]), reverse=True)
+    return [np.sort(idx[labels == c]) for c in keep]
+
+
+def constellation_of(
+    positions: np.ndarray,
+    mask: np.ndarray,
+    global_centre: np.ndarray,
+    *,
+    min_members: int = CONSTELLATION_MIN_MEMBERS,
+    radius: float = CONSTELLATION_RADIUS,
+) -> Constellation | None:
+    """Build the figure for a masked family, or ``None`` if it has one place.
+
+    A single place is not a constellation — there would be nothing to join —
+    so the caller must fall back to a knot story rather than draw a figure
+    with no lines.
+    """
+    csgraph = require_module("scipy.sparse.csgraph")
+    places = single_linkage_places(
+        positions, mask, min_members=min_members, radius=radius
+    )
+    if len(places) < 2:
+        return None
+    centroids = np.stack([positions[s].mean(axis=0) for s in places]).astype(np.float32)
+    dist = np.linalg.norm(centroids[:, None, :] - centroids[None, :, :], axis=2)
+    mst = csgraph.minimum_spanning_tree(dist).tocoo()
+    edges = np.stack([mst.row, mst.col], axis=1).astype(np.int64)
+    members = np.sort(np.concatenate(places))
+    centre, radial = cluster_geometry(positions[members])
+    # The thinnest principal axis of the lit members: looking ALONG it is the
+    # one direction that sees the figure spread out instead of end-on. Signed
+    # outward so the camera sits outside the cloud looking back into it.
+    spread = positions[members].astype(np.float64)
+    _, vectors = np.linalg.eigh(np.cov((spread - spread.mean(axis=0)).T))
+    view = np.asarray(vectors[:, 0], dtype=np.float64)
+    outward = centre - np.asarray(global_centre, dtype=np.float64)
+    if float(view @ outward) < 0.0:
+        view = -view
+    return Constellation(
+        places=tuple(places),
+        centroids=centroids,
+        edges=edges,
+        members=members,
+        centre=centre,
+        r_max=float(radial.max()),
+        view=view / float(np.linalg.norm(view)),
+    )
+
+
+def story_constellations(
+    universe: Universe, stories: tuple[UniverseStory, ...]
+) -> dict[str, Constellation]:
+    """The figure for every constellation story, keyed by story key.
+
+    Pure in ``(universe.positions, story.pfam)``, so every call site —
+    framing, highlight, lines — recomputes the SAME figure rather than
+    threading one object through, and the lines cannot drift off the beads.
+    """
+    centre = universe.positions.mean(axis=0)
+    out: dict[str, Constellation] = {}
+    for s in stories:
+        if not s.constellation:
+            continue
+        figure = constellation_of(
+            universe.positions, universe.pfam_mask(s.pfam), centre
+        )
+        if figure is None:
+            raise ValueError(
+                f"story {s.key!r} is a constellation, but its Pfam selection "
+                f"{s.pfam} occupies fewer than two places of "
+                f"{CONSTELLATION_MIN_MEMBERS}+ clusters — there is nothing to "
+                "join. Tell it as a knot story instead."
+            )
+        out[s.key] = figure
+    return out
+
+
+def carries_labels(story: UniverseStory, n_members: int) -> bool:
+    """Whether a story's highlight carries per-member hover labels.
+
+    A knot always does. A ``whole`` story does only when its members are few
+    enough to be worth reading and cheap enough to store: a scatter story's
+    few dozen qualify, a region story's hundreds of thousands do not (see
+    :data:`LABELLED_MEMBER_CAP`).
+    """
+    return not story.whole or n_members <= LABELLED_MEMBER_CAP
+
+
+def highlight_appearance(
+    story: UniverseStory, n_drawn: int, *, figure: Constellation | None = None
+) -> tuple[float, float]:
+    """Point radius and intensity for a story's highlight node.
+
+    Four regimes: a constellation's beads, sized to the figure so they hold a
+    constant angular size at its pulled-back framing; a scatter story's
+    countable dots; a region story's sub-pixel shadow over the whole map; and
+    a knot's points sized for the close framing (dimmed by
+    :func:`highlight_intensity` when the knot is big).
+    """
+    if story.constellation:
+        if figure is None:
+            raise ValueError(
+                f"story {story.key!r} is a constellation: pass its figure, whose "
+                "extent sets the bead size"
+            )
+        return (
+            max(HIGHLIGHT_RADIUS, CONSTELLATION_MARKER_FRAC * figure.r_max),
+            highlight_intensity(n_drawn, base=CONSTELLATION_HIGHLIGHT_INTENSITY),
+        )
+    if story.scatter:
+        return SCATTER_HIGHLIGHT_RADIUS, SCATTER_HIGHLIGHT_INTENSITY
+    if story.whole:
+        return WHOLE_HIGHLIGHT_RADIUS, WHOLE_HIGHLIGHT_INTENSITY
+    return HIGHLIGHT_RADIUS, highlight_intensity(n_drawn)
+
+
 #: The backdrop is a hand-built ``kind=partition`` of 64 BSP tiles of at most
 #: this many points, each tile its own ``kind=lod`` ladder of two POINTS
 #: levels: a fixed random 1-in-K subsample (colours scaled by K so the additive
@@ -614,41 +974,81 @@ BACKDROP_TILE_POINTS = 125_000
 #: Coarse level = one point in this many (light conserved by scaling colours).
 BACKDROP_LOD_FACTOR = 4
 
-STORIES: tuple[UniverseStory, ...] = (
+_STORY_POOL: tuple[UniverseStory, ...] = (
     _carry(
         "Hemoglobin",
-        subtitle="A hundred animal globin clusters, out of four hundred in the map",
+        # The carried narration never mentioned the map, and on this tour the
+        # story is a CONSTELLATION — a visitor heard Perutz's balsa-wood model
+        # while looking at four beads joined by threads. Overridden here and
+        # not in the Swiss-Prot tour, whose map has no such figure.
+        narration=(
+            "Hemoglobin, the molecule of breath. Each red blood cell carries "
+            "some two hundred and eighty million of these, and each one holds "
+            "four oxygens. In 1949 Linus Pauling showed that sickle-cell "
+            "anaemia comes from a single swapped amino acid: the first "
+            "molecular disease. Max Perutz needed twenty-two years to see its "
+            "shape. The lines here join the four places this fold is filed "
+            "in: one of animal globins, three of bacterial enzymes that "
+            "destroy nitric oxide instead of carrying oxygen. And yet "
+            "hemoglobin also turns up inside dopamine neurons, nowhere near "
+            "blood. What it does there, nobody quite knows."
+        ),
+        # A CONSTELLATION: the same fold in four places, one animal and three
+        # bacterial, and the split is the story (see `UniverseStory.constellation`).
+        constellation=True,
+        subtitle="One fold in four places — animal oxygen carriers and bacterial nitric-oxide destroyers",
         pattern="",
         pfam=("PF00042",),  # Globin
-        # The 423 globin clusters break into two components of 159 (linked at
-        # 0.3): one purely bacterial (Pseudomonadota flavohemoglobins), one
-        # animal-dominated. Without this filter the purer bacterial knot wins
-        # the purity-weighted seed; with it the story lands on 102 animal
-        # clusters (Chordata 53, Nematoda 38, Arthropoda 9, Mollusca 2).
-        groups=("Other Vertebrates", "Insects & Worms"),
+        # Audit (2026-09-16): 423 globin clusters map-wide, 391 of them in four
+        # places of 10+ at 0.3 linkage, joined by 3 lines totalling 20.2 units
+        # (longest 14.1). Place 1, 159 clusters: animal (Chordata 53, Nematoda
+        # 38), named "globin domain-containing protein". Place 2, 159:
+        # Pseudomonadota 133, the flavohemoglobins. Place 3, 46: named "nitric
+        # oxide dioxygenase", Actinomycetota 25 / Pseudomonadota 15. Place 4,
+        # 27: FAD-binding oxidoreductase/globin fusions, Pseudomonadota 18.
+        # This story used to cut a KNOT and needed a `groups` filter to stop
+        # the purity-weighted seed landing on the bacterial half; a
+        # constellation takes no knot cut, so the filter is gone (and is
+        # refused outright — see `UniverseStory.__post_init__`).
         radius=FAMILY_RADIUS,
         min_distance=FAMILY_MIN_DISTANCE,
         facts=_swap_fact(
             "Hemoglobin",
             3,
-            # Knot (audit): 102 clusters — Chordata 53, Nematoda 38,
-            # Arthropoda 9, Mollusca 2. Only 14 are named "hemoglobin"; most
-            # carry the generic "globin domain-containing protein", and a
-            # handful are neuroglobin, cytoglobin or myoglobin — the whole
-            # animal globin family, of which our blood protein is one member
-            # (Vinogradov & Moens, JBC 283:8773 (2008), for the fold's reach
-            # into bacteria, fungi and plants; that bacterial knot of 159 sits
-            # elsewhere in the map).
-            "This knot is the animal globins: hemoglobin beside the myoglobin "
-            "of muscle, the neuroglobin of nerves, and the globins of worms and "
-            "insects. The fold is far older than blood — bacteria, fungi and "
-            "plants carry globins that sense oxygen or detoxify nitric oxide, "
-            "and the model files those in a knot of their own elsewhere.",
+            # The lines are the claim: same Pfam family (PF00042), four
+            # places. Vinogradov & Moens, JBC 283:8773 (2008), for the fold's
+            # reach beyond animals; Gardner et al., PNAS 95:10378 (1998), for
+            # flavohemoglobin as a nitric oxide dioxygenase.
+            "The lines join the four places this one fold is filed in. Only "
+            "one of them is about breathing: the animal globins — hemoglobin "
+            "beside the myoglobin of muscle, the neuroglobin of nerves, and "
+            "the globins of worms and insects. The other three are bacterial, "
+            "and they are not carrying oxygen at all. They are "
+            "flavohemoglobins, which use oxygen to destroy the nitric oxide an "
+            "immune system fires at them. Same fold, opposite job, fourteen "
+            "units apart.",
         ),
     ),
     _carry(
         "Photosystem II",
-        subtitle="D1, the water-splitting protein — in cyanobacteria and plants, and in the viruses that hijack them",
+        # As for hemoglobin: a constellation on this tour, and the carried
+        # narration said nothing about the six places or the lines.
+        narration=(
+            "Photosystem II, the protein that made the sky breathable. Its D1 "
+            "subunit sits at the heart of the only enzyme known that splits "
+            "water. Cyanobacteria running this machine filled Earth's air "
+            "with oxygen, two and a half billion years ago. The chemistry is "
+            "so violent that D1 wrecks itself within the hour in bright sun; "
+            "a leaf rebuilds it all day long. The lines here join six places: "
+            "D1 itself, its partner D2, and the purple-bacterial chains that "
+            "split no water. Molecular clocks say water-splitting is far "
+            "older than the rise of oxygen. So why did the planet wait so "
+            "long to change?"
+        ),
+        # A CONSTELLATION: the reaction centre taken apart — D1, D2 and the
+        # purple-bacterial L/M chains are filed in separate places.
+        constellation=True,
+        subtitle="The reaction centre taken apart — D1, D2 and the purple-bacterial chains, in six places",
         pattern="",
         pfam=("PF00124",),  # Photo_RC: D1/D2 and the L/M chains
         radius=FAMILY_RADIUS,
@@ -656,20 +1056,25 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "Photosystem II",
             3,
-            # Knot (audit): 44 clusters — Uroviricota 18, Cyanobacteriota 13,
-            # Rhodophyta 7, Streptophyta 5. Twenty are named "photosystem II
-            # protein D1", three are the far-red D1 paralogue chlorophyll f
-            # synthase, nine carry the generic reaction-centre name and six are
-            # hypothetical; NOT ONE is D2, and there are no purple bacteria —
-            # the D2 and L/M chains sit in knots of their own. Cyanophage
-            # psbA: Mann et al., Nature 424:741 (2003); Lindell et al., Nature
-            # 438:86 (2005) — the phage copy of D1 is expressed during infection
-            # and keeps photosynthesis running while the phage replicates.
-            "This knot is D1 itself, from cyanobacteria, red algae and plants — "
-            "and two in five of its clusters belong to viruses. Cyanophages "
-            "carry their own copy of D1, and switch it on during infection to "
-            "keep the host's photosynthesis running while they replicate "
-            "inside it.",
+            # Audit (2026-09-16): 265 clusters map-wide, 183 in six places of
+            # 10+ at 0.3 linkage, 5 lines totalling 12.5 units (longest 7.0).
+            # Largest place, 80: the L and M chains of purple bacteria
+            # (Pseudomonadota 64). Next, 44: D1 — Uroviricota 18,
+            # Cyanobacteriota 13, Rhodophyta 7, Streptophyta 5, and NOT ONE D2.
+            # Third, 22: D2, eighteen of them named so outright. The remaining
+            # three (16, 11, 10) are reaction-centre domains and D2 fragments.
+            # D1/D2 homologous to L/M: Michel & Deisenhofer, Biochemistry
+            # 27:1 (1988). Cyanophage psbA: Mann et al., Nature 424:741
+            # (2003); Lindell et al., Nature 438:86 (2005).
+            "The lines join six places, and they are the reaction centre taken "
+            "apart. One is D1 itself, from cyanobacteria, red algae and "
+            "plants — and two in five of its clusters belong to viruses, "
+            "because cyanophages carry their own copy and switch it on during "
+            "infection to keep the host photosynthesising while they "
+            "replicate. Another is D1's partner D2. The largest of all is the "
+            "L and M chains of purple bacteria, which run photosynthesis "
+            "without ever splitting water. The model has pulled the machine "
+            "apart and filed each piece on its own.",
         ),
     ),
     _carry(
@@ -745,6 +1150,18 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
     _carry(
         "ATP synthase",
+        # The carried narration was all mechanism and no map.
+        narration=(
+            "ATP synthase, the turbine in every cell. Protons flowing through "
+            "it turn an axle, and each turn presses out three molecules of "
+            "ATP. In 1997 a single motor was filmed spinning under a "
+            "microscope. You make and spend roughly your own body weight in "
+            "ATP every day. The knot lit here is nearly three hundred "
+            "clusters of the beta subunit as bacteria build it, with the "
+            "chloroplast copies of plants filed among them. It is one of the "
+            "most efficient motors known, wasting almost nothing as heat. "
+            "How a protein manages that is still debated."
+        ),
         subtitle="The rotary motor that makes the currency of life, in bacteria and in us",
         pattern=r"(?i)ATP synthase (subunit )?beta",
         radius=FAMILY_RADIUS,
@@ -763,6 +1180,19 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
     _carry(
         "RuBisCO",
+        # The carried narration was all chemistry and no map.
+        narration=(
+            "RuBisCO, the most abundant enzyme on Earth, and one of the "
+            "slowest. Nearly every carbon atom in every living thing has "
+            "passed through it. It fixes about one CO2 every thirty seconds "
+            "and keeps confusing oxygen with carbon dioxide, so plants make "
+            "it by the tonne. The knot lit here is a hundred and seventeen "
+            "clusters of the large chain: half the plant enzyme, the rest "
+            "bacterial, with a few relatives that fix no carbon at all. "
+            "Three billion years of evolution never produced a fast, accurate "
+            "RuBisCO. Is that a wall that cannot be climbed, or has nobody "
+            "found the path?"
+        ),
         subtitle="The protein that pulls carbon out of the air for almost all life",
         pattern="",
         pfam=("PF00016", "PF02788"),  # RuBisCO_large, RuBisCO_large_N
@@ -986,10 +1416,26 @@ STORIES: tuple[UniverseStory, ...] = (
             "phage there really are — nobody knows."
         ),
         tags=("virology", "ecology"),
-        # The whole tail machine of phage T7 — collar, nozzle and tube — a
-        # recognisable piece of a phage, not one fibre tip (2XGF). The full T4
-        # baseplate (5IV5) renders too, but face-on it reads as a hexagonal blob.
-        pdb_id="6R21",
+        # THE WHOLE PHAGE, not a part of one: the recognisable silhouette,
+        # capsid through connector and tail to the fibres. Native
+        # bacteriophage P68 has the whole virion in one
+        # entry — 8 entities over 668 chains, 20 MDa, 3.8 A: major head
+        # protein (235 chains) for the capsid, portal (12) and lower collar
+        # (12) for the connector, minor structural (72) and tail fibre (72)
+        # for the tail and legs, plus 15 head fibres.
+        #
+        # Three earlier choices were rejected. 6R21, the T7 "fiberless tail
+        # complex", has the PORTAL as its first and largest entity — a head
+        # connector, 12 of its 30 chains — and no fibres, yet a comment here
+        # called it "the whole tail machine". 8IYK, the lambda tail tip, is
+        # honestly a tail but only a tail. 9MJN, the near-complete PhiTE
+        # virion, is the most complete phage in the PDB (1,996 chains,
+        # 57.6 MDa) and is the right ANSWER but the wrong SIZE for this
+        # pipeline: PyMOL's per-chain molecular surface passed 7.9 GB after
+        # eighteen minutes without finishing, so it was abandoned. If the
+        # turntable ever grows a coarse-surface path for huge assemblies,
+        # 9MJN is the entry to come back to.
+        pdb_id="6Q3G",
         narration=(
             "The phage universe. Bacteriophages, the viruses of bacteria, are "
             "the most abundant biological entities on Earth: ten million "
@@ -1057,8 +1503,9 @@ STORIES: tuple[UniverseStory, ...] = (
             "described in 1940, a year before the first patient was treated. "
             "Today antibiotic resistance is linked to nearly five million deaths "
             "a year, and these genes turn up in thirty-thousand-year-old "
-            "permafrost. Can new drugs keep pace with an enzyme that evolves in "
-            "real time?"
+            "permafrost. The knot lit here is four hundred clusters, almost "
+            "all class A, the family TEM-1 itself belongs to. Can new drugs "
+            "keep pace with an enzyme that evolves in real time?"
         ),
     ),
     UniverseStory(
@@ -1126,14 +1573,747 @@ STORIES: tuple[UniverseStory, ...] = (
             "time. Noticed in 1987, understood in 2005, and in 2012 Doudna and "
             "Charpentier showed Cas9 could be pointed at any DNA at all. Eleven "
             "years later the first CRISPR medicine was approved, for sickle-cell "
-            "disease, the illness of the first story on this tour. Yet many "
-            "successful bacteria do without CRISPR. Why give up an immune "
-            "system?"
+            "disease, the illness of the first story on this tour. The knot "
+            "lit here is two hundred and sixty clusters of Cas9 itself. Yet "
+            "many successful bacteria do without CRISPR. Why give up an "
+            "immune system?"
+        ),
+    ),
+    # ---------------------------------------------------------------------
+    # Added after the 2026-09-16 review by the ESM Atlas team (four themes
+    # requested: extremophiles, antibiotic peptides, olfactory receptors,
+    # bacterial tyrosine decarboxylase). Each selector below was measured
+    # against this release before its panel was written — see the knot
+    # composition quoted in each comment.
+    # ---------------------------------------------------------------------
+    UniverseStory(
+        key="Lanthipeptides",
+        # A CONSTELLATION: one gene cluster, filed by job — dehydratase,
+        # cyclase, immunity, precursor, each in its own place.
+        constellation=True,
+        title="Lanthipeptides — antibiotics stitched into rings",
+        subtitle=(
+            "One gene cluster in eight places — dehydratase, cyclase, "
+            "immunity, and the peptide itself"
+        ),
+        pattern="",
+        # PF05147 LanC-like cyclase, PF04738/PF14028 lantibiotic dehydratase
+        # (LanB), PF04604 type-A lantibiotic, PF18218 Spa1 immunity, PF19402
+        # SapB precursor. Audit (2026-09-16): 722 clusters map-wide, 650 in
+        # eight places of 10+ at 0.3 linkage, 7 lines totalling 35.1 units
+        # (longest 10.3). By size: 352 LanC-like cyclase (Bacillota 139,
+        # Actinomycetota 83) — which is why the turntable is NisC, the nisin
+        # cyclase; 108 lantibiotic dehydratase N-terminus; 90 dehydratase
+        # C-terminus; 33 both dehydratase halves at once; 18 NisI/SpaI
+        # immunity lipoprotein; 17 Spa1 immunity C-terminal; 17 more LanC-like;
+        # 15 SapB/RamS precursor peptide.
+        pfam=("PF05147", "PF04738", "PF14028", "PF04604", "PF18218", "PF19402"),
+        color=(0.9, 1.0, 0.55),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            "Nisin is a lanthipeptide: a short peptide whose amino acids are "
+            "stapled together into five rings, each one closed by a single "
+            "sulfur atom. An inhibitory substance from milk streptococci was "
+            "reported in 1928; it has been a commercial preservative for more "
+            "than half a century, starting with the processed cheese whose packs "
+            "clostridia blow open, and it is approved as a food additive in the "
+            "European Union, the United States and dozens of other countries.",
+            "It kills by grabbing lipid II, the brick the bacterial cell wall "
+            "is built from. That blocks construction of the wall, and the same "
+            "captured brick then anchors the peptide while it punches pores in "
+            "the membrane: two attacks on one target.",
+            "The rings are not made by the peptide. A dehydratase strips water "
+            "from its serines and threonines and a cyclase closes the sulfur "
+            "bridges, and in many bacteria one enzyme does both jobs.",
+            # Only six clusters in the whole map carry "nisin" in their name.
+            "The lines join eight places, and they are that assembly line "
+            "taken apart. Two hold the cyclase that closes the rings, one of "
+            "them the largest place of all. Three more hold the dehydratase "
+            "that prepares them, its two halves filed separately. Two hold "
+            "the immunity proteins a producer needs so its own antibiotic "
+            "does not kill it. The last holds a peptide itself — and barely: the mature peptides are too "
+            "short and too variable to cluster, and the whole map holds just "
+            "six clusters carrying nisin's own name. These genes sit side by "
+            "side on one stretch of chromosome and switch on together. The "
+            "model, which sees only sequence, has scattered them across the "
+            "map by what each one does.",
+        ),
+        mystery=(
+            "Seventy years in the food supply and no strain has yet been found "
+            "spreading stable, transmissible resistance to nisin — though "
+            "resistance genes are known and many wild strains are naturally "
+            "hard to kill with it. Part of the answer may be that nisin has "
+            "never been used the way we use clinical antibiotics. Part of it is "
+            "not settled."
+        ),
+        tags=("antibiotics", "medicine", "peptides"),
+        pdb_id="2G0D",  # Nisin cyclase NisC (Li et al., Science 2006)
+        narration=(
+            "Lanthipeptides, antibiotics stitched into rings. Nisin is the "
+            "famous one, found in 1928 and used to preserve cheese ever since. "
+            "It grabs lipid II, the brick the bacterial wall is built from, "
+            "blocks construction, then uses that same brick as an anchor while "
+            "it punches holes in the membrane. Two attacks on one target. The "
+            "lines join eight places: one gene cluster pulled apart — "
+            "dehydratase, cyclase, immunity proteins, and the peptide itself, "
+            "scattered across the map by what each one does. "
+            "Seventy years of use, and no strain has been caught spreading "
+            "resistance to it. Is that the molecule, or just the way we use it?"
+        ),
+    ),
+    UniverseStory(
+        key="Ice-binding proteins",
+        title="Ice-binding proteins — surviving the cold",
+        subtitle=(
+            "Thirty-two clusters of ice-binding proteins, every one of them bacterial"
+        ),
+        pattern="",
+        # PF11999 is the DUF3494 ice-binding domain, now named "Ice-binding-
+        # like" (271 clusters); PF20597 is its putative adhesive relative
+        # (134) and PF21300 the grass antifreeze beta roll (106). Audit: 511
+        # clusters map-wide by dominant domain, 1,118 carrying one of the
+        # three, 1,287 carrying any ice or antifreeze domain; the knot is 32 at
+        # r95 0.086 — Actinomycetota 20, Chloroflexota 5, Candidatus
+        # Saccharimonadota 4 — and 31 of the 32 are named for ice-binding.
+        #
+        # DO NOT ADD PF07589 BACK. The first draft of this story included it
+        # and drew a 94-cluster knot of Verrucomicrobiota and Kiritimatiellota
+        # that were 90/94 bare "hypothetical protein" — because **the Atlas's
+        # own `cluster_top_pfam_names` column mislabels PF07589 as
+        # "Ice-binding protein, C-terminal domain"**, while InterPro and
+        # current Pfam call it "PEP-CTERM protein-sorting motif"
+        # (PEP_exosort_dom). PEP-CTERM is characteristic of the PVC bacteria,
+        # which is exactly what that knot was, and a handful of its members
+        # still carried "PEP-CTERM sorting domain" in their product names —
+        # the tell we missed first time round. PF07589 supplied 2,076 of the
+        # 2,587 clusters that story used to claim, so the whole knot was the
+        # wrong protein family.
+        #
+        # Every other Pfam accession the tour uses was checked
+        # against InterPro after this: 44 accessions, and PF07589 is the only
+        # one where the Atlas's name disagrees. Trust the accession, not the
+        # Atlas's name for it.
+        pfam=("PF11999", "PF20597", "PF21300"),
+        color=(0.65, 0.92, 1.0),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            "Antifreeze proteins were found in Antarctic fish in 1969: proteins "
+            "that keep the blood liquid at the minus one point nine degrees of "
+            "ice-laden seawater, far colder than its dissolved salts alone could "
+            "manage.",
+            "They do not work the way an ordinary antifreeze does, by sheer "
+            "weight of dissolved material. They stick to the face of a growing "
+            "ice crystal and stop it spreading, which opens a gap between the "
+            "temperature at which ice melts and the lower one at which it will "
+            "actually form.",
+            "The most widespread ice-binding domain of all is not the fish one. "
+            "It is a domain shared by bacteria, archaea, algae, fungi and "
+            "diatoms, in a scattered pattern across the tree of life that is "
+            "best explained by the gene being passed sideways between species "
+            "rather than inherited.",
+            # Audit numbers (2026-09-16).
+            "Some thirteen hundred clusters in this map carry an ice-binding or "
+            "antifreeze domain. The 32 lit here are all bacteria — twenty of "
+            "them actinobacteria of the soil — and all but one is named for the "
+            "job: ice-binding, in an organism nobody has cultured.",
+        ),
+        mystery=(
+            "How a protein recognises ice at all — a surface made of nothing "
+            "but water, ordered — is still argued over."
+        ),
+        tags=("cold", "metagenomics", "bacteria"),
+        pdb_id="3WP9",  # Ice-binding protein, Antarctic sea-ice Colwellia sp.
+        narration=(
+            "Ice-binding proteins. Antifreeze proteins were found in Antarctic "
+            "fish in 1969, keeping their blood liquid in water cold enough to "
+            "freeze it. They do not work by sheer weight of dissolved material: "
+            "they stick to the face of a growing ice crystal and stop it "
+            "spreading. The most widespread ice-binding domain is not the fish "
+            "one but a microbial one, scattered across bacteria, archaea, algae "
+            "and fungi as if the gene had been passed sideways. The thirty-two "
+            "clusters lit here are all bacterial. How a protein recognises ice, "
+            "a surface of nothing but ordered water, is still argued over."
+        ),
+    ),
+    UniverseStory(
+        key="Reverse gyrase",
+        title="Reverse gyrase — the enzyme only boiling life carries",
+        subtitle=("Fourteen clusters, the tightest knot on this tour, mostly archaeal"),
+        # Selected by NAME: reverse gyrase is a FUSION of a helicase-like
+        # motor and a type IA topoisomerase, and has no Pfam family of its
+        # own — its parts are shared with ordinary topoisomerases and
+        # helicases, so a Pfam selector would light those instead. Audit: 29
+        # clusters name it map-wide in 13 components; the knot is 14 at 93%
+        # ball purity with r95 0.020, the tightest measured anywhere on this
+        # tour — Thermoproteota 6, phylum unrecorded 5, Methanobacteriota 1,
+        # Aquificota 1, Nitrososphaerota 1.
+        pattern=r"(?i)reverse gyrase",
+        color=(1.0, 0.86, 0.72),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            "Every cell carries enzymes that take the twist out of its DNA. "
+            "Reverse gyrase does the opposite: it is the only enzyme known "
+            "that winds extra positive twist in, and it spends ATP to do it.",
+            "It was found in a hot-spring archaeon in 1984, and misfiled at "
+            "first. Nine years later it turned out to be a chimera of two "
+            "machines: a helicase-like motor fused to a topoisomerase in one "
+            "protein chain.",
+            "It turns up in every organism that grows best above eighty "
+            "degrees, and in a scattering of merely hot-living bacteria that "
+            "appear to have borrowed the gene from archaea. Cool-living "
+            "relatives do without it almost without exception.",
+            "The extra twist is thought to help hold the double helix shut at "
+            "temperatures that would otherwise pull it apart. That is the "
+            "standard explanation and it has never been shown directly: the DNA "
+            "inside these cells is not actually found positively supercoiled, "
+            "and the enzyme also protects DNA from breaking in a way that needs "
+            "no twist at all.",
+            # Audit numbers (2026-09-16).
+            "Only 29 clusters in 7.7 million are named for it, and the 14 lit "
+            "here sit within two hundredths of a unit of one another: the "
+            "smallest and tightest knot on this tour. Six are Thermoproteota, "
+            "archaea of the boiling springs.",
+        ),
+        mystery=(
+            "Delete the gene in an archaeon that likes eighty-five degrees and "
+            "it does not die, it just grows badly, worse the hotter you push "
+            "it. Delete it in one that likes a hundred and it will not grow at "
+            "all above ninety. Something changes across those few degrees, and "
+            "nobody knows what."
+        ),
+        tags=("extremophiles", "DNA", "archaea"),
+        pdb_id="1GKU",  # Reverse gyrase, Archaeoglobus fulgidus
+        narration=(
+            "Reverse gyrase, the enzyme only boiling life carries. Every cell "
+            "has enzymes that take the twist out of its DNA. This one does the "
+            "opposite: it is the only enzyme known that winds extra positive "
+            "twist in, spending ATP to do it, and it is two machines fused into "
+            "one. It appears in everything that grows best above eighty "
+            "degrees, and almost nowhere else. The extra twist is thought to "
+            "hold the double helix shut, though that has never been shown "
+            "directly. Fourteen clusters, the tightest knot on this tour. "
+            "Delete the gene at eighty-five degrees and the cell limps; at "
+            "ninety-five it dies. Nobody knows what changes."
+        ),
+    ),
+    UniverseStory(
+        key="Olfactory receptors",
+        title="Olfactory receptors — the largest family in our genome",
+        subtitle="A knot of 136 clusters, every one of them from a vertebrate",
+        pattern="",
+        # PF13853, the olfactory-receptor domain: 305 clusters map-wide, knot
+        # 136 at radius 0.3, r95 0.123, EVERY member Chordata (lca
+        # Euteleostomi 153 over the family). Purity is only 36% because the
+        # ball also holds 90 clusters whose dominant family is the generic
+        # 7tm_1 (PF00001) — also vertebrate — so the neighbourhood is
+        # vertebrate class A receptors at 59%; step out to radius 0.6 and the
+        # vertebrate share collapses to 17%. That is the fact the last panel
+        # line states.
+        pfam=("PF13853",),
+        color=(0.85, 0.55, 1.0),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            "Something like four hundred working olfactory receptor genes sit "
+            "in the human genome, beside a slightly larger number of broken "
+            "copies. It is the largest family of receptor genes we have, and "
+            "mice carry close to three times as many working ones.",
+            "Linda Buck and Richard Axel found the family in 1991, and shared "
+            "the Nobel Prize for it in 2004.",
+            "Each mature sensory neuron in the nose settles on a single "
+            "receptor, and a smell is read as the pattern across many of them. "
+            "That combinatorial code is how a few hundred receptors cover so "
+            "enormous a range of odours — and the rule is not absolute: "
+            "immature neurons carry several before committing, and mosquito "
+            "neurons break it outright.",
+            "The first structure of a human olfactory receptor arrived only in "
+            "2023, thirty-two years after the genes were found: OR51E2, caught "
+            "holding propionate, the sour, cheesy acid behind Swiss cheese.",
+            # Audit numbers (2026-09-16).
+            "The knot here is 136 clusters, every single one from a "
+            "vertebrate, and the largest of the three smell knots on this "
+            "tour. Pull back a little and it dissolves into the far larger "
+            "neighbourhood of other receptors built to the same plan.",
+        ),
+        mystery=(
+            "We can now predict fairly well what a molecule will smell like. "
+            "Going the other way — reading a receptor's sequence and saying "
+            "what it detects — is still mostly beyond us, and most human "
+            "receptors have no known odour at all."
+        ),
+        tags=("senses", "receptors", "genomics"),
+        pdb_id="8F76",  # Human OR51E2 with propionate (Billesbolle et al. 2023)
+        # The one turntable the completeness pass could not fix by rendering
+        # the biological assembly, because the assembly IS five chains and
+        # only one of them is the receptor this story is about: 330 of 1,177
+        # residues, 28%. The other four are the machinery used to catch it in
+        # its active state — the Gs heterotrimer (Gas-mini 261, Gb1 370,
+        # Gg2 71) plus Nanobody 35, which is a structural-biology tool and not
+        # anything in a nose. The deposited title names only miniGs399 of the
+        # four, so the caption says the ratio instead. It deliberately claims
+        # no position ("the receptor on top"): `principal_frame` picks the
+        # orientation from the assembly's own inertia, not from biology.
+        pdb_caption=(
+            "Human olfactory receptor OR51E2 with propionate — one of five "
+            "chains; the rest is the Gs protein and a nanobody that trap it"
+        ),
+        narration=(
+            "Olfactory receptors, the largest family of receptor genes we have. "
+            "About four hundred working copies in the human genome, and slightly "
+            "more broken ones. Linda Buck and Richard Axel found them in 1991 "
+            "and won the Nobel Prize in 2004. Each mature neuron in the nose "
+            "settles on one receptor, and a smell is the pattern across many of "
+            "them. Yet the first structure of a human one came only in 2023, "
+            "thirty-two years after the genes. This knot is a hundred and "
+            "thirty-six clusters, every one a vertebrate. Reading a receptor's "
+            "sequence and saying what it detects is still mostly beyond us."
+        ),
+    ),
+    UniverseStory(
+        key="Insect odorant receptors",
+        title="Insect odorant receptors — smell invented a second time",
+        subtitle="Seventy-five arthropod clusters, ten units from the vertebrate knot",
+        pattern="",
+        # PF02949, the insect 7tm odorant receptor: 197 clusters map-wide,
+        # knot 75, EVERY member Arthropoda, r95 0.086, centre
+        # [5.02, -1.19, -5.05] against the vertebrate knot's
+        # [-1.70, -7.83, -1.90] — 9.96 units apart, on a map whose 95th
+        # percentile radius is 13.3. Stable: radius 0.2 and 0.3 give the same
+        # 75 members and the same centre.
+        pfam=("PF02949",),
+        color=(0.25, 0.85, 0.75),
+        radius=FAMILY_RADIUS,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            "Insects do not smell with our receptors, or with anything related "
+            "to them. A vertebrate olfactory receptor passes its signal to a "
+            "G protein; an insect odorant receptor is itself an ion channel, "
+            "opening to let current through when the odorant binds.",
+            "Each one works inside a four-subunit channel built around Orco, a "
+            "partner so conserved that it is recognisably the same protein in "
+            "flies, moths, beetles and aphids, while the receptors beside it "
+            # Re-checked 2026-09-17: the 1 OR : 3 Orco asymmetric tetramer is
+            # now shown in SEVERAL complexes -- Aedes and Anopheles ORs on a
+            # fig-wasp Orco scaffold (Zhao et al., Science 385, adn6384, 2024)
+            # and the pea-aphid ApOR5-Orco of this story's own turntable
+            # (8Z9Z). An earlier draft said "the one complex anyone has
+            # solved", which was true when written and is not now.
+            "vary enormously. In every complex solved so far — mosquito, aphid "
+            "and more — three Orco subunits surround a single receptor, and "
+            "only that one receptor binds the odour.",
+            "A fruit fly manages with about sixty odorant receptors where we "
+            "have four hundred. Mosquitoes use theirs to find people: knock out "
+            "Orco and a malaria mosquito largely stops being drawn to human "
+            "odour, which is why this family matters to malaria.",
+            # Audit numbers (2026-09-16).
+            "The knot here is 75 clusters, every one an arthropod, and it sits "
+            "about ten units from the vertebrate knot on a map whose bulk fits "
+            "inside a radius of thirteen. The model has filed the two solutions "
+            "to smelling about as far apart as it files anything.",
+        ),
+        mystery=(
+            "The near-constant partner turns out to be a scaffold: it holds the "
+            "pore open around whichever receptor sits beside it. What fixes each "
+            "receptor's chemical taste — and how to read that taste off its "
+            "sequence — is still being worked out."
+        ),
+        tags=("senses", "ion channels", "insects"),
+        pdb_id="8Z9Z",  # Insect OR-Orco heterocomplex, Acyrthosiphon pisum
+        narration=(
+            "Smell, invented a second time. Insects do not use our receptors or "
+            "anything related to them. A vertebrate receptor passes its signal "
+            "to a G protein. An insect odorant receptor is an ion channel: it "
+            "opens and lets current through. Each works inside a four-subunit "
+            "channel built around Orco, a partner recognisable in every insect "
+            "while the receptors beside it vary enormously. A fruit fly gets by "
+            "with sixty odorant receptors where we have four hundred. This knot "
+            "sits ten units from the vertebrate one, about as far apart as this "
+            "map puts anything. Two solutions to the same problem, filed apart."
+        ),
+    ),
+    UniverseStory(
+        key="Worm chemoreceptors",
+        title="Worm chemoreceptors — smell invented a third time",
+        subtitle="Fifty-five nematode clusters, the tightest of the three smell knots",
+        pattern="",
+        # The nematode serpentine chemoreceptor families (Srh, Srw, Srt, Srx,
+        # Srd, Srv, Srz, Str, Srsx and the class-ab chemoreceptors): 366
+        # clusters map-wide. RADIUS 0.2 IS DELIBERATE and must not be raised
+        # to FAMILY_RADIUS: the family has several comparable components, and
+        # at 0.3 the purity-weighted seed leaves the tight one (55 members,
+        # r95 0.051, 95% ball purity, all Nematoda) for a diffuse 40-member
+        # component at 20% purity. Measured both ways on 2026-09-16.
+        pfam=(
+            "PF10324",
+            "PF10318",
+            "PF10326",
+            "PF10292",
+            "PF10320",
+            "PF10321",
+            "PF10323",
+            "PF10328",
+            "PF10317",
+            "PF10325",
+        ),  # fmt: skip
+        color=(1.0, 0.62, 0.42),
+        radius=0.2,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            "A millimetre-long worm, Caenorhabditis elegans, spends something "
+            "like thirteen hundred of its twenty thousand genes on "
+            "chemoreceptors — about seven per cent of its genome, against the "
+            "two per cent we spend on smell.",
+            "It has only about thirty chemosensory neurons to put them in, so "
+            "each neuron has to carry many receptors at once — one of them "
+            "expresses close to a hundred. That is the opposite of the rule in "
+            "our own nose, where a neuron picks one.",
+            "For almost all of them nobody knows what they detect. The "
+            "receptor for diacetyl, the smell of butter, is one of the few "
+            "that has been pinned to its odour.",
+            # Audit numbers (2026-09-16). No experimental structure of a
+            # nematode chemoreceptor exists, hence the relative on the left.
+            "The knot lit here is 55 clusters, every one a nematode, and the "
+            "tightest of the three smell knots on this tour. Not one of these "
+            "receptors has ever had its structure solved — nor has any other "
+            "nematode chemoreceptor. So the turntable beside this panel is "
+            "not one of them: it is FSHR-1, the worm's hormone receptor, the "
+            "nearest thing on the shelf.",
+        ),
+        mystery=(
+            "What the rest of those receptors are for — and why an animal with "
+            "about thirty sensory neurons needs thirteen hundred of them — is "
+            "open."
+        ),
+        tags=("senses", "receptors", "nematodes"),
+        pdb_id="8W1Z",  # A C. elegans family-1 GPCR: the nearest solved relative
+        # The panel says no chemoreceptor has ever been solved and the
+        # turntable then shows a structure, which reads as a contradiction
+        # until you reach the panel's last clause — and a viewer reads the
+        # CAPTION, which was the deposited title, "Structure of a LGR dimer
+        # from Caenorhabditis elegans in apo state". Nothing there says it is
+        # a stand-in. So the caption carries the disclaimer now, and names the
+        # protein: 8W1Z is FSHR-1 (UniProt G5EG04), the worm's orthologue of
+        # the follicle-stimulating-hormone receptor — a leucine-rich-repeat
+        # GPCR, genuinely a hormone receptor.
+        #
+        # The absence is verified, not assumed: an RCSB search for
+        # Caenorhabditis elegans against "chemoreceptor" and against
+        # "serpentine receptor" returns zero entries, as does Nematoda-wide
+        # "chemoreceptor" (2026-09-17). The one "odorant receptor" hit is a
+        # false positive (3UA4, an arginine methyltransferase).
+        pdb_caption=(
+            "FSHR-1, a C. elegans hormone receptor — a stand-in, because no "
+            "nematode chemoreceptor has ever been solved"
+        ),
+        narration=(
+            "Smell, invented a third time. A millimetre-long worm spends "
+            "something like thirteen hundred of its twenty thousand genes on "
+            "chemoreceptors, a far bigger share of its genome than we spend on "
+            "smell. It has only about thirty sensory neurons to put them in, so "
+            "each neuron carries many receptors at once, the opposite of the "
+            "rule in our nose. For almost all of them nobody knows what they "
+            "detect. This is the tightest of the three smell knots, and not one "
+            "of these receptors has ever had its structure solved. Why does a "
+            "worm need thirteen hundred of them?"
+        ),
+    ),
+    UniverseStory(
+        key="TnpB and Fanzor",
+        title="TnpB and Fanzor — the scissors CRISPR grew out of",
+        subtitle=(
+            "Six hundred clusters of the RNA-guided nucleases that jumping genes carry"
+        ),
+        pattern="",
+        # PF07282 is the domain TnpB shares with the compact Cas12f nucleases.
+        # NOTE WHAT IT IS: a zinc-ribbon target-nucleic-acid-binding (TNB)
+        # module — the DNA grip, NOT the scissors. The nuclease is the RuvC
+        # region, covered by PF01385. An earlier draft of this comment called
+        # PF07282 a nuclease domain, which a structural biologist would catch.
+        #
+        # RADIUS 0.2, not FAMILY_RADIUS: at 0.3 the ball reaches 821 clusters
+        # at 78% purity, at 0.2 it is 624 at 94%. Audit (2026-09-17): 1,575
+        # clusters map-wide; the knot centres at [-14.22, 0.68, 1.24] with
+        # Bacillota 228, Cyanobacteriota 103, Pseudomonadota 81,
+        # Actinomycetota 60 and 42 viral clusters. Only four of the 624 are
+        # eukaryotic — the Fanzors proper sit about 0.6 units away, which is
+        # why the panel places them nearby rather than inside.
+        #
+        # Verified against the preprint's own text: 435 of the map's 459
+        # Cas12-named clusters and 830 of its 1,243 TnpB-named clusters lie
+        # within one unit of this spot, so the neighbourhood is real in our
+        # data and not just in theirs.
+        pfam=("PF07282",),
+        color=(0.7, 0.25, 0.75),
+        radius=0.2,
+        min_distance=FAMILY_MIN_DISTANCE,
+        facts=(
+            # ISDra2 TnpB is 408 aa (UniProt Q7DF80); SpCas9 is 1,368
+            # (Q99ZW2). Karvelis et al., Nature 599:692 (2021) and
+            # Altae-Tran et al., Science 374:57 (2021) established the
+            # RNA-guided activity; TnpB genes ride in IS200/IS605 AND IS607
+            # elements, so "jumping genes" rather than a named family.
+            "TnpB is a small bacterial enzyme, about four hundred amino acids "
+            "— roughly a third the size of the CRISPR protein Cas9 — that "
+            "jumping genes carry around with them. It is handed a short piece "
+            "of RNA as a search template and cuts DNA wherever that template "
+            "matches.",
+            # Altae-Tran, Shmakov, Makarova, Wolf, Kannan, Zhang & Koonin,
+            # PNAS 120:e2308224120 (2023): "TnpB appears to be the
+            # evolutionary ancestor of Cas12". Cas12 is polyphyletic, which is
+            # why this says stock-and-recruitment rather than "TnpB evolved
+            # into Cas12".
+            #
+            # NO NUMBER HERE ON PURPOSE. An earlier draft said "about 50
+            # independent occasions", attributed to this paper's body.
+            # Re-checked 2026-09-17 against what is reachable without a
+            # subscription: the abstract says Cas12 "evolved from TnpB on
+            # numerous, independent occasions" and gives no count, and the
+            # count could not be confirmed. The panel now uses the abstract's
+            # own word. Do not restore a figure without reading the body.
+            "Enzymes like it are the ancestral stock the CRISPR Cas12 editors "
+            "arose from — and not once: the same jumping-gene protein was "
+            "recruited into CRISPR systems on numerous separate "
+            "occasions.",
+            # Saito et al., Nature 620:660 (2023); Jiang et al., Science
+            # Advances 9:eadk0171 (2023), which found Fanzor2 enriched in
+            # Mimiviridae, Phycodnaviridae and Ascoviridae — all
+            # Nucleocytoviricota. Viruses are not a domain of life, hence the
+            # phrasing.
+            "Their relatives in cells with nuclei, called Fanzors, turn up in "
+            "chytrid fungi, in algae, in amoebae and in clams — and in the "
+            "giant viruses that prey on single-celled hosts. One family, "
+            "across all three domains of life and the viruses that infect "
+            "them.",
+            # Audit numbers (2026-09-17).
+            "This knot is 624 clusters, nearly all bacterial, with forty-two "
+            "viral ones among them. Only four are eukaryotic: the Fanzors "
+            "proper sit a fraction of a unit away, in the same "
+            "neighbourhood.",
+            # The preprint, Appendix A.5.5, verified verbatim against the PDF:
+            # "The cluster centroid has 0.87 Jaccard similarity in SAE feature
+            # space and a TM-score of 0.59 to the canonical ISDra2 TnpB,
+            # despite a sequence identity of only 13.9%." The Jaccard figure
+            # is deliberately NOT quoted: it is an internal metric of this
+            # model with no community threshold, and printing it beside a
+            # TM-score would imply the two are equally calibrated. TM > 0.5 =
+            # same fold (Xu & Zhang, Bioinformatics 26:889, 2010); 13.9%
+            # identity is below Rost's 20-35% twilight zone and close to the
+            # 8-9% expected of unrelated sequences (Rost 1997, 1999).
+            "Sequence alone cannot see the kinship. The work behind this map "
+            "reports a cluster whose centre folds like the best-studied TnpB "
+            "— a structural match of 0.59, where anything above 0.5 means the "
+            "same fold — while sharing under fourteen per cent of its "
+            "letters, no more than two unrelated proteins would by chance.",
+        ),
+        # Preprint, Appendix A.5.5: the search against 1,927 Cas12/TnpB
+        # cluster representatives "yielded 315 'dark' clusters with >= 0.6
+        # similarity to any Cas12/TnpB". Verified verbatim.
+        mystery=(
+            "Three hundred and fifteen clusters with no annotation at all sit "
+            "close enough in the model's feature space to belong to this "
+            "neighbourhood. How many more RNA-guided systems are waiting in "
+            "them, nobody knows."
+        ),
+        tags=("genome editing", "mobile elements", "evolution"),
+        # ISDra2 TnpB with its reRNA — Sasnauskas et al., Nature 616:384
+        # (2023), whose title is the argument for this choice: "TnpB structure
+        # reveals minimal functional core of Cas12 nuclease family". Two
+        # polymer entities (protein + guide RNA), 2.80 A, and the
+        # most-studied TnpB, so it represents the shared core of a knot made
+        # of TnpB and Cas12f-like proteins. It is the DNA-FREE state, which is
+        # why the narration says "before it has found a target". The
+        # Spizellomyces Fanzor structure (9CEU) was the alternative and was
+        # rejected: the eukaryotic Fanzors are 4 of the 624 clusters lit, so
+        # it would misrepresent the knot, and that entry is an MBP fusion.
+        pdb_id="8BF8",
+        narration=(
+            "The scissors CRISPR grew out of. TnpB is a small bacterial "
+            "enzyme, a third the size of Cas9, that jumping genes carry "
+            "around with them: hand it a short piece of RNA and it cuts DNA "
+            "wherever that template matches. Enzymes like it are the stock the "
+            "CRISPR editors arose from, recruited many separate times. "
+            "Their relatives in cells with nuclei turn up in fungi, algae, "
+            "amoebae, clams, and in giant viruses. Six hundred clusters are "
+            "lit here, nearly all bacterial, the eukaryotic Fanzors just "
+            "beside them, and the structure turning alongside is the "
+            "best-studied one, caught holding its RNA guide before it has "
+            "found a target."
+        ),
+    ),
+    UniverseStory(
+        key="Levodopa and the gut",
+        title="Tyrosine decarboxylase — the gut enzyme that eats a Parkinson's drug",
+        subtitle="Fifty-two clusters in about a dozen specks, never a family of its own",
+        # Name match plus PF21391, the tyrosine decarboxylase C-terminal
+        # domain (19 clusters). Audit: 52 clusters, and they are NOT a family
+        # in this map — the densest ball of them holds 21 at 4% PURITY inside
+        # the group II PLP decarboxylase fold, which holds 1,909 clusters
+        # (clan CL0061 only; an earlier draft said 4,170, which counted three
+        # clans and two unrelated folds). Members sit a median 2.43 units
+        # apart pairwise and the phyla are scattered (Pseudomonadota 11,
+        # Bacillota 11, Methanobacteriota 5, Actinomycetota 4, Ascomycota 4,
+        # Streptophyta 4; 8 archaeal in total). Eight are named MfnA, the
+        # archaeal methanofuran-pathway enzyme, which decarboxylates tyrosine
+        # for an unrelated purpose. So this is a SCATTER story: light every
+        # one of the 52 and let the absence of a family be the point. A knot
+        # story here would claim a family the map does not show.
+        #
+        # WHAT THE PICTURE ACTUALLY SHOWS, and why the panel says "about a
+        # dozen specks" rather than fifty-two countable dots (measured
+        # 2026-09-16, after the owner asked why this stop has neither a bubble
+        # nor a constellation). The members' median NEAREST-neighbour distance
+        # is 0.022 units — a fifth of SCATTER_HIGHLIGHT_RADIUS — so merging
+        # anything closer than one marker diameter leaves 13 VISIBLE BLOBS of
+        # sizes [21, 13, 4, 3, 3, 1x8]. No marker radius fixes that: resolving
+        # a 0.022 gap needs a radius smaller than a knot's, which is invisible
+        # at this story's 38-unit framing. Their bounding box is also 15.3
+        # units against the map's 89.4-unit diagonal — 17% of it — so the
+        # earlier "scattered across the whole map" was wrong twice over. The
+        # text now describes the dozen specks and the fifth of the cloud.
+        #
+        # NOT a constellation, though two of its components clear the
+        # 10-member floor (21 and 13): a single line joining them would assert
+        # exactly the family relation the whole story is about NOT finding.
+        # No bubble either, for the same reason — a bubble says "the story is
+        # this blob", and there is no blob.
+        pattern=r"(?i)tyrosine decarboxylase",
+        pfam=("PF21391",),
+        whole=True,
+        scatter=True,
+        color=(1.0, 1.0, 0.95),
+        frame_fraction=1.0,
+        flight_ms=3000,
+        facts=(
+            "Levodopa is the mainstay of Parkinson's treatment, and it only "
+            "works if it reaches the brain. Gut bacteria carrying tyrosine "
+            "decarboxylase convert it to dopamine on the way — in the gut, "
+            "where it is no longer any use.",
+            # Re-checked 2026-09-17. What the literature SHOWS is qualitative:
+            # carbidopa "did not affect gut bacterial l-dopa decarboxylation"
+            # in complex human gut communities (Maini Rekdal et al., Science
+            # 364:eaau6323, 2019), because the human-AADC inhibitors are
+            # substrate analogues that do not inhibit bacterial TyrDC (van
+            # Kessel et al., Nat. Commun. 10:310, 2019). An earlier draft
+            # added "hundreds to thousands of times weaker", a potency ratio
+            # with no citation here and none found; removed rather than left
+            # standing on a card.
+            "Patients are given a second drug, carbidopa, to block the human "
+            "version of that reaction. It does not block the bacterial one — "
+            "in human gut communities it leaves the bacterial conversion "
+            "untouched — so the bacteria go on eating theirs.",
+            # Audit numbers (2026-09-16): the scatter is the finding.
+            "Now look at what this map does with the enzyme. Fifty-two "
+            "clusters out of 7.7 million are named for it, and they never "
+            "make a family of their own. They sit in about a dozen specks "
+            "strung across a fifth of the cloud, and the two largest hold "
+            "twenty-one and thirteen clusters packed so tightly that each "
+            "draws as a single point. Eleven are in one bacterial phylum, "
+            "eleven in another, and eight are an archaeal enzyme doing an "
+            "entirely different job.",
+            "That scatter is the clinical problem in miniature. The enzyme sits "
+            "in a fold shared by nearly two thousand other clusters of "
+            "decarboxylases that work on other molecules — glutamate, "
+            "histidine, the aromatic amino acids — so finding it in a patient's "
+            "gut means telling it apart from all of them.",
+        ),
+        mystery=(
+            "How much of the difference between patients' responses to "
+            "levodopa comes down to which bacteria they carry — and whether "
+            "profiling this one enzyme could guide a dose — is open, and "
+            "clinically live."
+        ),
+        tags=("medicine", "microbiome", "neurology"),
+        pdb_id="5HSJ",  # Tyrosine decarboxylase with PLP, Lactobacillus brevis
+        narration=(
+            "Tyrosine decarboxylase, the gut enzyme that eats a Parkinson's "
+            "drug. Levodopa only works if it reaches the brain, and gut "
+            "bacteria carrying this enzyme convert it to dopamine on the way, "
+            "in the gut, where it is wasted. Patients take a second drug to "
+            "block the human version of that reaction, but it does not block "
+            "the bacterial one. And look what the map does with it: fifty-two "
+            "clusters out of seven point seven million, never a family of "
+            "their own, sitting in about a dozen specks inside a fold shared "
+            "by nearly two thousand other decarboxylases. That scatter is the "
+            "clinical problem in miniature."
         ),
     ),
 )
 
-OVERVIEW_TITLE = "Twelve stories in the protein universe"
+#: The order the tour walks, and the reason for it. The authoring blocks above
+#: are grouped by where each story CAME FROM (the seven carried from the
+#: Swiss-Prot tour, then the map-only ones, then the batch the ESM Atlas team
+#: asked for); that is provenance, not a narrative, and the tour should be a
+#: narrative. Five movements, each handing off to the next:
+#:
+#: 1-6   The machinery every cell runs on, opening on the one protein everyone
+#:       already knows. Hemoglobin's oxygen leads to where oxygen came from,
+#:       and photosystem II hands straight to RuBisCO — the two halves of
+#:       photosynthesis, light and carbon — before energy, repair and rescue.
+#: 7-9   The map's own geography, which only this dataset can show: a spur
+#:       flung off the cloud, the quarter of it nobody has characterised, and
+#:       the half-million phage clusters inside that dark. (This trio must
+#:       stay in the order spur, dark, phage — the dark story sets up how much
+#:       of it is phage; a test pins it.)
+#: 10-14 The arms race, chained: what a virus wears on its surface, the
+#:       immune system bacteria evolved against viruses, the jumping-gene
+#:       nuclease that immune system's scissors were recruited from — the
+#:       owner asked for these two to be adjacent and they are, CRISPR first
+#:       because the TnpB story is titled against it — then the chemical war,
+#:       resistance before the weapon it defeats.
+#: 15-19 Life at the edges, then the same trick invented three times: ice and
+#:       boiling water, then smell in vertebrates, insects and nematodes.
+#:       (The smell trio must stay in that order — each narration counts "a
+#:       second time", "a third time".)
+#: 20    The closer, and the only stop that is not a knot at all: a gut enzyme
+#:       that eats a Parkinson's drug, so scattered that the absence of a
+#:       family IS the story. The tour ends on the map admitting a limit.
+TOUR_ORDER: tuple[str, ...] = (
+    "Hemoglobin",
+    "Photosystem II",
+    "RuBisCO",
+    "ATP synthase",
+    "Hsp70",
+    "RecA and Rad51",
+    "ABC transporters",
+    "Dark proteome",
+    "Phage",
+    "Viral surface proteins",
+    "CRISPR-Cas",
+    "TnpB and Fanzor",
+    "Beta-lactamases",
+    "Lanthipeptides",
+    "Ice-binding proteins",
+    "Reverse gyrase",
+    "Olfactory receptors",
+    "Insect odorant receptors",
+    "Worm chemoreceptors",
+    "Levodopa and the gut",
+)
+
+
+def _ordered(
+    pool: tuple[UniverseStory, ...], order: tuple[str, ...]
+) -> tuple[UniverseStory, ...]:
+    """The pool walked in ``order``, which must name every story exactly once."""
+    by_key = {s.key: s for s in pool}
+    missing = sorted(set(by_key) - set(order))
+    unknown = sorted(set(order) - set(by_key))
+    if missing or unknown:
+        raise ValueError(
+            f"TOUR_ORDER must be a permutation of the story pool: "
+            f"missing {missing}, unknown {unknown}"
+        )
+    if len(order) != len(set(order)):
+        raise ValueError("TOUR_ORDER repeats a story key")
+    return tuple(by_key[k] for k in order)
+
+
+STORIES: tuple[UniverseStory, ...] = _ordered(_STORY_POOL, TOUR_ORDER)
+
+OVERVIEW_TITLE = "Twenty stories in the protein universe"
 ATTRIBUTION = f"{DEMO_META['citation']['ref']} · {DEMO_META['citation']['license']}"
 OVERVIEW_HTML = (
     "Every point is one of {n:,} clusters of proteins from the ESM Atlas: 6.8 "
@@ -1142,11 +2322,15 @@ OVERVIEW_HTML = (
     "a protein language model sees in them and laid out in 3D with UMAP so that "
     "similar clusters sit close together. Colours are the main branches of "
     "life; the dim points are clusters nobody has characterised."
-    "<br><br>Step the <b>story</b> dimension to fly to twelve knots that each "
-    "tell a piece of biology: blood, sunlight, the oldest chaperone, the "
-    "coronavirus spike, the cell's turbine, the slowest important enzyme, the "
-    "machine that mends DNA, a spur flung off the map, the dark proteome, the "
-    "phage universe, the enzyme that beats penicillin, and CRISPR."
+    "<br><br>Step the <b>story</b> dimension to fly to twenty places that "
+    "each tell a piece of biology: blood, sunlight, the slowest important "
+    "enzyme, the cell's turbine, the oldest chaperone, the machine that mends "
+    "DNA; then a spur flung off the map, the dark proteome and the phage "
+    "universe; then the coronavirus spike, CRISPR, the jumping-gene scissors "
+    "CRISPR grew out of, the enzyme that beats penicillin and the antibiotics "
+    "bacteria stitch into rings; then life in ice and life in boiling water "
+    "and three separate inventions of the sense of smell; and last, a gut "
+    "enzyme that eats a Parkinson's drug."
 )
 #: Spoken introduction at the Overview slot.
 OVERVIEW_NARRATION = (
@@ -1154,7 +2338,8 @@ OVERVIEW_NARRATION = (
     "them, drawn from nearly seven billion sequences, most read straight out "
     "of the environment, and grouped by a language model so that similar "
     "proteins sit close together. The dim points are families nobody has "
-    "characterised. Twelve of these knots hide a story. Step through them."
+    "characterised. Twenty places on this map hide a story. Step through "
+    "them."
 )
 UNIREF_LINK = "https://www.uniprot.org/uniref?query={hover_key}"
 NARRATION_CACHE_DIR = CACHE_DIR / "narration"
@@ -1256,18 +2441,37 @@ def select_universe_members(
     universe: Universe,
     mask: np.ndarray,
     all_tree: Any,
+    *,
+    figure: Constellation | None = None,
 ) -> StoryCluster:
     """Resolve a story to the clusters of its densest knot — or, for a
-    ``whole`` story, to every matching cluster.
+    ``whole`` story, to every matching cluster, or, for a constellation, to
+    every member of every place its figure joins.
 
     A knot story seeds on the member with the most (and purest) member
     neighbours within two thirds of ``story.radius``, keeps the members within
     ``story.radius`` of it, and re-centres on their bounding box (see
     :func:`~luxar.demos.demo_esm3_protein_stories.cluster_geometry`).
+
+    A constellation takes no knot cut: its members are exactly the union of
+    its places, so the lit clusters and the line endpoints are the same
+    geometry and cannot drift apart.
     """
     n_named = int(mask.sum())
     if n_named == 0:
         raise ValueError(f"story {story.key!r}: no cluster matched its selector")
+    if story.constellation:
+        if figure is None:
+            raise ValueError(f"story {story.key!r} is a constellation: pass its figure")
+        centre, radial = cluster_geometry(universe.positions[figure.members])
+        return StoryCluster(
+            indices=figure.members,
+            centre=centre,
+            r95=float(np.percentile(radial, 95)),
+            n_named=n_named,
+            r50=float(np.percentile(radial, 50)),
+            r_max=float(radial.max()),
+        )
     if story.whole:
         indices = np.flatnonzero(mask)
         centre, radial = cluster_geometry(universe.positions[indices])
@@ -1316,15 +2520,110 @@ def highlight_unit(n_members: int, n_drawn: int) -> str:
     return f"clusters (one in {round(n_members / n_drawn)} drawn)"
 
 
-def universe_story_camera(
-    cluster: StoryCluster, story: UniverseStory, global_centre: np.ndarray
+def scatter_camera(
+    cluster: StoryCluster,
+    story: UniverseStory,
+    global_centre: np.ndarray,
+    map_radius: float,
 ) -> CameraConfig:
-    """The waypoint pose: the stories tour's outside-in shot, or side-on.
+    """The pose for a SCATTER story: the whole map, seen from the members' side.
+
+    A scatter story claims its members are spread across the cloud, so the
+    picture has to contain the cloud. Framing it like any other story does not:
+    the bounding-box centre of 52 clusters is a biased point (measured 7.6
+    units off the origin for tyrosine decarboxylase), and aiming there put the
+    map in the right half of the frame with dead space beside it. So the camera
+    targets the MAP's centre and pulls back to hold ``map_radius``, keeping
+    only the direction from the members' own side of the cloud — which makes it
+    a different shot from the Overview rather than a repeat of it.
+    """
+    outward = cluster.centre - global_centre
+    norm = float(np.linalg.norm(outward))
+    direction = (
+        outward / norm if norm > 1e-6 else np.array([0.0, 0.0, 1.0])
+    ) + np.array([0.0, 0.35, 0.0])
+    direction /= np.linalg.norm(direction)
+    half_height_per_unit = np.tan(np.radians(STORY_LENS_FOV_DEG) / 2)
+    distance = max(
+        story.min_distance,
+        map_radius / (story.frame_fraction * float(half_height_per_unit)),
+    )
+    position = global_centre + direction * distance
+    return CameraConfig(
+        position=tuple(float(v) for v in position),
+        target=tuple(float(v) for v in global_centre),
+        up=(0.0, 1.0, 0.0),
+    )
+
+
+def constellation_camera(figure: Constellation, story: UniverseStory) -> CameraConfig:
+    """The pose for a CONSTELLATION story: the whole figure, seen face-on.
+
+    Two decisions, both forced by what a constellation is.
+
+    *Distance* is set from ``r_max`` — the furthest member from the target —
+    rather than from the projected extent, because ``r_max`` bounds the
+    figure's apparent radius from EVERY direction. The tour runs with
+    auto-rotate on, which keeps the target and the distance from this pose but
+    supplies its own direction, so a distance computed for one viewing angle
+    would let the outermost node swing out of frame at another. At
+    :data:`CONSTELLATION_FRAME_FRACTION` the figure spans 80% of the frame
+    height in its WORST orientation.
+
+    *Direction* is the figure's thinnest principal axis (see
+    :class:`Constellation`), which is the one view that sees the places spread
+    out rather than stacked behind one another. It is what a visitor gets when
+    they stop the spin, and what a still capture shows. No upward lift: the
+    lift the knot stories use to avoid a dead-level shot would tilt the figure
+    back off the face-on view that is the entire point.
+    """
+    half_height_per_unit = float(np.tan(np.radians(STORY_LENS_FOV_DEG) / 2))
+    distance = max(
+        story.min_distance,
+        figure.r_max / (CONSTELLATION_FRAME_FRACTION * half_height_per_unit),
+    )
+    position = figure.centre + figure.view * distance
+    # The view axis is data-driven and may come out near-vertical, which would
+    # make the default up-vector degenerate; fall back to +z there.
+    up = (0.0, 1.0, 0.0) if abs(float(figure.view[1])) < 0.95 else (0.0, 0.0, 1.0)
+    return CameraConfig(
+        position=tuple(float(v) for v in position),
+        target=tuple(float(v) for v in figure.centre),
+        up=up,
+    )
+
+
+def universe_story_camera(
+    cluster: StoryCluster,
+    story: UniverseStory,
+    global_centre: np.ndarray,
+    *,
+    map_radius: float | None = None,
+    figure: Constellation | None = None,
+) -> CameraConfig:
+    """The waypoint pose: outside-in, side-on, scatter, or constellation.
 
     Side-on keeps the tour's distance rule and swaps the direction for one
     perpendicular to the centre→cluster ray (the horizontal perpendicular,
     lifted a little), so an elongated radial feature is seen across, not along.
+    A scatter story frames the whole map instead (see :func:`scatter_camera`),
+    which needs ``map_radius``. A constellation frames its whole figure (see
+    :func:`constellation_camera`), which needs ``figure``.
     """
+    if story.constellation:
+        if figure is None:
+            raise ValueError(
+                f"story {story.key!r} is a constellation, which frames its whole "
+                "figure: pass figure"
+            )
+        return constellation_camera(figure, story)
+    if story.scatter:
+        if map_radius is None:
+            raise ValueError(
+                f"story {story.key!r} is a scatter, which frames the whole map: "
+                "pass map_radius"
+            )
+        return scatter_camera(cluster, story, global_centre, map_radius)
     if not story.side_on:
         return story_camera(cluster, story, global_centre, min_radius=BUBBLE_MIN_RADIUS)
     outward = cluster.centre - global_centre
@@ -1399,11 +2698,13 @@ def member_labels(
 def _member_details(
     annotations: Path, universe: Universe, clusters: dict[int, StoryCluster]
 ) -> dict[int, tuple[list[str], list[str]]]:
-    """Read the label columns for every knot-story member (one parquet pass).
+    """Read the label columns for every labelled story's members (one parquet pass).
 
-    ``clusters`` maps story slot → cluster for the KNOT stories only: a
-    whole-map highlight of two million points carries no hover labels (the
-    strings would dominate the store).
+    ``clusters`` maps story slot → cluster for the stories with few enough
+    members to label: every knot story, plus a scatter story's few dozen. A
+    whole-map highlight of two million points carries no hover labels — the
+    strings would dominate the store — hence
+    :data:`LABELLED_MEMBER_CAP`.
     """
     pq = require_module("pyarrow.parquet")
     if not clusters:
@@ -1605,7 +2906,7 @@ def _add_overlays(
             transition_duration=0.35,
         )
         scene.add_text(
-            f"PDB {a.pdb_id} · {a.title}",
+            f"PDB {a.pdb_id} · {s.pdb_caption or a.title}",
             position=TURNTABLE_CAPTION_POSITION,
             anchor="top-center",
             text_align="center",
@@ -1635,6 +2936,64 @@ def _add_overlays(
     )
 
 
+def constellation_line_color(color: tuple[float, float, float]) -> np.ndarray:
+    """The story colour pushed towards white: bright, still tinted."""
+    base = np.asarray(color, dtype=np.float32)
+    return (base + (1.0 - base) * CONSTELLATION_LINE_WHITEN).astype(np.float32)
+
+
+def _add_constellations(
+    scene: Any,
+    stories: tuple[UniverseStory, ...],
+    figures: dict[str, Constellation],
+) -> None:
+    """One lines node per constellation story, joining the places it lights.
+
+    The vertices are the figure's own place centroids, and the story's
+    highlight is the union of those same places (see
+    :func:`select_universe_members`) — so an endpoint sits on a lit bead by
+    construction. An earlier version drew the lines from the family's
+    components while the highlight lit a KNOT ball around a purity-weighted
+    seed, and the two disagreed by up to 0.45 world units: on the olfactory
+    story the line visibly missed the blob it was supposed to leave.
+    """
+    for k, s in enumerate(stories, start=1):
+        if not s.constellation:
+            continue
+        figure = figures[s.key]
+        centroids = figure.centroids
+        edges = figure.edges
+        vertices = np.column_stack(
+            [np.full(len(centroids), float(k), dtype=np.float32), centroids]
+        ).astype(np.float32)
+        spans = np.linalg.norm(centroids[edges[:, 0]] - centroids[edges[:, 1]], axis=1)
+        aprint(
+            f"{s.key}: {len(centroids)} places, {len(edges)} lines, "
+            f"total {float(spans.sum()):.1f} units, longest {float(spans.max()):.1f}; "
+            f"figure r_max {figure.r_max:.2f}"
+        )
+        width = max(
+            CONSTELLATION_LINE_MIN_WIDTH, CONSTELLATION_LINE_WIDTH_FRAC * figure.r_max
+        )
+        scene.add_lines(
+            f"Links {k}: {s.key}",
+            vertices,
+            widths=np.full(len(centroids), width, dtype=np.float32),
+            colors=np.broadcast_to(
+                constellation_line_color(s.color), (len(centroids), 3)
+            ).copy(),
+            indices=edges.astype(np.uint32),
+            line_type="indexed",
+            opacity=0.9,
+            intensity=CONSTELLATION_LINE_INTENSITY,
+            layer=True,
+            blending_mode="additive",
+            # Under the highlight, over the backdrop: the beads are the nodes
+            # of the figure and must stay brighter than the threads.
+            layer_order=8,
+        )
+
+
 def _add_bubbles(
     scene: Any, stories: tuple[UniverseStory, ...], clusters: list[StoryCluster]
 ) -> None:
@@ -1643,6 +3002,12 @@ def _add_bubbles(
     for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
         if s.whole:
             continue  # a story about the whole map has nothing to bubble
+        if s.constellation:
+            # Mutually exclusive by the owner's rule (2026-09-16): a bubble
+            # says "the story is THIS blob", which is the opposite of what a
+            # figure spanning a third of the map says, and a bubble sized to
+            # hold every place would swallow the lines too.
+            continue
         radius = bubble_radius(c, min_radius=BUBBLE_MIN_RADIUS)
         vertices = np.column_stack(
             [
@@ -1747,22 +3112,37 @@ def resolve_stories(
     universe: Universe,
     annotations: Path,
     stories: tuple[UniverseStory, ...] = STORIES,
+    figures: dict[str, Constellation] | None = None,
 ) -> list[StoryCluster]:
-    """Resolve every story against the map (selection + knot framing)."""
+    """Resolve every story against the map (selection + knot framing).
+
+    ``figures`` are the constellation figures from :func:`story_constellations`;
+    they are recomputed when not supplied, since they are a pure function of
+    the map and the story's Pfam selection.
+    """
     spatial = require_module("scipy.spatial")
+    if figures is None:
+        figures = story_constellations(universe, stories)
     with asection("Resolving stories against the map"):
         all_tree = spatial.cKDTree(universe.positions)
         masks = _name_masks(annotations, universe, stories)
         clusters = []
         for s in stories:
             mask = family_mask(s, universe, masks.get(s.key))
-            c = select_universe_members(s, universe, mask, all_tree)
+            c = select_universe_members(
+                s, universe, mask, all_tree, figure=figures.get(s.key)
+            )
             clusters.append(c)
             if s.region == "spur":
                 aprint(
                     f"{s.key}: {check_spur_story(universe, c):.0%} ABC-transporter Pfams"
                 )
-            scope = "whole map" if s.whole else f"within {s.radius:g} of the knot"
+            if s.constellation:
+                scope = f"{len(figures[s.key].places)} places joined"
+            elif s.whole:
+                scope = "whole map"
+            else:
+                scope = f"within {s.radius:g} of the knot"
             aprint(
                 f"{s.key}: {len(c.indices):,} of {c.n_named:,} matching clusters, "
                 f"{scope}; centre={c.centre.round(2)} r95={c.r95:.2f}"
@@ -1793,13 +3173,14 @@ def build_universe_scene(
     if turntables:
         assets = _render_story_turntables(stories, output_path, turntable_cache)
 
-    clusters = resolve_stories(universe, annotations, stories)
-    knots = {
+    figures = story_constellations(universe, stories)
+    clusters = resolve_stories(universe, annotations, stories, figures)
+    labelled = {
         k: c
         for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1)
-        if not s.whole
+        if carries_labels(s, len(c.indices))
     }
-    details = _member_details(annotations, universe, knots)
+    details = _member_details(annotations, universe, labelled)
 
     with asection("Composing waypoints"):
         positions = universe.positions
@@ -1823,7 +3204,13 @@ def build_universe_scene(
             waypoints.append(
                 Waypoint(
                     when={STORY_DIM: k},
-                    camera=universe_story_camera(c, s, global_centre),
+                    camera=universe_story_camera(
+                        c,
+                        s,
+                        global_centre,
+                        map_radius=spatial_max,
+                        figure=figures.get(s.key),
+                    ),
                     duration_ms=s.flight_ms,
                     reveal="on_arrival",
                 )
@@ -1882,14 +3269,14 @@ def build_universe_scene(
                 m = len(idx)
                 units[k] = highlight_unit(len(c.indices), m)
                 labels, keys = details.get(k, (None, None))
-                # Hover labels + UniRef link on knot stories only (see
-                # `_member_details`). `labels`/`keys` accept None; `link`
-                # refuses it, so the template rides in the link-metadata spread
-                # the element-cap gate knows (`link_attrs`, never a budget).
+                # Hover labels + UniRef link on the stories whose members are
+                # few enough to carry them (see `_member_details`).
+                # `labels`/`keys` accept None; `link` refuses it, so the
+                # template rides in the link-metadata spread the element-cap
+                # gate knows (`link_attrs`, never a budget).
                 link_attrs = {"link": UNIREF_LINK} if keys is not None else {}
-                radius = WHOLE_HIGHLIGHT_RADIUS if s.whole else HIGHLIGHT_RADIUS
-                intensity = (
-                    WHOLE_HIGHLIGHT_INTENSITY if s.whole else highlight_intensity(m)
+                radius, intensity = highlight_appearance(
+                    s, m, figure=figures.get(s.key)
                 )
                 highlight_positions = np.column_stack(
                     [np.full(m, float(k), dtype=np.float32), positions[idx]]
@@ -1924,6 +3311,8 @@ def build_universe_scene(
                     layer_order=10,
                 )
             _add_bubbles(scene, stories, clusters)
+            with asection("Constellations"):
+                _add_constellations(scene, stories, figures)
             _add_overlays(scene, stories, clusters, assets, n, units)
             if audio:
                 with asection("Sound layer"):
@@ -1936,6 +3325,10 @@ def build_universe_scene(
                     )
 
     aprint(f"✓ Wrote {n:,} clusters and {len(stories)} stories to {output_path}")
+    # The bubbles are `material="physical"` and so read `scene.environment`.
+    # Freeze it into the store instead of leaving every viewer to capture it
+    # live; best-effort, and a no-op without a development checkout.
+    bake_scene_environment(output_path)
     return n
 
 
@@ -1946,7 +3339,7 @@ def build_universe_scene(
 
 def main() -> None:
     aprint("=" * 70)
-    aprint("ESM PROTEIN UNIVERSE — twelve stories across 7.7 million clusters")
+    aprint("ESM PROTEIN UNIVERSE — twenty stories across 7.7 million clusters")
     aprint("=" * 70)
 
     auto_rotate = "--no-auto-rotate" not in sys.argv

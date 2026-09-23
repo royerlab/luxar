@@ -32,6 +32,8 @@ function makeDeps(
     /** Whether the loaded scene has sound nodes (drives the Sound button's hidden predicate). */
     hasSoundNodes?: boolean;
     muted?: boolean;
+    /** Sound wanted but the browser has not allowed the context to start. */
+    audioBlocked?: boolean;
   } = {}
 ) {
   const controlType = overrides.controlType ?? 'orbit';
@@ -101,6 +103,8 @@ function makeDeps(
     audioEngine: {
       hasSoundNodes: vi.fn().mockReturnValue(overrides.hasSoundNodes ?? false),
       isMuted: vi.fn().mockReturnValue(overrides.muted ?? false),
+      isBlocked: vi.fn().mockReturnValue(overrides.audioBlocked ?? false),
+      enableSound: vi.fn().mockResolvedValue(true),
       setMuted: vi.fn(),
       getState: vi.fn().mockReturnValue({
         state: 'running',

@@ -243,6 +243,30 @@ describe('AudioEngine — slab, ducking and buses', () => {
     expect(h.engine.getState().playing).not.toContain('n2');
   });
 
+  it('an arrive event does not discard an on_depart clip still decoding', async () => {
+    const h = makeHarness();
+    let release!: () => void;
+    const clipReady = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const departing = soundPlaceholder('/bye', { trigger: 'on_depart', bus: 'voice' });
+    const desc = departing.userData.sound as SoundSourceDescriptor;
+    desc.readClip = async () => {
+      await clipReady;
+      return new Uint8Array([1, 2, 3, 4]);
+    };
+    h.root.add(departing);
+    h.engine.attachScene(h.root);
+
+    h.engine.notifyWaypoint('depart', { story: 0 });
+    h.engine.notifyWaypoint('arrive', { story: 1 });
+    release();
+    await flush();
+    vi.advanceTimersByTime(1);
+
+    expect(h.engine.getState().playing).toEqual(['bye']);
+  });
+
   it('setNodeMuted mutes one node by path or a whole subtree by ancestor, independently of the rail', async () => {
     const h = makeHarness();
     h.root.add(soundPlaceholder('/story/bed', { trigger: 'continuous' }));
@@ -457,6 +481,95 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     expect(h.engine.getState().playing.sort()).toEqual(['bed', 'narr']);
   });
 
+  it('keeps the gate closed when a tap resume resolves but the context stays suspended', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeSucceeds = false;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+
+    document.dispatchEvent(new Event('pointerdown'));
+    await flush();
+    expect(h.engine.isBlocked()).toBe(true);
+    expect(h.engine.getState().playing).toEqual([]);
+    expect(document.querySelector('.luxar-audio-gate')).not.toBeNull();
+
+    h.ctx.resumeSucceeds = true;
+    document.dispatchEvent(new Event('keydown'));
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.isBlocked()).toBe(false);
+    expect(h.engine.getState().playing).toEqual(['bed']);
+  });
+
+  it('does not restore the gate when the scene is muted during a pending tap resume', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeSucceeds = false;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+
+    let resolveResume!: () => void;
+    const pendingResume = new Promise<void>((resolve) => {
+      resolveResume = resolve;
+    });
+    vi.spyOn(h.ctx, 'resume').mockReturnValue(pendingResume);
+    document.dispatchEvent(new Event('pointerdown'));
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+
+    h.engine.setMuted(true);
+    resolveResume();
+    await flush();
+    expect(h.engine.isMuted()).toBe(true);
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+  });
+
+  it('does not restore the gate when the engine is disposed during a pending tap resume', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeSucceeds = false;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+
+    let rejectResume!: (error: Error) => void;
+    const pendingResume = new Promise<void>((_resolve, reject) => {
+      rejectResume = reject;
+    });
+    vi.spyOn(h.ctx, 'resume').mockReturnValue(pendingResume);
+    document.dispatchEvent(new Event('pointerdown'));
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+
+    h.engine.dispose();
+    rejectResume(new Error('resume blocked'));
+    await flush();
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'does not restore the gate when the scene is detached during a pending tap resume that %ss',
+    async (outcome) => {
+      const h = makeHarness('suspended');
+      h.ctx.resumeSucceeds = false;
+      h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+      h.engine.attachScene(h.root);
+      await flush();
+
+      let settleResume!: () => void;
+      const pendingResume = new Promise<void>((resolve, reject) => {
+        settleResume = outcome === 'resolve' ? resolve : () => reject(new Error('resume blocked'));
+      });
+      vi.spyOn(h.ctx, 'resume').mockReturnValue(pendingResume);
+      document.dispatchEvent(new Event('pointerdown'));
+      expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+
+      h.engine.detachScene();
+      settleResume();
+      await flush();
+      expect(h.engine.hasSoundNodes()).toBe(false);
+      expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+    }
+  );
+
   it('a muted scene never shows the gate', async () => {
     localStorage.setItem(StorageKeys.audio, JSON.stringify({ muted: true, masterGain: 0.8 }));
     const h = makeHarness('suspended');
@@ -513,5 +626,94 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     h.engine.dispose();
     expect(h.ctx.state).toBe('closed');
     expect(h.camera.children.some((c) => c instanceof THREE.AudioListener)).toBe(false);
+  });
+});
+
+describe('AudioEngine — a context the browser has not released', () => {
+  it('holds ONE deferred narration across many stops, not one per stop', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    for (let i = 0; i < 4; i++) {
+      h.root.add(
+        soundPlaceholder(`/narr${i}`, { trigger: 'on_arrive', bus: 'voice' }, [[i, 0, 0, 0]])
+      );
+    }
+    h.engine.attachScene(h.root);
+    await flush();
+
+    // Walk the tour with sound still blocked. Every arrival defers.
+    for (let i = 0; i < 4; i++) {
+      h.setStep(i);
+      h.engine.notifyWaypoint('arrive', { story: i });
+    }
+    await flush();
+    expect(h.engine.getState().playing).toEqual([]);
+
+    // The browser lets the context through. Only the stop the listener is
+    // actually on may speak; the three walked past must stay silent.
+    h.ctx.unblock();
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['narr3']);
+  });
+
+  it('shows the gate when resume() never settles', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(document.querySelector('.luxar-audio-gate')).not.toBeNull();
+    expect(h.engine.isBlocked()).toBe(true);
+    expect(h.engine.getState().playing).toEqual([]);
+  });
+
+  it('a gesture anywhere recovers, without the listener finding the mute toggle', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(h.engine.getState().playing).toEqual([]);
+
+    h.ctx.resumeNeverSettles = false;
+    document.dispatchEvent(new Event('keydown'));
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.isBlocked()).toBe(false);
+    expect(h.engine.getState().playing).toEqual(['bed']);
+  });
+
+  it('a context that reaches running on its own opens the gate', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(h.engine.getState().playing).toEqual([]);
+
+    // No call of ours: the browser simply released it, which is reported
+    // through onstatechange and nothing else.
+    h.ctx.unblock();
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed']);
+    expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+  });
+
+  it('blocked is not muted: the listener never chose it, and unmuting is not the cure', async () => {
+    const h = makeHarness('suspended');
+    h.ctx.resumeNeverSettles = true;
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(h.engine.isBlocked()).toBe(true);
+    expect(h.engine.isMuted()).toBe(false);
+
+    h.ctx.resumeNeverSettles = false;
+    expect(await h.engine.enableSound()).toBe(true);
+    expect(h.engine.isBlocked()).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed']);
   });
 });

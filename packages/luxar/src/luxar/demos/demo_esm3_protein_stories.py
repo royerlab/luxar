@@ -112,7 +112,12 @@ from luxar.core.viewer_config import (
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import cached_download, control_serve_args, launch_viewer
+from luxar.demos import (
+    bake_scene_environment,
+    cached_download,
+    control_serve_args,
+    launch_viewer,
+)
 from luxar.demos._audio_synth import synthesise_foa_from_clip
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -171,6 +176,16 @@ class Story:
     tags: tuple[str, ...] = field(default_factory=tuple)
     #: Representative PDB entry rendered as the left-hand turntable ("" = none).
     pdb_id: str = ""
+    #: Override the turntable caption. Empty = the entry's deposited RCSB
+    #: title, which is right for almost every entry now that the renderer
+    #: draws the BIOLOGICAL ASSEMBLY with its ligands (see
+    #: :data:`~luxar.demos._pdb_turntable.RCSB_ASSEMBLY_URL`) — before that,
+    #: titles were accurate about the deposit and wrong about the picture.
+    #: What completeness cannot fix is an entry containing more than the
+    #: molecule: a receptor solved on a signalling scaffold with a nanobody
+    #: added to trap it is five chains, and its title names one of them. Then
+    #: the caption has to say what the viewer is looking at.
+    pdb_caption: str = ""
     #: What the narrator SAYS on arrival: a short spoken script, not the panel
     #: read aloud — the good facts, punchier, no "Story N of 10", ending on the
     #: open question. Consumed by the sound layer's narration builder.
@@ -247,6 +262,9 @@ STORIES: tuple[Story, ...] = (
             # Half-life ~90 min at a moderate 125 umol/m2/s; 30-60 min under
             # intense illumination (pulse-chase measurements). D1 is the
             # fastest-turning-over subunit of photosystem II in the light.
+            # Also ~2 h at growth irradiance in higher plants vs 30-60 min
+            # under strong illumination in cyanobacteria, which is the same
+            # roughly-halving the sentence below states.
             "Splitting water has a price: D1 is damaged by its own chemistry "
             "and is replaced faster than any other protein of photosystem II "
             "— a half-life of about ninety minutes in ordinary light, half "
@@ -549,7 +567,15 @@ STORIES: tuple[Story, ...] = (
             "or testing many sites at once — is still argued over."
         ),
         tags=("DNA repair", "cancer"),
-        pdb_id="3CMW",
+        # Wild-type E. coli RecA, 1.9 A, one chain, no engineering.
+        #
+        # This replaced 3CMW after a structure audit (2026-09-17). That entry,
+        # "Mechanism of homologous recombination from the RecA-ssDNA/dsDNA
+        # structures", is an ENGINEERED single chain of five RecA copies fused
+        # head to tail — its own entity 1 is a DNA 15-mer — and it contains no
+        # Rad51 at all, though this story is titled for both. Carried by
+        # `demo_esm_protein_universe` too, so the swap fixes both tours.
+        pdb_id="1U94",
         narration=(
             "RecA and Rad51, the machine that mends broken DNA. It coats a "
             "broken strand and searches the entire genome for the matching "
@@ -728,6 +754,15 @@ AMBIENT_BED_LOOP_CROSSFADE_S = 15.0
 NARRATION_CACHE_DIR = (
     Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "narration"
 )
+#: `alloy` is KEPT DELIBERATELY. It is OpenAI's neutral voice and the one
+#: listeners describe as gender-ambiguous — the owner heard it as female in
+#: some stories and male in others and, offered all eleven voices side by side
+#: on the same narration (2026-09-17), chose to keep it: "the ambiguity is
+#: perhaps a feature and not a bug". A kiosk narrator reading twenty pieces of
+#: science wants no persona of its own. So this is a decision, not a default —
+#: do not "fix" it to `fable` or `onyx` because a blog ranks those higher for
+#: audiobooks. The voice is part of the narration cache key, so changing it
+#: re-synthesises all 21 clips.
 NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
 NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
 # Narration is `on_arrive`: it starts when the story's flight lands (the waypoint
@@ -1585,7 +1620,9 @@ def build_stories_scene(
                     continue
                 # Older RCSB entries shout their title in capitals; it stays as
                 # deposited — sentence-casing mangles the acronyms (NMR, MVIIA).
-                title = a.title
+                # A story may override it when the entry holds more than the
+                # molecule (see `Story.pdb_caption`).
+                title = s.pdb_caption or a.title
                 scene.add_video(
                     a.webm,
                     position=TURNTABLE_POSITION,
@@ -1642,6 +1679,9 @@ def build_stories_scene(
                     add_story_sounds(scene, stories)
 
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")
+    # Same reason as the protein-universe tour: the bubbles are physical
+    # meshes, so freeze their environment rather than capturing it per viewer.
+    bake_scene_environment(output_path)
     return n
 
 

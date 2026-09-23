@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import ast
+import importlib.util
+import io
 import socket
 import stat
 import subprocess
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from urllib.request import urlopen
 
@@ -16,16 +20,22 @@ import pytest
 import zarr
 from typer.testing import CliRunner
 
-from luxar import Dimensions, LuxarZarrCompiler
+from luxar import Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
 from luxar.cli import app
+from luxar.cli import export as export_module
+from luxar.cli import main as main_module
 from luxar.cli.export import (
+    SceneFacts,
     _copy_viewer,
     _copy_zarr_data,
     _generate_readme,
     _generate_serve_script,
+    _generate_testing_notes,
     _get_serve_script_content,
     export_scene,
+    read_scene_facts,
 )
+from luxar.core.viewer_config import Chapter, ControlPanelConfig
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -322,24 +332,35 @@ class TestServeScript:
                 imported.add((node.module or "").split(".")[0])
 
         assert imported, "parsed no imports at all -- the check would be vacuous"
-        foreign = imported - sys.stdlib_module_names - {"__future__"}
+        # `luxar_qr` is not stdlib, and it is not a pip install either: the
+        # exporter COPIES it into the folder beside serve.py (see
+        # `_copy_qr_module`), and serve.py imports it inside a try/except so a
+        # folder without it still serves, printing URLs and no QR. Allowed by
+        # name, not by relaxing the rule -- an import of `luxar` or
+        # `websockets` must still fail this.
+        shipped = {"luxar_qr"}
+        foreign = imported - sys.stdlib_module_names - {"__future__"} - shipped
         assert not foreign, f"Non-stdlib imports found: {sorted(foreign)}"
+        for name in shipped:
+            assert (Path(export_module.__file__).parent / "_qr.py").exists(), name
 
-    def test_relay_rides_along_off_by_default(self) -> None:
-        """The generated script can host the relay, and does not by default.
+    def test_relay_default_follows_the_scene(self) -> None:
+        """The relay can be hosted, and whether it IS depends on the scene.
 
-        The feature is the point of stage 6 -- an exported folder used to carry
-        `control.html` while being unable to serve it -- but a folder you
-        double-click must not start listening for anything that wants to drive
-        the display.
+        A folder you double-click must not start listening for anything that
+        wants to drive the display -- unless the scene was authored to be
+        driven, in which case the alternative is an exhibit operator reading a
+        README to make the tablet work. So the default is the scene's own
+        `viewer_config.control_panel`, and `--no-control` turns it off.
         """
         content = _get_serve_script_content("data")
         assert "--control" in content
         assert "--control-token" in content
-        assert (
-            'parser.add_argument(\n        "--control",\n        action="store_true"'
-            in (content)
-        ), "--control must be a flag, so control is off unless asked for"
+        # The switch is a BooleanOptionalAction, so `--no-control` exists.
+        assert "action=argparse.BooleanOptionalAction" in content
+        assert "default=HAS_CONTROL_PANEL" in content
+        # A scene with no panel keeps the old, quiet behaviour.
+        assert "HAS_CONTROL_PANEL = False" in content
 
     def test_substitution_failure_is_loud(self, tmp_path: Path) -> None:
         """A template that stopped carrying a substituted line must not export.
@@ -782,14 +803,472 @@ class TestServeScriptTitle:
         monkeypatch.setattr(export_mod, "get_viewer_dist_path", lambda: viewer_dist)
         monkeypatch.setattr(export_mod, "_copy_viewer", lambda dest: None)
         monkeypatch.setattr(export_mod, "_copy_zarr_data", lambda s, d: None)
-        monkeypatch.setattr(export_mod, "_generate_readme", lambda o, d: None)
+        monkeypatch.setattr(
+            export_mod, "_generate_readme", lambda o, d, facts=None: None
+        )
         monkeypatch.setattr(export_mod, "validate_zarr_store", lambda p: (True, None))
         monkeypatch.setattr(
             export_mod,
             "_generate_serve_script",
-            lambda out, ddn, title=None: captured.update(title=title),
+            lambda out, ddn, title=None, facts=None: captured.update(title=title),
         )
         src = tmp_path / "my_scene.luxar.zarr"
         src.mkdir()
         export_mod.export_scene(src, tmp_path / "out")
         assert captured["title"] == "my_scene"
+
+
+# ---------------------------------------------------------------------------
+# Control-panel awareness (2026-09-17)
+# ---------------------------------------------------------------------------
+
+
+def _scene_attrs(control_panel: bool) -> dict:
+    """Root attributes shaped like a real compiled scene."""
+    attrs: dict = {
+        "type": "scene",
+        "citation": {"ref": "A Dataset, Someone et al. 2026"},
+        "scene_dimensions": {
+            "dimensions": [
+                {"name": "story", "display": False},
+                {"name": "x", "display": True},
+                {"name": "y", "display": True},
+                {"name": "z", "display": True},
+            ]
+        },
+        "viewer_config": {"title": "A Tour"},
+    }
+    if control_panel:
+        attrs["viewer_config"]["control_panel"] = {
+            "chapter_dimension": "story",
+            "chapters": {str(i): {"sublabel": f"stop {i}"} for i in range(1, 21)},
+        }
+    return attrs
+
+
+def test_scene_facts_read_the_dimensions_from_the_right_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`scene_dimensions.dimensions`, not a top-level `dimensions`.
+
+    The wrong key fails SILENTLY: the lookup finds nothing, no dimensions are
+    reported, and the README simply omits those lines. That is exactly how the
+    first version of this shipped a README with no dimensions in it.
+    """
+    monkeypatch.setattr(
+        export_module, "read_node_attrs", lambda _p: _scene_attrs(control_panel=True)
+    )
+    facts = export_module.read_scene_facts(tmp_path)
+    assert facts.dimensions == ("story", "x", "y", "z")
+    assert facts.displayed == ("x", "y", "z")
+    assert facts.title == "A Tour"
+    assert facts.citation == "A Dataset, Someone et al. 2026"
+
+
+def test_scene_facts_detect_a_control_panel_and_count_its_stops(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for has_panel in (True, False):
+        monkeypatch.setattr(
+            export_module,
+            "read_node_attrs",
+            lambda _p, h=has_panel: _scene_attrs(control_panel=h),
+        )
+        facts = export_module.read_scene_facts(tmp_path)
+        assert facts.has_control_panel is has_panel
+        assert facts.chapter_count == (20 if has_panel else 0)
+        assert facts.chapter_dimension == ("story" if has_panel else None)
+
+
+def test_scene_facts_never_raise_on_an_unreadable_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Introspection is a nicety; a store it cannot read still exports."""
+
+    def boom(_p: Path) -> dict:
+        raise OSError("no metadata here")
+
+    monkeypatch.setattr(export_module, "read_node_attrs", boom)
+    facts = export_module.read_scene_facts(tmp_path)
+    assert facts == export_module.SceneFacts()
+    assert facts.has_control_panel is False
+
+    monkeypatch.setattr(export_module, "read_node_attrs", lambda _p: None)
+    assert export_module.read_scene_facts(tmp_path).has_control_panel is False
+
+
+def test_the_serve_script_defaults_follow_the_scene() -> None:
+    """A panel scene starts its relay; a plain scene does not.
+
+    The substituted constant is what the exported script reads, so it is
+    asserted in the generated TEXT rather than by importing the template.
+    """
+    panel = export_module._get_serve_script_content(
+        "data", None, export_module.SceneFacts(has_control_panel=True)
+    )
+    plain = export_module._get_serve_script_content(
+        "data", None, export_module.SceneFacts(has_control_panel=False)
+    )
+    assert "HAS_CONTROL_PANEL = True" in panel
+    assert "HAS_CONTROL_PANEL = False" in plain
+    # No facts at all is the conservative case, not an error.
+    assert "HAS_CONTROL_PANEL = False" in export_module._get_serve_script_content(
+        "data"
+    )
+
+
+def test_panel_serve_script_runs_its_defaults_and_writes_the_qr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the generated module rather than only its substituted text."""
+    _generate_serve_script(
+        tmp_path,
+        "data",
+        facts=SceneFacts(has_control_panel=True),
+    )
+    export_module._copy_qr_module(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    spec = importlib.util.spec_from_file_location(
+        "exported_panel_serve", tmp_path / "serve.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    args = module._parse_args([])
+    assert args.control is True
+    assert args.host == "0.0.0.0"
+    ascii_stdout = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+    monkeypatch.setattr(sys, "stdout", ascii_stdout)
+    module.print_control_qr("http://192.168.1.42:8000/viewer/control.html")
+    assert (tmp_path / "control-qr.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_scene_facts_read_a_compiler_written_control_panel(tmp_path: Path) -> None:
+    """Pin the actual on-disk keys shared by the compiler and exporter."""
+    store = tmp_path / "panel.luxar.zarr"
+    dimensions = Dimensions(
+        [
+            Dimension(
+                "story",
+                range=(0, 2),
+                step=1,
+                display=False,
+                discrete=True,
+                categories=["Overview", "One", "Two"],
+            ),
+            Dimension("x"),
+        ]
+    )
+    panel = ControlPanelConfig(
+        chapter_dimension="story",
+        chapters={1: Chapter(label="One"), 2: Chapter(label="Two")},
+    )
+    with LuxarZarrCompiler(store) as compiler:
+        compiler.create_scene(
+            dimensions=dimensions,
+            viewer_config=ViewerConfig(control_panel=panel),
+        )
+
+    facts = read_scene_facts(store)
+    assert facts.has_control_panel is True
+    assert facts.chapter_dimension == "story"
+    assert facts.chapter_count == 2
+    assert facts.panel_tiles == 3
+    assert facts.dimensions == ("story", "x")
+    assert facts.displayed == ("x",)
+
+
+def test_the_readme_leads_with_kiosk_mode_only_for_a_panel_scene(
+    tmp_path: Path,
+) -> None:
+    panel_dir, plain_dir = tmp_path / "panel", tmp_path / "plain"
+    panel_dir.mkdir()
+    plain_dir.mkdir()
+    export_module._generate_readme(
+        panel_dir,
+        "data",
+        export_module.SceneFacts(
+            title="A Tour",
+            has_control_panel=True,
+            chapter_dimension="story",
+            chapter_count=20,
+            dimensions=("story", "x", "y", "z"),
+            displayed=("x", "y", "z"),
+            citation="A Dataset",
+        ),
+    )
+    export_module._generate_readme(plain_dir, "data", export_module.SceneFacts())
+
+    panel = (panel_dir / "README.txt").read_text()
+    plain = (plain_dir / "README.txt").read_text()
+
+    assert "THIS SCENE HAS A CONTROL PANEL" in panel
+    assert "THIS SCENE HAS A CONTROL PANEL" not in plain
+    assert "declares no control panel" in plain
+    # The scene summary only appears when there is something to say.
+    assert "About this scene" in panel and "20 stops along 'story'" in panel
+    assert "Steppable    story" in panel and "Displayed    x, y, z" in panel
+    assert "About this scene" not in plain
+    # Both name the QR encoder they ship, so a reader knows what the file is.
+    for text in (panel, plain):
+        assert "luxar_qr.py" in text
+
+
+def test_the_export_ships_the_qr_encoder_beside_serve(tmp_path: Path) -> None:
+    """serve.py imports `luxar_qr` by name, so the copy must use that name."""
+    out = tmp_path / "out"
+    out.mkdir()
+    export_module._copy_qr_module(out)
+    shipped = out / "luxar_qr.py"
+    assert shipped.exists()
+    assert shipped.read_text() == export_module.QR_MODULE_SOURCE.read_text()
+    template = export_module.SERVE_TEMPLATE.read_text()
+    assert "from luxar_qr import" in template
+    assert f"from {shipped.stem} import" in template
+
+
+def test_the_server_is_quiet_about_client_disconnects_but_not_about_faults() -> None:
+    """A cancelled chunk fetch is not a server error and must not print one.
+
+    The viewer abandons in-flight requests on every camera move and every
+    level-of-detail decision, and each abandonment aborts a response the
+    server is still writing. `socketserver` calls that a handler crash and
+    prints a traceback, which buries the two URLs and the QR the operator
+    needs.
+
+    The suppression is narrow, which is what this asserts: a bare `except`
+    around `do_GET` would hide real handler faults too.
+    """
+    content = _get_serve_script_content("data")
+    assert "def handle_error" in content
+    for quiet in ("BrokenPipeError", "ConnectionResetError", "ConnectionAbortedError"):
+        assert quiet in content, quiet
+    # Anything else still reaches the base implementation.
+    assert "super().handle_error(request, client_address)" in content
+    # And the check is on the live exception, not a broad swallow.
+    assert "sys.exc_info()[1]" in content
+    assert "except Exception" not in content.split("def handle_error")[1][:600]
+
+
+def test_every_surface_that_names_the_serve_command_says_python3() -> None:
+    """The run command is printed in two places and they have to agree.
+
+    Stock macOS ships no `python` on PATH, and neither do most Linux distros;
+    the bare name only resolves where a conda or pyenv shim provides one. Both
+    the generated README and the CLI's own "To view:" line name the command, so
+    both are pinned here rather than either alone. `python serve.py` remains
+    valid only where it is explicitly the WINDOWS spelling.
+    """
+    cli_main = Path(main_module.__file__).read_text(encoding="utf-8")
+    hint = [ln for ln in cli_main.splitlines() if "To view: cd" in ln]
+    assert hint, "the export command no longer prints a run hint"
+    for line in hint:
+        assert "python3 serve.py" in line, line
+
+    with TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        _generate_readme(out, "data")
+        readme = (out / "README.txt").read_text(encoding="utf-8")
+    assert "python3 serve.py" in readme
+    # The bare name survives only as the Windows spelling, in the one sentence
+    # that says so.
+    for para in readme.split("\n\n"):
+        if "python serve.py" in para and "python3 serve.py" not in para:
+            assert "Windows" in para, para
+
+
+def test_panel_tile_count_comes_from_the_dimension_not_the_chapter_dict() -> None:
+    """A coordinate with no authored Chapter still gets a tile.
+
+    A `Chapter` supplies a slot's sublabel; the tile and its main label come
+    from the chapter dimension's `categories`. A scene can therefore author
+    fewer chapters than the dimension has coordinates — an unauthored slot 0
+    overview still draws a tile — so the two counts differ and the
+    operator-facing text must use the tile count.
+    """
+    attrs = {
+        "viewer_config": {
+            "control_panel": {
+                "chapter_dimension": "story",
+                # Authored for slots 1..3 only; slot 0 is an unauthored overview.
+                "chapters": {"1": {}, "2": {}, "3": {}},
+            }
+        },
+        "scene_dimensions": {
+            "dimensions": [
+                {"name": "story", "categories": ["Overview", "A", "B", "C"]},
+                {"name": "x", "display": True},
+            ]
+        },
+    }
+    with patch("luxar.cli.export.read_node_attrs", return_value=attrs):
+        facts = read_scene_facts(Path("ignored"))
+    assert facts.chapter_count == 3
+    assert facts.panel_tiles == 4
+
+    with TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        _generate_testing_notes(out, facts)
+        notes = (out / "TESTING.txt").read_text(encoding="utf-8")
+    assert "show 4 tiles" in notes
+    assert "show 3 tiles" not in notes
+
+
+def test_panel_tile_count_falls_back_to_a_range_then_to_the_chapters() -> None:
+    """A dimension naming no categories is counted from its inclusive range.
+
+    When the dimension cannot be found at all the count is unknown, and the
+    operator-facing `stops` substitutes the authored chapter count rather than
+    printing zero.
+    """
+
+    def facts_for(dims: list[dict]) -> SceneFacts:
+        attrs = {
+            "viewer_config": {
+                "control_panel": {
+                    "chapter_dimension": "t",
+                    "chapters": {"1": {}, "2": {}},
+                }
+            },
+            "scene_dimensions": {"dimensions": dims},
+        }
+        with patch("luxar.cli.export.read_node_attrs", return_value=attrs):
+            return read_scene_facts(Path("ignored"))
+
+    # Inclusive span in units of step: 0..20 by 1 is 21 coordinates, not 20.
+    assert facts_for([{"name": "t", "range": [0, 20], "step": 1}]).panel_tiles == 21
+    assert facts_for([{"name": "t", "range": [0, 10], "step": 2}]).panel_tiles == 6
+
+    # Dimension absent: the count is genuinely unknown, so `panel_tiles` stays
+    # 0 and only the operator-facing `stops` substitutes the authored chapters
+    # -- the fallback lives in one place rather than at each use site.
+    absent = facts_for([{"name": "other"}])
+    assert absent.panel_tiles == 0
+    assert absent.stops == 2
+    # And a hand-built SceneFacts that knows only the chapter count still
+    # reports something, which is what stopped the README dropping its whole
+    # "About this scene" block when this field was introduced.
+    assert SceneFacts(chapter_count=20).stops == 20
+
+
+#: Oldest Python the EXPORTED folder must import on. Not the repo's floor --
+#: luxar itself needs 3.12. This is whatever a recipient already has, and stock
+#: macOS still ships 3.9.6.
+EXPORT_PYTHON_FLOOR = (3, 9)
+
+
+def _has_future_annotations(tree: ast.Module) -> bool:
+    """Whether the module defers its annotations, which is what makes 3.9 safe."""
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(alias.name == "annotations" for alias in node.names)
+        for node in tree.body
+    )
+
+
+def _never_executed(tree: ast.Module) -> set[int]:
+    """ids of nodes that are not evaluated at import time.
+
+    Annotations (deferred to strings by the __future__ import) and the bodies
+    of `if TYPE_CHECKING:` blocks. Everything else in the module runs, and so
+    has to parse AND evaluate on the floor version.
+    """
+    ids: set[int] = set()
+
+    def defer(node: ast.AST | None) -> None:
+        if node is not None:
+            ids.update(map(id, ast.walk(node)))
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defer(node.returns)
+            args = node.args
+            for arg in args.args + args.kwonlyargs + args.posonlyargs:
+                defer(arg.annotation)
+        elif isinstance(node, ast.AnnAssign):
+            defer(node.annotation)
+        elif isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test):
+            for stmt in node.body:
+                defer(stmt)
+    return ids
+
+
+def _looks_like_a_type_union(text: str) -> bool:
+    """Tell a type union from an honest bitwise-or on integers."""
+    return "None" in text or any(
+        token in text for token in ("list[", "dict[", "tuple[", "str", "bool")
+    )
+
+
+def _uses_zip_strict(node: ast.Call) -> bool:
+    """`zip(..., strict=...)`, which is a TypeError before 3.10.
+
+    An API-level version floor, not a syntax one: it parses everywhere and only
+    fails when the call runs. Worth naming separately because a linter that
+    wants `strict=` on every `zip` (ruff's B905) pushes straight into it.
+    """
+    name = node.func.id if isinstance(node.func, ast.Name) else None
+    return name == "zip" and any(kw.arg == "strict" for kw in node.keywords)
+
+
+def _runtime_only_since_310(source: str) -> list[str]:
+    """Constructs in `source` that are EXECUTED and need Python 3.10+.
+
+    Annotations are excluded: `from __future__ import annotations` makes them
+    strings, so `def f(x: int | None)` is fine on 3.9. A module-level type
+    ALIAS is not an annotation -- it is an expression evaluated at import --
+    and that distinction is the entire bug this guards.
+    """
+    tree = ast.parse(source)
+    found: list[str] = []
+    if not _has_future_annotations(tree):
+        found.append("missing `from __future__ import annotations`")
+
+    deferred = _never_executed(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Match):
+            found.append(f"line {node.lineno}: match statement")
+        elif isinstance(node, ast.Call) and _uses_zip_strict(node):
+            found.append(f"line {node.lineno}: zip(strict=...)")
+        elif (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.BitOr)
+            and id(node) not in deferred
+            and _looks_like_a_type_union(ast.unparse(node))
+        ):
+            found.append(f"line {node.lineno}: runtime union `{ast.unparse(node)}`")
+    return found
+
+
+def test_the_exported_scripts_import_on_the_oldest_python_they_promise(
+    tmp_path: Path, mock_viewer_dist: Path, sample_scene: Path
+) -> None:
+    """The exported folder must not use syntax newer than its own floor.
+
+    The exported README promises Python 3.9 or newer, which is what stock macOS
+    provides. A module-level type alias such as `list[list[int | None]]` is an
+    expression evaluated at import and raises `TypeError` before 3.10, so
+    `serve.py` fails on `import luxar_qr` before printing a URL.
+
+    The check is STATIC rather than a subprocess run: a test that invokes
+    whichever `python3` is first on PATH passes under a conda 3.12 while the
+    artefact is broken for a recipient using the system interpreter.
+    """
+    output = tmp_path / "export"
+    with (
+        patch("luxar.cli.export.check_viewer_built", return_value=True),
+        patch("luxar.cli.export.get_viewer_dist_path", return_value=mock_viewer_dist),
+    ):
+        export_scene(sample_scene, output)
+
+    shipped = ["serve.py", "luxar_qr.py"]
+    for name in shipped:
+        path = output / name
+        assert path.exists(), f"{name} was not exported"
+        problems = _runtime_only_since_310(path.read_text(encoding="utf-8"))
+        assert not problems, (
+            f"{name} needs Python > {'.'.join(map(str, EXPORT_PYTHON_FLOOR))}: "
+            + "; ".join(problems)
+        )

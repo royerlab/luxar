@@ -73,6 +73,7 @@ from ._support.downloads.download import (
 from ._support.downloads.remote_zip import download_zip_member
 from ._support.runtime.cli import run_luxar_cli
 from ._support.runtime.device import detect_device, warn_if_no_cuda_gpu
+from ._support.runtime.environment import bake_scene_environment
 from ._support.runtime.flags import (
     control_serve_args,
     parse_demo_flags,
@@ -135,6 +136,7 @@ __all__ = [
     "is_installed",
     "is_lfs_pointer",
     "control_serve_args",
+    "bake_scene_environment",
     "launch_viewer",
     "load_dataset_bundle",
     "load_dataset_gsplats",

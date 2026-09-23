@@ -3,7 +3,7 @@
 The demo itself needs the two hand-delivered parquet files (~900 MB), so the
 scene build is exercised manually; these tests pin the parts that decide WHAT a
 story highlights and WHERE the camera goes, on synthetic data, plus the
-well-formedness of the twelve shipped stories.
+well-formedness of the twenty shipped stories.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from luxar.demos.demo_esm_protein_universe import (
     backdrop_colors,
     densest_core,
     family_mask,
+    highlight_appearance,
     highlight_intensity,
     member_labels,
     overview_panel_html,
@@ -370,7 +371,7 @@ def test_overview_panel_carries_the_count_and_the_credit() -> None:
     panel = overview_panel_html(7_714_508)
     assert "7,714,508" in panel
     assert demo.ATTRIBUTION in panel
-    assert "Twelve stories" in panel
+    assert "Twenty stories" in panel
 
 
 # --------------------------------------------------------------------------- #
@@ -378,9 +379,9 @@ def test_overview_panel_carries_the_count_and_the_credit() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_twelve_shipped_stories_are_well_formed() -> None:
+def test_shipped_stories_are_well_formed() -> None:
     keys = [s.key for s in STORIES]
-    assert len(keys) == len(set(keys)) == 12
+    assert len(keys) == len(set(keys)) == 20
     for s in STORIES:
         assert isinstance(s, UniverseStory) and isinstance(s, Story)
         assert "/" not in s.key, f"{s.key!r} doubles as a node name; '/' is refused"
@@ -403,7 +404,13 @@ def test_twelve_shipped_stories_are_well_formed() -> None:
     # A story about the map itself lights EVERY member (the panel says "a quarter
     # of the map"; the picture must agree), so it has no knot cut and no bubble.
     assert all(s.whole for s in STORIES if s.region)
-    assert not any(s.whole for s in STORIES if not s.region)
+    # The converse does NOT hold: a SCATTER story is whole without being a
+    # region (tyrosine decarboxylase selects a family that turns out not to be
+    # one). Every non-region whole story must be exactly that case, so a story
+    # cannot silently lose its knot cut.
+    assert all(s.scatter for s in STORIES if s.whole and not s.region)
+    assert all(s.whole for s in STORIES if s.scatter)
+    assert [s.key for s in STORIES if s.scatter] == ["Levodopa and the gut"]
 
 
 def test_carried_stories_keep_their_vetted_facts() -> None:
@@ -442,7 +449,7 @@ def test_shipped_stories_author_valid_waypoints() -> None:
         for k, s in enumerate(STORIES, start=1)
     ]
     config = ViewerConfig(waypoints=waypoints)
-    assert len(config.to_dict()["waypoints"]) == 12
+    assert len(config.to_dict()["waypoints"]) == 20
     # A knot smaller than the bubble floor is framed at the story's own
     # distance floor, never closer than the bubble.
     pose = waypoints[0].camera
@@ -513,3 +520,585 @@ def test_high_quality_flag_is_spelled_in_main_and_documented() -> None:
     assert module_doc.index("--high-quality") < touch_panel
     assert module_doc.index("--coords X.parquet --annotations Y.parquet") < touch_panel
     assert "95% dolly swing" in (demo.build_universe_scene.__doc__ or "")
+
+
+# ---------------------------------------------------------------------------
+# Scatter stories (2026-09-16 review: a requested family that is not one)
+# ---------------------------------------------------------------------------
+
+
+def test_scatter_story_demands_the_whole_selection() -> None:
+    """A scatter story is about every member, so it cannot take a knot cut."""
+    with pytest.raises(ValueError, match="scatter=True needs whole=True"):
+        _story(pattern="x", scatter=True)
+
+    # whole=True makes it legal, and the flag survives construction.
+    story = _story(pattern="x", whole=True, scatter=True)
+    assert story.scatter and story.whole
+
+
+def test_highlight_appearance_has_one_regime_per_kind_of_story() -> None:
+    """Knot points, a region's sub-pixel shadow, a scatter's countable dots."""
+    knot = _story(pfam=("PF00042",))
+    region = _story(region="dark", whole=True)
+    scatter = _story(pattern="x", whole=True, scatter=True)
+
+    assert highlight_appearance(knot, 50) == (
+        demo.HIGHLIGHT_RADIUS,
+        highlight_intensity(50),
+    )
+    # A big knot is dimmed by the member count; a region ignores it.
+    assert highlight_appearance(knot, 10_000)[1] < highlight_appearance(knot, 50)[1]
+    assert highlight_appearance(region, 300_000) == (
+        demo.WHOLE_HIGHLIGHT_RADIUS,
+        demo.WHOLE_HIGHLIGHT_INTENSITY,
+    )
+    assert highlight_appearance(scatter, 52) == (
+        demo.SCATTER_HIGHLIGHT_RADIUS,
+        demo.SCATTER_HIGHLIGHT_INTENSITY,
+    )
+    # The whole point of a scatter marker: visible where a region's is not.
+    assert demo.SCATTER_HIGHLIGHT_RADIUS > 10 * demo.WHOLE_HIGHLIGHT_RADIUS
+    # ... and dimmer than a knot's, because each marker covers many pixels.
+    assert demo.SCATTER_HIGHLIGHT_INTENSITY < HIGHLIGHT_INTENSITY
+
+
+def test_carries_labels_follows_the_member_count_not_the_story_kind() -> None:
+    """A scatter story's few dozen members are labelled; a region's millions are not.
+
+    Hover labels are per-member strings in the store, so the dark proteome's
+    two million would dominate it; 52 tyrosine decarboxylase clusters are worth
+    reading and cost nothing.
+    """
+    knot = _story(pfam=("PF00042",))
+    region = _story(region="dark", whole=True)
+    scatter = _story(pattern="x", whole=True, scatter=True)
+    cap = demo.LABELLED_MEMBER_CAP
+
+    # A knot is labelled whatever its size (its knot cut keeps it small).
+    assert demo.carries_labels(knot, 1)
+    assert demo.carries_labels(knot, cap + 1)
+    # A whole story is labelled up to the cap and not past it.
+    assert demo.carries_labels(scatter, 52)
+    assert demo.carries_labels(scatter, cap)
+    assert not demo.carries_labels(scatter, cap + 1)
+    assert not demo.carries_labels(region, 2_025_330)
+    # The cap sits below the whole-map draw budget, so no region story can
+    # slip under it by being sampled.
+    assert cap < demo.WHOLE_HIGHLIGHT_MAX_POINTS
+
+
+def test_shipped_stories_label_the_scatter_and_not_the_regions() -> None:
+    """The rule, applied to the real tour with its measured member counts."""
+    measured = {
+        "Dark proteome": 2_025_330,
+        "Phage": 580_733,
+        "ABC transporters": 8_277,
+        "Levodopa and the gut": 52,
+    }
+    by_key = {s.key: s for s in STORIES}
+    assert demo.carries_labels(
+        by_key["Levodopa and the gut"], measured["Levodopa and the gut"]
+    )
+    for key in ("Dark proteome", "Phage", "ABC transporters"):
+        assert not demo.carries_labels(by_key[key], measured[key]), key
+
+
+def test_the_scatter_story_is_the_one_family_that_is_not_a_family() -> None:
+    """Tyrosine decarboxylase is authored as a scatter on purpose.
+
+    Measured on this Atlas release (2026-09-16): 52 clusters name it, their
+    densest ball holds 21 at 4% PURITY inside the group II PLP decarboxylase
+    fold (1,909 clusters in clan CL0061; an earlier draft said 4,170, which
+    counted three clans and two unrelated folds), and their phyla are
+    scattered. A knot story here would claim a family the map does not show,
+    so the panel's last two facts are about the scatter itself.
+
+    It is not a constellation either, and the reason is measured rather than
+    stylistic (re-derived 2026-09-17). Two of its components DO clear the
+    10-member floor, so the rule would allow a figure: places of 21 and 13,
+    joined by exactly ONE line. But a constellation lights only the places it
+    joins, so that figure would light 34 of the 52 and HIDE 18 — 35% of the
+    story's subject, including every singleton, and the singletons are the
+    scatter. The one line would also assert precisely the family relation the
+    story exists to say is absent.
+    """
+    (story,) = [s for s in STORIES if s.scatter]
+    assert story.key == "Levodopa and the gut"
+    assert story.pattern and story.pfam  # name match UNION the dedicated Pfam
+    assert story.region is None  # not a map-wide predicate: a family selector
+    assert story.frame_fraction >= 1.0  # pulled back to hold the whole scatter
+    assert any("never make a family of their own" in f for f in story.facts)
+    assert not story.constellation
+
+
+def test_the_worm_knot_keeps_its_deliberately_smaller_radius() -> None:
+    """The nematode chemoreceptor radius is 0.2, not FAMILY_RADIUS.
+
+    Measured both ways (2026-09-16): the family has several comparable
+    components, and at 0.3 the purity-weighted seed abandons the tight knot
+    (55 members, r95 0.051, 95% ball purity, every member a nematode) for a
+    diffuse 40-member component at 20% purity. This pins the choice so a later
+    tidy-up cannot silently widen it.
+    """
+    (worm,) = [s for s in STORIES if s.key == "Worm chemoreceptors"]
+    assert worm.radius == 0.2 < demo.FAMILY_RADIUS
+
+
+def test_every_new_story_selects_by_pfam_or_name_and_names_its_structure() -> None:
+    """The stories added after the 2026-09-16 review and the 09-17 follow-up."""
+    added = [
+        "Lanthipeptides",
+        "Ice-binding proteins",
+        "Reverse gyrase",
+        "Olfactory receptors",
+        "Insect odorant receptors",
+        "Worm chemoreceptors",
+        "TnpB and Fanzor",
+        "Levodopa and the gut",
+    ]
+    by_key = {s.key: s for s in STORIES}
+    assert sorted(added) == sorted(k for k in added if k in by_key)
+    # They used to be pinned to the last eight slots, so the kiosk chapter
+    # indices of the original twelve would not move. That is no longer the
+    # contract: the tour is walked in an explicit narrative order
+    # (`TOUR_ORDER`), which interleaves new stops with old ones and therefore
+    # DOES renumber the chapters. Nothing persists a chapter index across
+    # builds, so the cost is a stale bookmark, not a broken kiosk.
+    for key in added:
+        s = by_key[key]
+        assert s.key not in {c.key for c in SWISSPROT_STORIES}  # not carried
+        assert s.pfam or s.pattern, key
+        assert s.pdb_id and s.pdb_id == s.pdb_id.upper(), key
+        assert s.tags, key
+    # Distinct turntables: two stops showing the same molecule would read as a
+    # bug on the kiosk.
+    pdbs = [s.pdb_id.upper() for s in STORIES]
+    assert len(pdbs) == len(set(pdbs))
+
+
+def test_scatter_camera_frames_the_map_not_the_members_bounding_box() -> None:
+    """A scatter story's picture must contain the cloud its panel talks about.
+
+    The bounding-box centre of a few dozen scattered clusters is a biased
+    point, so aiming there leaves the map in one half of the frame.
+    """
+    from luxar.demos.demo_esm3_protein_stories import StoryCluster
+
+    cluster = StoryCluster(
+        indices=np.arange(52),
+        centre=np.array([-7.63, 2.49, 0.2]),  # measured for the shipped scatter
+        r95=6.79,
+        n_named=52,
+        r50=5.94,
+        r_max=7.63,
+    )
+    story = _story(pattern="x", whole=True, scatter=True, frame_fraction=1.0)
+    pose = demo.universe_story_camera(cluster, story, np.zeros(3), map_radius=20.0)
+
+    # Aimed at the MAP's centre, not the members'.
+    assert tuple(pose.target) == (0.0, 0.0, 0.0)
+    # Far enough back that the map's radius fits the frame height.
+    distance = float(np.linalg.norm(np.asarray(pose.position)))
+    assert distance > 20.0
+    # Approached from the members' own side of the cloud, so the shot differs
+    # from the Overview's.
+    to_camera = np.asarray(pose.position)
+    assert float(np.dot(to_camera[[0, 2]], cluster.centre[[0, 2]])) > 0
+
+    # A knot story is unaffected and needs no map radius.
+    knot = _story(pfam=("PF00042",))
+    assert demo.universe_story_camera(cluster, knot, np.zeros(3)).target != (
+        0.0,
+        0.0,
+        0.0,
+    )
+
+
+def test_a_scatter_story_refuses_to_be_framed_without_the_map_radius() -> None:
+    """Fail loudly rather than silently framing a scatter like a knot."""
+    from luxar.demos.demo_esm3_protein_stories import StoryCluster
+
+    cluster = StoryCluster(
+        indices=np.arange(3),
+        centre=np.array([1.0, 0.0, 0.0]),
+        r95=5.0,
+        n_named=3,
+        r50=4.0,
+    )
+    with pytest.raises(ValueError, match="pass map_radius"):
+        demo.universe_story_camera(
+            cluster, _story(pattern="x", whole=True, scatter=True), np.zeros(3)
+        )
+
+
+def test_only_one_story_claims_the_tour_is_tightest_knot() -> None:
+    """Superlatives are measured, so only one story may hold each.
+
+    Measured r95 over the fifteen knot stories (2026-09-16): reverse gyrase
+    0.020 is the tightest, then ice-binding 0.044 and the worm chemoreceptors
+    0.051; the vertebrate olfactory knot is EIGHTH at 0.123, so an earlier
+    draft calling it "among the tightest" was wrong and now says it is the
+    largest of the three smell knots instead. This guard keeps two stories from
+    claiming the same crown after a later edit.
+    """
+    unscoped, scoped = [], []
+    for s in STORIES:
+        body = " ".join(s.facts + (s.subtitle, s.title)).lower()
+        if "tightest" not in body:
+            continue
+        (scoped if "of the three" in body else unscoped).append(s.key)
+    assert unscoped == ["Reverse gyrase"], unscoped
+    assert scoped == ["Worm chemoreceptors"], scoped
+    # And the one that claims it is the smallest knot is the same story.
+    smallest = [s.key for s in STORIES if "smallest" in " ".join(s.facts).lower()]
+    assert smallest == ["Reverse gyrase"], smallest
+
+
+def test_the_ice_story_never_selects_the_mislabelled_pfam_again() -> None:
+    """PF07589 is a protein-sorting motif, not an ice-binding domain.
+
+    The Atlas's own ``cluster_top_pfam_names`` column calls PF07589
+    "Ice-binding protein, C-terminal domain"; InterPro and current Pfam call it
+    "PEP-CTERM protein-sorting motif". Including it drew a 94-cluster knot of
+    PVC bacteria carrying a secretion signal, and it supplied 2,076 of the
+    2,587 clusters that story used to claim. This pins the corrected selector
+    so the Atlas's label cannot lead us back.
+    """
+    (ice,) = [s for s in STORIES if s.key == "Ice-binding proteins"]
+    assert "PF07589" not in ice.pfam
+    assert ice.pfam == ("PF11999", "PF20597", "PF21300")
+    # No other story may pick it up either.
+    for s in STORIES:
+        assert "PF07589" not in (s.pfam or ()), s.key
+
+
+# ---------------------------------------------------------------------------
+# Constellations (2026-09-16: light every place a family sits, join them with
+# lines, and frame the whole figure)
+# ---------------------------------------------------------------------------
+
+_MAP_CENTRE = np.zeros(3)
+
+
+def _figure_with_r_max(r_max: float) -> demo.Constellation:
+    return demo.Constellation(
+        places=(np.array([0]), np.array([1])),
+        centroids=np.zeros((2, 3), dtype=np.float32),
+        edges=np.array([[0, 1]]),
+        members=np.array([0, 1]),
+        centre=np.zeros(3),
+        r_max=r_max,
+        view=np.array([0.0, 0.0, 1.0]),
+    )
+
+
+def test_constellation_joins_the_big_places_and_skips_the_stragglers() -> None:
+    """Two dense places plus a singleton: one line, and the singleton is out."""
+    rng = np.random.default_rng(3)
+    a = np.array([0.0, 0.0, 0.0]) + rng.normal(size=(40, 3)) * 0.02
+    b = np.array([5.0, 0.0, 0.0]) + rng.normal(size=(30, 3)) * 0.02
+    stray = np.array([[-9.0, 0.0, 0.0]])
+    other = rng.normal(size=(200, 3)) * 3.0  # not in the family
+    positions = np.vstack([a, b, stray, other]).astype(np.float32)
+    mask = np.zeros(len(positions), dtype=bool)
+    mask[: len(a) + len(b) + 1] = True
+
+    figure = demo.constellation_of(positions, mask, _MAP_CENTRE)
+    assert figure is not None
+
+    assert len(figure.centroids) == 2, "the one-member place is below the floor"
+    assert figure.edges.shape == (1, 2)
+    got = sorted(float(c[0]) for c in figure.centroids)
+    assert got[0] == pytest.approx(0.0, abs=0.02)
+    assert got[1] == pytest.approx(5.0, abs=0.02)
+    # An MST over n places has exactly n-1 edges.
+    assert len(figure.edges) == len(figure.centroids) - 1
+    # The stray is NOT lit: the highlight is exactly the joined places.
+    assert len(figure.members) == len(a) + len(b)
+    assert np.array_equal(figure.members, np.sort(np.concatenate(figure.places)))
+
+
+def test_constellation_endpoints_sit_on_lit_clusters() -> None:
+    """The bug the redesign fixes: a line must start and end on a lit place.
+
+    Every centroid is the mean of one place, and every place is a subset of
+    the lit members — so an endpoint can never float free of the blob it
+    appears to leave. Before the redesign the lines were drawn from the
+    family's components while the highlight lit a KNOT ball around a
+    purity-weighted seed, and the two disagreed by up to 0.45 world units.
+    """
+    rng = np.random.default_rng(11)
+    places = [
+        np.array(c) + rng.normal(size=(25, 3)) * 0.02
+        for c in ([0.0, 0.0, 0.0], [4.0, 1.0, 0.0], [-3.0, 2.0, 1.0])
+    ]
+    positions = np.vstack([*places, rng.normal(size=(150, 3)) * 5.0]).astype(np.float32)
+    mask = np.zeros(len(positions), dtype=bool)
+    mask[: 25 * 3] = True
+
+    figure = demo.constellation_of(positions, mask, _MAP_CENTRE)
+    assert figure is not None
+    assert len(figure.places) == 3 and len(figure.edges) == 2
+
+    lit = set(figure.members.tolist())
+    for place, centroid in zip(figure.places, figure.centroids, strict=True):
+        assert set(place.tolist()) <= lit
+        assert centroid == pytest.approx(positions[place].mean(axis=0), abs=1e-5)
+    # Every endpoint index addresses a real place.
+    assert int(figure.edges.min()) >= 0
+    assert int(figure.edges.max()) < len(figure.centroids)
+
+
+def test_constellation_is_none_when_the_family_sits_in_one_place() -> None:
+    """A family that is not scattered has no figure — the caller must not draw one."""
+    rng = np.random.default_rng(4)
+    positions = np.vstack(
+        [np.zeros((50, 3)) + rng.normal(size=(50, 3)) * 0.02, rng.normal(size=(50, 3))]
+    ).astype(np.float32)
+    mask = np.zeros(len(positions), dtype=bool)
+    mask[:50] = True
+
+    assert demo.constellation_of(positions, mask, _MAP_CENTRE) is None
+    # And an empty family is handled rather than raising.
+    empty = np.zeros(len(positions), dtype=bool)
+    assert demo.constellation_of(positions, empty, _MAP_CENTRE) is None
+
+
+def test_constellation_respects_its_floor_and_radius() -> None:
+    rng = np.random.default_rng(5)
+    a = rng.normal(size=(12, 3)) * 0.02
+    b = np.array([4.0, 0.0, 0.0]) + rng.normal(size=(12, 3)) * 0.02
+    positions = np.vstack([a, b]).astype(np.float32)
+    mask = np.ones(len(positions), dtype=bool)
+
+    assert demo.constellation_of(positions, mask, _MAP_CENTRE) is not None
+    # Raise the floor above both places and there is no figure.
+    assert demo.constellation_of(positions, mask, _MAP_CENTRE, min_members=20) is None
+    # Widen the linkage until the two places merge into one.
+    assert demo.constellation_of(positions, mask, _MAP_CENTRE, radius=9.0) is None
+
+
+def test_constellation_view_axis_is_the_thin_one_and_points_outward() -> None:
+    """The face-on direction: along the axis the figure is flattest."""
+    rng = np.random.default_rng(7)
+    # Three places strung along x and spread in y, but flat in z: the thin
+    # axis is z, so the camera must look down z. (The y spread matters — three
+    # isotropic blobs on a line leave y and z tied, and the "thinnest" axis of
+    # a tie is arbitrary.)
+    positions = np.vstack(
+        [
+            np.array([x, 0.0, 0.0])
+            + rng.normal(size=(30, 3)) * np.array([0.02, 1.5, 0.02])
+            for x in (-4.0, 0.0, 4.0)
+        ]
+    ).astype(np.float32)
+    map_centre = np.array([0.0, 0.0, -50.0])
+
+    figure = demo.constellation_of(
+        positions, np.ones(len(positions), dtype=bool), map_centre
+    )
+    assert figure is not None
+    assert abs(float(figure.view[2])) > 0.9, figure.view
+    # Signed AWAY from the map centre, so the camera sits outside looking in.
+    assert float(figure.view @ (figure.centre - map_centre)) > 0
+
+
+def test_constellation_camera_frames_the_whole_figure_from_every_angle() -> None:
+    """Distance is set from r_max, so auto-rotate cannot swing a node out of frame."""
+    rng = np.random.default_rng(9)
+    positions = np.vstack(
+        [
+            np.array([x, 0.0, 0.0]) + rng.normal(size=(30, 3)) * 0.02
+            for x in (-6.0, 0.0, 6.0)
+        ]
+    ).astype(np.float32)
+    figure = demo.constellation_of(
+        positions, np.ones(len(positions), dtype=bool), _MAP_CENTRE
+    )
+    assert figure is not None
+    story = _story(pfam=("PF00042",), constellation=True)
+    camera = demo.constellation_camera(figure, story)
+
+    distance = float(np.linalg.norm(np.asarray(camera.position) - figure.centre))
+    assert camera.target == pytest.approx(tuple(figure.centre), abs=1e-5)
+    half_height = distance * float(np.tan(np.radians(demo.STORY_LENS_FOV_DEG) / 2))
+    # Every member is inside the frame even at the worst viewing angle, where
+    # its whole distance from the centre is perpendicular to the view.
+    assert figure.r_max <= half_height
+    # And it is not framed so wide that the figure becomes a speck.
+    assert figure.r_max / half_height == pytest.approx(
+        demo.CONSTELLATION_FRAME_FRACTION, rel=1e-6
+    )
+
+
+def test_constellation_beads_hold_a_constant_angular_size() -> None:
+    """Marker radius scales with the figure, so a small one is not sub-pixel."""
+    story = _story(pfam=("PF00042",), constellation=True)
+    r_small, _ = demo.highlight_appearance(story, 100, figure=_figure_with_r_max(2.0))
+    r_large, _ = demo.highlight_appearance(story, 100, figure=_figure_with_r_max(12.0))
+    assert r_large / r_small == pytest.approx(6.0, rel=1e-6)
+    # Never below the knot marker, whatever the figure's scale.
+    tiny, _ = demo.highlight_appearance(story, 100, figure=_figure_with_r_max(0.01))
+    assert tiny == pytest.approx(demo.HIGHLIGHT_RADIUS)
+    # Bigger highlights are dimmed, as everywhere else on the tour.
+    _, bright = demo.highlight_appearance(story, 100, figure=_figure_with_r_max(5.0))
+    _, dim = demo.highlight_appearance(story, 900, figure=_figure_with_r_max(5.0))
+    assert dim < bright
+    # A constellation without its figure is a programming error, not a default.
+    with pytest.raises(ValueError, match="pass its figure"):
+        demo.highlight_appearance(story, 100)
+
+
+def test_constellation_lines_are_bright_and_still_tinted() -> None:
+    """The owner's brief: nearly white, holding some of the story's hue."""
+    color = (0.9, 0.25, 0.2)
+    line = demo.constellation_line_color(color)
+    assert line.min() > 0.7, "every channel is bright — the line reads as light"
+    assert line.max() <= 1.0
+    # The hue order survives, so the line still belongs to its story.
+    assert line[0] > line[1] > line[2]
+    # Brighter than the story colour it came from, channel by channel.
+    assert np.all(line >= np.asarray(color, dtype=np.float32))
+    # White stays white rather than overshooting.
+    assert demo.constellation_line_color((1.0, 1.0, 1.0)) == pytest.approx(
+        np.ones(3), abs=1e-6
+    )
+
+
+def test_only_pfam_selected_stories_may_be_constellations() -> None:
+    """The line means "same Pfam family", so there must be a Pfam selector."""
+    with pytest.raises(ValueError, match="constellation needs a pfam selector"):
+        _story(pattern="x", constellation=True)
+    assert _story(pfam=("PF00042",), constellation=True).constellation
+
+
+def test_constellation_excludes_every_other_framing_mode() -> None:
+    """A constellation is its own mode: no knot cut, no bubble, no groups filter."""
+    for kwargs in (
+        {"whole": True},
+        {"whole": True, "scatter": True},
+        {"side_on": True},
+    ):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            _story(pfam=("PF00042",), constellation=True, **kwargs)
+    with pytest.raises(ValueError, match="cannot take a groups filter"):
+        _story(pfam=("PF00042",), constellation=True, groups=("Bacteria",))
+
+
+def test_the_shipped_constellations_are_the_three_whose_split_means_something() -> None:
+    """Reduced from six on 2026-09-16: lines assert the split is meaningful.
+
+    The three smell families were measured and dropped — every place they
+    occupy is the same protein in another spot (four Chordata olfactory places
+    with nothing telling them apart; one big insect place plus a crumb; six
+    worm places all of mixed Sr families) — so a line between them would
+    assert a structure the data does not carry.
+    """
+    assert [s.key for s in STORIES if s.constellation] == [
+        "Hemoglobin",
+        "Photosystem II",
+        "Lanthipeptides",
+    ]
+    for s in STORIES:
+        if s.constellation:
+            assert s.pfam, s.key
+            assert not s.whole and not s.scatter and not s.groups, s.key
+            # The panel must say what the lines mean, or the figure is decoration.
+            assert "lines join" in " ".join(s.facts).lower(), s.key
+
+
+# ---------------------------------------------------------------------------
+# Tour order (2026-09-16: an explicit narrative order, not authoring order)
+# ---------------------------------------------------------------------------
+
+
+def test_tour_order_is_a_permutation_of_the_authored_pool() -> None:
+    assert len(demo.TOUR_ORDER) == len(set(demo.TOUR_ORDER)) == len(demo._STORY_POOL)
+    assert set(demo.TOUR_ORDER) == {s.key for s in demo._STORY_POOL}
+    assert [s.key for s in STORIES] == list(demo.TOUR_ORDER)
+
+
+def test_tour_order_rejects_a_list_that_is_not_a_permutation() -> None:
+    pool = demo._STORY_POOL
+    with pytest.raises(ValueError, match="missing"):
+        demo._ordered(pool, demo.TOUR_ORDER[:-1])
+    with pytest.raises(ValueError, match="unknown"):
+        demo._ordered(pool, (*demo.TOUR_ORDER, "Not a story"))
+
+
+def test_tour_order_keeps_the_three_sequences_that_depend_on_it() -> None:
+    """Three adjacencies are load-bearing, not taste."""
+    order = list(demo.TOUR_ORDER)
+    # The owner asked for these two together (2026-09-16), and the TnpB story
+    # is titled against CRISPR ("the scissors CRISPR grew out of"), so CRISPR
+    # must come first or the title has no referent.
+    assert order.index("TnpB and Fanzor") == order.index("CRISPR-Cas") + 1
+    # Each smell narration counts itself: "a second time", "a third time".
+    smell = ["Olfactory receptors", "Insect odorant receptors", "Worm chemoreceptors"]
+    first = order.index(smell[0])
+    assert order[first : first + 3] == smell
+    # The map's own geography, in the order the dark story sets up.
+    assert [s.region for s in STORIES if s.region] == ["spur", "dark", "phage"]
+
+
+# ---------------------------------------------------------------------------
+# Text/picture agreement (2026-09-16: the panels must describe what is drawn)
+# ---------------------------------------------------------------------------
+
+
+def _story_text(story: UniverseStory) -> str:
+    return " ".join([story.subtitle, *story.facts, story.narration]).lower()
+
+
+def test_no_story_describes_a_framing_it_does_not_use() -> None:
+    """The panel vocabulary has to match the mode the story is drawn in.
+
+    Every mode has its own words: a knot story is "this knot" inside a bubble,
+    a constellation says "the lines join N places", a whole-map story lights a
+    region. Using another mode's words is the drift that is hardest to see,
+    because the sentence still reads perfectly well.
+    """
+    for s in STORIES:
+        text = _story_text(s)
+        assert "bubble" not in text, f"{s.key}: panels never name the bubble"
+        if s.constellation:
+            assert "lines join" in text, f"{s.key}: a constellation must say so"
+            assert "this knot" not in text, f"{s.key}: no knot is cut here"
+        else:
+            assert "lines join" not in text, (
+                f"{s.key}: only a constellation draws lines"
+            )
+        if s.whole and not s.scatter:
+            assert "this knot" not in text, f"{s.key}: no knot is cut here"
+
+
+def test_the_scatter_story_does_not_claim_the_whole_map() -> None:
+    """Its members span 17% of the map diagonal, not the map.
+
+    Measured 2026-09-16: bounding box 15.3 units against the map's 89.4, and
+    the 52 clusters draw as ~13 blobs because their median nearest-neighbour
+    distance (0.022) is a fifth of `SCATTER_HIGHLIGHT_RADIUS`. The panel used
+    to say "scattered across the whole map" and "right across the cloud", and
+    then showed a dozen beads inside a fifth of the cloud.
+    """
+    scatter = [s for s in STORIES if s.scatter]
+    assert scatter, "the tour has a scatter story"
+    for s in scatter:
+        text = _story_text(s)
+        for claim in ("whole map", "across the cloud", "across the whole"):
+            assert claim not in text, f"{s.key}: overclaims the extent ({claim!r})"
+        # It must explain the gap between its count and its dots instead.
+        assert "specks" in text, f"{s.key}: say what the picture actually shows"
+
+
+def test_the_cross_story_reference_still_points_at_story_one() -> None:
+    """The CRISPR panel calls sickle-cell "the illness of the first story".
+
+    A reference by POSITION is the one thing `TOUR_ORDER` can silently break,
+    so it is pinned here rather than left to a reading.
+    """
+    referrers = [s for s in STORIES if "first story on this tour" in _story_text(s)]
+    assert referrers, "if the phrase is gone, delete this test with it"
+    assert STORIES[0].key == "Hemoglobin"
+    assert "sickle-cell" in _story_text(STORIES[0])

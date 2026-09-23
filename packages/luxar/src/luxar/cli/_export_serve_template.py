@@ -2,8 +2,8 @@
 """Serve this exported Luxar scene locally.
 
 Usage:
-    python serve.py [--port PORT] [--host HOST] [--no-open]
-    python serve.py --control [--control-token SECRET]
+    python3 serve.py [--port PORT] [--host HOST] [--no-open]
+    python3 serve.py --control [--control-token SECRET]
 
 Requirements:
     Python 3.9+ (stdlib only -- no pip install needed)
@@ -44,11 +44,33 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 
+# `luxar_qr` only exists in an EXPORTED folder, where the exporter copies
+# `luxar/cli/_qr.py` beside this script. mypy cannot see it from the source
+# tree, hence the ignore; the try/except is what makes a folder missing the
+# file still serve, printing the panel URL without a QR under it.
+try:
+    from luxar_qr import (  # type: ignore[import-not-found]
+        qr_ascii,
+        qr_matrix,
+        qr_png_bytes,
+    )
+except ImportError:  # pragma: no cover - exercised by deleting the file
+    qr_matrix = None
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Substituted by `luxar export` (luxar/cli/export.py). The defaults are what an
 # export with no options produces, so this script runs as-is from a checkout.
 DATA_DIR_NAME = "data"
+#: Whether the exported scene declares a control panel (a `control_panel` in
+#: its viewer config). Substituted at export time. It decides the DEFAULTS
+#: only: a scene authored to be driven from a tablet starts its relay and
+#: binds the network without being asked, because the alternative is an
+#: operator reading a README at an exhibit. A scene with no panel behaves as
+#: before -- loopback, no relay -- since a folder you double-click should not
+#: start listening for anything that wants to drive it. `--no-control` and
+#: `--host 127.0.0.1` override either way.
+HAS_CONTROL_PANEL = False
 TITLE_QUERY = ""
 
 # ── wire contract ───────────────────────────────────────────────────────────
@@ -575,6 +597,33 @@ class ControlServer(http.server.ThreadingHTTPServer):
         super().__init__(address, handler)
         self.relay = relay
 
+    #: Client disconnects, not faults. A browser that has changed its mind
+    #: closes the socket mid-response and the write raises one of these.
+    QUIET_ERRORS = (
+        BrokenPipeError,
+        ConnectionResetError,
+        ConnectionAbortedError,
+    )
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Swallow client disconnects; report anything else as usual.
+
+        The viewer CANCELS in-flight chunk fetches constantly -- every camera
+        move and every level-of-detail decision abandons requests it no longer
+        wants -- and each cancellation aborts a response the server is still
+        writing. `socketserver` treats that as a handler crash and prints a
+        full traceback, which on a single scene load buries the two URLs and
+        the QR under dozens of `BrokenPipeError`s. It is not an error: the
+        client asked for less, not the server failing to give it.
+
+        Deliberately narrow. Any other exception still reaches the base
+        implementation, so a real handler fault stays loud; wrapping `do_GET`
+        in a bare `except` would hide those too.
+        """
+        if isinstance(sys.exc_info()[1], self.QUIET_ERRORS):
+            return
+        super().handle_error(request, client_address)
+
 
 class LuxarHandler(http.server.SimpleHTTPRequestHandler):
     """Serves the viewer and its zarr data from one origin, plus the relay.
@@ -776,18 +825,32 @@ def find_port(host: str, start: int = 8000, attempts: int = 100) -> int | None:
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve exported Luxar scene")
     parser.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
+    # Binding every interface is the POINT of a panel scene: the tablet is a
+    # different device, so loopback cannot serve it. A scene without a panel
+    # still defaults to loopback, and `--host 127.0.0.1` overrides either way.
+    # The exposure is documented in the generated README and TESTING notes,
+    # with `--control-token` for an untrusted network.
+    default_host = (
+        "0.0.0.0"  # noqa: S104 # nosec B104 - a tablet cannot reach loopback
+        if HAS_CONTROL_PANEL
+        else "127.0.0.1"
+    )
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
-        help="Bind address (default: 127.0.0.1; use 0.0.0.0 for the network)",
+        default=default_host,
+        help=f"Bind address (default: {default_host}; 127.0.0.1 is local-only)",
     )
     parser.add_argument(
         "--no-open", action="store_true", help="Don't open browser automatically"
     )
     parser.add_argument(
         "--control",
-        action="store_true",
-        help="Host the remote-control relay for a touch panel",
+        action=argparse.BooleanOptionalAction,
+        default=HAS_CONTROL_PANEL,
+        help=(
+            "Host the remote-control relay for a touch panel "
+            f"(default: {'on, this scene has a panel' if HAS_CONTROL_PANEL else 'off'})"
+        ),
     )
     parser.add_argument(
         "--control-token",
@@ -811,6 +874,37 @@ def urls(host: str, port: int, control: bool, token: str | None) -> list[str]:
     ]
 
 
+def print_control_qr(url: str) -> None:
+    """Print a scannable QR for ``url`` and leave a PNG copy beside the script.
+
+    The point of kiosk mode is a tablet, and the URL carries a host, a port, a
+    path and possibly a token -- too much to read off a screen and type in
+    correctly at an exhibit. Half-block glyphs are used so the symbol comes out
+    roughly square in a terminal; one module per character is twice as tall as
+    wide and many phone cameras will not lock onto it.
+
+    Missing encoder (someone deleted luxar_qr.py) or an unwritable folder are
+    both non-fatal: the URL above it is still the real instruction.
+    """
+    if qr_matrix is None:
+        return
+    try:
+        matrix = qr_matrix(url)
+    except Exception:  # noqa: BLE001 - a QR is a convenience, never the gate
+        return
+    try:
+        print()
+        print(qr_ascii(matrix, border=2))
+    except (OSError, UnicodeError):
+        pass
+    try:
+        target = SCRIPT_DIR / "control-qr.png"
+        target.write_bytes(qr_png_bytes(matrix, scale=8, border=4))
+        print(f"  (also written to {target.name}, for printing or a second screen)")
+    except OSError:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Serve this folder until interrupted."""
     args = _parse_args(argv)
@@ -827,14 +921,26 @@ def main(argv: list[str] | None = None) -> int:
     server = ControlServer((args.host, port), handler, relay)
 
     addresses = urls(args.host, port, args.control, args.control_token)
-    print(f"Luxar viewer: {addresses[0]}")
+    print()
+    print("  Display (open this on the big screen)")
+    print(f"    {addresses[0]}")
     if args.control:
-        print(f"Control panel for a tablet: {addresses[1]}")
+        print()
+        print("  Control panel (open this on the tablet)")
+        print(f"    {addresses[1]}")
+        print_control_qr(addresses[1])
         if not is_loopback_host(args.host) and not args.control_token:
+            print()
             print(
-                "Warning: the control relay is reachable from the network "
-                "without a token. Pass --control-token to restrict it."
+                "  Note: anyone who can reach this machine on the network can "
+                "drive the display.\n"
+                "  Foreign web pages cannot (the relay checks the request "
+                "origin), but a person on\n"
+                "  this network who opens the panel URL can. Pass "
+                "--control-token SECRET on an\n"
+                "  untrusted network, or --host 127.0.0.1 to keep it local."
             )
+    print()
     print("Press Ctrl+C to stop")
     # Flushed explicitly: stdout is block-buffered when it is a pipe rather
     # than a terminal, so `python serve.py | tee log` would hold the one thing

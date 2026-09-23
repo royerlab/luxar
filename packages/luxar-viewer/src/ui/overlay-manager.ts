@@ -206,8 +206,29 @@ export class OverlayManager {
   private objectUrls = new Set<string>();
   /** Video overlays by name, so visibility can start/stop playback. */
   private videoElements = new Map<string, HTMLVideoElement>();
-  /** Stacked-alpha-matte compositors by overlay name (`alpha_matte: 'stacked'`). */
+  /**
+   * Stacked-alpha-matte compositors, for the VISIBLE clips only.
+   *
+   * A compositor owns a WebGL context, and a browser caps how many may be live
+   * at once — Chrome then evicts the OLDEST, which is the scene's own renderer.
+   * A tour with more stacked clips than that cap (nineteen turntables, against
+   * a cap around sixteen) therefore lost the renderer partway through when each
+   * clip kept a context for the session. So a compositor is built when its clip
+   * is shown and destroyed, canvas and all, once its hide transition completes:
+   * see {@link showMatte} and {@link scheduleMatteHide}. The canvas cannot be
+   * kept and merely emptied — `WEBGL_lose_context` is not reversible by asking
+   * that same canvas for a context again, which silently leaves a dead one behind.
+   */
   private matteCompositors = new Map<string, VideoMatteCompositor>();
+  /** What {@link showMatte} needs to rebuild a compositor for a clip. */
+  private matteSpecs = new Map<
+    string,
+    { el: HTMLDivElement; video: HTMLVideoElement; config: OverlayConfig }
+  >();
+  /** Fade-out timers that hand matte contexts back after the canvas disappears. */
+  private matteHideTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Clips whose compositor could not read them: show the raw clip, never retry. */
+  private matteAbandoned = new Set<string>();
   private baseUrl = '';
   private readFile?: OverlayFileReader;
   private boundDimChangeHandler: () => void;
@@ -539,8 +560,12 @@ export class OverlayManager {
   dispose(): void {
     sceneDimsManager.removeListener(this.boundDimChangeHandler);
 
+    for (const timer of this.matteHideTimers.values()) clearTimeout(timer);
+    this.matteHideTimers.clear();
     for (const matte of this.matteCompositors.values()) matte.dispose();
     this.matteCompositors.clear();
+    this.matteSpecs.clear();
+    this.matteAbandoned.clear();
     for (const video of this.videoElements.values()) {
       // Stop decoding and release the media resource before the element goes.
       video.pause();
@@ -692,13 +717,19 @@ export class OverlayManager {
       );
     };
 
-    const shown = this.attachMatteCanvas(el, video, config) ?? video;
-    if (config.size) {
-      shown.style.width = `${config.size[0] * 100}vw`;
-      // A null height keeps the media's own aspect ratio.
-      shown.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
+    if (config.alpha_matte === 'stacked') {
+      // No compositor yet: one is built when the clip is shown (see the note on
+      // `matteCompositors`). The <video> stays the hidden frame source.
+      this.matteSpecs.set(config.name, { el, video, config });
+      video.classList.add('luxar-overlay__matte-source');
+    } else {
+      if (config.size) {
+        video.style.width = `${config.size[0] * 100}vw`;
+        // A null height keeps the media's own aspect ratio.
+        video.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
+      }
+      video.style.display = 'block';
     }
-    shown.style.display = 'block';
     el.appendChild(video);
     this.videoElements.set(config.name, video);
   }
@@ -718,27 +749,34 @@ export class OverlayManager {
   }
 
   /**
-   * For an `alpha_matte: 'stacked'` clip, show a compositor canvas instead of
-   * the `<video>` (which stays in the DOM, decoding, but visually hidden — it is
-   * the compositor's frame source). The poster sits behind the canvas until the
-   * first frame is drawn. Returns the element to size, or `null` when the clip
-   * is not a stacked matte. If WebGL is unavailable, the first `start()` reports
-   * failure and the manager falls back to the plain video.
+   * Build and attach the compositor canvas for a stacked-matte clip that is
+   * becoming visible, and return it started. The `<video>` stays in the DOM,
+   * decoding, but visually hidden — it is the compositor's frame source — and
+   * the poster sits behind the canvas until the first frame is drawn.
+   *
+   * Idempotent: an already-live compositor is returned as it is. A clip that
+   * has been abandoned (a tainted cross-origin video, or no WebGL at all) is
+   * never rebuilt, so a failing clip is reported once rather than at every
+   * story step.
    */
-  private attachMatteCanvas(
-    el: HTMLDivElement,
-    video: HTMLVideoElement,
-    config: OverlayConfig
-  ): HTMLCanvasElement | null {
-    if (config.alpha_matte !== 'stacked') return null;
+  private showMatte(name: string): VideoMatteCompositor | undefined {
+    const hideTimer = this.matteHideTimers.get(name);
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      this.matteHideTimers.delete(name);
+    }
+    const live = this.matteCompositors.get(name);
+    if (live) return live;
+    const spec = this.matteSpecs.get(name);
+    if (!spec || this.matteAbandoned.has(name)) return undefined;
+    const { el, video, config } = spec;
     const matte = createVideoMatteCompositor(video, {
-      onFailure: (error) => this.abandonMatte(config.name, video, error),
+      onFailure: (error) => this.abandonMatte(name, video, error),
       onFirstFrame: () => {
-        const current = this.matteCompositors.get(config.name);
+        const current = this.matteCompositors.get(name);
         if (current) current.canvas.style.backgroundImage = 'none';
       },
     });
-    video.classList.add('luxar-overlay__matte-source');
     if (video.poster) {
       // Longhands, not the `background` shorthand: the shorthand also resets
       // the colour, and the page's `canvas { background-color: #000 }` rule
@@ -750,9 +788,59 @@ export class OverlayManager {
       style.backgroundSize = 'contain';
       style.backgroundRepeat = 'no-repeat';
     }
+    if (config.size) {
+      matte.canvas.style.width = `${config.size[0] * 100}vw`;
+      // A null height keeps the media's own aspect ratio.
+      matte.canvas.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
+    }
+    matte.canvas.style.display = 'block';
     el.appendChild(matte.canvas);
-    this.matteCompositors.set(config.name, matte);
-    return matte.canvas;
+    this.matteCompositors.set(name, matte);
+    return matte;
+  }
+
+  /**
+   * Destroy the compositor of a clip that has gone off screen, canvas and all,
+   * so its WebGL context is handed back (see the note on `matteCompositors`).
+   * The canvas is DISCARDED rather than kept and reused: a context lost through
+   * `WEBGL_lose_context` cannot be re-acquired from the same canvas, and asking
+   * it for one again yields a dead context that silently draws nothing.
+   */
+  private hideMatte(name: string): void {
+    const matte = this.matteCompositors.get(name);
+    if (!matte) return;
+    this.matteCompositors.delete(name);
+    matte.dispose();
+    matte.canvas.remove();
+  }
+
+  /** Keep the last composited frame alive until a CSS fade has completed. */
+  private scheduleMatteHide(name: string, delayMs: number): void {
+    const pending = this.matteHideTimers.get(name);
+    if (pending && delayMs > 0) return;
+    if (pending) {
+      clearTimeout(pending);
+      this.matteHideTimers.delete(name);
+    }
+    if (delayMs <= 0) {
+      this.matteHideTimers.delete(name);
+      this.hideMatte(name);
+      return;
+    }
+    const matte = this.matteCompositors.get(name);
+    if (!matte) return;
+    matte.stop();
+    const timer = setTimeout(() => {
+      if (this.matteHideTimers.get(name) !== timer) return;
+      this.matteHideTimers.delete(name);
+      this.hideMatte(name);
+    }, delayMs);
+    this.matteHideTimers.set(name, timer);
+  }
+
+  private matteHideDelayMs(name: string): number {
+    const config = this.configs.get(name);
+    return config?.transition === 'fade' ? config.transition_duration * 1000 : 0;
   }
 
   /**
@@ -761,9 +849,17 @@ export class OverlayManager {
    * than a blank square — and say why, once.
    */
   private abandonMatte(name: string, video: HTMLVideoElement, error: unknown): void {
+    const hideTimer = this.matteHideTimers.get(name);
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      this.matteHideTimers.delete(name);
+    }
     const matte = this.matteCompositors.get(name);
     if (!matte) return;
     this.matteCompositors.delete(name);
+    // Never rebuild this one: without the flag the next time the clip is shown
+    // would construct another compositor and fail again, warning each time.
+    this.matteAbandoned.add(name);
     const sizing = { width: matte.canvas.style.width, height: matte.canvas.style.height };
     matte.dispose();
     matte.canvas.remove();
@@ -817,9 +913,10 @@ export class OverlayManager {
   private syncVideoPlayback(name: string, visible: boolean): void {
     const video = this.videoElements.get(name);
     if (!video) return;
-    const matte = this.matteCompositors.get(name);
-    if (visible) matte?.start();
-    else matte?.stop();
+    // A stacked-matte clip gets its compositor (and its WebGL context) only
+    // while it is on screen; see the note on `matteCompositors`.
+    if (visible) this.showMatte(name)?.start();
+    else this.scheduleMatteHide(name, this.matteHideDelayMs(name));
     if (visible) {
       video.preload = 'auto';
       if (video.paused && video.dataset.autoplay === '1') {
