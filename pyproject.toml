@@ -544,7 +544,8 @@ check-demo-ladders = "python scripts/check_demo_ladders.py {args}"
 # nothing complains. Also a no-op without built scenes.
 check-scene-credits = "python scripts/check_scene_credits.py {args}"
 # Ratchet ruff's C901 against scripts/complexity_baseline.json: existing debt is
-# tolerated, a newly over-complex (or newly worse) function fails.
+# tolerated, while new, worsened, moved, or paid-down entries fail until the
+# baseline is refreshed.
 check-complexity = "python scripts/check_complexity.py {args}"
 # Inspect a BUILT wheel: package completeness against the source tree, the
 # pyproject excludes honoured, no Git-LFS pointer stubs, no member over PyPI's
@@ -558,7 +559,7 @@ check-wheel = "python scripts/check_wheel.py {args}"
 # against scripts/lint_baseline.json. It has the same shape as check-complexity
 # for the same reason: 651 pre-existing violations across 338 file/rule keys
 # mean the rules cannot go into `[tool.ruff.lint] select` without a large,
-# behaviour-changing sweep.
+# behaviour-changing sweep. Paid-down entries fail until the baseline is refreshed.
 check-lint-ratchet = "python scripts/check_lint_ratchet.py {args}"
 # Compile-check the shipped CUDA/Metal sources -- no GPU, no linking, just
 # `-fsyntax-only` / `metal -c` / `nvcc -cuda`. First no-GPU compile gate over

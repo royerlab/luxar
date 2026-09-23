@@ -185,11 +185,12 @@ ratchet, the same shape as the documentation ratchet above.
   `scripts/complexity_baseline.json` (228 at the time of writing)
 - Fail (exit 1) when a function is newly over the limit, or when a baselined
   one gets *more* complex
-- Report paid-down debt as advisory (exit 0) so the baseline can be tightened
+- Fail (exit 1) when paid-down debt leaves the baseline over-declared; run
+  `--update-baseline` and commit the tightened baseline
 - Report a *move* (a baselined function reappearing under a new path at no
-  greater complexity, with or without a tidy-up) as advisory too, itemised
-  old-key-to-new-key, so a module-move series is not a false red. Full runs
-  only — see the restricted-scan note below
+  greater complexity, with or without a tidy-up) itemised old-key-to-new-key,
+  and fail until `--update-baseline` re-keys it. Full runs only — see the
+  restricted-scan note below
 - Fail closed (exit 2) rather than green whenever the scan cannot be trusted: a
   ruff that did not run, a target ruff could not read (its `Failed to lint`
   warning otherwise leaves a partial scan behind a normal exit code), an
@@ -269,7 +270,8 @@ handlers (`BLE001`) can hide unrelated defects.
   (651 across 338 file/rule keys at the time of writing, 289 of them `B905`)
 - Fail (exit 1) when a file newly breaks a rule, or gains another violation of
   a rule it already breaks
-- Report paid-down debt as advisory (exit 0) so the baseline can be tightened
+- Fail (exit 1) when paid-down debt leaves the baseline over-declared; run
+  `--update-baseline` and commit the tightened baseline
 - Fail closed (exit 2) rather than green whenever the scan cannot be trusted —
   the same three cases the complexity ratchet documents, plus a baseline whose
   recorded `rules` disagree with the selection (shrink the selection and every

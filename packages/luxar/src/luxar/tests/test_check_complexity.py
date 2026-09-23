@@ -342,8 +342,8 @@ def test_evaluate_ratchet_classifies_every_transition() -> None:
     assert report.unchanged == ["a.py::same"]
 
 
-def test_evaluate_ratchet_treats_a_file_move_as_advisory() -> None:
-    """A relocated function is `moved`, not `new` + `improved` (no false red)."""
+def test_evaluate_ratchet_classifies_a_file_move_separately() -> None:
+    """A relocated function is `moved`, not `new` plus `improved`."""
     baseline = {"old/mod.py::f": [14], "old/mod.py::g": [12]}
     current = {"new/mod.py::f": [14], "new/mod.py::g": [12]}
 
@@ -782,10 +782,10 @@ def test_main_refusal_diagnoses_a_clean_restricted_update(
     assert checker.load_baseline(baseline) == {"other/mod.py::elsewhere": [13]}
 
 
-def test_main_reports_a_move_as_advisory(
+def test_main_fails_when_a_move_leaves_the_baseline_overdeclared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A baselined function that relocated does not fail the gate."""
+    """A relocated function must be re-keyed before the gate passes."""
     _require_ruff()
     _unrestrict(monkeypatch)
     _write_tree(tmp_path, complex_function=True)
@@ -805,15 +805,39 @@ def test_main_reports_a_move_as_advisory(
     exit_code = _run_main(tmp_path, baseline)
     output = _clean_output(capsys)
 
-    assert exit_code == 0
+    assert exit_code == 1
     assert "🚚 Moved (same function, new file): 1" in output
     assert "🆕 New: 0" in output
     assert "✨ Improved: 0" in output
     assert "run --update-baseline to re-key the baseline" in output
-    # Auditable on the GREEN path, not just when the run fails.
     assert "🚚 old/sample.py::tangled -> sample.py::tangled" in output
-    # A pair can lower debt, so the advisory must not claim it never changes.
+    assert "Baseline is over-declared" in output
     assert "Total debt is unchanged" not in output
+
+
+def test_main_fails_when_paid_down_debt_leaves_the_baseline_overdeclared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A lower complexity bound must be recorded before the gate passes."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, complex_function=True)
+    baseline = tmp_path / "baseline.json"
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 0
+    capsys.readouterr()
+    current = checker.load_baseline(baseline)["sample.py::tangled"]
+    checker.save_baseline(
+        baseline,
+        {"sample.py::tangled": [current[0] + 5]},
+        _TEST_SETTINGS_FINGERPRINT,
+    )
+
+    assert _run_main(tmp_path, baseline) == 1
+    output = _clean_output(capsys)
+    assert "✨ Improved: 1" in output
+    assert "Baseline is over-declared" in output
+    assert "--update-baseline" in output
 
 
 def test_main_does_not_pair_moves_on_a_restricted_run(
@@ -1086,7 +1110,7 @@ def test_default_targets_match_the_lint_scripts_ruff_paths() -> None:
 
 
 def test_repository_has_no_complexity_regressions() -> None:
-    """The real tree must not add (or worsen) an over-limit function.
+    """The real tree and baseline must describe the same complexity debt.
 
     Deliberately fails closed: a missing baseline is NOT skipped, it reports
     every function as new — deleting the baseline must not turn the only
@@ -1116,12 +1140,19 @@ def test_repository_has_no_complexity_regressions() -> None:
 
     report = checker.evaluate_ratchet(current, baseline)
 
-    hint = (
+    regression_hint = (
         "Simplify the function(s) listed above (extract helpers, flatten "
         "branches). If the change is legitimate, run "
         "`hatch run check-complexity --update-baseline`."
     )
-    assert not report.new, f"Newly over-complex functions: {report.new}. {hint}"
+    baseline_hint = "Run `hatch run check-complexity --update-baseline`."
+    assert not report.new, (
+        f"Newly over-complex functions: {report.new}. {regression_hint}"
+    )
     assert not report.worsened, (
-        f"Functions that got more complex: {report.worsened}. {hint}"
+        f"Functions that got more complex: {report.worsened}. {regression_hint}"
+    )
+    assert not report.moved, f"Moved baseline entries: {report.moved}. {baseline_hint}"
+    assert not report.improved, (
+        f"Over-declared baseline entries: {report.improved}. {baseline_hint}"
     )

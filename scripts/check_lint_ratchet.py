@@ -7,8 +7,9 @@ Enforces ruff's ``flake8-bugbear`` (``B``) and ``flake8-blind-except``
 Pre-existing violations are tolerated via a checked-in baseline
 (``scripts/lint_baseline.json``), but a NEW violation — or an extra one in an
 already-baselined file — fails the check. Regenerate the baseline with
-``--update-baseline``; paid-down debt is reported as advisory (exit 0) so the
-baseline can be tightened the same way.
+``--update-baseline``; paid-down debt also fails a full run until the baseline is
+tightened. Restricted runs keep it advisory because keys outside the explicit
+targets were not scanned.
 
 WHY THESE RULES
 ---------------
@@ -107,7 +108,8 @@ BASELINE_COMMENT = (
     "with: hatch run check-lint-ratchet --update-baseline. Each key is "
     "'<repo-relative-path>::<ruff code>' and maps to the NUMBER of violations "
     "of that code in that file. A key absent from here, or one whose count "
-    "exceeds its baselined value, fails the check. 'rules' records the "
+    "exceeds its baselined value, fails the check. A missing or lower-count "
+    "entry also fails until the baseline is refreshed. 'rules' records the "
     "--select used. 'settings_fingerprint' records Ruff's normalized root "
     "resolved settings. Either mismatch fails rather than silently retiring debt."
 )
@@ -132,8 +134,8 @@ def is_ratcheted_code(code: str) -> bool:
 class RatchetReport:
     """Classification of the current findings against the baseline.
 
-    ``new`` and ``worsened`` are the FAILING sets; ``improved`` is advisory
-    (debt paid down — regenerate the baseline to lock it in).
+    Every changed bucket fails a full run. ``improved`` remains advisory on
+    restricted runs, where omitted keys may simply be unscanned.
     """
 
     new: list[str] = field(default_factory=list)
@@ -617,12 +619,19 @@ def _print_report(
         )
     elif report.improved:
         aprint(
-            "\n   Nice — some lint debt was paid down. Run --update-baseline to "
+            "\n   Some lint debt was paid down. Run --update-baseline to "
             "tighten the baseline so it can't come back."
         )
 
     if report.new or report.worsened:
         _print_regressions(report, current, baseline, restricted)
+        return 1
+
+    if not restricted and report.improved:
+        aprint(
+            "\n❌ Baseline is over-declared. Run --update-baseline and commit "
+            "the tightened baseline."
+        )
         return 1
 
     aprint("\n✅ No new lint regressions.")

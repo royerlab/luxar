@@ -6,10 +6,10 @@ Enforces ``[tool.ruff.lint.mccabe] max-complexity`` as a baseline-driven
 *ratchet*: pre-existing over-limit functions are tolerated via a checked-in
 baseline (``scripts/complexity_baseline.json``), but a function that is NEWLY
 over the limit — or an already-baselined one whose complexity INCREASED — fails
-the check. Regenerate the baseline with ``--update-baseline``; paid-down debt and
-functions that merely MOVED (same name, no greater complexity, new file) are
-reported as advisory (exit 0) so the baseline can be re-keyed or tightened the
-same way.
+the check. Paid-down debt and functions that merely MOVED (same name, no greater
+complexity, new file) also fail a full run until ``--update-baseline`` re-keys or
+tightens the baseline. Restricted runs keep those findings advisory because
+keys outside the explicit targets were not scanned.
 
 Why a script instead of putting ``C901`` in ``[tool.ruff.lint] select``?
 ruff has no baseline mechanism. A bare ``select`` entry would fail on all
@@ -70,8 +70,10 @@ BASELINE_COMMENT = (
     "complexities of the over-limit functions with that name in that file (a "
     "list, because one file may hold several same-named functions). A function "
     "not listed here, or one whose complexity exceeds its baselined value, "
-    "fails the check. 'settings_fingerprint' records Ruff's normalized root "
-    "resolved settings; a mismatch fails rather than silently retiring debt."
+    "fails the check. A missing, moved, or lower-complexity entry also fails "
+    "until the baseline is refreshed. 'settings_fingerprint' records Ruff's "
+    "normalized root resolved settings; a mismatch fails rather than silently "
+    "retiring debt."
 )
 
 # ruff's C901 message, e.g. "`robust_download` is too complex (66 > 10)".
@@ -86,8 +88,8 @@ _UNSCANNED_RE = re.compile(r"Failed to lint ")
 class RatchetReport:
     """Classification of the current findings against the baseline.
 
-    ``new`` and ``worsened`` are the FAILING sets; ``improved`` and ``moved`` are
-    advisory (debt paid down / re-keyed — regenerate the baseline to lock it in).
+    Every changed bucket fails a full run. ``improved`` and ``moved`` remain
+    advisory on restricted runs, where omitted keys may simply be unscanned.
     """
 
     new: list[str] = field(default_factory=list)
@@ -678,12 +680,19 @@ def _print_report(
         )
     elif report.improved:
         aprint(
-            "\n   Nice — some complexity debt was paid down. Run "
+            "\n   Some complexity debt was paid down. Run "
             "--update-baseline to tighten the baseline so it can't come back."
         )
 
     if report.new or report.worsened:
         _print_regressions(report, current, baseline, restricted)
+        return 1
+
+    if not restricted and (report.moved or report.improved):
+        aprint(
+            "\n❌ Baseline is over-declared. Run --update-baseline and commit "
+            "the tightened baseline."
+        )
         return 1
 
     aprint("\n✅ No new complexity regressions.")

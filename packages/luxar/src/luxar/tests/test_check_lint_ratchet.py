@@ -552,20 +552,21 @@ def test_main_fails_when_a_baselined_file_gains_a_violation(
     assert "sample.py::B905: 1 → 2" in _clean_output(capsys)
 
 
-def test_main_reports_a_fix_as_advisory_and_passes(
+def test_main_fails_when_a_fix_leaves_the_baseline_overdeclared(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ARM 3 — paid-down debt is green, and says the baseline can be tightened."""
+    """ARM 3 — paid-down debt must be recorded before the gate passes."""
     _require_ruff()
     _unrestrict(monkeypatch)
     _write_tree(tmp_path, _ONE_VIOLATION)
     baseline = tmp_path / "baseline.json"
     baseline.write_text(json.dumps(_baseline_payload({"sample.py::B905": 2})))
 
-    assert _run_main(tmp_path, baseline) == 0
+    assert _run_main(tmp_path, baseline) == 1
 
     output = _clean_output(capsys)
     assert "Improved: 1" in output
+    assert "Baseline is over-declared" in output
     assert "--update-baseline" in output
 
 
@@ -865,7 +866,7 @@ def test_main_restricted_run_does_not_invite_updating_the_baseline(
 
     output = _clean_output(capsys)
     assert "RESTRICTED" in output
-    assert "Nice — some lint debt was paid down" not in output
+    assert "Some lint debt was paid down" not in output
 
 
 def test_main_reports_a_ruff_failure_as_exit_2(
@@ -1158,7 +1159,7 @@ def test_repository_settings_fingerprint_is_target_independent() -> None:
 def test_repository_has_no_lint_regressions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The real tree must not add a violation of any ratcheted rule.
+    """The real tree and baseline must describe the same lint debt.
 
     Deliberately fails closed: a missing baseline is NOT skipped, it reports
     every violation as new — deleting the baseline must not turn the only
@@ -1191,12 +1192,16 @@ def test_repository_has_no_lint_regressions(
 
     report = checker.evaluate_ratchet(current, baseline)
 
-    hint = (
+    regression_hint = (
         "Fix the code, or add a `# noqa: <code>` with a rationale if the rule is "
         "a false positive at that site. If the change is legitimate (a file "
         "move, say), run `hatch run check-lint-ratchet --update-baseline`."
     )
-    assert not report.new, f"New lint violations: {report.new}. {hint}"
+    baseline_hint = "Run `hatch run check-lint-ratchet --update-baseline`."
+    assert not report.new, f"New lint violations: {report.new}. {regression_hint}"
     assert not report.worsened, (
-        f"Files that gained violations: {report.worsened}. {hint}"
+        f"Files that gained violations: {report.worsened}. {regression_hint}"
+    )
+    assert not report.improved, (
+        f"Over-declared baseline entries: {report.improved}. {baseline_hint}"
     )
