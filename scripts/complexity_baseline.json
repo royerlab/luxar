@@ -51,7 +51,7 @@
       13
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/recipe_shared.py::parse_lod_breakpoints": [
-      13
+      11
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/scene_commands.py::convert_to_scene": [
       17
@@ -73,9 +73,6 @@
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/transforms/transform.py::run_transform_dataset": [
       47
-    ],
-    "packages/luxar/src/luxar/cli/info_command.py::_print_tree": [
-      17
     ],
     "packages/luxar/src/luxar/cli/info_command.py::info": [
       23
@@ -99,7 +96,7 @@
       12
     ],
     "packages/luxar/src/luxar/cli/utils.py::format_tree_node": [
-      16
+      13
     ],
     "packages/luxar/src/luxar/cli/utils.py::get_zarr_info": [
       13
@@ -125,9 +122,6 @@
     "packages/luxar/src/luxar/core/group/lod/group.py::resolve_additive_axis": [
       13
     ],
-    "packages/luxar/src/luxar/core/group/lod/group.py::resolve_coarsen_dims": [
-      13
-    ],
     "packages/luxar/src/luxar/core/group/lod/group.py::resolve_substitutive_axis": [
       15
     ],
@@ -137,14 +131,11 @@
     "packages/luxar/src/luxar/core/group/lod/gsplats.py::resolve_substitutive_axis_gsplats": [
       12
     ],
-    "packages/luxar/src/luxar/core/group/lod/lines.py::compute_additive_order_lines": [
-      11
-    ],
     "packages/luxar/src/luxar/core/group/lod/lines.py::identify_polylines": [
       12
     ],
     "packages/luxar/src/luxar/core/group/lod/lines.py::make_additive_lod_lines": [
-      19
+      18
     ],
     "packages/luxar/src/luxar/core/group/lod/points.py::make_additive_lod_points": [
       11
@@ -327,7 +318,7 @@
       11
     ],
     "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_merge_flat": [
-      24
+      23
     ],
     "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_merge_partition": [
       15
@@ -360,7 +351,7 @@
       12
     ],
     "packages/luxar/src/luxar/gsplats/fit_tiled_parallel.py::build_worker_cmd": [
-      21
+      20
     ],
     "packages/luxar/src/luxar/gsplats/fit_tiled_parallel.py::fit_tiled_parallel": [
       18
@@ -372,7 +363,7 @@
       17
     ],
     "packages/luxar/src/luxar/gsplats/fitting/initialization.py::initialize_optimization": [
-      36
+      31
     ],
     "packages/luxar/src/luxar/gsplats/fitting/optimization.py::run_optimization_loop": [
       39
@@ -405,7 +396,7 @@
       13
     ],
     "packages/luxar/src/luxar/gsplats/io/inspect_gsplats.py::_inspect_store": [
-      16
+      15
     ],
     "packages/luxar/src/luxar/gsplats/io/migrate.py::detect_legacy_format": [
       12
@@ -477,7 +468,7 @@
       29
     ],
     "packages/luxar/src/luxar/gsplats/tiling.py::compute_tile_specs": [
-      12
+      11
     ],
     "packages/luxar/src/luxar/gsplats/utils/device.py::resolve_gpu_selection": [
       15
@@ -514,9 +505,6 @@
     ],
     "packages/luxar/src/luxar/io/_ordering/lines.py::sort_segments_compound": [
       13
-    ],
-    "packages/luxar/src/luxar/io/compiler.py::finalize": [
-      11
     ],
     "packages/luxar/src/luxar/io/volume.py::load_volume": [
       12
@@ -580,9 +568,6 @@
     ],
     "scripts/check_documentation.py::_check_markdown_path_references": [
       30
-    ],
-    "scripts/check_documentation.py::main": [
-      12
     ],
     "stats/generate_stats.py::_count_lines_python": [
       14
