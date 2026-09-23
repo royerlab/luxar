@@ -20,6 +20,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 _SCRIPT = PROJECT_ROOT / "scripts" / "check_wheel.py"
+_HATCH_BUILD = PROJECT_ROOT / "hatch_build.py"
 
 pytestmark = pytest.mark.skipif(
     not _SCRIPT.exists(),
@@ -41,6 +42,20 @@ def _load_checker() -> ModuleType:
 
 
 checker = _load_checker()
+
+
+def _load_hatch_build() -> ModuleType:
+    """Import the metadata hook so its URLs can be checked end to end."""
+    spec = importlib.util.spec_from_file_location("wheel_hatch_build", _HATCH_BUILD)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load {_HATCH_BUILD}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+hatch_build = _load_hatch_build()
 
 
 @pytest.fixture(autouse=True)
@@ -511,6 +526,19 @@ def test_main_exits_2_on_an_unreadable_wheel(
 # ---------------------------------------------------------------------------
 # Drift guard against the REAL pyproject
 # ---------------------------------------------------------------------------
+
+
+def test_repository_link_pattern_matches_metadata_hook_output() -> None:
+    """The release gate must recognize every repository URL the hook emits."""
+    rewritten = hatch_build.absolutize_readme_links(
+        (PROJECT_ROOT / "README.md").read_text(encoding="utf-8"),
+        repository_ref="v9.9.9",
+    )
+
+    repository_refs = set(checker.REPOSITORY_LINK_REF.findall(rewritten))
+
+    assert repository_refs
+    assert repository_refs == {"v9.9.9"}
 
 
 def test_the_checker_imports_only_the_standard_library() -> None:
