@@ -545,6 +545,31 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     expect(document.querySelector('.luxar-audio-gate')).toBeNull();
   });
 
+  it.each(['resolve', 'reject'] as const)(
+    'does not restore the gate when the scene is detached during a pending tap resume that %ss',
+    async (outcome) => {
+      const h = makeHarness('suspended');
+      h.ctx.resumeSucceeds = false;
+      h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+      h.engine.attachScene(h.root);
+      await flush();
+
+      let settleResume!: () => void;
+      const pendingResume = new Promise<void>((resolve, reject) => {
+        settleResume = outcome === 'resolve' ? resolve : () => reject(new Error('resume blocked'));
+      });
+      vi.spyOn(h.ctx, 'resume').mockReturnValue(pendingResume);
+      document.dispatchEvent(new Event('pointerdown'));
+      expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+
+      h.engine.detachScene();
+      settleResume();
+      await flush();
+      expect(h.engine.hasSoundNodes()).toBe(false);
+      expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+    }
+  );
+
   it('a muted scene never shows the gate', async () => {
     localStorage.setItem(StorageKeys.audio, JSON.stringify({ muted: true, masterGain: 0.8 }));
     const h = makeHarness('suspended');
