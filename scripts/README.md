@@ -18,11 +18,11 @@ scripts/
 | Script | Purpose |
 |--------|---------|
 | `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage, with an unbaselineable changelog-fragment format check (JSON output) |
-| `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
+| `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails on newly over-complex or worsened functions, and when the baseline is over-declared) |
 | `check_cadence_liveness.py` | Check GitHub Actions workflow cadences for missing or stale successes using an `actions: read` token; only workflow cadences are visible to this check |
 | `check_layer_order.py` | Assert the `Subpackage layering` order is still the measured minimum and that its dated debt list has not grown |
 | `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, nothing over PyPI's per-file limit, the wheel itself under that limit, viewer dist bundled |
-| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`), flake8-blind-except (`BLE`), and `RUF012` (fails only on newly-broken rules) |
+| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`), flake8-blind-except (`BLE`), and `RUF012` (fails on newly broken rules and when the baseline is over-declared) |
 | `ruff_ratchet.py` | Shared fail-closed Ruff settings, nested-config, and scan-coverage guards used by both baseline ratchets |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
