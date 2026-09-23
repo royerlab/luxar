@@ -569,9 +569,6 @@
     "scripts/check_documentation.py::_check_markdown_path_references": [
       30
     ],
-    "scripts/check_version_consistency.py::main": [
-      11
-    ],
     "stats/generate_stats.py::_count_lines_python": [
       14
     ],

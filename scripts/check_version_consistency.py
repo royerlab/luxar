@@ -103,6 +103,40 @@ def _check_expected_tag(expect_tag: str, py_version: str) -> int:
     return 0
 
 
+def _check_citation(py_version: str) -> int:
+    """Compare CITATION.cff against the package version. 0 ok, 1 mismatch, 2 invalid."""
+    try:
+        cff_text = CITATION.read_text()
+    except OSError as exc:
+        print(f"error: cannot read {CITATION}: {exc}", file=sys.stderr)
+        return 2
+    m_ver = CFF_VERSION_RE.search(cff_text)
+    m_date = CFF_DATE_RE.search(cff_text)
+    if not m_ver or not m_date:
+        print(
+            f"error: {CITATION.name} needs both a 'version:' and a 'date-released:' "
+            "line for the release gate to check them",
+            file=sys.stderr,
+        )
+        return 2
+    cff_version, cff_date = _cff_scalar(m_ver), _cff_scalar(m_date)
+    expected_date = py_version.replace(".", "-")
+    if cff_version != py_version or cff_date != expected_date:
+        print(
+            "Version mismatch between Python package and CITATION.cff:\n"
+            f"  Python  __version__      = {py_version!r}\n"
+            f"  CITATION.cff version     = {cff_version!r}  "
+            f"(expected {py_version!r})\n"
+            f"  CITATION.cff date-released = {cff_date!r}  "
+            f"(expected {expected_date!r})\n"
+            "They must describe the same release. Run "
+            f"`make set-version DATE={py_version}` to sync, then commit.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main(argv: Sequence[str] = ()) -> int:
     # argv defaults to EMPTY, not sys.argv: `main()` is called directly by
     # scripts/tests/test_set_version.py, where sys.argv holds pytest's flags and
@@ -151,39 +185,13 @@ def main(argv: Sequence[str] = ()) -> int:
     # --- CITATION.cff: zero-padded version + a date-released derived from it ---
     # Cheap to check and easy to forget: nothing else reads this file, so drift
     # here is invisible until a citation manager or Zenodo shows the wrong year.
-    try:
-        cff_text = CITATION.read_text()
-    except OSError as exc:
-        print(f"error: cannot read {CITATION}: {exc}", file=sys.stderr)
-        return 2
-    m_ver = CFF_VERSION_RE.search(cff_text)
-    m_date = CFF_DATE_RE.search(cff_text)
-    if not m_ver or not m_date:
-        print(
-            f"error: {CITATION.name} needs both a 'version:' and a 'date-released:' "
-            "line for the release gate to check them",
-            file=sys.stderr,
-        )
-        return 2
-    cff_version, cff_date = _cff_scalar(m_ver), _cff_scalar(m_date)
-    expected_date = py_version.replace(".", "-")
-    if cff_version != py_version or cff_date != expected_date:
-        print(
-            "Version mismatch between Python package and CITATION.cff:\n"
-            f"  Python  __version__      = {py_version!r}\n"
-            f"  CITATION.cff version     = {cff_version!r}  "
-            f"(expected {py_version!r})\n"
-            f"  CITATION.cff date-released = {cff_date!r}  "
-            f"(expected {expected_date!r})\n"
-            "They must describe the same release. Run "
-            f"`make set-version DATE={py_version}` to sync, then commit.",
-            file=sys.stderr,
-        )
-        return 1
+    rc = _check_citation(py_version)
+    if rc != 0:
+        return rc
 
     summary = (
         f"versions consistent: Python {py_version} == viewer {viewer_version} "
-        f"== citation {cff_version} ({cff_date})"
+        f"== citation {py_version} ({py_version.replace('.', '-')})"
     )
     if args.expect_tag is not None:
         summary += f" == tag {args.expect_tag}"
