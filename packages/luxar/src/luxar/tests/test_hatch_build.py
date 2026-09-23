@@ -20,12 +20,14 @@ if PROJECT_ROOT is None or not (PROJECT_ROOT / "hatch_build.py").is_file():
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from hatch_build import (  # noqa: E402
-    REPO_BLOB_URL,
-    REPO_TREE_URL,
+    REPO_URL,
     LuxarBuildHook,
     LuxarMetadataHook,
     absolutize_readme_links,
 )
+
+REPO_BLOB_URL = f"{REPO_URL}/blob/main/"
+REPO_TREE_URL = f"{REPO_URL}/tree/main/"
 
 
 def make_hook(root: Path) -> LuxarBuildHook:
@@ -106,20 +108,51 @@ def test_unknown_build_version_is_rejected(tmp_path: Path) -> None:
     ],
 )
 def test_absolutize_readme_links(markdown: str, expected: str) -> None:
-    assert absolutize_readme_links(markdown) == expected
+    assert absolutize_readme_links(markdown, repository_ref="main") == expected
 
 
-def test_metadata_hook_serves_the_readme_with_absolute_links(tmp_path: Path) -> None:
-    (tmp_path / "README.md").write_text("# T\n\nSee [the docs](docs/a.md).\n")
+@pytest.mark.parametrize(
+    ("ref_type", "ref_name", "expected_ref"),
+    [
+        ("tag", "v2026.09.22", "v2026.09.22"),
+        ("tag", None, "main"),
+        ("tag", "", "main"),
+        ("branch", "dev", "main"),
+        (None, None, "main"),
+    ],
+)
+def test_metadata_hook_serves_the_readme_with_absolute_links(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ref_type: str | None,
+    ref_name: str | None,
+    expected_ref: str,
+) -> None:
+    (tmp_path / "README.md").write_text(
+        "# T\n\nSee [the docs](docs/a.md) and [skills](.agents/skills/).\n"
+    )
     metadata: dict[str, object] = {}
+    if ref_type is None:
+        monkeypatch.delenv("GITHUB_REF_TYPE", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_REF_TYPE", ref_type)
+    if ref_name is None:
+        monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_REF_NAME", ref_name)
 
     LuxarMetadataHook(str(tmp_path), {}).update(metadata)
 
     assert metadata == {
         "readme": {
             "content-type": "text/markdown",
-            "text": f"# T\n\nSee [the docs]({REPO_BLOB_URL}docs/a.md).\n",
-        }
+            "text": (
+                "# T\n\nSee [the docs](https://github.com/royerlab/luxar/"
+                f"blob/{expected_ref}/docs/a.md) and "
+                "[skills](https://github.com/royerlab/luxar/"
+                f"tree/{expected_ref}/.agents/skills/).\n"
+            ),
+        },
     }
 
 
@@ -127,7 +160,9 @@ def test_the_real_readme_has_no_relative_link_left_after_rewriting() -> None:
     """The regex the hook uses must cover every link form the README uses."""
     import re  # noqa: PLC0415
 
-    text = absolutize_readme_links((PROJECT_ROOT / "README.md").read_text())
+    text = absolutize_readme_links(
+        (PROJECT_ROOT / "README.md").read_text(), repository_ref="main"
+    )
     relative = re.compile(
         r'(?:\]\(|\bhref="|\bsrc=")(?!(?:[a-z][a-z0-9+.-]*:|//|#))([^)"\s]+)'
     )
