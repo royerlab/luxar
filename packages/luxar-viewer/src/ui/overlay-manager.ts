@@ -817,7 +817,10 @@ export class OverlayManager {
   /** Keep the last composited frame alive until a CSS fade has completed. */
   private scheduleMatteHide(name: string, delayMs: number): void {
     const pending = this.matteHideTimers.get(name);
-    if (pending) clearTimeout(pending);
+    if (pending) {
+      clearTimeout(pending);
+      this.matteHideTimers.delete(name);
+    }
     if (delayMs <= 0) {
       this.matteHideTimers.delete(name);
       this.hideMatte(name);

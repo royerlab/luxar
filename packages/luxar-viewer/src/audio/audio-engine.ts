@@ -468,7 +468,10 @@ export class AudioEngine {
         if (ctx.state === 'running') this.openGate();
         else this.armGestureRetry();
       })
-      .catch((error) => log.warning(Modules.AUDIO, 'AudioContext.resume() failed', error));
+      .catch((error) => {
+        log.warning(Modules.AUDIO, 'AudioContext.resume() failed', error);
+        this.armGestureRetry();
+      });
   }
 
   private openGate(): void {
