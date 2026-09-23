@@ -43,6 +43,13 @@ def _load_checker() -> ModuleType:
 checker = _load_checker()
 
 
+@pytest.fixture(autouse=True)
+def _clear_github_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep wheel inspection tests independent of the invoking GitHub ref."""
+    monkeypatch.delenv("GITHUB_REF_TYPE", raising=False)
+    monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # glob_to_regex — the `*` vs `**` distinction the exclude patterns rely on
 # ---------------------------------------------------------------------------
@@ -322,6 +329,60 @@ def test_absolute_links_anchors_and_uris_are_not_flagged(tmp_path: Path) -> None
 
     assert report.relative_links == []
     assert report.problems() == 0
+
+
+def test_tag_build_with_wrong_repository_refs_is_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A release wheel must embed the exact triggering tag, never ``main``."""
+    monkeypatch.setenv("GITHUB_REF_TYPE", "tag")
+    monkeypatch.setenv("GITHUB_REF_NAME", "v2026.09.22")
+    members = dict(_GOOD_MEMBERS)
+    members["luxar-1.0.dist-info/METADATA"] = _metadata_with_body(
+        "[a](https://github.com/royerlab/luxar/blob/main/LICENSE) "
+        "[b](https://github.com/royerlab/luxar/tree/v2026.09.21/docs/)\n"
+    )
+
+    report = _inspect(tmp_path, members)
+
+    assert report.mismatched_repository_refs == ["main", "v2026.09.21"]
+    assert report.problems() == 2
+    assert any(
+        "triggering tag" in heading
+        for heading, _, _ in checker._problem_sections(report)
+    )
+
+
+def test_tag_build_with_matching_repository_ref_is_sound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_REF_TYPE", "tag")
+    monkeypatch.setenv("GITHUB_REF_NAME", "v2026.09.22")
+    members = dict(_GOOD_MEMBERS)
+    members["luxar-1.0.dist-info/METADATA"] = _metadata_with_body(
+        "[a](https://github.com/royerlab/luxar/blob/v2026.09.22/LICENSE) "
+        "[b](https://github.com/royerlab/luxar/tree/v2026.09.22/docs/)\n"
+    )
+
+    report = _inspect(tmp_path, members)
+
+    assert report.mismatched_repository_refs == []
+    assert report.problems() == 0
+
+
+def test_tag_build_without_ref_name_rejects_repository_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_REF_TYPE", "tag")
+    members = dict(_GOOD_MEMBERS)
+    members["luxar-1.0.dist-info/METADATA"] = _metadata_with_body(
+        "[a](https://github.com/royerlab/luxar/blob/main/LICENSE)\n"
+    )
+
+    report = _inspect(tmp_path, members)
+
+    assert report.mismatched_repository_refs == ["main"]
+    assert report.problems() == 1
 
 
 def test_a_metadata_without_a_body_has_nothing_to_check(tmp_path: Path) -> None:

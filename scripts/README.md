@@ -21,7 +21,7 @@ scripts/
 | `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
 | `check_cadence_liveness.py` | Check GitHub Actions workflow cadences for missing or stale successes using an `actions: read` token; only workflow cadences are visible to this check |
 | `check_layer_order.py` | Assert the `Subpackage layering` order is still the measured minimum and that its dated debt list has not grown |
-| `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, nothing over PyPI's per-file limit, the wheel itself under that limit, viewer dist bundled |
+| `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, PyPI size limits, viewer dist bundled, and long-description links valid and release-pinned |
 | `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`), flake8-blind-except (`BLE`), and `RUF012` (fails only on newly-broken rules) |
 | `ruff_ratchet.py` | Shared fail-closed Ruff settings, nested-config, and scan-coverage guards used by both baseline ratchets |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
@@ -369,6 +369,8 @@ guards:**
   uploaded file, which the per-member check cannot see.
 - **The viewer dist is bundled** (`luxar/_viewer_dist/`), a superset of the
   check `publish.yml` already makes.
+- **Long-description links are valid** — no relative README links survive, and
+  tag builds pin repository links to the exact triggering tag.
 
 ```bash
 make build-viewer && hatch build
