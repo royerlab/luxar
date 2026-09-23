@@ -8,8 +8,8 @@ HTML snapshots here so they cannot alter those captured bytes.
 
 Four of them are the demo-dataset records, discovered from `data_manifest.json`.
 The benchmark-volumes and supplementary-videos records are not demo datasets, so
-they have no manifest entry and are listed explicitly in `capture.py`'s
-`EXTRA_RECORDS` — they are here for the same reason as the rest: their
+they have no manifest entry and are listed explicitly in `extra_records.json` —
+they are here for the same reason as the rest: their
 descriptions are hand-written and exist nowhere else. Those two carry version
 record ids, so publishing a new version needs the same repin the manifest
 entries get.
