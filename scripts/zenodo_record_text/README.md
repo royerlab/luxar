@@ -1,8 +1,18 @@
 # Zenodo record descriptions, as published
 
-The four Zenodo record descriptions, captured verbatim from the live records.
+The six Zenodo record descriptions, captured verbatim from the live records.
 They are stored byte-for-byte as the API returns them, including markup and line
 wrapping; never reformat these files, only re-capture them.
+The `trailing-whitespace` and `end-of-file-fixer` pre-commit hooks exclude the
+HTML snapshots here so they cannot alter those captured bytes.
+
+Four of them are the demo-dataset records, discovered from `data_manifest.json`.
+The benchmark-volumes and supplementary-videos records are not demo datasets, so
+they have no manifest entry and are listed explicitly in `extra_records.json` —
+they are here for the same reason as the rest: their
+descriptions are hand-written and exist nowhere else. Those two carry version
+record ids, so publishing a new version needs the same repin the manifest
+entries get.
 
 **These files are the authoritative text, not `gen_zenodo_records.py`'s output.**
 The published descriptions are hand-maintained: they carry framing, provenance

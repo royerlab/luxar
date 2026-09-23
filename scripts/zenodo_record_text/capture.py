@@ -49,9 +49,30 @@ FIELDS = (
 )
 
 
+def extra_records() -> dict[str, dict[str, Any]]:
+    """Records captured here that are not demo datasets, so the manifest has none.
+
+    Read from `extra_records.json` beside this file rather than hardcoded, so the
+    set travels with `HERE` — a caller that redirects `HERE` (the tests do) gets no
+    extras instead of reaching real depositions. Keys starting with `_` are notes.
+    """
+    path = HERE / "extra_records.json"
+    if not path.exists():
+        return {}
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    return {key: value for key, value in loaded.items() if not key.startswith("_")}
+
+
 def records() -> dict[str, dict[str, Any]]:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    return manifest["records"]
+    extras = extra_records()
+    overlap = sorted(set(manifest["records"]) & set(extras))
+    if overlap:
+        raise SystemExit(
+            "record defined twice — drop it from extra_records.json now that the "
+            f"manifest carries it: {overlap}"
+        )
+    return {**manifest["records"], **extras}
 
 
 def fetch(
@@ -67,7 +88,7 @@ def fetch(
     last: Exception | None = None
     for attempt in range(6):
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=60) as response:  # nosec B310
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             if exc.code != 429 and exc.code < 500:
