@@ -594,8 +594,8 @@ def _print_report(
     """Print the human summary of ``report``; returns the exit code.
 
     ``restricted`` marks a run over explicit target paths rather than the whole
-    lint scope: keys outside those paths look vanished, so the advisory that
-    would otherwise invite ``--update-baseline`` is replaced by a caveat.
+    lint scope: keys outside those paths look vanished, so the full-run failure
+    and ``--update-baseline`` remedy are replaced by a caveat.
     """
     total = sum(current.values())
 

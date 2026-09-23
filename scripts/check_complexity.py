@@ -646,9 +646,9 @@ def _print_report(
     """Print the human summary of ``report``; returns the exit code.
 
     ``restricted`` marks a run over explicit target paths rather than the whole
-    lint scope: keys outside those paths look vanished, so the advisory that
-    would otherwise invite ``--update-baseline`` is replaced by a caveat (and
-    ``main`` disables move pairing upstream, so ``moved`` is empty there).
+    lint scope: keys outside those paths look vanished, so the full-run failure
+    and ``--update-baseline`` remedy are replaced by a caveat (and ``main``
+    disables move pairing upstream, so ``moved`` is empty there).
     """
     total = sum(len(v) for v in current.values())
 
@@ -663,8 +663,7 @@ def _print_report(
     aprint(f"✨ Improved: {len(report.improved)}")
 
     if report.moved:
-        # Itemised here rather than only on the failing path, so a green run's
-        # move count is auditable instead of being a bare number.
+        # Itemise the move count so it is auditable instead of a bare number.
         aprint(
             "\n   Some baselined functions relocated (total debt never "
             "increased); run --update-baseline to re-key the baseline:\n"
