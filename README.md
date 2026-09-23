@@ -7,6 +7,7 @@
 [![npm](https://img.shields.io/npm/v/%40luxar%2Fviewer?label=npm%20%40luxar%2Fviewer)](https://www.npmjs.com/package/@luxar/viewer)
 [![Docs](https://img.shields.io/badge/docs-royerlab.github.io%2Fluxar-blue)](https://royerlab.github.io/luxar/)
 [![Live demos](https://img.shields.io/badge/live%20demos-demos.luxarviewer.dev-7c3aed)](https://demos.luxarviewer.dev)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22908222.svg)](https://doi.org/10.5281/zenodo.22908222)
 
 ![Luxar: n-dimensional scientific data, compiled and explored in the browser. Points, lines, Gaussian splats, meshes.](https://data.luxarviewer.dev/media/558d5db88635bec2.png)
 
@@ -964,8 +965,9 @@ when a result needs to be reproducible against exact bytes.
 
 ## Citation
 
-GitHub's *Cite this repository* button reads [CITATION.cff](CITATION.cff). For
-the **software** (this repository, whichever version you used):
+GitHub's *Cite this repository* button offers the preferred preprint from
+[CITATION.cff](CITATION.cff). To cite the **software** itself (this repository,
+whichever version you used), use:
 
 ```bibtex
 @software{luxar2026,
@@ -973,6 +975,7 @@ the **software** (this repository, whichever version you used):
            multidimensional scientific data},
   author = {Royer, Lo{\"i}c A.},
   year = {2026},
+  doi = {10.5281/zenodo.22908222},
   url = {https://github.com/royerlab/luxar}
 }
 ```
@@ -982,13 +985,15 @@ volumes, blind-spot cross-validation of the splat budget, the streaming viewer),
 cite the preprint:
 
 ```bibtex
-@article{royer2026luxar,
+@misc{royer2026luxar,
   title = {Luxar: Gaussian splatting for microscopy and scalable interactive web
            visualisation of multidimensional scientific data},
   author = {Royer, Lo{\"i}c A.},
-  journal = {bioRxiv},
   year = {2026},
-  url = {https://github.com/royerlab/luxar}
+  publisher = {Zenodo},
+  doi = {10.5281/zenodo.22912049},
+  url = {https://doi.org/10.5281/zenodo.22912049},
+  note = {Preprint on Zenodo}
 }
 ```
 
