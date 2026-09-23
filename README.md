@@ -965,8 +965,9 @@ when a result needs to be reproducible against exact bytes.
 
 ## Citation
 
-GitHub's *Cite this repository* button reads [CITATION.cff](CITATION.cff). For
-the **software** (this repository, whichever version you used):
+GitHub's *Cite this repository* button offers the preferred preprint from
+[CITATION.cff](CITATION.cff). To cite the **software** itself (this repository,
+whichever version you used), use:
 
 ```bibtex
 @software{luxar2026,
