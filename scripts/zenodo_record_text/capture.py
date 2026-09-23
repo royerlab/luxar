@@ -49,32 +49,30 @@ FIELDS = (
 )
 
 
-# Records that are NOT demo datasets, so they have no entry in the demo manifest —
-# but whose descriptions are hand-written on Zenodo and exist nowhere else, which is
-# the same exposure this directory removes for the four manifest records.
-# `zenodo_record` is a VERSION id, matching the manifest's own convention: publish a
-# new version and this needs the same repin the manifest entries get.
-EXTRA_RECORDS: dict[str, dict[str, Any]] = {
-    "benchmark-volumes": {
-        "zenodo_record": "22820799",
-        "zenodo_doi": "10.5281/zenodo.22820799",
-    },
-    "supplementary-videos": {
-        "zenodo_record": "22825093",
-        "zenodo_doi": "10.5281/zenodo.22825093",
-    },
-}
+def extra_records() -> dict[str, dict[str, Any]]:
+    """Records captured here that are not demo datasets, so the manifest has none.
+
+    Read from `extra_records.json` beside this file rather than hardcoded, so the
+    set travels with `HERE` — a caller that redirects `HERE` (the tests do) gets no
+    extras instead of reaching real depositions. Keys starting with `_` are notes.
+    """
+    path = HERE / "extra_records.json"
+    if not path.exists():
+        return {}
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    return {key: value for key, value in loaded.items() if not key.startswith("_")}
 
 
 def records() -> dict[str, dict[str, Any]]:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    overlap = set(manifest["records"]) & set(EXTRA_RECORDS)
+    extras = extra_records()
+    overlap = sorted(set(manifest["records"]) & set(extras))
     if overlap:
         raise SystemExit(
-            "record defined twice — move it out of EXTRA_RECORDS now that the "
-            f"manifest carries it: {sorted(overlap)}"
+            "record defined twice — drop it from extra_records.json now that the "
+            f"manifest carries it: {overlap}"
         )
-    return {**manifest["records"], **EXTRA_RECORDS}
+    return {**manifest["records"], **extras}
 
 
 def fetch(

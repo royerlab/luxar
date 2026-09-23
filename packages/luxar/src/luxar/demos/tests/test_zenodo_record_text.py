@@ -2903,9 +2903,19 @@ def test_plain_file_record_has_no_splat_legends(
 
 def test_committed_record_snapshots_match_their_index(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text(encoding="utf-8"))
+    raw_extras = json.loads(
+        (_SNAPSHOT_DIR / "extra_records.json").read_text(encoding="utf-8")
+    )
+    extras = {k: v for k, v in raw_extras.items() if not k.startswith("_")}
+    # Rebuilt from the two data files rather than from capture.records(), so this
+    # cross-checks the committed snapshots instead of agreeing with itself.
+    assert not set(manifest["records"]) & set(extras), (
+        "a record is in both the demo manifest and extra_records.json"
+    )
+    expected = {**manifest["records"], **extras}
     index = json.loads((_SNAPSHOT_DIR / "records.json").read_text(encoding="utf-8"))
-    assert set(index) - {"_captured_utc"} == set(manifest["records"])
-    for key, record in manifest["records"].items():
+    assert set(index) - {"_captured_utc"} == set(expected)
+    for key, record in expected.items():
         snapshot = _SNAPSHOT_DIR / f"{key}.html"
         assert snapshot.exists(), key
         description_bytes = snapshot.read_bytes()
@@ -2986,6 +2996,64 @@ def test_capture_fetches_every_record_before_writing(
     assert (tmp_path / "first.html").read_text(encoding="utf-8") == "old first"
     assert (tmp_path / "second.html").read_text(encoding="utf-8") == "old second"
     assert (tmp_path / "records.json").read_text(encoding="utf-8") == "old index"
+
+
+def test_records_is_manifest_only_when_no_extra_records_file_exists(
+    capture: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The absent-file path. It is what keeps every other test off real records."""
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"first": 10})
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+
+    assert not (tmp_path / "extra_records.json").exists()
+    assert capture.extra_records() == {}
+    assert set(capture.records()) == {"first"}
+
+
+def test_records_unions_extra_records_and_skips_comment_keys(
+    capture: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"first": 10})
+    (tmp_path / "extra_records.json").write_text(
+        json.dumps(
+            {
+                "_comment": "not a record",
+                "extra": {"zenodo_record": "99", "zenodo_doi": "10.5281/zenodo.99"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+
+    assert set(capture.records()) == {"first", "extra"}
+    assert capture.records()["extra"]["zenodo_record"] == "99"
+    assert "_comment" not in capture.records()
+
+
+def test_records_rejects_a_record_defined_in_both_places(
+    capture: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dict union silently prefers one side; the guard must refuse instead."""
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"first": 10})
+    (tmp_path / "extra_records.json").write_text(
+        json.dumps(
+            {"first": {"zenodo_record": "99", "zenodo_doi": "10.5281/zenodo.99"}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+
+    with pytest.raises(SystemExit) as error:
+        capture.records()
+
+    assert "defined twice" in str(error.value)
+    assert "'first'" in str(error.value)
 
 
 def test_capture_uses_manifest_records_and_hashes_written_utf8(

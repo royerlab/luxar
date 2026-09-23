@@ -1,0 +1,11 @@
+{
+  "_comment": "Records captured here that are NOT demo datasets, so they have no entry in packages/luxar/src/luxar/demos/data_manifest.json. Their descriptions are hand-written on Zenodo and exist nowhere else, which is the same exposure this directory removes for the manifest records. zenodo_record is a VERSION id, matching the manifest's convention: publishing a new version needs the same repin a manifest entry gets.",
+  "benchmark-volumes": {
+    "zenodo_record": "22820799",
+    "zenodo_doi": "10.5281/zenodo.22820799"
+  },
+  "supplementary-videos": {
+    "zenodo_record": "22825093",
+    "zenodo_doi": "10.5281/zenodo.22825093"
+  }
+}
