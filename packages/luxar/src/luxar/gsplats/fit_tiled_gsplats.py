@@ -101,7 +101,10 @@ def occupancy_weight_from_mass(
     splat density in tiles of different sizes (the fraction cancels the size),
     while between equal-size tiles the budgets stand in the ratio of their
     masses to the power ``alpha``. A tile with no mass weighs zero and is
-    skipped.
+    skipped. Because all above-floor mass counts, disabling the floor on a flat
+    pedestal can direct most of a whole-volume seed budget into a tile with no
+    structure: one haze/blob fixture shifts from 359/241 seeds with no floor to
+    90/510 with the resolved automatic floor.
     """
     if mass <= 0.0 or hann_voxels <= 0.0:
         return 0.0

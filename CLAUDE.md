@@ -499,8 +499,11 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # Hann-weighted intensity MASS above the resolved floor, saturated by
 # `--saturation-exponent`. This prevents a hot voxel from making whole tiles of
 # dim nuclei look empty (1-38 seeds of 32,000 for tiles holding up to 6% of the
-# intensity; a 7-14 dB loss). A tile holding >= 1/4 of the equal MASS share
-# never gets < 1/4 of the equal SEED share
+# intensity; a 7-14 dB loss). Keep the floor enabled: with `--floor none`, a
+# flat pedestal is signal to this allocator and can take most of K into an
+# otherwise empty tile (359/241 seeds on the haze/blob fixture, versus 90/510
+# after the default `auto` floor resolves). A tile holding >= 1/4 of the equal
+# MASS share never gets < 1/4 of the equal SEED share
 # (`MIN_TILE_SEED_SHARE_FRACTION`). Two paths stay EQUAL-SHARE: a hand-run
 # `fit --tile k/M` (no parent to hand it a count; scanning the volume per worker
 # is the cost the plan exists to avoid), and a `batch-fit` plan that cannot
