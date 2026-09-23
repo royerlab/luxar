@@ -221,10 +221,12 @@ Browsers refuse to start an `AudioContext` without a user gesture on the page.
   is reported separately from `isMuted()`, and the rail's Sound button renders
   it as a third state whose click resumes the context rather than toggling a
   mute the listener never set.
-- **At most one deferred waypoint trigger.** A trigger that cannot start while
-  the gate is shut is held, and superseded by the next waypoint event. Holding
-  one per node means a listener who walks N stops before sound starts hears all
-  N clips at once when it does.
+- **At most one deferred waypoint trigger per node.** A trigger that cannot
+  start while the gate is shut is held, and superseded by the next waypoint
+  event of the same kind. An arrival therefore does not discard the departure
+  trigger from the same transition. Replacing the prior trigger prevents a
+  listener who walks N stops before sound starts from hearing all N clips at
+  once when it does.
 
 ### 4.5 Remote API (extends `REMOTE_CONTROL_SPEC.md`)
 

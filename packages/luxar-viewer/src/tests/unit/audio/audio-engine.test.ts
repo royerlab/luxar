@@ -492,6 +492,7 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     await flush();
     expect(h.engine.isBlocked()).toBe(true);
     expect(h.engine.getState().playing).toEqual([]);
+    expect(document.querySelector('.luxar-audio-gate')).not.toBeNull();
 
     h.ctx.resumeSucceeds = true;
     document.dispatchEvent(new Event('keydown'));
