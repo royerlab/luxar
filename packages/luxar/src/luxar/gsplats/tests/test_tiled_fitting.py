@@ -619,12 +619,14 @@ def test_uniform_tile_weights_ignore_uninformative_threshold_spikes(
 @pytest.mark.slow  # ~70s: four real 40-iteration CPU fits
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
 def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
-    """Characterize the haze/blob tradeoff against this fixture's equal split."""
+    """Characterize equal, threshold, and mass splits on one haze fixture."""
     from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
     from luxar.gsplats.fit_tiled_gsplats import (
         fit_tile,
         uniform_tile_occupancy_weights,
     )
+    from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.tiling import cosine_window
 
     shape = (24, 24, 80)
     volume = np.zeros(shape, dtype=np.float32)
@@ -645,18 +647,63 @@ def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
         )
 
     specs = compute_tile_specs(shape, tile_size=48, overlap=8, fold_slivers=True)
-    weights = uniform_tile_occupancy_weights(
+
+    mass_weights = uniform_tile_occupancy_weights(
         volume,
         specs,
         None,
         intensity_scale=float(volume.max()),
         saturation_exponent=0.44,
     )
-    counts = allocate_weighted_integer_seeds(600, weights)
-    assert counts == (359, 241)
+    mass_counts = allocate_weighted_integer_seeds(600, mass_weights)
 
-    def disparity(seed_counts: tuple[int, ...]) -> float:
+    def legacy_threshold_weights(applied_floor: float | None) -> list[float]:
+        weights = []
+        signal_threshold = 0.1 * (float(volume.max()) - (applied_floor or 0.0))
+        for spec in specs:
+            tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
+            if applied_floor is not None:
+                tile_data = np.clip(tile_data - applied_floor, 0.0, None)
+            window = cosine_window(spec)
+            hann_voxels = float(np.sum(window, dtype=np.float64))
+            foreground = float(
+                np.sum(
+                    window,
+                    where=tile_data >= signal_threshold,
+                    dtype=np.float64,
+                )
+            )
+            weights.append(
+                hann_voxels * (foreground / hann_voxels) ** 0.44
+                if foreground > 0.0
+                else hann_voxels * (1.0 / hann_voxels) ** 0.44
+            )
+        return weights
+
+    threshold_counts = allocate_weighted_integer_seeds(
+        600, legacy_threshold_weights(None)
+    )
+
+    assert mass_counts == (359, 241)
+    assert threshold_counts == (26, 574)
+
+    auto_floor = _resolve_floor(volume, "auto")
+    assert auto_floor == pytest.approx(0.0497412)
+    auto_mass_weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        auto_floor,
+        intensity_scale=float(volume.max()) - auto_floor,
+        saturation_exponent=0.44,
+    )
+    assert allocate_weighted_integer_seeds(600, auto_mass_weights) == (90, 510)
+    assert allocate_weighted_integer_seeds(
+        600, legacy_threshold_weights(auto_floor)
+    ) == (29, 571)
+
+    def metrics(seed_counts: tuple[int, ...]) -> tuple[float, float]:
         mean_amplitudes = []
+        psnr_values = []
         for spec, count in zip(specs, seed_counts, strict=True):
             result = fit_tile(
                 volume,
@@ -671,14 +718,88 @@ def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
                 output_space="voxel",
             )
             mean_amplitudes.append(float(np.mean(result.amplitudes)))
-        return max(mean_amplitudes) / min(mean_amplitudes)
+            psnr_values.append(float(result.stats["psnr_db"]))
+        disparity = max(mean_amplitudes) / min(mean_amplitudes)
+        return disparity, float(np.mean(psnr_values))
 
-    selected_disparity = disparity(counts)
-    equal_disparity = disparity((300, 300))
+    mass_disparity, mass_psnr = metrics(mass_counts)
+    equal_disparity, equal_psnr = metrics((300, 300))
+    threshold_disparity, threshold_psnr = metrics(threshold_counts)
 
-    assert selected_disparity == pytest.approx(4.39, abs=0.15)
+    assert mass_disparity == pytest.approx(4.39, abs=0.15)
     assert equal_disparity == pytest.approx(3.98, abs=0.15)
-    assert selected_disparity > equal_disparity
+    assert threshold_disparity == pytest.approx(1.30, abs=0.15)
+    assert mass_disparity > equal_disparity > threshold_disparity
+    assert mass_psnr == pytest.approx(35.55, abs=0.3)
+    assert equal_psnr == pytest.approx(35.72, abs=0.3)
+    assert threshold_psnr == pytest.approx(33.80, abs=0.3)
+
+
+@pytest.mark.slow  # ~20s: six real 40-iteration CPU fits
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+def test_mass_weighting_quantifies_depth_attenuation_tradeoff() -> None:
+    """Measure the seed tilt and per-depth PSNR on repeated attenuated content."""
+    from luxar.gsplats.batch.manifest import allocate_weighted_integer_seeds
+    from luxar.gsplats.fit_tiled_gsplats import (
+        fit_tile,
+        uniform_tile_occupancy_weights,
+    )
+
+    shape = (24, 24, 104)
+    volume = np.zeros(shape, dtype=np.float32)
+    zz, yy, xx = np.indices(shape)
+    for x_center, attenuation in ((16, 1.0), (52, 0.7), (88, 0.5)):
+        for z_center, y_center, amplitude, sigma in (
+            (8, 8, 1.0, 2.2),
+            (16, 16, 0.85, 2.5),
+            (8, 17, 0.7, 1.8),
+            (17, 7, 0.65, 2.0),
+        ):
+            distance_squared = (
+                (zz - z_center) ** 2 + (yy - y_center) ** 2 + (xx - x_center) ** 2
+            )
+            volume += (
+                attenuation
+                * amplitude
+                * np.exp(-distance_squared / (2 * sigma**2)).astype(np.float32)
+            )
+
+    specs = compute_tile_specs(shape, tile_size=40, overlap=4, fold_slivers=True)
+    weights = uniform_tile_occupancy_weights(
+        volume,
+        specs,
+        None,
+        intensity_scale=float(volume.max()),
+        saturation_exponent=0.44,
+    )
+    mass_counts = allocate_weighted_integer_seeds(900, weights)
+    assert mass_counts == (364, 301, 235)
+
+    def psnr_by_depth(seed_counts: tuple[int, ...]) -> list[float]:
+        values = []
+        for spec, count in zip(specs, seed_counts, strict=True):
+            result = fit_tile(
+                volume,
+                spec,
+                seeds=count,
+                n_iters=40,
+                floor="none",
+                norm_range=(0.0, float(volume.max())),
+                device="cpu",
+                cull_retention=0.95,
+                verbose=False,
+                output_space="voxel",
+            )
+            values.append(float(result.stats["psnr_db"]))
+        return values
+
+    equal_psnr = psnr_by_depth((300, 300, 300))
+    mass_psnr = psnr_by_depth(mass_counts)
+
+    assert equal_psnr == pytest.approx([49.82, 50.05, 50.44], abs=0.35)
+    assert mass_psnr == pytest.approx([51.42, 50.21, 49.16], abs=0.35)
+    assert np.mean(mass_psnr) > np.mean(equal_psnr)
+    assert mass_psnr[-1] < equal_psnr[-1] - 0.8
 
 
 class TestCosineWindow:
