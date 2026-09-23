@@ -835,6 +835,11 @@ export class OverlayManager {
     this.matteHideTimers.set(name, timer);
   }
 
+  private matteHideDelayMs(name: string): number {
+    const config = this.configs.get(name);
+    return config?.transition === 'fade' ? config.transition_duration * 1000 : 0;
+  }
+
   /**
    * The compositor could not read the video (a tainted cross-origin clip):
    * drop the canvas and show the raw clip — colour over matte, visible rather
@@ -908,11 +913,7 @@ export class OverlayManager {
     // A stacked-matte clip gets its compositor (and its WebGL context) only
     // while it is on screen; see the note on `matteCompositors`.
     if (visible) this.showMatte(name)?.start();
-    else {
-      const config = this.configs.get(name);
-      const delayMs = config?.transition === 'fade' ? config.transition_duration * 1000 : 0;
-      this.scheduleMatteHide(name, delayMs);
-    }
+    else this.scheduleMatteHide(name, this.matteHideDelayMs(name));
     if (visible) {
       video.preload = 'auto';
       if (video.paused && video.dataset.autoplay === '1') {
