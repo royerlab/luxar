@@ -66,6 +66,10 @@ def bake_scene_environment(store: Union[str, Path]) -> bool:
         return False
 
     probe = config.get("probe")
+    if isinstance(probe, (list, tuple)):
+        probe_arg = ",".join(str(value) for value in probe)
+    else:
+        probe_arg = "auto" if probe is None else str(probe)
     resolution = int(config.get("resolution") or _DEFAULT_RESOLUTION)
     with asection("Baking the scene environment"):
         try:
@@ -77,7 +81,7 @@ def bake_scene_environment(store: Union[str, Path]) -> bool:
                 "bake",
                 str(path),
                 "--probe",
-                "auto" if probe is None else str(probe),
+                probe_arg,
                 "--resolution",
                 str(resolution),
             )

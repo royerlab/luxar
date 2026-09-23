@@ -50,6 +50,19 @@ def test_bakes_a_live_capture_scene_with_its_own_probe_and_resolution(
     assert args[args.index("--resolution") + 1] == "256"
 
 
+def test_bakes_a_positional_probe_in_the_cli_format(tmp_path: Path) -> None:
+    """A stored JSON coordinate triple must become the CLI's x,y,z spelling."""
+    cfg = {"source": "scene", "probe": [1.0, 2.5, -3.0]}
+    with _scene(tmp_path, cfg) as store:
+        with patch(
+            "luxar.demos._support.runtime.environment.run_luxar_cli",
+            side_effect=lambda *a: (store / "environment").mkdir(exist_ok=True),
+        ) as bake:
+            assert bake_scene_environment(store) is True
+    args = list(bake.call_args.args)
+    assert args[args.index("--probe") + 1] == "1.0,2.5,-3.0"
+
+
 @pytest.mark.parametrize(
     "environment",
     [None, {"source": "room"}, {"source": "hdri", "url": "x.hdr"}],
