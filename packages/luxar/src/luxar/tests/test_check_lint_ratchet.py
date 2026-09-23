@@ -566,8 +566,9 @@ def test_main_fails_when_a_fix_leaves_the_baseline_overdeclared(
 
     output = _clean_output(capsys)
     assert "Improved: 1" in output
-    assert "Baseline is over-declared" in output
-    assert "--update-baseline" in output
+    assert "Baseline no longer matches the current tree" in output
+    assert "your change, a dev merge, or a Ruff update" in output
+    assert output.count("--update-baseline") == 1
 
 
 def test_main_passes_when_the_violation_is_baselined(

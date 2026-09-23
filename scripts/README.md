@@ -182,7 +182,7 @@ ratchet, the same shape as the documentation ratchet above.
 **Purpose:**
 - Run `ruff check --select C901` over the same paths as `hatch run lint`
 - Tolerate the pre-existing over-limit functions recorded in
-  `scripts/complexity_baseline.json` (228 at the time of writing)
+  `scripts/complexity_baseline.json` (195 at the time of writing)
 - Fail (exit 1) when a function is newly over the limit, or when a baselined
   one gets *more* complex
 - Fail (exit 1) when paid-down debt leaves the baseline over-declared; run
@@ -203,7 +203,7 @@ ratchet, the same shape as the documentation ratchet above.
 
 `C901` is deliberately not in `[tool.ruff.lint] select`: ruff has no baseline
 mechanism, and its only native suppression (`per-file-ignores`) is
-file-granular, so it would blind the guard to new offenders in the 151 files
+file-granular, so it would blind the guard to new offenders in the 140 files
 that already hold a violation.
 
 **Usage:**
@@ -213,7 +213,8 @@ that already hold a violation.
 hatch run check-complexity
 make check-complexity
 
-# (Re)write the baseline from the current state, then exit 0
+# (Re)write the baseline from the current state, then exit 0. After merging
+# dev, regenerate this file instead of hand-resolving a baseline conflict.
 hatch run check-complexity --update-baseline
 
 # Point at a non-default baseline
@@ -267,7 +268,7 @@ handlers (`BLE001`) can hide unrelated defects.
 **Purpose:**
 - Run `ruff check --select B,BLE,RUF012` over the same paths as `hatch run lint`
 - Tolerate the pre-existing violations recorded in `scripts/lint_baseline.json`
-  (651 across 338 file/rule keys at the time of writing, 289 of them `B905`)
+  (641 across 334 file/rule keys at the time of writing, 281 of them `B905`)
 - Fail (exit 1) when a file newly breaks a rule, or gains another violation of
   a rule it already breaks
 - Fail (exit 1) when paid-down debt leaves the baseline over-declared; run
@@ -287,7 +288,7 @@ handlers (`BLE001`) can hide unrelated defects.
 These rules are deliberately not in `[tool.ruff.lint] select` for the same
 reason as `C901` — ruff has no baseline mechanism, and here the sweep would also
 be *behaviour-changing*: `zip(..., strict=True)` **raises** on mismatched
-lengths, so each of the 289 `B905` sites is a decision, not a mechanical edit.
+lengths, so each of the 281 `B905` sites is a decision, not a mechanical edit.
 
 `B008` is absent from the baseline on purpose. All 83 findings were
 `typer.Option(...)` / `typer.Argument(...)` in a parameter default — the
@@ -302,7 +303,8 @@ declares those two calls immutable and the ratchet gates `B008` at **zero**.
 hatch run check-lint-ratchet
 make check-lint-ratchet
 
-# (Re)write the baseline from the current state, then exit 0
+# (Re)write the baseline from the current state, then exit 0. After merging
+# dev, regenerate this file instead of hand-resolving a baseline conflict.
 hatch run check-lint-ratchet --update-baseline
 
 # Restrict the scan to some paths (same restricted-run caveats as above)

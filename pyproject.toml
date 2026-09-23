@@ -557,7 +557,7 @@ check-complexity = "python scripts/check_complexity.py {args}"
 check-wheel = "python scripts/check_wheel.py {args}"
 # Ratchet ruff's defect-bearing rules (flake8-bugbear + blind-except + RUF012)
 # against scripts/lint_baseline.json. It has the same shape as check-complexity
-# for the same reason: 651 pre-existing violations across 338 file/rule keys
+# for the same reason: 641 pre-existing violations across 334 file/rule keys
 # mean the rules cannot go into `[tool.ruff.lint] select` without a large,
 # behaviour-changing sweep. Paid-down entries fail until the baseline is refreshed.
 check-lint-ratchet = "python scripts/check_lint_ratchet.py {args}"
@@ -1226,8 +1226,8 @@ known-first-party = ["luxar"]
 
 # The `B` (flake8-bugbear) and `BLE` (flake8-blind-except) families plus RUF012
 # are enforced as a RATCHET by `scripts/check_lint_ratchet.py`, not by `select`
-# above — see that script's module docstring for why (651 pre-existing
-# violations across 338 file/rule keys, and B905's fix changes behaviour). This
+# above — see that script's module docstring for why (641 pre-existing
+# violations across 334 file/rule keys, and B905's fix changes behaviour). This
 # setting exists so the ratchet baselines real defects only:
 # `typer.Option(...)` / `typer.Argument(...)` in a parameter default is the
 # documented Typer idiom, evaluated once at import ON PURPOSE, and it accounted
@@ -1239,7 +1239,7 @@ extend-immutable-calls = ["typer.Option", "typer.Argument"]
 
 # C901 (the rule this limit feeds) is intentionally NOT in `[tool.ruff.lint]
 # select`: ruff has no baseline mechanism, so a bare `select` entry would fail
-# on all 228 pre-existing violations, and the only ruff-native suppression
+# on all 195 pre-existing violations, and the only ruff-native suppression
 # (`per-file-ignores`) is file-granular and would blind the guard to new
 # offenders in those files. Instead `scripts/check_complexity.py` selects C901
 # explicitly and ratchets it against `scripts/complexity_baseline.json`, so THIS

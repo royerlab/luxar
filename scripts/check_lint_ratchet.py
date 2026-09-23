@@ -39,7 +39,7 @@ WHY A SCRIPT INSTEAD OF ``[tool.ruff.lint] select``
 The same reason ``C901`` is ratcheted by ``scripts/check_complexity.py``: ruff
 has no baseline mechanism. A bare
 ``select = ["B", "BLE", "RUF012"]`` would fail on all pre-existing violations
-(651 across 338 file/rule keys at the time of writing; 289 are ``B905``), so it
+(641 across 334 file/rule keys at the time of writing; 281 are ``B905``), so it
 could not be enabled without a large, unrelated sweep. For ``B905``, that sweep
 is also *behaviour-changing*: ``strict=True`` RAISES on mismatched lengths. That
 is a decision per call site, not a mechanical edit. Ruff's root resolved
@@ -617,20 +617,15 @@ def _print_report(
             "keys outside them merely went unscanned — they were not fixed. Do "
             "NOT run --update-baseline from a restricted run."
         )
-    elif report.improved:
-        aprint(
-            "\n   Some lint debt was paid down. Run --update-baseline to "
-            "tighten the baseline so it can't come back."
-        )
-
     if report.new or report.worsened:
         _print_regressions(report, current, baseline, restricted)
         return 1
 
     if not restricted and report.improved:
         aprint(
-            "\n❌ Baseline is over-declared. Run --update-baseline and commit "
-            "the tightened baseline."
+            "\n❌ Baseline no longer matches the current tree. This can follow "
+            "your change, a dev merge, or a Ruff update. Run --update-baseline "
+            "and commit the regenerated baseline."
         )
         return 1
 

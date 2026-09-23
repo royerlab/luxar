@@ -811,7 +811,8 @@ def test_main_fails_when_a_move_leaves_the_baseline_overdeclared(
     assert "✨ Improved: 0" in output
     assert "run --update-baseline to re-key the baseline" in output
     assert "🚚 old/sample.py::tangled -> sample.py::tangled" in output
-    assert "Baseline is over-declared" in output
+    assert "Baseline no longer matches the current tree" in output
+    assert "your change, a dev merge, or a Ruff update" in output
     assert "Total debt is unchanged" not in output
 
 
@@ -836,8 +837,9 @@ def test_main_fails_when_paid_down_debt_leaves_the_baseline_overdeclared(
     assert _run_main(tmp_path, baseline) == 1
     output = _clean_output(capsys)
     assert "✨ Improved: 1" in output
-    assert "Baseline is over-declared" in output
-    assert "--update-baseline" in output
+    assert "Baseline no longer matches the current tree" in output
+    assert "your change, a dev merge, or a Ruff update" in output
+    assert output.count("--update-baseline") == 1
 
 
 def test_main_does_not_pair_moves_on_a_restricted_run(
