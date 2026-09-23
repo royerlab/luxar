@@ -665,6 +665,9 @@ def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
             if applied_floor is not None:
                 tile_data = np.clip(tile_data - applied_floor, 0.0, None)
             window = cosine_window(spec)
+            if float(np.max(tile_data * window)) < 1e-8:
+                weights.append(0.0)
+                continue
             hann_voxels = float(np.sum(window, dtype=np.float64))
             foreground = float(
                 np.sum(
