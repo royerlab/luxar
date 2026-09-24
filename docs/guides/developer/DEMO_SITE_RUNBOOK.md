@@ -818,8 +818,9 @@ Section 2's rule — hosted cost is **requests**, not bytes — is right, but "o
 request per node" is an *upper bound*, not a measurement. After
 `optimize --profile archive` (1 MB target) a big array spans many chunks while a
 small one spans exactly one, so cutting node count only cuts fetches in one of two
-regimes. The following counts come from the consolidated metadata at published
-prefix `2026-08-27b`; `arrays` excludes zero-shaped `array_ref` placeholders,
+regimes. The following historical counts come from consolidated metadata at the
+retired published prefix `2026-08-27b`; the live gallery prefix is
+`data/2026-09-12` (8.1). `arrays` excludes zero-shaped `array_ref` placeholders,
 `chunks` is the root `chunk_layout.chunks_after` value, and the eager columns apply
 the viewer's `default_level` deferral rule in
 `packages/luxar-viewer/src/data/scene-loader/nodes/load-lod-group-node.ts`. They
@@ -843,46 +844,52 @@ Two regimes, and the ratio tells you which one you are in:
 
 - **Node-bound (ratio ≈ 1).** Every eager array is a single chunk, so removing an
   eagerly loaded array removes approximately one request from the converged
-  default-level load. `codex_pancreas` is exactly 1.00 both store-wide and for
-  its eager subset; that load converges at 3,440 arrays/chunks, not all 10,320,
-  while its first committed rung needs 860. The 63-request
+  default-level load. In the retired `2026-08-27b` generation,
+  `codex_pancreas` was exactly 1.00 both store-wide and for its eager subset;
+  that load converged at 3,440 arrays/chunks, not all 10,320, while its first
+  committed rung needed 860. The 63-request
   stacked-leaf versus 689-request partition measurement in
   `packages/luxar/src/luxar/demos/_lod_policy.py` is not a reusable sublinear
   node-to-request law: it compares a byte-bound leaf with a node-bound partition.
 
-  **Measured 2026-08-28; hosted topology re-checked 2026-09-24.** The then-live
-  `2026-08-27b` store was rebuilt at a 4x coarser partition (172 parts -> 43)
-  and taken through `optimize --profile archive`:
-
-  | generation | parts | geometry groups | all groups | arrays | chunks | chunks:arrays |
-  |---|---:|---:|---:|---:|---:|---:|
-  | published `2026-08-27b` | 172 | 2764 | 2767 | 10320 | 10320 | 1.00 |
-  | rebuilt | 43 | 700 | 703 | 2580 | 2828 | 1.10 |
-
-  The three extra groups in the all-group count are the overlay wrapper and its
-  two text overlays; stating both counts keeps the structural comparison
-  like-for-like. The old prefix has since been retired. The current
-  `2026-09-12` root metadata independently confirms that the hosted store is the
-  43-part rebuild: 700 geometry groups (703 including overlays),
-  `arrays_total=2580`, and `chunks_after=2828`.
-
-  That is a **3.65x reduction in the full-detail chunk total**. Two cautions,
-  both of which the columns above exist to prevent: this is the whole-store
-  figure, *not* the converged eager load (the historical published store used
-  3,440 chunks) nor first paint (860); and the array count alone predicts 4.00x,
-  so **extrapolating from groups or arrays overstates the win**. The coarser
-  partition made arrays ~4x larger as well as ~4x fewer, moving the ratio
-  1.00 -> 1.10 toward byte-bound without leaving the node-bound regime. Only
-  re-running `optimize` gives the real number.
 - **Byte-bound (ratio >> 1).** Arrays span many chunks, so request count tracks
   total bytes and is nearly indifferent to node count. `cmu1`'s converged load
   fetches 508 chunks from 60 arrays, while its first rung fetches 127 from 15;
   both have ratio 8.47, so halving its node count would barely move either.
 
+#### Measured: re-tiling `codex_pancreas` at a 4x coarser partition
+
+**Measured 2026-08-28 in commit `99c1b0820` on the since-deleted
+`runbook-followup-codex-and-review-loop` branch; hosted topology re-checked
+2026-09-24.** The then-live `2026-08-27b` store was rebuilt at a 4x coarser
+partition (172 parts → 43) and taken through `optimize --profile archive`:
+
+| generation | parts | geometry groups | all groups | arrays | chunks | eager arrays | eager chunks | first-rung arrays | first-rung chunks | chunks:arrays |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| published `2026-08-27b` | 172 | 2764 | 2767 | 10320 | 10320 | 3440 | 3440 | 860 | 860 | 1.00 |
+| rebuilt | 43 | 700 | 703 | 2580 | 2828 | 860 | 860 | 215 | 215 | 1.10 |
+
+The three extra groups in the all-group count are the overlay wrapper and its
+two text overlays; stating both counts keeps the structural comparison
+like-for-like. The old prefix has since been retired. The current `2026-09-12`
+root metadata independently confirms that the hosted store is the 43-part
+rebuild: 700 geometry groups (703 including overlays), `arrays_total=2580`, and
+`chunks_after=2828`.
+
+The full-detail chunk total fell by **3.65x**, short of the 4.00x reduction in
+arrays because the coarser partition made each array larger. That shortfall is
+whole-store only: both the converged eager load and first committed rung fell by
+the full **4.00x**, to 860 and 215 arrays/chunks respectively, and the eager
+subset remains exactly 1.00 chunks:arrays. The whole-store ratio moved from
+1.00 → 1.10 toward byte-bound without leaving the node-bound regime. Only
+re-running `optimize` gives the real request count.
+
 **The ratio is a property of a pipeline STAGE, not of a store.** `optimize` is
-what moves these stores toward the node-bound regime. The same published roots
-record both pipeline stages in `chunk_layout`, so this comparison is reproducible
-from their `zarr.json` files without a separate local build:
+what moves these stores toward the node-bound regime. The same historical
+published roots recorded both pipeline stages in `chunk_layout`, so this
+comparison was reproducible from their `zarr.json` files while the retired
+`2026-08-27b` prefix was live. The current live prefix is `data/2026-09-12`
+(8.1); the table is retained as a historical measurement, not re-measured:
 
 | store | arrays | chunks before | before ratio | chunks after | after ratio |
 |---|---:|---:|---:|---:|---:|
@@ -1357,7 +1364,8 @@ internal node. The algebra on it lives in `core/group/partition.py`:
 `serialized_bsp_tree_straddles_centers`,
 `serialized_bsp_tree_axis_overlap_floors`, and `persist_pruned_bsp_tree`.
 
-Measured on published prefix `2026-08-27b`:
+Historical measurement from the retired published prefix `2026-08-27b`; the
+current live prefix is `data/2026-09-12` (8.1):
 
 | store | node | depth | leaves | axes |
 |---|---|---:|---:|---|
