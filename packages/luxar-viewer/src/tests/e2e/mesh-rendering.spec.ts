@@ -34,9 +34,9 @@ const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixture
 const MESH = `${FIXTURES_BASE}/test_mesh.luxar.zarr`;
 const MESH_ND = `${FIXTURES_BASE}/test_mesh_nd.luxar.zarr`;
 
-// `test.slow()` gives this test 180 s: after the 45 s commit wait, a 120 s
-// in-page cap leaves 15 s for navigation, setup, assertions, and reporting.
-const MESH_FADE_SWEEP_DEADLINE_MS = 120000;
+// `test.slow()` gives this test 180 s: the 45 s ready wait, 45 s commit wait,
+// and 75 s in-page cap leave 15 s for navigation, assertions, and reporting.
+const MESH_FADE_SWEEP_DEADLINE_MS = 75000;
 
 /** The `meshNodes` entry for `name`, or undefined. */
 interface MeshNodeInfo {
