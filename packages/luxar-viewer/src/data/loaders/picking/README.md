@@ -83,7 +83,10 @@ loader.dispose(); // clear array handles, decoded labels, and in-flight maps
 
 `getLabel` returns `null` when the node has no labels, the element's
 label is empty, or the index is out of range. A failed zarr fetch
-resolves to `null` rather than throwing. A node whose
+resolves to `null` rather than throwing. An absent channel, including a
+missing `label_bytes` array next to present offsets, is remembered for the
+session; other open or chunk-read failures are not cached, so a later hover
+retries them. A node whose
 `label_offsets` array is simply absent is the ordinary case — the picker
 calls `getLabel` for whatever it hit, and most nodes are unlabelled — so
 **that one open** is logged at info. Everything after it still logs a

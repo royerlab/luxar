@@ -154,12 +154,14 @@ export class LabelLoader {
     return { offsets, bytes };
   }
 
+  /** Return undefined for retryable failures; null is a cacheable missing or empty label. */
   private async fetchLabel(
     nodePath: string,
     elementIndex: number
   ): Promise<string | null | undefined> {
     try {
       const arrays = await this.loadArrays(nodePath);
+      // Permanently absent channels are already memoized by arraysCache.
       if (!arrays) return undefined;
       if (elementIndex >= arrays.offsets.shape[0] - 1) return null;
 
