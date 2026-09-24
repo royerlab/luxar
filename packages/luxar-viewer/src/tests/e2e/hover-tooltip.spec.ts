@@ -20,6 +20,7 @@
 
 import { test, expect, type Page } from './fixtures';
 import { waitForLuxarReady, waitForPointsLoaded, assertNoConsoleErrors } from './helpers';
+import { HOVER_SETTLE_MS } from '../../rendering/picking/picking-system/settle-loop';
 
 const DATASET =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_labelled_points.luxar.zarr';
@@ -157,54 +158,88 @@ test.describe('Hover-tooltip end-to-end (GPU picking + settle + overlay)', () =>
   }) => {
     // Move to a known canvas position and let everything settle from the load.
     await page.mouse.move(10, 10);
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(HOVER_SETTLE_MS + 80);
     const before = await readDiagnostics(page);
 
     // Move to a point's projected position and stay still
     const target = await getCanvasCentre(page);
     await page.mouse.move(target.x, target.y);
-    await page.waitForTimeout(250); // HOVER_SETTLE_MS + margin
+    await page.waitForTimeout(HOVER_SETTLE_MS + 130);
 
     const after = await readDiagnostics(page);
     expect(after.lastPickFiredTime).toBeGreaterThan(before.lastPickFiredTime);
   });
 
   test('cursor in continuous motion never triggers a pick', async ({ page }) => {
+    // Defensively drain any camera-settle pick armed by the tail of scene loading.
+    // The atomic baseline read and first move below are what close the race.
+    await page.mouse.move(10, 10);
+    await page.waitForTimeout(HOVER_SETTLE_MS + 80);
+
     // Sweep the cursor across the canvas without ever pausing. Drive the
-    // sweep from inside the browser so the gaps between dispatched
-    // mousemove events are bounded by `setTimeout(0)` (a few ms) rather
-    // than by Playwright IPC + Node-side `waitForTimeout` (~40 ms each,
+    // sweep from inside the browser so the gaps between dispatched events
+    // avoid Playwright IPC + Node-side `waitForTimeout` (~40 ms each,
     // and >150 ms under CI load). The previous implementation used per-
     // iteration `page.mouse.move` + `page.waitForTimeout(40)` and was
     // flaky on slow machines because individual gaps could exceed
     // HOVER_SETTLE_MS, allowing the settle loop to fire a pick.
-    const start = await readDiagnostics(page);
-    const target = await getCanvasCentre(page);
-
-    await page.evaluate(
-      async ([tx, ty]) => {
-        const canvas = document.querySelector('canvas');
-        if (!canvas) throw new Error('canvas missing');
-        for (let i = 0; i < 60; i++) {
-          const dx = (i % 7) - 3;
-          const dy = (Math.floor(i / 7) % 7) - 3;
-          const ev = new MouseEvent('mousemove', {
-            clientX: tx + dx * 4,
-            clientY: ty + dy * 4,
-            bubbles: true,
-            cancelable: true,
-          });
-          canvas.dispatchEvent(ev);
-          // ~16 ms between moves keeps the gap well below the 120 ms
-          // settle window even under heavy worker load.
-          await new Promise((r) => setTimeout(r, 16));
+    const sweep = await page.evaluate(async () => {
+      const debug = (
+        window as unknown as {
+          __luxarDebug: {
+            app: { pickingSystem?: { getDiagnostics: () => PickingDiagnostics } };
+            renderer: { domElement: HTMLCanvasElement };
+          };
         }
-      },
-      [target.x, target.y] as const
-    );
+      ).__luxarDebug;
+      const pickingSystem = debug?.app?.pickingSystem;
+      if (!pickingSystem) throw new Error('PickingSystem not initialized — fixture has no labels?');
+      const canvas = debug.renderer.domElement;
+      // Keep the centre calculation in-page so no Playwright IPC can split the
+      // baseline snapshot from the first dispatched move.
+      const rect = canvas.getBoundingClientRect();
+      const tx = rect.left + rect.width / 2;
+      const ty = rect.top + rect.height / 2;
+      const startPickFiredTime = pickingSystem.getDiagnostics().lastPickFiredTime;
+      let previousMoveTime = 0;
+      let maxMoveGap = 0;
+      const MOVE_COUNT = 60;
 
-    const after = await readDiagnostics(page);
-    expect(after.lastPickFiredTime).toBe(start.lastPickFiredTime);
+      for (let i = 0; i < MOVE_COUNT; i++) {
+        const moveTime = performance.now();
+        if (previousMoveTime !== 0) {
+          maxMoveGap = Math.max(maxMoveGap, moveTime - previousMoveTime);
+        }
+        previousMoveTime = moveTime;
+
+        const dx = (i % 7) - 3;
+        const dy = (Math.floor(i / 7) % 7) - 3;
+        const ev = new MouseEvent('mousemove', {
+          clientX: tx + dx * 4,
+          clientY: ty + dy * 4,
+          bubbles: true,
+          cancelable: true,
+        });
+        canvas.dispatchEvent(ev);
+        if (i < MOVE_COUNT - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 16));
+        }
+      }
+
+      return {
+        startPickFiredTime,
+        endPickFiredTime: pickingSystem.getDiagnostics().lastPickFiredTime,
+        maxMoveGap,
+      };
+    });
+
+    // Fail deterministically when the page stalls: a runaway render loop is
+    // actionable even though the scheduler is correct to fire after that pause.
+    expect(
+      sweep.maxMoveGap,
+      'runner stalled: inter-move gap exceeded the settle window — not a scheduler regression'
+    ).toBeLessThan(HOVER_SETTLE_MS);
+    expect(sweep.endPickFiredTime).toBe(sweep.startPickFiredTime);
   });
 });
 
