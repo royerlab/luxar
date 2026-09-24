@@ -1,9 +1,3 @@
 {
-  "exceptions": [
-    {
-      "file": "src/tests/e2e/mesh-rendering.spec.ts",
-      "test": "flying into a mesh fades it out smoothly instead of clipping (#1431)",
-      "reason": "PR #2890 adds the dedicated slow-test budget while optimizing this sweep."
-    }
-  ]
+  "exceptions": []
 }

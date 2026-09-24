@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { analyzeSpec, compareViolationsToExceptions } from './check-e2e-timeout-budgets.mjs';
+import {
+  analyzeSpec,
+  compareViolationsToExceptions,
+  projectTestTimeout,
+} from './check-e2e-timeout-budgets.mjs';
 
 describe('analyzeSpec', () => {
   it('flags a long explicit wait without a test budget', () => {
@@ -110,6 +114,18 @@ describe('analyzeSpec', () => {
     expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
   });
 
+  it('uses the supplied project-derived threshold', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test('crosses a smaller project threshold', async ({ page }) => {
+        await page.waitForTimeout(25_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts', 20_000)).toHaveLength(1);
+  });
+
   it('reads explicit deadline arguments passed to shared wait helpers', () => {
     const source = `
       import { test } from '@playwright/test';
@@ -126,6 +142,29 @@ describe('analyzeSpec', () => {
         file: 'src/tests/e2e/example.spec.ts',
         line: 5,
         test: 'loads a large scene',
+      },
+    ]);
+  });
+
+  it('includes long deadlines from enclosing hooks', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('group', () => {
+        test.beforeEach(async ({ page }) => {
+          await page.waitForFunction(() => window.ready, undefined, { timeout: 45_000 });
+        });
+
+        test('inherits the hook deadline', async () => {});
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 9,
+        test: 'inherits the hook deadline',
       },
     ]);
   });
@@ -170,5 +209,21 @@ describe('compareViolationsToExceptions', () => {
         },
       ],
     });
+  });
+});
+
+describe('projectTestTimeout', () => {
+  it('reads the test timeout without confusing web-server or expect timeouts', () => {
+    const source = `
+      const TEST_TIMEOUT = 60_000;
+
+      export default defineConfig({
+        webServer: { timeout: 15_000 },
+        timeout: TEST_TIMEOUT,
+        expect: { timeout: 10_000 },
+      });
+    `;
+
+    expect(projectTestTimeout(source)).toBe(60_000);
   });
 });

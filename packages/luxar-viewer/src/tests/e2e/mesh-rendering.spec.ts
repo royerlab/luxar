@@ -265,6 +265,8 @@ test.describe('Mesh rendering', () => {
   });
 
   test('flying into a mesh fades it out smoothly instead of clipping (#1431)', async ({ page }) => {
+    test.slow();
+
     // Mesh was the one geometry type with no `perspectiveNearFade`: a triangle
     // clipped hard against the near plane while the other three faded. This pins the
     // fixed behaviour where it is observable — in framebuffer pixels, through the

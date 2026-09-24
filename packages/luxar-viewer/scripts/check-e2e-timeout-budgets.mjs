@@ -9,6 +9,7 @@ export const LONG_DEADLINE_THRESHOLD_MS = 30_000;
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SPEC_ROOT = join(PACKAGE_ROOT, 'src/tests/e2e');
 const EXCEPTIONS_PATH = join(PACKAGE_ROOT, 'scripts/e2e-timeout-budget-exceptions.json');
+const PLAYWRIGHT_CONFIG_PATH = join(PACKAGE_ROOT, 'playwright.config.ts');
 const DEADLINE_NAME = /(timeout|deadline)/i;
 
 function propertyName(node) {
@@ -140,6 +141,19 @@ function deadlineCandidates(callback, constants, helpers) {
   return deadlines.filter((value) => value !== undefined && Number.isFinite(value));
 }
 
+function hookDeadline(statements, constants, helpers) {
+  const deadlines = statements.flatMap((statement) => {
+    if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
+      return [];
+    }
+    const path = callPath(statement.expression.expression).join('.');
+    if (path !== 'test.beforeEach' && path !== 'test.afterEach') return [];
+    const callback = callbackArgument(statement.expression);
+    return callback ? deadlineCandidates(callback, constants, helpers) : [];
+  });
+  return Math.max(0, ...deadlines);
+}
+
 function collectCallDeadlines(call, constants, helpers, deadlines) {
   const path = callPath(call.expression);
   if (path.at(-1) === 'waitForTimeout')
@@ -156,22 +170,23 @@ function collectCallDeadlines(call, constants, helpers, deadlines) {
 
 function findTests(sourceFile, constants, helpers, file) {
   const violations = [];
-  const visit = (node, inheritedBudget = false) => {
+  const visit = (node, inheritedBudget = false, inheritedDeadlineMs = 0) => {
     if (ts.isCallExpression(node)) {
       const path = callPath(node.expression);
       const callback = callbackArgument(node);
       if (callback && path[0] === 'test' && path[1] === 'describe') {
-        visit(callback.body, inheritedBudget || hasDirectBudget(callback, true));
+        const statements = ts.isBlock(callback.body) ? callback.body.statements : [];
+        visit(
+          callback.body,
+          inheritedBudget || hasDirectBudget(callback, true),
+          Math.max(inheritedDeadlineMs, hookDeadline(statements, constants, helpers))
+        );
         return;
       }
       if (callback && (path.join('.') === 'test' || path.join('.') === 'test.only')) {
         const deadlines = deadlineCandidates(callback, constants, helpers);
-        const deadlineMs = Math.max(0, ...deadlines);
-        if (
-          deadlineMs > LONG_DEADLINE_THRESHOLD_MS &&
-          !inheritedBudget &&
-          !hasDirectBudget(callback, false)
-        ) {
+        const deadlineMs = Math.max(inheritedDeadlineMs, ...deadlines);
+        if (deadlineMs > 0 && !inheritedBudget && !hasDirectBudget(callback, false)) {
           violations.push({
             deadlineMs,
             file,
@@ -182,16 +197,49 @@ function findTests(sourceFile, constants, helpers, file) {
         return;
       }
     }
-    ts.forEachChild(node, (child) => visit(child, inheritedBudget));
+    ts.forEachChild(node, (child) => visit(child, inheritedBudget, inheritedDeadlineMs));
   };
-  visit(sourceFile, hasBudgetStatements(sourceFile.statements, true));
+  visit(
+    sourceFile,
+    hasBudgetStatements(sourceFile.statements, true),
+    hookDeadline(sourceFile.statements, constants, helpers)
+  );
   return violations;
 }
 
-export function analyzeSpec(sourceText, file) {
+export function analyzeSpec(sourceText, file, thresholdMs = LONG_DEADLINE_THRESHOLD_MS) {
   const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true);
   const constants = constantDeclarations(sourceFile);
-  return findTests(sourceFile, constants, localHelpers(sourceFile, constants), file);
+  return findTests(sourceFile, constants, localHelpers(sourceFile, constants), file).filter(
+    (violation) => violation.deadlineMs > thresholdMs
+  );
+}
+
+export function projectTestTimeout(sourceText) {
+  const sourceFile = ts.createSourceFile(
+    'playwright.config.ts',
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true
+  );
+  const assignment = sourceFile.statements.find(ts.isExportAssignment);
+  const configCall = assignment?.expression;
+  if (!configCall || !ts.isCallExpression(configCall)) {
+    throw new Error('Could not find exported Playwright config.');
+  }
+  const config = configCall.arguments[0];
+  if (!config || !ts.isObjectLiteralExpression(config)) {
+    throw new Error('Playwright config must be an object literal.');
+  }
+  const timeout = config.properties.find(
+    (property) => ts.isPropertyAssignment(property) && propertyName(property.name) === 'timeout'
+  );
+  const value =
+    timeout && ts.isPropertyAssignment(timeout)
+      ? evaluateNumber(timeout.initializer, constantDeclarations(sourceFile))
+      : undefined;
+  if (!value) throw new Error('Could not read the Playwright test timeout.');
+  return value;
 }
 
 function exceptionKey(entry) {
@@ -239,8 +287,9 @@ function formatViolation(violation) {
 }
 
 export function runCheck() {
+  const thresholdMs = projectTestTimeout(readFileSync(PLAYWRIGHT_CONFIG_PATH, 'utf8')) / 2;
   const violations = specFiles().flatMap((path) =>
-    analyzeSpec(readFileSync(path, 'utf8'), normalizedRelative(path))
+    analyzeSpec(readFileSync(path, 'utf8'), normalizedRelative(path), thresholdMs)
   );
   const result = compareViolationsToExceptions(violations, loadExceptions());
   for (const violation of result.newViolations)
