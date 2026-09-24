@@ -20,9 +20,10 @@ interface LabelArrays {
 }
 
 const DEFAULT_MAX_CACHE_BYTES = 1024 * 1024;
+const MIN_CACHE_ENTRY_BYTES = 64;
 
 function cachedLabelSize(label: string | null): number {
-  return label === null ? 1 : Math.max(1, label.length * 2);
+  return Math.max(MIN_CACHE_ENTRY_BYTES, (label?.length ?? 0) * 2);
 }
 
 function decodeByteRange(offsets: BigUint64Array): { start: number; end: number } | null {

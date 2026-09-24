@@ -145,10 +145,22 @@ describe('LabelLoader.getLabel', () => {
     expect(mockGet).toHaveBeenCalledTimes(2);
   });
 
+  it('coalesces array opens across concurrent reads of different elements', async () => {
+    const loader = makeLoader();
+    programArrays(['left', 'right']);
+
+    await expect(
+      Promise.all([loader.getLabel('/Points', 0), loader.getLabel('/Points', 1)])
+    ).resolves.toEqual(['left', 'right']);
+    expect(mockOpen).toHaveBeenCalledTimes(2);
+    expect(mockGet).toHaveBeenCalledTimes(4);
+  });
+
   it('returns null for an empty label without reading label_bytes', async () => {
     const loader = makeLoader();
     programArrays(['filled', '']);
 
+    expect(await loader.getLabel('/Points', 1)).toBeNull();
     expect(await loader.getLabel('/Points', 1)).toBeNull();
     expect(mockGet).toHaveBeenCalledTimes(1);
     expect(selectedRange(0)).toEqual({ start: 1, end: 3 });
@@ -165,7 +177,7 @@ describe('LabelLoader.getLabel', () => {
   });
 
   it('uses a bounded LRU for decoded labels', async () => {
-    const loader = makeLoader(4);
+    const loader = makeLoader(64);
     programArrays(['aa', 'bb']);
 
     expect(await loader.getLabel('/Points', 0)).toBe('aa');
