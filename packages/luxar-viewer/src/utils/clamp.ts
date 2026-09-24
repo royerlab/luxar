@@ -3,9 +3,8 @@
  *
  * Lives in `utils/` (the cross-cutting foundation layer) so any layer can
  * import it without crossing layer boundaries. The original copy lived in
- * `ui/slider-kit/format.ts`, which is unreachable from `rendering`
- * under the dependency-cruiser layer order. `slider-kit/format.ts` now
- * re-exports this for back-compat.
+ * `ui/gui/format/value-formatting.ts`, which was unreachable from `rendering`
+ * under the dependency-cruiser layer order.
  *
  * @module utils/clamp
  */

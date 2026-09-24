@@ -1,8 +1,8 @@
-# GUI Value-Formatting Helpers
+# GUI Focus Helpers
 
-Small helpers shared by the custom GUI controllers: keep input focus from
-sticking, format numbers consistently with their step size, and parse
-user input safely.
+Small helpers shared by the custom GUI controllers to keep input focus from
+sticking after an interaction. Slider number formatting now lives in
+[`../../slider-kit/`](../../slider-kit/README.md).
 
 ## Files
 
@@ -20,18 +20,6 @@ user input safely.
   Listeners are registered through the controller's
   [`EventManager`](../dom/event-manager.ts) so they are cleaned up when
   the controller is disposed.
-
-- `value-formatting.ts` — Numeric formatting and parsing helpers, plus a
-  re-export of `clamp`:
-  - `formatNumber(value, step?)` — Formats `value` with as many decimal
-    places as `step` implies (derived from the decimal portion of
-    `String(step)`). Falls back to `String(value)` when no step is
-    given.
-  - `parseNumber(str, fallback)` — `parseFloat` with a fallback when the
-    result is `NaN`.
-  - `clamp` — Re-exported from `../../../utils/clamp` for back-compat
-    with existing `ui/` callers; new code outside this folder should
-    import it from `src/utils/clamp.ts` directly.
 
 ## Why auto-blur matters
 

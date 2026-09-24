@@ -66,7 +66,8 @@ ui/
 │   ├── gui.ts, controller.ts, folder.ts, types.ts
 │   ├── controllers/                    # per-type controllers
 │   ├── dom/                            # DOM plumbing
-│   └── format/                         # value-formatting + auto-blur
+│   └── format/                         # input auto-blur helpers
+├── slider-kit/                         # shared slider gestures, formatting, grids, and editing
 ├── rendering-controls/
 │   ├── focus-manager.ts, cinematic-mode.ts, apply-settings.ts,
 │   │ sync-current-state.ts, settings-persistence.ts,

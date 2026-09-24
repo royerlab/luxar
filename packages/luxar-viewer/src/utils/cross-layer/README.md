@@ -1,6 +1,6 @@
 # Cross-Layer Plumbing
 
-Dependency-inversion seams that let lower viewer layers (`data`, `scene`, `input`) push state and surface user-visible messages to the UI without importing UI modules directly. Three small primitives sit here — a typed pub/sub bus, a single-backend notifier facade, and a per-component DOM-listener group — collectively enforcing the layer order documented in `CONVENTIONS.md` §10.
+Dependency-inversion seams that let lower viewer layers (`data`, `scene`, `input`) share small contracts and surface user-visible messages without importing UI modules directly. Four primitives sit here — a typed pub/sub bus, a single-backend notifier facade, a per-component DOM-listener group, and the shared slider modifier ladder — collectively enforcing the layer order documented in `CONVENTIONS.md` §10.
 
 ## Architecture
 
@@ -8,12 +8,20 @@ Dependency-inversion seams that let lower viewer layers (`data`, `scene`, `input
 cross-layer/
 ├── event-bus.ts     # Typed pub/sub: many subscribers per event, payload-typed catalog
 ├── event-group.ts   # DOM-listener collection with single-call LIFO teardown
-└── notifier.ts      # Single-backend method dictionary (toast, error, help, loading)
+├── modifier-tiers.ts # Shift/Ctrl step multipliers shared by scene, input, and UI
+└── notifier.ts       # Single-backend method dictionary (toast, error, help, loading)
 ```
 
 The bus and the notifier are deliberately distinct: the **notifier** has one backend and a fixed method dictionary (the UI bootstrap calls `setNotifierBackend(...)` once); the **bus** has open subscriber sets typed against `LuxarEventMap` and lets panels subscribe late without bootstrap-order coupling. `EventGroup` is unrelated to either — it's a lifecycle helper that any component (UI or otherwise) uses to bundle its DOM listeners.
 
 ## Modules
+
+### modifier-tiers.ts — Shared Step Ladder
+
+`applyModifierTier(baseStep, modifiers, options?)` applies the common slider
+law: no modifier ×1, Shift ÷10, Control ×10, and Control+Shift ÷100. It accepts
+both DOM `shiftKey`/`ctrlKey` flags and the nD-navigation `shift`/`ctrl` shape so
+lower layers can share the contract without importing `ui/`.
 
 ### event-bus.ts — Typed Pub/Sub
 
