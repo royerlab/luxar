@@ -7,8 +7,9 @@ Enforces ruff's ``flake8-bugbear`` (``B``) and ``flake8-blind-except``
 Pre-existing violations are tolerated via a checked-in baseline
 (``scripts/lint_baseline.json``), but a NEW violation — or an extra one in an
 already-baselined file — fails the check. Regenerate the baseline with
-``--update-baseline``; paid-down debt is reported as advisory (exit 0) so the
-baseline can be tightened the same way.
+``--update-baseline``; paid-down debt also fails a full run until the baseline is
+tightened. Restricted runs keep it advisory because keys outside the explicit
+targets were not scanned.
 
 WHY THESE RULES
 ---------------
@@ -38,7 +39,7 @@ WHY A SCRIPT INSTEAD OF ``[tool.ruff.lint] select``
 The same reason ``C901`` is ratcheted by ``scripts/check_complexity.py``: ruff
 has no baseline mechanism. A bare
 ``select = ["B", "BLE", "RUF012"]`` would fail on all pre-existing violations
-(651 across 338 file/rule keys at the time of writing; 289 are ``B905``), so it
+(641 across 334 file/rule keys at the time of writing; 281 are ``B905``), so it
 could not be enabled without a large, unrelated sweep. For ``B905``, that sweep
 is also *behaviour-changing*: ``strict=True`` RAISES on mismatched lengths. That
 is a decision per call site, not a mechanical edit. Ruff's root resolved
@@ -107,7 +108,8 @@ BASELINE_COMMENT = (
     "with: hatch run check-lint-ratchet --update-baseline. Each key is "
     "'<repo-relative-path>::<ruff code>' and maps to the NUMBER of violations "
     "of that code in that file. A key absent from here, or one whose count "
-    "exceeds its baselined value, fails the check. 'rules' records the "
+    "exceeds its baselined value, fails the check. A missing or lower-count "
+    "entry also fails until the baseline is refreshed. 'rules' records the "
     "--select used. 'settings_fingerprint' records Ruff's normalized root "
     "resolved settings. Either mismatch fails rather than silently retiring debt."
 )
@@ -132,8 +134,8 @@ def is_ratcheted_code(code: str) -> bool:
 class RatchetReport:
     """Classification of the current findings against the baseline.
 
-    ``new`` and ``worsened`` are the FAILING sets; ``improved`` is advisory
-    (debt paid down — regenerate the baseline to lock it in).
+    Every changed bucket fails a full run. ``improved`` remains advisory on
+    restricted runs, where omitted keys may simply be unscanned.
     """
 
     new: list[str] = field(default_factory=list)
@@ -592,8 +594,8 @@ def _print_report(
     """Print the human summary of ``report``; returns the exit code.
 
     ``restricted`` marks a run over explicit target paths rather than the whole
-    lint scope: keys outside those paths look vanished, so the advisory that
-    would otherwise invite ``--update-baseline`` is replaced by a caveat.
+    lint scope: keys outside those paths look vanished, so the full-run failure
+    and ``--update-baseline`` remedy are replaced by a caveat.
     """
     total = sum(current.values())
 
@@ -615,14 +617,16 @@ def _print_report(
             "keys outside them merely went unscanned — they were not fixed. Do "
             "NOT run --update-baseline from a restricted run."
         )
-    elif report.improved:
-        aprint(
-            "\n   Nice — some lint debt was paid down. Run --update-baseline to "
-            "tighten the baseline so it can't come back."
-        )
-
     if report.new or report.worsened:
         _print_regressions(report, current, baseline, restricted)
+        return 1
+
+    if not restricted and report.improved:
+        aprint(
+            "\n❌ Baseline no longer matches the current tree. This can follow "
+            "your change, a dev merge, or a Ruff update. Run --update-baseline "
+            "and commit the regenerated baseline."
+        )
         return 1
 
     aprint("\n✅ No new lint regressions.")

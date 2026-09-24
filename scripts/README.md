@@ -18,11 +18,11 @@ scripts/
 | Script | Purpose |
 |--------|---------|
 | `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage, with an unbaselineable changelog-fragment format check (JSON output) |
-| `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
+| `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails on newly over-complex or worsened functions, and when the baseline is over-declared) |
 | `check_cadence_liveness.py` | Check GitHub Actions workflow cadences for missing or stale successes using an `actions: read` token; only workflow cadences are visible to this check |
 | `check_layer_order.py` | Assert the `Subpackage layering` order is still the measured minimum and that its dated debt list has not grown |
 | `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, PyPI size limits, viewer dist bundled, and long-description links valid and release-pinned |
-| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`), flake8-blind-except (`BLE`), and `RUF012` (fails only on newly-broken rules) |
+| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`), flake8-blind-except (`BLE`), and `RUF012` (fails on newly broken rules and when the baseline is over-declared) |
 | `ruff_ratchet.py` | Shared fail-closed Ruff settings, nested-config, and scan-coverage guards used by both baseline ratchets |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
@@ -182,14 +182,15 @@ ratchet, the same shape as the documentation ratchet above.
 **Purpose:**
 - Run `ruff check --select C901` over the same paths as `hatch run lint`
 - Tolerate the pre-existing over-limit functions recorded in
-  `scripts/complexity_baseline.json` (228 at the time of writing)
+  `scripts/complexity_baseline.json` (195 at the time of writing)
 - Fail (exit 1) when a function is newly over the limit, or when a baselined
   one gets *more* complex
-- Report paid-down debt as advisory (exit 0) so the baseline can be tightened
+- Fail (exit 1) when paid-down debt leaves the baseline over-declared; run
+  `--update-baseline` and commit the tightened baseline
 - Report a *move* (a baselined function reappearing under a new path at no
-  greater complexity, with or without a tidy-up) as advisory too, itemised
-  old-key-to-new-key, so a module-move series is not a false red. Full runs
-  only — see the restricted-scan note below
+  greater complexity, with or without a tidy-up) itemised old-key-to-new-key,
+  and fail until `--update-baseline` re-keys it. Full runs only — see the
+  restricted-scan note below
 - Fail closed (exit 2) rather than green whenever the scan cannot be trusted: a
   ruff that did not run, a target ruff could not read (its `Failed to lint`
   warning otherwise leaves a partial scan behind a normal exit code), an
@@ -202,7 +203,7 @@ ratchet, the same shape as the documentation ratchet above.
 
 `C901` is deliberately not in `[tool.ruff.lint] select`: ruff has no baseline
 mechanism, and its only native suppression (`per-file-ignores`) is
-file-granular, so it would blind the guard to new offenders in the 151 files
+file-granular, so it would blind the guard to new offenders in the 140 files
 that already hold a violation.
 
 **Usage:**
@@ -212,7 +213,8 @@ that already hold a violation.
 hatch run check-complexity
 make check-complexity
 
-# (Re)write the baseline from the current state, then exit 0
+# (Re)write the baseline from the current state, then exit 0. After merging
+# dev, regenerate this file instead of hand-resolving a baseline conflict.
 hatch run check-complexity --update-baseline
 
 # Point at a non-default baseline
@@ -266,10 +268,11 @@ handlers (`BLE001`) can hide unrelated defects.
 **Purpose:**
 - Run `ruff check --select B,BLE,RUF012` over the same paths as `hatch run lint`
 - Tolerate the pre-existing violations recorded in `scripts/lint_baseline.json`
-  (651 across 338 file/rule keys at the time of writing, 289 of them `B905`)
+  (641 across 334 file/rule keys at the time of writing, 281 of them `B905`)
 - Fail (exit 1) when a file newly breaks a rule, or gains another violation of
   a rule it already breaks
-- Report paid-down debt as advisory (exit 0) so the baseline can be tightened
+- Fail (exit 1) when paid-down debt leaves the baseline over-declared; run
+  `--update-baseline` and commit the tightened baseline
 - Fail closed (exit 2) rather than green whenever the scan cannot be trusted —
   the same three cases the complexity ratchet documents, plus a baseline whose
   recorded `rules` disagree with the selection (shrink the selection and every
@@ -285,7 +288,7 @@ handlers (`BLE001`) can hide unrelated defects.
 These rules are deliberately not in `[tool.ruff.lint] select` for the same
 reason as `C901` — ruff has no baseline mechanism, and here the sweep would also
 be *behaviour-changing*: `zip(..., strict=True)` **raises** on mismatched
-lengths, so each of the 289 `B905` sites is a decision, not a mechanical edit.
+lengths, so each of the 281 `B905` sites is a decision, not a mechanical edit.
 
 `B008` is absent from the baseline on purpose. All 83 findings were
 `typer.Option(...)` / `typer.Argument(...)` in a parameter default — the
@@ -300,7 +303,8 @@ declares those two calls immutable and the ratchet gates `B008` at **zero**.
 hatch run check-lint-ratchet
 make check-lint-ratchet
 
-# (Re)write the baseline from the current state, then exit 0
+# (Re)write the baseline from the current state, then exit 0. After merging
+# dev, regenerate this file instead of hand-resolving a baseline conflict.
 hatch run check-lint-ratchet --update-baseline
 
 # Restrict the scan to some paths (same restricted-run caveats as above)

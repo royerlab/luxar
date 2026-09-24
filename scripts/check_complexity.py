@@ -6,16 +6,17 @@ Enforces ``[tool.ruff.lint.mccabe] max-complexity`` as a baseline-driven
 *ratchet*: pre-existing over-limit functions are tolerated via a checked-in
 baseline (``scripts/complexity_baseline.json``), but a function that is NEWLY
 over the limit — or an already-baselined one whose complexity INCREASED — fails
-the check. Regenerate the baseline with ``--update-baseline``; paid-down debt and
-functions that merely MOVED (same name, no greater complexity, new file) are
-reported as advisory (exit 0) so the baseline can be re-keyed or tightened the
-same way.
+the check. Paid-down debt and functions that merely MOVED (same name, no greater
+complexity, new file) also fail a full run until ``--update-baseline`` re-keys or
+tightens the baseline. Restricted runs disable move pairing, so relocations are
+reported as new; paid-down or vanished keys remain advisory because keys outside
+the explicit targets were not scanned.
 
 Why a script instead of putting ``C901`` in ``[tool.ruff.lint] select``?
 ruff has no baseline mechanism. A bare ``select`` entry would fail on all
-pre-existing violations (228 at the time of writing), so it could not be turned
+pre-existing violations (195 at the time of writing), so it could not be turned
 on at all without a large, unrelated refactor. The only ruff-native suppression
-is ``per-file-ignores``, which is *file*-granular: silencing the 151 files that
+is ``per-file-ignores``, which is *file*-granular: silencing the 140 files that
 currently hold a violation would also blind the guard to brand-new offenders
 inside those very files — precisely the code most likely to grow. This checker
 selects the rule explicitly and diffs the findings against the baseline, so the
@@ -70,8 +71,10 @@ BASELINE_COMMENT = (
     "complexities of the over-limit functions with that name in that file (a "
     "list, because one file may hold several same-named functions). A function "
     "not listed here, or one whose complexity exceeds its baselined value, "
-    "fails the check. 'settings_fingerprint' records Ruff's normalized root "
-    "resolved settings; a mismatch fails rather than silently retiring debt."
+    "fails the check. A missing, moved, or lower-complexity entry also fails "
+    "until the baseline is refreshed. 'settings_fingerprint' records Ruff's "
+    "normalized root resolved settings; a mismatch fails rather than silently "
+    "retiring debt."
 )
 
 # ruff's C901 message, e.g. "`robust_download` is too complex (66 > 10)".
@@ -86,8 +89,9 @@ _UNSCANNED_RE = re.compile(r"Failed to lint ")
 class RatchetReport:
     """Classification of the current findings against the baseline.
 
-    ``new`` and ``worsened`` are the FAILING sets; ``improved`` and ``moved`` are
-    advisory (debt paid down / re-keyed — regenerate the baseline to lock it in).
+    Every changed bucket fails a full run. Restricted runs disable move pairing,
+    so relocations are reported as ``new``; ``improved`` remains advisory because
+    omitted keys may simply be unscanned.
     """
 
     new: list[str] = field(default_factory=list)
@@ -432,12 +436,13 @@ def evaluate_ratchet(
       i-th descending-sorted complexity above the baseline's i-th.
     - ``moved``: a vanished baseline key paired one-to-one with a ``new`` key
       naming the same function at no greater complexity — a module move, with or
-      without a tidy-up on the way (see ``_pair_moves``). Advisory: a pair can
-      never add debt, so the ratchet's invariant still holds. The baseline should
-      still be regenerated to re-key it. Pass ``pair_moves=False`` when the scan
-      was PARTIAL (explicit target paths): every baseline key outside the scanned
-      targets then looks vanished and would be an eligible pairing candidate, so
-      a genuinely new function could be absorbed by a file that was never read.
+      without a tidy-up on the way (see ``_pair_moves``). A full run fails until
+      the baseline is regenerated to re-key it. Move pairing is disabled when
+      ``pair_moves=False`` for a PARTIAL scan (explicit target paths), so a
+      relocation is reported as ``new`` rather than ``moved``: every baseline
+      key outside the scanned targets then looks vanished and would be an
+      eligible pairing candidate, so a genuinely new function could otherwise
+      be absorbed by a file that was never read.
     - ``improved``: a key that is strictly better (fewer entries or a lower
       complexity), plus unpaired keys that vanished entirely (fixed or deleted).
     - ``unchanged``: the rest (tolerated pre-existing debt).
@@ -644,9 +649,9 @@ def _print_report(
     """Print the human summary of ``report``; returns the exit code.
 
     ``restricted`` marks a run over explicit target paths rather than the whole
-    lint scope: keys outside those paths look vanished, so the advisory that
-    would otherwise invite ``--update-baseline`` is replaced by a caveat (and
-    ``main`` disables move pairing upstream, so ``moved`` is empty there).
+    lint scope: keys outside those paths look vanished, so the full-run failure
+    and ``--update-baseline`` remedy are replaced by a caveat (and ``main``
+    disables move pairing upstream, so ``moved`` is empty there).
     """
     total = sum(len(v) for v in current.values())
 
@@ -661,8 +666,7 @@ def _print_report(
     aprint(f"✨ Improved: {len(report.improved)}")
 
     if report.moved:
-        # Itemised here rather than only on the failing path, so a green run's
-        # move count is auditable instead of being a bare number.
+        # Itemise the move count so it is auditable instead of a bare number.
         aprint(
             "\n   Some baselined functions relocated (total debt never "
             "increased); run --update-baseline to re-key the baseline:\n"
@@ -676,14 +680,16 @@ def _print_report(
             "keys outside them merely went unscanned — they were not fixed. Do "
             "NOT run --update-baseline from a restricted run."
         )
-    elif report.improved:
-        aprint(
-            "\n   Nice — some complexity debt was paid down. Run "
-            "--update-baseline to tighten the baseline so it can't come back."
-        )
-
     if report.new or report.worsened:
         _print_regressions(report, current, baseline, restricted)
+        return 1
+
+    if not restricted and (report.moved or report.improved):
+        aprint(
+            "\n❌ Baseline no longer matches the current tree. This can follow "
+            "your change, a dev merge, or a Ruff update. Run --update-baseline "
+            "and commit the regenerated baseline."
+        )
         return 1
 
     aprint("\n✅ No new complexity regressions.")
