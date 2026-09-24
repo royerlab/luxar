@@ -158,21 +158,21 @@ test.describe('Hover-tooltip end-to-end (GPU picking + settle + overlay)', () =>
   }) => {
     // Move to a known canvas position and let everything settle from the load.
     await page.mouse.move(10, 10);
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(HOVER_SETTLE_MS + 80);
     const before = await readDiagnostics(page);
 
     // Move to a point's projected position and stay still
     const target = await getCanvasCentre(page);
     await page.mouse.move(target.x, target.y);
-    await page.waitForTimeout(250); // HOVER_SETTLE_MS + margin
+    await page.waitForTimeout(HOVER_SETTLE_MS + 130);
 
     const after = await readDiagnostics(page);
     expect(after.lastPickFiredTime).toBeGreaterThan(before.lastPickFiredTime);
   });
 
   test('cursor in continuous motion never triggers a pick', async ({ page }) => {
-    // Drain any camera-settle pick armed by the tail of scene loading before
-    // defining the sweep's assertion window.
+    // Defensively drain any camera-settle pick armed by the tail of scene loading.
+    // The atomic baseline read and first move below are what close the race.
     await page.mouse.move(10, 10);
     await page.waitForTimeout(HOVER_SETTLE_MS + 80);
 
@@ -195,14 +195,17 @@ test.describe('Hover-tooltip end-to-end (GPU picking + settle + overlay)', () =>
       const pickingSystem = debug?.app?.pickingSystem;
       if (!pickingSystem) throw new Error('PickingSystem not initialized — fixture has no labels?');
       const canvas = debug.renderer.domElement;
+      // Keep the centre calculation in-page so no Playwright IPC can split the
+      // baseline snapshot from the first dispatched move.
       const rect = canvas.getBoundingClientRect();
       const tx = rect.left + rect.width / 2;
       const ty = rect.top + rect.height / 2;
       const startPickFiredTime = pickingSystem.getDiagnostics().lastPickFiredTime;
       let previousMoveTime = 0;
       let maxMoveGap = 0;
+      const MOVE_COUNT = 60;
 
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < MOVE_COUNT; i++) {
         const moveTime = performance.now();
         if (previousMoveTime !== 0) {
           maxMoveGap = Math.max(maxMoveGap, moveTime - previousMoveTime);
@@ -218,7 +221,7 @@ test.describe('Hover-tooltip end-to-end (GPU picking + settle + overlay)', () =>
           cancelable: true,
         });
         canvas.dispatchEvent(ev);
-        if (i < 59) {
+        if (i < MOVE_COUNT - 1) {
           await new Promise((resolve) => setTimeout(resolve, 16));
         }
       }
@@ -230,7 +233,12 @@ test.describe('Hover-tooltip end-to-end (GPU picking + settle + overlay)', () =>
       };
     });
 
-    expect(sweep.maxMoveGap).toBeLessThan(HOVER_SETTLE_MS);
+    // Fail deterministically when the page stalls: a runaway render loop is
+    // actionable even though the scheduler is correct to fire after that pause.
+    expect(
+      sweep.maxMoveGap,
+      'runner stalled: inter-move gap exceeded the settle window — not a scheduler regression'
+    ).toBeLessThan(HOVER_SETTLE_MS);
     expect(sweep.endPickFiredTime).toBe(sweep.startPickFiredTime);
   });
 });
