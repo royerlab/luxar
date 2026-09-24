@@ -430,15 +430,17 @@ least diagnosable way for a diagnostic test to fail.
 `pnpm check:e2e-timeout-budgets` enforces that rule for deadlines above half the
 default project's test timeout (30 s with today's 60 s budget). It reads
 explicit `timeout` options, numeric arguments passed to wait helpers, local
-wait-helper defaults, and module-level timeout/deadline constants used by each
-test. Imported helper defaults, deadlines inside local helper bodies, and
-`beforeAll`/`afterAll` hooks remain out of scope; #2897 tracks that gap.
+wait-helper defaults, imported defaults from `./helpers` and `./helpers/*`, and
+module-level timeout/deadline constants used by each test. Deadlines inside
+local helper bodies and `beforeAll`/`afterAll` hooks remain out of scope.
 `test.slow()`, `test.setTimeout()`, or an enclosing
 `test.describe.configure({ timeout })` supplies the budget. If the static
 heuristic cannot model a case, add its file, source line, test title, and a specific reason
 to `scripts/e2e-timeout-budget-exceptions.json`; stale exceptions fail the
 check and must be removed when the test gains a budget or stops using the long
-deadline.
+deadline. Existing imported-default exposure is recorded by per-file count in
+`scripts/e2e-timeout-budget-baseline.json`; a higher count fails, and a lower
+count also fails until the baseline is tightened.
 
 ### Pattern for a new helper
 

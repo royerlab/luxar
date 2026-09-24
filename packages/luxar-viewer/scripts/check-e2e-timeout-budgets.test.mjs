@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   analyzeSpec,
   compareViolationsToExceptions,
+  compareViolationCountsToBaseline,
   isDefaultConfigSpec,
   projectTestTimeout,
 } from './check-e2e-timeout-budgets.mjs';
@@ -204,6 +205,58 @@ describe('analyzeSpec', () => {
     ]);
   });
 
+  it('resolves aliased defaults from exported shared helpers', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForLuxarReady as waitForReady } from './helpers';
+
+      test('uses the imported default', async ({ page }) => {
+        await waitForReady(page);
+      });
+
+      test('overrides the imported default', async ({ page }) => {
+        await waitForReady(page, 20_000);
+      });
+    `;
+    const helpers = `
+      const DEFAULT_TIMEOUT = 45_000;
+      export async function waitForLuxarReady(page, timeout = DEFAULT_TIMEOUT) {}
+      async function privateWait(page, timeout = 90_000) {}
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helpers]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'uses the imported default',
+      },
+    ]);
+  });
+
+  it('ignores unrelated and unresolved helper imports', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForReady } from '../support';
+      import { missingHelper } from './helpers/missing';
+
+      test('has no modeled helper', async ({ page }) => {
+        await waitForReady(page);
+        await missingHelper(page);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
   it('includes long deadlines from enclosing hooks', () => {
     const source = `
       import { test } from '@playwright/test';
@@ -288,6 +341,32 @@ describe('compareViolationsToExceptions', () => {
         ]
       )
     ).toEqual({ newViolations: [secondViolation], staleExceptions: [] });
+  });
+});
+
+describe('compareViolationCountsToBaseline', () => {
+  const violations = [
+    { deadlineMs: 45_000, file: 'a.spec.ts', line: 1, test: 'one' },
+    { deadlineMs: 45_000, file: 'a.spec.ts', line: 2, test: 'two' },
+  ];
+
+  it('reports count regressions and stale over-declarations', () => {
+    expect(
+      compareViolationCountsToBaseline(violations, { 'a.spec.ts': 1, 'old.spec.ts': 2 })
+    ).toEqual({
+      regressions: [{ allowed: 1, file: 'a.spec.ts', found: 2 }],
+      improvements: [{ allowed: 2, file: 'old.spec.ts', found: 0 }],
+    });
+  });
+
+  it('accepts exact counts and rejects invalid counts', () => {
+    expect(compareViolationCountsToBaseline(violations, { 'a.spec.ts': 2 })).toEqual({
+      regressions: [],
+      improvements: [],
+    });
+    expect(() => compareViolationCountsToBaseline(violations, { 'a.spec.ts': -1 })).toThrow(
+      /non-negative integer/
+    );
   });
 });
 

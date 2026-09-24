@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -8,6 +8,7 @@ const LONG_DEADLINE_THRESHOLD_MS = 30_000;
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SPEC_ROOT = join(PACKAGE_ROOT, 'src/tests/e2e');
+const BASELINE_PATH = join(PACKAGE_ROOT, 'scripts/e2e-timeout-budget-baseline.json');
 const EXCEPTIONS_PATH = join(PACKAGE_ROOT, 'scripts/e2e-timeout-budget-exceptions.json');
 const PLAYWRIGHT_CONFIG_PATH = join(PACKAGE_ROOT, 'playwright.config.ts');
 const DEADLINE_NAME = /(timeout|deadline)/i;
@@ -80,6 +81,49 @@ function localHelpers(sourceFile, constants) {
           deadlineParameters(declaration.initializer.parameters, constants)
         );
       }
+    }
+  }
+  return helpers;
+}
+
+function exportedHelpers(sourceText, file) {
+  const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true);
+  const constants = constantDeclarations(sourceFile);
+  const helpers = localHelpers(sourceFile, constants);
+  const exported = new Map();
+  for (const statement of sourceFile.statements) {
+    const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+    if (!modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
+    if (ts.isFunctionDeclaration(statement) && statement.name) {
+      exported.set(statement.name.text, helpers.get(statement.name.text) ?? []);
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && helpers.has(declaration.name.text)) {
+        exported.set(declaration.name.text, helpers.get(declaration.name.text));
+      }
+    }
+  }
+  return exported;
+}
+
+function importedHelpers(sourceFile, helperSources) {
+  const helpers = new Map();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+      continue;
+    }
+    const specifier = statement.moduleSpecifier.text;
+    if (!/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    const sourceText = helperSources.get(specifier);
+    if (sourceText === undefined) continue;
+    const exported = exportedHelpers(sourceText, specifier);
+    for (const element of bindings.elements) {
+      const importedName = element.propertyName?.text ?? element.name.text;
+      const parameters = exported.get(importedName);
+      if (parameters) helpers.set(element.name.text, parameters);
     }
   }
   return helpers;
@@ -239,17 +283,18 @@ export function analyzeSpec(
   sourceText,
   file,
   thresholdMs = LONG_DEADLINE_THRESHOLD_MS,
-  projectTimeoutMs = thresholdMs * 2
+  projectTimeoutMs = thresholdMs * 2,
+  helperSources = new Map()
 ) {
   const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true);
   const constants = constantDeclarations(sourceFile);
-  return findTests(
-    sourceFile,
-    constants,
-    localHelpers(sourceFile, constants),
-    file,
-    projectTimeoutMs
-  ).filter((violation) => violation.deadlineMs > thresholdMs);
+  const helpers = new Map([
+    ...localHelpers(sourceFile, constants),
+    ...importedHelpers(sourceFile, helperSources),
+  ]);
+  return findTests(sourceFile, constants, helpers, file, projectTimeoutMs).filter(
+    (violation) => violation.deadlineMs > thresholdMs
+  );
 }
 
 export function projectTestTimeout(sourceText) {
@@ -302,6 +347,25 @@ export function compareViolationsToExceptions(violations, exceptions) {
   };
 }
 
+export function compareViolationCountsToBaseline(violations, baseline) {
+  const actual = new Map();
+  for (const violation of violations)
+    actual.set(violation.file, (actual.get(violation.file) ?? 0) + 1);
+  const files = new Set([...Object.keys(baseline), ...actual.keys()]);
+  const regressions = [];
+  const improvements = [];
+  for (const file of [...files].sort()) {
+    const allowed = baseline[file] ?? 0;
+    if (!Number.isInteger(allowed) || allowed < 0) {
+      throw new Error(`Timeout-budget baseline count for ${file} must be a non-negative integer.`);
+    }
+    const found = actual.get(file) ?? 0;
+    if (found > allowed) regressions.push({ allowed, file, found });
+    if (found < allowed) improvements.push({ allowed, file, found });
+  }
+  return { improvements, regressions };
+}
+
 export function isDefaultConfigSpec(path) {
   const normalized = path.split(sep).join('/');
   return !normalized.endsWith('perf-bench.spec.ts') && !normalized.includes('/mobile/');
@@ -327,6 +391,30 @@ function loadExceptions(path = EXCEPTIONS_PATH) {
   return payload.exceptions;
 }
 
+function loadBaseline(path = BASELINE_PATH) {
+  const payload = JSON.parse(readFileSync(path, 'utf8'));
+  if (!payload.files || Array.isArray(payload.files) || typeof payload.files !== 'object') {
+    throw new Error(`${normalizedRelative(path)} must contain a files object.`);
+  }
+  return payload.files;
+}
+
+function helperSourcesForSpec(sourceText, path) {
+  const sourceFile = ts.createSourceFile(path, sourceText, ts.ScriptTarget.Latest, true);
+  const sources = new Map();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+      continue;
+    }
+    const specifier = statement.moduleSpecifier.text;
+    if (!/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
+    const base = resolve(dirname(path), specifier);
+    const modulePath = [base, `${base}.ts`, join(base, 'index.ts')].find(existsSync);
+    if (modulePath) sources.set(specifier, readFileSync(modulePath, 'utf8'));
+  }
+  return sources;
+}
+
 function formatViolation(violation) {
   return `${violation.file}:${violation.line} ${violation.test} (${violation.deadlineMs} ms)`;
 }
@@ -335,23 +423,50 @@ export function runCheck() {
   const projectTimeoutMs = projectTestTimeout(readFileSync(PLAYWRIGHT_CONFIG_PATH, 'utf8'));
   const thresholdMs = projectTimeoutMs / 2;
   const paths = specFiles();
-  const violations = paths.flatMap((path) =>
-    analyzeSpec(readFileSync(path, 'utf8'), normalizedRelative(path), thresholdMs, projectTimeoutMs)
-  );
-  const result = compareViolationsToExceptions(violations, loadExceptions());
-  for (const violation of result.newViolations)
-    console.error(`Missing timeout budget: ${formatViolation(violation)}`);
-  for (const exception of result.staleExceptions) {
+  const violations = paths.flatMap((path) => {
+    const sourceText = readFileSync(path, 'utf8');
+    return analyzeSpec(
+      sourceText,
+      normalizedRelative(path),
+      thresholdMs,
+      projectTimeoutMs,
+      helperSourcesForSpec(sourceText, path)
+    );
+  });
+  const exceptions = compareViolationsToExceptions(violations, loadExceptions());
+  const baseline = compareViolationCountsToBaseline(exceptions.newViolations, loadBaseline());
+  for (const regression of baseline.regressions) {
+    console.error(
+      `Timeout-budget baseline regression: ${regression.file} has ${regression.found}, allowed ${regression.allowed}.`
+    );
+    for (const violation of exceptions.newViolations.filter(
+      ({ file }) => file === regression.file
+    )) {
+      console.error(`  Missing timeout budget: ${formatViolation(violation)}`);
+    }
+  }
+  for (const improvement of baseline.improvements) {
+    console.error(
+      `Stale timeout-budget baseline: ${improvement.file} has ${improvement.found}, recorded ${improvement.allowed}.`
+    );
+  }
+  for (const exception of exceptions.staleExceptions) {
     console.error(
       `Stale timeout-budget exception: ${exception.file}:${exception.line} :: ${exception.test}`
     );
   }
-  if (result.newViolations.length) {
+  if (baseline.regressions.length) {
     console.error(
-      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }), or add a reasoned entry to scripts/e2e-timeout-budget-exceptions.json.'
+      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }); use an exact reasoned exception only when the heuristic is wrong.'
     );
   }
-  if (result.newViolations.length || result.staleExceptions.length) return false;
+  if (
+    baseline.regressions.length ||
+    baseline.improvements.length ||
+    exceptions.staleExceptions.length
+  ) {
+    return false;
+  }
   console.log(`E2E timeout budgets checked: ${paths.length} specs.`);
   return true;
 }
