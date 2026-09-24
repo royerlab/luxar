@@ -8,9 +8,9 @@
  * Image i = image_label_bytes[offsets[i] : offsets[i+1]], as raw JPEG/WebP/PNG bytes.
  * Empty entries (offsets[i] === offsets[i+1]) return null.
  *
- * Unlike LabelLoader (which bulk-loads all labels), image data can be hundreds of MB,
- * so this loader is truly lazy: offsets are bulk-loaded (small), but image bytes are
- * fetched per-element on demand using zarr slice access.
+ * Image data can be hundreds of MB, so image bytes are fetched per-element on
+ * demand using zarr slice access. Unlike LabelLoader, this loader still
+ * bulk-loads its offsets because they are small relative to the image payload.
  *
  * Decoded images are cached as blob URLs in an LRU cache with automatic
  * URL.revokeObjectURL on eviction.

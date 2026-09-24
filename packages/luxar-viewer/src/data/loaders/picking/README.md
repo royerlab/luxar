@@ -21,16 +21,12 @@ empty entry (`offsets[i] === offsets[i+1]`) means "no label for this
 element" and resolves to `null`. Both arrays use `uint64` offsets
 (decoded as `BigUint64Array`) of length `N+1` and a `uint8` bytes array.
 
-The two loaders differ in how aggressively they fetch:
+The two loaders differ in how they fetch offsets:
 
-- **`LabelLoader`** bulk-loads and UTF-8-decodes **every** label for a
-  node on first hover, then serves all subsequent lookups from memory.
-  That is usually cheap, but not always: labels are stored per element,
-  so a node that tags all 168k of its vertices with one ~120-byte tract
-  name carries ~20 MB of raw CSR bytes over ~300 chunks. The first hover
-  of such a node pays that fetch (a few tens of KB once compressed) and
-  one synchronous decode pass; consecutive equal labels are decoded once
-  (see Invariants), so the retained strings stay small.
+- **`LabelLoader`** slice-reads two offsets and the exact UTF-8 byte range
+  for one hovered element. It retains open array handles per node and keeps
+  recently decoded labels in a shared 1 MB LRU, so first-hover work and
+  retained text no longer scale with the node's element count.
 - **`ImageLabelLoader`** is **truly lazy**: it bulk-loads only the
   (small) offsets array per node, then fetches each image's byte range
   on demand via a zarr slice. Image blobs can be hundreds of MB, so
@@ -44,7 +40,7 @@ repeated hovers over the same element/node share a single fetch.
 
 ```
 picking/
-├── label-loader.ts         # LabelLoader — bulk CSR text-label decode per node
+├── label-loader.ts         # LabelLoader — per-element CSR text fetch + LRU
 └── image-label-loader.ts   # ImageLabelLoader — per-element image fetch + blob-URL LRU
 ```
 
@@ -52,8 +48,8 @@ picking/
 
 ### LabelLoader (`label-loader.ts`)
 
-Loads and decodes the full set of UTF-8 text labels for a node on first
-access, caching the decoded `string[]` per node path.
+Loads and decodes one UTF-8 text label at a time. Array handles are cached
+per node; decoded labels share a byte-bounded LRU across nodes.
 
 ```typescript
 import { LabelLoader } from './picking/label-loader';
@@ -61,7 +57,7 @@ import { LabelLoader } from './picking/label-loader';
 const loader = new LabelLoader(store, rootLoc);
 const keyLoader = new LabelLoader(store, rootLoc, 'keys');
 
-// First call loads + decodes all labels for the node; later calls hit the cache.
+// Each call fetches one label; recently decoded labels hit the bounded LRU.
 const label = await loader.getLabel('/points/cells', elementIndex); // string | null
 
 // Available as a cheap guard from cached node .zattrs — but note that NOTHING
@@ -76,12 +72,12 @@ if (keyLoader.hasLabels(nodeAttrs)) {
   /* node has a key_offsets / key_bytes pair, stamped by has_keys */
 }
 
-loader.dispose(); // clear caches + in-flight map
+loader.dispose(); // clear array handles, decoded labels, and in-flight maps
 ```
 
 `getLabel` returns `null` when the node has no labels, the element's
 label is empty, or the index is out of range. A failed zarr fetch
-resolves to an empty label set rather than throwing. A node whose
+resolves to `null` rather than throwing. A node whose
 `label_offsets` array is simply absent is the ordinary case — the picker
 calls `getLabel` for whatever it hit, and most nodes are unlabelled — so
 **that one open** is logged at info. Everything after it still logs a
@@ -125,16 +121,9 @@ WebP (`RIFF…WEBP`) are detected, with `image/png` as the fallback.
   converted to `Number` before slicing — fine for in-range byte offsets.
 - **Empty entry ⇒ `null`.** `offsets[i] === offsets[i+1]` is the
   canonical "no label" sentinel for both loaders.
-- **A consecutive run of equal labels is decoded once.** `LabelLoader`
-  compares each element's bytes to the previous element's and reuses the
-  string on a match, so a broadcast label (one value repeated across a
-  whole node) costs one decode and one retained string instead of `N`.
-  The saving is retained memory, not time: a full byte compare costs about
-  what the decode it replaces does, so the comparison rejects on length and
-  on both _end_ bytes before scanning the interior — that is what keeps the
-  all-distinct case at parity instead of ~1.7x. Only _consecutive_ runs
-  collapse — a general pool would cost more than it saves on the common
-  all-distinct case.
+- **Repeated labels stay bounded.** `LabelLoader` never materialises a
+  whole run: it decodes only hovered elements, and the shared LRU caps
+  retained text even when every label is distinct.
 - **Path normalization.** A leading `/` on `nodePath` is stripped before
   `rootLoc.resolve(...)`, so both `/points/cells` and `points/cells`
   resolve identically.
