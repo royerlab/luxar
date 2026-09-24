@@ -21,17 +21,23 @@ empty entry (`offsets[i] === offsets[i+1]`) means "no label for this
 element" and resolves to `null`. Both arrays use `uint64` offsets
 (decoded as `BigUint64Array`) of length `N+1` and a `uint8` bytes array.
 
-The two loaders differ in how they fetch offsets:
+The two loaders choose different offset strategies based on their payload/index
+ratio:
 
 - **`LabelLoader`** slice-reads two offsets and the exact UTF-8 byte range
   for one hovered element. It retains open array handles per node and keeps
   recently decoded labels in a shared 1 MB LRU, so first-hover work and
   retained text no longer scale with the node's element count.
-- **`ImageLabelLoader`** is **truly lazy**: it bulk-loads only the
-  (small) offsets array per node, then fetches each image's byte range
-  on demand via a zarr slice. Image blobs can be hundreds of MB, so
-  per-element fetching avoids pulling the whole `image_label_bytes`
-  array into memory.
+- **`ImageLabelLoader`** bulk-loads the comparatively small offsets array per
+  node, then fetches each image's byte range on demand via a zarr slice. Image
+  blobs can be hundreds of MB, so retaining the index avoids repeated offset
+  reads without pulling the whole `image_label_bytes` array into memory.
+
+The Python writer in
+`packages/luxar/src/luxar/io/_compiler/labels/text_labels.py` chunks text
+offsets and bytes at 65,536 entries/bytes. Together with spatial element
+ordering, that keeps `LabelLoader` hover reads bounded by nearby chunks rather
+than whole-node arrays.
 
 Both loaders coalesce concurrent requests (in-flight promise maps) so
 repeated hovers over the same element/node share a single fetch.
@@ -54,8 +60,8 @@ per node; decoded labels share a byte-bounded LRU across nodes.
 ```typescript
 import { LabelLoader } from './picking/label-loader';
 
-const loader = new LabelLoader(store, rootLoc);
-const keyLoader = new LabelLoader(store, rootLoc, 'keys');
+const loader = new LabelLoader(rootLoc);
+const keyLoader = new LabelLoader(rootLoc, 'keys');
 
 // Each call fetches one label; recently decoded labels hit the bounded LRU.
 const label = await loader.getLabel('/points/cells', elementIndex); // string | null

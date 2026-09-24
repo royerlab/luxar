@@ -135,9 +135,10 @@ export interface PickResultHandlerPorts {
  *   own element space, meaningless against a whole-node array. Before the
  *   split, every hover on a partitioned layer resolved to an empty tooltip,
  *   silently — `LabelLoader` demotes the missing array to an info log and
- *   caches `[]`. Of the three lookups only the label/key `getLabel` calls are
- *   reachable under a partition today (all four adders refuse `image_labels`
- *   alongside `partition=`, so no `part_<i>` ever owns an image CSR);
+ *   caches that the node lacks the channel. Of the three lookups only the
+ *   label/key `getLabel` calls are reachable under a partition today (all four
+ *   adders refuse `image_labels` alongside `partition=`, so no `part_<i>` ever
+ *   owns an image CSR);
  *   `getImageUrl` moves with them for consistency, not because it is broken
  *   today.
  *
