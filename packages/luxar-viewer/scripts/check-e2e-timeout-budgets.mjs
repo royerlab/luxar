@@ -11,6 +11,8 @@ const SPEC_ROOT = join(PACKAGE_ROOT, 'src/tests/e2e');
 const EXCEPTIONS_PATH = join(PACKAGE_ROOT, 'scripts/e2e-timeout-budget-exceptions.json');
 const PLAYWRIGHT_CONFIG_PATH = join(PACKAGE_ROOT, 'playwright.config.ts');
 const DEADLINE_NAME = /(timeout|deadline)/i;
+// Statements that DECLARE a budget rather than wait for anything.
+const BUDGET_CALL_PATHS = new Set(['test.setTimeout', 'test.slow', 'test.describe.configure']);
 
 function propertyName(node) {
   if (ts.isIdentifier(node) || ts.isStringLiteral(node)) return node.text;
@@ -98,6 +100,14 @@ function callPath(node) {
   return [...callPath(node.expression), node.name.text];
 }
 
+function isBudgetStatement(node) {
+  return (
+    ts.isExpressionStatement(node) &&
+    ts.isCallExpression(node.expression) &&
+    BUDGET_CALL_PATHS.has(callPath(node.expression.expression).join('.'))
+  );
+}
+
 function callbackArgument(call) {
   return [...call.arguments]
     .reverse()
@@ -110,7 +120,7 @@ function testTitle(call) {
   return '<dynamic title>';
 }
 
-function budgetForStatements(statements, constants, projectTimeoutMs, describeScope) {
+function budgetForStatements(statements, constants, enclosingBudgetMs, describeScope) {
   let budgetMs;
   for (const statement of statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
@@ -119,7 +129,9 @@ function budgetForStatements(statements, constants, projectTimeoutMs, describeSc
     const call = statement.expression;
     const path = callPath(call.expression).join('.');
     if (path === 'test.slow') {
-      budgetMs = projectTimeoutMs * 3;
+      // Playwright triples the ALREADY-resolved slot timeout, so test.slow()
+      // inside a 600 s describe is 1800 s, not three project timeouts.
+      budgetMs = enclosingBudgetMs * 3;
       continue;
     }
     if (path === 'test.setTimeout') {
@@ -144,15 +156,18 @@ function normalizedBudget(value) {
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-function directBudget(callback, constants, projectTimeoutMs, describeScope) {
+function directBudget(callback, constants, enclosingBudgetMs, describeScope) {
   return ts.isBlock(callback.body)
-    ? budgetForStatements(callback.body.statements, constants, projectTimeoutMs, describeScope)
+    ? budgetForStatements(callback.body.statements, constants, enclosingBudgetMs, describeScope)
     : undefined;
 }
 
 function deadlineCandidates(callback, constants, helpers) {
   const deadlines = [];
   const visit = (node) => {
+    // A budget declaration is not a wait: test.setTimeout(MESH_TIMEOUT_MS)
+    // would otherwise resolve its own constant into the deadline it has to beat.
+    if (isBudgetStatement(node)) return;
     if (ts.isPropertyAssignment(node) && propertyName(node.name) === 'timeout') {
       deadlines.push(evaluateNumber(node.initializer, constants));
     }
@@ -201,7 +216,12 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
       const callback = callbackArgument(node);
       if (callback && path[0] === 'test' && path[1] === 'describe') {
         const statements = ts.isBlock(callback.body) ? callback.body.statements : [];
-        const describeBudgetMs = directBudget(callback, constants, projectTimeoutMs, true);
+        const describeBudgetMs = directBudget(
+          callback,
+          constants,
+          inheritedBudgetMs ?? projectTimeoutMs,
+          true
+        );
         visit(
           callback.body,
           describeBudgetMs ?? inheritedBudgetMs,
@@ -213,7 +233,8 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
         const deadlines = deadlineCandidates(callback, constants, helpers);
         const deadlineMs = Math.max(inheritedDeadlineMs, ...deadlines);
         const budgetMs =
-          directBudget(callback, constants, projectTimeoutMs, false) ?? inheritedBudgetMs;
+          directBudget(callback, constants, inheritedBudgetMs ?? projectTimeoutMs, false) ??
+          inheritedBudgetMs;
         if (deadlineMs > 0 && (budgetMs === undefined || budgetMs <= deadlineMs)) {
           violations.push({
             deadlineMs,
@@ -312,12 +333,16 @@ function specFiles(directory = SPEC_ROOT) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) return specFiles(path);
     // Mobile and perf specs share this testDir but have their own, larger project budgets.
-    return entry.name.endsWith('.spec.ts') && isDefaultConfigSpec(path) ? [path] : [];
+    // Match on the package-relative path: an absolute one drags the checkout's own
+    // ancestors (a /home/mobile/... clone) through the exclusion patterns.
+    return entry.name.endsWith('.spec.ts') && isDefaultConfigSpec(normalizedRelative(path))
+      ? [path]
+      : [];
   });
 }
 
-function normalizedRelative(path) {
-  return relative(PACKAGE_ROOT, path).split(sep).join('/');
+export function normalizedRelative(path, root = PACKAGE_ROOT) {
+  return relative(root, path).split(sep).join('/');
 }
 
 function loadExceptions(path = EXCEPTIONS_PATH) {

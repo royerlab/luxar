@@ -4,6 +4,7 @@ import {
   analyzeSpec,
   compareViolationsToExceptions,
   isDefaultConfigSpec,
+  normalizedRelative,
   projectTestTimeout,
 } from './check-e2e-timeout-budgets.mjs';
 
@@ -42,6 +43,23 @@ describe('analyzeSpec', () => {
       test('owns its budget', async ({ page }) => {
         test.slow();
         await page.waitForFunction(() => window.ready, undefined, { timeout: 60_000 });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
+  it('scales test.slow() by the enclosing describe budget', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('slow group', () => {
+        test.describe.configure({ timeout: 600_000 });
+
+        test('triples the resolved slot timeout', async ({ page }) => {
+          test.slow();
+          await page.waitForTimeout(300_000);
+        });
       });
     `;
 
@@ -87,6 +105,21 @@ describe('analyzeSpec', () => {
     `;
 
     expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toHaveLength(1);
+  });
+
+  it('does not count a named budget constant as its own deadline', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      const MESH_COMMIT_TIMEOUT_MS = 120_000;
+
+      test('declares its budget through a constant', async ({ page }) => {
+        test.setTimeout(MESH_COMMIT_TIMEOUT_MS);
+        await page.waitForTimeout(45_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
   });
 
   it('lets a direct test budget override an enclosing describe budget', () => {
@@ -296,6 +329,21 @@ describe('isDefaultConfigSpec', () => {
     expect(isDefaultConfigSpec('src/tests/e2e/example.spec.ts')).toBe(true);
     expect(isDefaultConfigSpec('src/tests/e2e/mobile/touch.spec.ts')).toBe(false);
     expect(isDefaultConfigSpec('src/tests/e2e/rendering-perf-bench.spec.ts')).toBe(false);
+  });
+
+  it('keeps a checkout under a mobile ancestor directory in scope', () => {
+    const packageRoot = '/home/mobile/ci/pkg';
+
+    expect(
+      isDefaultConfigSpec(
+        normalizedRelative(`${packageRoot}/src/tests/e2e/basic.spec.ts`, packageRoot)
+      )
+    ).toBe(true);
+    expect(
+      isDefaultConfigSpec(
+        normalizedRelative(`${packageRoot}/src/tests/e2e/mobile/touch.spec.ts`, packageRoot)
+      )
+    ).toBe(false);
   });
 });
 
