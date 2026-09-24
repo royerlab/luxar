@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,6 +10,7 @@ import {
   compareViolationCountsToBaseline,
   isDefaultConfigSpec,
   projectTestTimeout,
+  specFiles,
 } from './check-e2e-timeout-budgets.mjs';
 
 describe('analyzeSpec', () => {
@@ -49,6 +54,163 @@ describe('analyzeSpec', () => {
     expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
   });
 
+  it('scales test.slow() by the enclosing describe budget', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('slow group', () => {
+        test.describe.configure({ timeout: 600_000 });
+
+        test('triples the resolved slot timeout', async ({ page }) => {
+          test.slow();
+          await page.waitForTimeout(300_000);
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
+  it('triples a suite budget whatever the order of slow and configure', () => {
+    // At suite scope nothing executes: the declared timeout always wins and the
+    // static `slow` annotation triples it afterwards, across levels.
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('configure first', () => {
+        test.describe.configure({ timeout: 100_000 });
+        test.slow();
+
+        test('inherits 300 s', async ({ page }) => {
+          await page.waitForTimeout(200_000);
+        });
+      });
+
+      test.describe('slow first', () => {
+        test.slow();
+        test.describe.configure({ timeout: 100_000 });
+
+        test('inherits 300 s either way', async ({ page }) => {
+          await page.waitForTimeout(200_000);
+        });
+      });
+
+      test.describe('slow outside', () => {
+        test.slow();
+
+        test.describe('configured inside', () => {
+          test.describe.configure({ timeout: 100_000 });
+
+          test('inherits 300 s across levels', async ({ page }) => {
+            await page.waitForTimeout(200_000);
+          });
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
+  it('walks a test body in statement order', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('group', () => {
+        test.describe.configure({ timeout: 300_000 });
+
+        test('narrows before slowing down', async ({ page }) => {
+          test.setTimeout(40_000);
+          test.slow();
+          await page.waitForTimeout(200_000);
+        });
+
+        test('narrows after slowing down', async ({ page }) => {
+          test.slow();
+          test.setTimeout(400_000);
+          await page.waitForTimeout(200_000);
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 200_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 7,
+        test: 'narrows before slowing down',
+      },
+    ]);
+  });
+
+  it('ignores a conditional test.slow()', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('suite condition', () => {
+        test.slow(process.platform === 'darwin');
+
+        test('has no declared budget', async ({ page }) => {
+          await page.waitForTimeout(120_000);
+        });
+      });
+
+      test('condition in the body', async ({ page, isMobile }) => {
+        test.slow(isMobile, 'slower on mobile');
+        await page.waitForTimeout(120_000);
+      });
+
+      test('callback condition', async ({ page }) => {
+        test.slow(() => true);
+        await page.waitForTimeout(120_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 120_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 7,
+        test: 'has no declared budget',
+      },
+      {
+        deadlineMs: 120_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 12,
+        test: 'condition in the body',
+      },
+      {
+        deadlineMs: 120_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 17,
+        test: 'callback condition',
+      },
+    ]);
+  });
+
+  it('applies test.slow() at most once per test', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('slow group', () => {
+        test.slow();
+
+        test('is not slowed twice', async ({ page }) => {
+          test.slow();
+          await page.waitForTimeout(200_000);
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 200_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 7,
+        test: 'is not slowed twice',
+      },
+    ]);
+  });
+
   it('accepts a file-level describe budget', () => {
     const source = `
       import { test } from '@playwright/test';
@@ -61,6 +223,37 @@ describe('analyzeSpec', () => {
     `;
 
     expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
+  it('lets an inner describe budget override the outer one', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('outer', () => {
+        test.describe.configure({ timeout: 120_000 });
+
+        test.describe('inner', () => {
+          test.describe.configure({ timeout: 300_000 });
+
+          test('uses the inner budget', async ({ page }) => {
+            await page.waitForTimeout(200_000);
+          });
+        });
+
+        test('outruns the inherited outer budget', async ({ page }) => {
+          await page.waitForTimeout(200_000);
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 200_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 15,
+        test: 'outruns the inherited outer budget',
+      },
+    ]);
   });
 
   it('does not treat mode-only describe configuration as a budget', () => {
@@ -83,6 +276,36 @@ describe('analyzeSpec', () => {
 
       test('needs actual headroom', async ({ page }) => {
         test.setTimeout(45_000);
+        await page.waitForTimeout(45_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toHaveLength(1);
+  });
+
+  it('does not count a named budget constant as its own deadline', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      const MESH_COMMIT_TIMEOUT_MS = 120_000;
+
+      test('declares its budget through a constant', async ({ page }) => {
+        test.setTimeout(MESH_COMMIT_TIMEOUT_MS);
+        await page.waitForTimeout(45_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
+  it('still flags a named budget constant without headroom', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      const MESH_COMMIT_TIMEOUT_MS = 45_000;
+
+      test('declares an undersized budget', async ({ page }) => {
+        test.setTimeout(MESH_COMMIT_TIMEOUT_MS);
         await page.waitForTimeout(45_000);
       });
     `;
@@ -281,6 +504,27 @@ describe('analyzeSpec', () => {
     ).toHaveLength(1);
   });
 
+  it('includes long deadlines from file-level hooks in a test.only', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.beforeEach(async ({ page }) => {
+        await page.waitForFunction(() => window.ready, undefined, { timeout: 45_000 });
+      });
+
+      test.only('inherits the file hook deadline', async () => {});
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 8,
+        test: 'inherits the file hook deadline',
+      },
+    ]);
+  });
+
   it('includes long deadlines from enclosing hooks', () => {
     const source = `
       import { test } from '@playwright/test';
@@ -320,6 +564,18 @@ describe('compareViolationsToExceptions', () => {
         [{ file: violation.file, test: violation.test, reason: '   ' }]
       )
     ).toThrow(/non-empty reason/);
+  });
+
+  it('rejects two exceptions keyed to the same test', () => {
+    expect(() =>
+      compareViolationsToExceptions(
+        [violation],
+        [
+          { ...violation, reason: 'Legacy helper is bounded elsewhere.' },
+          { ...violation, reason: 'Duplicated by a bad merge.' },
+        ]
+      )
+    ).toThrow(/Duplicate timeout-budget exception/);
   });
 
   it('reports new violations and stale exceptions', () => {
@@ -399,6 +655,28 @@ describe('isDefaultConfigSpec', () => {
     expect(isDefaultConfigSpec('src/tests/e2e/example.spec.ts')).toBe(true);
     expect(isDefaultConfigSpec('src/tests/e2e/mobile/touch.spec.ts')).toBe(false);
     expect(isDefaultConfigSpec('src/tests/e2e/rendering-perf-bench.spec.ts')).toBe(false);
+  });
+});
+
+describe('specFiles', () => {
+  it('keeps a checkout under a mobile ancestor directory in scope', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-budgets-'));
+    // The bug was matching the exclusions against the ABSOLUTE path, which a
+    // checkout under /home/mobile/... drags its own ancestors through.
+    const root = join(fixture, 'mobile', 'ci', 'pkg');
+    const specRoot = join(root, 'src/tests/e2e');
+    try {
+      mkdirSync(join(specRoot, 'mobile'), { recursive: true });
+      writeFileSync(join(specRoot, 'basic.spec.ts'), '');
+      writeFileSync(join(specRoot, 'rendering-perf-bench.spec.ts'), '');
+      writeFileSync(join(specRoot, 'mobile/touch.spec.ts'), '');
+
+      expect(specFiles(specRoot, root).map((path) => relative(root, path))).toEqual([
+        'src/tests/e2e/basic.spec.ts',
+      ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });
 
