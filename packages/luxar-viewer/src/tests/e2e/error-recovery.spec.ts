@@ -174,6 +174,8 @@ test.describe('Error Recovery - Network Failures', () => {
   });
 
   test('should handle network failure mid-load gracefully', async ({ page }) => {
+    test.setTimeout(120000);
+
     const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));

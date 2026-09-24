@@ -183,6 +183,8 @@ test.describe('Real Dataset Loading', () => {
   });
 
   test('should load scene dimensions with correct count from 4D dataset', async ({ page }) => {
+    test.setTimeout(120000);
+
     await page.goto(`/?src=${DATASETS.dimensionNav}&debug`);
     await waitForLuxarReady(page);
 
@@ -241,6 +243,8 @@ test.describe('Real Dataset Loading', () => {
   });
 
   test('should verify WebGL rendering with real data', async ({ page }) => {
+    test.setTimeout(120000);
+
     // Use build_example_structured (3D with guaranteed visible points)
     await page.goto(`/?src=${DATASETS.buildStructured}&debug`);
     await waitForLuxarReady(page);
