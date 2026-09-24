@@ -18,6 +18,9 @@ scripts/
 ├── check-build-identity.mjs       # Asserts a built bundle carries its build stamp
 ├── check-build-identity.test.mjs  # unit coverage for the stamp gate
 ├── check-coverage-slack.mjs       # Coverage floor/baseline drift gate and refresh printer
+├── check-e2e-timeout-budgets.mjs  # Default-project E2E deadline/budget ratchet
+├── check-e2e-timeout-budgets.test.mjs # unit coverage for the E2E timeout-budget ratchet
+├── e2e-timeout-budget-exceptions.json # Reasoned, stale-failing timeout-budget opt-outs
 ├── check-lib-exports.mjs          # Post-build sanity check on dist/lib/
 ├── check-node-types-version.mjs   # Node runtime/@types major-version declaration guard
 ├── check-node-types-version.test.mjs # unit coverage for the Node types guard

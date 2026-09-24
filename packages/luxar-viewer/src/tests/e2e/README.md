@@ -427,12 +427,15 @@ covers their sum with headroom — being killed by the suite-wide budget
 mid-`page.evaluate` throws away the attachment and the annotation, which is the
 least diagnosable way for a diagnostic test to fail.
 
-`pnpm check:e2e-timeout-budgets` enforces that rule for deadlines above 30 s.
-It reads explicit `timeout` options, numeric arguments passed to wait helpers,
-local wait-helper defaults, and module-level timeout/deadline constants used by
-each test. `test.slow()`, `test.setTimeout()`, or an enclosing
+`pnpm check:e2e-timeout-budgets` enforces that rule for deadlines above half the
+default project's test timeout (30 s with today's 60 s budget). It reads
+explicit `timeout` options, numeric arguments passed to wait helpers, local
+wait-helper defaults, and module-level timeout/deadline constants used by each
+test. Imported helper defaults, deadlines inside local helper bodies, and
+`beforeAll`/`afterAll` hooks remain out of scope; #2897 tracks that gap.
+`test.slow()`, `test.setTimeout()`, or an enclosing
 `test.describe.configure({ timeout })` supplies the budget. If the static
-heuristic cannot model a case, add its file, test title, and a specific reason
+heuristic cannot model a case, add its file, source line, test title, and a specific reason
 to `scripts/e2e-timeout-budget-exceptions.json`; stale exceptions fail the
 check and must be removed when the test gains a budget or stops using the long
 deadline.

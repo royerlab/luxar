@@ -73,11 +73,12 @@ async function waitForMeshCommitted(
 }
 
 test.describe('Mesh rendering', () => {
+  // The 45 s commit waits leave 75 s for navigation, rendering, and assertions.
+  test.describe.configure({ timeout: 120000 });
+
   test('a written mesh loads, commits its triangles, and draws without GL errors', async ({
     page,
   }) => {
-    test.setTimeout(120000);
-
     await page.goto(`/?src=${MESH}&debug`);
     await waitForLuxarReady(page);
     // Four mesh nodes in the fixture; all four must commit.
@@ -110,8 +111,6 @@ test.describe('Mesh rendering', () => {
   });
 
   test('the authored shading variant reaches the shader, per node', async ({ page }) => {
-    test.setTimeout(120000);
-
     // The §3.4 rule end to end. `shading="smooth"` with `normal_dims == displayDims`
     // must compile the stored-normal build; `shading="flat"` must compile the
     // derivative one — in the SAME scene, so a global misconfiguration cannot make
@@ -132,8 +131,6 @@ test.describe('Mesh rendering', () => {
   });
 
   test('the colormap node reads the LUT and the direct-colour node does not', async ({ page }) => {
-    test.setTimeout(120000);
-
     await page.goto(`/?src=${MESH}&debug`);
     await waitForLuxarReady(page);
     await waitForMeshCommitted(page, 4);
@@ -148,8 +145,6 @@ test.describe('Mesh rendering', () => {
   test('mesh defaults to `opaque`, so the cutout variant is live without anyone asking', async ({
     page,
   }) => {
-    test.setTimeout(120000);
-
     // §6.3's deliberate asymmetry — the three siblings default to `additive`. Asserted
     // through the shader variant rather than through the attrs, because the default is
     // applied VIEWER-side (`?? 'opaque'` in createMeshNode) and never stamped by the
@@ -166,8 +161,6 @@ test.describe('Mesh rendering', () => {
   test('scrubbing a hidden categorical dimension SWAPS the two meshes rather than accumulating', async ({
     page,
   }) => {
-    test.setTimeout(120000);
-
     // The §5.4 whole-triangle slab cull, and the mesh counterpart of the Lines
     // categorical regression. Mesh needs its own assertion here rather than inheriting
     // the Lines one: it has no interpolation and no per-element extent, so its
@@ -232,8 +225,6 @@ test.describe('Mesh rendering', () => {
   test('a mesh actually rasterizes — real pixels, not just a committed geometry', async ({
     page,
   }) => {
-    test.setTimeout(120000);
-
     // The one assertion no state snapshot can make: `triangleCount > 0` says the
     // geometry committed, not that anything was RASTERIZED. A shader that discarded
     // every fragment — the exact failure mode of a mis-signed derivative normal, an
@@ -265,6 +256,7 @@ test.describe('Mesh rendering', () => {
   });
 
   test('flying into a mesh fades it out smoothly instead of clipping (#1431)', async ({ page }) => {
+    // The 45 s commit wait plus 120 s sweep need test.slow()'s 180 s budget.
     test.slow();
 
     // Mesh was the one geometry type with no `perspectiveNearFade`: a triangle

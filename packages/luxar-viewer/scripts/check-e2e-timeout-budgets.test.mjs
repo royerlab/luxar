@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   analyzeSpec,
   compareViolationsToExceptions,
+  isDefaultConfigSpec,
   projectTestTimeout,
 } from './check-e2e-timeout-budgets.mjs';
 
@@ -55,6 +56,63 @@ describe('analyzeSpec', () => {
 
       test('inherits the file budget', async ({ page }) => {
         await page.waitForFunction(() => window.ready, undefined, { timeout: 60_000 });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
+  it('does not treat mode-only describe configuration as a budget', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe.configure({ mode: 'serial' });
+
+      test('still needs a budget', async ({ page }) => {
+        await page.waitForTimeout(45_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toHaveLength(1);
+  });
+
+  it('rejects a declared budget that does not exceed the deadline', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test('needs actual headroom', async ({ page }) => {
+        test.setTimeout(45_000);
+        await page.waitForTimeout(45_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toHaveLength(1);
+  });
+
+  it('lets a direct test budget override an enclosing describe budget', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('group', () => {
+        test.describe.configure({ timeout: 120_000 });
+
+        test('narrows its own budget', async ({ page }) => {
+          test.setTimeout(45_000);
+          await page.waitForTimeout(45_000);
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toHaveLength(1);
+  });
+
+  it('accepts an unbounded test timeout', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test('opts out of the timeout', async ({ page }) => {
+        test.setTimeout(0);
+        await page.waitForTimeout(90_000);
       });
     `;
 
@@ -194,6 +252,7 @@ describe('compareViolationsToExceptions', () => {
         [
           {
             file: 'src/tests/e2e/old.spec.ts',
+            line: 8,
             test: 'fixed test',
             reason: 'Legacy helper is bounded elsewhere.',
           },
@@ -204,11 +263,39 @@ describe('compareViolationsToExceptions', () => {
       staleExceptions: [
         {
           file: 'src/tests/e2e/old.spec.ts',
+          line: 8,
           test: 'fixed test',
           reason: 'Legacy helper is bounded elsewhere.',
         },
       ],
     });
+  });
+
+  it('keys dynamic-title exceptions by source line', () => {
+    const dynamicViolation = { ...violation, test: '<dynamic title>' };
+    const secondViolation = { ...dynamicViolation, line: 8 };
+
+    expect(
+      compareViolationsToExceptions(
+        [dynamicViolation, secondViolation],
+        [
+          {
+            file: dynamicViolation.file,
+            line: dynamicViolation.line,
+            test: dynamicViolation.test,
+            reason: 'Legacy wait.',
+          },
+        ]
+      )
+    ).toEqual({ newViolations: [secondViolation], staleExceptions: [] });
+  });
+});
+
+describe('isDefaultConfigSpec', () => {
+  it('excludes specs owned by the mobile and perf configs', () => {
+    expect(isDefaultConfigSpec('src/tests/e2e/example.spec.ts')).toBe(true);
+    expect(isDefaultConfigSpec('src/tests/e2e/mobile/touch.spec.ts')).toBe(false);
+    expect(isDefaultConfigSpec('src/tests/e2e/rendering-perf-bench.spec.ts')).toBe(false);
   });
 });
 

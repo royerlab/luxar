@@ -72,6 +72,7 @@ test.describe('Data Loading Monitor Metrics', () => {
   });
 
   test('debug surface wires live FPS sampling and additive ladder state', async ({ page }) => {
+    // The 60 s monitor-state wait leaves another minute for setup and assertions.
     test.setTimeout(120000);
 
     await page.evaluate(() => {

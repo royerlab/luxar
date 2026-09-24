@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 
-export const LONG_DEADLINE_THRESHOLD_MS = 30_000;
+const LONG_DEADLINE_THRESHOLD_MS = 30_000;
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SPEC_ROOT = join(PACKAGE_ROOT, 'src/tests/e2e');
@@ -110,19 +110,44 @@ function testTitle(call) {
   return '<dynamic title>';
 }
 
-function hasBudgetStatements(statements, describeScope) {
-  return statements.some((statement) => {
+function budgetForStatements(statements, constants, projectTimeoutMs, describeScope) {
+  let budgetMs;
+  for (const statement of statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
-      return false;
+      continue;
     }
-    const path = callPath(statement.expression.expression).join('.');
-    if (path === 'test.slow' || path === 'test.setTimeout') return true;
-    return describeScope && path === 'test.describe.configure';
-  });
+    const call = statement.expression;
+    const path = callPath(call.expression).join('.');
+    if (path === 'test.slow') {
+      budgetMs = projectTimeoutMs * 3;
+      continue;
+    }
+    if (path === 'test.setTimeout') {
+      budgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+      continue;
+    }
+    if (!describeScope || path !== 'test.describe.configure') continue;
+    const options = call.arguments[0];
+    if (!options || !ts.isObjectLiteralExpression(options)) continue;
+    const timeout = options.properties.find(
+      (property) => ts.isPropertyAssignment(property) && propertyName(property.name) === 'timeout'
+    );
+    if (timeout && ts.isPropertyAssignment(timeout)) {
+      budgetMs = normalizedBudget(evaluateNumber(timeout.initializer, constants));
+    }
+  }
+  return budgetMs;
 }
 
-function hasDirectBudget(callback, describeScope) {
-  return ts.isBlock(callback.body) && hasBudgetStatements(callback.body.statements, describeScope);
+function normalizedBudget(value) {
+  if (value === 0) return Number.POSITIVE_INFINITY;
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function directBudget(callback, constants, projectTimeoutMs, describeScope) {
+  return ts.isBlock(callback.body)
+    ? budgetForStatements(callback.body.statements, constants, projectTimeoutMs, describeScope)
+    : undefined;
 }
 
 function deadlineCandidates(callback, constants, helpers) {
@@ -168,17 +193,18 @@ function collectCallDeadlines(call, constants, helpers, deadlines) {
   }
 }
 
-function findTests(sourceFile, constants, helpers, file) {
+function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
   const violations = [];
-  const visit = (node, inheritedBudget = false, inheritedDeadlineMs = 0) => {
+  const visit = (node, inheritedBudgetMs, inheritedDeadlineMs = 0) => {
     if (ts.isCallExpression(node)) {
       const path = callPath(node.expression);
       const callback = callbackArgument(node);
       if (callback && path[0] === 'test' && path[1] === 'describe') {
         const statements = ts.isBlock(callback.body) ? callback.body.statements : [];
+        const describeBudgetMs = directBudget(callback, constants, projectTimeoutMs, true);
         visit(
           callback.body,
-          inheritedBudget || hasDirectBudget(callback, true),
+          describeBudgetMs ?? inheritedBudgetMs,
           Math.max(inheritedDeadlineMs, hookDeadline(statements, constants, helpers))
         );
         return;
@@ -186,7 +212,9 @@ function findTests(sourceFile, constants, helpers, file) {
       if (callback && (path.join('.') === 'test' || path.join('.') === 'test.only')) {
         const deadlines = deadlineCandidates(callback, constants, helpers);
         const deadlineMs = Math.max(inheritedDeadlineMs, ...deadlines);
-        if (deadlineMs > 0 && !inheritedBudget && !hasDirectBudget(callback, false)) {
+        const budgetMs =
+          directBudget(callback, constants, projectTimeoutMs, false) ?? inheritedBudgetMs;
+        if (deadlineMs > 0 && (budgetMs === undefined || budgetMs <= deadlineMs)) {
           violations.push({
             deadlineMs,
             file,
@@ -197,22 +225,31 @@ function findTests(sourceFile, constants, helpers, file) {
         return;
       }
     }
-    ts.forEachChild(node, (child) => visit(child, inheritedBudget, inheritedDeadlineMs));
+    ts.forEachChild(node, (child) => visit(child, inheritedBudgetMs, inheritedDeadlineMs));
   };
   visit(
     sourceFile,
-    hasBudgetStatements(sourceFile.statements, true),
+    budgetForStatements(sourceFile.statements, constants, projectTimeoutMs, true),
     hookDeadline(sourceFile.statements, constants, helpers)
   );
   return violations;
 }
 
-export function analyzeSpec(sourceText, file, thresholdMs = LONG_DEADLINE_THRESHOLD_MS) {
+export function analyzeSpec(
+  sourceText,
+  file,
+  thresholdMs = LONG_DEADLINE_THRESHOLD_MS,
+  projectTimeoutMs = thresholdMs * 2
+) {
   const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true);
   const constants = constantDeclarations(sourceFile);
-  return findTests(sourceFile, constants, localHelpers(sourceFile, constants), file).filter(
-    (violation) => violation.deadlineMs > thresholdMs
-  );
+  return findTests(
+    sourceFile,
+    constants,
+    localHelpers(sourceFile, constants),
+    file,
+    projectTimeoutMs
+  ).filter((violation) => violation.deadlineMs > thresholdMs);
 }
 
 export function projectTestTimeout(sourceText) {
@@ -243,7 +280,7 @@ export function projectTestTimeout(sourceText) {
 }
 
 function exceptionKey(entry) {
-  return `${entry.file}\0${entry.test}`;
+  return `${entry.file}\0${entry.line}\0${entry.test}`;
 }
 
 export function compareViolationsToExceptions(violations, exceptions) {
@@ -253,7 +290,9 @@ export function compareViolationsToExceptions(violations, exceptions) {
       throw new Error('Every timeout-budget exception needs a non-empty reason.');
     const key = exceptionKey(exception);
     if (exceptionMap.has(key))
-      throw new Error(`Duplicate timeout-budget exception: ${exception.file} :: ${exception.test}`);
+      throw new Error(
+        `Duplicate timeout-budget exception: ${exception.file}:${exception.line} :: ${exception.test}`
+      );
     exceptionMap.set(key, exception);
   }
   const violationKeys = new Set(violations.map(exceptionKey));
@@ -263,11 +302,17 @@ export function compareViolationsToExceptions(violations, exceptions) {
   };
 }
 
+export function isDefaultConfigSpec(path) {
+  const normalized = path.split(sep).join('/');
+  return !normalized.endsWith('perf-bench.spec.ts') && !normalized.includes('/mobile/');
+}
+
 function specFiles(directory = SPEC_ROOT) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) return specFiles(path);
-    return entry.name.endsWith('.spec.ts') ? [path] : [];
+    // Mobile and perf specs share this testDir but have their own, larger project budgets.
+    return entry.name.endsWith('.spec.ts') && isDefaultConfigSpec(path) ? [path] : [];
   });
 }
 
@@ -287,20 +332,27 @@ function formatViolation(violation) {
 }
 
 export function runCheck() {
-  const thresholdMs = projectTestTimeout(readFileSync(PLAYWRIGHT_CONFIG_PATH, 'utf8')) / 2;
-  const violations = specFiles().flatMap((path) =>
-    analyzeSpec(readFileSync(path, 'utf8'), normalizedRelative(path), thresholdMs)
+  const projectTimeoutMs = projectTestTimeout(readFileSync(PLAYWRIGHT_CONFIG_PATH, 'utf8'));
+  const thresholdMs = projectTimeoutMs / 2;
+  const paths = specFiles();
+  const violations = paths.flatMap((path) =>
+    analyzeSpec(readFileSync(path, 'utf8'), normalizedRelative(path), thresholdMs, projectTimeoutMs)
   );
   const result = compareViolationsToExceptions(violations, loadExceptions());
   for (const violation of result.newViolations)
     console.error(`Missing timeout budget: ${formatViolation(violation)}`);
   for (const exception of result.staleExceptions) {
-    console.error(`Stale timeout-budget exception: ${exception.file} :: ${exception.test}`);
+    console.error(
+      `Stale timeout-budget exception: ${exception.file}:${exception.line} :: ${exception.test}`
+    );
+  }
+  if (result.newViolations.length) {
+    console.error(
+      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }), or add a reasoned entry to scripts/e2e-timeout-budget-exceptions.json.'
+    );
   }
   if (result.newViolations.length || result.staleExceptions.length) return false;
-  console.log(
-    `E2E timeout budgets checked: ${specFiles().length} specs, ${violations.length} exceptions.`
-  );
+  console.log(`E2E timeout budgets checked: ${paths.length} specs.`);
   return true;
 }
 
