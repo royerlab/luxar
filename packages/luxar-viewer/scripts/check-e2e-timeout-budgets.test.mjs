@@ -257,6 +257,30 @@ describe('analyzeSpec', () => {
     expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
   });
 
+  it('resolves helper submodule defaults', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForScene } from './helpers/scene';
+
+      test('uses a helper submodule', async ({ page }) => {
+        await waitForScene(page);
+      });
+    `;
+    const helpers = `
+      export const waitForScene = async (page, deadlineMs = 45_000) => {};
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers/scene', helpers]])
+      )
+    ).toHaveLength(1);
+  });
+
   it('includes long deadlines from enclosing hooks', () => {
     const source = `
       import { test } from '@playwright/test';

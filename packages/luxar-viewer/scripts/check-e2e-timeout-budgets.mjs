@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -409,7 +409,9 @@ function helperSourcesForSpec(sourceText, path) {
     const specifier = statement.moduleSpecifier.text;
     if (!/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
     const base = resolve(dirname(path), specifier);
-    const modulePath = [base, `${base}.ts`, join(base, 'index.ts')].find(existsSync);
+    const modulePath = [`${base}.ts`, join(base, 'index.ts'), base].find(
+      (candidate) => existsSync(candidate) && statSync(candidate).isFile()
+    );
     if (modulePath) sources.set(specifier, readFileSync(modulePath, 'utf8'));
   }
   return sources;
