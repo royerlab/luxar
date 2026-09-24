@@ -849,6 +849,31 @@ Two regimes, and the ratio tells you which one you are in:
   stacked-leaf versus 689-request partition measurement in
   `packages/luxar/src/luxar/demos/_lod_policy.py` is not a reusable sublinear
   node-to-request law: it compares a byte-bound leaf with a node-bound partition.
+
+  **Measured 2026-08-28; hosted topology re-checked 2026-09-24.** The then-live
+  `2026-08-27b` store was rebuilt at a 4x coarser partition (172 parts -> 43)
+  and taken through `optimize --profile archive`:
+
+  | generation | parts | geometry groups | all groups | arrays | chunks | chunks:arrays |
+  |---|---:|---:|---:|---:|---:|---:|
+  | published `2026-08-27b` | 172 | 2764 | 2767 | 10320 | 10320 | 1.00 |
+  | rebuilt | 43 | 700 | 703 | 2580 | 2828 | 1.10 |
+
+  The three extra groups in the all-group count are the overlay wrapper and its
+  two text overlays; stating both counts keeps the structural comparison
+  like-for-like. The old prefix has since been retired. The current
+  `2026-09-12` root metadata independently confirms that the hosted store is the
+  43-part rebuild: 700 geometry groups (703 including overlays),
+  `arrays_total=2580`, and `chunks_after=2828`.
+
+  That is a **3.65x reduction in the full-detail chunk total**. Two cautions,
+  both of which the columns above exist to prevent: this is the whole-store
+  figure, *not* the converged eager load (the historical published store used
+  3,440 chunks) nor first paint (860); and the array count alone predicts 4.00x,
+  so **extrapolating from groups or arrays overstates the win**. The coarser
+  partition made arrays ~4x larger as well as ~4x fewer, moving the ratio
+  1.00 -> 1.10 toward byte-bound without leaving the node-bound regime. Only
+  re-running `optimize` gives the real number.
 - **Byte-bound (ratio >> 1).** Arrays span many chunks, so request count tracks
   total bytes and is nearly indifferent to node count. `cmu1`'s converged load
   fetches 508 chunks from 60 arrays, while its first rung fetches 127 from 15;
