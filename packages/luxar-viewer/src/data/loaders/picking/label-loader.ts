@@ -14,12 +14,14 @@ import { log, Modules } from '../../../utils/log';
 import * as zarr from '../../zarr';
 import { readArray, slice } from '../../zarr';
 
-interface LabelArrays {
+/** Open zarr arrays backing one CSR text channel. */
+export interface LabelArrays {
   offsets: zarr.Array<zarr.DataType>;
   bytes: zarr.Array<zarr.DataType>;
 }
 
 const DEFAULT_MAX_CACHE_BYTES = 1024 * 1024;
+// Roughly 16k short labels per 1 MB budget; cache keys add a small uncounted overhead.
 const MIN_CACHE_ENTRY_BYTES = 64;
 
 function cachedLabelSize(label: string | null): number {
@@ -54,7 +56,7 @@ export class LabelLoader {
   private labelCache: LRUCache<string | null>;
 
   /** In-flight label reads, coalesced per node and element. */
-  private labelInflight = new Map<string, Promise<string | null>>();
+  private labelInflight = new Map<string, Promise<string | null | undefined>>();
 
   /** UTF-8 text decoder (reused). */
   private decoder = new TextDecoder('utf-8');
@@ -66,7 +68,6 @@ export class LabelLoader {
    * @param maxCacheBytes Byte budget for decoded strings across all nodes.
    */
   constructor(
-    _store: zarr.Readable,
     private rootLoc: zarr.Location<zarr.Readable>,
     private channel: 'labels' | 'keys' = 'labels',
     maxCacheBytes: number = DEFAULT_MAX_CACHE_BYTES
@@ -83,14 +84,14 @@ export class LabelLoader {
     if (cached !== undefined) return cached;
 
     const existing = this.labelInflight.get(cacheKey);
-    if (existing) return existing;
+    if (existing) return (await existing) ?? null;
 
     const promise = this.fetchLabel(nodePath, elementIndex);
     this.labelInflight.set(cacheKey, promise);
     try {
       const label = await promise;
-      this.labelCache.set(cacheKey, label);
-      return label;
+      if (label !== undefined) this.labelCache.set(cacheKey, label);
+      return label ?? null;
     } finally {
       this.labelInflight.delete(cacheKey);
     }
@@ -127,7 +128,7 @@ export class LabelLoader {
         Modules.SCENE_LOADER,
         `Failed to open ${this.channel} for ${nodePath}: ${error instanceof Error ? error.message : error}`
       );
-      this.arraysCache.set(nodePath, null);
+      if (zarr.isNotFoundError(error)) this.arraysCache.set(nodePath, null);
       return null;
     } finally {
       this.arraysInflight.delete(nodePath);
@@ -153,10 +154,14 @@ export class LabelLoader {
     return { offsets, bytes };
   }
 
-  private async fetchLabel(nodePath: string, elementIndex: number): Promise<string | null> {
+  private async fetchLabel(
+    nodePath: string,
+    elementIndex: number
+  ): Promise<string | null | undefined> {
     try {
       const arrays = await this.loadArrays(nodePath);
-      if (!arrays || elementIndex >= arrays.offsets.shape[0] - 1) return null;
+      if (!arrays) return undefined;
+      if (elementIndex >= arrays.offsets.shape[0] - 1) return null;
 
       const offsetResult = await readArray(arrays.offsets, [slice(elementIndex, elementIndex + 2)]);
       const range = decodeByteRange(offsetResult.data as BigUint64Array);
@@ -173,7 +178,7 @@ export class LabelLoader {
           error instanceof Error ? error.message : error
         }`
       );
-      return null;
+      return undefined;
     }
   }
 }

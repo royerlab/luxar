@@ -459,7 +459,6 @@ describe('initPicking', () => {
       });
 
       expect(LabelLoader).toHaveBeenCalledExactlyOnceWith(
-        { kind: 'store' },
         { kind: 'zarr-root-loc' },
         'keys'
       );

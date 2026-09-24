@@ -69,7 +69,7 @@ function programArrays(labels: string[]): MockArrays {
 
 function makeLoader(maxCacheBytes = 1024 * 1024, channel: 'labels' | 'keys' = 'labels') {
   const fakeRoot = { resolve: (path: string) => `loc:${path}` } as never;
-  return new LabelLoader({} as never, fakeRoot, channel, maxCacheBytes);
+  return new LabelLoader(fakeRoot, channel, maxCacheBytes);
 }
 
 function selectedRange(callIndex: number): { start: number; end: number } {
@@ -212,6 +212,19 @@ describe('LabelLoader.getLabel', () => {
     }
   });
 
+  it('does not evict decoded labels when an unlabelled node is hovered', async () => {
+    const loader = makeLoader(64);
+    programArrays(['retained']);
+
+    expect(await loader.getLabel('/Labelled', 0)).toBe('retained');
+    mockOpen.mockRejectedValueOnce(new NotFoundError('v2 array', { path: '/x/.zarray' }));
+    expect(await loader.getLabel('/Unlabelled', 0)).toBeNull();
+    expect(await loader.getLabel('/Unlabelled', 1)).toBeNull();
+    expect(await loader.getLabel('/Labelled', 0)).toBe('retained');
+
+    expect(mockGet).toHaveBeenCalledTimes(2);
+  });
+
   it('warns and remembers when bytes metadata is missing', async () => {
     const loader = makeLoader();
     mockOpen.mockResolvedValueOnce({ kind: 'offsets-array', shape: [2] } as never);
@@ -230,15 +243,41 @@ describe('LabelLoader.getLabel', () => {
     }
   });
 
-  it('warns when a sliced chunk read fails', async () => {
+  it('retries after a transient array-open failure', async () => {
+    const loader = makeLoader();
+    const arrays = encodeLabels(['recovered']);
+    const offsetsArray = { kind: 'offsets-array', shape: [arrays.offsets.length] };
+    const bytesArray = { kind: 'bytes-array', shape: [arrays.bytes.length] };
+    mockOpen.mockRejectedValueOnce(new Error('HTTP 503: label_offsets metadata'));
+    mockOpen.mockResolvedValueOnce(offsetsArray as never);
+    mockOpen.mockResolvedValueOnce(bytesArray as never);
+    mockGet.mockResolvedValueOnce({ data: arrays.offsets } as never);
+    mockGet.mockResolvedValueOnce({ data: arrays.bytes } as never);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      expect(await loader.getLabel('/TransientOpen', 0)).toBeNull();
+      expect(await loader.getLabel('/TransientOpen', 0)).toBe('recovered');
+      expect(mockOpen).toHaveBeenCalledTimes(3);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('retries after a transient sliced chunk read failure', async () => {
     const loader = makeLoader();
     mockOpen.mockResolvedValueOnce({ kind: 'offsets-array', shape: [2] } as never);
-    mockOpen.mockResolvedValueOnce({ kind: 'bytes-array', shape: [1] } as never);
-    mockGet.mockRejectedValueOnce(new Error('HTTP 404: /x/label_offsets/0'));
+    mockOpen.mockResolvedValueOnce({ kind: 'bytes-array', shape: [5] } as never);
+    mockGet.mockRejectedValueOnce(new Error('HTTP 503: /x/label_offsets/0'));
+    mockGet.mockResolvedValueOnce({ data: new BigUint64Array([0n, 5n]) } as never);
+    mockGet.mockResolvedValueOnce({ data: new TextEncoder().encode('retry') } as never);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     try {
       expect(await loader.getLabel('/BrokenChunk', 0)).toBeNull();
+      expect(await loader.getLabel('/BrokenChunk', 0)).toBe('retry');
+      expect(mockGet).toHaveBeenCalledTimes(3);
       expect(warnSpy).toHaveBeenCalledTimes(1);
     } finally {
       warnSpy.mockRestore();
