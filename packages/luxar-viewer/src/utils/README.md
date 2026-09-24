@@ -161,7 +161,7 @@ Union type and helpers so the codebase can treat perspective and orthographic ca
 
 ### clamp.ts - Generic Numeric Clamp
 
-`clamp(value, min?, max?)` — Either bound may be omitted; both omitted is a pass-through. The canonical home for this primitive; it moved here from `ui/gui/format/value-formatting.ts` so lower layers can import it without crossing the dependency-cruiser layer order.
+`clamp(value, min?, max?)` — Either bound may be omitted; both omitted is a pass-through. The canonical home for this primitive; it moved here from the former GUI formatting helper so lower layers can import it without crossing the dependency-cruiser layer order.
 
 ### event-bus.ts - Typed Cross-Layer Pub/Sub
 
