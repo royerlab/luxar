@@ -1,6 +1,4 @@
 /** Shared numeric formatting for slider tracks, readouts, and editors. */
-export { clamp } from '../../utils/clamp';
-
 /** Return the decimal precision represented by a fixed or exponent-form step. */
 export function decimalsForStep(step: number): number {
   if (!Number.isFinite(step) || step <= 0) return 0;
@@ -15,16 +13,15 @@ export function formatNumber(value: number, step?: number): string {
   return step === undefined ? String(value) : value.toFixed(decimalsForStep(step));
 }
 
-/** Parse a number, returning `fallback` when the text is not numeric. */
-export function parseNumber(value: string, fallback: number): number {
-  const parsed = parseFloat(value);
-  return Number.isNaN(parsed) ? fallback : parsed;
-}
-
 /** Format a slider readout, widening precision when it sits off the drag grid. */
-export function formatSliderValue(value: number, baseStep: number, min: number): string {
+export function formatSliderValue(
+  value: number,
+  baseStep: number,
+  min: number,
+  minimumDecimals = 2
+): string {
   const quotient = baseStep > 0 ? (value - min) / baseStep : 0;
   const onBaseGrid = Math.abs(quotient - Math.round(quotient)) < 1e-9;
   const step = onBaseGrid ? baseStep : baseStep / 100;
-  return value.toFixed(Math.max(2, Math.min(12, decimalsForStep(step))));
+  return value.toFixed(Math.max(minimumDecimals, Math.min(12, decimalsForStep(step))));
 }

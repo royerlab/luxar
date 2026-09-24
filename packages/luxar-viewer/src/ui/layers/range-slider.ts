@@ -7,11 +7,16 @@
  * The bound labels (left/right of the track) are click-to-edit: clicking on
  * them opens a tiny text input so the user can type a custom slider limit,
  * napari-style.
+ *
+ * The overlapping range thumbs retain native drag and arrow behavior. Their
+ * adaptive wheel stepping lives on the editable bound labels, so they are not
+ * fine-grid members of the single-thumb slider interaction contract.
  */
 
-import { attachInlineNumberEdit, clamp } from '../slider-kit';
+import { attachInlineNumberEdit, WHEEL_INTERACTION_HINT } from '../slider-kit';
 import { normalizeWheelDeltaWithAxisFallback } from '../../utils/wheel-delta';
 import { applyModifierTier } from '../../utils/cross-layer/modifier-tiers';
+import { clamp } from '../../utils/clamp';
 
 export interface RangeSliderOptions {
   container: HTMLElement;
@@ -32,7 +37,7 @@ export interface RangeSliderOptions {
  *
  * Strategy: step = 10^(floor(log10(range)) - 1), giving ~10–100 clean
  * power-of-10 increments across the full range.
- * Shift key divides by 10 for fine control.
+ * The caller applies the shared Shift/Ctrl modifier ladder.
  */
 function computeWheelStep(min: number, max: number, fine: boolean): number {
   const range = Math.abs(max - min);
@@ -110,7 +115,7 @@ export class RangeSlider {
     this.boundsLowLabel.setAttribute('role', 'button');
     this.boundsLowLabel.tabIndex = 0;
     this.boundsLowLabel.setAttribute('aria-label', `${options.label ?? 'Range'} lower bound`);
-    this.boundsLowLabel.title = 'Click to edit · Scroll to adjust (Shift = fine)';
+    this.boundsLowLabel.title = `Click to edit · ${WHEEL_INTERACTION_HINT}`;
     this.boundsLowLabel.textContent = this.formatValue(options.min);
     this.onClickLow = () => this.editBound('low');
     this.boundsLowLabel.addEventListener('click', this.onClickLow);
@@ -121,7 +126,7 @@ export class RangeSlider {
     this.boundsHighLabel.setAttribute('role', 'button');
     this.boundsHighLabel.tabIndex = 0;
     this.boundsHighLabel.setAttribute('aria-label', `${options.label ?? 'Range'} upper bound`);
-    this.boundsHighLabel.title = 'Click to edit · Scroll to adjust (Shift = fine)';
+    this.boundsHighLabel.title = `Click to edit · ${WHEEL_INTERACTION_HINT}`;
     this.boundsHighLabel.textContent = this.formatValue(options.max);
     this.onClickHigh = () => this.editBound('high');
     this.boundsHighLabel.addEventListener('click', this.onClickHigh);

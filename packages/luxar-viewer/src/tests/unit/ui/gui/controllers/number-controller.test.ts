@@ -97,6 +97,22 @@ describe('NumberController', () => {
       expect(object.value).toBeCloseTo(41.11, 9);
     });
 
+    it('widens the number readout for fine wheel values', () => {
+      const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
+
+      slider.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: -120,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+
+      expect(object.value).toBeCloseTo(50.1, 9);
+      expect(controller.$input?.value).toBe('50.10');
+    });
+
     it('wheel reads the horizontal axis when Shift swaps it; zero delta is a no-op', () => {
       const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
 

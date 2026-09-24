@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { clamp, formatNumber, parseNumber } from '../../../ui/slider-kit';
+import { formatNumber } from '../../../ui/slider-kit';
+import { clamp } from '../../../utils/clamp';
 
 describe('clamp', () => {
   it('returns value unchanged when within range', () => {
@@ -84,43 +85,5 @@ describe('formatNumber', () => {
   it('handles zero value', () => {
     expect(formatNumber(0, 0.01)).toBe('0.00');
     expect(formatNumber(0, 1)).toBe('0');
-  });
-});
-
-describe('parseNumber', () => {
-  it('parses an integer string', () => {
-    expect(parseNumber('42', 0)).toBe(42);
-  });
-
-  it('parses a decimal string', () => {
-    expect(parseNumber('3.14', 0)).toBe(3.14);
-  });
-
-  it('parses a negative number', () => {
-    expect(parseNumber('-2.5', 0)).toBe(-2.5);
-  });
-
-  it('parses scientific notation', () => {
-    expect(parseNumber('1e3', 0)).toBe(1000);
-    expect(parseNumber('1.5e-2', 0)).toBe(0.015);
-  });
-
-  it('returns the fallback for an unparseable string', () => {
-    expect(parseNumber('abc', 99)).toBe(99);
-    expect(parseNumber('', 7)).toBe(7);
-  });
-
-  it('returns the fallback for whitespace-only string', () => {
-    expect(parseNumber('   ', 5)).toBe(5);
-  });
-
-  it('parses leading numeric portion (parseFloat semantics)', () => {
-    // parseFloat is permissive: stops at the first non-numeric character.
-    expect(parseNumber('42abc', 0)).toBe(42);
-    expect(parseNumber('3.14 units', 0)).toBe(3.14);
-  });
-
-  it('returns the fallback when parseFloat returns NaN', () => {
-    expect(parseNumber('NaN', 0)).toBe(0);
   });
 });

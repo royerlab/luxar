@@ -10,10 +10,16 @@
 
 import { Controller } from '../controller';
 import { ControllerType, type ControllerOptions } from '../types';
-import { clamp, fineTrackStep, formatNumber, snapToGrid } from '../../slider-kit';
+import {
+  fineTrackStep,
+  formatSliderValue,
+  SLIDER_INTERACTION_HINT,
+  snapToGrid,
+} from '../../slider-kit';
 import { applyAutoBlur } from '../format/auto-blur';
 import { normalizeWheelDeltaWithAxisFallback } from '../../../utils/wheel-delta';
 import { applyModifierTier } from '../../../utils/cross-layer/modifier-tiers';
+import { clamp } from '../../../utils/clamp';
 
 export class NumberController extends Controller<number> {
   protected type = ControllerType.NUMBER;
@@ -66,7 +72,6 @@ export class NumberController extends Controller<number> {
         const min = this.minValue ?? 0;
         const snapped = snapToGrid(parseFloat(this.slider.value), min, this.stepValue ?? 0);
         const value = this.constrainValue(snapped);
-        this.slider.value = String(value);
         this.object[this.property] = value;
         this.updateDisplay();
         this.triggerChange();
@@ -140,7 +145,7 @@ export class NumberController extends Controller<number> {
       });
 
       // Cursor hint and tooltip
-      this.slider.title = 'Scroll: fine-tune · ⇧: finer · ⌃: coarse · Double-click: reset';
+      this.slider.title = SLIDER_INTERACTION_HINT;
 
       // Auto-blur after interaction
       applyAutoBlur(this.slider, this.eventManager);
@@ -220,7 +225,10 @@ export class NumberController extends Controller<number> {
       this.slider.value = String(value);
     }
 
-    this.input.value = formatNumber(value, this.stepValue);
+    this.input.value =
+      this.stepValue === undefined
+        ? String(value)
+        : formatSliderValue(value, this.stepValue, this.minValue ?? 0, 0);
 
     return this;
   }

@@ -5,6 +5,7 @@ import { getNonDisplayedDimensions } from '../scene/dims/selection';
 import { getViewerContainer } from '../utils/viewer-container';
 import { getInputProfile } from '../utils/input-capabilities';
 import { normalizeWheelDeltaWithAxisFallback } from '../utils/wheel-delta';
+import { WHEEL_INTERACTION_HINT } from './slider-kit';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { describeLadderDepth } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
@@ -848,7 +849,7 @@ export class DimensionSliders {
     this.sliderEvents.on(sliderContainer, 'wheel', wheelHandler, { passive: false });
 
     // Discoverability, matching the layers range-slider's affordance.
-    slider.title = 'Scroll to step (Shift = fine, Ctrl = coarse, Ctrl+Shift = extra-fine)';
+    slider.title = WHEEL_INTERACTION_HINT;
 
     sliderContainer.appendChild(progressBar);
     sliderContainer.appendChild(slider);

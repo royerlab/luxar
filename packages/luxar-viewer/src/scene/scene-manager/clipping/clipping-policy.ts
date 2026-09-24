@@ -107,7 +107,7 @@ export function applyClippingPlanes(camera: LuxarCamera, near: number, far: numb
   // DEFENSIVE, not currently reachable: every present caller of
   // `SceneManager.updateClippingPlanes` passes values that already went through
   // `validateRenderingSettings` (reset / load / zarr paths) or the number
-  // controller's `parseNumber` fallback (the sliders), so none can deliver a
+  // controller's numeric input parsing (the sliders), so none can deliver a
   // non-finite pair today. The guard exists because that is a property of the
   // CALLERS, not of this function's contract, and because the sibling
   // `restoreCamera` (`core/app/snapshot/viewer-snapshot.ts`) shows the shape of

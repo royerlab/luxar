@@ -778,9 +778,9 @@ export class RenderingControls {
    * displayed decimal count from `String(step)` (`slider-kit/format.ts`).
    * A scene-derived step carries float noise into that string — `String(1.05e-4)`
    * is `"0.00010499999999999999"`, which renders every value with TWENTY
-   * decimals — and below 1e-6 `String` switches to exponential, where the
-   * decimal count is read off the mantissa and is meaningless. `decadeStep`
-   * exists to hand this function a clean value; see it for the exact bounds.
+   * decimals. `decimalsForStep` handles exponential notation, but it cannot
+   * distinguish meaningful precision from that binary float noise, so
+   * `decadeStep` hands it a clean value; see that helper for the exact bounds.
    */
   private updateClippingSliderRanges(scale: number): void {
     type ChainableNumber = {

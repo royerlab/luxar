@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { LabeledSlider } from '../../../../ui/layers/labeled-slider';
+import { absorptionSliderRange } from '../../../../ui/layers/absorption-range';
 
 describe('LabeledSlider', () => {
   let container: HTMLElement;
@@ -91,6 +92,27 @@ describe('LabeledSlider', () => {
     input.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expect(input.valueAsNumber).toBe(1);
     expect(onChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it('ignores slider gestures while inert', () => {
+    const onChange = vi.fn();
+    const slider = new LabeledSlider({
+      container,
+      label: 'Clearcoat roughness',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: 0.5,
+      onChange,
+    });
+    slider.setInert('Clearcoat is disabled');
+
+    findInput().dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true })
+    );
+
+    expect(findInput().valueAsNumber).toBe(0.5);
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('commits exact typed values and widens the track when needed', () => {
@@ -234,6 +256,7 @@ describe('LabeledSlider', () => {
         step: 0.05, // ignored on a log track
         scale: 'log',
         initialValue,
+        rangeForValue: absorptionSliderRange,
         onChange,
       });
       return { slider, onChange };
@@ -318,6 +341,40 @@ describe('LabeledSlider', () => {
       input.value = '1';
       input.dispatchEvent(new Event('input'));
       expect(onChange).toHaveBeenLastCalledWith(expect.closeTo(10000, 3));
+    });
+
+    it('uses the live range when double-click resetting', () => {
+      const { slider, onChange } = makeLog();
+      const input = findInput();
+      slider.setRange(0.0001, 10);
+
+      input.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+      expect(onChange).toHaveBeenLastCalledWith(1);
+      expect(parseFloat(input.value)).toBeCloseTo(pos(0.8), 6);
+    });
+
+    it('keeps typed zero and extreme values within the absorption range policy', () => {
+      const { slider, onChange } = makeLog();
+
+      findReadout().click();
+      let editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+      editor.value = '0';
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(slider.getRange()).toEqual([0.001, 10]);
+      expect(onChange).toHaveBeenLastCalledWith(0);
+
+      findReadout().click();
+      editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+      editor.value = '1e12';
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const range = absorptionSliderRange(1e12);
+      expect(slider.getRange()).toEqual([range.min, range.max]);
+
+      const input = findInput();
+      input.value = '0.5';
+      input.dispatchEvent(new Event('input'));
+      expect(onChange.mock.lastCall?.[0]).toBeGreaterThan(0);
     });
 
     it('a linear track keeps driving the input in value space (unchanged default)', () => {

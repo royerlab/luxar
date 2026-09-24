@@ -19,6 +19,14 @@
  * which sync the slider to the primary selected layer without re-applying.
  */
 
+import {
+  attachInlineNumberEdit,
+  attachSliderInteractions,
+  fineTrackStep,
+  formatSliderValue,
+  snapToGrid,
+} from '../slider-kit';
+
 /** Value scale of the slider track — see the module note. */
 export type SliderScale = 'linear' | 'log';
 
@@ -54,6 +62,8 @@ export interface LabeledSliderOptions {
   format?: (value: number) => string;
   /** Constrain the parsed value before invoking onChange. */
   constrain?: (value: number) => number;
+  /** Derive value-space bounds after exact entry widens a specialised track. */
+  rangeForValue?: (value: number) => { min: number; max: number };
   /** Fired with the constrained value on each `input` event. */
   onChange: (value: number) => void;
 }
@@ -130,7 +140,7 @@ export class LabeledSlider {
     this.disposeInteractions = attachSliderInteractions({
       input: this.input,
       baseStep,
-      initialValue: this.toPosition(options.initialValue),
+      resetValue: () => this.applyValue(options.initialValue),
       getValue: () => parseFloat(this.input.value),
       setValue: (position) => this.applyPosition(position),
     });
@@ -153,6 +163,10 @@ export class LabeledSlider {
     );
     const raw = this.toValue(clampedPosition);
     const value = this.options.constrain ? this.options.constrain(raw) : raw;
+    this.applyValue(value);
+  }
+
+  private applyValue(value: number): void {
     this.lastValue = value;
     this.input.value = String(this.toPosition(value));
     this.valueEl.textContent = this.formatValue(value);
@@ -162,12 +176,16 @@ export class LabeledSlider {
 
   private commitTypedValue(parsed: number): void {
     const value = this.options.constrain ? this.options.constrain(parsed) : parsed;
-    if (value === parsed) this.setRange(Math.min(this.min, value), Math.max(this.max, value));
-    this.lastValue = value;
-    this.input.value = String(this.toPosition(value));
-    this.valueEl.textContent = this.formatValue(value);
-    this.syncAriaValueText(value);
-    this.options.onChange(value);
+    if (value === parsed) {
+      const range = this.options.rangeForValue?.(value);
+      if (range) {
+        this.setRange(range.min, range.max);
+      } else {
+        const min = this.scale === 'log' && value <= 0 ? this.min : Math.min(this.min, value);
+        this.setRange(min, Math.max(this.max, value));
+      }
+    }
+    this.applyValue(value);
   }
 
   /** Thumb position (DOM input space) for a value. */
@@ -273,10 +291,3 @@ export class LabeledSlider {
     this.wrapper.remove();
   }
 }
-import {
-  attachInlineNumberEdit,
-  attachSliderInteractions,
-  fineTrackStep,
-  formatSliderValue,
-  snapToGrid,
-} from '../slider-kit';
