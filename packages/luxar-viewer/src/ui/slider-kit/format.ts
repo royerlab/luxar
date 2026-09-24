@@ -1,4 +1,3 @@
-/** Shared numeric formatting for slider tracks, readouts, and editors. */
 /** Return the decimal precision represented by a fixed or exponent-form step. */
 export function decimalsForStep(step: number): number {
   if (!Number.isFinite(step) || step <= 0) return 0;
