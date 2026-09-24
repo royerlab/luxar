@@ -446,10 +446,16 @@ loops is not something a static pass can honestly claim to do, so the budget
 still has to be sized by hand.
 `test.slow()`, `test.setTimeout()`, or an enclosing
 `test.describe.configure({ timeout })` supplies the budget. `test.slow()` is
-modelled the way Playwright's `TimeoutManager` implements it: three times the
-budget resolved at that point — so a `setTimeout` or `configure` earlier in the
-same block wins — and **once per test**, because a suite-level `slow` makes an
-in-test one a no-op. If the static
+modelled as Playwright implements it, which differs by scope. In a describe
+body or at file level nothing executes: it is a static annotation, so the
+declared timeout always wins and the tripling happens afterwards — order is
+irrelevant and it reaches down through nested suites. In a **test body** it is
+a live call against the resolved slot, so a preceding `setTimeout` is what gets
+tripled and a following one replaces the result. Either way it lands **once per
+test**, since a suite-level `slow` makes an in-test one a no-op, and a
+_conditional_ `test.slow(cond)` declares nothing at all — the condition is a
+run-time value, so the check falls back to demanding a real budget. If the
+static
 heuristic cannot model a case, add its file, source line, test title, and a specific reason
 to `scripts/e2e-timeout-budget-exceptions.json`; stale exceptions fail the
 check and must be removed when the test gains a budget or stops using the long

@@ -120,48 +120,77 @@ function testTitle(call) {
   return '<dynamic title>';
 }
 
-// Returns the budget these statements declare plus the running `slow` flag, so
-// a caller can hand both down to the scope inside.
-function budgetScopeForStatements(
-  statements,
-  constants,
-  enclosing,
-  projectTimeoutMs,
-  describeScope
-) {
-  let budgetMs;
+function budgetCalls(statements) {
+  return statements.flatMap((statement) =>
+    ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
+      ? [statement.expression]
+      : []
+  );
+}
+
+// A conditional modifier declares nothing we can model: Playwright bails on a
+// falsy condition, and the `() => …` form is resolved from fixtures at run time.
+function isUnconditionalSlow(call) {
+  return call.arguments.length === 0;
+}
+
+function configuredTimeout(call, constants) {
+  const options = call.arguments[0];
+  if (!options || !ts.isObjectLiteralExpression(options)) return undefined;
+  const timeout = options.properties.find(
+    (property) => ts.isPropertyAssignment(property) && propertyName(property.name) === 'timeout'
+  );
+  return timeout && ts.isPropertyAssignment(timeout)
+    ? normalizedBudget(evaluateNumber(timeout.initializer, constants))
+    : undefined;
+}
+
+// Suite scope — a file's top level or a describe body. Nothing executes here:
+// `test.slow()` becomes a static annotation while setTimeout/configure set the
+// suite's own `_timeout`, and the worker resolves the timeout FIRST and applies
+// the annotations after. So textual order is irrelevant, the declared timeout
+// always wins, and the x3 is deferred to the test boundary. `_timeout` resolves
+// to the nearest ancestor that declared one.
+function suiteScope(statements, constants, enclosing) {
+  let declaredMs;
   let { slowApplied } = enclosing;
-  for (const statement of statements) {
-    if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
-      continue;
-    }
-    const call = statement.expression;
+  for (const call of budgetCalls(statements)) {
     const path = callPath(call.expression).join('.');
     if (path === 'test.slow') {
-      // TimeoutManager.slow() triples the slot timeout AS RESOLVED AT THAT
-      // POINT and is guarded by a per-test flag, so a preceding setTimeout or
-      // describe.configure wins and a suite-level slow makes an in-test one a
-      // no-op — the total is 3x, never 9x.
-      if (slowApplied) continue;
-      slowApplied = true;
-      budgetMs = (budgetMs ?? enclosing.budgetMs ?? projectTimeoutMs) * 3;
-      continue;
-    }
-    if (path === 'test.setTimeout') {
-      budgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
-      continue;
-    }
-    if (!describeScope || path !== 'test.describe.configure') continue;
-    const options = call.arguments[0];
-    if (!options || !ts.isObjectLiteralExpression(options)) continue;
-    const timeout = options.properties.find(
-      (property) => ts.isPropertyAssignment(property) && propertyName(property.name) === 'timeout'
-    );
-    if (timeout && ts.isPropertyAssignment(timeout)) {
-      budgetMs = normalizedBudget(evaluateNumber(timeout.initializer, constants));
+      slowApplied ||= isUnconditionalSlow(call);
+    } else if (path === 'test.setTimeout') {
+      declaredMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+    } else if (path === 'test.describe.configure') {
+      const timeout = configuredTimeout(call, constants);
+      if (timeout !== undefined) declaredMs = timeout;
     }
   }
-  return { budgetMs, slowApplied };
+  return { declaredMs: declaredMs ?? enclosing.declaredMs, slowApplied };
+}
+
+// An undeclared budget stays undefined — the whole point of the gate is that a
+// long deadline riding on the bare project timeout is the thing to flag.
+function materializedBudget(scope, projectTimeoutMs) {
+  if (scope.declaredMs === undefined && !scope.slowApplied) return undefined;
+  return (scope.declaredMs ?? projectTimeoutMs) * (scope.slowApplied ? 3 : 1);
+}
+
+// A test body DOES execute, so here order matters: TimeoutManager.setTimeout
+// assigns the slot outright and slow() triples whatever it finds, once per test
+// (a suite-level slow already spent that flag).
+function testBudget(statements, constants, enclosing, projectTimeoutMs) {
+  let budgetMs = materializedBudget(enclosing, projectTimeoutMs);
+  let { slowApplied } = enclosing;
+  for (const call of budgetCalls(statements)) {
+    const path = callPath(call.expression).join('.');
+    if (path === 'test.setTimeout') {
+      budgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+    } else if (path === 'test.slow' && !slowApplied && isUnconditionalSlow(call)) {
+      slowApplied = true;
+      budgetMs = (budgetMs ?? projectTimeoutMs) * 3;
+    }
+  }
+  return budgetMs;
 }
 
 function normalizedBudget(value) {
@@ -169,16 +198,8 @@ function normalizedBudget(value) {
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-function directBudgetScope(callback, constants, enclosing, projectTimeoutMs, describeScope) {
-  return ts.isBlock(callback.body)
-    ? budgetScopeForStatements(
-        callback.body.statements,
-        constants,
-        enclosing,
-        projectTimeoutMs,
-        describeScope
-      )
-    : { budgetMs: undefined, slowApplied: enclosing.slowApplied };
+function blockStatements(callback) {
+  return callback && ts.isBlock(callback.body) ? callback.body.statements : [];
 }
 
 function deadlineCandidates(callback, constants, helpers) {
@@ -233,12 +254,11 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
     if (ts.isCallExpression(node)) {
       const path = callPath(node.expression);
       const callback = callbackArgument(node);
+      const statements = blockStatements(callback);
       if (callback && path[0] === 'test' && path[1] === 'describe') {
-        const statements = ts.isBlock(callback.body) ? callback.body.statements : [];
-        const scope = directBudgetScope(callback, constants, enclosing, projectTimeoutMs, true);
         visit(
           callback.body,
-          { budgetMs: scope.budgetMs ?? enclosing.budgetMs, slowApplied: scope.slowApplied },
+          suiteScope(statements, constants, enclosing),
           Math.max(inheritedDeadlineMs, hookDeadline(statements, constants, helpers))
         );
         return;
@@ -246,8 +266,7 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
       if (callback && (path.join('.') === 'test' || path.join('.') === 'test.only')) {
         const deadlines = deadlineCandidates(callback, constants, helpers);
         const deadlineMs = Math.max(inheritedDeadlineMs, ...deadlines);
-        const scope = directBudgetScope(callback, constants, enclosing, projectTimeoutMs, false);
-        const budgetMs = scope.budgetMs ?? enclosing.budgetMs;
+        const budgetMs = testBudget(statements, constants, enclosing, projectTimeoutMs);
         if (deadlineMs > 0 && (budgetMs === undefined || budgetMs <= deadlineMs)) {
           violations.push({
             deadlineMs,
@@ -263,13 +282,7 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
   };
   visit(
     sourceFile,
-    budgetScopeForStatements(
-      sourceFile.statements,
-      constants,
-      { budgetMs: undefined, slowApplied: false },
-      projectTimeoutMs,
-      true
-    ),
+    suiteScope(sourceFile.statements, constants, { declaredMs: undefined, slowApplied: false }),
     hookDeadline(sourceFile.statements, constants, helpers)
   );
   return violations;

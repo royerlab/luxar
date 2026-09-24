@@ -77,7 +77,7 @@ async function waitForMeshCommitted(
 }
 
 test.describe('Mesh rendering', () => {
-  // The 45 s commit waits leave 75 s for navigation, rendering, and assertions.
+  // The 45 s ready wait and 45 s commit wait leave 30 s for navigation, rendering, and assertions.
   test.describe.configure({ timeout: 120000 });
 
   test('a written mesh loads, commits its triangles, and draws without GL errors', async ({

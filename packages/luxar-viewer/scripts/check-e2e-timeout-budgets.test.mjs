@@ -70,25 +70,62 @@ describe('analyzeSpec', () => {
     expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
   });
 
-  it('triples a budget declared earlier in the same block', () => {
+  it('triples a suite budget whatever the order of slow and configure', () => {
+    // At suite scope nothing executes: the declared timeout always wins and the
+    // static `slow` annotation triples it afterwards, across levels.
     const source = `
       import { test } from '@playwright/test';
 
-      test.describe('slow group', () => {
-        test.describe.configure({ timeout: 600_000 });
+      test.describe('configure first', () => {
+        test.describe.configure({ timeout: 100_000 });
         test.slow();
 
-        test('inherits 1800 s', async ({ page }) => {
-          await page.waitForTimeout(300_000);
+        test('inherits 300 s', async ({ page }) => {
+          await page.waitForTimeout(200_000);
         });
       });
 
-      test.describe('narrowed group', () => {
+      test.describe('slow first', () => {
+        test.slow();
+        test.describe.configure({ timeout: 100_000 });
+
+        test('inherits 300 s either way', async ({ page }) => {
+          await page.waitForTimeout(200_000);
+        });
+      });
+
+      test.describe('slow outside', () => {
+        test.slow();
+
+        test.describe('configured inside', () => {
+          test.describe.configure({ timeout: 100_000 });
+
+          test('inherits 300 s across levels', async ({ page }) => {
+            await page.waitForTimeout(200_000);
+          });
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
+  it('walks a test body in statement order', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('group', () => {
         test.describe.configure({ timeout: 300_000 });
 
         test('narrows before slowing down', async ({ page }) => {
           test.setTimeout(40_000);
           test.slow();
+          await page.waitForTimeout(200_000);
+        });
+
+        test('narrows after slowing down', async ({ page }) => {
+          test.slow();
+          test.setTimeout(400_000);
           await page.waitForTimeout(200_000);
         });
       });
@@ -98,8 +135,53 @@ describe('analyzeSpec', () => {
       {
         deadlineMs: 200_000,
         file: 'src/tests/e2e/example.spec.ts',
-        line: 16,
+        line: 7,
         test: 'narrows before slowing down',
+      },
+    ]);
+  });
+
+  it('ignores a conditional test.slow()', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.describe('suite condition', () => {
+        test.slow(process.platform === 'darwin');
+
+        test('has no declared budget', async ({ page }) => {
+          await page.waitForTimeout(120_000);
+        });
+      });
+
+      test('condition in the body', async ({ page, isMobile }) => {
+        test.slow(isMobile, 'slower on mobile');
+        await page.waitForTimeout(120_000);
+      });
+
+      test('callback condition', async ({ page }) => {
+        test.slow(() => true);
+        await page.waitForTimeout(120_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 120_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 7,
+        test: 'has no declared budget',
+      },
+      {
+        deadlineMs: 120_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 12,
+        test: 'condition in the body',
+      },
+      {
+        deadlineMs: 120_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 17,
+        test: 'callback condition',
       },
     ]);
   });
@@ -345,6 +427,27 @@ describe('analyzeSpec', () => {
     ]);
   });
 
+  it('includes long deadlines from file-level hooks in a test.only', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      test.beforeEach(async ({ page }) => {
+        await page.waitForFunction(() => window.ready, undefined, { timeout: 45_000 });
+      });
+
+      test.only('inherits the file hook deadline', async () => {});
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 8,
+        test: 'inherits the file hook deadline',
+      },
+    ]);
+  });
+
   it('includes long deadlines from enclosing hooks', () => {
     const source = `
       import { test } from '@playwright/test';
@@ -384,6 +487,18 @@ describe('compareViolationsToExceptions', () => {
         [{ file: violation.file, test: violation.test, reason: '   ' }]
       )
     ).toThrow(/non-empty reason/);
+  });
+
+  it('rejects two exceptions keyed to the same test', () => {
+    expect(() =>
+      compareViolationsToExceptions(
+        [violation],
+        [
+          { ...violation, reason: 'Legacy helper is bounded elsewhere.' },
+          { ...violation, reason: 'Duplicated by a bad merge.' },
+        ]
+      )
+    ).toThrow(/Duplicate timeout-budget exception/);
   });
 
   it('reports new violations and stale exceptions', () => {
