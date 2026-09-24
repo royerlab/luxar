@@ -1905,6 +1905,8 @@ export type PixelCaptureRoute = 'framebuffer' | 'composited';
  * composited element-screenshot route, with unrelated DOM hidden without
  * reflow. New pixel-measurement specs should use this helper or one of its
  * consumers, never a hand-rolled 2D-context readback.
+ * Multi-sample scalar sweeps should call `renderToImageData()` in-page and
+ * reduce each `ImageData` there instead of round-tripping every full frame.
  *
  * Framebuffer captures return drawing-buffer pixels. Pin `?dpr=1` when pixel
  * counts or exact sample locations must not vary with adaptive DPR. `timeout`

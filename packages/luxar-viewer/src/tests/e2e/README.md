@@ -358,6 +358,9 @@ exports group into the categories below.
 | `captureCanvasRGBA(page, selector, route)`                  | Decode one explicit-route capture into a full-frame RGBA buffer for whole-image / multi-region analysis on a single identical frame.                                                                                                                  |
 | `getElementPixelStats(page, ..., route)`                    | Pixel-statistics rollup over one explicit-route capture.                                                                                                                                                                                              |
 
+For a multi-sample scalar sweep, call `postProcessing.renderToImageData()`
+in-page and reduce each `ImageData` there instead of serializing every frame.
+
 ### Camera placement
 
 Writing `camera.position` from a spec does **not** move the camera: the active
