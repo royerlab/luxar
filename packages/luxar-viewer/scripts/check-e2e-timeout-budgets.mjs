@@ -120,8 +120,17 @@ function testTitle(call) {
   return '<dynamic title>';
 }
 
-function budgetForStatements(statements, constants, enclosingBudgetMs, describeScope) {
+// Returns the budget these statements declare plus the running `slow` flag, so
+// a caller can hand both down to the scope inside.
+function budgetScopeForStatements(
+  statements,
+  constants,
+  enclosing,
+  projectTimeoutMs,
+  describeScope
+) {
   let budgetMs;
+  let { slowApplied } = enclosing;
   for (const statement of statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
       continue;
@@ -129,9 +138,13 @@ function budgetForStatements(statements, constants, enclosingBudgetMs, describeS
     const call = statement.expression;
     const path = callPath(call.expression).join('.');
     if (path === 'test.slow') {
-      // Playwright triples the ALREADY-resolved slot timeout, so test.slow()
-      // inside a 600 s describe is 1800 s, not three project timeouts.
-      budgetMs = enclosingBudgetMs * 3;
+      // TimeoutManager.slow() triples the slot timeout AS RESOLVED AT THAT
+      // POINT and is guarded by a per-test flag, so a preceding setTimeout or
+      // describe.configure wins and a suite-level slow makes an in-test one a
+      // no-op — the total is 3x, never 9x.
+      if (slowApplied) continue;
+      slowApplied = true;
+      budgetMs = (budgetMs ?? enclosing.budgetMs ?? projectTimeoutMs) * 3;
       continue;
     }
     if (path === 'test.setTimeout') {
@@ -148,7 +161,7 @@ function budgetForStatements(statements, constants, enclosingBudgetMs, describeS
       budgetMs = normalizedBudget(evaluateNumber(timeout.initializer, constants));
     }
   }
-  return budgetMs;
+  return { budgetMs, slowApplied };
 }
 
 function normalizedBudget(value) {
@@ -156,10 +169,16 @@ function normalizedBudget(value) {
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-function directBudget(callback, constants, enclosingBudgetMs, describeScope) {
+function directBudgetScope(callback, constants, enclosing, projectTimeoutMs, describeScope) {
   return ts.isBlock(callback.body)
-    ? budgetForStatements(callback.body.statements, constants, enclosingBudgetMs, describeScope)
-    : undefined;
+    ? budgetScopeForStatements(
+        callback.body.statements,
+        constants,
+        enclosing,
+        projectTimeoutMs,
+        describeScope
+      )
+    : { budgetMs: undefined, slowApplied: enclosing.slowApplied };
 }
 
 function deadlineCandidates(callback, constants, helpers) {
@@ -210,21 +229,16 @@ function collectCallDeadlines(call, constants, helpers, deadlines) {
 
 function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
   const violations = [];
-  const visit = (node, inheritedBudgetMs, inheritedDeadlineMs = 0) => {
+  const visit = (node, enclosing, inheritedDeadlineMs = 0) => {
     if (ts.isCallExpression(node)) {
       const path = callPath(node.expression);
       const callback = callbackArgument(node);
       if (callback && path[0] === 'test' && path[1] === 'describe') {
         const statements = ts.isBlock(callback.body) ? callback.body.statements : [];
-        const describeBudgetMs = directBudget(
-          callback,
-          constants,
-          inheritedBudgetMs ?? projectTimeoutMs,
-          true
-        );
+        const scope = directBudgetScope(callback, constants, enclosing, projectTimeoutMs, true);
         visit(
           callback.body,
-          describeBudgetMs ?? inheritedBudgetMs,
+          { budgetMs: scope.budgetMs ?? enclosing.budgetMs, slowApplied: scope.slowApplied },
           Math.max(inheritedDeadlineMs, hookDeadline(statements, constants, helpers))
         );
         return;
@@ -232,9 +246,8 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
       if (callback && (path.join('.') === 'test' || path.join('.') === 'test.only')) {
         const deadlines = deadlineCandidates(callback, constants, helpers);
         const deadlineMs = Math.max(inheritedDeadlineMs, ...deadlines);
-        const budgetMs =
-          directBudget(callback, constants, inheritedBudgetMs ?? projectTimeoutMs, false) ??
-          inheritedBudgetMs;
+        const scope = directBudgetScope(callback, constants, enclosing, projectTimeoutMs, false);
+        const budgetMs = scope.budgetMs ?? enclosing.budgetMs;
         if (deadlineMs > 0 && (budgetMs === undefined || budgetMs <= deadlineMs)) {
           violations.push({
             deadlineMs,
@@ -246,11 +259,17 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
         return;
       }
     }
-    ts.forEachChild(node, (child) => visit(child, inheritedBudgetMs, inheritedDeadlineMs));
+    ts.forEachChild(node, (child) => visit(child, enclosing, inheritedDeadlineMs));
   };
   visit(
     sourceFile,
-    budgetForStatements(sourceFile.statements, constants, projectTimeoutMs, true),
+    budgetScopeForStatements(
+      sourceFile.statements,
+      constants,
+      { budgetMs: undefined, slowApplied: false },
+      projectTimeoutMs,
+      true
+    ),
     hookDeadline(sourceFile.statements, constants, helpers)
   );
   return violations;
@@ -328,21 +347,21 @@ export function isDefaultConfigSpec(path) {
   return !normalized.endsWith('perf-bench.spec.ts') && !normalized.includes('/mobile/');
 }
 
-function specFiles(directory = SPEC_ROOT) {
+function normalizedRelative(path, root = PACKAGE_ROOT) {
+  return relative(root, path).split(sep).join('/');
+}
+
+export function specFiles(directory = SPEC_ROOT, root = PACKAGE_ROOT) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) return specFiles(path);
+    if (entry.isDirectory()) return specFiles(path, root);
     // Mobile and perf specs share this testDir but have their own, larger project budgets.
     // Match on the package-relative path: an absolute one drags the checkout's own
     // ancestors (a /home/mobile/... clone) through the exclusion patterns.
-    return entry.name.endsWith('.spec.ts') && isDefaultConfigSpec(normalizedRelative(path))
+    return entry.name.endsWith('.spec.ts') && isDefaultConfigSpec(normalizedRelative(path, root))
       ? [path]
       : [];
   });
-}
-
-export function normalizedRelative(path, root = PACKAGE_ROOT) {
-  return relative(root, path).split(sep).join('/');
 }
 
 function loadExceptions(path = EXCEPTIONS_PATH) {

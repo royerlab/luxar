@@ -266,7 +266,6 @@ test.describe('Mesh rendering', () => {
     // 120 s to 360 s and double the ceiling a hung sweep holds a worker for.
     test.setTimeout(180000);
 
-
     // Mesh was the one geometry type with no `perspectiveNearFade`: a triangle
     // clipped hard against the near plane while the other three faded. This pins the
     // fixed behaviour where it is observable — in framebuffer pixels, through the
