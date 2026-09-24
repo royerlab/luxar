@@ -458,10 +458,7 @@ describe('initPicking', () => {
         getOverlayManager: () => undefined,
       });
 
-      expect(LabelLoader).toHaveBeenCalledExactlyOnceWith(
-        { kind: 'zarr-root-loc' },
-        'keys'
-      );
+      expect(LabelLoader).toHaveBeenCalledExactlyOnceWith({ kind: 'zarr-root-loc' }, 'keys');
       expect(result.keyLoader).toBeDefined();
       expect(result.pickingSystem).toBeDefined();
     });

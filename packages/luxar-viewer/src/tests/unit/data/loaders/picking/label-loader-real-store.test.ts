@@ -25,7 +25,9 @@ describe('LabelLoader real-store CSR reads', () => {
     const store = await zarr.openStore(new FileSystemStore(path.join(FIXTURES_DIR, fixture)));
     const loader = new LabelLoader(zarr.root(store));
 
-    expect(new Set(labels)).toEqual(new Set(Array.from({ length: 8 }, (_, index) => `Point ${index}`)));
+    expect(new Set(labels)).toEqual(
+      new Set(Array.from({ length: 8 }, (_, index) => `Point ${index}`))
+    );
     await expect(loader.getLabel('/labelled_points', 8)).resolves.toBeNull();
   });
 
