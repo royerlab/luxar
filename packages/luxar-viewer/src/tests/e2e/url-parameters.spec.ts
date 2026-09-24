@@ -86,7 +86,11 @@ test.describe('URL Parameters', () => {
   });
 
   test.describe('high-DPR pin', () => {
-    test.use({ deviceScaleFactor: 2 });
+    // Native 2x rendering quadruples the backing-store pixels. Keep the real
+    // HiDPI contract while avoiding a full-size framebuffer, and retain enough
+    // timeout headroom for software rendering on a loaded runner.
+    test.slow();
+    test.use({ deviceScaleFactor: 2, viewport: { width: 640, height: 480 } });
 
     test('?dpr= above 1.0 overrides the high-DPR ceiling', async ({ page }) => {
       // High DPR is off by default, which caps the viewer at CSS

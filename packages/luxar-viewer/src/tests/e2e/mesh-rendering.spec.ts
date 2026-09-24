@@ -27,7 +27,6 @@ import {
   getLuxarState,
   getWebGLErrors,
   getElementPixelStats,
-  captureCanvasRGBA,
   renderOnce,
 } from './helpers';
 
@@ -253,6 +252,10 @@ test.describe('Mesh rendering', () => {
   });
 
   test('flying into a mesh fades it out smoothly instead of clipping (#1431)', async ({ page }) => {
+    // The 45 s mesh-commit deadline plus a 17-frame framebuffer sweep cannot
+    // safely share the default 60 s wall-clock budget on a loaded runner.
+    test.slow();
+
     // Mesh was the one geometry type with no `perspectiveNearFade`: a triangle
     // clipped hard against the near plane while the other three faded. This pins the
     // fixed behaviour where it is observable — in framebuffer pixels, through the
@@ -299,45 +302,6 @@ test.describe('Mesh rendering', () => {
     });
     expect(targetDistance).toBeGreaterThan(0);
 
-    /**
-     * Write `uNearCull` on every MESH material in the scene. Identified by
-     * `uAmbient` — the shade floor no other geometry type has — so this cannot
-     * silently start driving a point/line/gsplat material instead.
-     *
-     * Safe to write directly only because the DPR is pinned: the manager rebroadcasts
-     * on resize, load, or an ortho zoom change, and with adaptive DPR live the first
-     * of those fires on its own mid-sweep (see the `?dpr=1` note above).
-     */
-    const setNearCull = async (value: number): Promise<number> =>
-      page.evaluate((v) => {
-        const debug = (
-          window as unknown as {
-            __luxarDebug: { scene: { traverse(cb: (o: unknown) => void): void } };
-          }
-        ).__luxarDebug;
-        let touched = 0;
-        debug.scene.traverse((object) => {
-          const material = (object as { material?: unknown }).material;
-          for (const m of Array.isArray(material) ? material : [material]) {
-            const uniforms = (m as { uniforms?: Record<string, { value: unknown }> } | undefined)
-              ?.uniforms;
-            if (!uniforms?.uNearCull || !uniforms.uAmbient) continue;
-            uniforms.uNearCull.value = v;
-            touched++;
-          }
-        });
-        return touched;
-      }, value);
-
-    const meanChannel = async (): Promise<number> => {
-      const frame = await captureCanvasRGBA(page, 'canvas#app', 'framebuffer');
-      let sum = 0;
-      for (let i = 0; i < frame.rgba.length; i += 4) {
-        sum += frame.rgba[i] + frame.rgba[i + 1] + frame.rgba[i + 2];
-      }
-      return sum / ((frame.rgba.length / 4) * 3);
-    };
-
     // 0.4 → 1.2 × the target distance, in steps of 0.05. At 0.4 the whole surface
     // still sits beyond the band's outer edge (`2 · nearCull`) and the fade is a flat
     // 1.0; by 1.2 every fragment is inside the reject region and the mesh is gone.
@@ -349,13 +313,46 @@ test.describe('Mesh rendering', () => {
     // the ramp and brings the largest single one down to 18.7% (measured; the full
     // per-step table is in the NO-POP comment below).
     const factors = Array.from({ length: 17 }, (_, i) => Number((0.4 + i * 0.05).toFixed(2)));
-    const means: number[] = [];
-    for (const f of factors) {
-      const touched = await setNearCull(f * targetDistance);
-      expect(touched, 'no mesh material carries a uNearCull uniform').toBeGreaterThan(0);
-      await renderOnce(page);
-      means.push(await meanChannel());
-    }
+    const { materialCount, means } = await page.evaluate(
+      async ({ distance, sweepFactors }) => {
+        const debug = (
+          window as unknown as {
+            __luxarDebug: {
+              scene: { traverse(cb: (object: unknown) => void): void };
+              postProcessing: { renderToImageData(): Promise<ImageData> };
+            };
+          }
+        ).__luxarDebug;
+        const nearCullUniforms: Array<{ value: unknown }> = [];
+        debug.scene.traverse((object) => {
+          const material = (object as { material?: unknown }).material;
+          for (const entry of Array.isArray(material) ? material : [material]) {
+            const uniforms = (
+              entry as { uniforms?: Record<string, { value: unknown }> } | undefined
+            )?.uniforms;
+            if (uniforms?.uNearCull && uniforms.uAmbient) {
+              nearCullUniforms.push(uniforms.uNearCull);
+            }
+          }
+        });
+
+        const channelMeans: number[] = [];
+        for (const factor of sweepFactors) {
+          for (const uniform of nearCullUniforms) {
+            uniform.value = factor * distance;
+          }
+          const imageData = await debug.postProcessing.renderToImageData();
+          let sum = 0;
+          for (let index = 0; index < imageData.data.length; index += 4) {
+            sum += imageData.data[index] + imageData.data[index + 1] + imageData.data[index + 2];
+          }
+          channelMeans.push(sum / ((imageData.data.length / 4) * 3));
+        }
+        return { materialCount: nearCullUniforms.length, means: channelMeans };
+      },
+      { distance: targetDistance, sweepFactors: factors }
+    );
+    expect(materialCount, 'no mesh material carries a uNearCull uniform').toBeGreaterThan(0);
 
     const total = means[0] - means[means.length - 1];
     const trace = means.map((m) => m.toFixed(2)).join(' → ');
