@@ -49,7 +49,7 @@ export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-contr
  * `String()` form is an exact short decimal.
  *
  * The GUI derives a controller's displayed decimal count from
- * `String(step).split('.')[1].length` (`gui/format/value-formatting.ts`), so the
+ * `String(step).split('.')[1].length` (`slider-kit/format.ts`), so the
  * step's *textual* form is load-bearing, not just its magnitude:
  *
  *  - A scene-derived value carries float noise. `String(1.05e-4)` is
@@ -775,7 +775,7 @@ export class RenderingControls {
    * trigger, same structural cast, same reason.
    *
    * The STEP is not simply the range minimum, because the GUI derives the
-   * displayed decimal count from `String(step)` (`format/value-formatting.ts`).
+   * displayed decimal count from `String(step)` (`slider-kit/format.ts`).
    * A scene-derived step carries float noise into that string — `String(1.05e-4)`
    * is `"0.00010499999999999999"`, which renders every value with TWENTY
    * decimals — and below 1e-6 `String` switches to exponential, where the

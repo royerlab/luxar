@@ -62,6 +62,33 @@ describe('RangeSlider — construction', () => {
     expect(labelEl?.textContent).toBe('Display range');
     // Two value spans (low and high), inside the values container.
     expect(host.querySelectorAll('.luxar-range-slider__value').length).toBe(2);
+    const { low, high } = getInputs();
+    expect(low.getAttribute('aria-label')).toBe('Display range minimum slider');
+    expect(high.getAttribute('aria-label')).toBe('Display range maximum slider');
+    const values = host.querySelectorAll('.luxar-range-slider__value');
+    expect(values[0].getAttribute('aria-label')).toBe('Display range minimum value');
+    expect(values[1].getAttribute('aria-label')).toBe('Display range maximum value');
+    expect(values[0].getAttribute('role')).toBe('button');
+  });
+
+  it('edits current values exactly and widens only when ordering permits it', () => {
+    const { onChange, onBoundsChange } = makeSlider({ label: 'Display range' });
+    const values = host.querySelectorAll('.luxar-range-slider__value');
+
+    (values[1] as HTMLElement).click();
+    let editor = host.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+    editor.value = '1.25';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(getInputs().high.max).toBe('1.25');
+    expect(onBoundsChange).toHaveBeenLastCalledWith(0, 1.25);
+    expect(onChange).toHaveBeenLastCalledWith(0.2, 1.25);
+
+    (values[0] as HTMLElement).click();
+    editor = host.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+    editor.value = '2';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(getInputs().low.valueAsNumber).toBe(1.25);
+    expect(getInputs().low.max).toBe('1.25');
   });
 
   it('omits the label row when `label` is not supplied', () => {

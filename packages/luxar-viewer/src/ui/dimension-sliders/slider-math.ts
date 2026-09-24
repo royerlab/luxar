@@ -10,7 +10,7 @@
  * @module ui/dimension-sliders/slider-math
  */
 
-import { clamp } from '../gui/format/value-formatting';
+import { clamp } from '../slider-kit';
 
 /**
  * Clamp `value` into `[min, max]`. When `isCyclic` is true, an underflow
@@ -36,58 +36,6 @@ export function clampWithCyclicWrap(
   if (value < min) return isCyclic ? max : min;
   if (value > max) return isCyclic ? min : max;
   return value;
-}
-
-/**
- * Project a value onto the `[0, 1]` fractional range defined by `[min, max]`.
- * A degenerate range (`min === max`) is reported as 0.5 — the visual
- * convention used by the dimension slider so the thumb sits in the middle
- * of an empty axis.
- *
- * @param value - The current value (typically `currentStep[dim]`).
- * @param min - Range minimum.
- * @param max - Range maximum.
- * @returns A fraction in `[0, 1]` (clamped only if value is in-range).
- */
-export function valueToFraction(value: number, min: number, max: number): number {
-  const range = max - min;
-  if (range === 0) return 0.5;
-  return (value - min) / range;
-}
-
-/**
- * Inverse of `valueToFraction`: map a fraction back into the value space
- * defined by `[min, max]`. Degenerate ranges return `min` (no other
- * sensible pre-image exists).
- *
- * @param fraction - A value in `[0, 1]`.
- * @param min - Range minimum.
- * @param max - Range maximum.
- * @returns The corresponding value.
- */
-export function fractionToValue(fraction: number, min: number, max: number): number {
-  const range = max - min;
-  if (range === 0) return min;
-  return min + fraction * range;
-}
-
-/**
- * Compute the pixel offset for a slider thumb so the thumb's left edge sits
- * at the requested fraction of the visible track. Accounts for the thumb's
- * own width so the thumb's right edge does not overshoot the container at
- * fraction = 1.
- *
- * @param fraction - A value in `[0, 1]`.
- * @param containerWidth - Width of the slider track in pixels.
- * @param thumbWidth - Width of the thumb in pixels.
- * @returns The thumb's `left` offset in pixels (always >= 0).
- */
-export function fractionToThumbLeft(
-  fraction: number,
-  containerWidth: number,
-  thumbWidth: number
-): number {
-  return fraction * (containerWidth - thumbWidth);
 }
 
 /**

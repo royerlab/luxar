@@ -281,6 +281,18 @@
 .luxar-layers-panel__control-value {
   font-family: var(--luxar-font-mono);
   color: var(--luxar-text-primary);
+  cursor: pointer;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+.luxar-layers-panel__control-value:hover,
+.luxar-layers-panel__control-value:focus-visible,
+.luxar-range-slider__value:hover,
+.luxar-range-slider__value:focus-visible {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover);
+  outline: none;
 }
 
 /* Read-only physical-material listing (material="physical" mesh layers). */
@@ -439,6 +451,9 @@
 
 .luxar-range-slider__value {
   min-width: 2ch;
+  cursor: pointer;
+  padding: 0 1px;
+  border-radius: 2px;
 }
 
 .luxar-range-slider__track-row {

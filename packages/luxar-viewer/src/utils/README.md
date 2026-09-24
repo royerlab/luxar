@@ -160,7 +160,7 @@ Union type and helpers so the codebase can treat perspective and orthographic ca
 
 ### clamp.ts - Generic Numeric Clamp
 
-`clamp(value, min?, max?)` — Either bound may be omitted; both omitted is a pass-through. The canonical home for this primitive; `ui/gui/format/value-formatting.ts` re-exports it for back-compat (the original lived there and was unreachable from `rendering` under the dependency-cruiser layer order).
+`clamp(value, min?, max?)` — Either bound may be omitted; both omitted is a pass-through. The canonical home for this primitive; `packages/luxar-viewer/src/ui/slider-kit/format.ts` re-exports it for UI consumers (the original lived there and was unreachable from `rendering` under the dependency-cruiser layer order).
 
 ### event-bus.ts - Typed Cross-Layer Pub/Sub
 

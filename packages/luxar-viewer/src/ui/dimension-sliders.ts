@@ -11,13 +11,8 @@ import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import { attachLongPress } from '../utils/long-press';
-import {
-  clampWithCyclicWrap,
-  valueToFraction,
-  fractionToValue,
-  fractionToThumbLeft,
-  clampInteger,
-} from './dimension-sliders/slider-math';
+import { clampWithCyclicWrap, clampInteger } from './dimension-sliders/slider-math';
+import { fractionToThumbLeft, fractionToValue, valueToFraction } from './slider-kit';
 
 function placeContextMenuVertically(
   menuHeight: number,

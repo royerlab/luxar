@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { clamp, formatNumber, parseNumber } from '../../../ui/gui/format/value-formatting';
+import { clamp, formatNumber, parseNumber } from '../../../ui/slider-kit';
 
 describe('clamp', () => {
   it('returns value unchanged when within range', () => {
@@ -71,6 +71,10 @@ describe('formatNumber', () => {
 
   it('uses 3 decimals for step=0.001', () => {
     expect(formatNumber(0.12345, 0.001)).toBe('0.123');
+  });
+
+  it('handles exponent-form steps', () => {
+    expect(formatNumber(0.00003, 1e-5)).toBe('0.00003');
   });
 
   it('formats negative values correctly', () => {

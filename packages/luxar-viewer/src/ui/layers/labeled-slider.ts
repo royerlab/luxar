@@ -64,6 +64,8 @@ export class LabeledSlider {
   private valueEl: HTMLElement;
   private options: LabeledSliderOptions;
   private inputHandler: () => void;
+  private disposeInteractions: () => void;
+  private disposeInlineEdit: () => void;
   private scale: SliderScale;
   private min: number;
   private max: number;
@@ -103,29 +105,69 @@ export class LabeledSlider {
     if (this.scale === 'log') {
       this.input.min = '0';
       this.input.max = '1';
-      this.input.step = String(1 / LOG_STEPS);
+      this.input.step = fineTrackStep(1 / LOG_STEPS);
+      this.input.dataset.baseStep = String(1 / LOG_STEPS);
     } else {
       this.input.min = String(options.min);
       this.input.max = String(options.max);
-      this.input.step = String(options.step);
+      this.input.step = fineTrackStep(options.step);
+      this.input.dataset.baseStep = String(options.step);
     }
     this.input.value = String(this.toPosition(options.initialValue));
     this.input.className = 'luxar-layers-panel__slider';
+    this.input.setAttribute('aria-label', `${options.label} slider`);
     this.syncAriaValueText(options.initialValue);
 
     this.inputHandler = (): void => {
-      const raw = this.toValue(parseFloat(this.input.value));
-      const value = options.constrain ? options.constrain(raw) : raw;
-      this.lastValue = value;
-      this.valueEl.textContent = this.formatValue(value);
-      this.syncAriaValueText(value);
-      options.onChange(value);
+      const position =
+        this.scale === 'log'
+          ? parseFloat(this.input.value)
+          : snapToGrid(parseFloat(this.input.value), this.min, options.step);
+      this.applyPosition(position);
     };
     this.input.addEventListener('input', this.inputHandler);
+    const baseStep = this.scale === 'log' ? 1 / LOG_STEPS : options.step;
+    this.disposeInteractions = attachSliderInteractions({
+      input: this.input,
+      baseStep,
+      initialValue: this.toPosition(options.initialValue),
+      getValue: () => parseFloat(this.input.value),
+      setValue: (position) => this.applyPosition(position),
+    });
+    this.disposeInlineEdit = attachInlineNumberEdit(this.valueEl, {
+      ariaLabel: `${options.label} value`,
+      getValue: () => this.lastValue,
+      formatValue: (value) => String(value),
+      onCommit: (parsed) => this.commitTypedValue(parsed),
+    });
 
     this.wrapper.appendChild(labelEl);
     this.wrapper.appendChild(this.input);
     options.container.appendChild(this.wrapper);
+  }
+
+  private applyPosition(position: number): void {
+    const clampedPosition = Math.min(
+      parseFloat(this.input.max),
+      Math.max(parseFloat(this.input.min), position)
+    );
+    const raw = this.toValue(clampedPosition);
+    const value = this.options.constrain ? this.options.constrain(raw) : raw;
+    this.lastValue = value;
+    this.input.value = String(this.toPosition(value));
+    this.valueEl.textContent = this.formatValue(value);
+    this.syncAriaValueText(value);
+    this.options.onChange(value);
+  }
+
+  private commitTypedValue(parsed: number): void {
+    const value = this.options.constrain ? this.options.constrain(parsed) : parsed;
+    if (value === parsed) this.setRange(Math.min(this.min, value), Math.max(this.max, value));
+    this.lastValue = value;
+    this.input.value = String(this.toPosition(value));
+    this.valueEl.textContent = this.formatValue(value);
+    this.syncAriaValueText(value);
+    this.options.onChange(value);
   }
 
   /** Thumb position (DOM input space) for a value. */
@@ -161,7 +203,11 @@ export class LabeledSlider {
   }
 
   private formatValue(v: number): string {
-    return this.options.format ? this.options.format(v) : v.toFixed(2);
+    return this.options.format
+      ? this.options.format(v)
+      : this.scale === 'log'
+        ? v.toFixed(2)
+        : formatSliderValue(v, this.options.step, this.min);
   }
 
   /** Programmatically set the slider value + readout. Does not fire onChange. */
@@ -222,6 +268,15 @@ export class LabeledSlider {
   /** Remove from DOM and detach listeners. */
   dispose(): void {
     this.input.removeEventListener('input', this.inputHandler);
+    this.disposeInteractions();
+    this.disposeInlineEdit();
     this.wrapper.remove();
   }
 }
+import {
+  attachInlineNumberEdit,
+  attachSliderInteractions,
+  fineTrackStep,
+  formatSliderValue,
+  snapToGrid,
+} from '../slider-kit';

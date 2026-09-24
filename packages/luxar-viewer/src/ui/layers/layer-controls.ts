@@ -52,7 +52,7 @@ import {
   type PhysicalMeshKnobKey,
 } from '../../rendering/materials/mesh-physical/config';
 import { clampGamma } from './attrs-utils';
-import { clamp } from '../gui/format/value-formatting';
+import { clamp } from '../slider-kit';
 import type { LayerApplyEngine } from './layer-apply';
 
 const SCALAR_RANGE_LABEL = 'Display range';

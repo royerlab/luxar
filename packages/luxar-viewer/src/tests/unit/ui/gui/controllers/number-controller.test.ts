@@ -78,23 +78,23 @@ describe('NumberController', () => {
       expect(controller.$input!.inputMode).toBe('decimal');
     });
 
-    it('wheel steps 1/10th step; modifiers follow the slider convention (⇧ finer, ⌃ coarse)', () => {
+    it('wheel uses the declared step with the shared modifier tiers', () => {
       const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
       const wheel = (init: WheelEventInit) =>
         slider.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init }));
 
-      // Base: scroll up = +0.1×step (step 1 → +0.1).
+      // Base: scroll up = +1×step.
       wheel({ deltaY: -120 });
-      expect(object.value).toBeCloseTo(50.1, 9);
-      // Shift = finer (÷10 of base).
+      expect(object.value).toBeCloseTo(51, 9);
+      // Shift = fine (÷10).
       wheel({ deltaY: -120, shiftKey: true });
-      expect(object.value).toBeCloseTo(50.11, 9);
-      // Ctrl = coarse (×10 of base = one full step).
+      expect(object.value).toBeCloseTo(51.1, 9);
+      // Ctrl = coarse (×10).
       wheel({ deltaY: 120, ctrlKey: true });
-      expect(object.value).toBeCloseTo(49.11, 9);
-      // Ctrl+Shift = finest (÷100 of base).
+      expect(object.value).toBeCloseTo(41.1, 9);
+      // Ctrl+Shift = extra-fine (÷100).
       wheel({ deltaY: -120, ctrlKey: true, shiftKey: true });
-      expect(object.value).toBeCloseTo(49.111, 9);
+      expect(object.value).toBeCloseTo(41.11, 9);
     });
 
     it('wheel reads the horizontal axis when Shift swaps it; zero delta is a no-op', () => {
@@ -110,12 +110,12 @@ describe('NumberController', () => {
           cancelable: true,
         })
       );
-      expect(object.value).toBeCloseTo(49.99, 9); // scrolled "down" → −0.01
+      expect(object.value).toBeCloseTo(49.9, 9); // scrolled "down" → −0.1
 
       slider.dispatchEvent(
         new WheelEvent('wheel', { deltaY: 0, deltaX: 0, bubbles: true, cancelable: true })
       );
-      expect(object.value).toBeCloseTo(49.99, 9); // unchanged
+      expect(object.value).toBeCloseTo(49.9, 9); // unchanged
     });
 
     it('wheel bubbles to the window after the coarse tier is applied', () => {
@@ -128,7 +128,7 @@ describe('NumberController', () => {
       );
       window.removeEventListener('wheel', windowSpy);
       expect(windowSpy).toHaveBeenCalledTimes(1);
-      expect(object.value).toBeCloseTo(51, 9);
+      expect(object.value).toBeCloseTo(60, 9);
     });
 
     it('should create both slider and input', () => {
@@ -144,7 +144,8 @@ describe('NumberController', () => {
 
       expect(slider.min).toBe('0');
       expect(slider.max).toBe('100');
-      expect(slider.step).toBe('1');
+      expect(slider.step).toBe('0.01');
+      expect(slider.dataset.baseStep).toBe('1');
     });
 
     it('should update object when slider changes', () => {
@@ -333,8 +334,19 @@ describe('NumberController', () => {
       const controller2 = new NumberController(object, 'value', { min: 0, max: 100 });
       const slider = controller2.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
 
-      expect(slider.step).toBe('1'); // 100 / 100 = 1
+      expect(slider.step).toBe('0.01'); // fine DOM grid for base step 1
 
+      controller2.dispose();
+    });
+
+    it('uses step="any" when the range is degenerate', () => {
+      const controller2 = new NumberController(object, 'value', { min: 50, max: 50 });
+      const slider = controller2.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
+      const input = controller2.domElement.querySelector(
+        '.luxar-gui__input--number'
+      ) as HTMLInputElement;
+      expect(slider.step).toBe('any');
+      expect(input.step).toBe('any');
       controller2.dispose();
     });
   });
@@ -392,7 +404,8 @@ describe('NumberController', () => {
       controller.step(5);
 
       const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
-      expect(slider.step).toBe('5');
+      expect(slider.step).toBe('0.05');
+      expect(slider.dataset.baseStep).toBe('5');
     });
 
     it('should return this for chaining', () => {

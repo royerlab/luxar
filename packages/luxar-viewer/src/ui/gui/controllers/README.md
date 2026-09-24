@@ -58,7 +58,7 @@ Live `change` events on every keystroke; `finishChange` on commit (`change` even
 **Constraints**
 
 - `min(value)`, `max(value)`, `step(value)` — chainable; mutate both slider and input attributes.
-- `constrainValue(v)` clamps to `[minValue, maxValue]` using `clamp` from `../format/value-formatting`.
+- `constrainValue(v)` clamps to `[minValue, maxValue]` using `clamp` from `../../slider-kit`.
 - Default step (when only `min`/`max` given) is `1%` of the range.
 - Display formatting goes through `formatNumber(value, step)`.
 
@@ -98,6 +98,6 @@ Renders a single `<button>` whose textContent is the controller label. Clicks in
 - `../controller.ts` — Abstract `Controller<T>` base (target/property binding, event callbacks, `createBaseElement`, `dispose`).
 - `../types.ts` — `ControllerType` enum and `ControllerOptions` shape.
 - `../format/auto-blur.ts` — `applyAutoBlur` helper.
-- `../format/value-formatting.ts` — `clamp` and `formatNumber` (used by `NumberController`).
+- `packages/luxar-viewer/src/ui/slider-kit/format.ts` — `clamp` and `formatNumber` (used by `NumberController`).
 - `../gui.ts` / `../folder.ts` — `Folder.add(object, property, ...args)` selects the appropriate controller subclass based on the value's runtime type and the optional args.
 - `../../rendering-controls/` — Consumer of the GUI library (imports `NumberController`); the slider hooks `setCustomUpdateDisplay` and `$input` exist for custom display logic such as logarithmic sliders.

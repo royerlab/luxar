@@ -38,10 +38,81 @@ describe('LabeledSlider', () => {
     const input = findInput();
     expect(input.min).toBe('0.2');
     expect(input.max).toBe('5');
-    expect(input.step).toBe('0.01');
+    expect(input.step).toBe('0.0001');
+    expect(input.dataset.baseStep).toBe('0.01');
     expect(input.value).toBe('1.5');
+    expect(input.getAttribute('aria-label')).toBe('Gamma slider');
 
     expect(findReadout().textContent).toBe('1.50');
+    expect(findReadout().getAttribute('aria-label')).toBe('Gamma value');
+    expect(findReadout().getAttribute('role')).toBe('button');
+  });
+
+  it('supports tiered wheel and arrow stepping, reset, and base-grid dragging', () => {
+    const onChange = vi.fn();
+    new LabeledSlider({
+      container,
+      label: 'Gamma',
+      min: 0.2,
+      max: 5,
+      step: 0.01,
+      initialValue: 1,
+      onChange,
+    });
+
+    const input = findInput();
+    input.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaX: -120,
+        deltaY: 0,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    expect(input.valueAsNumber).toBeCloseTo(1.001, 9);
+    expect(findReadout().textContent).toBe('1.0010');
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    expect(input.valueAsNumber).toBeCloseTo(1.0011, 9);
+
+    input.value = '1.006';
+    input.dispatchEvent(new Event('input'));
+    expect(input.valueAsNumber).toBeCloseTo(1.01, 9);
+
+    input.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(input.valueAsNumber).toBe(1);
+    expect(onChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it('commits exact typed values and widens the track when needed', () => {
+    const onChange = vi.fn();
+    const slider = new LabeledSlider({
+      container,
+      label: 'Gamma',
+      min: 0.2,
+      max: 5,
+      step: 0.01,
+      initialValue: 1,
+      onChange,
+    });
+
+    findReadout().click();
+    const editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+    editor.value = '6.125';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(slider.getRange()).toEqual([0.2, 6.125]);
+    expect(findInput().valueAsNumber).toBeCloseTo(6.125, 9);
+    expect(onChange).toHaveBeenLastCalledWith(6.125);
   });
 
   it('fires onChange with constrained value on input event', () => {

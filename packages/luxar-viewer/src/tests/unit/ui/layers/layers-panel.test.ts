@@ -1802,7 +1802,9 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       expect(group, `${label} control should exist`).not.toBeNull();
       expect(group!.style.display, `${label} should be visible on a mesh layer`).not.toBe('none');
     }
-    expect(findControlGroup(container, 'Shininess')!.querySelector('input')!.step).toBe('0.5');
+    const shininessInput = findControlGroup(container, 'Shininess')!.querySelector('input')!;
+    expect(shininessInput.step).toBe('0.005');
+    expect(shininessInput.dataset.baseStep).toBe('0.5');
 
     // The converse, on a fresh panel over a POINTS layer.
     document.body.innerHTML = '';
@@ -2357,16 +2359,16 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(panel.layerState.getLayer('/cloud')!.ambient).toBeCloseTo(0.7, 6);
 
     drag('Shade falloff', 2.5);
-    expect(calls.shadeExponent).toHaveBeenCalledWith(expect.closeTo(2.5, 6));
-    expect(panel.layerState.getLayer('/cloud')!.shadeExponent).toBeCloseTo(2.5, 6);
+    expect(calls.shadeExponent).toHaveBeenCalledWith(expect.closeTo(2.501, 6));
+    expect(panel.layerState.getLayer('/cloud')!.shadeExponent).toBeCloseTo(2.501, 6);
 
     drag('Specular', 0.3);
     expect(calls.specular).toHaveBeenCalledWith(expect.closeTo(0.3, 6));
     expect(panel.layerState.getLayer('/cloud')!.specular).toBeCloseTo(0.3, 6);
 
     drag('Shininess', 48);
-    expect(calls.shininess).toHaveBeenCalledWith(expect.closeTo(48, 6));
-    expect(panel.layerState.getLayer('/cloud')!.shininess).toBeCloseTo(48, 6);
+    expect(calls.shininess).toHaveBeenCalledWith(expect.closeTo(48.001, 6));
+    expect(panel.layerState.getLayer('/cloud')!.shininess).toBeCloseTo(48.001, 6);
 
     drag('Alpha cutoff', 0.8);
     expect(calls.alphaCutoff).toHaveBeenCalledWith(expect.closeTo(0.8, 6));
@@ -2409,9 +2411,9 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     drag('Alpha cutoff', 0.8);
     // Sanity: the layer state actually moved before we reset.
     expect(panel.layerState.getLayer('/cloud')!.ambient).toBeCloseTo(0.7, 6);
-    expect(panel.layerState.getLayer('/cloud')!.shadeExponent).toBeCloseTo(2.5, 6);
+    expect(panel.layerState.getLayer('/cloud')!.shadeExponent).toBeCloseTo(2.501, 6);
     expect(panel.layerState.getLayer('/cloud')!.specular).toBeCloseTo(0.3, 6);
-    expect(panel.layerState.getLayer('/cloud')!.shininess).toBeCloseTo(48, 6);
+    expect(panel.layerState.getLayer('/cloud')!.shininess).toBeCloseTo(48.001, 6);
     expect(panel.layerState.getLayer('/cloud')!.alphaCutoff).toBeCloseTo(0.8, 6);
 
     // Only the reset-driven setter calls should be observed below.
@@ -4350,19 +4352,31 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     window.addEventListener('keydown', globalHandler);
     try {
       for (const slider of [opacitySlider!, rangeSlider!]) {
-        for (const event of [
-          new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }),
-          new KeyboardEvent('keydown', {
-            key: 'ArrowDown',
-            shiftKey: true,
-            bubbles: true,
-            cancelable: true,
-          }),
-        ]) {
-          slider!.dispatchEvent(event);
-          expect(event.defaultPrevented).toBe(false);
-        }
+        const end = new KeyboardEvent('keydown', {
+          key: 'End',
+          bubbles: true,
+          cancelable: true,
+        });
+        slider.dispatchEvent(end);
+        expect(end.defaultPrevented).toBe(false);
       }
+      const labeledArrow = new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      opacitySlider!.dispatchEvent(labeledArrow);
+      expect(labeledArrow.defaultPrevented).toBe(true);
+
+      const rangeArrow = new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      rangeSlider!.dispatchEvent(rangeArrow);
+      expect(rangeArrow.defaultPrevented).toBe(false);
 
       for (const control of controls) {
         control.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true }));
