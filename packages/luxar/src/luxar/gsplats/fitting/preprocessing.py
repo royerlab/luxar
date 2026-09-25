@@ -1376,6 +1376,45 @@ def resolve_volume_floor(
     return float(resolved)
 
 
+def resolve_volume_floor_with_strategy(
+    volume: Any,
+    floor: "str | float | None",
+    *,
+    guard_numeric: bool = False,
+    sample_budget: "int | None" = None,
+    verbose: bool = False,
+) -> "tuple[float | None, str | None]":
+    """Resolve specimen level and branch from the same bounded sample."""
+    if not (isinstance(floor, str) and floor.strip().lower() == "specimen"):
+        return (
+            resolve_volume_floor(
+                volume,
+                floor,
+                guard_numeric=guard_numeric,
+                sample_budget=sample_budget,
+                verbose=verbose,
+            ),
+            None,
+        )
+    from luxar.gsplats.calibration import estimate_floor_result
+
+    budget = FLOOR_SAMPLE_BUDGET_VOXELS if sample_budget is None else sample_budget
+    sample = _sample_volume_for_floor(volume, int(budget))
+    if sample is None:
+        return None, None
+    estimate = estimate_floor_result(sample, method="specimen")
+    sample_max = float(sample.max())
+    if estimate.level >= sample_max:
+        aprint(
+            f"Warning: floor {estimate.level:.6g} >= sampled volume max "
+            f"{sample_max:.6g}; ignoring (would erase all signal)."
+        )
+        return None, None
+    if verbose:
+        aprint(f"Resolved whole-volume background floor: {estimate.level:.6g}")
+    return float(estimate.level), estimate.strategy
+
+
 # Voxel budget for the denoise-correction probe of
 # :func:`resolve_volume_floor_denoised`: at most this many voxels are denoised a
 # second time to measure the shift denoising induces on the floor estimate.

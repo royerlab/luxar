@@ -892,9 +892,10 @@ def resolve_batch_floor(
     if not floor_spec_needs_volume(floor_spec):
         # Concrete already ("none" / a number): resolved without touching data,
         # so nothing is guarded here — exactly as before this resolution existed.
-        return resolve_shared_floor(
+        level, forward, _ = resolve_shared_floor(
             None, floor_spec, guard_numeric=False, scope="every (t, c) task"
         )
+        return level, forward
 
     pairs = _floor_resolution_pairs(n_timepoints, n_channels, denoise_h_values)
     budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
@@ -2352,6 +2353,7 @@ def plan_batch(
 
     floor_spec = effective_floor_spec(fit)
     validate_floor_spec(floor_spec)
+    _reject_unsupported_batch_floor(floor_spec)
     floor_deferred = _should_defer_floor_resolution(
         mode, denoise, floor_spec, denoise_mode
     )

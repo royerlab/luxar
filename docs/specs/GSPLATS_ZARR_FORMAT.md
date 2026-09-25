@@ -1387,32 +1387,34 @@ substitutive/pyramid/recipe build round-trips its parameters:
   "image_min": 110.0,
   "image_max": 4095.0,
   "intensity_range": 3985.0,
-  "floor": 110.0
+  "floor": 110.0,
+  "floor_strategy": "specimen"
 }
 ```
 
 A fit also persists its **normalization metadata** here (see the per-writer
 table below for exactly which keys, and where the record comes from):
 `image_min` / `image_max` / `intensity_range` record how the source volume
-was normalized, and `floor` is the background level subtracted before
-fitting (`null` when floor suppression was disabled or refused). **Semantic
+was normalized, `floor` is the background level subtracted before fitting
+(`null` when floor suppression was disabled or refused), and `floor_strategy`
+records the specimen estimator branch. **Semantic
 contract:** the floor is NOT added back — stored amplitudes are
 background-relative (intensity above the subtracted pedestal), so renders
 reconstruct the floor-suppressed volume, not the raw one.
 
 Wherever it is recorded it is under one key name (`floor`) in one location
 (`pipeline/`). The full key set is `NORMALIZATION_STATS_KEYS` in
-`gsplats/io/save_gsplats.py`; which of those four a given writer can honestly
+`gsplats/io/save_gsplats.py`; which of those five a given writer can honestly
 fill differs, and the last column says so.
 
 | Writer | How it reaches `pipeline/` | Keys |
 |---|---|---|
-| flat fit (`--tiling none`) | `stats` → `split_fitting_info` (`gsplats/fitting/results.py`) | all four |
-| progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all four |
-| sequential tiled merge (`fit_tiled`), flat leaf or `kind=partition` | `_stamp_merge_normalization` on the merged `stats` / the ROOT node's `meta`, from the level the merge applied plus the bounds its tiles agree on | all four |
-| parallel tiled merge (`fit -j N`) | same stamp, but the merge applied no level itself: the tiles are reloaded WITH stats and the block is recovered from what they unanimously recorded | all four |
-| `--tiling content` | the one level `resolve_shared_floor` gave every box, stamped on the merged leaf's `stats` or the root node's `meta` — unless the boxes themselves recorded a level, which wins (content boxes now share one `norm_range`, so their recorded bounds agree across boxes; a recorded floor can still exceed the planned level when the shared low endpoint does) | `floor`, plus any bound the in-process boxes of a `--flat` fit agreed on |
-| `batch-fit merge` (default `kind=partition`, and its K=1 bare leaf) | `manifest.floor_level`, the ONE level the plan pinned for every `(t, c)` task, folded into `pipeline_info` | `floor` only |
+| flat fit (`--tiling none`) | `stats` → `split_fitting_info` (`gsplats/fitting/results.py`) | all five |
+| progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all five |
+| sequential tiled merge (`fit_tiled`), flat leaf or `kind=partition` | `_stamp_merge_normalization` on the merged `stats` / the ROOT node's `meta`, from the level the merge applied plus the bounds its tiles agree on | numeric keys; strategy when recorded by every tile |
+| parallel tiled merge (`fit -j N`) | same stamp, but the merge applied no level itself: the tiles are reloaded WITH stats and the block is recovered from what they unanimously recorded | numeric keys; strategy when recorded by every tile |
+| `--tiling content` | the one level and strategy `resolve_shared_floor` gave every box, stamped on the merged leaf's `stats` or the root node's `meta` — unless the boxes themselves recorded a level, which wins (content boxes now share one `norm_range`, so their recorded bounds agree across boxes; a recorded floor can still exceed the planned level when the shared low endpoint does) | `floor`, `floor_strategy`, plus any bound the in-process boxes of a `--flat` fit agreed on |
+| `batch-fit merge` (default `kind=partition`, and its K=1 bare leaf) | `manifest.floor_level`, the ONE level the plan pinned for every `(t, c)` task, folded into `pipeline_info` | `floor` only (`specimen` is rejected) |
 
 Two paths deliberately write nothing rather than guess. `batch-fit merge` is
 silent when the manifest pinned no level — a negative resolved level is
@@ -1422,8 +1424,9 @@ and the legacy `batch-fit merge --flat` fan-in (a multi-stage reload through
 all. An **absent** key means "this artifact does not know"; `floor: null`
 asserts that no pedestal was removed, so the two are never interchangeable.
 
-Where a writer records `image_min`, it records it in the **input volume's own
-units** and, when a floor was applied, equal to `floor`: `_normalize_data` sets
+Where a writer records a numeric normalization value, it records it in the
+**input volume's own units** and, when a floor was applied, `image_min` equals
+`floor`: `_normalize_data` sets
 `image_min = max(resolved_floor, image_min)` and records that applied value as
 `floor`, so `image_min == floor` whenever suppression ran. #1616 makes the
 pre-clamp `image_min` shared across content and batch children. A tiled or progressive path subtracts the pedestal OUTSIDE the fitter and

@@ -512,14 +512,14 @@ class TestPrepareConfig:
 
 
 class TestFloorValidation:
+    """Tests for the ``floor`` (background suppression) parameter."""
+
     def test_specimen_floor_is_valid(self) -> None:
         fitter = MockGaussianSplatFitter()
         config = prepare_fit_config(
             fitter, np.ones((4, 4), dtype=np.float32), floor="specimen"
         )
         assert config.floor == "specimen"
-
-    """Tests for the ``floor`` (background suppression) parameter."""
 
     def test_default_floor_is_auto(self) -> None:
         fitter = MockGaussianSplatFitter()

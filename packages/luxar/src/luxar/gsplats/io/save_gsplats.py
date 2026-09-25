@@ -297,9 +297,10 @@ _HEADER_STATS_KEYS = (
 #: ``pipeline/`` group) on every writer path — see
 #: ``docs/specs/GSPLATS_ZARR_FORMAT.md`` §"Pipeline Group Attributes" (#1175).
 #:
-#: The values are in the INPUT VOLUME's own units: ``floor`` is the background
-#: level subtracted before fitting (``None``/``null`` when suppression was
-#: disabled or refused), ``image_min`` / ``image_max`` are the normalization
+#: Numeric values are in the INPUT VOLUME's own units: ``floor`` is the
+#: background level subtracted before fitting (``None``/``null`` when
+#: suppression was disabled or refused), ``floor_strategy`` is categorical
+#: estimator provenance, and ``image_min`` / ``image_max`` are the normalization
 #: bounds and ``intensity_range`` their span. A tiled/progressive path removes
 #: the pedestal OUTSIDE the fitter and then fits with ``floor="none"``, so it
 #: must shift its inner bounds back into those units before recording them —

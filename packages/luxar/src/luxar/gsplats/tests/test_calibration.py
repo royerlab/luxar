@@ -1430,6 +1430,8 @@ class TestExponentFitSerialization:
 
 
 class TestEstimateFloor:
+    """Unit tests for the background/DC floor estimator."""
+
     @staticmethod
     def _specimen_mixture(medium_fraction: float = 0.56) -> np.ndarray:
         rng = np.random.default_rng(1910)
@@ -1498,7 +1500,42 @@ class TestEstimateFloor:
         assert result.strategy == "specimen-fallback-auto"
         assert result.level == pytest.approx(100.0, abs=1.0)
 
-    """Unit tests for the background/DC floor estimator."""
+    def test_specimen_rejects_a_bright_tail_as_the_second_mode(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = np.concatenate(
+            [
+                rng.normal(204.0, 5.0, 112_000),
+                rng.normal(675.0, 25.0, 68_000),
+                rng.normal(2500.0, 350.0, 20_000),
+            ]
+        ).astype(np.float32)
+
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen-fallback-auto"
+        assert result.level < 1000.0
+
+    @pytest.mark.parametrize(
+        ("medium_sigma", "specimen_sigma", "strategy"),
+        [(20.0, 70.0, "specimen"), (25.0, 85.0, "specimen-fallback-auto")],
+    )
+    def test_specimen_compactness_boundary_is_explicit(
+        self, medium_sigma: float, specimen_sigma: float, strategy: str
+    ) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = np.concatenate(
+            [
+                rng.normal(204.0, medium_sigma, 112_000),
+                rng.normal(675.0, specimen_sigma, 78_000),
+                rng.normal(2500.0, 350.0, 10_000),
+            ]
+        ).astype(np.float32)
+
+        assert estimate_floor_result(values, method="specimen").strategy == strategy
 
     def _pedestal_volume(self, pedestal: float = 110.0, seed: int = 0) -> np.ndarray:
         rng = np.random.default_rng(seed)

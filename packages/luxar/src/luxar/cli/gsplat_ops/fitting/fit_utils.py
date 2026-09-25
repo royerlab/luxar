@@ -566,7 +566,10 @@ def _weighted_uniform_seed_counts(
         resolve_tile_intensity_scale,
         uniform_tile_occupancy_weights,
     )
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
+    from luxar.gsplats.fitting.preprocessing import (
+        resolve_volume_floor_denoised,
+        resolve_volume_floor_with_strategy,
+    )
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
@@ -1136,7 +1139,7 @@ def resolve_shared_floor(
     guard_numeric: bool = True,
     scope: str = "every tile",
     verbose: bool = True,
-) -> "tuple[float | None, str | float]":
+) -> "tuple[float | None, str | float, str | None]":
     """Resolve a user ``--floor`` spec ONCE into the level every worker subtracts.
 
     The multi-worker counterpart of what :func:`luxar.gsplats.fit_tiled_gsplats.fit_tiled`
@@ -1205,7 +1208,7 @@ def resolve_shared_floor(
           and no level is recorded in the manifest (see
           :func:`luxar.cli.gsplat_ops.batch.planning.resolve_batch_floor`).
     """
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_with_strategy
     from luxar.gsplats.fitting.validation import _validate_floor
 
     if isinstance(floor_spec, str):
@@ -1214,12 +1217,14 @@ def resolve_shared_floor(
         # Nothing to sample: a concrete spec resolves without data (the caller
         # checked `floor_spec_needs_volume`), so the guard has to be skipped.
         guard_numeric = False
-    level = resolve_volume_floor(volume, floor_spec, guard_numeric=guard_numeric)
+    level, strategy = resolve_volume_floor_with_strategy(
+        volume, floor_spec, guard_numeric=guard_numeric
+    )
     if level is None:
         # Disabled, resolved to 0 (the "0 disables" rule), or refused by the
         # guard — all three mean "subtract nothing", which is what the workers
         # must be told explicitly so they don't re-resolve the spec themselves.
-        return None, "none"
+        return None, "none", None
     if level < 0.0:
         aprint(
             f"Note: resolved background floor {level:.6g} is negative and cannot "
@@ -1228,13 +1233,13 @@ def resolve_shared_floor(
         # `floor_spec` cannot be None here: a None spec resolves to level None
         # and already returned above.
         assert floor_spec is not None
-        return level, floor_spec
+        return level, floor_spec, strategy
     if verbose:
         aprint(
             f"Floor suppression: {scope} subtracts background level {level:.6g} "
             f"(resolved once for the whole volume)"
         )
-    return level, level
+    return level, level, strategy
 
 
 def _tile_worker_label(ctx: "Any", tile_idx: int, n_tiles: int) -> str:
@@ -1482,13 +1487,23 @@ def fit_single_tile(
         )
     probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
     _validate_floor(floor_spec)
-    resolved_floor = resolve_volume_floor_denoised(
-        volume,
-        floor_spec,
-        denoise_h=fit_config.get("_denoise_h"),
-        denoise_params=fit_config.get("_denoise_params"),
-        probe_cache=probe_cache,
-        guard_numeric=not (floor_resolved or preselected_tile),
+    denoise_h = fit_config.get("_denoise_h")
+    denoise_params = fit_config.get("_denoise_params")
+    floor_strategy = None
+    if denoise_h is None or denoise_params is None:
+        resolved_floor, floor_strategy = resolve_volume_floor_with_strategy(
+            volume,
+            floor_spec,
+            guard_numeric=not (floor_resolved or preselected_tile),
+        )
+    else:
+        resolved_floor = resolve_volume_floor_denoised(
+            volume,
+            floor_spec,
+            denoise_h=denoise_h,
+            denoise_params=denoise_params,
+            probe_cache=probe_cache,
+            guard_numeric=not (floor_resolved or preselected_tile),
         # Log the raw level and the measured denoise shift — but ONLY where
         # denoising made this a new resolution to report. With `--denoise` off
         # this worker's log stays byte-identical to what it printed before #1178
@@ -1497,11 +1512,9 @@ def fit_single_tile(
         # Gated on a volume-derived spec too: an absolute level is not resolved
         # here, and `warn_if_level_erases_volume` below is the line that matters
         # for one of those.
-        verbose=bool(fit_config.get("verbose", False))
-        and floor_spec_needs_volume(floor_spec)
-        and fit_config.get("_denoise_h") is not None
-        and fit_config.get("_denoise_params") is not None,
-    )
+            verbose=bool(fit_config.get("verbose", False))
+            and floor_spec_needs_volume(floor_spec),
+        )
     if resolved_floor is not None and not floor_spec_needs_volume(floor_spec):
         warning_volume = volume if preselected_tile else volume[specs[tile_idx].slices]
         warn_if_level_erases_volume(
@@ -1547,6 +1560,8 @@ def fit_single_tile(
             from luxar.gsplats.fit_tiled_gsplats import _cull_keeping_measured_scores
 
             result = _cull_keeping_measured_scores(result, float(cull_retention))
+        if floor_strategy is not None:
+            result.stats["floor_strategy"] = floor_strategy
         return result
 
 

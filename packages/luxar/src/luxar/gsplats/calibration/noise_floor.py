@@ -14,6 +14,10 @@ from typing import List
 
 import numpy as np
 
+_SPECIMEN_MIN_CLASS_FRACTION = 0.02
+_SPECIMEN_MAX_MAD_SEPARATION_RATIO = 0.10
+_SPECIMEN_MAX_LOWER_P90_DEVIATION_RATIO = 0.20
+
 
 @dataclass
 class NoiseFloor:
@@ -152,6 +156,8 @@ def estimate_noise_floor(V: np.ndarray) -> NoiseFloor:
 
 def _histogram_mode(values: np.ndarray) -> float:
     hi = float(np.percentile(values, 95.0))
+    # Float64 is mandatory: 512 bins can be narrower than float32 spacing
+    # for a narrow high-valued band, which NumPy rejects (#1671).
     low_band = values[values <= hi].astype(np.float64, copy=False)
     hist, edges = np.histogram(low_band, bins=512)
     index = int(hist.argmax())
@@ -159,6 +165,7 @@ def _histogram_mode(values: np.ndarray) -> float:
 
 
 def _otsu_threshold(values: np.ndarray) -> float:
+    # Same float32-spacing constraint as _histogram_mode (#1671).
     hist, edges = np.histogram(values.astype(np.float64, copy=False), bins=512)
     centers = 0.5 * (edges[:-1] + edges[1:])
     weights = np.cumsum(hist, dtype=np.float64)
@@ -180,7 +187,9 @@ def _specimen_floor(values: np.ndarray, auto_level: float) -> FloorEstimate:
     threshold = _otsu_threshold(low_band)
     lower = low_band[low_band <= threshold]
     upper = low_band[low_band > threshold]
-    min_class_size = max(2, int(math.ceil(0.02 * low_band.size)))
+    min_class_size = max(
+        2, int(math.ceil(_SPECIMEN_MIN_CLASS_FRACTION * low_band.size))
+    )
     if lower.size < min_class_size or upper.size < min_class_size:
         return FloorEstimate(auto_level, "specimen-fallback-auto")
 
@@ -189,7 +198,13 @@ def _specimen_floor(values: np.ndarray, auto_level: float) -> FloorEstimate:
     separation = upper_median - lower_median
     lower_mad = float(np.median(np.abs(lower - lower_median)))
     upper_mad = float(np.median(np.abs(upper - upper_median)))
-    if separation <= 0.0 or max(lower_mad, upper_mad) > 0.1 * separation:
+    lower_tail = float(np.percentile(np.abs(lower - lower_median), 90.0))
+    if (
+        separation <= 0.0
+        or max(lower_mad, upper_mad)
+        > _SPECIMEN_MAX_MAD_SEPARATION_RATIO * separation
+        or lower_tail > _SPECIMEN_MAX_LOWER_P90_DEVIATION_RATIO * separation
+    ):
         return FloorEstimate(auto_level, "specimen-fallback-auto")
 
     candidate = _histogram_mode(upper)
