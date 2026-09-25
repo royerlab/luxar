@@ -122,9 +122,18 @@ function browserArgs(perf) {
     '--enable-webgpu-developer-features',
   ];
   if (process.platform === 'linux') {
+    // ANGLE on Vulkan puts WebGL on the discrete GPU (the default is
+    // SwiftShader headless). Do NOT add the `Vulkan` feature: it moves
+    // Chrome's own compositor onto Skia-Vulkan, which has no window surface
+    // in headless mode ("Failed to initialize vulkan surface"), and the first
+    // composited WebGL frame then loses the context (restored ~1 s later).
+    // Measured on obsidian (system Chrome 146, RTX 3070): with
+    // `--enable-features=Vulkan,WebGPU` every WebGL page lost its context;
+    // with `WebGPU` alone none did, and both backends stayed on the NVIDIA
+    // card. Not a viewer bug: a bare canvas clearing each frame reproduces it.
     a.push(
       '--use-angle=vulkan',
-      '--enable-features=Vulkan,WebGPU',
+      '--enable-features=WebGPU',
       '--no-sandbox',
       '--disable-dev-shm-usage'
     );
