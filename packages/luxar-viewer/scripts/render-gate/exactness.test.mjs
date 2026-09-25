@@ -146,6 +146,31 @@ describe('scorePickBuffers', () => {
     expect(s.hits).toBe(0); // the id is in the candidate; hits count the baseline
   });
 
+  it('judges ULP on node identity and IDENTICAL on everything', () => {
+    // 1000 pixels of node 2; the candidate changes the ELEMENT (G) at half of
+    // them (a tie flip among overlapping elements) and the NODE (R) at 5.
+    const n = 1000;
+    const a = rgba(n, 0);
+    for (let p = 0; p < n; p++) {
+      a[p * 4] = 2;
+      a[p * 4 + 1] = p % 7;
+    }
+    const b = a.slice();
+    for (let p = 0; p < n; p += 2) b[p * 4 + 1] += 1;
+    const clean = scoreFloatBuffers(rgba(10, 0.1), rgba(10, 0.1));
+    const elementOnly = scorePickBuffers(a, b);
+    expect(elementOnly.nodeMismatches).toBe(0);
+    expect(elementOnly.mismatches).toBe(500);
+    expect(judge('ULP', clean, null, elementOnly).pass).toBe(true);
+    expect(judge('IDENTICAL', clean, null, elementOnly).pass).toBe(false);
+    for (let p = 1; p < 11; p += 2) b[p * 4] = 3; // 5 node changes = 5e-3
+    const nodeChanged = scorePickBuffers(a, b);
+    expect(nodeChanged.nodeMismatches).toBe(5);
+    const v = judge('ULP', clean, null, nodeChanged);
+    expect(v.pass).toBe(false);
+    expect(v.failures.join()).toMatch(/pick node mismatches/);
+  });
+
   it('counts baseline pixels carrying an id as hits', () => {
     const a = rgba(4, 0);
     a[0] = 7; // pixel 0 holds an id

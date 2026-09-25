@@ -444,7 +444,7 @@ function markdown(meta, exact, perf) {
       '|---|---|---|---|---|---|---|---|---|'
     );
     for (const r of exact) {
-      const pick = r.pick ? `${r.pick.mismatches}` : '';
+      const pick = r.pick ? `node ${r.pick.nodeMismatches} / element ${r.pick.mismatches}` : '';
       lines.push(
         `| ${r.case} | ${r.backend} | ${r.dsf} | ${r.view} | ${r.cls ?? ''} | ${r.status}${r.failures?.length ? ` (${r.failures.join('; ')})` : ''} | ${fmtScore(r.hdr)} | ${fmtScore(r.ldr)} | ${pick} |`
       );

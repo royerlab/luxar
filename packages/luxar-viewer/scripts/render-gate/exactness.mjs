@@ -136,18 +136,26 @@ export function scoreFloatBuffers(base, cand) {
 }
 
 /**
- * Compare two pick-ID captures. A pick pixel encodes an element identity, so
- * ANY difference is a mismatch — there is no drift for an ID.
+ * Compare two pick-ID captures. A pick pixel encodes an identity, so there is
+ * no drift for it — but there are two levels of identity:
+ *   - the NODE (channel R): which object the pixel belongs to;
+ *   - the ELEMENT and depth/brightness payload (G, B, A): which of that
+ *     node's elements won the pixel.
+ * Where elements of one node overlap, the winner is a near-tie that ANY
+ * rounding change flips: nudging the line width scale by one float32 ulp
+ * (the calibration arm, `calib-lines-1ulp`) changed the element at up to 35%
+ * of a dense line scene's pick pixels while not one pixel changed node. So a
+ * math-moving change is judged on NODE identity; element changes are
+ * reported. `IDENTICAL` still requires both to be zero.
  *
- * @param {Float32Array} base Baseline RGBA pick buffer.
- * @param {Float32Array} cand Candidate RGBA pick buffer.
  * `hits` counts baseline pixels that carry an id at all: a pick buffer that is
  * empty in both builds "matches" trivially and certifies nothing, so the
  * harness treats `hits === 0` on a pickable case as an error.
  *
  * @param {Float32Array} base Baseline RGBA pick buffer.
  * @param {Float32Array} cand Candidate RGBA pick buffer.
- * @returns {{ pixels: number, hits: number, mismatches: number, mismatchFraction: number }}
+ * @returns {{ pixels: number, hits: number, mismatches: number, mismatchFraction: number,
+ *   nodeMismatches: number, nodeMismatchFraction: number }}
  */
 export function scorePickBuffers(base, cand) {
   if (base.length !== cand.length || base.length % 4 !== 0) {
@@ -155,6 +163,7 @@ export function scorePickBuffers(base, cand) {
   }
   const pixels = base.length / 4;
   let mismatches = 0;
+  let nodeMismatches = 0;
   let hits = 0;
   for (let p = 0; p < pixels; p++) {
     let hit = false;
@@ -165,8 +174,17 @@ export function scorePickBuffers(base, cand) {
     }
     if (hit) hits++;
     if (differs) mismatches++;
+    if (!Object.is(base[p * 4], cand[p * 4])) nodeMismatches++;
   }
-  return { pixels, hits, mismatches, mismatchFraction: pixels > 0 ? mismatches / pixels : 0 };
+  const frac = (n) => (pixels > 0 ? n / pixels : 0);
+  return {
+    pixels,
+    hits,
+    mismatches,
+    mismatchFraction: frac(mismatches),
+    nodeMismatches,
+    nodeMismatchFraction: frac(nodeMismatches),
+  };
 }
 
 /**
@@ -194,11 +212,14 @@ export const CLASS_LIMITS = Object.freeze({
     hdr: { maxDriftUlp: 0, p9999Ulp: 0, flipFraction: 0 },
     ldr: { maxDriftUlp: 0, p9999Ulp: 0, flipFraction: 0 },
     pickMismatchFraction: 0,
+    pickNodeMismatchFraction: 0,
   },
   ULP: {
     hdr: { maxDriftUlp: FLIP_ULP, p9999Ulp: 32, flipFraction: 3e-3 },
     ldr: { maxDriftUlp: FLIP_ULP, p9999Ulp: 64, flipFraction: 1e-2 },
-    pickMismatchFraction: 3e-3,
+    // Element-level pick winners are tie flips (see scorePickBuffers).
+    pickMismatchFraction: Infinity,
+    pickNodeMismatchFraction: 3e-3,
   },
 });
 
@@ -234,6 +255,11 @@ export function judge(cls, hdr, ldr, pick) {
   if (pick && pick.mismatchFraction > limits.pickMismatchFraction) {
     failures.push(
       `pick mismatches ${pick.mismatches} (${pick.mismatchFraction.toExponential(2)}) > ${limits.pickMismatchFraction}`
+    );
+  }
+  if (pick && pick.nodeMismatchFraction > limits.pickNodeMismatchFraction) {
+    failures.push(
+      `pick node mismatches ${pick.nodeMismatches} (${pick.nodeMismatchFraction.toExponential(2)}) > ${limits.pickNodeMismatchFraction}`
     );
   }
   return { pass: failures.length === 0, failures };
