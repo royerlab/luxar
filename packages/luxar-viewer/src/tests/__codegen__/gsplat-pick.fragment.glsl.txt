@@ -53,7 +53,6 @@ layout( std140 ) uniform object {
 	mat3 nodeUniform13;
 	uint nodeUniform14;
 	mat4 nodeUniform16;
-	float nodeUniform17;
 	float nodeUniform18;
 	vec2 nodeUniform19;
 	float nodeUniform20;
@@ -62,11 +61,9 @@ layout( std140 ) uniform object {
 	float nodeUniform23;
 	float nodeUniform24;
 	float nodeUniform25;
-	float nodeUniform27;
 	float nodeUniform28;
-	float nodeUniform31;
-	float nodeUniform32;
-	float nodeUniform33;
+	float nodeUniform29;
+	float nodeUniform30;
 };
 
 layout( std140 ) uniform render {
@@ -96,11 +93,11 @@ float gsplatPickMahalSq;
 float gsplatPickIntensity;
 float gsplatPickBrightness;
 float nodeVar6;
-vec4 nodeVar91;
+vec4 nodeVar90;
 vec3 positionView;
 vec4 DiffuseColor;
 vec4 Output;
-vec4 nodeVar94;
+vec4 nodeVar93;
 
 // codes
 
@@ -123,8 +120,8 @@ void main() {
 
 	if ( ( int( nodeUniform3 ) == 1 ) ) {
 
-		nodeVar91 = ( cameraProjectionMatrixInverse * v_clipSpace );
-		positionView = ( nodeVar91.xyz / vec3( nodeVar91.w ) );
+		nodeVar90 = ( cameraProjectionMatrixInverse * v_clipSpace );
+		positionView = ( nodeVar90.xyz / vec3( nodeVar90.w ) );
 		nodeVar6 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
 
 	} else {
@@ -135,7 +132,7 @@ void main() {
 
 	gl_FragDepth = nodeVar6;
 
-	if ( ( gsplatPickMahalSq > nodeUniform31 ) ) {
+	if ( ( gsplatPickMahalSq > nodeUniform28 ) ) {
 
 		discard;
 
@@ -151,11 +148,11 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying4, nodeVarying5.x, gsplatPickBrightness, nodeVarying5.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform33 );
-	nodeVar94 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar94;
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform30 );
+	nodeVar93 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar93;
 
 	// result
-	fragColor = nodeVar94;
+	fragColor = nodeVar93;
 
 }

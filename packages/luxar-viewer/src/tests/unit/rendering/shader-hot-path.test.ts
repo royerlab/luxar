@@ -75,7 +75,7 @@ describe('Shader hot-path string regressions', () => {
       // The floor is 1e-20 — a degenerate-smoothstep guard only, so the
       // scene-relative uNearCull is never overridden (tiny-unit scenes).
       expect(GSPLAT_VERTEX_SHADER).toMatch(
-        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*centerCam\.z\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
+        /perspectiveNearFade\s*\(\s*isOrtho\s*,\s*centerCam\.z\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
       );
       // The shared helper carries the smoothstep.
       expect(GSPLAT_VERTEX_SHADER).toMatch(

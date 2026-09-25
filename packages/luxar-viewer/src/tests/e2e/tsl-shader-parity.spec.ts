@@ -2123,6 +2123,32 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(1.0);
   });
 
+  test('gsplat-cube-face: a cube-capture face places a splat where its +90° equivalent does', async ({
+    page,
+  }) => {
+    // The scene-captured environment draws the data through CubeCamera faces
+    // (fov −90, a flipped P). Splat centres and Jacobians now go through P,
+    // so the face and its rolled +90° equivalent render the same image; the
+    // CPU focal length they used before carried no flip and put the splat on
+    // the point-reflected pixel (mirrored splats in reflections).
+    await bootHarness(page);
+
+    const face = await runGLSL(page, 'gsplat-cube-face');
+    const equivalent = await runGLSL(page, 'gsplat-cube-face-equivalent');
+    const faceTsl = (await runTSL(page, 'gsplat-cube-face')).pixels;
+    const equivalentTsl = (await runTSL(page, 'gsplat-cube-face-equivalent')).pixels;
+
+    assertBothRendered(face, faceTsl, 'gsplat-cube-face');
+    expect(nonUniformPixelCount(face), 'a visible splat').toBeGreaterThan(20);
+    expect(meanAbsDiffPerCoveredPixel(face, equivalent), 'GLSL face vs equivalent').toBeLessThan(
+      1.0
+    );
+    expect(
+      meanAbsDiffPerCoveredPixel(faceTsl, equivalentTsl),
+      'TSL face vs equivalent'
+    ).toBeLessThan(1.0);
+  });
+
   test('line-tiny-ortho: a nanometre-scale ortho line renders as its unit-scale twin', async ({
     page,
   }) => {

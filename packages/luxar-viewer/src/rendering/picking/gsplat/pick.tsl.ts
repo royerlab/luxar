@@ -51,6 +51,8 @@ import {
 import { NodeMaterial } from 'three/webgpu';
 import { resolveElementTextureWidth, SPLAT_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
+  isOrthoProjectionTSL,
+  projectionSizeScaleTSL,
   perspectiveNearFadeTSL,
   invalidFloatTSL,
   type TSLNode,
@@ -121,10 +123,7 @@ export function gsplatPickWebGPUFactory(
 
   const uSplatTex = nodes.uSplatTex;
   const uResolution = nodes.uResolution;
-  const uFx = nodes.uFx;
-  const uFy = nodes.uFy;
   const uTruncate = nodes.uTruncate;
-  const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
   const uCov2DDilation = nodes.uCov2DDilation;
@@ -201,6 +200,12 @@ export function gsplatPickWebGPUFactory(
 
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
     const centerCam: TSLNode = vec3(centerCam4).toVar();
+    // Clip-space centre through the projection this draw uses (GLSL twin:
+    // shader-glsl.ts). The screen centre, the Jacobian, the coverage extent
+    // and the ortho branch are all read from it and from P.
+    const centerClip: TSLNode = cameraProjectionMatrix.mul(centerCam4).toVar();
+    const isOrthoInt: TSLNode = isOrthoProjectionTSL().toVar();
+    const invW: TSLNode = float(1.0).div(centerClip.w).toVar();
     const zDepth: TSLNode = centerCam.z.negate().toVar();
 
     const L00 = aCholesky01.x;
@@ -225,7 +230,7 @@ export function gsplatPickWebGPUFactory(
     // scene-bounds-scaled (an absolute 1e-4 faded out tiny-unit scenes
     // entirely).
     const depthFade: TSLNode = perspectiveNearFadeTSL(
-      uIsOrtho,
+      isOrthoInt,
       centerCam.z,
       max(uNearCull, float(1e-20))
     ).toVar();
@@ -239,12 +244,14 @@ export function gsplatPickWebGPUFactory(
       SigmaCam.element(int(0)).element(int(0)),
       max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
     ).toVar();
-    const isOrtho: TSLNode = int(uIsOrtho).equal(int(1)).toVar();
+    const isOrtho: TSLNode = isOrthoInt.equal(int(1)).toVar();
     // 1e-20 floors = pure div-by-zero/sqrt guards, matching the visual
     // shader: maxLateralVar is world-unit² (an absolute 1e-8 floor
     // coverage-culled every splat of a tiny-unit scene); zDepth is
     // bounded by the scene-relative near fade.
-    const projectedExtent: TSLNode = uFx
+    const projectedExtent: TSLNode = uResolution.y
+      .mul(0.5)
+      .mul(projectionSizeScaleTSL())
       .mul(sqrt(max(maxLateralVar, float(1e-20))))
       .mul(uTruncate)
       .div(isOrtho.select(float(1.0), max(zDepth, float(1e-20))));
@@ -260,25 +267,20 @@ export function gsplatPickWebGPUFactory(
     // limits harder to pick than they appear.
     const nearFade: TSLNode = min(depthFade, coverageFade).toVar();
 
-    // Projection Jacobian. 1e-20 = exact-zero guard only (GLSL twin
-    // divides unguarded; the near-fade reject bounds zDepth at the
-    // scene-relative ~uNearCull).
-    const invZ: TSLNode = float(1.0)
-      .div(max(zDepth, float(1e-20)))
-      .toVar();
-    const invZ2: TSLNode = invZ.mul(invZ);
-    const J0: TSLNode = isOrtho
-      .select(vec2(uFx, float(0.0)), vec2(uFx.mul(invZ), float(0.0)))
-      .toVar();
-    const J1: TSLNode = isOrtho
-      .select(vec2(float(0.0), uFy), vec2(float(0.0), uFy.mul(invZ)))
-      .toVar();
-    const J2: TSLNode = isOrtho
-      .select(
-        vec2(float(0.0), float(0.0)),
-        vec2(uFx.mul(centerCam.x).mul(invZ2), uFy.mul(centerCam.y).mul(invZ2))
-      )
-      .toVar();
+    // Projection Jacobian, general form (GLSL twin: shader-glsl.ts), as three
+    // vec2 columns (TSL has no mat3x2): J[k] = res/2 * (P[k].xy / w -
+    // clip.xy * P[k].w / w^2), P = cameraProjectionMatrix. It reduces to the
+    // classic perspective / ortho Jacobians (projection-math.ts).
+    const P: TSLNode = cameraProjectionMatrix;
+    const halfRes: TSLNode = uResolution.mul(0.5);
+    const clipTerm: TSLNode = centerClip.xy.mul(invW.mul(invW));
+    const jacobianColumn = (k: number): TSLNode => {
+      const Pk: TSLNode = P.element(int(k));
+      return halfRes.mul(Pk.xy.mul(invW).sub(clipTerm.mul(Pk.w))).toVar();
+    };
+    const J0: TSLNode = jacobianColumn(0);
+    const J1: TSLNode = jacobianColumn(1);
+    const J2: TSLNode = jacobianColumn(2);
 
     const S00: TSLNode = SigmaCam.element(int(0)).element(int(0));
     const S01: TSLNode = SigmaCam.element(int(0)).element(int(1));
@@ -339,15 +341,13 @@ export function gsplatPickWebGPUFactory(
     const extent1: TSLNode = extent1Raw.mul(clampScale);
     const extent2: TSLNode = extent2Raw.mul(clampScale);
 
-    const centerScreenOrtho: TSLNode = vec2(
-      uFx.mul(centerCam.x).add(uResolution.x.mul(0.5)),
-      uFy.mul(centerCam.y).add(uResolution.y.mul(0.5))
-    );
-    const centerScreenPersp: TSLNode = vec2(
-      uFx.mul(centerCam.x).mul(invZ).add(uResolution.x.mul(0.5)),
-      uFy.mul(centerCam.y).mul(invZ).add(uResolution.y.mul(0.5))
-    );
-    const vCenterScreenVal: TSLNode = isOrtho.select(centerScreenOrtho, centerScreenPersp).toVar();
+    // Screen centre in pixels from the clip-space centre.
+    const vCenterScreenVal: TSLNode = centerClip.xy
+      .mul(invW)
+      .mul(0.5)
+      .add(0.5)
+      .mul(uResolution)
+      .toVar();
 
     const quadOffset: TSLNode = majorAxis
       .mul(aQuadCorner.x)
@@ -356,7 +356,6 @@ export function gsplatPickWebGPUFactory(
     const screenPos: TSLNode = vCenterScreenVal.add(quadOffset);
     const ndcXY: TSLNode = screenPos.div(uResolution).mul(2.0).sub(1.0);
 
-    const centerClip: TSLNode = cameraProjectionMatrix.mul(centerCam4).toVar();
     const ndcZ: TSLNode = centerClip.z.div(centerClip.w);
 
     // Parity with the GLSL `invalidCov2D || isInvalidFloat(aAmplitude)`

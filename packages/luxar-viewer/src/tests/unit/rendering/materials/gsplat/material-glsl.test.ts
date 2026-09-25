@@ -355,9 +355,20 @@ describe('GSplatMaterial', () => {
       // fade, not hard discard) with the uNearCull uniform
       // 1e-20 floor = degenerate-smoothstep guard only (scene-relative
       // uNearCull is never overridden on tiny-unit scenes).
+      // The ortho branch is read from the projection matrix, not a uniform.
+      expect(material.vertexShader).toContain('int isOrtho = luxarIsOrthoProjection();');
       expect(material.vertexShader).toContain(
-        'perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-20))'
+        'perspectiveNearFade(isOrtho, centerCam.z, max(uNearCull, 1e-20))'
       );
+      // Centre, Jacobian and coverage extent come from P and the clip centre.
+      expect(material.vertexShader).toContain('vec4 centerClip = projectionMatrix * centerCam4;');
+      expect(material.vertexShader).toContain(
+        'J[2] = halfRes * (projectionMatrix[2].xy * invW - clipTerm * projectionMatrix[2].w);'
+      );
+      expect(material.vertexShader).toContain(
+        'vCenterScreen = (centerClip.xy * invW * 0.5 + 0.5) * uResolution;'
+      );
+      expect(material.vertexShader).not.toMatch(/\buFx\s*\*/);
       // Screen-coverage fade uses projected extent and uMaxExtentFactor
       expect(material.vertexShader).toContain('uMaxExtentFactor');
       expect(material.vertexShader).toContain('projectedExtent');
