@@ -66,29 +66,49 @@ mismatch.
 | class | allowed |
 |---|---|
 | `IDENTICAL` | nothing: 0 ULP16 in every buffer, 0 pick mismatches, equal drawn element counts |
-| `ULP` | HDR: flips ≤ 3e-3 of pixels, p99.99 ≤ 32 ULP16. LDR: flips ≤ 1e-2, p99.99 ≤ 64. Pick mismatches ≤ 3e-3. Equal drawn element counts. |
+| `ULP` | frame energy change within ±1e-5; p99.9 of the 4×4 box-filtered tile change ≤ 1.3e-4 of the brightest tile; pick NODE mismatches ≤ 3e-3; equal drawn element counts |
 | `INTENDED` (per case, `INTENDED=a,b`) | any change in the named cases; reported, never failed. Each must be backed by its own targeted test. Every other case keeps the commit's class. |
 
-**How the `ULP` limits were set.** They are calibrated, not guessed. The gate
-was run against builds whose point size factor, or splat focal length, was
-scaled by (1 + ε). It covered points and splats in every blending mode, on both
-backends at DPR 1 and 2 (Apple M4 Max, 2026-09-25). Per view:
+**Why `ULP` is judged on light, not on pixels.** A per-pixel count cannot tell a
+real error from rounding jitter. Take a line shader that reads
+`projectionMatrix[1][1]` where it used to read a CPU uniform of the same value.
+On ANGLE/Metal that changes how the surrounding matrix products compile, and a
+dense, far-away line scene moves about one float32 ulp per vertex. That flips
+2.7e-3 of the frame's pixels, yet the frame's energy moves 1e-7, exactly like a
+1-ulp nudge of the uniform. A width that is really 1e-4 too large moves the
+energy by 1e-4. So `ULP` compares what a viewer could see:
 
-| ε | HDR p99.99 (ULP16) | HDR flips | LDR flips |
-|---|---|---|---|
-| 2⁻²³ (1 float32 ULP) | ≤ 4 | ≤ 2.2e-4 | ≤ 4.0e-4 |
-| 2⁻²⁰ (8 float32 ULPs) | ≤ 18 | ≤ 1.2e-3 | ≤ 4.8e-3 |
-| 1e-4 | ≥ 13 | ≥ 6.7e-3 | ≥ 1.3e-3 |
-| 1e-3 | ≥ 415 | ≥ 0.17 | ≥ 0.13 |
+- the signed relative change of the frame's total energy;
+- the change of each 4×4 box-filtered tile relative to the brightest tile. The
+  filter cancels light moved between neighbouring pixels and keeps light added
+  or removed.
 
-The HDR flip fraction is the metric that separates a rounding-level change from
-a real 1e-4 error in every view. For splats, p99.99 and the tone-mapped LDR
-buffer overlap between those two cases, so they are looser guards against gross
-errors. `ULP` therefore accepts up to about 8 float32 ULPs of change in a
-derived scale and rejects a 1e-4 relative error. A pixel-sized change is far
-more visible than its ULP16 count suggests: a point or splat edge moving by a
-fraction of a pixel flips the pixels it crosses. Re-run the sweep after
-changing the scenes or the scorer.
+Per-pixel drift, flips and p99.99 stay in the report for reading.
+
+Pick buffers are judged on NODE identity. Where one node's elements overlap, the
+winning element is a near-tie that any rounding flips. A 1-ulp nudge of the line
+width changed the element at up to 35% of a dense line scene's pick pixels, and
+changed the node at none.
+
+**How the `ULP` limits were set.** They are calibrated, not guessed. Calibration
+arms scale one derived quantity by (1 + ε): the point size factor, the line
+width scale or the splat focal length. The real commits of the
+projection-in-shader work were measured next to them. Every case covered
+points, lines and splats in every blending mode, on both backends (Apple M4 Max,
+2026-09-25). Worst value per view:
+
+| arm | abs(energy change) | tile p99.9 |
+|---|---|---|
+| rounding level: 1 or 8 float32 ulps, the real commits | ≤ 2.2e-6 | ≤ 9.4e-5 |
+| real error: ε = 1e-4 | ≥ 4.4e-6 (see below) | ≥ 1.7e-4 |
+
+Max- and normal-blended splats at a close pose barely change energy under a
+1e-4 focal error, because those modes do not add light. There the tile metric
+catches the error, at ≥ 2.2e-3. The tile maximum overlaps between the two rows
+of the table and is only reported. The margins are about 1.4× on the tile metric
+and about 5× on energy wherever energy separates. Re-run the calibration arms
+(`--cand-dist` accepts a hand-patched build) after changing the scenes or the
+scorer.
 
 A drawn-element-count difference between the builds fails a case outright (it
 means LOD selection or residency diverged, which would otherwise surface as a

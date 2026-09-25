@@ -71,6 +71,67 @@ export function quantile(values, q) {
 }
 
 /**
+ * Scale-aware comparison: does the candidate move LIGHT, or only jitter it?
+ *
+ * A per-pixel score cannot tell a systematic error (a line 1e-4 too wide
+ * carries 1e-4 more light and brightens every neighbourhood it crosses) from
+ * rounding jitter (a vertex position one ulp off moves light between two
+ * neighbouring pixels and changes nothing in their sum). Box-filtering both
+ * frames into `block`x`block` tiles cancels the jitter and keeps the
+ * systematic part, so the worst tile change measures what a viewer could
+ * actually see.
+ *
+ * @param {Float32Array} base Baseline RGBA pixels.
+ * @param {Float32Array} cand Candidate RGBA pixels.
+ * @param {number} width Frame width in pixels.
+ * @param {number} height Frame height in pixels.
+ * @param {number} [block=4] Tile edge in pixels.
+ * @returns {{ energyRel: number, blockMaxRel: number, blockP999Rel: number }}
+ *   `energyRel`: signed relative change of the frame's total RGB energy.
+ *   `blockMaxRel` / `blockP999Rel`: max / p99.9 over tiles of |ΔE_tile|,
+ *   relative to the brightest baseline tile.
+ */
+export function scoreBlocks(base, cand, width, height, block = 4) {
+  const bw = Math.ceil(width / block);
+  const bh = Math.ceil(height / block);
+  const eb = new Float64Array(bw * bh);
+  const ec = new Float64Array(bw * bh);
+  let totalB = 0;
+  let totalC = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      let sb = 0;
+      let sc = 0;
+      for (let c = 0; c < 3; c++) {
+        const a = base[i + c];
+        const b = cand[i + c];
+        if (Number.isFinite(a)) sb += a;
+        if (Number.isFinite(b)) sc += b;
+      }
+      const t = Math.floor(y / block) * bw + Math.floor(x / block);
+      eb[t] += sb;
+      ec[t] += sc;
+      totalB += sb;
+      totalC += sc;
+    }
+  }
+  let peakTile = 0;
+  for (let t = 0; t < eb.length; t++) peakTile = Math.max(peakTile, eb[t]);
+  const rel = new Float64Array(eb.length);
+  let maxRel = 0;
+  for (let t = 0; t < eb.length; t++) {
+    rel[t] = peakTile > 0 ? Math.abs(ec[t] - eb[t]) / peakTile : 0;
+    if (rel[t] > maxRel) maxRel = rel[t];
+  }
+  return {
+    energyRel: totalB > 0 ? (totalC - totalB) / totalB : 0,
+    blockMaxRel: maxRel,
+    blockP999Rel: quantile(rel, 0.999),
+  };
+}
+
+/**
  * Score two RGBA float captures of identical size.
  *
  * Per pixel the distance is the maximum over its four channels. `peak` is the
@@ -188,51 +249,42 @@ export function scorePickBuffers(base, cand) {
 }
 
 /**
- * Tolerances per verdict class and buffer (see RENDER_GATE.md).
+ * Tolerances per verdict class (see RENDER_GATE.md).
  *
- * `IDENTICAL` admits no difference at all. `ULP` limits are CALIBRATED, not
- * guessed: the gate was run against builds whose point size factor or splat
- * focal length was scaled by (1 + ε), on points and splats in every blending
- * mode, both backends, DPR 1 and 2 (Apple M4 Max, 2026-09-25). Per view:
+ * `IDENTICAL` admits no difference at all: 0 ULP16 in every buffer, 0 pick
+ * mismatches.
  *
- *   ε                 HDR p99.99   HDR flips        LDR flips
- *   2^-23 (1 ulp32)   ≤ 4          ≤ 2.2e-4         ≤ 4.0e-4
- *   2^-20 (8 ulp32)   ≤ 18         ≤ 1.2e-3         ≤ 4.8e-3
- *   1e-4              ≥ 13         ≥ 6.7e-3         ≥ 1.3e-3
- *   1e-3              ≥ 415        ≥ 0.17           ≥ 0.13
+ * `ULP` is judged on WHAT A VIEWER COULD SEE, not on per-pixel counts: the
+ * frame's energy change and the p99.9 change of 4x4 box-filtered tiles
+ * (`scoreBlocks`). Per-pixel flips overstate sub-pixel jitter — reading
+ * projectionMatrix[1][1] in a line shader changed ANGLE/Metal codegen enough
+ * to flip 2.7e-3 of a dense line scene's pixels while its energy moved 1e-7,
+ * exactly like a 1-ulp nudge. The limits are CALIBRATED on arms that scale a
+ * derived quantity (point size factor, line width scale, splat focal length)
+ * by (1 + eps), plus the real commits, on points / lines / splats in every
+ * blending mode, both backends (Apple M4 Max, 2026-09-25). Worst case per view:
  *
- * The HDR flip fraction is the metric that separates rounding-level changes
- * from a real (1e-4) error in EVERY view; p99.99 and the tone-mapped LDR
- * buffer overlap for splats, so they are looser guards against gross errors.
- * `ULP` therefore accepts up to ~8 float32 ULPs of change in a derived scale
- * and rejects a 1e-4 relative error.
+ *   arm                        |energy|      tile p99.9    (tile max overlaps)
+ *   rounding: 1/8 ulp32, commits   <= 2.2e-6     <= 9.4e-5
+ *   real error: eps = 1e-4         >= 4.4e-6 *   >= 1.7e-4
+ *
+ *   * max / normal splats at the near pose barely change energy (those modes
+ *     do not add light); tile p99.9 catches them at >= 2.2e-3.
+ *
+ * So `ULP` fails a view on |energy| > 1e-5 OR tile p99.9 > 1.3e-4 (margins
+ * ~1.4x on the tile metric, ~5x on energy where energy separates at all), and
+ * on pick NODE mismatches > 3e-3 (element-level pick ties are reported only).
+ * Per-pixel statistics stay in the report for reading.
  */
 export const CLASS_LIMITS = Object.freeze({
-  IDENTICAL: {
-    hdr: { maxDriftUlp: 0, p9999Ulp: 0, flipFraction: 0 },
-    ldr: { maxDriftUlp: 0, p9999Ulp: 0, flipFraction: 0 },
-    pickMismatchFraction: 0,
-    pickNodeMismatchFraction: 0,
-  },
-  ULP: {
-    hdr: { maxDriftUlp: FLIP_ULP, p9999Ulp: 32, flipFraction: 3e-3 },
-    ldr: { maxDriftUlp: FLIP_ULP, p9999Ulp: 64, flipFraction: 1e-2 },
-    // Element-level pick winners are tie flips (see scorePickBuffers).
-    pickMismatchFraction: Infinity,
-    pickNodeMismatchFraction: 3e-3,
-  },
+  IDENTICAL: { exact: true },
+  ULP: { energyRel: 1e-5, blockP999Rel: 1.3e-4, pickNodeMismatchFraction: 3e-3 },
 });
 
-function checkBuffer(name, score, limits, failures) {
-  if (score.maxDriftUlp > limits.maxDriftUlp) {
-    failures.push(`${name} drift ${score.maxDriftUlp.toFixed(2)} ULP16 > ${limits.maxDriftUlp}`);
-  }
-  if (score.p9999Ulp > limits.p9999Ulp) {
-    failures.push(`${name} p99.99 ${score.p9999Ulp.toFixed(2)} ULP16 > ${limits.p9999Ulp}`);
-  }
-  if (score.flipFraction > limits.flipFraction) {
+function exactFailures(name, score, failures) {
+  if (score && score.differing > 0) {
     failures.push(
-      `${name} flips ${score.flips} (${score.flipFraction.toExponential(2)}) > ${limits.flipFraction}`
+      `${name}: ${score.differing} px differ (drift ${score.maxDriftUlp.toFixed(1)} ULP16, ${score.flips} flips)`
     );
   }
 }
@@ -244,18 +296,25 @@ function checkBuffer(name, score, limits, failures) {
  * @param {ReturnType<typeof scoreFloatBuffers>} hdr Raw-scene HDR score.
  * @param {ReturnType<typeof scoreFloatBuffers>|null} ldr Visible-LDR score, when captured.
  * @param {ReturnType<typeof scorePickBuffers>|null} pick Pick score, when captured.
+ * @param {ReturnType<typeof scoreBlocks>|null} blocks Scale-aware HDR score (required for ULP).
  * @returns {{ pass: boolean, failures: string[] }} Verdict and the violated limits.
  */
-export function judge(cls, hdr, ldr, pick) {
+export function judge(cls, hdr, ldr, pick, blocks = null) {
   const limits = CLASS_LIMITS[cls];
   if (!limits) throw new Error(`unknown verdict class ${cls}`);
   const failures = [];
-  checkBuffer('hdr', hdr, limits.hdr, failures);
-  if (ldr) checkBuffer('ldr', ldr, limits.ldr, failures);
-  if (pick && pick.mismatchFraction > limits.pickMismatchFraction) {
-    failures.push(
-      `pick mismatches ${pick.mismatches} (${pick.mismatchFraction.toExponential(2)}) > ${limits.pickMismatchFraction}`
-    );
+  if (limits.exact) {
+    exactFailures('hdr', hdr, failures);
+    exactFailures('ldr', ldr, failures);
+    if (pick && pick.mismatches > 0) failures.push(`pick: ${pick.mismatches} px differ`);
+    return { pass: failures.length === 0, failures };
+  }
+  if (!blocks) throw new Error('the ULP class needs the scale-aware block score');
+  if (Math.abs(blocks.energyRel) > limits.energyRel) {
+    failures.push(`energy ${blocks.energyRel.toExponential(2)} beyond ±${limits.energyRel}`);
+  }
+  if (blocks.blockP999Rel > limits.blockP999Rel) {
+    failures.push(`tile p99.9 ${blocks.blockP999Rel.toExponential(2)} > ${limits.blockP999Rel}`);
   }
   if (pick && pick.nodeMismatchFraction > limits.pickNodeMismatchFraction) {
     failures.push(

@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
 import { ensureBuild } from './builds.mjs';
-import { judge, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
+import { judge, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { judgePerf, median, noiseFloor } from './perf-stats.mjs';
@@ -291,7 +291,8 @@ async function runExact(browser, servers, outDir) {
           a.pick && b.pick && a.pick.length === b.pick.length
             ? scorePickBuffers(a.pick, b.pick)
             : null;
-        Object.assign(row, { hdr: strip(hdr), ldr: strip(ldr), pick });
+        const blocks = scoreBlocks(a.hdr, b.hdr, a.width, a.height);
+        Object.assign(row, { hdr: strip(hdr), ldr: strip(ldr), pick, blocks });
         if (!a.settled || !b.settled || !a2.settled) {
           row.status = 'error';
           row.failures = ['did not settle'];
@@ -312,7 +313,7 @@ async function runExact(browser, servers, outDir) {
         } else if (cls === 'INTENDED') {
           row.status = hdr.differing > 0 || ldr.differing > 0 ? 'changed' : 'unchanged';
         } else {
-          const verdict = judge(cls, hdr, ldr, pick);
+          const verdict = judge(cls, hdr, ldr, pick, blocks);
           row.status = verdict.pass ? 'pass' : 'fail';
           row.failures = verdict.failures;
         }

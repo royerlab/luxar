@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   judge,
   quantile,
+  scoreBlocks,
   scoreFloatBuffers,
   scorePickBuffers,
   ulp16,
@@ -81,7 +82,6 @@ describe('scoreFloatBuffers', () => {
     expect(s.flips).toBe(0);
     expect(s.maxDriftUlp).toBeCloseTo(1, 12);
     expect(judge('IDENTICAL', s, s, null).pass).toBe(false);
-    expect(judge('ULP', s, s, null).pass).toBe(true);
   });
 
   it('counts an isolated large jump as a flip with its size relative to peak', () => {
@@ -93,44 +93,80 @@ describe('scoreFloatBuffers', () => {
     expect(s.flips).toBe(1);
     expect(s.maxFlipRel).toBeCloseTo(0.25, 6);
     expect(s.maxDriftUlp).toBe(0);
-    expect(judge('ULP', s, null, null).pass).toBe(true); // 5e-6 < 3e-3
-  });
-
-  /** `count` pixels of a 10k frame jump by `ulps` ULP16. */
-  function withJumps(count, ulps) {
-    const a = rgba(10_000, 0.1);
-    const b = a.slice();
-    for (let i = 0; i < count; i++) b[i * 4] = 0.1 + ulps * ulp16(0.1);
-    return scoreFloatBuffers(a, b);
-  }
-
-  it('accepts HDR flips up to the calibrated 3e-3 budget and fails above it', () => {
-    // Small jumps (3 ULP16) so p99.99 stays under its limit and only the flip
-    // fraction decides.
-    expect(judge('ULP', withJumps(30, 3), null, null).pass).toBe(true); // 3e-3
-    const over = judge('ULP', withJumps(31, 3), null, null);
-    expect(over.pass).toBe(false);
-    expect(over.failures.join()).toMatch(/hdr flips/);
-  });
-
-  it('fails the ULP class on a large p99.99 even within the flip budget', () => {
-    // 1e-3 of pixels 100 ULP16 off: flips pass (1e-3 < 3e-3), p99.99 does not.
-    const s = withJumps(10, 100);
-    expect(s.flipFraction).toBeCloseTo(1e-3, 12);
-    const v = judge('ULP', s, null, null);
-    expect(v.pass).toBe(false);
-    expect(v.failures.join()).toMatch(/hdr p99.99/);
-  });
-
-  it('applies the looser LDR guard to the LDR buffer', () => {
-    const ldr = withJumps(50, 3); // 5e-3: over the HDR budget, under the LDR one
-    const clean = scoreFloatBuffers(rgba(10, 0.1), rgba(10, 0.1));
-    expect(judge('ULP', clean, ldr, null).pass).toBe(true);
-    expect(judge('ULP', clean, withJumps(101, 3), null).pass).toBe(false); // 1.01e-2
   });
 
   it('rejects mismatched sizes', () => {
     expect(() => scoreFloatBuffers(rgba(2, 0), rgba(3, 0))).toThrow();
+  });
+});
+
+/** A W x H RGBA frame, every pixel at `value` in RGB. */
+function frame(w, h, value) {
+  const f = new Float32Array(w * h * 4);
+  for (let i = 0; i < w * h; i++) f.fill(value, i * 4, i * 4 + 3);
+  return f;
+}
+
+describe('scoreBlocks and the ULP class', () => {
+  const W = 64;
+  const H = 32;
+
+  it('sees sub-pixel jitter as nothing and a systematic change as light', () => {
+    const base = frame(W, H, 0.2);
+    // Jitter: move light between two neighbouring pixels of every tile.
+    const jitter = base.slice();
+    for (let y = 0; y < H; y += 4) {
+      for (let x = 0; x < W; x += 4) {
+        const i = (y * W + x) * 4;
+        jitter[i] += 0.05;
+        jitter[i + 4] -= 0.05;
+      }
+    }
+    const j = scoreBlocks(base, jitter, W, H);
+    expect(Math.abs(j.energyRel)).toBeLessThan(1e-9);
+    expect(j.blockMaxRel).toBeLessThan(1e-9);
+    // Systematic: every pixel 1e-4 brighter.
+    const bright = base.map((v, i) => (i % 4 === 3 ? v : v * (1 + 1e-4)));
+    const b = scoreBlocks(base, bright, W, H);
+    expect(b.energyRel).toBeCloseTo(1e-4, 7);
+    expect(b.blockP999Rel).toBeCloseTo(1e-4, 7);
+  });
+
+  it('judges ULP on the calibrated energy and tile limits', () => {
+    const base = frame(W, H, 0.2);
+    const hdr = scoreFloatBuffers(base, base);
+    const scaled = (eps) =>
+      scoreBlocks(
+        base,
+        base.map((v, i) => (i % 4 === 3 ? v : v * (1 + eps))),
+        W,
+        H
+      );
+    expect(judge('ULP', hdr, null, null, scaled(2e-6)).pass).toBe(true); // rounding level
+    const v = judge('ULP', hdr, null, null, scaled(1e-4)); // a real error
+    expect(v.pass).toBe(false);
+    // A UNIFORM 1e-4 brightening moves every tile by exactly 1e-4 of the peak
+    // tile, under the tile limit: energy is what catches it (the tile rule
+    // catches local errors, next test).
+    expect(v.failures.join()).toMatch(/energy/);
+  });
+
+  it('catches a local error that leaves the frame energy flat', () => {
+    // Light moved from one region to another: energy unchanged, tiles not.
+    const base = frame(W, H, 0.2);
+    const moved = base.slice();
+    for (let i = 0; i < (W * H) / 2; i++) moved[i * 4] *= 1.001;
+    for (let i = (W * H) / 2; i < W * H; i++) moved[i * 4] *= 0.999;
+    const s = scoreBlocks(base, moved, W, H);
+    expect(Math.abs(s.energyRel)).toBeLessThan(1e-9);
+    const v = judge('ULP', scoreFloatBuffers(base, moved), null, null, s);
+    expect(v.pass).toBe(false);
+    expect(v.failures.join()).toMatch(/tile p99.9/);
+  });
+
+  it('requires the block score for the ULP class', () => {
+    const base = frame(4, 4, 0.1);
+    expect(() => judge('ULP', scoreFloatBuffers(base, base), null, null)).toThrow();
   });
 });
 
@@ -158,15 +194,16 @@ describe('scorePickBuffers', () => {
     const b = a.slice();
     for (let p = 0; p < n; p += 2) b[p * 4 + 1] += 1;
     const clean = scoreFloatBuffers(rgba(10, 0.1), rgba(10, 0.1));
+    const noLight = scoreBlocks(rgba(16, 0.1), rgba(16, 0.1), 4, 4);
     const elementOnly = scorePickBuffers(a, b);
     expect(elementOnly.nodeMismatches).toBe(0);
     expect(elementOnly.mismatches).toBe(500);
-    expect(judge('ULP', clean, null, elementOnly).pass).toBe(true);
+    expect(judge('ULP', clean, null, elementOnly, noLight).pass).toBe(true);
     expect(judge('IDENTICAL', clean, null, elementOnly).pass).toBe(false);
     for (let p = 1; p < 11; p += 2) b[p * 4] = 3; // 5 node changes = 5e-3
     const nodeChanged = scorePickBuffers(a, b);
     expect(nodeChanged.nodeMismatches).toBe(5);
-    const v = judge('ULP', clean, null, nodeChanged);
+    const v = judge('ULP', clean, null, nodeChanged, noLight);
     expect(v.pass).toBe(false);
     expect(v.failures.join()).toMatch(/pick node mismatches/);
   });
