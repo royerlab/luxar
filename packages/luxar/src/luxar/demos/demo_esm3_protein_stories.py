@@ -88,7 +88,7 @@ DEMO_META = {
         "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
         # Ordered so the licence sits beside the data it covers: CC BY 4.0 is
         # UniProt's; the ESM C weights carry their own licence.
-        "ref": "ESM C, EvolutionaryScale 2024 · UniProt/Swiss-Prot",
+        "ref": "ESM C 2024 · UniProt/Swiss-Prot",
         "license": "CC BY 4.0",
     },
 }

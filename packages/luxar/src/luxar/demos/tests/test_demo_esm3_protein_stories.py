@@ -655,3 +655,15 @@ def test_every_story_waypoint_reveals_its_overlays_on_arrival() -> None:
     )
     assert isinstance(alpha_matte, ast.Constant), ast.unparse(video_calls[0])[:80]
     assert alpha_matte.value == "stacked"
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["demo_esm3_protein_stories", "demo_esm_protein_universe"],
+)
+def test_citation_ref_fits_the_scene_limit(module: str) -> None:
+    """The scene refuses a ``citation.ref`` over 40 characters at write time."""
+    import importlib
+
+    meta = importlib.import_module(f"luxar.demos.{module}").DEMO_META
+    assert len(meta["citation"]["ref"]) <= 40
