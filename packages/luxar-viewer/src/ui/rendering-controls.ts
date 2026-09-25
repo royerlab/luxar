@@ -55,12 +55,14 @@ export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-contr
  *  - A scene-derived value carries float noise. `String(1.05e-4)` is
  *    `"0.00010499999999999999"` → 20 decimals → a near of 117.5 renders as
  *    `"117.50000000000000000000"`.
+ *
  * `decimalsForStep` now handles exponent form, so only the POWER-OF-TEN result
  * remains load-bearing: its `String()` is short and exact. The -6 floor is no
  * longer required for display precision; it preserves the established minimum
- * interaction step. The literal spelling is not: `Number('1e'+e)` and
- * `Math.pow(10, e)` were measured identical at every exponent from -13 to +12,
- * so either works — the literal just reads as the intent.
+ * interaction step. Only that power-of-ten result is load-bearing; the literal
+ * spelling is not: `Number('1e'+e)` and `Math.pow(10, e)` were measured
+ * identical at every exponent from -13 to +12, so either works — the literal
+ * just reads as the intent.
  *
  * Exported for test. The float-noise accommodation belongs at this caller,
  * where the scene-derived step is chosen.
