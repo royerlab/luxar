@@ -47,6 +47,10 @@ scripts/
 └── perf/                          # perf-bench capture fixtures / helpers
 ```
 
+Refresh intentional timeout-budget count changes with
+`pnpm update:e2e-timeout-budget-baseline`; the writer preserves the baseline
+note and re-keys renamed spec paths from the analyzer's current output.
+
 ## LOD visual A/B
 
 `pnpm test:lod-visual-ab` generates a deterministic fixture, captures the

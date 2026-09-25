@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-file counts of tests whose imported shared-helper defaults exceed half the default Playwright budget. Counts may only stay level or decrease.",
+  "note": "Per-file counts of tests whose imported shared-helper defaults exceed half the default Playwright budget. Counts may only stay level or decrease.",
   "files": {
     "src/tests/e2e/basic-rendering.spec.ts": 4,
     "src/tests/e2e/cache-hardening.spec.ts": 10,

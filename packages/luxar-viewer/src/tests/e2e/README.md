@@ -433,12 +433,14 @@ least diagnosable way for a diagnostic test to fail.
 `pnpm check:e2e-timeout-budgets` enforces that rule for deadlines above half the
 default project's test timeout (30 s with today's 60 s budget). It reads
 explicit `timeout` options, numeric arguments passed to wait helpers, local
-wait-helper defaults, imported defaults from `./helpers` and `./helpers/*`, and
-test — except where such a constant IS the budget, since the argument to
+wait-helper defaults, module-level timeout/deadline constants used by each test,
+and imported parameter defaults from `./helpers` and `./helpers/*` — except where
+such a constant IS the budget, since the argument to
 `test.setTimeout`, `test.slow` or `describe.configure` is what the deadline has
 to beat rather than a deadline of its own.
-Deadlines inside local helper bodies and `beforeAll`/`afterAll` hooks remain out
-of scope. So is the sum — deadlines are modelled as the largest single wait, not their total,
+Deadlines inside helper bodies, local or imported, and `beforeAll`/`afterAll`
+hooks remain out of scope (see #2901). So is the sum — deadlines are modelled as
+the largest single wait, not their total,
 so three sequential 40 s waits under a 45 s budget pass the check even though
 the rule above asks for headroom over their sum. Summing across branches and
 loops is not something a static pass can honestly claim to do, so the budget
@@ -460,7 +462,10 @@ to `scripts/e2e-timeout-budget-exceptions.json`; stale exceptions fail the
 check and must be removed when the test gains a budget or stops using the long
 deadline. Existing imported-default exposure is recorded by per-file count in
 `scripts/e2e-timeout-budget-baseline.json`; a higher count fails, and a lower
-count also fails until the baseline is tightened.
+count also fails until the baseline is tightened. Adding an exact exception
+removes that test from the per-file count, so update both mechanisms together.
+Regenerate intentional count changes with
+`pnpm update:e2e-timeout-budget-baseline`.
 
 ### Pattern for a new helper
 

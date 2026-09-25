@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -88,12 +88,24 @@ function localHelpers(sourceFile, constants) {
   return helpers;
 }
 
-function exportedHelpers(sourceText, file) {
-  const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true);
+function parsedSource(source, file) {
+  return typeof source === 'string'
+    ? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
+    : source;
+}
+
+function exportedHelpers(source, file, cache) {
+  const sourceFile = parsedSource(source, file);
+  const cacheKey = sourceFile.fileName;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
   const constants = constantDeclarations(sourceFile);
   const helpers = localHelpers(sourceFile, constants);
   const exported = new Map();
   for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement) && statement.moduleSpecifier) {
+      throw new Error(`Shared helper module ${file} uses an unsupported re-export.`);
+    }
     const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
     if (!modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
     if (ts.isFunctionDeclaration(statement) && statement.name) {
@@ -106,10 +118,11 @@ function exportedHelpers(sourceText, file) {
       }
     }
   }
+  cache.set(cacheKey, exported);
   return exported;
 }
 
-function importedHelpers(sourceFile, helperSources) {
+function importedHelpers(sourceFile, helperSources, exportedHelperCache) {
   const helpers = new Map();
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
@@ -117,11 +130,21 @@ function importedHelpers(sourceFile, helperSources) {
     }
     const specifier = statement.moduleSpecifier.text;
     if (!/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
-    const bindings = statement.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) continue;
-    const sourceText = helperSources.get(specifier);
-    if (sourceText === undefined) continue;
-    const exported = exportedHelpers(sourceText, specifier);
+    const importClause = statement.importClause;
+    if (!importClause) continue;
+    if (importClause.name) {
+      throw new Error(`Shared helper module ${specifier} uses an unsupported default import.`);
+    }
+    const bindings = importClause.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) {
+      throw new Error(`Shared helper module ${specifier} uses an unsupported namespace import.`);
+    }
+    if (!bindings) continue;
+    const helperSource = helperSources.get(specifier);
+    if (helperSource === undefined) {
+      throw new Error(`Could not resolve shared helper module ${specifier}.`);
+    }
+    const exported = exportedHelpers(helperSource, specifier, exportedHelperCache);
     for (const element of bindings.elements) {
       const importedName = element.propertyName?.text ?? element.name.text;
       const parameters = exported.get(importedName);
@@ -333,17 +356,18 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
 }
 
 export function analyzeSpec(
-  sourceText,
+  source,
   file,
   thresholdMs = LONG_DEADLINE_THRESHOLD_MS,
   projectTimeoutMs = thresholdMs * 2,
-  helperSources = new Map()
+  helperSources = new Map(),
+  exportedHelperCache = new Map()
 ) {
-  const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true);
+  const sourceFile = parsedSource(source, file);
   const constants = constantDeclarations(sourceFile);
   const helpers = new Map([
     ...localHelpers(sourceFile, constants),
-    ...importedHelpers(sourceFile, helperSources),
+    ...importedHelpers(sourceFile, helperSources, exportedHelperCache),
   ]);
   return findTests(sourceFile, constants, helpers, file, projectTimeoutMs).filter(
     (violation) => violation.deadlineMs > thresholdMs
@@ -456,8 +480,8 @@ function loadBaseline(path = BASELINE_PATH) {
   return payload.files;
 }
 
-function helperSourcesForSpec(sourceText, path) {
-  const sourceFile = ts.createSourceFile(path, sourceText, ts.ScriptTarget.Latest, true);
+export function helperSourcesForSpec(source, path, helperModuleCache = new Map()) {
+  const sourceFile = parsedSource(source, path);
   const sources = new Map();
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
@@ -469,34 +493,80 @@ function helperSourcesForSpec(sourceText, path) {
     const modulePath = [`${base}.ts`, join(base, 'index.ts'), base].find(
       (candidate) => existsSync(candidate) && statSync(candidate).isFile()
     );
-    if (modulePath) sources.set(specifier, readFileSync(modulePath, 'utf8'));
+    if (!modulePath) throw new Error(`Could not resolve shared helper module ${specifier}.`);
+    let helperSource = helperModuleCache.get(modulePath);
+    if (!helperSource) {
+      helperSource = ts.createSourceFile(
+        modulePath,
+        readFileSync(modulePath, 'utf8'),
+        ts.ScriptTarget.Latest,
+        true
+      );
+      helperModuleCache.set(modulePath, helperSource);
+    }
+    sources.set(specifier, helperSource);
   }
   return sources;
+}
+
+function violationCounts(violations) {
+  const counts = new Map();
+  for (const violation of violations) {
+    counts.set(violation.file, (counts.get(violation.file) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts].sort(([left], [right]) => left.localeCompare(right)));
+}
+
+export function saveBaseline(violations, path = BASELINE_PATH) {
+  const payload = JSON.parse(readFileSync(path, 'utf8'));
+  payload.files = violationCounts(violations);
+  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+export function parseArgs(argv) {
+  const options = { updateBaseline: false };
+  for (const argument of argv) {
+    if (argument === '--') continue;
+    if (argument === '--update-baseline') options.updateBaseline = true;
+    else throw new Error(`Unknown argument: ${argument}`);
+  }
+  return options;
 }
 
 function formatViolation(violation) {
   return `${violation.file}:${violation.line} ${violation.test} (${violation.deadlineMs} ms)`;
 }
 
-export function runCheck() {
+export function runCheck({ updateBaseline = false } = {}) {
   const projectTimeoutMs = projectTestTimeout(readFileSync(PLAYWRIGHT_CONFIG_PATH, 'utf8'));
   const thresholdMs = projectTimeoutMs / 2;
   const paths = specFiles();
+  const helperModuleCache = new Map();
+  const exportedHelperCache = new Map();
   const violations = paths.flatMap((path) => {
     const sourceText = readFileSync(path, 'utf8');
+    const sourceFile = ts.createSourceFile(path, sourceText, ts.ScriptTarget.Latest, true);
     return analyzeSpec(
-      sourceText,
+      sourceFile,
       normalizedRelative(path),
       thresholdMs,
       projectTimeoutMs,
-      helperSourcesForSpec(sourceText, path)
+      helperSourcesForSpec(sourceFile, path, helperModuleCache),
+      exportedHelperCache
     );
   });
   const exceptions = compareViolationsToExceptions(violations, loadExceptions());
+  if (updateBaseline && !exceptions.staleExceptions.length) {
+    saveBaseline(exceptions.newViolations);
+    console.log(
+      `Wrote ${Object.keys(violationCounts(exceptions.newViolations)).length} files to ${normalizedRelative(BASELINE_PATH)}.`
+    );
+    return true;
+  }
   const baseline = compareViolationCountsToBaseline(exceptions.newViolations, loadBaseline());
   for (const regression of baseline.regressions) {
     console.error(
-      `Timeout-budget baseline regression: ${regression.file} has ${regression.found}, allowed ${regression.allowed}.`
+      `Timeout-budget baseline regression: ${regression.file} has ${regression.found}, allowed ${regression.allowed}. Regenerate with pnpm update:e2e-timeout-budget-baseline.`
     );
     for (const violation of exceptions.newViolations.filter(
       ({ file }) => file === regression.file
@@ -506,7 +576,7 @@ export function runCheck() {
   }
   for (const improvement of baseline.improvements) {
     console.error(
-      `Stale timeout-budget baseline: ${improvement.file} has ${improvement.found}, recorded ${improvement.allowed}.`
+      `Stale timeout-budget baseline: ${improvement.file} has ${improvement.found}, recorded ${improvement.allowed}. Regenerate with pnpm update:e2e-timeout-budget-baseline.`
     );
   }
   for (const exception of exceptions.staleExceptions) {
@@ -516,7 +586,7 @@ export function runCheck() {
   }
   if (baseline.regressions.length) {
     console.error(
-      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }); use an exact reasoned exception only when the heuristic is wrong.'
+      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }); use an exact reasoned exception only when the heuristic is wrong; regenerate intentional count changes with pnpm update:e2e-timeout-budget-baseline.'
     );
   }
   if (
@@ -530,6 +600,7 @@ export function runCheck() {
   return true;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && !runCheck()) {
-  process.exitCode = 1;
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const options = parseArgs(process.argv.slice(2));
+  if (!runCheck(options)) process.exitCode = 1;
 }
