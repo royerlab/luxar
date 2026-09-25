@@ -1437,16 +1437,20 @@ number, and never put both in one table.
 
 ## 8. Current state, and what a fresh operator needs
 
-Written 2026-09-13. Read this before touching the site; several items below
+Updated 2026-09-25. Read this before touching the site; several items below
 change what the earlier sections tell you to do.
 
 ### 8.1 Where the site stands right now
 
-- Gallery data prefixes: **`data/2026-09-12`** backs 84 tiles;
-  **`data/2026-09-13`** backs `esm3_protein_stories`,
-  `esm_protein_universe`, and `gsplats_4d_h2afva_timelapse`, the three tiles
-  republished by an incremental wave; **`data/2026-09-19`** backs
-  `biodiversity_planetary_scale`.
+- Gallery data prefixes, re-resolved from the stable `/d/` routes on
+  2026-09-25: **`data/2026-09-12`** backs 64 tiles and
+  **`data/2026-09-16`** backs 16 tiles. The later waves are one tile at
+  **`data/2026-09-18`** (`gsplats_4d_drosophila_embryogenesis`), two at
+  **`data/2026-09-19`** (`biodiversity_planetary_scale`,
+  `gsplats_3d_opencell_map4`), two at **`data/2026-09-20`**
+  (`gsplats_4d_h2afva_timelapse`, `gsplats_4d_neuromast_2ch`), and
+  three at **`data/2026-09-22`** (`gsplats_3d_blastocyst_dapi_nuclei`,
+  `gsplats_3d_blastocyst_multichannel`, `protein_landscape`).
 - **There is no rollback prefix.** `2026-09-01` was purged after verification.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with
