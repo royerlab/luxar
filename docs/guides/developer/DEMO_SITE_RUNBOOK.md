@@ -1584,34 +1584,44 @@ stale-generation incident below began with an unverified local archive:
 cd ~/luxar-zenodo-archives && shasum -c SHA256SUMS    # expect: 52 OK, 0 failed
 ```
 
-Verified on 2026-09-25, the resolver has one current checksum contract per
-artifact: #2454 fixed the stale-cache acceptance and repair paths, and #2431
-removed the former `hosted_sha256`/in-repo digest split. Do not assume a verified
-cache entry is the wrong generation. Instead, verify the generation the scene
-actually records. Every manifest-backed demo stamps a canonical scene-root
-`input_digests` map from the exact bytes accepted by the resolver, and that map
-participates in `content_hash` (#2475):
+Verified on 2026-09-25, the manifest declares one current checksum contract per
+artifact and contains no `hosted_sha256` fields: #2454 fixed the stale-cache
+acceptance and repair paths, and #2431 removed the former dual pins. The resolver
+still supports that legacy field, so keep the dormant guard below. Do not assume
+a verified cache entry is the wrong generation. Instead, verify the generation
+the scene actually records. Every manifest-backed demo stamps a canonical
+scene-root `input_digests` map from the exact bytes accepted by the resolver.
+When stamped before finalization, as the demos do, that map participates in
+`content_hash` (#2475):
 
 ```bash
-hatch run python - <scene.luxar.zarr> <<'PY'
+SCENE=/path/to/scene.luxar.zarr
+hatch run python - "$SCENE" <<'PY'
 import json
 import sys
+from pathlib import Path
 
-import zarr
+from luxar._zarr_compat import read_node_attrs
 
-root = zarr.open_group(sys.argv[1], mode="r")
-print(json.dumps(dict(root.attrs["input_digests"]), indent=2, sort_keys=True))
+attrs = read_node_attrs(Path(sys.argv[1])) or {}
+print(json.dumps(attrs.get("input_digests", {}), indent=2, sort_keys=True))
 PY
 ```
 
 Compare each basename and digest with the record's `SHA256SUMS`, or with the
 manifest `sha256` for a dataset using a pinned mirror. This is the primary
-post-build generation check. As a log-side cross-check, also confirm that files
-were verified and that the obsolete dual-contract warning never appeared:
+post-build generation check. An empty map means either that the demo recorded no
+manifest inputs or that the stamp is absent, including a scene built before
+#2475. For a manifest-backed demo that should have archive inputs, treat an empty
+map as failed provenance and rebuild it. As a log-side cross-check, also confirm
+that current local files were verified, no superseded pair was accepted, and the
+legacy dual-contract warning never appeared:
 
 ```bash
-grep -c "SHA256 verified" <build-log>              # want: > 0
-grep -c "record hosts a newer build" <build-log>   # want: 0
+grep -c "SHA256 verified (local)" <build-log>       # want: > 0
+grep -c "SHA256 verified (superseded)" <build-log>  # want: 0
+grep -c "SUPERSEDED positional pair" <build-log>    # want: 0
+grep -c "record hosts a newer build" <build-log>    # want: 0 (dormant legacy guard)
 ```
 
 **Checking element counts is not enough on its own.** The stale-generation
