@@ -133,6 +133,7 @@ from luxar.demos._pdb_turntable import (
 from luxar.demos.demo_esm3_protein_landscape import (
     TAXON_COLORS,
     _linkable_accessions,
+    refresh_kingdoms,
 )
 from luxar.utils.paths import get_demos_output_dir
 
@@ -324,10 +325,11 @@ STORIES: tuple[Story, ...] = (
             "After some two billion years of separate evolution, human Hsp70 "
             "and E. coli DnaK are still about 47% identical, letter for "
             "letter — one of the most conserved proteins known.",
-            # Map audit: all 567 members are named DnaK, from bacteria and a
-            # few archaea; the nearest eukaryotic Hsp70 sits ~10 units away.
+            # Map audit: all 567 members are named DnaK: 541 bacteria, 12
+            # archaea, 14 algal chloroplast copies; the nearest eukaryotic
+            # cytosolic Hsp70 sits ~10 units away.
             "This blob is DnaK in hundreds of bacteria, with a few archaea "
-            "among them. Our own Hsp70 sits far off on the map: the model "
+            "and the chloroplast copies of some algae among them. Our own Hsp70 sits far off on the map: the model "
             "reads sequence, and ours has drifted, though it does the same job.",
             # Ritossa, Experientia 18:571 (1962); Ritossa's own account,
             # Cell Stress Chaperones 1:97 (1996).
@@ -1297,6 +1299,11 @@ def load_landscape_cache(cache_dir: Path) -> tuple[np.ndarray, dict[str, np.ndar
                 f"cache mismatch: {key} has {len(meta[key])} rows, positions {n}"
             )
     fields = {k: meta[k] for k in ("names", "organisms", "kingdoms")}
+    # Taxon categories come from the UniProt lineage; an older cache is
+    # upgraded in place (one ~6 MB download), so the colours are right here too.
+    fields["kingdoms"] = refresh_kingdoms(
+        cache_dir, metadata_cache, {k: meta[k] for k in meta.files}
+    )
     fields["accessions"] = (
         meta["accessions"] if "accessions" in meta.files else np.array([], dtype=object)
     )
