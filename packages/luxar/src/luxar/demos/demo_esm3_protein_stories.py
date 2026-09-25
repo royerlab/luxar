@@ -1234,8 +1234,8 @@ def add_story_sounds(
         added += 1
 
     chosen = resolve_engine(engine)
-    voice = NARRATION_VOICES.get(chosen or "", "")
-    narration_license = NARRATION_LICENSES.get(chosen or "", "unspecified")
+    voice = NARRATION_VOICES[chosen] if chosen is not None else ""
+    narration_license = NARRATION_LICENSES[chosen] if chosen is not None else ""
     if chosen == "say":
         aprint(
             "⚠️ Narration uses a macOS system voice, licensed for personal, "

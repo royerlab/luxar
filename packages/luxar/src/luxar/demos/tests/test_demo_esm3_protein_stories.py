@@ -15,6 +15,7 @@ import pytest
 
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import demo_esm3_protein_stories as demo
+from luxar.demos._narration import ENGINE_EXTENSIONS
 from luxar.demos.demo_esm3_protein_stories import (
     NARRATION_AFTER_FLIGHT_MS,
     STORIES,
@@ -437,8 +438,15 @@ def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
 # =============================================================================
 
 
+@pytest.mark.parametrize(
+    ("engine", "expected_license"),
+    [
+        ("openai", "CC0"),
+        ("say", "Apple macOS system voice: personal, non-commercial use only"),
+    ],
+)
 def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, engine: str, expected_license: str
 ) -> None:
     """The bed download and the TTS are swapped for fakes; the SOUND NODES that land
     in the store are real (through ``scene.add_sound``)."""
@@ -495,7 +503,7 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
             scene,
             stories,
             narration_dir=tmp_path / "narration",
-            engine="openai",
+            engine=engine,
             ambisonic_dir=tmp_path / "foa",
         )
     # bed + overview + two narrations — and nothing on the `effects` bus: the
@@ -522,6 +530,7 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     assert bed_attrs["layer"] is True
     assert "layer" not in dict(root["narration_B"].attrs)
     narr = dict(root["narration_B"].attrs)
+    assert narr["license"] == expected_license
     # Narration starts when the flight lands (waypoint arrival), a beat later.
     assert narr["trigger"] == "on_arrive" and narr["bus"] == "voice"
     assert narr["delay_ms"] == NARRATION_AFTER_FLIGHT_MS
@@ -530,6 +539,11 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     assert overview["trigger"] == "on_arrive"
     # The highlight node name the hums used to attach to is still the demo's.
     assert story_node_name(2, stories[1]) == "Story 2: B"
+
+
+def test_narration_engine_metadata_covers_every_supported_engine() -> None:
+    assert set(demo.NARRATION_VOICES) == set(ENGINE_EXTENSIONS)
+    assert set(demo.NARRATION_LICENSES) == set(ENGINE_EXTENSIONS)
 
 
 def test_add_story_sounds_stays_silent_without_an_engine_and_survives_no_bed(
