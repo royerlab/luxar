@@ -453,12 +453,12 @@ irrelevant and it reaches down through nested suites. In a **test body** it is
 a live call against the resolved slot, so a preceding `setTimeout` is what gets
 tripled and a following one replaces the result. Either way it lands **once per
 test**, since a suite-level `slow` makes an in-test one a no-op, and a
-_conditional_ `test.slow(cond)` declares nothing at all — the condition is a
-run-time value, so the check falls back to demanding a real budget. If the
-static
-heuristic cannot model a case, add its file, source line, test title, and a specific reason
-to `scripts/e2e-timeout-budget-exceptions.json`; stale exceptions fail the
-check and must be removed when the test gains a budget or stops using the long
+_conditional_ `test.slow(...)` with any arguments declares nothing at all — the
+check treats every argument form as unmodelled, including literal conditions,
+and falls back to demanding a real budget. If the static heuristic cannot model
+a case, add its file, source line, test title, and a specific reason to
+`scripts/e2e-timeout-budget-exceptions.json`; stale exceptions fail the check
+and must be removed when the test gains a budget or stops using the long
 deadline.
 
 ### Pattern for a new helper
