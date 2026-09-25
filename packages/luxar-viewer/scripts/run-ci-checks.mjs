@@ -17,6 +17,7 @@ export const CI_CHECKS = [
   'check:node-types',
   'check:three-types',
   'check:jsdom-version',
+  'check:e2e-timeout-budgets',
   'check:format',
   'typecheck',
   'lint',

@@ -34,8 +34,9 @@ const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixture
 const MESH = `${FIXTURES_BASE}/test_mesh.luxar.zarr`;
 const MESH_ND = `${FIXTURES_BASE}/test_mesh_nd.luxar.zarr`;
 
-// `test.slow()` gives this test 180 s: the 45 s ready wait, 45 s commit wait,
-// and 75 s in-page cap leave 15 s for navigation, assertions, and reporting.
+// The fade test pins 180 s with `test.setTimeout`: the 45 s ready wait, 45 s
+// commit wait, and 75 s in-page cap leave 15 s for navigation, assertions, and
+// reporting.
 const MESH_FADE_SWEEP_DEADLINE_MS = 75000;
 
 /** The `meshNodes` entry for `name`, or undefined. */
@@ -76,6 +77,9 @@ async function waitForMeshCommitted(
 }
 
 test.describe('Mesh rendering', () => {
+  // The 45 s ready wait and 45 s commit wait leave 30 s for navigation, rendering, and assertions.
+  test.describe.configure({ timeout: 120000 });
+
   test('a written mesh loads, commits its triangles, and draws without GL errors', async ({
     page,
   }) => {
@@ -257,8 +261,10 @@ test.describe('Mesh rendering', () => {
 
   test('flying into a mesh fades it out smoothly instead of clipping (#1431)', async ({ page }) => {
     // The 45 s mesh-commit deadline plus a 17-frame framebuffer sweep (#2520)
-    // cannot safely share the default 60 s wall-clock budget on a loaded runner.
-    test.slow();
+    // cannot safely share the enclosing 120 s budget on a loaded runner. Pinned
+    // absolutely rather than via test.slow(), which would triple the describe's
+    // 120 s to 360 s and double the ceiling a hung sweep holds a worker for.
+    test.setTimeout(180000);
 
     // Mesh was the one geometry type with no `perspectiveNearFade`: a triangle
     // clipped hard against the near plane while the other three faded. This pins the

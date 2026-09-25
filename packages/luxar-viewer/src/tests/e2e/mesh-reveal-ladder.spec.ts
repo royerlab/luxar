@@ -172,6 +172,9 @@ async function waitForRevealComplete(
 }
 
 test.describe('Mesh reveal ladder', () => {
+  // The 60 s reveal wait leaves two minutes for navigation and image comparisons.
+  test.describe.configure({ timeout: 180000 });
+
   test('the revealed surface converges to the unladdered control', async ({ page }) => {
     await page.goto(`/?src=${LADDER}&debug`);
     await waitForLuxarReady(page);

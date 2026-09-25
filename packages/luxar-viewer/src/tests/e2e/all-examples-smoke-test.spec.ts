@@ -254,6 +254,9 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
 });
 
 test.describe('Critical Examples - Deep Validation', () => {
+  // The 60 s readiness waits leave a second minute for rendering assertions.
+  test.describe.configure({ timeout: 120000 });
+
   // Deep validation for examples that exposed bugs
 
   test('mesh_basic - should report its rendered triangles', async ({ page }) => {

@@ -183,6 +183,9 @@ test.describe('Real Dataset Loading', () => {
   });
 
   test('should load scene dimensions with correct count from 4D dataset', async ({ page }) => {
+    // The 45 s dimension wait leaves 75 s for loading and assertions.
+    test.setTimeout(120000);
+
     await page.goto(`/?src=${DATASETS.dimensionNav}&debug`);
     await waitForLuxarReady(page);
 
@@ -241,6 +244,9 @@ test.describe('Real Dataset Loading', () => {
   });
 
   test('should verify WebGL rendering with real data', async ({ page }) => {
+    // The 60 s point-load wait leaves another minute for rendering checks.
+    test.setTimeout(120000);
+
     // Use build_example_structured (3D with guaranteed visible points)
     await page.goto(`/?src=${DATASETS.buildStructured}&debug`);
     await waitForLuxarReady(page);
