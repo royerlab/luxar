@@ -136,7 +136,7 @@ DEMO_META = {
         "short": "ESM Atlas cluster map (Candido et al. 2026)",
         "ref": "ESM Atlas, Candido et al. 2026",
         "doi": "10.64898/2026.06.03.729735",
-        "url": "https://biohub.ai/esmc/atlas",
+        "url": "https://biohub.ai/esm/protein/atlas",
         # What governs OUR data is the permission, not a public licence: the 3D
         # coordinates and the per-cluster annotation table are a hand-off from
         # the ESM Atlas team, not the published release. Nor is the release's
@@ -984,10 +984,10 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         narration=(
             "Hemoglobin, the molecule of breath. Each red blood cell carries "
             "some two hundred and eighty million of these, and each one holds "
-            "four oxygens. In 1949 Linus Pauling showed that sickle-cell "
-            "anaemia comes from a single swapped amino acid: the first "
-            "molecular disease. Max Perutz needed twenty-two years to see its "
-            "shape. The lines here join the four places this fold is filed "
+            "four oxygens. In 1949 Linus Pauling traced sickle-cell anaemia "
+            "to an altered hemoglobin, the first molecular disease; the cause "
+            "proved to be a single swapped amino acid. Max Perutz needed "
+            "twenty-two years to see its shape. The lines here join the four places this fold is filed "
             "in: one of animal globins, three of bacterial enzymes that "
             "destroy nitric oxide instead of carrying oxygen. And yet "
             "hemoglobin also turns up inside dopamine neurons, nowhere near "
@@ -1024,8 +1024,8 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "beside the myoglobin of muscle, the neuroglobin of nerves, and "
             "the globins of worms and insects. The other three are bacterial, "
             "and they are not carrying oxygen at all. They are "
-            "flavohemoglobins, which use oxygen to destroy the nitric oxide an "
-            "immune system fires at them. Same fold, opposite job, fourteen "
+            "flavohemoglobins, which use oxygen to destroy toxic nitric oxide, "
+            "including the bursts an immune system fires at them. Same fold, opposite job, fourteen "
             "units apart.",
         ),
     ),
@@ -1036,12 +1036,12 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         narration=(
             "Photosystem II, the protein that made the sky breathable. Its D1 "
             "subunit sits at the heart of the only enzyme known that splits "
-            "water. Cyanobacteria running this machine filled Earth's air "
-            "with oxygen, two and a half billion years ago. The chemistry is "
+            "water. Cyanobacteria running this machine began filling Earth's "
+            "air with oxygen, some 2.4 billion years ago. The chemistry is "
             "so violent that D1 wrecks itself within the hour in bright sun; "
             "a leaf rebuilds it all day long. The lines here join six places: "
             "D1 itself, its partner D2, and the purple-bacterial chains that "
-            "split no water. Molecular clocks say water-splitting is far "
+            "split no water. Some molecular clocks say water-splitting is far "
             "older than the rise of oxygen. So why did the planet wait so "
             "long to change?"
         ),
@@ -1098,20 +1098,20 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "That is why the map holds it in dozens of knots — most of them "
             "bacterial DnaK in one variation or another, with the plant and "
             "animal versions filed among them — all recognisably the same "
-            "protein. The map is showing a protein older than the deepest split "
-            "in the tree of life.",
+            "protein. The map is showing a protein older than complex life, "
+            "passed between the great branches of the tree.",
         ),
         narration=(
             "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
             "refolds the damaged ones, and hands the hopeless ones to the "
-            "shredder. Every bacterium and every eukaryote has one. After "
-            "three billion years apart, the human and E. coli "
+            "shredder. Almost every bacterium and every eukaryote has one. "
+            "After perhaps two billion years apart, the human and E. coli "
             "versions are still nearly half identical, letter for letter. The "
             "map holds it in dozens of knots, most of them bacterial, all "
             "recognisably the same protein. "
             "Cancer cells over-produce it to survive their own chaos, and drugs "
-            "against it have been tried for decades. None has reached the "
-            "clinic. Why is such a universal protein so hard to target?"
+            "against it have been tried for decades. None has been approved. "
+            "Why is such a universal protein so hard to target?"
         ),
     ),
     _carry(
@@ -1152,11 +1152,11 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         "ATP synthase",
         # The carried narration was all mechanism and no map.
         narration=(
-            "ATP synthase, the turbine in every cell. Protons flowing through "
-            "it turn an axle, and each turn presses out three molecules of "
-            "ATP. In 1997 a single motor was filmed spinning under a "
-            "microscope. You make and spend roughly your own body weight in "
-            "ATP every day. The knot lit here is nearly three hundred "
+            "ATP synthase, the turbine in almost every cell. Protons flowing "
+            "through it turn an axle, and each turn presses out three "
+            "molecules of ATP. In 1997 a single motor was filmed spinning "
+            "under a microscope. You make and spend roughly your own body "
+            "weight in ATP every day. The knot lit here is nearly three hundred "
             "clusters of the beta subunit as bacteria build it, with the "
             "chloroplast copies of plants filed among them. It is one of the "
             "most efficient motors known, wasting almost nothing as heat. "
@@ -1182,8 +1182,8 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         "RuBisCO",
         # The carried narration was all chemistry and no map.
         narration=(
-            "RuBisCO, the most abundant enzyme on Earth, and one of the "
-            "slowest. Nearly every carbon atom in every living thing has "
+            "RuBisCO, perhaps the most abundant enzyme on Earth, and one of "
+            "the slowest. Nearly every carbon atom in every living thing has "
             "passed through it. It fixes about one CO2 every thirty seconds "
             "and keeps confusing oxygen with carbon dioxide, so plants make "
             "it by the tonne. The knot lit here is a hundred and seventeen "
@@ -1220,7 +1220,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         "RecA and Rad51",
         subtitle="One recombinase, from phages and E. coli to the BRCA2 pathway in our cells",
         pattern="",
-        pfam=("PF00154",),  # RecA (Rad51 has its own knot far away)
+        pfam=("PF00154",),  # RecA (Rad51 is its own family, PF08423)
         radius=FAMILY_RADIUS,
         min_distance=FAMILY_MIN_DISTANCE,
         facts=_swap_fact(
@@ -1234,17 +1234,17 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             # them archaeal RadA and centred one unit from this knot.
             "The densest RecA knot in this map belongs to viruses: many tailed "
             "phages carry a RecA of their own, to repair and reshuffle their "
-            "genomes inside the host. Our RAD51 and its archaeal cousin RadA "
-            "make knots of their own a short way off; the shape has barely "
-            "moved in billions of years.",
+            "genomes inside the host. The RAD51 family makes knots of its own, "
+            "the largest of them the archaeal RadA, a short way off; "
+            "the shape has barely moved in billions of years.",
         ),
         narration=(
             "RecA and Rad51, the machine that mends broken DNA. It coats a "
             "broken strand and searches the entire genome for the matching "
-            "sequence. Our version, RAD51, is loaded by BRCA2, the protein "
-            "whose mutations cause much of hereditary breast cancer. This knot "
-            "belongs to phages, which carry a RecA of their own, and our RAD51 "
-            "sits in a knot just beside it; the shape has barely moved in "
+            "sequence. Our version, RAD51, is loaded by BRCA2, whose gene lies "
+            "behind many inherited breast cancers. This knot belongs to phages, "
+            "which carry a RecA of their own, and the RAD51 family, led by the "
+            "archaeal RadA, sits in knots nearby; the shape has barely moved in "
             "billions of years. It finds one match among "
             "millions of base pairs in minutes. How it searches that fast is "
             "still argued over."
@@ -1274,8 +1274,8 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             # ABC genes; CFTR = ABCC7; Juliano & Ling 1976 (P-glycoprotein).
             "Humans have 48. When one of them, CFTR, is broken, the result is "
             "cystic fibrosis; another, P-glycoprotein, pumps chemotherapy back "
-            "out of cancer cells and is a major cause of drug resistance in "
-            "tumours.",
+            "out of cancer cells and is a well-known cause of drug resistance "
+            "in tumours.",
             "The engine is the same everywhere: a pair of nucleotide-binding "
             "domains that clamp shut around two ATPs and spring open when they "
             "are spent. That engine — the cassette — is what these clusters "
@@ -1336,11 +1336,11 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             # sequences, 5.6 billion from metagenomic samples (SPIRE, MGnify:
             # gut, aquatic, soil, wastewater, agriculture, built environment);
             # 1.1 billion representative structures from ESMFold2.
-            "They come from metagenomics: DNA read straight out of soil, "
-            "seawater, wastewater and guts, from organisms nobody has grown in "
-            "a lab. Of the 6.8 billion sequences behind this map, 5.6 billion "
-            "came that way — and a structure has been predicted for 1.1 "
-            "billion of them.",
+            "Most of this atlas comes from metagenomics: DNA read straight out "
+            "of soil, seawater, wastewater and guts, from organisms nobody has "
+            "grown in a lab. Of the 6.8 billion sequences this map is drawn "
+            "from, 5.6 billion came that way, and across the whole atlas 1.1 "
+            "billion structures have been predicted.",
             # Annotation table (re-measured): the ten nearest neighbours of a
             # dark cluster are dark 80% of the time against a 26% base rate,
             # rising to 85% for dark clusters in the densest 1% of the map.
@@ -1351,10 +1351,10 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "unnamed cluster are unnamed too, where one in four would be the "
             "rate if they were scattered. Whatever these proteins do, they do "
             "it in families of their own.",
-            # CRISPR: Ishino et al. 1987 → Jinek et al. 2012. GFP: Shimomura
-            # 1962 → Chalfie et al. 1994.
+            # CRISPR: Ishino et al. 1987 → the viral-spacer insight of 2005.
+            # GFP: Shimomura 1962 → Chalfie et al. 1994.
             "Some of the most useful tools in biology were dark once. The "
-            "CRISPR repeats were “unusual” DNA for twenty-five years; green "
+            "CRISPR repeats were “unusual” DNA for nearly twenty years; green "
             "fluorescent protein was a jellyfish curiosity for thirty.",
         ),
         mystery=(
@@ -1372,7 +1372,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "eight of the ten nearest neighbours of an unnamed cluster are "
             "unnamed too, where one in four would be the rate by chance. "
             "Some of biology's best tools were dark once; CRISPR was unusual "
-            "DNA for twenty-five years. Are these new chemistry, or old folds "
+            "DNA for almost twenty years. Are these new chemistry, or old folds "
             "drifted beyond recognition? Nobody knows the proportion."
         ),
     ),
@@ -1464,11 +1464,12 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "Penicillin works by jamming the enzymes that build the bacterial "
             "cell wall. A beta-lactamase cuts open the antibiotic's "
             "four-membered ring before it gets there, and the drug is dead.",
-            # Abraham & Chain, Nature 146:837 (1940); first patient treated
-            # February 1941.
+            # Abraham & Chain, Nature 146:837 (1940); purified penicillin
+            # first given to a patient in February 1941.
             "Resistance was there before the cure. Edward Abraham and Ernst "
             "Chain described an E. coli enzyme that destroyed penicillin in "
-            "1940 — a year before the first patient was ever treated with it.",
+            "1940 — a year before purified penicillin was first given to a "
+            "patient.",
             # Murray et al., Lancet 399:629 (2022): 4.95 million deaths
             # associated with, 1.27 million attributable to, bacterial AMR in 2019.
             "Antibiotic resistance is now associated with nearly five million "
@@ -1500,7 +1501,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "Beta-lactamase, the enzyme that fights back. Penicillin jams the "
             "machinery that builds the bacterial cell wall; this enzyme cuts "
             "the antibiotic open first. Resistance came before the cure: it was "
-            "described in 1940, a year before the first patient was treated. "
+            "described in 1940, a year before purified penicillin first reached a patient. "
             "Today antibiotic resistance is linked to nearly five million deaths "
             "a year, and these genes turn up in thirty-thousand-year-old "
             "permafrost. The knot lit here is four hundred clusters, almost "
@@ -1511,7 +1512,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
     UniverseStory(
         key="CRISPR-Cas",
         title="CRISPR-Cas9 — a bacterial immune system turned into scissors",
-        subtitle="Hundreds of clusters of the enzyme bacteria use to cut viral DNA",
+        subtitle="Hundreds of clusters of Cas9 and its kin, the enzymes bacteria use to cut viral DNA",
         pattern="",
         # The preprint's own Cas9 class (Table S15 of Candido et al. 2026):
         # the RuvC, REC-lobe, bridge-helix, WED, PI and C-terminal families of
@@ -1548,7 +1549,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "spacers between them matched viral DNA.",
             # Jinek et al., Science 337:816 (2012); Nobel Prize in Chemistry 2020.
             "In 2012 Jennifer Doudna and Emmanuelle Charpentier showed that "
-            "Cas9 could be pointed at any DNA sequence by rewriting its guide — "
+            "Cas9 could be pointed at almost any DNA sequence by rewriting its guide — "
             "programmable scissors. Nobel Prize in Chemistry 2020.",
             # Casgevy (exagamglogene autotemcel): MHRA Nov 2023, FDA Dec 2023.
             "Eleven years later the first CRISPR medicine was approved: a "
@@ -1556,11 +1557,9 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "on this tour.",
         ),
         # Makarova et al., Nat. Rev. Microbiol. 13:722 (2015): CRISPR-Cas in
-        # ~45% of bacterial and ~85% of archaeal genomes. (The often-quoted
-        # 40% / 90% pair traces to survey papers that do not agree with each
-        # other; CRISPRdb itself, Grissa et al. 2007, gives ~45% / ~83%.)
+        # 87% of archaeal and 50% of bacterial genomes.
         mystery=(
-            "Roughly 45% of bacteria and 85% of archaea carry CRISPR systems, "
+            "About half of bacteria and nearly nine in ten archaea carry CRISPR systems, "
             "yet many highly successful bacteria do without. Why would an "
             "organism give up an immune system?"
         ),
@@ -1571,10 +1570,11 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "Bacteria keep snippets of the viruses that attacked them, and Cas "
             "proteins use those snippets to find and cut the same virus next "
             "time. Noticed in 1987, understood in 2005, and in 2012 Doudna and "
-            "Charpentier showed Cas9 could be pointed at any DNA at all. Eleven "
+            "Charpentier showed Cas9 could be pointed at almost any DNA. Eleven "
             "years later the first CRISPR medicine was approved, for sickle-cell "
             "disease, the illness of the first story on this tour. The knot "
-            "lit here is two hundred and sixty clusters of Cas9 itself. Yet "
+            "lit here is two hundred and sixty clusters, most of them Cas9 and "
+            "its close kin. Yet "
             "many successful bacteria do without CRISPR. Why give up an "
             "immune system?"
         ),
@@ -1593,8 +1593,8 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         constellation=True,
         title="Lanthipeptides — antibiotics stitched into rings",
         subtitle=(
-            "One gene cluster in eight places — dehydratase, cyclase, "
-            "immunity, and the peptide itself"
+            "Lanthipeptide gene clusters in eight places — dehydratase, cyclase, "
+            "immunity, and a ring-stitched peptide"
         ),
         pattern="",
         # PF05147 LanC-like cyclase, PF04738/PF14028 lantibiotic dehydratase
@@ -1632,18 +1632,22 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "them the largest place of all. Three more hold the dehydratase "
             "that prepares them, its two halves filed separately. Two hold "
             "the immunity proteins a producer needs so its own antibiotic "
-            "does not kill it. The last holds a peptide itself — and barely: the mature peptides are too "
-            "short and too variable to cluster, and the whole map holds just "
-            "six clusters carrying nisin's own name. These genes sit side by "
-            "side on one stretch of chromosome and switch on together. The "
+            "does not kill it. The last holds a ring-stitched peptide itself, "
+            "though not nisin: SapB, which Streptomyces uses to raise aerial "
+            "threads rather than to kill. Mature lantibiotics are too short "
+            "and too variable to cluster, and the whole map holds just six "
+            "clusters carrying nisin's own name. In any one producer these "
+            "genes sit side by side and switch on together. The "
             "model, which sees only sequence, has scattered them across the "
             "map by what each one does.",
         ),
+        # McKay & Baldwin, Appl. Environ. Microbiol. 47:68 (1984): nisin
+        # resistance on the conjugative plasmid pNP40.
         mystery=(
-            "Seventy years in the food supply and no strain has yet been found "
-            "spreading stable, transmissible resistance to nisin — though "
-            "resistance genes are known and many wild strains are naturally "
-            "hard to kill with it. Part of the answer may be that nisin has "
+            "Seventy years in the food supply and resistance to nisin has "
+            "never become a real problem, though resistance genes are known, "
+            "one even rides a transferable plasmid, and many wild strains are "
+            "naturally hard to kill with it. Part of the answer may be that nisin has "
             "never been used the way we use clinical antibiotics. Part of it is "
             "not settled."
         ),
@@ -1651,15 +1655,14 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         pdb_id="2G0D",  # Nisin cyclase NisC (Li et al., Science 2006)
         narration=(
             "Lanthipeptides, antibiotics stitched into rings. Nisin is the "
-            "famous one, found in 1928 and used to preserve cheese ever since. "
+            "famous one, found in 1928 and used to preserve cheese since the 1950s. "
             "It grabs lipid II, the brick the bacterial wall is built from, "
             "blocks construction, then uses that same brick as an anchor while "
             "it punches holes in the membrane. Two attacks on one target. The "
-            "lines join eight places: one gene cluster pulled apart — "
-            "dehydratase, cyclase, immunity proteins, and the peptide itself, "
+            "lines join eight places: lanthipeptide gene clusters pulled apart — "
+            "dehydratase, cyclase, immunity proteins, and a peptide, "
             "scattered across the map by what each one does. "
-            "Seventy years of use, and no strain has been caught spreading "
-            "resistance to it. Is that the molecule, or just the way we use it?"
+            "Seventy years of use, and resistance has never taken hold. Is that the molecule, or just the way we use it?"
         ),
     ),
     UniverseStory(
@@ -1716,7 +1719,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             # Audit numbers (2026-09-16).
             "Some thirteen hundred clusters in this map carry an ice-binding or "
             "antifreeze domain. The 32 lit here are all bacteria — twenty of "
-            "them actinobacteria of the soil — and all but one is named for the "
+            "them actinobacteria — and all but one is named for the "
             "job: ice-binding, in an organism nobody has cultured.",
         ),
         mystery=(
@@ -1756,9 +1759,8 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         facts=(
             "Every cell carries enzymes that take the twist out of its DNA. "
             "Reverse gyrase does the opposite: it is the only enzyme known "
-            "that winds extra positive twist in, and it spends ATP to do it.",
-            "It was found in a hot-spring archaeon in 1984, and misfiled at "
-            "first. Nine years later it turned out to be a chimera of two "
+            "built to wind extra positive twist in, and it spends ATP to do it.",
+            "It was found in a hot-spring archaeon in 1984. Nine years later it turned out to be a chimera of two "
             "machines: a helicase-like motor fused to a topoisomerase in one "
             "protein chain.",
             "It turns up in every organism that grows best above eighty "
@@ -1767,10 +1769,10 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "relatives do without it almost without exception.",
             "The extra twist is thought to help hold the double helix shut at "
             "temperatures that would otherwise pull it apart. That is the "
-            "standard explanation and it has never been shown directly: the DNA "
-            "inside these cells is not actually found positively supercoiled, "
-            "and the enzyme also protects DNA from breaking in a way that needs "
-            "no twist at all.",
+            "standard explanation and it has never been shown directly: some "
+            "of these cells keep their DNA only slightly overwound or even "
+            "underwound, and the enzyme also protects DNA from breaking in a "
+            "way that needs no twist at all.",
             # Audit numbers (2026-09-16).
             "Only 29 clusters in 7.7 million are named for it, and the 14 lit "
             "here sit within two hundredths of a unit of one another: the "
@@ -1789,14 +1791,14 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         narration=(
             "Reverse gyrase, the enzyme only boiling life carries. Every cell "
             "has enzymes that take the twist out of its DNA. This one does the "
-            "opposite: it is the only enzyme known that winds extra positive "
+            "opposite: it is the only enzyme known built to wind extra positive "
             "twist in, spending ATP to do it, and it is two machines fused into "
             "one. It appears in everything that grows best above eighty "
             "degrees, and almost nowhere else. The extra twist is thought to "
             "hold the double helix shut, though that has never been shown "
             "directly. Fourteen clusters, the tightest knot on this tour. "
-            "Delete the gene at eighty-five degrees and the cell limps; at "
-            "ninety-five it dies. Nobody knows what changes."
+            "Delete the gene and one archaeon limps; a hotter one stops "
+            "growing above ninety. Nobody knows what changes."
         ),
     ),
     UniverseStory(
@@ -1897,7 +1899,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "flies, moths, beetles and aphids, while the receptors beside it "
             # Re-checked 2026-09-17: the 1 OR : 3 Orco asymmetric tetramer is
             # now shown in SEVERAL complexes -- Aedes and Anopheles ORs on a
-            # fig-wasp Orco scaffold (Zhao et al., Science 385, adn6384, 2024)
+            # fig-wasp Orco scaffold (Zhao et al., Science 384:1460, 2024)
             # and the pea-aphid ApOR5-Orco of this story's own turntable
             # (8Z9Z). An earlier draft said "the one complex anyone has
             # solved", which was true when written and is not now.
@@ -1915,8 +1917,9 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "to smelling about as far apart as it files anything.",
         ),
         mystery=(
-            "The near-constant partner turns out to be a scaffold: it holds the "
-            "pore open around whichever receptor sits beside it. What fixes each "
+            "The near-constant partner turns out to be a scaffold: it builds "
+            "the channel, and whichever receptor sits beside it opens the "
+            "gate. What fixes each "
             "receptor's chemical taste — and how to read that taste off its "
             "sequence — is still being worked out."
         ),
@@ -1927,7 +1930,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "anything related to them. A vertebrate receptor passes its signal "
             "to a G protein. An insect odorant receptor is an ion channel: it "
             "opens and lets current through. Each works inside a four-subunit "
-            "channel built around Orco, a partner recognisable in every insect "
+            "channel built around Orco, a partner recognisable in nearly every insect "
             "while the receptors beside it vary enormously. A fruit fly gets by "
             "with sixty odorant receptors where we have four hundred. This knot "
             "sits ten units from the vertebrate one, about as far apart as this "
@@ -1979,7 +1982,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "tightest of the three smell knots on this tour. Not one of these "
             "receptors has ever had its structure solved — nor has any other "
             "nematode chemoreceptor. So the turntable beside this panel is "
-            "not one of them: it is FSHR-1, the worm's hormone receptor, the "
+            "not one of them: it is FSHR-1, a worm hormone receptor, the "
             "nearest thing on the shelf.",
         ),
         mystery=(
@@ -2022,7 +2025,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
     ),
     UniverseStory(
         key="TnpB and Fanzor",
-        title="TnpB and Fanzor — the scissors CRISPR grew out of",
+        title="TnpB and Fanzor — the scissors Cas12 grew out of",
         subtitle=(
             "Six hundred clusters of the RNA-guided nucleases that jumping genes carry"
         ),
@@ -2041,7 +2044,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         # eukaryotic — the Fanzors proper sit about 0.6 units away, which is
         # why the panel places them nearby rather than inside.
         #
-        # Verified against the preprint's own text: 435 of the map's 459
+        # Map audit: 435 of the map's 459
         # Cas12-named clusters and 830 of its 1,243 TnpB-named clusters lie
         # within one unit of this spot, so the neighbourhood is real in our
         # data and not just in theirs.
@@ -2066,17 +2069,11 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             # why this says stock-and-recruitment rather than "TnpB evolved
             # into Cas12".
             #
-            # NO NUMBER HERE ON PURPOSE. An earlier draft said "about 50
-            # independent occasions", attributed to this paper's body.
-            # Re-checked 2026-09-17 against what is reachable without a
-            # subscription: the abstract says Cas12 "evolved from TnpB on
-            # numerous, independent occasions" and gives no count, and the
-            # count could not be confirmed. The panel now uses the abstract's
-            # own word. Do not restore a figure without reading the body.
+            # The abstract: "the evolution of type V CRISPR-Cas effectors on
+            # about 50 independent occasions".
             "Enzymes like it are the ancestral stock the CRISPR Cas12 editors "
             "arose from — and not once: the same jumping-gene protein was "
-            "recruited into CRISPR systems on numerous separate "
-            "occasions.",
+            "recruited into CRISPR systems about fifty separate times.",
             # Saito et al., Nature 620:660 (2023); Jiang et al., Science
             # Advances 9:eadk0171 (2023), which found Fanzor2 enriched in
             # Mimiviridae, Phycodnaviridae and Ascoviridae — all
@@ -2130,11 +2127,11 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         # it would misrepresent the knot, and that entry is an MBP fusion.
         pdb_id="8BF8",
         narration=(
-            "The scissors CRISPR grew out of. TnpB is a small bacterial "
+            "The scissors Cas12 grew out of. TnpB is a small bacterial "
             "enzyme, a third the size of Cas9, that jumping genes carry "
             "around with them: hand it a short piece of RNA and it cuts DNA "
             "wherever that template matches. Enzymes like it are the stock the "
-            "CRISPR editors arose from, recruited many separate times. "
+            "Cas12 editors arose from, recruited about fifty separate times. "
             "Their relatives in cells with nuclei turn up in fungi, algae, "
             "amoebae, clams, and in giant viruses. Six hundred clusters are "
             "lit here, nearly all bacterial, the eukaryotic Fanzors just "
@@ -2215,8 +2212,9 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
             "entirely different job.",
             "That scatter is the clinical problem in miniature. The enzyme sits "
             "in a fold shared by nearly two thousand other clusters of "
-            "decarboxylases that work on other molecules — glutamate, "
-            "histidine, the aromatic amino acids — so finding it in a patient's "
+            "decarboxylases, among them the ones for glutamate and histidine "
+            "and our own dopa decarboxylase, the enzyme carbidopa blocks — so "
+            "finding it in a patient's "
             "gut means telling it apart from all of them.",
         ),
         mystery=(
@@ -2254,15 +2252,15 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
 #:       photosynthesis, light and carbon — before energy, repair and rescue.
 #: 7-9   The map's own geography, which only this dataset can show: a spur
 #:       flung off the cloud, the quarter of it nobody has characterised, and
-#:       the half-million phage clusters inside that dark. (This trio must
+#:       the phage clusters, half of them inside that dark. (This trio must
 #:       stay in the order spur, dark, phage — the dark story sets up how much
 #:       of it is phage; a test pins it.)
 #: 10-14 The arms race, chained: what a virus wears on its surface, the
 #:       immune system bacteria evolved against viruses, the jumping-gene
 #:       nuclease that immune system's scissors were recruited from — the
 #:       owner asked for these two to be adjacent and they are, CRISPR first
-#:       because the TnpB story is titled against it — then the chemical war,
-#:       resistance before the weapon it defeats.
+#:       because Cas12 links the CRISPR system to its TnpB ancestors — then
+#:       the chemical war, resistance before the weapon it defeats.
 #: 15-19 Life at the edges, then the same trick invented three times: ice and
 #:       boiling water, then smell in vertebrates, insects and nematodes.
 #:       (The smell trio must stay in that order — each narration counts "a
@@ -2323,21 +2321,21 @@ OVERVIEW_HTML = (
     "similar clusters sit close together. Colours are the main branches of "
     "life; the dim points are clusters nobody has characterised."
     "<br><br>Step the <b>story</b> dimension to fly to twenty places that "
-    "each tell a piece of biology: blood, sunlight, the slowest important "
+    "each tell a piece of biology: blood, sunlight, a famously slow "
     "enzyme, the cell's turbine, the oldest chaperone, the machine that mends "
     "DNA; then a spur flung off the map, the dark proteome and the phage "
     "universe; then the coronavirus spike, CRISPR, the jumping-gene scissors "
-    "CRISPR grew out of, the enzyme that beats penicillin and the antibiotics "
+    "Cas12 grew out of, the enzyme that beats penicillin and the antibiotics "
     "bacteria stitch into rings; then life in ice and life in boiling water "
     "and three separate inventions of the sense of smell; and last, a gut "
     "enzyme that eats a Parkinson's drug."
 )
 #: Spoken introduction at the Overview slot.
 OVERVIEW_NARRATION = (
-    "Every point here is a family of proteins: seven point seven million of "
+    "Every point here is a cluster of related proteins: seven point seven million of "
     "them, drawn from nearly seven billion sequences, most read straight out "
     "of the environment, and grouped by a language model so that similar "
-    "proteins sit close together. The dim points are families nobody has "
+    "proteins sit close together. The dim points are clusters nobody has "
     "characterised. Twenty places on this map hide a story. Step through "
     "them."
 )

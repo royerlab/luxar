@@ -85,7 +85,9 @@ DEMO_META = {
     "outputs": ["esm3_protein_stories"],
     "citation": {
         "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
-        "ref": "UniProt / EvolutionaryScale 2024",
+        # Ordered so the licence sits beside the data it covers: CC BY 4.0 is
+        # UniProt's; the ESM C weights carry their own licence.
+        "ref": "ESM C 2024; UniProt/Swiss-Prot",
         "license": "CC BY 4.0",
     },
 }
@@ -204,11 +206,14 @@ STORIES: tuple[Story, ...] = (
             # figure (EBSCO Research Starters; LibreTexts).
             "Each red blood cell carries roughly 280 million hemoglobin "
             "molecules, and each of them can hold four oxygen molecules.",
-            # Pauling, Itano, Singer & Wells, Science 110:543 (1949).
+            # Pauling, Itano, Singer & Wells, Science 110:543 (1949); Ingram,
+            # Nature 178:792 (1956) and Nature 180:326 (1957) for the
+            # substitution.
             "In 1949 Linus Pauling and Harvey Itano showed that sickle-cell "
             "anaemia is caused by an altered hemoglobin — the first "
-            "“molecular disease”. The culprit is a single amino acid: "
-            "glutamate swapped for valine at position 6 of the beta chain.",
+            "“molecular disease”. In 1956–57 Vernon Ingram found the culprit: a "
+            "single amino acid, glutamate swapped for valine at position 6 of "
+            "the beta chain.",
             # Perutz's low-resolution model, 1959; Nobel 1962 with Kendrew
             # (MRC LMB; Britannica).
             "Max Perutz needed 22 years of X-ray work to see the molecule: "
@@ -232,9 +237,9 @@ STORIES: tuple[Story, ...] = (
         narration=(
             "Hemoglobin, the molecule of breath. Each red blood cell carries "
             "some two hundred and eighty million of these, and each one holds "
-            "four oxygens. In 1949 Linus Pauling showed that sickle-cell "
-            "anaemia comes from a single swapped amino acid: the first "
-            "molecular disease. Max Perutz needed twenty-two years to see its "
+            "four oxygens. In 1949 Linus Pauling traced sickle-cell anaemia to "
+            "an altered hemoglobin, the first molecular disease; the cause "
+            "proved to be a single swapped amino acid. Max Perutz needed twenty-two years to see its "
             "shape. And yet hemoglobin also turns up inside dopamine neurons, "
             "nowhere near blood. What it does there, nobody quite knows."
         ),
@@ -270,16 +275,18 @@ STORIES: tuple[Story, ...] = (
             "— a half-life of about ninety minutes in ordinary light, half "
             "that in full sun. A leaf rebuilds this protein all day long.",
             # Purple-bacteria reaction centre L/M chains are homologous to
-            # D1/D2 (Deisenhofer, Huber & Michel; Nobel 1988).
+            # D1/D2. Deisenhofer, Huber & Michel solved that reaction centre,
+            # the first membrane protein seen atom by atom (Nobel 1988).
             "Its neighbours in this map are the L and M chains of "
             "purple-bacteria reaction centres: D1's distant cousins, which "
-            "harvest light but never learned to split water. Their kinship "
-            "was a key clue when the first photosynthetic structure was "
-            "solved (Nobel Prize in Chemistry 1988).",
+            "harvest light but never learned to split water. When their "
+            "reaction centre became the first membrane protein solved atom by "
+            "atom (Nobel Prize in Chemistry 1988), it became the blueprint for "
+            "photosystem II.",
         ),
         # Cardona et al., Geobiology / PMC6492235: early Archean origin.
         mystery=(
-            "Molecular clocks place a water-splitting photosystem deep in the "
+            "Some molecular clocks place a water-splitting photosystem deep in the "
             "Archean, perhaps a billion years before oxygen rose. Why did the "
             "planet wait so long to change?"
         ),
@@ -288,10 +295,10 @@ STORIES: tuple[Story, ...] = (
         narration=(
             "Photosystem II, the protein that made the sky breathable. Its D1 "
             "subunit sits at the heart of the only enzyme known that splits "
-            "water. Cyanobacteria running this machine filled Earth's air with "
-            "oxygen, two and a half billion years ago. The chemistry is so "
+            "water. Cyanobacteria running this machine began filling Earth's air "
+            "with oxygen, some 2.4 billion years ago. The chemistry is so "
             "violent that D1 wrecks itself within the hour in bright sun; a "
-            "leaf rebuilds it all day long. Molecular clocks say water-splitting is "
+            "leaf rebuilds it all day long. Some molecular clocks say water-splitting is "
             "far older than the rise of oxygen. So why did the planet wait so "
             "long to change?"
         ),
@@ -306,20 +313,25 @@ STORIES: tuple[Story, ...] = (
         facts=(
             "Hsp70 — DnaK in bacteria — is a chaperone: it holds unfolded "
             "proteins, refolds the damaged ones and hands the hopeless ones to "
-            "the shredder. Every bacterium and every eukaryote carries one, "
-            "with no known exception; archaea are the odd ones out, and those "
-            "that have it borrowed it from bacteria.",
+            # dnaK in 98.9% of bacterial genomes (Pan et al., mSystems 9:e01154-23 (2024));
+            # archaeal copies came from bacteria by lateral transfer
+            # (Gribaldo et al., J. Bacteriol. 181:434 (1999)).
+            "the shredder. Almost every bacterium and every eukaryote carries "
+            "one; archaea are the odd ones out, and those that have it "
+            "borrowed it from bacteria.",
             # Human Hsp70 vs E. coli DnaK: ~47–48% identity (Brocchieri et al.
             # 2008; Frontiers Mol. Biosci. 2021).
-            "After some three billion years of separate evolution, human Hsp70 "
+            # Eukaryotic Hsp70 descends from the bacterial gene the
+            # mitochondrial endosymbiont brought, some two billion years ago.
+            "After perhaps two billion years of separate evolution, human Hsp70 "
             "and E. coli DnaK are still about 47% identical, letter for "
             "letter — one of the most conserved proteins known.",
             "That is why this blob mixes colours: bacteria, archaea, plants "
             "and animals interleave here. The map is showing a protein older "
-            "than the deepest split in the tree of life.",
+            "than complex life, passed between the great branches of the tree.",
             # Ritossa, Experientia 18:571 (1962); Ritossa's own account in
             # Cell Stress & Chaperones (PMC4147064).
-            "It was discovered by accident. In 1962 Ferruccio Ritossa saw new "
+            "Its story began by accident. In 1962 Ferruccio Ritossa saw new "
             "“puffs” on fruit-fly chromosomes after someone in the lab "
             "had nudged his incubator's temperature — the first observation "
             "of the heat-shock response.",
@@ -327,7 +339,7 @@ STORIES: tuple[Story, ...] = (
         mystery=(
             "Cancer cells over-produce Hsp70 to survive their own chaos, and "
             "drugs that turn this against them have been tried for decades. "
-            "None has yet reached the clinic. Why is such a universal protein "
+            "None has yet been approved. Why is such a universal protein "
             "so hard to target?"
         ),
         tags=("chaperone", "evolution"),
@@ -335,12 +347,12 @@ STORIES: tuple[Story, ...] = (
         narration=(
             "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
             "refolds the damaged ones, and hands the hopeless ones to the "
-            "shredder. Every bacterium and every eukaryote has one. After "
-            "three billion years apart, the human and E. coli "
+            "shredder. Almost every bacterium and every eukaryote has one. After "
+            "perhaps two billion years apart, the human and E. coli "
             "versions are still nearly half identical, letter for letter. That "
             "is why this cluster mixes bacteria, plants and animals. Cancer "
             "cells over-produce it to survive their own chaos, and drugs against "
-            "it have been tried for decades. None has reached the clinic. Why "
+            "it have been tried for decades. None has been approved. Why "
             "is such a universal protein so hard to target?"
         ),
     ),
@@ -373,13 +385,17 @@ STORIES: tuple[Story, ...] = (
             "The 1918 pandemic, an H1N1 virus, killed tens of millions of "
             "people — estimates run from 17 to 100 million.",
             "The SARS-CoV-2 spike grips the human ACE2 receptor to open a "
-            "cell; its receptor-binding domain is what most COVID-19 vaccines "
-            "teach the immune system to recognise. Its cousins pick other "
+            "cell; COVID-19 vaccines teach the immune system this spike, and "
+            "the strongest antibodies grab its receptor-binding tip. Its "
+            "cousins pick other "
             "locks — MERS uses DPP4, not ACE2.",
-            "Here they gather into one continent although they share no "
-            "common ancestor. The language model groups them by how they are "
-            "built and what they do — a hint of convergent design, visible "
-            "as geography.",
+            # Whether class I fusion proteins share an ancestor is unresolved:
+            # the fold recurs in viruses otherwise unrelated, and for class II
+            # the same pattern is read as descent plus gene exchange
+            # (Guardado-Calvo & Rey, Viruses 13:2368 (2021)).
+            "Here they gather into one continent although no shared ancestor "
+            "can be traced in their sequences. The language model groups them "
+            "by how they are built and what they do, visible as geography.",
         ),
         mystery=(
             "Most viral proteins have no known relatives at all — the "
@@ -394,7 +410,7 @@ STORIES: tuple[Story, ...] = (
             "Each snaps into a bundle that drags virus and cell together. The "
             "1918 flu killed tens of millions of people with a protein like this "
             "one. "
-            "They gather here although they share no ancestor; the model groups "
+            "They gather here though no shared ancestor can be traced; the model groups "
             "them by how they are built and what they do. Most viral proteins "
             "have no known relatives at all. Where would that dark matter land "
             "on this map?"
@@ -408,15 +424,18 @@ STORIES: tuple[Story, ...] = (
         color=(0.35, 0.88, 1.0),
         radius=0.6,
         facts=(
-            # Gajdusek, Nobel 1976; kuru among the Fore (Nobel press release 1997).
+            # Gajdusek, Nobel 1976, for transmitting kuru to chimpanzees; the
+            # funerary-feast route was proposed by Glasse and Lindenbaum
+            # (Liberski et al., Viruses 11:232 (2019)).
             "Kuru among the Fore people of New Guinea, scrapie in sheep, "
             "Creutzfeldt–Jakob disease in humans: brain diseases that "
             "spread like infections, yet no virus was ever found. Carleton "
-            "Gajdusek traced kuru to funerary cannibalism (Nobel Prize 1976).",
+            "Gajdusek showed kuru could be passed on (Nobel Prize 1976); it "
+            "spread through funeral feasts.",
             # Prusiner 1982 'prion'; Nobel 1997 (NobelPrize.org press release).
             "In 1982 Stanley Prusiner proposed the heresy that the agent is a "
-            "protein alone — a misfolded shape that converts healthy copies "
-            "into itself. He called it a prion. Nobel Prize 1997.",
+            "protein alone, and called it a prion; it proved to be a misfolded "
+            "shape that converts healthy copies into itself. Nobel Prize 1997.",
             # BSE evident 1985–86 in the UK; vCJD first identified March 1996
             # (ECDC; Stanford prion timeline).
             "Mad cow disease surfaced in British cattle in the mid-1980s; its "
@@ -439,8 +458,8 @@ STORIES: tuple[Story, ...] = (
             "A protein that is its own pathogen. Kuru, scrapie, "
             "Creutzfeldt-Jakob disease: brain diseases that spread like "
             "infections, yet no virus was ever found. In 1982 Stanley Prusiner "
-            "proposed the heresy that the agent is a misfolded protein, one "
-            "that converts healthy copies into itself. Mad cow disease later "
+            "proposed the heresy that the agent is a protein alone; it proved "
+            "to be a misfolded shape that converts healthy copies into itself. Mad cow disease later "
             "proved it could cross species through food. Every mammal carries "
             "the healthy form on its neurons. Forty years on, we still do not "
             "know what it is for."
@@ -448,7 +467,7 @@ STORIES: tuple[Story, ...] = (
     ),
     Story(
         key="ATP synthase",
-        title="ATP synthase — the turbine in every cell",
+        title="ATP synthase — the turbine in almost every cell",
         subtitle="The rotary motor that makes the currency of life, in bacteria and in us",
         pattern=r"ATP synthase subunit beta\b",
         color=(1.0, 0.5, 0.12),
@@ -469,7 +488,7 @@ STORIES: tuple[Story, ...] = (
             "times.",
             "This blob holds the beta subunit from bacteria, plant chloroplasts "
             "and animal mitochondria side by side: the same motor, inherited "
-            "from the bacteria that became our mitochondria.",
+            "from the bacteria that became mitochondria and chloroplasts.",
         ),
         mystery=(
             "F₁ is one of the most efficient motors known: almost all of the "
@@ -481,7 +500,7 @@ STORIES: tuple[Story, ...] = (
         # not the F1 head alone (1BMF): a visitor should recognise a turbine.
         pdb_id="6N2Y",
         narration=(
-            "ATP synthase, the turbine in every cell. Protons flowing through "
+            "ATP synthase, the turbine in almost every cell. Protons flowing through "
             "it turn an axle, and each turn presses out three molecules of "
             "ATP. In 1997 a single motor was filmed spinning under a "
             "microscope. You make and spend roughly your own body weight in "
@@ -492,7 +511,7 @@ STORIES: tuple[Story, ...] = (
     ),
     Story(
         key="RuBisCO",
-        title="RuBisCO — the most abundant enzyme, and one of the slowest",
+        title="RuBisCO — perhaps the most abundant enzyme, and one of the slowest",
         subtitle="The protein that pulls carbon out of the air for almost all life",
         pattern=r"^Ribulose bisphosphate carboxylase large chain",
         color=(0.72, 1.0, 0.3),
@@ -500,13 +519,14 @@ STORIES: tuple[Story, ...] = (
         facts=(
             # Bar-On & Milo, PNAS 116:4738 (2019): ~0.7 Gt; Raven 2013.
             "Nearly every carbon atom in every living thing passed through "
-            "this enzyme. Earth carries about 0.7 billion tonnes of it — very "
-            "likely the most abundant protein on the planet.",
-            # Time-averaged ~0.03 s⁻¹ on land (Bar-On & Milo 2019); in vitro
-            # only a few per second.
-            "It is also remarkably slow: a few reactions per second at best, "
-            "and averaged over a growing season a land plant's RuBisCO fixes "
-            "about one CO₂ every thirty seconds. Plants compensate by making "
+            "this enzyme. Earth carries about 0.7 billion tonnes of it, a "
+            "strong contender for the most abundant protein on the planet.",
+            # Time-averaged ~0.03 s⁻¹ on land, an annual mean over day and
+            # night (Bar-On & Milo 2019); plant kcat a few per second, the
+            # fastest known form ~22/s (Davidi et al., EMBO J 39:e104081 (2020)).
+            "It is also remarkably slow: a few reactions per second in plants, "
+            "and averaged over day and night, all year round, a land plant's "
+            "RuBisCO fixes about one CO₂ every thirty seconds. Plants compensate by making "
             "enormous amounts of it.",
             "It makes mistakes, too: it cannot tell O₂ from CO₂ well, and every "
             "time it grabs oxygen the plant pays in lost carbon and energy "
@@ -524,7 +544,7 @@ STORIES: tuple[Story, ...] = (
         tags=("photosynthesis", "enzyme"),
         pdb_id="8RUC",
         narration=(
-            "RuBisCO, the most abundant enzyme on Earth, and one of the "
+            "RuBisCO, perhaps the most abundant enzyme on Earth, and one of the "
             "slowest. Nearly every carbon atom in every living thing has passed "
             "through it. It fixes about one CO2 every thirty seconds and keeps "
             "confusing oxygen with carbon dioxide, so plants make it by the "
@@ -554,10 +574,12 @@ STORIES: tuple[Story, ...] = (
             "response, switching on dozens of repair genes when DNA is "
             "damaged.",
             # Human RAD51 is loaded onto resected ends by BRCA2's BRC repeats.
-            "Our version is RAD51. It is loaded onto broken DNA by BRCA2 — the "
-            "protein whose inherited mutations cause a large share of "
-            "hereditary breast and ovarian cancer. Repair fails, and errors "
-            "accumulate.",
+            # BRCA1 and BRCA2 together explain many breast-ovarian cancer
+            # families, BRCA1 the larger share (Ford et al., AJHG 62:676 (1998)).
+            "Our version is RAD51. It is loaded onto broken DNA by BRCA2, "
+            "whose gene is one of the two, with BRCA1, behind many inherited "
+            "breast and ovarian cancers. When it fails, repair fails, and "
+            "errors accumulate.",
             "This blob mixes bacteria and eukaryotes: the recombinase predates "
             "their split, and its shape has barely moved since.",
         ),
@@ -579,8 +601,8 @@ STORIES: tuple[Story, ...] = (
         narration=(
             "RecA and Rad51, the machine that mends broken DNA. It coats a "
             "broken strand and searches the entire genome for the matching "
-            "sequence. Our version, RAD51, is loaded by BRCA2, the protein "
-            "whose mutations cause much of hereditary breast cancer. Bacteria "
+            "sequence. Our version, RAD51, is loaded by BRCA2, whose gene lies "
+            "behind many inherited breast cancers. Bacteria "
             "and humans share this cluster; the shape has barely moved in "
             "billions of years. It finds one match among millions of base "
             "pairs in minutes. How it searches that fast is still argued over."
@@ -657,7 +679,7 @@ STORIES: tuple[Story, ...] = (
             "pain. It blocks the calcium channels that carry pain signals in "
             "the spinal cord — the first medicine ever made from a venom of "
             "the sea. (The first from the sea at all came earlier: "
-            "cytarabine, in 1969, from a Caribbean sponge.)",
+            "cytarabine, in 1969, modelled on a Caribbean sponge's chemistry.)",
             "Swiss-Prot holds over 1,200 conotoxins. This knot is one "
             "superfamily of them; the others are strewn across the whole map, "
             "because venom evolves faster than almost anything else.",
@@ -693,7 +715,7 @@ OVERVIEW_HTML = (
     "<br><br>Step the <b>story</b> dimension to fly to ten clusters that each "
     "tell a piece of biology: blood, sunlight, the oldest chaperone, the coats "
     "of viruses, a protein that infects without genes, the cell's turbine, "
-    "the slowest important enzyme, the machine that mends DNA, a century of "
+    "a famously slow enzyme, the machine that mends DNA, a century of "
     "insulin, and venom that became medicine."
 )
 
@@ -764,6 +786,13 @@ NARRATION_CACHE_DIR = (
 #: audiobooks. The voice is part of the narration cache key, so changing it
 #: re-synthesises all 21 clips.
 NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
+#: Licence stamped on a narration clip, per engine. The macOS system voices
+#: are licensed for personal, non-commercial use only, so a `say` build is
+#: not fit for a public kiosk or a published store.
+NARRATION_LICENSES = {
+    "openai": "CC0",
+    "say": "Apple macOS system voice: personal, non-commercial use only",
+}
 NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
 # Narration is `on_arrive`: it starts when the story's flight lands (the waypoint
 # driver's arrival event), plus a beat so the picture settles first.
@@ -1205,7 +1234,14 @@ def add_story_sounds(
         added += 1
 
     chosen = resolve_engine(engine)
-    voice = NARRATION_VOICES.get(chosen or "", "")
+    voice = NARRATION_VOICES[chosen] if chosen is not None else ""
+    narration_license = NARRATION_LICENSES[chosen] if chosen is not None else ""
+    if chosen == "say":
+        aprint(
+            "⚠️ Narration uses a macOS system voice, licensed for personal, "
+            "non-commercial use only; set LUXAR_NARRATION_ENGINE=openai for a "
+            "public build"
+        )
     # The spoken scripts are authored with the stories (`Story.narration`,
     # `OVERVIEW_NARRATION`): short and punchy, not the panel read aloud.
     slots: list[tuple[int, str, str]] = [(0, "Overview", overview_narration)]
@@ -1222,7 +1258,7 @@ def add_story_sounds(
             trigger="on_arrive",
             delay_ms=NARRATION_AFTER_FLIGHT_MS,
             bus="voice",
-            license="CC0",
+            license=narration_license,
             attribution=f"Narration synthesised at build time ({chosen}, voice {voice})",
             source_url=NARRATION_SOURCE_URL,
         )
