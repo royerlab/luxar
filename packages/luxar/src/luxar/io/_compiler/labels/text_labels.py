@@ -105,6 +105,7 @@ def write_labels_csr(
         group,
         offsets_name,
         data=offsets,
+        # Keep viewer hover reads chunk-bounded; see viewer label-loader.ts.
         chunks=(min(n_elements + 1, 65536),),
         compressor=resolve_compressor(compressor, offsets.dtype),
         overwrite=True,
@@ -113,6 +114,7 @@ def write_labels_csr(
         group,
         bytes_name,
         data=label_bytes,
+        # Keep viewer hover reads chunk-bounded; see viewer label-loader.ts.
         chunks=(min(total_bytes, 65536) if total_bytes > 0 else 1,),
         compressor=resolve_compressor(compressor, label_bytes.dtype),
         overwrite=True,
