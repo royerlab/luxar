@@ -13,7 +13,8 @@
  *   - Preserve the `uProjectionMode` uniform value (0 = sum, 1 = max).
  *   - Preserve `USE_COLORMAP` define + the scalar-range uniforms when
  *     the source material has a colormap attached.
- *   - Resync key camera uniforms (`uFx`, `uFy`, `uResolution`).
+ *   - Resync key camera uniforms (`uResolution`, `uPixelRatio`); the
+ *     focal length is read in the graph from `cameraProjectionMatrix`.
  *
  * The TSL factory's `rebuildGraph` is invoked inside the constructor
  * so the clone — constructed via `new GSplatTSLMaterial(config)` —
@@ -175,16 +176,17 @@ describe('GSplatTSLMaterial clone', () => {
     expect(cloned.uniforms.uInvOneMinusC.value).toBeCloseTo(expectedInvOneMinusC, 5);
   });
 
-  it('resyncs camera uniforms (uFx, uFy, uResolution) from source onto clone', () => {
+  it('resyncs camera uniforms (uResolution, uPixelRatio) from source onto clone', () => {
     const original = new GSplatTSLMaterial();
-    original.updateCameraParams(Math.PI / 3, new THREE.Vector2(1600, 900), false);
-    const srcFx = original.uniforms.uFx.value as number;
+    original.updateCameraParams(new THREE.Vector2(1600, 900), false, undefined, 2);
     const srcRes = original.uniforms.uResolution.value as THREE.Vector2;
 
     const cloned = original.clone();
 
-    expect(cloned.uniforms.uFx.value).toBeCloseTo(srcFx, 5);
-    expect(cloned.uniforms.uFy.value).toBeCloseTo(srcFx, 5);
+    expect(cloned.uniforms.uPixelRatio.value).toBe(2);
+    // No focal-length uniform exists to resync: the graph reads P per draw.
+    expect(cloned.uniforms.uFx).toBeUndefined();
+    expect(cloned.uniforms.uFy).toBeUndefined();
     const clonedRes = cloned.uniforms.uResolution.value as THREE.Vector2;
     expect(clonedRes.x).toBeCloseTo(srcRes.x, 5);
     expect(clonedRes.y).toBeCloseTo(srcRes.y, 5);

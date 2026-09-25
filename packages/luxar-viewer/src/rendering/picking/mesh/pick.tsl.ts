@@ -96,12 +96,6 @@ export interface MeshPickTSLNodes {
    * `opaque`/`normal` surface modes). Mirrors the GLSL `uSurfaceDepth`.
    */
   readonly uSurfaceDepth: TSLNode;
-  /**
-   * Near-fade projection selector: 0 = perspective, 1 = orthographic (identity).
-   * A runtime uniform, so this graph takes `perspectiveNearFadeTSL` rather than
-   * the compile-time-ortho variant — the ortho toggle must not rebuild it.
-   */
-  readonly uIsOrtho: TSLNode;
   /** Near-fade start distance, world units (scene-relative). */
   readonly uNearCull: TSLNode;
   /**
@@ -337,9 +331,8 @@ export function buildMeshPickTSLNodesFromUniforms(
     // is not in.
     uAlphaCutout: uniform((uniforms.uAlphaCutout?.value as number) ?? 1),
     uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 1),
-    // 0 = perspective, and 0.1 is the near-cull default every wrapper constructs
-    // with (overridden per scene by updateCameraParams).
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    // 0.1 is the near-cull default every wrapper constructs with (overridden
+    // per scene by updateCameraParams).
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
     // PRESENCE-keyed, not defaulted: an absent uniform means the node has no
     // texture, and binding a blank one would build the sampling variant for a node

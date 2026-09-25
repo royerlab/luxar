@@ -47,11 +47,9 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
 
     // Uniforms (modelViewMatrix and projectionMatrix are built-in THREE.js uniforms)
     uniform vec2 uResolution;
-    uniform float uFx, uFy;           // Focal lengths in pixels
     uniform float uTruncate;          // Truncation radius (in sigmas)
     uniform float uRayIntegralFactor; // Shifted Gaussian ray integral factor
     uniform int uProjectionMode;      // 0 = sum (ray-integral: additive/luminous/volumetric), 1 = peak (2D-projected surfaces: max/normal/opaque)
-    uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // Near cull distance (scene-scale-aware)
     uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
     uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in CSS px² (3DGS anti-aliasing)

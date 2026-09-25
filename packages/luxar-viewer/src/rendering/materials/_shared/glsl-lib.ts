@@ -99,8 +99,8 @@ float luxarProjectionSizeScale() {
 `;
 
 /**
- * The line pixel-width scale, resY * |P11| (the historical uPerspectiveLineScale
- * AND uOrthoLineScale). Declared once as a vertex-stage global and assigned as
+ * The line pixel-width scale, resY * |P11| (replacing the former CPU-pushed
+ * perspective / ortho line-scale uniforms). Declared once as a vertex-stage global and assigned as
  * the FIRST statement of `main()` (`luxarLineScale = uResolution.y *
  * luxarProjectionSizeScale();`), so every consumer — the line shader body and
  * the shared width/join helpers — reads it exactly where the uniform used to be

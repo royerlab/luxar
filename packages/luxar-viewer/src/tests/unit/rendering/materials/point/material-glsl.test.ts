@@ -69,11 +69,11 @@ describe('PointMaterial', () => {
       expect(material.uniforms.uInvGamma.value).toBe(1.0);
       expect(material.userData.gamma).toBe(1.0); // gamma stored in userData, not uniforms
 
-      // Check pre-computed pointSizeFactor (default 60 degrees, 1080p)
-      const defaultTanHalfFov = Math.tan((60 * Math.PI) / 180 / 2);
-      const expectedPointSizeFactor = (2.0 * 1080) / defaultTanHalfFov;
-      expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      // Only the viewport-derived maxPointSize is pre-computed (1080p default);
+      // the size scale and ortho test are read in shader (see below).
       expect(material.uniforms.maxPointSize.value).toBe(1080 * 0.5);
+      expect(material.uniforms.pointSizeFactor).toBeUndefined();
+      expect(material.uniforms.uIsOrtho).toBeUndefined();
 
       // vertexColors is unconditionally false — the shader reads aColor
       // as an explicit InstancedBufferAttribute.
@@ -128,7 +128,8 @@ describe('PointMaterial', () => {
         'float basePointSize = normalizedRadius * sizeFactor * invDistance'
       );
       expect(material.vertexShader).toContain('(luxarIsOrthoProjection() == 1) ? 1.0');
-      expect(material.vertexShader).not.toMatch(/\* pointSizeFactor \*/);
+      expect(material.vertexShader).not.toContain('pointSizeFactor');
+      expect(material.vertexShader).not.toContain('uIsOrtho');
 
       // Check pointSize clamp + sprite expansion (replaces gl_PointSize).
       expect(material.vertexShader).toContain('uniform float maxPointSize');
@@ -213,17 +214,16 @@ describe('PointMaterial', () => {
   });
 
   describe('methods', () => {
-    it('clone() carries the camera-STATE uniforms (uIsOrtho, uNearCull, uResolution)', () => {
-      // A clone taken in ortho mode used to keep the constructor
-      // defaults (perspective branch, stale resolution/nearCull) until
-      // the next global updateCameraParams broadcast. Lines clones are
-      // the reference implementation.
+    it('clone() carries the camera-STATE uniforms (uNearCull, uResolution)', () => {
+      // A clone used to keep the constructor defaults (stale
+      // resolution/nearCull) until the next global updateCameraParams
+      // broadcast. Lines clones are the reference implementation. (The
+      // ortho test is read in shader, so there is no ortho flag to carry.)
       const original = new PointMaterial();
-      original.updateCameraParams(2.0, new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+      original.updateCameraParams(new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
 
       const cloned = original.clone();
 
-      expect(cloned.uniforms.uIsOrtho.value).toBe(1);
       expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
       expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(640);
       expect((cloned.uniforms.uResolution.value as THREE.Vector2).y).toBe(480);
@@ -231,15 +231,14 @@ describe('PointMaterial', () => {
 
     it('should update camera parameters with pre-computed values', () => {
       const material = new PointMaterial();
-      const fov = (45 * Math.PI) / 180;
       const resolution = new THREE.Vector2(1920, 1080);
 
-      material.updateCameraParams(fov, resolution);
+      material.updateCameraParams(resolution, false, undefined, 2);
 
-      // Verify pointSizeFactor was computed correctly: 2.0 * resolution.y / tan(fov/2)
-      const tanHalfFov = Math.tan(fov / 2);
-      const expectedPointSizeFactor = (2.0 * 1080) / tanHalfFov;
-      expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      // The viewport reaches the shader (it converts the projected size to
+      // pixels as 2 * uResolution.y * |P11|).
+      expect((material.uniforms.uResolution.value as THREE.Vector2).y).toBe(1080);
+      expect(material.uniforms.uPixelRatio.value).toBe(2);
 
       // Verify maxPointSize is resolution.y * 0.5
       expect(material.uniforms.maxPointSize.value).toBe(1080 * 0.5);

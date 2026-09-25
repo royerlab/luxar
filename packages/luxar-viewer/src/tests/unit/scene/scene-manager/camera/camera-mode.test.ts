@@ -63,7 +63,6 @@ function makeCtx(
   const { setCamera: controlsSetCamera, setControlTypeMock } = made;
   const { pp, setCamera: ppSetCamera } = makePostProcessing();
   const updateMaterialsForCurrentCamera = vi.fn();
-  const setLastOrthoZoom = vi.fn();
   // Backing store so the FOV round-trips through the ctx exactly like the host.
   let lastPerspectiveFov = 47;
   const setLastPerspectiveFov = vi.fn((fov: number) => {
@@ -79,7 +78,6 @@ function makeCtx(
     renderer: makeRenderer(),
     postProcessing: pp,
     updateMaterialsForCurrentCamera,
-    setLastOrthoZoom,
     getLastPerspectiveFov: () => lastPerspectiveFov,
     setLastPerspectiveFov,
   };
@@ -91,7 +89,6 @@ function makeCtx(
     setControlTypeMock,
     ppSetCamera,
     updateMaterialsForCurrentCamera,
-    setLastOrthoZoom,
     setLastPerspectiveFov,
     getLastPerspectiveFov: () => lastPerspectiveFov,
   };
@@ -128,7 +125,6 @@ describe('swapToOrthographic', () => {
 
     expect(harness.getCurrentCamera()).toBeInstanceOf(THREE.OrthographicCamera);
     expect(harness.ppSetCamera).toHaveBeenCalledWith(harness.getCurrentCamera());
-    expect(harness.setLastOrthoZoom).toHaveBeenCalledTimes(1);
   });
 
   it('is a no-op when current camera is already orthographic', () => {

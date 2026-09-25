@@ -94,10 +94,6 @@ export interface LinePickTSLNodes {
   readonly uNodeId: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
-  /** = resolution.y / tan(fov * 0.5), precomputed by the wrapper. */
-  readonly uPerspectiveLineScale: TSLNode;
-  /** = 2 * resolution.y / frustumHeight, precomputed by the wrapper. */
-  readonly uOrthoLineScale: TSLNode;
 }
 
 /**
@@ -141,8 +137,8 @@ export function linePickWebGPUFactory(
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
   const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
-  // Pixel-width math consumes the CPU-precomputed
-  // uPerspectiveLineScale / uOrthoLineScale (no FOV uniform exists).
+  // Pixel-width math reads the projection matrix (`lineScale` below;
+  // no FOV uniform exists).
   // uIsOrtho is unbound — projection mode is a JS-level config
   // branch (`config.isOrtho`), not a runtime uniform.
   const uLineTex = nodes.uLineTex;
@@ -152,8 +148,8 @@ export function linePickWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   // Pixels per view unit at unit depth: resY * |P11|, read from the
-  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It is
-  // the historical uPerspectiveLineScale AND uOrthoLineScale.
+  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It
+  // replaces the former CPU-pushed perspective / ortho line-scale uniforms.
   const lineScale: TSLNode = uResolution.y.mul(projectionSizeScaleTSL());
 
   // ---- Vertex computation (mirrors line shader-tsl.ts exactly) ----
@@ -372,14 +368,7 @@ export function linePickWebGPUFactory(
     // consumed at.
     const endPixelWidthAt = (tEnd: TSLNode, mvZ: TSLNode): TSLNode =>
       clamp(
-        tslLineEndPixelWidth(
-          !!config.isOrtho,
-          mix(startW, endW, tEnd),
-          mvZ,
-          nearCull,
-          lineScale,
-          lineScale
-        ),
+        tslLineEndPixelWidth(!!config.isOrtho, mix(startW, endW, tEnd), mvZ, nearCull, lineScale),
         minPixelWidth,
         maxPW
       );
@@ -610,7 +599,5 @@ export function buildLinePickTSLNodesFromUniforms(
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
-    uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),
-    uOrthoLineScale: uniform((uniforms.uOrthoLineScale?.value as number) ?? 1.0),
   };
 }

@@ -171,13 +171,10 @@ export interface GSplatTSLNodes {
   readonly uSplatTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uPixelRatio: TSLNode;
-  readonly uFx: TSLNode;
-  readonly uFy: TSLNode;
   readonly uTruncate: TSLNode;
   readonly uTruncateSq: TSLNode;
   readonly uRayIntegralFactor: TSLNode;
   readonly uProjectionMode: TSLNode;
-  readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -845,8 +842,6 @@ export function buildGSplatTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
-    uFx: uniform((uniforms.uFx?.value as number) ?? 1.0),
-    uFy: uniform((uniforms.uFy?.value as number) ?? 1.0),
     // Deliberately NOT `GSPLAT_DEFAULT_TRUNCATION_RADIUS`. This adapter is
     // harness/snapshot only (production materials set the real default in
     // their own constructor), and its values must stay equal to the GLSL twin
@@ -857,7 +852,6 @@ export function buildGSplatTSLNodesFromUniforms(
     uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 9.0),
     uRayIntegralFactor: uniform((uniforms.uRayIntegralFactor?.value as number) ?? 1.0),
     uProjectionMode: uniform((uniforms.uProjectionMode?.value as number) ?? 0),
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     ...glassPartitionNodesFromUniforms(uniforms),

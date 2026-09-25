@@ -17,11 +17,12 @@
  * the colormap path, the gamma/GOG fast paths, the flat-normal variant and the
  * emission shape, so each of those changes the *shape* of the graph and rebuilds.
  * Everything else — opacity, intensity, offset, the four lighting controls, alpha
- * cutoff, scalar range, and the two near-fade inputs — is a plain runtime uniform
- * and never rebuilds. The near fade in particular must NOT be a build flag: the
- * ortho-mode toggle would otherwise recompile every mesh graph in the scene, which
- * is why this graph takes `perspectiveNearFadeTSL` rather than the
- * compile-time-ortho variant the line graphs use.
+ * cutoff, scalar range, and the near-fade start — is a plain runtime uniform and
+ * never rebuilds. The near fade's ortho test in particular must NOT be a build
+ * flag: the ortho-mode toggle would otherwise recompile every mesh graph in the
+ * scene, which is why this graph takes `perspectiveNearFadeTSL`, fed from
+ * `cameraProjectionMatrix` per draw, rather than the compile-time-ortho variant
+ * the line graphs use.
  *
  * @module rendering/materials/mesh/material-tsl
  */
@@ -76,7 +77,6 @@ interface MeshMaterialTSLNodeTable {
   uSpecular: TSLNode;
   uShininess: TSLNode;
   uAlphaCutoff: TSLNode;
-  uIsOrtho: TSLNode;
   uNearCull: TSLNode;
   uGlassPartition: TSLNode;
   uGlassDepth: TSLNode;
@@ -125,9 +125,8 @@ export class MeshTSLMaterial
       uAlphaCutoff: uniform(
         clampAppearanceFraction(materialConfig.alphaCutoff, MESH_DEFAULTS.alphaCutoff)
       ),
-      // 0 = perspective; 0.1 matches the GLSL twin's constructor default and is
-      // overridden per scene by `updateCameraParams`.
-      uIsOrtho: uniform(0),
+      // 0.1 matches the GLSL twin's constructor default and is overridden per
+      // scene by `updateCameraParams`.
       uNearCull: uniform(0.1),
       // Refraction split: mode 0 outside the split; the shared glass depth texture.
       ...glassPartitionNodes(),
@@ -143,7 +142,6 @@ export class MeshTSLMaterial
       uSpecular: proxyIUniform(this.tslNodes.uSpecular),
       uShininess: proxyIUniform(this.tslNodes.uShininess),
       uAlphaCutoff: proxyIUniform(this.tslNodes.uAlphaCutoff),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
       uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
@@ -296,18 +294,17 @@ export class MeshTSLMaterial
   }
 
   /**
-   * @see MeshMaterial.updateCameraParams — `_fov` / `_resolution` are accepted and
-   * ignored (a mesh has no screen-space size); only the two near-fade inputs are
-   * consumed. Both are plain runtime uniforms, so this never rebuilds the graph.
+   * @see MeshMaterial.updateCameraParams — `_resolution` / `_isOrtho` are accepted
+   * and ignored (a mesh has no screen-space size, and the near fade's ortho test
+   * reads `cameraProjectionMatrix`); only `nearCull` is consumed. It is a plain
+   * runtime uniform, so this never rebuilds the graph.
    */
   updateCameraParams(
-    _fov: number,
     _resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     _pixelRatio?: number
   ): void {
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }
@@ -514,7 +511,6 @@ export class MeshTSLMaterial
     // Camera state rides along for the same reason it does on the GLSL twin: a
     // clone left at the perspective/0.1 defaults would fade against the wrong near
     // plane — and under ortho, where the fade is the identity, would fade at all.
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     return cloned as this;
   }

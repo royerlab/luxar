@@ -62,8 +62,6 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uNodeId;
     uniform float uNearCull;
     uniform float uMaxLinePixelWidth;
-    uniform float uPerspectiveLineScale;
-    uniform float uOrthoLineScale;
 
     // Geometry varyings are screen-space quantities pre-multiplied by the
     // corner's clip w and multiplied by gl_FragCoord.w (= 1/w) in the

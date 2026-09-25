@@ -20,9 +20,9 @@ records which types actually reach it.
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `shader-source.ts`           | `ShaderSource` registry type: `{ name, webgl?: { vertex, fragment }, webgpu?: factory }` plus `requireWebGLSources()` narrowing helper                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `material-builder.ts`        | `buildMaterial(source, config, caps)` — branches on `caps.apiSurface` to return either a `THREE.ShaderMaterial` (GLSL3) or a TSL `NodeMaterial`                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `camera-aware-material.ts`   | `CameraAwareMaterial` interface + `isCameraAwareMaterial` guard. The contract `updateCameraParams(fov, resolution, isOrtho?, nearCull?, pixelRatio?)` that `MaterialManager` broadcasts to every registered visual + picking material; `pixelRatio` is the current render target's physical pixels per CSS pixel, including supersampling                                                                                                                                                                                                                                                                 |
+| `camera-aware-material.ts`   | `CameraAwareMaterial` interface + `isCameraAwareMaterial` guard. The contract `updateCameraParams(resolution, isOrtho?, nearCull?, pixelRatio?)` that `MaterialManager` broadcasts to every registered visual + picking material; `pixelRatio` is the current render target's physical pixels per CSS pixel, including supersampling. No FOV / frustum height: projection terms are read in shader, so only a resize, a projection-kind flip, a near-cull or a pixel-ratio change needs a push                                                                                                            |
 | `colormap-aware-material.ts` | `ColormapAwareMaterial` interface + guard. Two setters (`setColormapTexture`, `setScalarRange`) so the colormap helpers never reach into `material.uniforms` directly                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `camera-uniforms.ts`         | Pure math shared by visual + picking materials: `computePointSizeFactor`, `computeMaxPointSize`, `computeFocalLength`. Branches on `isOrtho` so callers don't special-case projection                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `camera-uniforms.ts`         | Viewport-only math shared by the point visual + picking materials: `computeMaxPointSize`. The projection-derived terms that used to live here (point size factor, splat focal length) are read in shader from the projection matrix — `luxarProjectionSizeScale()` / `luxarIsOrthoProjection()` in `glsl-lib.ts`, `projectionSizeScaleTSL()` / `isOrthoProjectionTSL()` in `tsl-helpers.ts` — with `projection-math.ts` as their CPU mirror for tests                                                                                                                                                     |
 | `uniform-helpers.ts`         | `clampGamma(g)` — single source of truth for the `Math.max(0.001, g ?? 1.0)` clamp used in every material constructor; `isGammaOne(g)` — `abs(g - 1) < 1e-4` fast-path test that gates the `LUXAR_GAMMA_ONE` define (GLSL) / `gammaOne` flag (TSL) so the shader skips `pow(color, 1/gamma)` when gamma is unity                                                                                                                                                                                                                                                                                          |
 | `glsl-lib.ts`                | `GLSL_SANITIZE_FUNCTIONS` GLSL3 snippet (`isInvalidFloat`, `sanitizePositive`, `sanitizeNonNegative`) prepended to every visual _and_ picking GLSL shader of all four geometry types, plus `GLSL_NEAR_FADE_FUNCTIONS` (`perspectiveNearFade` — the unified near handling **all four** types share, visual and pick; see the stage table below for where each one evaluates it)                                                                                                                                                                                                                            |
 | `falloff.ts`                 | Shared constants for the Points/Lines shifted super-Gaussian sprite falloff (`FALLOFF_FLOOR`, `FALLOFF_K`, `INV_ONE_MINUS_FALLOFF_FLOOR`, `GAUSSIAN_EQUIVALENT_TRUNCATION`) — one `toFixed`-stable literal source for the GLSL strings, the TSL graphs, and the codegen snapshots                                                                                                                                                                                                                                                                                                                         |
@@ -136,7 +136,7 @@ interfaces, and the manager uses the `is*` type guards to discover capability
 at runtime:
 
 - **`CameraAwareMaterial`**: implemented by every visual material (Point,
-  Line, GSplat) **and** their picking counterparts. `MaterialManager`
+  Line, GSplat, Mesh) **and** their picking counterparts. `MaterialManager`
   iterates its registry and calls `updateCameraParams` on every member.
 - **`ColormapAwareMaterial`**: implemented by visual materials only. Picking
   materials deliberately do **not** implement it — picking shaders don't
@@ -147,16 +147,20 @@ at runtime:
   confining writes to setters means the WebGPU port rewrites the setter
   bodies and nothing outside changes.
 
-## Why the math helpers live here
+## Why the projection math lives in the shader
 
-`camera-uniforms.ts` is the smallest module here but the most consequential:
-the perspective↔ortho `pointSizeFactor` / `focalLength` formulas were
-previously inlined in each of the four materials that need them
-(`PointMaterial`, `PointPickingMaterial`, `GSplatMaterial`,
-`GSplatPickingMaterial`). When picking drifts out of sync with rendering,
-the user's screen-space hit test stops matching what they see. Centralising
-the formulas guarantees byte-for-byte identical math and makes them
-unit-testable in one place.
+The perspective↔ortho point-size factor and splat focal length were once
+CPU-computed from a pushed FOV (or, in ortho, a frustum height smuggled
+through the same argument) and uploaded as uniforms. Every camera the scene
+is drawn with that was not the one pushed — a cube-capture face (fov −90, a
+flipped projection), an off-axis `setViewOffset` frustum, a zoomed perspective
+camera, a host's plain `THREE.Camera` — then rendered at the wrong size or
+position. The shaders now read those terms from the projection matrix three
+binds per draw (`glsl-lib.ts` / `tsl-helpers.ts`), and `projection-math.ts`
+states the same formulas on the CPU so the unit tests can check them against
+the historical fov-based ones and against finite differences of P. Visual and
+picking shaders share the same helpers, so a screen-space hit test cannot
+drift from what the user sees.
 
 Similarly, `clampGamma` exists only because the `Math.max(0.001, gamma ?? 1.0)`
 clamp was repeated in six material constructors (3 geometries × {GLSL, TSL});

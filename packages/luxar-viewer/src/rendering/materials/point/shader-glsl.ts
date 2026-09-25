@@ -64,10 +64,8 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     uniform mediump float uInvGamma;   // Gamma applied to the VALUE, pre-LUT (see note below)
     #endif
 
-    uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or 4.0 * resolution.y / frustumHeight for ortho)
     uniform float maxPointSize;    // Pre-computed: resolution.y * 0.5
     uniform float radiusScale;
-    uniform int uIsOrtho;          // 0 = perspective, 1 = orthographic
     uniform vec2 uResolution;      // Physical framebuffer size in pixels
     uniform float uPixelRatio;     // Physical framebuffer pixels per CSS pixel
     uniform float uNearCull;       // Near-fade start distance (world units)

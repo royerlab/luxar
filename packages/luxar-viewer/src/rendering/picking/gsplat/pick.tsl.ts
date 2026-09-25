@@ -81,11 +81,8 @@ export interface GSplatPickTSLNodes {
   readonly uSplatTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uPixelRatio: TSLNode;
-  readonly uFx: TSLNode;
-  readonly uFy: TSLNode;
   readonly uTruncate: TSLNode;
   readonly uTruncateSq: TSLNode;
-  readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -534,13 +531,10 @@ export function buildGSplatPickTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
-    uFx: uniform((uniforms.uFx?.value as number) ?? 1.0),
-    uFy: uniform((uniforms.uFy?.value as number) ?? 1.0),
     uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 1.5),
     // 1.5² — keep the default PAIR consistent (9.0 was half-copied from the
     // visual builder's 3.0/9.0 and sized the quad for 1.5σ while discarding at 3σ).
     uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 2.25),
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),

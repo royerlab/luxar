@@ -240,9 +240,6 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.resizer.resizeLocked = v;
   }
 
-  /** Cached ortho zoom level to avoid redundant material updates during panning */
-  private lastOrthoZoom: number = 1;
-
   /**
    * Perspective FOV in effect at the last perspective→ortho swap, restored on
    * the inverse ortho→perspective swap so a control-mode round trip preserves
@@ -325,7 +322,6 @@ export class SceneManager extends THREE.EventDispatcher<{
     if (!isOrthographicCamera(this.camera) || !Number.isFinite(zoom) || zoom <= 0) return;
     this.camera.zoom = zoom;
     this.camera.updateProjectionMatrix();
-    this.lastOrthoZoom = zoom;
     this.updateMaterialsForCurrentCamera();
     this.controls.setZoomLimits(zoom / ZOOM_OUT_FACTOR, zoom * ZOOM_IN_FACTOR);
   }
@@ -725,13 +721,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.controls.setControlType('orbit');
 
     // Listen for control changes to trigger renders
+    // (An ortho zoom needs no material push: it lives in the projection
+    // matrix, which every shader reads per draw.)
     this.controls.addEventListener('change', () => {
-      // Ortho zoom changes camera.zoom, which affects material frustum height.
-      // Only update materials if zoom actually changed (skip during panning).
-      if (isOrthographicCamera(this.camera) && this.camera.zoom !== this.lastOrthoZoom) {
-        this.lastOrthoZoom = this.camera.zoom;
-        this.updateMaterialsForCurrentCamera();
-      }
       this.dispatchEvent({ type: 'change' });
     });
 
@@ -906,9 +898,10 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Give the scene environment what a live `scene` capture needs (the init pipeline
    * calls this once the load-activity predicate exists). The capture pushes the cube
-   * camera's params (90° fov, a square drawing buffer, pixel ratio 1) to the material
-   * manager so point and line footprints render at the right size in the six faces,
-   * and restores the main camera's push afterwards through the ordinary path.
+   * camera's params (a square drawing buffer, perspective, pixel ratio 1) to the
+   * material manager so point and line footprints render at the right size in the six
+   * faces — the 90° projection itself is read in shader from the cube camera's matrix
+   * — and restores the main camera's push afterwards through the ordinary path.
    */
   attachEnvironmentRuntime(isSettled: () => boolean): void {
     const root = (): THREE.Object3D | null =>
@@ -917,7 +910,6 @@ export class SceneManager extends THREE.EventDispatcher<{
       sceneRoot: root,
       pushCaptureCameraParams: (resolution) => {
         materialManager.updateCameraParams(
-          Math.PI / 2,
           new THREE.Vector2(resolution, resolution),
           false,
           undefined,
@@ -1585,9 +1577,6 @@ export class SceneManager extends THREE.EventDispatcher<{
       renderer: this.renderer,
       postProcessing: this.postProcessing,
       updateMaterialsForCurrentCamera: () => this.updateMaterialsForCurrentCamera(),
-      setLastOrthoZoom: (zoom) => {
-        this.lastOrthoZoom = zoom;
-      },
       getLastPerspectiveFov: () => this.lastPerspectiveFov,
       setLastPerspectiveFov: (fov) => {
         this.lastPerspectiveFov = fov;

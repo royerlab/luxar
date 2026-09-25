@@ -22,6 +22,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import type { DimensionMetadata, SimpleDims } from '../../../types/dims';
+import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
+import { GSplatMaterial } from '../../../rendering/materials/gsplat/material-glsl';
+import { MeshMaterial } from '../../../rendering/materials/mesh/material-glsl';
 
 // The layer's only browser requirement: these must exist.
 vi.stubGlobal('window', globalThis.window ?? {});
@@ -273,7 +277,6 @@ describe('LuxarLayer', () => {
     it('seeds camera params from the host camera', () => {
       new LuxarLayer(makeOptions());
       expect(updateCameraParams).toHaveBeenCalledWith(
-        expect.any(Number),
         expect.any(THREE.Vector2),
         false,
         undefined,
@@ -1121,9 +1124,10 @@ describe('LuxarLayer', () => {
   });
 
   describe('resize', () => {
-    it('reports an ortho frustum height and the ortho flag', () => {
-      // A real branch: the ortho path feeds a frustum height rather than a FOV,
-      // and materials size points from a different formula depending on it.
+    it('reports the ortho flag, and no frustum height', () => {
+      // The ortho path used to feed a frustum height in place of a FOV; both
+      // are now read in shader from the projection matrix, so only the flag
+      // (lines branch on it in their fragment stages) is pushed.
       const camera = new THREE.OrthographicCamera(-2, 2, 1.5, -1.5, 0.1, 100);
       const layer = new LuxarLayer(makeOptions({ getCamera: () => camera }));
       updateCameraParams.mockClear();
@@ -1131,13 +1135,66 @@ describe('LuxarLayer', () => {
       layer.resize();
 
       expect(updateCameraParams).toHaveBeenCalledWith(
-        3,
-        expect.any(THREE.Vector2),
+        expect.objectContaining({ x: 1600, y: 1200 }),
         true,
         undefined,
         2
       );
-      expect(updateCameraParams.mock.calls[0][0]).toBeCloseTo(3); // top - bottom
+      expect(updateCameraParams.mock.calls[0]).toHaveLength(4);
+    });
+
+    it('pushes only finite state for a camera that is neither perspective nor ortho', () => {
+      // A host may draw with a plain THREE.Camera carrying its own projection
+      // matrix (an XR eye, a custom off-axis frustum). The fov-based push used
+      // to fall back to a default FOV for it, and a degenerate fallback
+      // (tan(0)) made point sizes infinite. Now nothing projection-shaped is
+      // pushed: feed the real push into every geometry material and require
+      // every numeric uniform to stay finite.
+      const camera = new THREE.Camera();
+      camera.projectionMatrix.makePerspective(-0.1, 0.1, 0.075, -0.075, 0.1, 100);
+      camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+      const layer = new LuxarLayer(makeOptions({ getCamera: () => camera }));
+      updateCameraParams.mockClear();
+
+      layer.resize();
+
+      expect(updateCameraParams).toHaveBeenCalledTimes(1);
+      const [resolution, isOrtho, nearCull, pixelRatio] = updateCameraParams.mock.calls[0] as [
+        THREE.Vector2,
+        boolean,
+        number | undefined,
+        number,
+      ];
+      expect(Number.isFinite(resolution.x) && Number.isFinite(resolution.y)).toBe(true);
+      expect(resolution.y).toBeGreaterThan(0);
+      expect(isOrtho).toBe(false);
+      expect(Number.isFinite(pixelRatio)).toBe(true);
+
+      const materials = [
+        new PointMaterial(),
+        new LineMaterial({ primitive: 'screen-space' }),
+        new LineMaterial({ primitive: 'capsule' }),
+        new GSplatMaterial(),
+        new MeshMaterial(),
+      ];
+      for (const material of materials) {
+        material.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio);
+        for (const [name, u] of Object.entries(material.uniforms)) {
+          const v: unknown = u.value;
+          const values =
+            typeof v === 'number'
+              ? [v]
+              : v instanceof THREE.Vector2 ||
+                  v instanceof THREE.Vector3 ||
+                  v instanceof THREE.Vector4
+                ? v.toArray()
+                : [];
+          for (const x of values) {
+            expect(Number.isFinite(x), `${material.constructor.name}.${name}`).toBe(true);
+          }
+        }
+        material.dispose();
+      }
     });
 
     it('includes host supersampling in the framebuffer scale', () => {
@@ -1156,7 +1213,6 @@ describe('LuxarLayer', () => {
       layer.resize();
 
       expect(updateCameraParams).toHaveBeenCalledWith(
-        expect.any(Number),
         expect.any(THREE.Vector2),
         false,
         undefined,

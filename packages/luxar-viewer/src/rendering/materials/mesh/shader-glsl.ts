@@ -203,10 +203,8 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
     uniform mediump float uShininess;      // highlight exponent
     // Cutout threshold, read only under LUXAR_MESH_ALPHA_CUTOUT.
     uniform mediump float uAlphaCutoff;
-    // Near-fade inputs, the same pair the three siblings carry: 0 = perspective,
-    // 1 = orthographic (where the fade is the identity), and the scene-relative
-    // fade start in world units.
-    uniform int uIsOrtho;
+    // Near-fade start, world units (scene-relative). The fade's ortho test reads
+    // three's isOrthographic (the camera this draw uses), not a uniform.
     uniform float uNearCull;
 
     #ifdef LUXAR_MESH_BASE_COLOR_TEX

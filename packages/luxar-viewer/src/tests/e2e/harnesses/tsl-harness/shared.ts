@@ -94,7 +94,7 @@ export function buildCubeFaceEquivalentCamera(): THREE.Camera {
 /**
  * Perspective camera at (0,0,1) looking down −Z, for the behind-camera guard
  * cases. A point at world z=3 lands at view-space z=+2 (behind the camera),
- * so the perspective-only guard (`uIsOrtho == 0 && mvPosition.z >= 0`) fires.
+ * so the perspective-only guard (view z >= 0 under a perspective projection) fires.
  */
 export function buildBehindCamera(): THREE.Camera {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 10);

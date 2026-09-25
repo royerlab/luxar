@@ -41,8 +41,6 @@ export interface CameraModeCtx {
   readonly postProcessing: PostProcessingManager;
   /** Push current camera into materials. Called after each successful swap. */
   updateMaterialsForCurrentCamera(): void;
-  /** Update the cached ortho zoom on the host after a perspective→ortho swap. */
-  setLastOrthoZoom(zoom: number): void;
   /** Read the perspective FOV to restore on the next ortho→perspective swap. */
   getLastPerspectiveFov(): number;
   /** Stash the perspective FOV in effect at a perspective→ortho swap. */
@@ -130,7 +128,6 @@ export function swapToOrthographic(ctx: CameraModeCtx): void {
   ortho.updateMatrixWorld();
 
   ctx.setCamera(ortho);
-  ctx.setLastOrthoZoom(ortho.zoom);
   ctx.postProcessing.setCamera(ortho);
 }
 

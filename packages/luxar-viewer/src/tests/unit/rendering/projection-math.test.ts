@@ -2,10 +2,6 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
 import {
-  computeFocalLength,
-  computePointSizeFactor,
-} from '../../../rendering/materials/_shared/camera-uniforms';
-import {
   focalLengthFromProjection,
   gsplatJacobian,
   isOrthoProjection,
@@ -30,6 +26,29 @@ function ortho(frustumHeight: number, zoom = 1): THREE.OrthographicCamera {
   cam.zoom = zoom;
   cam.updateProjectionMatrix();
   return cam;
+}
+
+/**
+ * The historical point-size factor, as the removed CPU helper
+ * `computePointSizeFactor` computed it (`fov` carried the frustum height in ortho).
+ */
+function legacyPointSizeFactor(fov: number, resY: number, isOrtho: boolean): number {
+  if (isOrtho) {
+    const halfFrustum = fov * 0.5;
+    return (2.0 * resY) / halfFrustum;
+  }
+  return (2.0 * resY) / Math.tan(fov / 2);
+}
+
+/**
+ * The historical splat focal length, as the removed CPU helper
+ * `computeFocalLength` computed it (`fov` carried the frustum height in ortho).
+ */
+function legacyFocalLength(fov: number, resY: number, isOrtho: boolean): number {
+  if (isOrtho) {
+    return resY / fov;
+  }
+  return resY / (2 * Math.tan(fov / 2));
 }
 
 /** The historical line pixel-width scale, as `line/material-glsl.ts` computed it. */
@@ -67,11 +86,11 @@ describe('projection-math — agreement with the historical fov helpers', () => 
       const fov = THREE.MathUtils.degToRad(fovDeg);
       expect(isOrthoProjection(P)).toBe(false);
       expect(focalLengthFromProjection(P, RES[1])).toBeCloseTo(
-        computeFocalLength(fov, RES[1], false),
+        legacyFocalLength(fov, RES[1], false),
         8
       );
       expect(pointSizeFactorFromProjection(P, RES[1])).toBeCloseTo(
-        computePointSizeFactor(fov, RES[1], false),
+        legacyPointSizeFactor(fov, RES[1], false),
         6
       );
       expect(lineScaleFromProjection(P, RES[1])).toBeCloseTo(
@@ -94,12 +113,12 @@ describe('projection-math — agreement with the historical fov helpers', () => 
       expect(isOrthoProjection(P)).toBe(true);
       const rel = (a: number, b: number) => Math.abs(a - b) / Math.abs(b);
       expect(
-        rel(focalLengthFromProjection(P, RES[1]), computeFocalLength(effective, RES[1], true))
+        rel(focalLengthFromProjection(P, RES[1]), legacyFocalLength(effective, RES[1], true))
       ).toBeLessThan(1e-12);
       expect(
         rel(
           pointSizeFactorFromProjection(P, RES[1]),
-          computePointSizeFactor(effective, RES[1], true)
+          legacyPointSizeFactor(effective, RES[1], true)
         )
       ).toBeLessThan(1e-12);
       expect(
@@ -110,7 +129,7 @@ describe('projection-math — agreement with the historical fov helpers', () => 
 
   it('honours perspective zoom, which the fov helpers ignore', () => {
     const P = perspective(50, RES[0] / RES[1], 2).projectionMatrix.elements;
-    const unzoomed = computeFocalLength(THREE.MathUtils.degToRad(50), RES[1], false);
+    const unzoomed = legacyFocalLength(THREE.MathUtils.degToRad(50), RES[1], false);
     expect(focalLengthFromProjection(P, RES[1])).toBeCloseTo(2 * unzoomed, 8);
   });
 
@@ -127,7 +146,7 @@ describe('projection-math — agreement with the historical fov helpers', () => 
 describe('projection-math — gsplat centre and Jacobian', () => {
   it('reproduces the historical symmetric-perspective Jacobian', () => {
     const P = perspective(50).projectionMatrix.elements;
-    const fx = computeFocalLength(THREE.MathUtils.degToRad(50), RES[1], false);
+    const fx = legacyFocalLength(THREE.MathUtils.degToRad(50), RES[1], false);
     for (const c of VIEW_POINTS) {
       const z = -c[2];
       const J = gsplatJacobian(P, c, RES);
@@ -147,7 +166,7 @@ describe('projection-math — gsplat centre and Jacobian', () => {
   it('reproduces the historical orthographic Jacobian', () => {
     const cam = ortho(30);
     const P = cam.projectionMatrix.elements;
-    const fx = computeFocalLength(30, RES[1], true);
+    const fx = legacyFocalLength(30, RES[1], true);
     const J = gsplatJacobian(P, [2, -3, -40], RES);
     expect(J[0][0]).toBeCloseTo(fx, 8);
     expect(J[1][1]).toBeCloseTo(fx, 8);

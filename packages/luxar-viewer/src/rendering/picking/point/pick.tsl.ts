@@ -93,10 +93,8 @@ export interface PointPickTSLNodes {
    * material sync.
    */
   readonly uPointTex: TSLNode;
-  readonly pointSizeFactor: TSLNode;
   readonly maxPointSize: TSLNode;
   readonly radiusScale: TSLNode;
-  readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -348,10 +346,8 @@ export function buildPointPickTSLNodesFromUniforms(
     uPointTex: texture(
       (uniforms.uPointTex?.value as THREE.Texture | null) ?? getPlaceholderElementTexture()
     ),
-    pointSizeFactor: uniform((uniforms.pointSizeFactor?.value as number) ?? 1.0),
     maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),

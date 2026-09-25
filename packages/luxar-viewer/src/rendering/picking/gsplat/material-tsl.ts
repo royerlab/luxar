@@ -21,7 +21,6 @@ import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { gsplatPickWebGPUFactory } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
-import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { GSplatPickingMaterialConfig, SurfacePickAwareMaterial } from './material';
@@ -37,13 +36,10 @@ export class GSplatPickingTSLMaterial
     uSplatTex: TSLNode;
     uResolution: TSLNode;
     uPixelRatio: TSLNode;
-    uFx: TSLNode;
-    uFy: TSLNode;
     uTruncate: TSLNode;
     uTruncateSq: TSLNode;
     uShiftC: TSLNode;
     uInvOneMinusC: TSLNode;
-    uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uMaxExtentFactor: TSLNode;
     uCov2DDilation: TSLNode;
@@ -68,13 +64,10 @@ export class GSplatPickingTSLMaterial
       uSplatTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uPixelRatio: uniform(1),
-      uFx: uniform(500),
-      uFy: uniform(500),
       uTruncate: uniform(truncate),
       uTruncateSq: uniform(truncate * truncate),
       uShiftC: uniform(shiftC),
       uInvOneMinusC: uniform(invOneMinusC),
-      uIsOrtho: uniform(0),
       uNearCull: uniform(0.1),
       uMaxExtentFactor: uniform(0.33),
       uCov2DDilation: uniform(GSPLAT_COV2D_DILATION_DEFAULT),
@@ -99,13 +92,10 @@ export class GSplatPickingTSLMaterial
       uSplatTex: proxyIUniform(this.tslNodes.uSplatTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
-      uFx: proxyIUniform(this.tslNodes.uFx),
-      uFy: proxyIUniform(this.tslNodes.uFy),
       uTruncate: proxyIUniform(this.tslNodes.uTruncate),
       uTruncateSq: proxyIUniform(this.tslNodes.uTruncateSq),
       uShiftC: proxyIUniform(this.tslNodes.uShiftC),
       uInvOneMinusC: proxyIUniform(this.tslNodes.uInvOneMinusC),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
       uCov2DDilation: proxyIUniform(this.tslNodes.uCov2DDilation),
@@ -170,9 +160,6 @@ export class GSplatPickingTSLMaterial
       this.uniforms.uResolution.value as THREE.Vector2
     );
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    cloned.uniforms.uFx.value = this.uniforms.uFx.value;
-    cloned.uniforms.uFy.value = this.uniforms.uFy.value;
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
@@ -187,19 +174,13 @@ export class GSplatPickingTSLMaterial
   }
 
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
-
-    const fy = computeFocalLength(fov, resolution.y, isOrtho);
-    this.uniforms.uFx.value = fy;
-    this.uniforms.uFy.value = fy;
 
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;

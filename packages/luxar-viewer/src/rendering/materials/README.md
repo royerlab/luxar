@@ -57,8 +57,10 @@ materials/
 - [`_shared/`](./_shared/README.md) — Geometry-agnostic infrastructure: the
   `ShaderSource` GLSL/TSL parity registry, `buildMaterial(source, config, caps)`
   backend dispatch, `CameraAwareMaterial` / `ColormapAwareMaterial` marker
-  interfaces broadcast by `MaterialManager`, shared `pointSizeFactor` /
-  `focalLength` math in `camera-uniforms.ts`, `GLSL_SANITIZE_FUNCTIONS` and
+  interfaces broadcast by `MaterialManager`, the in-shader projection helpers
+  (`luxarProjectionSizeScale` / `luxarIsOrthoProjection` in `glsl-lib.ts`, their
+  TSL twins in `tsl-helpers.ts`) with their CPU mirror `projection-math.ts`,
+  `GLSL_SANITIZE_FUNCTIONS` and
   their TSL counterparts, and `proxyIUniform(node)` — the wrapper that lets
   `material.uniforms.uX.value = Y` land on a TSL `UniformNode` without a
   per-render callback bridge.
@@ -111,9 +113,10 @@ than by omission (each bullet below records its own exception):
   types, and `updateFlatNormal` on Mesh alone (nothing else shades).
 - **Same shared helpers** from `_shared/`: every wrapper consumes
   `clampGamma`, the sanitiser snippets, `CameraAwareMaterial`, and
-  `ColormapAwareMaterial`. Point and GSplat additionally consume
-  `computePointSizeFactor` / `computeMaxPointSize` / `computeFocalLength`
-  from `camera-uniforms.ts`.
+  `ColormapAwareMaterial`. Points, Lines and GSplats read their projection
+  terms (size scale, ortho test, focal length / Jacobian) in shader from the
+  projection matrix three binds per draw; Point additionally consumes
+  `computeMaxPointSize` from `camera-uniforms.ts`.
 - **Parallel picking counterparts** in `../picking/{point,line,gsplat,mesh}/`
   with the same four-file shape — except Mesh, a six-file variant: its element
   ordinal is `gl_VertexID` rather than an element-texture texel, which adds

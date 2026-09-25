@@ -79,8 +79,6 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     uniform int uIsOrtho;
     uniform float uNearCull;
     uniform float uMaxLinePixelWidth;
-    uniform float uPerspectiveLineScale;
-    uniform float uOrthoLineScale;
 
     // Stencil-LOCAL coordinates + attributes as INTERPOLATED varyings —
     // the fragment reads everything pre-blended by the rasterizer instead

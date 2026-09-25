@@ -82,11 +82,10 @@ describe('computePickBufferSize', () => {
 
   it('caps the larger axis to MAX_PICK_BUFFER_DIM and scales the other to preserve aspect', () => {
     // 4K → half-res 1920×1080 → uniform scale 1024/1920 → 1024×576.
-    // Aspect preservation is load-bearing: the gsplat pick shader maps
-    // view space to pixels with uFx == uFy (square-pixel assumption), so
-    // a pick buffer with a different aspect than the camera displaces
-    // gsplat picks horizontally (points/lines go through the
-    // aspect-aware projectionMatrix and were unaffected).
+    // Aspect preservation keeps the pick buffer a uniform downscale of the
+    // view. (It was once load-bearing for gsplats, whose pick shader mapped
+    // view space with a square-pixel focal length; all four types now go
+    // through the aspect-aware projectionMatrix.)
     expect(computePickBufferSize(3840, 2160)).toEqual({
       w: MAX_PICK_BUFFER_DIM,
       h: 576,
@@ -982,8 +981,9 @@ describe('PickingSystem — surface-pick depth sync', () => {
 
     renderPickBuffer();
 
+    // (resolution, isOrtho, nearCull, pixelRatio) — no FOV: every pick shader
+    // reads its projection terms from the projection matrix.
     expect(updateCameraParams).toHaveBeenCalledWith(
-      expect.any(Number),
       expect.objectContaining({ x: 800, y: 300 }),
       false,
       undefined,

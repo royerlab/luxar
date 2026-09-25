@@ -109,8 +109,8 @@ export const AUTO_QUAD_EFFECTIVE_SEGMENTS = 2_000_000;
  *
  * Deliberately order-of-magnitude, not exact: `openingPx` is the
  * authored width times a nominal px-per-unit, but the line shaders draw
- * about FOUR times that. Two factors of 2 stack — `uPerspectiveLineScale`
- * is `res.y / tan(fov/2)`, i.e. twice the true px-per-unit conversion,
+ * about FOUR times that. Two factors of 2 stack — the line scale
+ * `luxarLineScale` is `res.y · |P11| = res.y / tan(fov/2)`, i.e. twice the true px-per-unit conversion,
  * and the shader then consumes the result as the quad's HALF-extent
  * (`aQuadCorner.y ∈ {-1,+1}` in `shader-glsl.ts`) — on top of which each
  * primitive draws its own support multiple (see
@@ -121,7 +121,7 @@ export const AUTO_QUAD_EFFECTIVE_SEGMENTS = 2_000_000;
  * TRANSFORM, on the other hand, does NOT cancel: both terms are
  * authored, so the ratio itself is transform-free — but the rendered
  * width is not. The shader converts `width` against the VIEW-space depth
- * (`width * uPerspectiveLineScale / dist` in `shader-glsl.ts`) without
+ * (`width * luxarLineScale / dist` in `shader-glsl.ts`) without
  * the model matrix, while the extent that sets that depth carries it. A
  * node scaled by s therefore draws s× thinner, relative to its own
  * extent, than this estimate says: a scaled-up node can reach the

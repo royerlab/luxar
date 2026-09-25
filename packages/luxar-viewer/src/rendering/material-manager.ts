@@ -91,10 +91,11 @@ export type LuxarLineMaterial = LineMaterial | LineTSLMaterial;
 export type LuxarGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
 /**
  * Same union shape as its three siblings, including `updateCameraParams` — though a
- * mesh consumes only half of it. There is no screen-space size to recompute from
- * fov/resolution, but the projection mode and near-cull distance drive the shared
- * near fade, which applies to a surface exactly as it does to a sprite. So mesh
- * joins the camera broadcast like everything else.
+ * mesh consumes only part of it. There is no screen-space size to recompute from
+ * the resolution, and the near fade reads its ortho test from the camera itself,
+ * but the near-cull distance drives that shared fade, which applies to a surface
+ * exactly as it does to a sprite. So mesh joins the camera broadcast like
+ * everything else.
  */
 export type LuxarMeshMaterial = MeshMaterial | MeshTSLMaterial;
 /**
@@ -116,7 +117,7 @@ export type LuxarGSplatPickingMaterial = GSplatPickingMaterial | GSplatPickingTS
 /**
  * Like its three siblings, including `updateCameraParams` — the mesh pick pass has
  * no screen-space footprint to size, but it does have to reproduce the visual near
- * fade, so it takes the same two camera inputs and joins the same broadcast,
+ * fade, so it takes the same near-cull input and joins the same broadcast,
  * exactly as the visual mesh material does.
  */
 export type LuxarMeshPickingMaterial = MeshPickingMaterial | MeshPickingTSLMaterial;
@@ -208,7 +209,6 @@ export class MaterialManager {
    * See {@link LifecycleCtx.staticMaterials}.
    */
   private staticMaterials = new Set<THREE.Material>();
-  private currentFov = (60 * Math.PI) / 180; // Current FOV in radians (or frustumHeight for ortho)
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
   private currentIsOrtho = false;
   private currentNearCull: number | undefined = undefined;
@@ -296,7 +296,6 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
-      this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
       this.currentNearCull,
@@ -345,7 +344,6 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
-      this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
       this.currentNearCull,
@@ -391,7 +389,6 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
-      this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
       this.currentNearCull,
@@ -415,9 +412,9 @@ export class MaterialManager {
    * follow another's.
    *
    * Enters `registeredMaterials` and takes the camera broadcast like its three
-   * siblings. It consumes only half of it — there is no screen-space size to
-   * recompute from fov/resolution — but the projection mode and near-cull distance
-   * drive the shared near fade (#1431), and a mesh left out of the broadcast would
+   * siblings. It consumes only part of it — there is no screen-space size to
+   * recompute from the resolution — but the near-cull distance drives the shared
+   * near fade (#1431), and a mesh left out of the broadcast would
    * fade against the constructor's 0.1 default instead of the scene's. There is no
    * `meshMaterialCache`: no type has a material cache — every material is per-node,
    * so `getCacheStats()` reports only registry size and create-time, never a cache
@@ -451,7 +448,6 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
-      this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
       this.currentNearCull,
@@ -537,22 +533,25 @@ export class MaterialManager {
     return new (MEGA_SHADER_FACTORIES[resolveMaterialBackend(this.caps)]())(cfg);
   }
 
-  /** Update camera parameters for all registered materials. */
+  /**
+   * Update camera parameters for all registered materials: viewport size,
+   * projection kind, near cull and pixel ratio. The projection terms
+   * themselves (FOV, ortho zoom, off-axis frustum) are read in shader from
+   * the projection matrix, so they need no push.
+   */
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean,
     nearCull: number | undefined,
     pixelRatio: number
   ): void {
-    this.currentFov = fov;
     this.currentResolution.copy(resolution);
     this.currentIsOrtho = isOrtho;
     this.currentNearCull = nearCull;
     this.currentPixelRatio = pixelRatio;
 
     for (const material of this.registeredMaterials) {
-      material.updateCameraParams(fov, resolution, isOrtho, nearCull, pixelRatio);
+      material.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio);
     }
   }
 
@@ -587,7 +586,6 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
     this.ownedMaterials.add(material);
     material.updateCameraParams(
-      this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
       this.currentNearCull,

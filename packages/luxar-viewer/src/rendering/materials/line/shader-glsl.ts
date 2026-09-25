@@ -104,10 +104,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // near-plane safety distance (view-space, +z toward camera)
     uniform float uMaxLinePixelWidth; // clamp for screen-space width
-    // Precomputed CPU-side line-width scales — kill the per-vertex tan()
-    // and one division. See updateCameraParams in line-material.ts.
-    uniform float uPerspectiveLineScale; // = resolution.y / tan(fov * 0.5)
-    uniform float uOrthoLineScale;       // = 2 * resolution.y / frustumHeight
 
     // Screen-space miter join (#790) — declares uLineJoin and defines
     // luxarLinePixelPos + luxarLineJoin. MUST follow the uniforms above:

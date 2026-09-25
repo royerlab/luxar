@@ -62,9 +62,6 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uNodeId;
     uniform float uNearCull;          // visual-shader parity
     uniform float uMaxLinePixelWidth; // visual-shader parity
-    // CPU-precomputed pixel-width scales — visual-shader parity.
-    uniform float uPerspectiveLineScale; // = resolution.y / tan(fov * 0.5)
-    uniform float uOrthoLineScale;       // = 2 * resolution.y / frustumHeight
 
     // Screen-space miter join (#790) — same block the visual vertex stage
     // includes, so the pick footprint keeps matching the visible one at a

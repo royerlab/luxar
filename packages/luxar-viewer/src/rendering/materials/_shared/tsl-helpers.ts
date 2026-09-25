@@ -260,18 +260,19 @@ export function tslLineJointCapSuppression(jointCode: TSLNode): TSLNode {
  * the geometry is unchanged.
  *
  * `isOrtho` is the build-time graph variant, so only one branch is emitted.
+ * `lineScale` is resY·|P11| (GLSL `luxarLineScale`), the same scale in both
+ * projections.
  */
 export function tslLineEndPixelWidth(
   isOrtho: boolean,
   widthAtEnd: TSLNode,
   viewZ: TSLNode,
   nearCull: TSLNode,
-  uOrthoLineScale: TSLNode,
-  uPerspectiveLineScale: TSLNode
+  lineScale: TSLNode
 ): TSLNode {
   return isOrtho
-    ? widthAtEnd.mul(uOrthoLineScale)
-    : widthAtEnd.mul(uPerspectiveLineScale).div(max(viewZ.negate(), nearCull));
+    ? widthAtEnd.mul(lineScale)
+    : widthAtEnd.mul(lineScale).div(max(viewZ.negate(), nearCull));
 }
 
 /** Everything `tslLineJoin` needs from its calling vertex stage. */

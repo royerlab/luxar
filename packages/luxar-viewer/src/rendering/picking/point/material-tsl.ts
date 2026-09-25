@@ -25,10 +25,7 @@ import { NodeMaterial } from 'three/webgpu';
 import { pointPickWebGPUFactory } from './pick.tsl';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
-import {
-  computePointSizeFactor,
-  computeMaxPointSize,
-} from '../../materials/_shared/camera-uniforms';
+import { computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import type { PointPickingMaterialConfig } from './material';
 
@@ -37,10 +34,8 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
 
   private tslNodes: {
     uPointTex: TSLNode;
-    pointSizeFactor: TSLNode;
     maxPointSize: TSLNode;
     radiusScale: TSLNode;
-    uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uPixelRatio: TSLNode;
     uNodeId: TSLNode;
@@ -52,18 +47,14 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
   constructor(config: PointPickingMaterialConfig) {
     super();
 
-    const defaultFov = (60 * Math.PI) / 180;
     const defaultResolutionY = 1080;
-    const defaultTanHalfFov = Math.tan(defaultFov / 2);
 
     this.tslNodes = {
       // Point data texture node (placeholder until the commit sync
       // rebinds the pool texture; identity change -> factory re-run).
       uPointTex: texture(getPlaceholderElementTexture()),
-      pointSizeFactor: uniform((2.0 * defaultResolutionY) / defaultTanHalfFov),
       maxPointSize: uniform(defaultResolutionY * 0.5),
       radiusScale: uniform(config.radiusScale ?? 1.0),
-      uIsOrtho: uniform(0),
       uNearCull: uniform(0.1),
       uPixelRatio: uniform(1),
       uNodeId: uniform(config.nodeId),
@@ -80,10 +71,8 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
 
     this.uniforms = {
       uPointTex: proxyIUniform(this.tslNodes.uPointTex),
-      pointSizeFactor: proxyIUniform(this.tslNodes.pointSizeFactor),
       maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
@@ -126,9 +115,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     });
     const pointTex = this.uniforms.uPointTex?.value as THREE.DataTexture | null | undefined;
     if (pointTex) cloned.updatePointTexture(pointTex);
-    cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
@@ -143,15 +130,12 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
   }
 
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
-    this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     this.uniforms.uPixelRatio.value = pixelRatio;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);

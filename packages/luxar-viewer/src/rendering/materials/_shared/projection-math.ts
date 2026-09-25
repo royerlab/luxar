@@ -13,9 +13,10 @@
  * zoomed perspective camera, or an embedder's own camera.
  *
  * This module is the CPU mirror of that shader math, for tests: it states the
- * formulas once, in a form the unit tests can check against the historical
- * fov-based helpers (`camera-uniforms.ts`) and against finite differences of
- * the projection itself.
+ * formulas once, in a form the unit tests can check against the fov-based
+ * formulas the CPU used to push as uniforms (kept as local references in
+ * `projection-math.test.ts`) and against finite differences of the projection
+ * itself.
  *
  * Conventions: `P` is a THREE.Matrix4 `elements` array (column-major, so row r
  * of column c is `P[c * 4 + r]`); `c` is a view-space point; `res` is the
@@ -52,12 +53,15 @@ export function focalLengthFromProjection(P: Mat4Elements, resY: number): number
   return 0.5 * Math.abs(at(P, 1, 1)) * resY;
 }
 
-/** Point size factor (the historical `pointSizeFactor`): 2·|P11|·resY. */
+/** Point size factor (formerly a CPU-pushed `pointSizeFactor` uniform): 2·|P11|·resY. */
 export function pointSizeFactorFromProjection(P: Mat4Elements, resY: number): number {
   return 2 * Math.abs(at(P, 1, 1)) * resY;
 }
 
-/** Line pixel-width scale (the historical `uPerspectiveLineScale` / `uOrthoLineScale`): |P11|·resY. */
+/**
+ * Line pixel-width scale (formerly the CPU-pushed perspective / ortho line-scale
+ * uniforms): |P11|·resY.
+ */
 export function lineScaleFromProjection(P: Mat4Elements, resY: number): number {
   return Math.abs(at(P, 1, 1)) * resY;
 }

@@ -1634,7 +1634,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     // ABSOLUTE brightness assertion — parity alone is blind to this
     // bug because BOTH backends shared the maxLateralVar > 0.01 gate.
-    // projectedExtent = uFx·sigma·truncate = 3200·0.005·3 = 48 px sits
+    // projectedExtent = focal·sigma·truncate = 3200·0.005·3 = 48 px sits
     // mid-band (32, 64) → coverageFade = 0.5 → red-channel peak ≈ 127.
     // Pre-fix the gate skipped the fade for this sigma and the peak
     // saturated at ~255.
@@ -1927,9 +1927,9 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  // Behind-camera parity. A perspective camera (uIsOrtho:0) with the point
-  // behind it — the only cases exercising the perspective path and the
-  // behind-camera reject (`uIsOrtho == 0 && mvPosition.z >= 0`); every other
+  // Behind-camera parity. A perspective camera with the point behind it —
+  // the only cases exercising the perspective path and the perspective-only
+  // behind-camera reject (view z >= 0); every other
   // point case is ortho. Each asserts GLSL ↔ TSL produce identical frames and
   // that the frame is uniform (no fragments).
   //

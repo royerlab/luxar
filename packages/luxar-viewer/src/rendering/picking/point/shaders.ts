@@ -52,10 +52,8 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     // only (center/radius/sharpness) -- color and scalar are not fetched.
     uniform highp sampler2D uPointTex;
 
-    uniform float pointSizeFactor;
     uniform float maxPointSize;
     uniform float radiusScale;
-    uniform int uIsOrtho;
     uniform float uNearCull;
     uniform float uPixelRatio;
     uniform float uNodeId;

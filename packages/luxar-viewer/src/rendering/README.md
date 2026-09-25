@@ -214,7 +214,8 @@ Advanced shader material for points rendering with custom vertex and fragment sh
 - 1.5px sprite floor (anti-rasterization-gap, matches lines); no
   sharpness size compensation — the shifted-truncated super-Gaussian
   truncates exactly at the sprite edge
-- FOV-independent sizing
+- Projection read in shader (`luxarProjectionSizeScale()` / `luxarIsOrthoProjection()`
+  from the projection matrix), so an FOV, zoom or off-axis frustum needs no push
 - Automatic viewport adaptation
 - Unified `perspectiveNearFade` near handling (shared with lines/gsplats)
 
@@ -335,8 +336,8 @@ See `materials/mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
   texture, no `texelFetch` prologue, no `aSortedIndex` indirection and no buffer pool.
   Per-vertex data arrives in ordinary vertex attributes.
 - **Camera-aware for half the contract.** A mesh has no screen-space footprint to
-  size, so `fov` / `resolution` are ignored — but `uIsOrtho` / `uNearCull` are bound
-  and broadcast, because the shared `perspectiveNearFade` applies to a surface as
+  size, so `resolution` / `isOrtho` are ignored (the fade's ortho test reads three's
+  `isOrthographic`) — but `uNearCull` is bound and broadcast, because the shared `perspectiveNearFade` applies to a surface as
   much as to a sprite. Mesh evaluates it PER FRAGMENT (a triangle spans depth) with a
   per-fragment reject below 0.01; see the stage table in
   `materials/_shared/README.md`.
@@ -398,8 +399,9 @@ const lineMaterial = materialManager.getLineMaterial({
   offset: 0.0,
 });
 
-// Update global parameters (updates both point and line materials)
-materialManager.updateCameraParams(fov, resolution);
+// Update global parameters (updates every camera-aware material). No FOV: every
+// shader reads its projection terms from the projection matrix per draw.
+materialManager.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio);
 ```
 
 #### Material Lifecycle and Memory Management
@@ -416,11 +418,11 @@ points.geometry.dispose(); // Frees GPU buffers
 // Material manager keeps material alive if other objects use it
 ```
 
-**Global Updates**: When camera settings change, MaterialManager automatically updates ALL registered materials - no manual scene traversal needed. Global exposure/offset/gamma are handled inside the mega-shader post-processing pass, not per-material.
+**Global Updates**: When the viewport, projection kind, near cull or pixel ratio changes, MaterialManager automatically updates ALL registered materials - no manual scene traversal needed. Global exposure/offset/gamma are handled inside the mega-shader post-processing pass, not per-material.
 
 ```typescript
 // Updates all materials in the scene automatically
-materialManager.updateCameraParams(newFov, newResolution);
+materialManager.updateCameraParams(newResolution, isOrtho, nearCull, pixelRatio);
 ```
 
 **Memory Leak Prevention**: Always dispose geometries and points when done. The material system handles cleanup automatically.

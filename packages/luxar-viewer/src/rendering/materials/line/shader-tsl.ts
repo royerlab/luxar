@@ -180,8 +180,6 @@ export interface LineTSLNodes {
   readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
-  readonly uPerspectiveLineScale: TSLNode;
-  readonly uOrthoLineScale: TSLNode;
   readonly uOpacity: TSLNode;
   readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
@@ -234,8 +232,8 @@ export function lineWebGPUFactory(
   // harness path). Mutations on `material.uniforms.X.value` go via
   // `proxyIUniform` straight to `node.value` — no per-render
   // `.onUpdate` callbacks needed.
-  // No FOV uniform exists: the TSL graph reads the CPU-precomputed
-  // `uPerspectiveLineScale` / `uOrthoLineScale` instead.
+  // No FOV uniform exists: the pixel-width scale is read from the
+  // projection matrix (`lineScale` below).
   // uIsOrtho is also intentionally absent — projection mode is a
   // JS-level config branch (`config.isOrtho`), not a runtime uniform.
   const uLineTex = nodes.uLineTex;
@@ -244,8 +242,8 @@ export function lineWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   // Pixels per view unit at unit depth: resY * |P11|, read from the
-  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It is
-  // the historical uPerspectiveLineScale AND uOrthoLineScale.
+  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It
+  // replaces the former CPU-pushed perspective / ortho line-scale uniforms.
   const lineScale: TSLNode = uResolution.y.mul(projectionSizeScaleTSL());
   const uOpacity = nodes.uOpacity;
   const uInvGamma = nodes.uInvGamma;
@@ -564,14 +562,7 @@ export function lineWebGPUFactory(
     // startEndPixelWidth exactly (symmetrically at t=1).
     const endPixelWidthAt = (tEnd: TSLNode, mvZ: TSLNode): TSLNode =>
       clamp(
-        tslLineEndPixelWidth(
-          !!config.isOrtho,
-          mix(startW, endW, tEnd),
-          mvZ,
-          nearCull,
-          lineScale,
-          lineScale
-        ),
+        tslLineEndPixelWidth(!!config.isOrtho, mix(startW, endW, tEnd), mvZ, nearCull, lineScale),
         minPixelWidth,
         maxPW
       );
@@ -913,8 +904,6 @@ export function buildLineTSLNodesFromUniforms(
     ...glassPartitionNodesFromUniforms(uniforms),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
-    uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),
-    uOrthoLineScale: uniform((uniforms.uOrthoLineScale?.value as number) ?? 1.0),
     uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),

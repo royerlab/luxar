@@ -17,7 +17,7 @@ import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
-import { computePointSizeFactor, computeMaxPointSize } from '../_shared/camera-uniforms';
+import { computeMaxPointSize } from '../_shared/camera-uniforms';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -92,10 +92,8 @@ export class PointMaterial
     const isOpaque = blendingMode === 'opaque';
     const isAdditive = blendingMode === 'additive';
     const gammaValue = clampGamma(materialConfig.gamma);
-    // Default values for initial computation
-    const defaultFov = (60 * Math.PI) / 180;
+    // Default viewport height for the pre-first-broadcast state.
     const defaultResolutionY = 1080;
-    const defaultTanHalfFov = Math.tan(defaultFov / 2);
 
     // Initial THREE.Blending for `super`. `applyBlendingMode` below
     // overrides this with the canonical mode-derived state — the
@@ -128,16 +126,14 @@ export class PointMaterial
         // volumetric w(a) optical-depth map; config seeds it for clone().
         uHasElementAlpha: { value: materialConfig.hasElementAlpha ? 1 : 0 },
 
-        // OPTIMIZED camera uniforms - pre-computed for shader performance
-        // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
-        pointSizeFactor: { value: (2.0 * defaultResolutionY) / defaultTanHalfFov },
+        // Pixel-size ceiling, pre-computed from the viewport height. The
+        // perspective/ortho size scale itself is read in shader from the
+        // projection matrix (luxarProjectionSizeScale).
         maxPointSize: { value: defaultResolutionY * 0.5 }, // resolution.y * 0.5
 
         // Radius scaling for dtype normalization
         radiusScale: { value: materialConfig.radiusScale ?? 1.0 }, // Default 1.0 (no scaling)
 
-        // Projection mode
-        uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
         // holds a whole permutation (runtime uniform: never a define — a
@@ -154,8 +150,8 @@ export class PointMaterial
         // Physical framebuffer size in pixels (used by the
         // instanced-quad vertex shader to convert pixel offsets to
         // NDC. DELIBERATELY (1920, 1080) rather than the line/gsplat
-        // (1, 1) placeholder: it pairs with the pointSizeFactor /
-        // maxPointSize defaults derived from defaultResolutionY above,
+        // (1, 1) placeholder: it pairs with the maxPointSize default
+        // derived from defaultResolutionY above,
         // so the pre-first-broadcast state is self-consistent.
         // Overridden by `updateCameraParams`.
         uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
@@ -233,19 +229,17 @@ export class PointMaterial
   }
 
   /**
-   * Update camera parameters for world-space point sizing
-   * Pre-computes pointSizeFactor and maxPointSize for shader performance
+   * Update the viewport-dependent uniforms for world-space point sizing.
+   * The projection terms (size scale, ortho test) are read in shader from
+   * the projection matrix, so `_isOrtho` is accepted and ignored.
    */
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
-    this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     this.uniforms.uPixelRatio.value = pixelRatio;
     // The instanced-quad vertex shader needs the framebuffer size to
@@ -522,16 +516,13 @@ export class PointMaterial
     // texture rather than left on the constructor's session-width
     // pre-stamp.
     cloned.updatePointTexture(this.uniforms.uPointTex.value as THREE.DataTexture | null);
-    cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
     cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
     // Camera-state uniforms must ride along too (mirrors
-    // LineMaterial.clone, the reference implementation): a clone taken
-    // in ortho mode otherwise renders the perspective branch with stale
-    // resolution/nearCull until the next global updateCameraParams
-    // broadcast reaches it.
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    // LineMaterial.clone, the reference implementation): a clone
+    // otherwise renders with stale resolution/nearCull until the next
+    // global updateCameraParams broadcast reaches it.
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(

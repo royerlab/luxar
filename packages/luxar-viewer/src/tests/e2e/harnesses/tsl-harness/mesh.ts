@@ -197,13 +197,13 @@ const buildMeshObject =
   };
 
 /**
- * Near-fade inputs for the ORTHO default camera (`buildDefaultCamera`).
+ * Near-fade input for the ORTHO default camera (`buildDefaultCamera`).
  *
- * `uIsOrtho: 1` is the honest value for that camera, and it is also what keeps
- * every pre-existing entry's pixels unchanged: `perspectiveNearFade` returns 1.0
- * under ortho, so `uNearCull` is inert here.
+ * The fade's ortho test is read from the camera the frame is drawn with, and
+ * `perspectiveNearFade` returns 1.0 under ortho, so `uNearCull` is inert here —
+ * which keeps every pre-existing entry's pixels unchanged.
  */
-const ORTHO_FADE_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.1 } as const;
+const ORTHO_FADE_UNIFORMS = { uNearCull: 0.1 } as const;
 
 /**
  * Near-fade inputs for the PERSPECTIVE `buildBehindCamera` entries below.
@@ -215,7 +215,7 @@ const ORTHO_FADE_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.1 } as const;
  * reject (so it is not silently testing the discard instead), and constant across
  * the quad (so the two backends must agree to the last bit).
  */
-const NEAR_FADE_UNIFORMS = { uIsOrtho: 0, uNearCull: 0.8 } as const;
+const NEAR_FADE_UNIFORMS = { uNearCull: 0.8 } as const;
 
 /**
  * The un-faded reference for the perspective entries: the SAME camera, with a
@@ -223,22 +223,22 @@ const NEAR_FADE_UNIFORMS = { uIsOrtho: 0, uNearCull: 0.8 } as const;
  * `perspectiveNearFade` = smoothstep(1e-6, 2e-6, 1.0) = 1.0 exactly and every other
  * term of the fragment is untouched. Dividing one frame by the other therefore
  * isolates the fade and nothing else. (The ortho test is read from the camera the
- * frame is drawn with, so a mismatched `uIsOrtho` can no longer switch the fade off;
- * the ortho branch has its own entry, `mesh-ortho-near-cull`.)
+ * frame is drawn with, not from a uniform; the ortho branch has its own entry,
+ * `mesh-ortho-near-cull`.)
  */
-const UNFADED_REFERENCE_UNIFORMS = { uIsOrtho: 0, uNearCull: 1e-6 } as const;
+const UNFADED_REFERENCE_UNIFORMS = { uNearCull: 1e-6 } as const;
 
 /**
  * The ortho branch, non-vacuously: the `mesh` quad under an ORTHOGRAPHIC camera with
  * the perspective entries' `uNearCull` of 0.8. A perspective fade would be 0.15625
  * here; the ortho branch must return 1.0, so this frame equals `mesh`'s exactly.
  */
-const ORTHO_NEAR_CULL_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.8 } as const;
+const ORTHO_NEAR_CULL_UNIFORMS = { uNearCull: 0.8 } as const;
 
 /** Uniforms mirroring the production `MeshMaterial` constructor. */
 function meshUniforms(
   withColormap = false,
-  fade: { uIsOrtho: number; uNearCull: number } = ORTHO_FADE_UNIFORMS,
+  fade: { uNearCull: number } = ORTHO_FADE_UNIFORMS,
   withTexture = false
 ): Record<string, THREE.IUniform> {
   return {
@@ -251,7 +251,6 @@ function meshUniforms(
     uSpecular: { value: MESH_DEFAULTS.specular },
     uShininess: { value: MESH_DEFAULTS.shininess },
     uAlphaCutoff: { value: MESH_DEFAULTS.alphaCutoff },
-    uIsOrtho: { value: fade.uIsOrtho },
     uNearCull: { value: fade.uNearCull },
     ...(withColormap
       ? {
@@ -276,7 +275,7 @@ function meshUniforms(
  */
 function meshPickUniforms(
   surfaceMode: boolean,
-  fade: { uIsOrtho: number; uNearCull: number } = ORTHO_FADE_UNIFORMS,
+  fade: { uNearCull: number } = ORTHO_FADE_UNIFORMS,
   withTexture = false
 ): Record<string, THREE.IUniform> {
   return {
@@ -285,7 +284,6 @@ function meshPickUniforms(
     uAlphaCutoff: { value: MESH_DEFAULTS.alphaCutoff },
     uAlphaCutout: { value: surfaceMode ? 1 : 0 },
     uSurfaceDepth: { value: surfaceMode ? 1 : 0 },
-    uIsOrtho: { value: fade.uIsOrtho },
     uNearCull: { value: fade.uNearCull },
     ...(withTexture ? { uBaseColorTex: { value: buildBaseColorTexture() } } : {}),
   };
@@ -475,8 +473,8 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
   // the quad sits at viewZ = -1, so the fade is a uniform 0.15625 (see
   // NEAR_FADE_UNIFORMS for the arithmetic) and the two backends must agree exactly.
   //
-  // Deliberately NOT in the codegen snapshot list: `uIsOrtho` is a runtime uniform,
-  // so this generates the shader `mesh` already snapshots and a second copy would
+  // Deliberately NOT in the codegen snapshot list: the fade's ortho test is read
+  // per draw from the camera, not a build flag, so this generates the shader `mesh` already snapshots and a second copy would
   // only duplicate one. What it adds is the rendered proof — same reasoning as
   // `mesh-pick-commutative`.
   'mesh-near-fade': {
@@ -493,11 +491,11 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: buildMeshObject(),
     buildCamera: buildBehindCamera,
   },
-  // The un-faded twin of the entry above: same camera, same uNearCull, `uIsOrtho`
-  // flipped to 1 so the fade is the identity. This is what the parity spec divides
+  // The un-faded twin of the entry above: same camera, a uNearCull so small the
+  // fade is the identity (see UNFADED_REFERENCE_UNIFORMS). This is what the parity spec divides
   // against — the ortho-camera `mesh` entry would be a DIFFERENT crop of the quad,
   // so its pixel (32, 32) is not the same surface point. Out of the codegen list for
-  // the same runtime-uniform reason as `mesh-near-fade`.
+  // the same per-draw ortho-test reason as `mesh-near-fade`.
   'mesh-near-fade-reference': {
     source: MESH_SOURCE,
     buildUniforms: () => ({
@@ -516,8 +514,8 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
   // fold is wired: the codegen snapshot shows the line, but a snapshot cannot tell a
   // multiply into alpha from a multiply into nothing.
   //
-  // Out of the codegen list, same reasoning as `mesh-pick-commutative`: `uIsOrtho` is
-  // a runtime uniform, so this generates the shader `mesh-additive` already snapshots.
+  // Out of the codegen list, same reasoning as `mesh-near-fade`: the ortho test is
+  // read per draw, so this generates the shader `mesh-additive` already snapshots.
   'mesh-additive-near-fade': {
     source: MESH_SOURCE,
     buildUniforms: () => meshUniforms(false, NEAR_FADE_UNIFORMS),

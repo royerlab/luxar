@@ -190,10 +190,6 @@ export class LineMaterial
         // window only; updateCameraParams overwrites with the scene value).
         uNearCull: { value: 0.1 },
         uMaxLinePixelWidth: { value: 540 }, // ≈ resolution.y * 0.5 default; updated in updateCameraParams
-        // CPU-precomputed pixel-width scales so the shader avoids
-        // per-vertex tan() and one divide. Updated in updateCameraParams.
-        uPerspectiveLineScale: { value: 1.0 },
-        uOrthoLineScale: { value: 1.0 },
         // Join style at degree-2 polyline joints (#790): 0 none, 1 miter —
         // see types/line-join.ts for the styles and the override precedence.
         // A live uniform rather than a define so the session override costs no
@@ -276,13 +272,14 @@ export class LineMaterial
   }
 
   /**
-   * Update camera parameters for world-space line sizing.
+   * Update camera parameters for world-space line sizing. The pixel-width
+   * scale is read in shader from the projection matrix (luxarLineScale);
+   * `isOrtho` still drives the `uIsOrtho` uniform the vertex AND fragment
+   * stages branch on.
    *
-   * @param fov - Field of view in radians
    * @param resolution - Viewport resolution
    */
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
     nearCull?: number,
@@ -303,17 +300,6 @@ export class LineMaterial
     // near-camera segment can't paint the entire screen.
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    // Pre-compute pixel-width scales. Only the branch matching uIsOrtho
-    // is read in the shader, but writing both keeps the GPU values
-    // sane after a mode switch and avoids NaN from tan(frustumHeight/2)
-    // when fov stores frustumHeight in ortho mode.
-    const safeFov = Math.max(fov, 1e-4);
-    if (isOrtho) {
-      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
-    } else {
-      this.uniforms.uPerspectiveLineScale.value =
-        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
-    }
   }
 
   /**
@@ -492,15 +478,13 @@ export class LineMaterial
     // the clone's width define is re-stamped from that texture rather
     // than left on the constructor's session-width pre-stamp.
     cloned.updateLineTexture(this.uniforms.uLineTex.value as THREE.DataTexture | null);
-    // Preserve orthographic state, near-plane / max-pixel-width clamp,
-    // and the precomputed pixel-width scales.
+    // Preserve orthographic state and the near-plane / max-pixel-width
+    // clamp.
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
-    cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uLineJoin.value = this.uniforms.uLineJoin.value;
-    cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer

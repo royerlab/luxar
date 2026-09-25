@@ -72,9 +72,6 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         uNearCull: { value: 0.1 },
         uMaxLinePixelWidth: { value: 540 },
         uNodeId: { value: config.nodeId },
-        // CPU-precomputed pixel-width scales — see LineMaterial.
-        uPerspectiveLineScale: { value: 1.0 },
-        uOrthoLineScale: { value: 1.0 },
         // Join style (#790): 0 none, 1 miter — see types/line-join.ts for the
         // override precedence. Resolved the same way LineMaterial resolves it.
         uLineJoin: { value: resolveLineJoin(config.join) },
@@ -128,8 +125,6 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
-    cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
-    cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uLineJoin.value = this.uniforms.uLineJoin.value;
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer
@@ -140,7 +135,6 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
   }
 
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
     nearCull?: number,
@@ -158,14 +152,6 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
-    const safeFov = Math.max(fov, 1e-4);
-    if (isOrtho) {
-      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
-    } else {
-      this.uniforms.uPerspectiveLineScale.value =
-        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
-    }
   }
 
   /**

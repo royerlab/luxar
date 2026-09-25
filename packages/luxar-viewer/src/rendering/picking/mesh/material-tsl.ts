@@ -4,7 +4,7 @@
  * Mirrors the GLSL wrapper one-for-one — same constructor signature, same
  * `setPickMode` / `setPickSide` / `updateOpacityUniform` / `updateAlphaCutoff`
  * surface, same `MeshPickAwareMaterial` contract, and the same half-consumed
- * `CameraAwareMaterial` one (fov/resolution ignored, the near fade's two inputs
+ * `CameraAwareMaterial` one (resolution/isOrtho ignored, the near-fade start
  * taken).
  *
  * **Uniform plumbing.** This class owns one `UniformNode` per shader input. The
@@ -45,7 +45,6 @@ export class MeshPickingTSLMaterial
     uAlphaCutoff: TSLNode;
     uAlphaCutout: TSLNode;
     uSurfaceDepth: TSLNode;
-    uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uBaseColorTex?: TSLNode;
   };
@@ -63,9 +62,8 @@ export class MeshPickingTSLMaterial
       // governs only the window before the first one.
       uAlphaCutout: uniform(1),
       uSurfaceDepth: uniform(1),
-      // 0 = perspective; 0.1 matches the GLSL twin's default and is overridden per
-      // scene by `updateCameraParams`.
-      uIsOrtho: uniform(0),
+      // 0.1 matches the GLSL twin's default and is overridden per scene by
+      // `updateCameraParams`.
       uNearCull: uniform(0.1),
       // Bound only when the node has a texture, matching the GLSL twin's define:
       // `texture()` captures its Texture, so the real image is installed by
@@ -79,7 +77,6 @@ export class MeshPickingTSLMaterial
       uAlphaCutoff: proxyIUniform(this.tslNodes.uAlphaCutoff),
       uAlphaCutout: proxyIUniform(this.tslNodes.uAlphaCutout),
       uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       // A plain value holder, NOT a proxy: the graph reads the captured `texture()`
       // node, so writing this would change nothing. `updateBaseColorTexture` rebuilds
@@ -122,18 +119,16 @@ export class MeshPickingTSLMaterial
   }
 
   /**
-   * @see MeshPickingMaterial.updateCameraParams — `_fov` / `_resolution` ignored,
-   * the near fade's two inputs consumed. Both are runtime uniforms, so there is
-   * nothing to rebuild (this wrapper has no rebuild path at all).
+   * @see MeshPickingMaterial.updateCameraParams — `_resolution` / `_isOrtho`
+   * ignored, `nearCull` consumed. It is a runtime uniform, so there is nothing
+   * to rebuild (this wrapper has no rebuild path at all).
    */
   updateCameraParams(
-    _fov: number,
     _resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     _pixelRatio?: number
   ): void {
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }
@@ -183,7 +178,6 @@ export class MeshPickingTSLMaterial
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
     // Camera state too — see the GLSL twin: the constructor defaults would fade
     // against the wrong near plane, and would fade at all under ortho.
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     // The epoch's culling must ride along: a clone taken on an undecidable frame
     // would otherwise revert to FrontSide and drop half the pickable surface until

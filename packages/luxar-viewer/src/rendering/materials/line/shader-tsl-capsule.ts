@@ -107,8 +107,8 @@ export function capsuleLineWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   // Pixels per view unit at unit depth: resY * |P11|, read from the
-  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It is
-  // the historical uPerspectiveLineScale AND uOrthoLineScale.
+  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It
+  // replaces the former CPU-pushed perspective / ortho line-scale uniforms.
   const lineScale: TSLNode = uResolution.y.mul(projectionSizeScaleTSL());
   const uOpacity = nodes.uOpacity;
   const uInvGamma = nodes.uInvGamma;

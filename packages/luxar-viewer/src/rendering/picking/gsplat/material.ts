@@ -10,7 +10,6 @@
 
 import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
-import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { GSPLAT_PICK_SOURCE } from './shaders';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 import {
@@ -78,13 +77,10 @@ export class GSplatPickingMaterial
         uSplatTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uPixelRatio: { value: 1 },
-        uFx: { value: 500 },
-        uFy: { value: 500 },
         uTruncate: { value: truncate },
         uTruncateSq: { value: truncate * truncate },
         uShiftC: { value: shiftC },
         uInvOneMinusC: { value: invOneMinusC },
-        uIsOrtho: { value: 0 },
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
         // holds a whole permutation (runtime uniform: never a define — a
@@ -161,9 +157,6 @@ export class GSplatPickingMaterial
     cloned.updateSplatTexture(this.uniforms.uSplatTex.value as THREE.DataTexture | null);
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    cloned.uniforms.uFx.value = this.uniforms.uFx.value;
-    cloned.uniforms.uFy.value = this.uniforms.uFy.value;
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
@@ -178,19 +171,13 @@ export class GSplatPickingMaterial
   }
 
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
-
-    const fy = computeFocalLength(fov, resolution.y, isOrtho);
-    this.uniforms.uFx.value = fy;
-    this.uniforms.uFy.value = fy;
 
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;

@@ -23,6 +23,19 @@ describe('LineTSLMaterial clone', () => {
     expect(cloned.uniforms.uIsOrtho.value).toBe(1);
   });
 
+  it('updateCameraParams flips uIsOrtho and writes no line-scale uniform', () => {
+    // uIsOrtho stays (it selects the compile-time ortho graph); the pixel-width
+    // scale is read in the graph from cameraProjectionMatrix, so the former
+    // perspective / ortho line-scale uniforms are gone.
+    const material = new LineTSLMaterial();
+    material.updateCameraParams(new THREE.Vector2(800, 600), true, 0.25, 2);
+    expect(material.uniforms.uIsOrtho.value).toBe(1);
+    expect(material.uniforms.uNearCull.value).toBe(0.25);
+    expect(material.uniforms.uPixelRatio.value).toBe(2);
+    expect(material.uniforms.uPerspectiveLineScale).toBeUndefined();
+    expect(material.uniforms.uOrthoLineScale).toBeUndefined();
+  });
+
   it('does not introduce a LUXAR_SHARPNESS_TWO define (fast path removed)', () => {
     const original = new LineTSLMaterial();
     const cloned = original.clone();

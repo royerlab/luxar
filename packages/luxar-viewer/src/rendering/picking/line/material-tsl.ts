@@ -38,8 +38,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     uNearCull: TSLNode;
     uMaxLinePixelWidth: TSLNode;
     uNodeId: TSLNode;
-    uPerspectiveLineScale: TSLNode;
-    uOrthoLineScale: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
   };
@@ -60,8 +58,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
       uNodeId: uniform(config.nodeId),
-      uPerspectiveLineScale: uniform(1.0),
-      uOrthoLineScale: uniform(1.0),
       // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
       // The pick pass MUST track the visual one — it emits `vElementId`
       // from the same index, so reading the other buffer resolves hovers
@@ -95,8 +91,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
-      uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),
-      uOrthoLineScale: proxyIUniform(this.tslNodes.uOrthoLineScale),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
     };
@@ -164,8 +158,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
-    cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
-    cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.
@@ -179,7 +171,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
   }
 
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
     nearCull?: number,
@@ -198,14 +189,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
-    const safeFov = Math.max(fov, 1e-4);
-    if (isOrtho) {
-      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
-    } else {
-      this.uniforms.uPerspectiveLineScale.value =
-        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
-    }
     // Rebuild on projection-mode flip so the unused branch drops.
     if (isOrtho !== prevIsOrtho) {
       this._rebuild();

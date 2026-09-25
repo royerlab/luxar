@@ -46,7 +46,7 @@ export interface RegistryEntry {
    * Override the camera. Defaults to an `OrthographicCamera` at (0,0,1)
    * looking at the origin (see `buildDefaultCamera`). Override for cases
    * that need a `PerspectiveCamera` — e.g. the behind-camera guard, which
-   * is perspective-only (`uIsOrtho == 0`) and a no-op under the default
+   * is perspective-only (read from the projection matrix) and a no-op under the default
    * ortho camera.
    */
   readonly buildCamera?: () => THREE.Camera;

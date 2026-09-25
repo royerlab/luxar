@@ -138,12 +138,7 @@ import {
 import { disposeWorkerPool } from '../../workers/worker-pool';
 import type { DatasetFaultPayload } from '../app/embedder/events';
 import { applyModuleOverrides } from '../app/init/module-overrides';
-import {
-  getCameraFovRadians,
-  isOrthographicCamera,
-  getOrthoFrustumHeight,
-  type LuxarCamera,
-} from '../../utils/camera-utils';
+import { isOrthographicCamera, type LuxarCamera } from '../../utils/camera-utils';
 import { getInputProfile } from '../../utils/input-capabilities';
 import { config } from '../../config';
 import { isLuxarMaterial } from '../../ui/layers/luxar-material';
@@ -439,12 +434,16 @@ export class LuxarLayer {
   }
 
   /**
-   * Push the host's camera projection and drawing-buffer size into the
-   * material manager. Call after a viewport resize, a DPR change, or a change
-   * to the camera's FOV / ortho frustum.
+   * Push the host's drawing-buffer size, pixel ratio and projection kind
+   * (orthographic or not) into the material manager. Call after a viewport
+   * resize, a DPR change, or a swap between a perspective and an orthographic
+   * camera. An FOV / ortho-zoom change needs no call: every shader reads its
+   * projection terms from the camera's projection matrix per draw, which also
+   * makes a camera that is neither perspective nor orthographic (a plain
+   * `THREE.Camera` with its own matrix) render at the right size.
    *
    * Does NOT push a near-cull distance. `SceneManager` derives one from its
-   * dynamic scene-bounds cache and passes it as a fourth argument, which fades
+   * dynamic scene-bounds cache and passes it as a third argument, which fades
    * geometry approaching the near plane; without it the shared near fade stays
    * at its default and elements pop instead. Wiring it here would mean
    * reproducing the bounds cache, so it is a known limitation rather than an
@@ -454,8 +453,9 @@ export class LuxarLayer {
   resize(): void {
     if (this.disposed) return;
     // The public option is the broad `THREE.Camera` so any host camera is
-    // accepted; the projection helpers want the narrower perspective/ortho
-    // union, and a camera that is neither falls back to the default FOV.
+    // accepted; the ortho test wants the narrower perspective/ortho union, and
+    // a camera that is neither is treated as perspective (its fragment-stage
+    // near fade; its sizes come from its own projection matrix).
     const camera = this.options.getCamera() as LuxarCamera;
     this.options.renderer.getDrawingBufferSize(this.bufferSize);
     const viewportHeight = this.options.getViewportSize().height;
@@ -463,23 +463,12 @@ export class LuxarLayer {
       viewportHeight > 0
         ? this.bufferSize.y / viewportHeight
         : this.options.renderer.getPixelRatio();
-    if (isOrthographicCamera(camera)) {
-      materialManager.updateCameraParams(
-        getOrthoFrustumHeight(camera),
-        this.bufferSize,
-        true,
-        undefined,
-        pixelRatio
-      );
-    } else {
-      materialManager.updateCameraParams(
-        getCameraFovRadians(camera),
-        this.bufferSize,
-        false,
-        undefined,
-        pixelRatio
-      );
-    }
+    materialManager.updateCameraParams(
+      this.bufferSize,
+      isOrthographicCamera(camera),
+      undefined,
+      pixelRatio
+    );
   }
 
   /** Dimension metadata for the loaded scene (cloned), or null if none. */
