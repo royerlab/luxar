@@ -1,0 +1,373 @@
+{
+  "$comment": "Render-gate scene manifest. See docs/guides/developer/RENDER_GATE.md. Stores under datasets/gate/ come from scripts/render-gate/generate_gate_scenes.py. Every exact case runs on each backend x device-scale-factor x projection listed; a case's 'viewport'/'dsf' override the defaults.",
+  "defaults": {
+    "viewport": {
+      "width": 960,
+      "height": 540
+    },
+    "dsf": [1, 2],
+    "backends": ["webgl", "webgpu"],
+    "projections": ["perspective", "ortho"],
+    "urlParams": "lodFinest&noLodFade&noPrefetch&noBlendWarmup"
+  },
+  "syntheticPoses": [
+    {
+      "position": [200, 140, 200],
+      "target": [0, 0, 0],
+      "up": [0, 1, 0]
+    },
+    {
+      "position": [40, -30, 95],
+      "target": [5, 0, 0],
+      "up": [0, 1, 0],
+      "fov": 35,
+      "zoom": 2.5
+    }
+  ],
+  "exact": [
+    {
+      "id": "points-additive",
+      "synthetic": {
+        "type": "points",
+        "count": 200000,
+        "seed": 1,
+        "blending": "additive"
+      }
+    },
+    {
+      "id": "points-normal",
+      "synthetic": {
+        "type": "points",
+        "count": 200000,
+        "seed": 2,
+        "blending": "normal"
+      }
+    },
+    {
+      "id": "lines-additive",
+      "synthetic": {
+        "type": "lines",
+        "count": 200000,
+        "seed": 3,
+        "blending": "additive",
+        "turnAngle": 0.3
+      }
+    },
+    {
+      "id": "lines-capsule",
+      "synthetic": {
+        "type": "lines",
+        "count": 100000,
+        "seed": 4,
+        "blending": "additive",
+        "width": 3.0,
+        "turnAngle": 0.3
+      },
+      "urlParams": "linePrimitive=capsule"
+    },
+    {
+      "id": "splats-additive",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 200000,
+        "seed": 5,
+        "blending": "additive"
+      }
+    },
+    {
+      "id": "splats-luminous",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 200000,
+        "seed": 6,
+        "blending": "luminous"
+      }
+    },
+    {
+      "id": "splats-max",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 200000,
+        "seed": 7,
+        "blending": "max"
+      }
+    },
+    {
+      "id": "splats-normal",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 200000,
+        "seed": 8,
+        "blending": "normal"
+      }
+    },
+    {
+      "id": "splats-volumetric",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 200000,
+        "seed": 9,
+        "blending": "volumetric"
+      }
+    },
+    {
+      "id": "splats-opaque",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 200000,
+        "seed": 10,
+        "blending": "opaque"
+      }
+    },
+    {
+      "id": "odd-size-splats",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 200000,
+        "seed": 5,
+        "blending": "additive"
+      },
+      "viewport": {
+        "width": 1277,
+        "height": 719
+      },
+      "dsf": [1.5],
+      "projections": ["perspective"]
+    },
+    {
+      "id": "odd-size-points",
+      "synthetic": {
+        "type": "points",
+        "count": 200000,
+        "seed": 1,
+        "blending": "additive"
+      },
+      "viewport": {
+        "width": 1277,
+        "height": 719
+      },
+      "dsf": [1.5],
+      "projections": ["perspective"]
+    },
+    {
+      "id": "mixed",
+      "store": "gate/mixed.luxar.zarr",
+      "pick": true,
+      "poses": [
+        {
+          "position": [14, 9, 16],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [3, 2, 7],
+          "target": [0.5, 0, 0],
+          "up": [0, 1, 0],
+          "fov": 40,
+          "zoom": 3
+        }
+      ]
+    },
+    {
+      "id": "env_splats",
+      "store": "gate/env_splats.luxar.zarr",
+      "waitEnvironment": true,
+      "projections": ["perspective"],
+      "poses": [
+        {
+          "position": [0, 1.5, 6.5],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [0, 0.2, 2.6],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        }
+      ]
+    },
+    {
+      "id": "partition_normal",
+      "store": "gate/partition_normal.luxar.zarr",
+      "pick": true,
+      "poses": [
+        {
+          "position": [18, 10, 20],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [-3, 12, 26],
+          "target": [2, -1, 0],
+          "up": [0, 1, 0],
+          "zoom": 1.5
+        }
+      ]
+    },
+    {
+      "id": "glass",
+      "store": "gate/glass.luxar.zarr",
+      "projections": ["perspective"],
+      "poses": [
+        {
+          "position": [0, 1, 9],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [2.5, 0.5, 7],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        }
+      ]
+    },
+    {
+      "id": "lod_ladder",
+      "store": "gate/lod_ladder.luxar.zarr",
+      "urlParams": "noLodFade&noPrefetch&noBlendWarmup",
+      "poses": [
+        {
+          "position": [0, 6, 22],
+          "target": [0, 2, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [0, 3, 60],
+          "target": [0, 2, 0],
+          "up": [0, 1, 0],
+          "zoom": 0.5
+        }
+      ]
+    },
+    {
+      "id": "tiny_units_ortho",
+      "store": "gate/tiny_units_ortho.luxar.zarr",
+      "projections": ["ortho"],
+      "poses": [
+        {
+          "position": [0, 0, 0.0001],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [6e-5, 4e-5, 8e-5],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0],
+          "zoom": 2
+        }
+      ]
+    }
+  ],
+  "perf": [
+    {
+      "id": "perf-points-5m",
+      "synthetic": {
+        "type": "points",
+        "count": 5000000,
+        "seed": 1,
+        "blending": "additive"
+      }
+    },
+    {
+      "id": "perf-lines-10m",
+      "synthetic": {
+        "type": "lines",
+        "count": 10000000,
+        "seed": 3,
+        "blending": "additive"
+      }
+    },
+    {
+      "id": "perf-capsule-2m",
+      "synthetic": {
+        "type": "lines",
+        "count": 2000000,
+        "seed": 4,
+        "blending": "additive",
+        "width": 3.0,
+        "turnAngle": 0.3
+      },
+      "urlParams": "linePrimitive=capsule"
+    },
+    {
+      "id": "perf-splats-1m-normal",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 1000000,
+        "seed": 8,
+        "blending": "normal"
+      }
+    },
+    {
+      "id": "perf-splats-5m-volumetric",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 5000000,
+        "seed": 9,
+        "blending": "volumetric"
+      }
+    },
+    {
+      "id": "perf-splats-10m-additive",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 10000000,
+        "seed": 5,
+        "blending": "additive"
+      }
+    },
+    {
+      "id": "perf-splats-5m-ortho",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 5000000,
+        "seed": 5,
+        "blending": "additive"
+      },
+      "projection": "ortho"
+    },
+    {
+      "id": "perf-mixed",
+      "store": "gate/mixed.luxar.zarr",
+      "pose": {
+        "position": [14, 9, 16],
+        "target": [0, 0, 0],
+        "up": [0, 1, 0]
+      }
+    },
+    {
+      "id": "perf-lod-ladder",
+      "store": "gate/lod_ladder.luxar.zarr",
+      "pose": {
+        "position": [0, 6, 22],
+        "target": [0, 2, 0],
+        "up": [0, 1, 0]
+      }
+    },
+    {
+      "id": "perf-partition-normal",
+      "store": "gate/partition_normal.luxar.zarr",
+      "pose": {
+        "position": [18, 10, 20],
+        "target": [0, 0, 0],
+        "up": [0, 1, 0]
+      }
+    }
+  ],
+  "perfDefaults": {
+    "viewport": {
+      "width": 1600,
+      "height": 900
+    },
+    "dsf": 1,
+    "backends": ["webgl", "webgpu"],
+    "projection": "perspective",
+    "pose": {
+      "position": [200, 140, 200],
+      "target": [0, 0, 0],
+      "up": [0, 1, 0]
+    },
+    "rounds": 7,
+    "urlParams": "noPrefetch&noBlendWarmup"
+  }
+}

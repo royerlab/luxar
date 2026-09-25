@@ -2835,6 +2835,22 @@ test-perf-e2e: run-examples  ## Run the opt-in Playwright performance suite
 	fi
 	cd packages/luxar-viewer && pnpm test:perf:e2e
 
+# Render gate: exactness + performance of a candidate build against a baseline
+# build on THIS machine (docs/guides/developer/RENDER_GATE.md). Opt-in, not a CI
+# gate. Stores come from generate_gate_scenes.py on first use; REGEN=1 rebuilds them.
+BASE ?= origin/main
+CAND ?= HEAD
+SUITE ?= exact
+CLASS ?= IDENTICAL
+.PHONY: render-gate
+render-gate:  ## Render exactness/perf gate: BASE=<ref> CAND=<ref> [SUITE=exact|perf|all] [CLASS=IDENTICAL|ULP] [INTENDED=a,b] [ONLY=a,b]
+	@if [ -n "$(REGEN)" ] || [ ! -d datasets/gate/tiny_units_ortho.luxar.zarr ]; then \
+		$(HATCH) run python packages/luxar-viewer/scripts/render-gate/generate_gate_scenes.py --out datasets/gate; \
+	fi
+	cd packages/luxar-viewer && node scripts/render-gate/run-gate.mjs --base "$(BASE)" --cand "$(CAND)" \
+		--suite "$(SUITE)" --class "$(CLASS)" \
+		$(if $(INTENDED),--intended "$(INTENDED)") $(if $(ONLY),--only "$(ONLY)") $(GATE_ARGS)
+
 check-typescript:  ## Run all TypeScript checks (typecheck, lint, test)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
