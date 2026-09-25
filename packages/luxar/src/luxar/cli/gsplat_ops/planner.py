@@ -187,6 +187,7 @@ def _stamp_content_floor(
     result: Any,
     floor_level: "Optional[float]",
     floor_forward: "str | float",
+    floor_strategy: "Optional[str]" = None,
 ) -> None:
     """Record the one level every content box subtracted (#1175).
 
@@ -219,6 +220,8 @@ def _stamp_content_floor(
     if "floor" in target and target["floor"] != floor_level:
         return
     target["floor"] = floor_level
+    if floor_strategy is not None:
+        target["floor_strategy"] = floor_strategy
     # Since #1616 the boxes share one norm_range, so their bounds agree with each
     # other. Still, drop any image_min that would contradict `floor` rather than
     # leave the invariant broken. Only meaningful when a floor WAS applied: with
@@ -388,7 +391,7 @@ def run_content_fit(
         # level cannot be expressed as a concrete --floor, so resolve_shared_floor
         # hands the SPEC back and `_fit_one_box` re-resolves it against this box's
         # crop — per-box pedestals, for that one case only.
-        _, fk["floor"] = resolve_shared_floor(
+        _, fk["floor"], _ = resolve_shared_floor(
             vol, fk.get("floor", "auto"), guard_numeric=False, verbose=False
         )
         # The range has the same "resolve once against the whole (t, c) volume,
@@ -467,7 +470,7 @@ def run_content_fit(
     # subprocesses' argv. The spec comes out of the merged fit config, so a
     # `floor:` in --config/--preset is honoured rather than overridden.
     box_fit_kwargs = _fit_kwargs()
-    floor_level, floor_forward = resolve_shared_floor(
+    floor_level, floor_forward, floor_strategy = resolve_shared_floor(
         vol,
         box_fit_kwargs.get("floor", "auto"),
         guard_numeric=True,
@@ -668,7 +671,7 @@ def run_content_fit(
                 **fk,
             )
 
-    _stamp_content_floor(result, floor_level, floor_forward)
+    _stamp_content_floor(result, floor_level, floor_forward, floor_strategy)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     _save_fit_result(result, output, compress=compress)

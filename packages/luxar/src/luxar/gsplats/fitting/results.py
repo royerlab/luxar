@@ -400,6 +400,8 @@ def lift_normalization_stats(
     dest: dict[str, Any],
     passes: "Sequence[Any]",
     applied_floor: "float | None",
+    *,
+    floor_strategy: "str | None" = None,
 ) -> None:
     """Record a multi-pass fit's normalization provenance on ``dest`` (#1175).
 
@@ -423,6 +425,8 @@ def lift_normalization_stats(
     ``intensity_range`` as a flat fit.
     """
     dest["floor"] = applied_floor
+    if floor_strategy is not None:
+        dest["floor_strategy"] = floor_strategy
     if not passes:
         return
     first = getattr(passes[0], "stats", None) or {}
@@ -665,6 +669,11 @@ def finalize_results(
         "image_max": preprocessed_data.image_max,
         "intensity_range": preprocessed_data.intensity_range,
         "floor": preprocessed_data.floor,
+        **(
+            {"floor_strategy": preprocessed_data.floor_strategy}
+            if preprocessed_data.floor_strategy is not None
+            else {}
+        ),
         **diagnostic_stats,
         # What the splats are a representation OF. Without this, a stored
         # .gsplats.zarr cannot say how much it compressed: the source grid is

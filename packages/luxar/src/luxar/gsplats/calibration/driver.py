@@ -171,12 +171,13 @@ def calibrate(
     # floor-suppressed scale. (A per-fit floor would subtract only inside each
     # fit, mismatching the raw held-out reference and tanking the PSNR.) Default
     # is on ("auto"); K* is thus measured the same way you will fit.
-    from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.fitting.preprocessing import _resolve_floor_result
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_kwargs.pop("floor", "auto")
     _validate_floor(floor_spec)  # cal bypasses prepare_fit_config's validation
-    applied_floor = _resolve_floor(V, floor_spec)
+    floor_result = _resolve_floor_result(V, floor_spec)
+    applied_floor = None if floor_result is None else float(floor_result.level)
     # A floor at/above the brightest voxel would clip the whole volume to 0
     # (empty signal → non-finite held-out PSNR). Refuse it, mirroring the
     # single-pass guard in _normalize_data. `auto` can't trigger this (mode is
@@ -190,6 +191,14 @@ def calibrate(
             stacklevel=2,
         )
         applied_floor = None
+    floor_strategy = (
+        floor_result.strategy
+        if floor_result is not None
+        and applied_floor is not None
+        and isinstance(floor_spec, str)
+        and floor_spec.strip().lower() == "specimen"
+        else None
+    )
     if applied_floor is not None:
         V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
     # V is already floor-subtracted; the per-K fits must not subtract again.
@@ -442,6 +451,9 @@ def calibrate(
         fit_config={
             **{k: v for k, v in fit_kwargs.items() if _json_safe(v)},
             "floor_subtracted": applied_floor,
+            **(
+                {"floor_strategy": floor_strategy} if floor_strategy is not None else {}
+            ),
         },
         volume_shape=list(V.shape),
         volume_dtype=str(V.dtype),

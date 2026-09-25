@@ -17,10 +17,17 @@ import numpy as np
 import pytest
 import typer
 
-from luxar.cli.gsplat_ops.fitting.fit_utils import resolve_floor_with_calibration
+from luxar.cli.gsplat_ops.fitting.fit_utils import (
+    floor_spec_needs_volume,
+    resolve_floor_with_calibration,
+)
 from luxar.gsplats.calibration import CalibrationResult, HeldOutPeak, NoiseFloor
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import tril_size
+
+
+def test_specimen_floor_requires_volume() -> None:
+    assert floor_spec_needs_volume("specimen") is True
 
 
 def _write_cal(path: Path, fit_config: dict) -> Path:

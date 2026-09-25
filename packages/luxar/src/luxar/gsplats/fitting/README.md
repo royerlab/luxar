@@ -153,8 +153,9 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 1. **Background floor suppression** (`config.floor`, default `"auto"`): subtracts a
    constant background pedestal / DC offset before normalization by raising the
    effective `image_min` (`_resolve_floor` → `estimate_floor`). `auto` = capped
-   histogram mode (a no-op on clean data), `pN` = Nth percentile of non-zero
-   intensities, `<float>` =
+   histogram mode (a no-op on clean data), `specimen` = the upper compact mode
+   after excluding bright signal and splitting the remaining background band (falling back to `auto` when the
+   split is not credible), `pN` = Nth percentile of non-zero intensities, `<float>` =
    fixed, `none` = disabled. Whole-volume/tiled floor resolution reads at most
    `FLOOR_SAMPLE_BUDGET_VOXELS` from deterministic contiguous slabs; oversized
    cross-sections are center-cropped along additional axes rather than exceeding
@@ -171,8 +172,9 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    histogram-mode shift is dominated by measurement noise and was as likely to
    hurt as to help (#1178); no probe is denoised in that case. A numeric/`none`
    spec is a user absolute and is never corrected. The subtracted level is
-   recorded on `PreprocessedData.floor`; it is NOT added back (output amplitudes
-   are background-relative).
+   recorded on `PreprocessedData.floor`; `specimen` also records its selected or
+   fallback branch on `PreprocessedData.floor_strategy`. The floor is NOT added
+   back (output amplitudes are background-relative).
 2. **Normalization**: Converts input to [0, 1] range (floor/percentile-based or full range). Tiled and planned fits resolve one raw-input `norm_range` for the whole selected volume and forward it to every child, keeping convergence thresholds and amplitude limits on one physical scale. Degenerate shared ranges are declined so a child can fall back to a local usable range.
 3. **Seed Generation**: Creates initial splat positions (auto or user-provided)
 4. **Pre-initialized amplitude rescaling**: Brings `init_amps` onto the

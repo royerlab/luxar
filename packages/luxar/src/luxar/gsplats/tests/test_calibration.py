@@ -1432,6 +1432,150 @@ class TestExponentFitSerialization:
 class TestEstimateFloor:
     """Unit tests for the background/DC floor estimator."""
 
+    @staticmethod
+    def _specimen_mixture(
+        medium_fraction: float = 0.56, bright_fraction: float = 0.05
+    ) -> np.ndarray:
+        rng = np.random.default_rng(1910)
+        n = 200_000
+        specimen_fraction = 1.0 - medium_fraction - bright_fraction
+        return np.concatenate(
+            [
+                rng.normal(204.0, 5.0, int(n * medium_fraction)),
+                rng.normal(675.0, 25.0, int(n * specimen_fraction)),
+                rng.normal(2500.0, 350.0, int(n * bright_fraction)),
+            ]
+        ).astype(np.float32)
+
+    def test_specimen_selects_second_compact_low_band_mode(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        result = estimate_floor_result(self._specimen_mixture(), method="specimen")
+
+        assert result.strategy == "specimen"
+        assert result.level == pytest.approx(675.0, abs=15.0)
+
+    def test_specimen_accepts_medium_dominated_mixture(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        result = estimate_floor_result(
+            self._specimen_mixture(medium_fraction=0.90), method="specimen"
+        )
+
+        assert result.strategy == "specimen"
+        assert result.level == pytest.approx(675.0, abs=15.0)
+
+    @pytest.mark.parametrize(
+        "bright_fraction", [0.02, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30]
+    )
+    def test_specimen_in_medium_bright_fraction_sweep_selects_background(
+        self, bright_fraction: float
+    ) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        result = estimate_floor_result(
+            self._specimen_mixture(bright_fraction=bright_fraction), method="specimen"
+        )
+
+        assert result.strategy == "specimen"
+        assert result.level == pytest.approx(675.0, abs=15.0)
+
+    def test_specimen_falls_back_on_specimen_only_crop(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = np.concatenate(
+            [
+                rng.normal(675.0, 25.0, 140_000),
+                rng.normal(2500.0, 350.0, 60_000),
+            ]
+        ).astype(np.float32)
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen-fallback-auto"
+        assert result.level == pytest.approx(675.0, abs=8.0)
+
+    @pytest.mark.parametrize(
+        "bright_fraction", [0.02, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30]
+    )
+    def test_specimen_only_bright_fraction_sweep_never_selects_signal(
+        self, bright_fraction: float
+    ) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        n = 200_000
+        values = np.concatenate(
+            [
+                rng.normal(675.0, 25.0, int(n * (1.0 - bright_fraction))),
+                rng.normal(2500.0, 350.0, int(n * bright_fraction)),
+            ]
+        ).astype(np.float32)
+
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen-fallback-auto"
+        assert result.level == pytest.approx(675.0, abs=10.0)
+
+    def test_specimen_falls_back_on_single_population(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = rng.normal(1000.0, 25.0, 200_000).astype(np.float32)
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen-fallback-auto"
+        assert result.level == pytest.approx(1000.0, abs=8.0)
+
+    def test_specimen_falls_back_on_sparse_signal(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = np.concatenate(
+            [np.full(198_000, 100.0), rng.normal(2863.0, 350.0, 2_000)]
+        ).astype(np.float32)
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen-fallback-auto"
+        assert result.level == pytest.approx(100.0, abs=1.0)
+
+    def test_specimen_does_not_select_a_bright_tail_as_the_second_mode(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = np.concatenate(
+            [
+                rng.normal(204.0, 5.0, 112_000),
+                rng.normal(675.0, 25.0, 68_000),
+                rng.normal(2500.0, 350.0, 20_000),
+            ]
+        ).astype(np.float32)
+
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen"
+        assert result.level == pytest.approx(675.0, abs=15.0)
+
+    @pytest.mark.parametrize(
+        ("medium_sigma", "specimen_sigma", "strategy"),
+        [(20.0, 70.0, "specimen"), (25.0, 85.0, "specimen-fallback-auto")],
+    )
+    def test_specimen_compactness_boundary_is_explicit(
+        self, medium_sigma: float, specimen_sigma: float, strategy: str
+    ) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = np.concatenate(
+            [
+                rng.normal(204.0, medium_sigma, 112_000),
+                rng.normal(675.0, specimen_sigma, 78_000),
+                rng.normal(2500.0, 350.0, 10_000),
+            ]
+        ).astype(np.float32)
+
+        assert estimate_floor_result(values, method="specimen").strategy == strategy
+
     def _pedestal_volume(self, pedestal: float = 110.0, seed: int = 0) -> np.ndarray:
         rng = np.random.default_rng(seed)
         V = np.full((40, 64, 64), pedestal, np.float32)

@@ -649,7 +649,7 @@ seed_method: "auto"  # Seed method: auto, edges, grid, decomposition
 
 # --- Preprocessing ---
 norm_percentile: 0.0  # Percentile clipping (0=full range, >0=robust)
-floor: "auto"                # Background/DC suppression: auto | pN (e.g. p10) | <float> | none
+floor: "auto"                # Background/DC suppression: auto | specimen | pN (e.g. p10) | <float> | none
 downscale: null            # Downsample by integer factor (null=disabled, e.g. 4 or [1,4,4])
 
 # --- Regularization ---

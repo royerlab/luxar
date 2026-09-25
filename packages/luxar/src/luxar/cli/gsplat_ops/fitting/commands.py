@@ -184,7 +184,9 @@ def calibrate_command(
         "--floor",
         help="Background floor / DC-offset suppression (default: auto), so K* "
         "is measured on floor-suppressed data (matches how you will fit). "
-        "auto | pN | <float> | none. Unset lets a `floor:` in --config/preset "
+        "auto | specimen | pN | <float> | none. specimen targets a second "
+        "compact low-band mode and falls back to auto when bimodality is not "
+        "credible. Unset lets a `floor:` in --config/preset "
         "apply, else defaults to auto. See `gsplat fit --help`.",
     ),
     device: Optional[str] = typer.Option(

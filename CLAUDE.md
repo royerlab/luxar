@@ -450,6 +450,10 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # localized-Gaussian basis, so the floor is subtracted (clip at 0) before
 # normalization; output amplitudes are background-relative. auto = histogram-mode
 # estimate (capped at the median; a no-op on clean data with no pedestal).
+# `--floor specimen` is the opt-in specimen-in-medium mode: it splits the
+# signal-excluded background band, uses the upper mode only when both populations are compact,
+# and otherwise falls back to `auto`. The selected/fallback branch is recorded
+# as `floor_strategy`. `batch-fit` rejects this spec; pass a measured number.
 #
 # STAY ON `auto` UNLESS YOU HAVE MEASURED OTHERWISE. A `pN` floor subtracts the
 # Nth percentile OF NON-ZERO VOXELS, which on sparse data lands wherever the sparsity
@@ -472,6 +476,7 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # residual haze with the display window / opacity, not by destroying data at fit
 # time. And never port a floor choice between datasets without retesting.
 luxar gsplat fit volume.tiff splats.gsplats.zarr                 # --floor auto (default, recommended)
+luxar gsplat fit volume.tiff splats.gsplats.zarr --floor specimen # opt-in bimodal specimen background
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor p10     # subtract 10th percentile
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor 110     # subtract a fixed value
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard-min, legacy)
