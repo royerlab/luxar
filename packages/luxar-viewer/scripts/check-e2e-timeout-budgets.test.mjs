@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
@@ -7,8 +8,12 @@ import { describe, expect, it } from 'vitest';
 import {
   analyzeSpec,
   compareViolationsToExceptions,
+  compareViolationCountsToBaseline,
+  helperSourcesForSpec,
   isDefaultConfigSpec,
+  parseArgs,
   projectTestTimeout,
+  saveBaseline,
   specFiles,
 } from './check-e2e-timeout-budgets.mjs';
 
@@ -436,7 +441,20 @@ describe('analyzeSpec', () => {
       });
     `;
 
-    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([
+          [
+            './helpers',
+            'export async function waitForPointsLoaded(page, count, timeout = 45_000) {}',
+          ],
+        ])
+      )
+    ).toEqual([
       {
         deadlineMs: 60_000,
         file: 'src/tests/e2e/example.spec.ts',
@@ -444,6 +462,214 @@ describe('analyzeSpec', () => {
         test: 'loads a large scene',
       },
     ]);
+  });
+
+  it('resolves aliased defaults from exported shared helpers', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForLuxarReady as waitForReady } from './helpers';
+
+      test('uses the imported default', async ({ page }) => {
+        await waitForReady(page);
+      });
+
+      test('overrides the imported default', async ({ page }) => {
+        await waitForReady(page, 20_000);
+      });
+    `;
+    const helpers = `
+      const DEFAULT_TIMEOUT = 45_000;
+      export async function waitForLuxarReady(page, timeout = DEFAULT_TIMEOUT) {}
+      async function privateWait(page, timeout = 90_000) {}
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helpers]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'uses the imported default',
+      },
+    ]);
+  });
+
+  it('resolves helpers exposed through a local export list', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForReady } from './helpers';
+
+      test('uses the exported alias', async ({ page }) => {
+        await waitForReady(page);
+      });
+    `;
+    const helpers = `
+      async function wait(page, timeout = 45_000) {}
+      export { wait as waitForReady };
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helpers]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'uses the exported alias',
+      },
+    ]);
+  });
+
+  it('ignores unrelated imports and unknown named helper exports', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForReady } from '../support';
+      import { missingHelper } from './helpers/missing';
+
+      test('has no modelled helper', async ({ page }) => {
+        await waitForReady(page);
+        await missingHelper(page);
+      });
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers/missing', 'export const unrelated = 1;']])
+      )
+    ).toEqual([]);
+  });
+
+  it('resolves helper submodule defaults', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForScene } from './helpers/scene';
+
+      test('uses a helper submodule', async ({ page }) => {
+        await waitForScene(page);
+      });
+    `;
+    const helpers = `
+      export const waitForScene = async (page, deadlineMs = 45_000) => {};
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers/scene', helpers]])
+      )
+    ).toHaveLength(1);
+  });
+
+  it('fails closed on unsupported shared-helper import forms', () => {
+    const helpers = new Map([
+      ['./helpers', 'export async function wait(page, timeout = 45_000) {}'],
+    ]);
+
+    expect(() =>
+      analyzeSpec(
+        "import * as helpers from './helpers';",
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        helpers
+      )
+    ).toThrow(/namespace import/);
+    expect(() =>
+      analyzeSpec(
+        "import helpers from './helpers';",
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        helpers
+      )
+    ).toThrow(/default import/);
+    expect(() =>
+      analyzeSpec("import { wait } from './helpers';", 'src/tests/e2e/example.spec.ts')
+    ).toThrow(/Could not resolve shared helper module/);
+  });
+
+  it('fails closed on shared-helper re-exports', () => {
+    const source = "import { wait } from './helpers';";
+
+    expect(() =>
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', "export * from './waits';"]])
+      )
+    ).toThrow(/re-export/);
+    expect(() =>
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', "export { wait } from './waits';"]])
+      )
+    ).toThrow(/re-export/);
+  });
+
+  it('ignores type-only shared-helper imports and re-exports', () => {
+    const runtimeImport = `
+      import { test } from '@playwright/test';
+      import { wait } from './helpers';
+
+      test('uses the runtime helper', async ({ page }) => {
+        await wait(page);
+      });
+    `;
+    const helperWithTypeReExport = `
+      export type { HelperOptions } from './types';
+      export async function wait(page, timeout = 45_000) {}
+    `;
+
+    expect(
+      analyzeSpec(
+        runtimeImport,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helperWithTypeReExport]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'uses the runtime helper',
+      },
+    ]);
+    expect(
+      analyzeSpec("import type Helpers from './helpers';", 'src/tests/e2e/example.spec.ts')
+    ).toEqual([]);
+    expect(
+      analyzeSpec("import type * as Helpers from './helpers';", 'src/tests/e2e/example.spec.ts')
+    ).toEqual([]);
+    expect(
+      analyzeSpec("import { type HelperOptions } from './helpers';", 'example.spec.ts')
+    ).toEqual([]);
   });
 
   it('includes long deadlines from file-level hooks in a test.only', () => {
@@ -566,6 +792,32 @@ describe('compareViolationsToExceptions', () => {
   });
 });
 
+describe('compareViolationCountsToBaseline', () => {
+  const violations = [
+    { deadlineMs: 45_000, file: 'a.spec.ts', line: 1, test: 'one' },
+    { deadlineMs: 45_000, file: 'a.spec.ts', line: 2, test: 'two' },
+  ];
+
+  it('reports count regressions and stale over-declarations', () => {
+    expect(
+      compareViolationCountsToBaseline(violations, { 'a.spec.ts': 1, 'old.spec.ts': 2 })
+    ).toEqual({
+      regressions: [{ allowed: 1, file: 'a.spec.ts', found: 2 }],
+      improvements: [{ allowed: 2, file: 'old.spec.ts', found: 0 }],
+    });
+  });
+
+  it('accepts exact counts and rejects invalid counts', () => {
+    expect(compareViolationCountsToBaseline(violations, { 'a.spec.ts': 2 })).toEqual({
+      regressions: [],
+      improvements: [],
+    });
+    expect(() => compareViolationCountsToBaseline(violations, { 'a.spec.ts': -1 })).toThrow(
+      /non-negative integer/
+    );
+  });
+});
+
 describe('isDefaultConfigSpec', () => {
   it('excludes specs owned by the mobile and perf configs', () => {
     expect(isDefaultConfigSpec('src/tests/e2e/example.spec.ts')).toBe(true);
@@ -590,6 +842,90 @@ describe('specFiles', () => {
       expect(specFiles(specRoot, root).map((path) => relative(root, path))).toEqual([
         'src/tests/e2e/basic.spec.ts',
       ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('helperSourcesForSpec', () => {
+  it('resolves helper modules through each supported candidate', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-helpers-'));
+    try {
+      const cases = [
+        { importPath: './helpers/file', modulePath: 'helpers/file.ts' },
+        { importPath: './helpers/directory', modulePath: 'helpers/directory/index.ts' },
+        { importPath: './helpers/exact.ts', modulePath: 'helpers/exact.ts' },
+      ];
+      for (const { modulePath } of cases) {
+        const path = join(fixture, modulePath);
+        mkdirSync(join(path, '..'), { recursive: true });
+        writeFileSync(path, 'export const wait = async (page, timeout = 45_000) => {};');
+      }
+      const specPath = join(fixture, 'example.spec.ts');
+      const source = cases
+        .map(({ importPath }) => `import { wait } from '${importPath}';`)
+        .join('\n');
+      const cache = new Map();
+      const first = helperSourcesForSpec(source, specPath, cache);
+      const second = helperSourcesForSpec(source, specPath, cache);
+
+      expect([...first.keys()]).toEqual(cases.map(({ importPath }) => importPath));
+      for (const { importPath } of cases)
+        expect(second.get(importPath)).toBe(first.get(importPath));
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when a shared-helper module cannot be resolved', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-helpers-'));
+    try {
+      expect(() =>
+        helperSourcesForSpec(
+          "import { wait } from './helpers/missing';",
+          join(fixture, 'example.spec.ts')
+        )
+      ).toThrow(/Could not resolve shared helper module/);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('baseline updates', () => {
+  it('parses only the supported update flag', () => {
+    expect(parseArgs([])).toEqual({ updateBaseline: false });
+    expect(parseArgs(['--update-baseline'])).toEqual({ updateBaseline: true });
+    expect(() => parseArgs(['--unknown'])).toThrow(/Unknown argument/);
+  });
+
+  it('reports command errors without a stack trace', () => {
+    const result = spawnSync(
+      process.execPath,
+      [join(import.meta.dirname, 'check-e2e-timeout-budgets.mjs'), '--unknown'],
+      { encoding: 'utf8' }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('Unknown argument: --unknown\n');
+  });
+
+  it('rewrites sorted counts while preserving baseline metadata', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-baseline-'));
+    const baselinePath = join(fixture, 'baseline.json');
+    try {
+      writeFileSync(baselinePath, '{"note":"keep me","files":{"old.spec.ts":2}}\n');
+      saveBaseline(
+        [{ file: 'z.spec.ts' }, { file: 'a.spec.ts' }, { file: 'z.spec.ts' }],
+        baselinePath
+      );
+
+      expect(JSON.parse(readFileSync(baselinePath, 'utf8'))).toEqual({
+        note: 'keep me',
+        files: { 'a.spec.ts': 1, 'z.spec.ts': 2 },
+      });
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

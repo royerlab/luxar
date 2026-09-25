@@ -20,6 +20,7 @@ scripts/
 ├── check-coverage-slack.mjs       # Coverage floor/baseline drift gate and refresh printer
 ├── check-e2e-timeout-budgets.mjs  # Default-project E2E deadline/budget ratchet
 ├── check-e2e-timeout-budgets.test.mjs # unit coverage for the E2E timeout-budget ratchet
+├── e2e-timeout-budget-baseline.json # Per-file shared-helper deadline debt counts
 ├── e2e-timeout-budget-exceptions.json # Reasoned, stale-failing timeout-budget opt-outs
 ├── check-lib-exports.mjs          # Post-build sanity check on dist/lib/
 ├── check-node-types-version.mjs   # Node runtime/@types major-version declaration guard
@@ -45,6 +46,10 @@ scripts/
 ├── run-ci-checks.mjs              # Aggregate viewer static + coverage merge gates
 └── perf/                          # perf-bench capture fixtures / helpers
 ```
+
+Refresh intentional timeout-budget count changes with
+`pnpm update:e2e-timeout-budget-baseline`; the writer preserves the baseline
+note and re-keys renamed spec paths from the analyzer's current output.
 
 ## LOD visual A/B
 

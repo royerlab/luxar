@@ -111,6 +111,7 @@
     "check:three-types": "node scripts/check-three-types-version.mjs",
     "check:jsdom-version": "node scripts/check-jsdom-version.mjs",
     "check:e2e-timeout-budgets": "node scripts/check-e2e-timeout-budgets.mjs",
+    "update:e2e-timeout-budget-baseline": "node scripts/check-e2e-timeout-budgets.mjs --update-baseline",
     "check:knip": "knip --no-progress --no-config-hints",
     "check:knip:ci": "knip --no-progress --no-config-hints --include files,dependencies",
     "format": "prettier --write --cache --cache-strategy content src scripts tools examples \"*.{ts,mts,cts,js,mjs,cjs}\"",

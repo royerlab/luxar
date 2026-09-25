@@ -1,4 +1,4 @@
 {
-  "note": "Scope is the default Playwright project. Imported helper defaults, deadlines inside spec-local helper bodies, and beforeAll/afterAll hooks remain out of scope; see #2897. Deadlines are modelled as the largest single wait, not their sum.",
+  "note": "Scope is the default Playwright project. Imported parameter defaults from ./helpers and ./helpers/* are modelled; deadlines inside helper bodies, local or imported, and beforeAll/afterAll hooks remain out of scope (see #2901). Deadlines are modelled as the largest single wait, not their sum.",
   "exceptions": []
 }
