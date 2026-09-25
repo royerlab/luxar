@@ -13,7 +13,11 @@
  * fine-grid members of the single-thumb slider interaction contract.
  */
 
-import { attachInlineNumberEdit, WHEEL_INTERACTION_HINT } from '../slider-kit';
+import {
+  attachInlineNumberEdit,
+  INLINE_NUMBER_EDIT_HINT,
+  WHEEL_INTERACTION_HINT,
+} from '../slider-kit';
 import { normalizeWheelDeltaWithAxisFallback } from '../../utils/wheel-delta';
 import { applyModifierTier } from '../../utils/cross-layer/modifier-tiers';
 import { clamp } from '../../utils/clamp';
@@ -114,7 +118,7 @@ export class RangeSlider {
     this.boundsLowLabel.setAttribute('role', 'button');
     this.boundsLowLabel.tabIndex = 0;
     this.boundsLowLabel.setAttribute('aria-label', `${options.label ?? 'Range'} lower bound`);
-    this.boundsLowLabel.title = `Click to edit · ${WHEEL_INTERACTION_HINT}`;
+    this.boundsLowLabel.title = `${INLINE_NUMBER_EDIT_HINT} · ${WHEEL_INTERACTION_HINT}`;
     this.boundsLowLabel.textContent = this.formatValue(options.min);
     this.onClickLow = () => this.editBound('low');
     this.boundsLowLabel.addEventListener('click', this.onClickLow);
@@ -125,7 +129,7 @@ export class RangeSlider {
     this.boundsHighLabel.setAttribute('role', 'button');
     this.boundsHighLabel.tabIndex = 0;
     this.boundsHighLabel.setAttribute('aria-label', `${options.label ?? 'Range'} upper bound`);
-    this.boundsHighLabel.title = `Click to edit · ${WHEEL_INTERACTION_HINT}`;
+    this.boundsHighLabel.title = `${INLINE_NUMBER_EDIT_HINT} · ${WHEEL_INTERACTION_HINT}`;
     this.boundsHighLabel.textContent = this.formatValue(options.max);
     this.onClickHigh = () => this.editBound('high');
     this.boundsHighLabel.addEventListener('click', this.onClickHigh);

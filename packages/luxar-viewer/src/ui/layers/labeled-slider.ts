@@ -24,6 +24,7 @@ import {
   attachSliderInteractions,
   fineTrackStep,
   formatSliderValue,
+  INLINE_NUMBER_EDIT_HINT,
   snapToGrid,
 } from '../slider-kit';
 
@@ -285,7 +286,7 @@ export class LabeledSlider {
     } else {
       this.valueEl.setAttribute('role', 'button');
       this.valueEl.tabIndex = 0;
-      this.valueEl.title = 'Click to edit';
+      this.valueEl.title = INLINE_NUMBER_EDIT_HINT;
     }
   }
 

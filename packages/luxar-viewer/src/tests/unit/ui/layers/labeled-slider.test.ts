@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { LabeledSlider } from '../../../../ui/layers/labeled-slider';
 import { absorptionSliderRange } from '../../../../ui/layers/absorption-range';
+import { INLINE_NUMBER_EDIT_HINT } from '../../../../ui/slider-kit';
 
 describe('LabeledSlider', () => {
   let container: HTMLElement;
@@ -47,6 +48,7 @@ describe('LabeledSlider', () => {
     expect(findReadout().textContent).toBe('1.50');
     expect(findReadout().getAttribute('aria-label')).toBe('Gamma value');
     expect(findReadout().getAttribute('role')).toBe('button');
+    expect(findReadout().title).toBe(INLINE_NUMBER_EDIT_HINT);
   });
 
   it('supports tiered wheel and arrow stepping, reset, and base-grid dragging', () => {
@@ -131,6 +133,7 @@ describe('LabeledSlider', () => {
     slider.setInert('Clearcoat is disabled');
     expect(readout.hasAttribute('role')).toBe(false);
     expect(readout.tabIndex).toBe(-1);
+    expect(readout.title).toBe('');
     readout.click();
     expect(container.querySelector('.luxar-slider-kit__inline-input')).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
@@ -138,6 +141,7 @@ describe('LabeledSlider', () => {
     slider.setInert(null);
     expect(readout.getAttribute('role')).toBe('button');
     expect(readout.tabIndex).toBe(0);
+    expect(readout.title).toBe(INLINE_NUMBER_EDIT_HINT);
     readout.click();
     const editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
     expect(editor).not.toBeNull();

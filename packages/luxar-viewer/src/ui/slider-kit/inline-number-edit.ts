@@ -1,3 +1,5 @@
+import { INLINE_NUMBER_EDIT_HINT } from './hints';
+
 /** Value accessors and callbacks for an editable numeric readout. */
 export interface InlineNumberEditOptions {
   ariaLabel: string;
@@ -15,7 +17,7 @@ export function attachInlineNumberEdit(
   element.setAttribute('role', 'button');
   element.tabIndex = 0;
   element.setAttribute('aria-label', options.ariaLabel);
-  element.title = 'Click to edit';
+  element.title = INLINE_NUMBER_EDIT_HINT;
 
   const beginEdit = (): void => {
     if (options.isEnabled && !options.isEnabled()) return;
