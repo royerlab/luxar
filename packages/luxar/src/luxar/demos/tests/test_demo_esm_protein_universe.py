@@ -1030,9 +1030,8 @@ def test_tour_order_rejects_a_list_that_is_not_a_permutation() -> None:
 def test_tour_order_keeps_the_three_sequences_that_depend_on_it() -> None:
     """Three adjacencies are load-bearing, not taste."""
     order = list(demo.TOUR_ORDER)
-    # The owner asked for these two together (2026-09-16), and the TnpB story
-    # is titled against it ("the scissors Cas12 grew out of"), so CRISPR
-    # must come first or the title has no referent.
+    # The owner asked for these two together (2026-09-16): Cas12 links the
+    # CRISPR system to its TnpB ancestors, so CRISPR hands off to TnpB.
     assert order.index("TnpB and Fanzor") == order.index("CRISPR-Cas") + 1
     # Each smell narration counts itself: "a second time", "a third time".
     smell = ["Olfactory receptors", "Insect odorant receptors", "Worm chemoreceptors"]

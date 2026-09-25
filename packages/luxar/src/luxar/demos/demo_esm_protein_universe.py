@@ -2259,8 +2259,8 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
 #:       immune system bacteria evolved against viruses, the jumping-gene
 #:       nuclease that immune system's scissors were recruited from — the
 #:       owner asked for these two to be adjacent and they are, CRISPR first
-#:       because the TnpB story is titled against it — then the chemical war,
-#:       resistance before the weapon it defeats.
+#:       because Cas12 links the CRISPR system to its TnpB ancestors — then
+#:       the chemical war, resistance before the weapon it defeats.
 #: 15-19 Life at the edges, then the same trick invented three times: ice and
 #:       boiling water, then smell in vertebrates, insects and nematodes.
 #:       (The smell trio must stay in that order — each narration counts "a
