@@ -409,19 +409,38 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
   };
 }
 
-/** The GL/GPU adapter string, to refuse a software renderer. */
-export function rendererInfo() {
+/**
+ * The adapter the page renders on, so the harness can refuse to measure a
+ * software renderer, a WebGPU fallback adapter, or a lost WebGL context.
+ *
+ * WebGPU: three does not expose its adapter, so the page's own
+ * `navigator.gpu.requestAdapter()` answers (same browser, same flags, same
+ * adapter selection). WebGL: the unmasked renderer string, or null when the
+ * context is lost (`getParameter` returns null on a lost context).
+ *
+ * @returns {Promise<{ api: 'webgl'|'webgpu', gpu: string, usable: boolean, why?: string }>}
+ */
+export async function rendererInfo() {
   const r = window.__luxarDebug.app.sceneManager.renderer;
   const backend = r.backend;
   if (backend?.isWebGPUBackend) {
-    const info = backend.adapter?.info ?? {};
-    return {
-      api: 'webgpu',
-      gpu: `${info.vendor ?? ''} ${info.architecture ?? ''} ${info.description ?? ''}`.trim(),
-    };
+    const adapter = await navigator.gpu?.requestAdapter();
+    const info = adapter?.info ?? {};
+    const gpu = [info.vendor, info.architecture, info.device, info.description]
+      .filter(Boolean)
+      .join(' ');
+    const fallback = info.isFallbackAdapter ?? adapter?.isFallbackAdapter ?? false;
+    if (!adapter) return { api: 'webgpu', gpu: '', usable: false, why: 'no WebGPU adapter' };
+    if (fallback) return { api: 'webgpu', gpu, usable: false, why: 'fallback (software) adapter' };
+    if (!gpu) return { api: 'webgpu', gpu, usable: false, why: 'adapter reports no identity' };
+    return { api: 'webgpu', gpu, usable: true };
   }
   const gl = backend?.gl ?? r.getContext();
+  if (gl.isContextLost())
+    return { api: 'webgl', gpu: '', usable: false, why: 'WebGL context lost' };
   const ext = gl.getExtension('WEBGL_debug_renderer_info');
-  const gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
-  return { api: 'webgl', gpu: String(gpu) };
+  const gpu = String(
+    ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)
+  );
+  return { api: 'webgl', gpu, usable: true };
 }

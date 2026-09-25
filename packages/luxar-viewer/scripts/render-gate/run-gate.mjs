@@ -155,6 +155,8 @@ async function openCase(browser, origin, c, { backend, dsf, viewport, urlParams 
   await page.waitForFunction(ops.debugReady, undefined, { timeout: 300000 });
   const info = await page.evaluate(ops.rendererInfo);
   seenGpus.add(`${info.api}: ${info.gpu}`);
+  if (!info.usable)
+    throw new Error(`${info.why} (${info.gpu || 'no adapter string'}); refusing to measure`);
   if (SOFTWARE.test(info.gpu))
     throw new Error(`software renderer (${info.gpu}); refusing to measure`);
   if (info.api !== backend) throw new Error(`asked for ${backend}, got ${info.api} (${info.gpu})`);
