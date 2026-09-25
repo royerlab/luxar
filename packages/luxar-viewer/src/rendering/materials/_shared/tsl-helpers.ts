@@ -179,6 +179,23 @@ export function proxyIUniform<T>(node: TSLNode): IUniform<T> {
 }
 
 /**
+ * TSL twins of GLSL `luxarIsOrthoProjection` / `luxarProjectionSizeScale`
+ * (glsl-lib.ts): read from `cameraProjectionMatrix`, which three sets for the
+ * camera being drawn with. `element(c)` is column c, so P[3][3] is
+ * `element(3).w` and P[1][1] is `element(1).y`.
+ */
+export function isOrthoProjectionTSL(): TSLNode {
+  const P: TSLNode = cameraProjectionMatrix;
+  return P.element(int(3)).w.greaterThan(0.5).select(int(1), int(0));
+}
+
+/** |P11|: see {@link isOrthoProjectionTSL}. */
+export function projectionSizeScaleTSL(): TSLNode {
+  const P: TSLNode = cameraProjectionMatrix;
+  return P.element(int(1)).y.abs();
+}
+
+/**
  * Unified perspective near-plane fade (runtime-uniform variant, for
  * the point/gsplat graphs whose ortho flag is the `uIsOrtho` uniform).
  * Mirrors GLSL `perspectiveNearFade` in glsl-lib.ts: perspective =

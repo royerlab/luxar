@@ -2074,6 +2074,32 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(dprHalf).toEqual(dpr1);
   });
 
+  test('point-cube-face: a cube-capture face renders a point as its +90° equivalent does', async ({
+    page,
+  }) => {
+    // The scene-captured environment draws the data through CubeCamera faces
+    // (fov −90, a flipped projection). The point size is read from the
+    // projection as |P11|: a signed P11 would make it negative and clamp the
+    // sprite to the 1.5 px floor, so the face would show a speck where the
+    // equivalent camera shows a ~4 px point.
+    await bootHarness(page);
+
+    const face = await runGLSL(page, 'point-cube-face');
+    const equivalent = await runGLSL(page, 'point-cube-face-equivalent');
+    const faceTsl = (await runTSL(page, 'point-cube-face')).pixels;
+    const equivalentTsl = (await runTSL(page, 'point-cube-face-equivalent')).pixels;
+
+    assertBothRendered(face, faceTsl, 'point-cube-face');
+    expect(nonUniformPixelCount(face), 'a real sprite, not the size floor').toBeGreaterThan(9);
+    expect(meanAbsDiffPerCoveredPixel(face, equivalent), 'GLSL face vs equivalent').toBeLessThan(
+      1.0
+    );
+    expect(
+      meanAbsDiffPerCoveredPixel(faceTsl, equivalentTsl),
+      'TSL face vs equivalent'
+    ).toBeLessThan(1.0);
+  });
+
   test('point-near-fade: mid-band near fade renders identically across backends (B9c)', async ({
     page,
   }) => {

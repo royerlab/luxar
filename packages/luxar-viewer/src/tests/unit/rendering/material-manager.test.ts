@@ -898,8 +898,8 @@ describe('MaterialManager', () => {
       }) as PointMaterial;
 
       // Verify world-space sizing from VIEW-SPACE DEPTH (matches the
-      // line + gsplat shaders) and the pre-computed pointSizeFactor.
-      expect(material.vertexShader).toContain('normalizedRadius * pointSizeFactor * invDistance');
+      // line + gsplat shaders) and the size factor read from the projection.
+      expect(material.vertexShader).toContain('normalizedRadius * sizeFactor * invDistance');
       expect(material.vertexShader).toContain('1.0 / max(-mvPosition.z, 1e-20)');
     });
 

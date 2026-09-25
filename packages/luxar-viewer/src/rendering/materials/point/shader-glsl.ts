@@ -19,6 +19,7 @@
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
 import {
@@ -41,6 +42,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
+    ${GLSL_PROJECTION_FUNCTIONS}
 
     // Per-vertex (4 corners): -1..1 normalised quad coordinates.
     in vec2 aQuadCorner;
@@ -162,7 +164,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // floor here overrode the scene-relative value on tiny-unit
       // scenes (diagonal ~1e-6 put the WHOLE scene inside the fade
       // band and every vertex was rejected).
-      vNearFade = perspectiveNearFade(uIsOrtho, mvPosition.z, max(uNearCull, 1e-20));
+      vNearFade = perspectiveNearFade(luxarIsOrthoProjection(), mvPosition.z, max(uNearCull, 1e-20));
       if (vNearFade < 0.01) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         return;
@@ -181,8 +183,9 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // clamp(basePointSize, 1.5 * uPixelRatio, maxPointSize) below bounds the
       // output either way. The old absolute 1e-4 clamped VALID depths
       // on tiny-unit scenes (-z ~ 1e-6), shrinking every sprite ~100×.
-      float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-20);
-      float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
+      float invDistance = (luxarIsOrthoProjection() == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-20);
+      float sizeFactor = 2.0 * uResolution.y * luxarProjectionSizeScale();
+      float basePointSize = normalizedRadius * sizeFactor * invDistance;
 
       // The shifted-truncated super-Gaussian falloff (fragment shader)
       // truncates to zero exactly at the sprite edge (rho = 1), so the

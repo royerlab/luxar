@@ -49,6 +49,49 @@ export function buildDefaultCamera(): THREE.Camera {
 }
 
 /**
+ * Orthographic camera at (0,0,1) whose frustum height is `height` world
+ * units. Point, line and splat shaders derive their size scale from the
+ * projection matrix (|P11| = 2 / height), so a case that needs a specific
+ * size factor states it through the camera it renders with: e.g. a point
+ * size factor of `4 * resY / height`.
+ */
+export function buildOrthoCamera(height: number): THREE.Camera {
+  const half = height / 2;
+  const camera = new THREE.OrthographicCamera(-half, half, half, -half, 0.1, 10);
+  camera.position.set(0, 0, 1);
+  camera.lookAt(0, 0, 0);
+  return camera;
+}
+
+/**
+ * The +X face camera of a `THREE.CubeCamera` at the origin, built the way
+ * three builds it (WebGL coordinate system): fov −90 — a negative fov is
+ * three's convention for a cube face, and it FLIPS the projection matrix —
+ * up (0, −1, 0), looking down +X. The scene-captured environment renders the
+ * data through six of these.
+ */
+export function buildCubeFaceCamera(): THREE.Camera {
+  const camera = new THREE.PerspectiveCamera(-90, 1, 0.1, 10);
+  camera.up.set(0, -1, 0);
+  camera.lookAt(1, 0, 0);
+  return camera;
+}
+
+/**
+ * An ordinary +90° camera that sees exactly what {@link buildCubeFaceCamera}
+ * sees: the −90 fov negates both NDC axes, which is a 180° roll about the
+ * view axis, so the same view direction with up (0, +1, 0) produces the same
+ * image. A geometry whose size or position ignores the projection's sign
+ * renders differently through the two.
+ */
+export function buildCubeFaceEquivalentCamera(): THREE.Camera {
+  const camera = new THREE.PerspectiveCamera(90, 1, 0.1, 10);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(1, 0, 0);
+  return camera;
+}
+
+/**
  * Perspective camera at (0,0,1) looking down −Z, for the behind-camera guard
  * cases. A point at world z=3 lands at view-space z=+2 (behind the camera),
  * so the perspective-only guard (`uIsOrtho == 0 && mvPosition.z >= 0`) fires.

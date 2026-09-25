@@ -117,11 +117,18 @@ describe('PointMaterial', () => {
       // correct perspective sizing).
       expect(material.vertexShader).toContain('1.0 / max(-mvPosition.z, 1e-20)');
 
-      // OPTIMIZATION: Check for pre-computed pointSizeFactor uniform
-      expect(material.vertexShader).toContain('uniform float pointSizeFactor');
+      // The size factor is read from the projection matrix this draw uses
+      // (2 * resY * |P11|), not a CPU-pushed fov copy, and so is the ortho
+      // branch; see projection-math.ts.
+      expect(material.vertexShader).toContain('float luxarProjectionSizeScale()');
       expect(material.vertexShader).toContain(
-        'float basePointSize = normalizedRadius * pointSizeFactor * invDistance'
+        'float sizeFactor = 2.0 * uResolution.y * luxarProjectionSizeScale()'
       );
+      expect(material.vertexShader).toContain(
+        'float basePointSize = normalizedRadius * sizeFactor * invDistance'
+      );
+      expect(material.vertexShader).toContain('(luxarIsOrthoProjection() == 1) ? 1.0');
+      expect(material.vertexShader).not.toMatch(/\* pointSizeFactor \*/);
 
       // Check pointSize clamp + sprite expansion (replaces gl_PointSize).
       expect(material.vertexShader).toContain('uniform float maxPointSize');

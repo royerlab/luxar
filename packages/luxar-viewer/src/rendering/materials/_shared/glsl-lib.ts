@@ -74,6 +74,31 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
 `;
 
 /**
+ * View scales read from the projection matrix three sets for the camera
+ * being drawn with (vertex shaders only: `projectionMatrix` is a vertex
+ * built-in). Deriving them here, instead of pushing CPU copies computed
+ * from `camera.fov`, keeps them right for every camera the scene is drawn
+ * with — a cube-capture face (fov −90, a flipped P), a zoomed or asymmetric
+ * frustum, an embedder's camera — and makes a stale copy impossible.
+ * CPU mirror and tests: `projection-math.ts`.
+ *
+ *   - `luxarIsOrthoProjection()`: 1 for an orthographic P (last row
+ *     (0,0,0,1)), 0 for perspective.
+ *   - `luxarProjectionSizeScale()`: |P11|, pixels per view unit at unit
+ *     depth per half viewport height. Every size scale is a multiple of
+ *     `uResolution.y * luxarProjectionSizeScale()`. The absolute value keeps
+ *     sizes positive under a flipped P; positions keep the sign.
+ */
+export const GLSL_PROJECTION_FUNCTIONS = `
+int luxarIsOrthoProjection() {
+  return projectionMatrix[3][3] > 0.5 ? 1 : 0;
+}
+float luxarProjectionSizeScale() {
+  return abs(projectionMatrix[1][1]);
+}
+`;
+
+/**
  * The pick buffer's 16-bit element-id split, as a standalone function of an
  * arbitrary index.
  *
