@@ -275,7 +275,7 @@ describe('RangeSlider — bound wheel adjustment', () => {
   it('scrolling the low bound up increases min (no fine modifier)', () => {
     const { slider, onBoundsChange } = makeSlider({ min: 0, max: 10 });
     const lowBound = host.querySelectorAll('.luxar-range-slider__bound')[0];
-    // computeWheelStep([0,10], false) = 1 — scroll up adds one step.
+    // computeWheelStep([0,10]) = 1 — scroll up adds one step.
     const evt = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true });
     lowBound.dispatchEvent(evt);
 

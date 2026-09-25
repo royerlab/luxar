@@ -3,6 +3,7 @@ export interface InlineNumberEditOptions {
   ariaLabel: string;
   getValue: () => number;
   formatValue: (value: number) => string;
+  isEnabled?: () => boolean;
   onCommit: (value: number) => void;
 }
 
@@ -17,6 +18,7 @@ export function attachInlineNumberEdit(
   element.title = 'Click to edit';
 
   const beginEdit = (): void => {
+    if (options.isEnabled && !options.isEnabled()) return;
     if (element.nextElementSibling?.classList.contains('luxar-slider-kit__inline-input')) return;
     const input = document.createElement('input');
     input.type = 'text';
@@ -39,7 +41,9 @@ export function attachInlineNumberEdit(
       if (finished) return;
       finished = true;
       const parsed = parseFloat(input.value);
-      if (Number.isFinite(parsed)) options.onCommit(parsed);
+      if (Number.isFinite(parsed) && (!options.isEnabled || options.isEnabled())) {
+        options.onCommit(parsed);
+      }
       restore();
     };
     input.addEventListener('keydown', (event) => {

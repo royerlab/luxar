@@ -39,12 +39,11 @@ export interface RangeSliderOptions {
  * power-of-10 increments across the full range.
  * The caller applies the shared Shift/Ctrl modifier ladder.
  */
-function computeWheelStep(min: number, max: number, fine: boolean): number {
+function computeWheelStep(min: number, max: number): number {
   const range = Math.abs(max - min);
-  if (range < 1e-10) return fine ? 0.01 : 0.1;
+  if (range < 1e-10) return 0.1;
   const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
-  const step = magnitude / 10; // ~10 steps per order of magnitude
-  return fine ? step / 10 : step;
+  return magnitude / 10; // ~10 steps per order of magnitude
 }
 
 export class RangeSlider {
@@ -389,7 +388,7 @@ export class RangeSlider {
 
     const curMin = parseFloat(this.lowInput.min);
     const curMax = parseFloat(this.lowInput.max);
-    const step = applyModifierTier(computeWheelStep(curMin, curMax, false), e);
+    const step = applyModifierTier(computeWheelStep(curMin, curMax), e);
     // Scroll up → increase, scroll down → decrease.
     const wheelDelta = normalizeWheelDeltaWithAxisFallback(e);
     if (wheelDelta === 0) return;

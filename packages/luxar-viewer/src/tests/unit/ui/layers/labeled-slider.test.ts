@@ -115,6 +115,40 @@ describe('LabeledSlider', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it('disables exact readout editing while inert and restores it when live', () => {
+    const onChange = vi.fn();
+    const slider = new LabeledSlider({
+      container,
+      label: 'Clearcoat roughness',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: 0.5,
+      onChange,
+    });
+    const readout = findReadout();
+
+    slider.setInert('Clearcoat is disabled');
+    expect(readout.hasAttribute('role')).toBe(false);
+    expect(readout.tabIndex).toBe(-1);
+    readout.click();
+    expect(container.querySelector('.luxar-slider-kit__inline-input')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+
+    slider.setInert(null);
+    expect(readout.getAttribute('role')).toBe('button');
+    expect(readout.tabIndex).toBe(0);
+    readout.click();
+    const editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+    expect(editor).not.toBeNull();
+
+    slider.setInert('Clearcoat is disabled');
+    editor.value = '0.9';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(findReadout().textContent).toBe('0.50');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('commits exact typed values and widens the track when needed', () => {
     const onChange = vi.fn();
     const slider = new LabeledSlider({

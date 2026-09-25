@@ -7,11 +7,6 @@ export function decimalsForStep(step: number): number {
   return Math.max(0, coefficientDecimals - exponent);
 }
 
-/** Format a number with the precision implied by its step. */
-export function formatNumber(value: number, step?: number): string {
-  return step === undefined ? String(value) : value.toFixed(decimalsForStep(step));
-}
-
 /** Format a slider readout, widening precision when it sits off the drag grid. */
 export function formatSliderValue(
   value: number,

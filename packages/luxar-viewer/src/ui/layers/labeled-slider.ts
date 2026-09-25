@@ -148,6 +148,7 @@ export class LabeledSlider {
       ariaLabel: `${options.label} value`,
       getValue: () => this.lastValue,
       formatValue: (value) => String(value),
+      isEnabled: () => !this.input.disabled,
       onCommit: (parsed) => this.commitTypedValue(parsed),
     });
 
@@ -273,9 +274,19 @@ export class LabeledSlider {
    * of reading as broken. `null` restores the live state.
    */
   setInert(reason: string | null): void {
-    this.input.disabled = reason !== null;
-    this.wrapper.classList.toggle('luxar-layers-panel__control-group--inert', reason !== null);
+    const inert = reason !== null;
+    this.input.disabled = inert;
+    this.wrapper.classList.toggle('luxar-layers-panel__control-group--inert', inert);
     this.wrapper.title = reason ?? '';
+    if (inert) {
+      this.valueEl.removeAttribute('role');
+      this.valueEl.tabIndex = -1;
+      this.valueEl.title = '';
+    } else {
+      this.valueEl.setAttribute('role', 'button');
+      this.valueEl.tabIndex = 0;
+      this.valueEl.title = 'Click to edit';
+    }
   }
 
   /** The hover text of the whole group (the inert reason, or empty). */
