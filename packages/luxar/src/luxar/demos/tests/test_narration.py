@@ -144,3 +144,67 @@ def test_engine_extensions_are_formats_the_sound_writer_accepts() -> None:
         Path(name).suffix.lstrip(".") for name in AUDIO_FORMAT_FILENAMES.values()
     }
     assert set(ENGINE_EXTENSIONS.values()) <= accepted
+
+
+class _Resp:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> "_Resp":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def test_openai_request_retries_a_dropped_read(monkeypatch, tmp_path) -> None:
+    import urllib.request
+
+    from luxar.demos import _narration
+
+    calls = []
+
+    def flaky(request, timeout):  # noqa: ANN001 - urlopen's shape
+        calls.append(1)
+        if len(calls) < 3:
+            raise TimeoutError("The read operation timed out")
+        return _Resp(b"mp3-bytes")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setattr(urllib.request, "urlopen", flaky)
+    monkeypatch.setattr(_narration.time, "sleep", lambda s: None)
+    out = tmp_path / "clip.mp3"
+    _narration._openai_engine("hello", "alloy", out)
+    assert out.read_bytes() == b"mp3-bytes" and len(calls) == 3
+
+
+def test_openai_request_does_not_retry_a_client_error(monkeypatch, tmp_path) -> None:
+    import io
+    import urllib.error
+    import urllib.request
+
+    import pytest
+
+    from luxar.demos import _narration
+
+    calls = []
+
+    def bad(request, timeout):  # noqa: ANN001 - urlopen's shape
+        calls.append(1)
+        raise urllib.error.HTTPError(
+            "u",
+            401,
+            "no",
+            {},
+            io.BytesIO(b"bad key"),  # type: ignore[arg-type]
+        )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setattr(urllib.request, "urlopen", bad)
+    monkeypatch.setattr(_narration.time, "sleep", lambda s: None)
+    with pytest.raises(RuntimeError, match="HTTP 401"):
+        _narration._openai_engine("hello", "alloy", tmp_path / "c.mp3")
+    assert len(calls) == 1
