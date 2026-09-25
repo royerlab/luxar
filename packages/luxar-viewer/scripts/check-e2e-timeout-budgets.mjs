@@ -184,7 +184,8 @@ function testBudget(statements, constants, enclosing, projectTimeoutMs) {
   for (const call of budgetCalls(statements)) {
     const path = callPath(call.expression).join('.');
     if (path === 'test.setTimeout') {
-      budgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+      const directBudgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+      if (directBudgetMs !== undefined) budgetMs = directBudgetMs;
     } else if (path === 'test.slow' && !slowApplied && isUnconditionalSlow(call)) {
       slowApplied = true;
       budgetMs = (budgetMs ?? projectTimeoutMs) * 3;

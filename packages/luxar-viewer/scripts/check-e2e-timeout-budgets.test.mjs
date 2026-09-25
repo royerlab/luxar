@@ -312,6 +312,25 @@ describe('analyzeSpec', () => {
     expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toHaveLength(1);
   });
 
+  it('keeps an enclosing budget when a direct timeout cannot be resolved', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      const BACKENDS = ['webgl', 'webgpu'];
+
+      test.describe('group', () => {
+        test.describe.configure({ timeout: 300_000 });
+
+        test('scales with the backend axis', async ({ page }) => {
+          test.setTimeout(Math.max(300_000, 90_000 * BACKENDS.length));
+          await page.waitForTimeout(90_000);
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
   it('lets a direct test budget override an enclosing describe budget', () => {
     const source = `
       import { test } from '@playwright/test';
