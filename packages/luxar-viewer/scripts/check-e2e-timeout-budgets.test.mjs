@@ -580,6 +580,177 @@ describe('analyzeSpec', () => {
     ).toHaveLength(1);
   });
 
+  it('propagates hardcoded deadlines from local helper bodies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      async function loadScene(page) {
+        await page.waitForFunction(() => window.ready, undefined, { timeout: 45_000 });
+      }
+
+      test('loads through a local helper', async ({ page }) => {
+        await loadScene(page);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 8,
+        test: 'loads through a local helper',
+      },
+    ]);
+  });
+
+  it('propagates imported helper defaults through a local helper body', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForLuxarReady, waitForPointsLoaded } from './helpers';
+
+      async function loadScene(page) {
+        await waitForLuxarReady(page);
+        await waitForPointsLoaded(page);
+      }
+
+      test('loads through imported helpers', async ({ page }) => {
+        await loadScene(page);
+      });
+    `;
+    const helpers = `
+      export async function waitForLuxarReady(page, timeout = 45_000) {}
+      export async function waitForPointsLoaded(page, count = 1, timeout = 45_000) {}
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helpers]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 10,
+        test: 'loads through imported helpers',
+      },
+    ]);
+  });
+
+  it('propagates deadlines from imported helper bodies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { openPanel } from './helpers';
+
+      test('opens through an imported wrapper', async ({ page }) => {
+        await openPanel(page);
+      });
+    `;
+    const helpers = `
+      async function waitForPanel(page) {
+        await page.waitForFunction(() => window.panelOpen, undefined, { timeout: 45_000 });
+      }
+
+      export async function openPanel(page) {
+        await waitForPanel(page);
+      }
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helpers]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'opens through an imported wrapper',
+      },
+    ]);
+  });
+
+  it('propagates caller timeout arguments through nested helper bodies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      async function waitForScene(page, timeout = 45_000) {
+        await page.waitForFunction(() => window.ready, undefined, { timeout });
+      }
+
+      async function prepareScene(page, deadline = 45_000) {
+        await waitForScene(page, deadline);
+      }
+
+      test('overrides the nested helper deadline', async ({ page }) => {
+        await prepareScene(page, 75_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 75_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 12,
+        test: 'overrides the nested helper deadline',
+      },
+    ]);
+  });
+
+  it('guards mutually recursive helper bodies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      async function loadScene(page) {
+        await retryLoad(page);
+      }
+
+      async function retryLoad(page) {
+        await loadScene(page);
+        await page.waitForTimeout(45_000);
+      }
+
+      test('loads through recursive helpers', async ({ page }) => {
+        await loadScene(page);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 13,
+        test: 'loads through recursive helpers',
+      },
+    ]);
+  });
+
+  it('fails closed on deeply nested helper-body traversal', () => {
+    const helperChain = Array.from({ length: 20 }, (_, index) => {
+      const next = index === 19 ? 'page.waitForTimeout(45_000)' : `helper${index + 1}(page)`;
+      return `async function helper${index}(page) { await ${next}; }`;
+    }).join('\n');
+    const source = `
+      import { test } from '@playwright/test';
+      ${helperChain}
+
+      test('does not traverse an unbounded helper chain', async ({ page }) => {
+        await helper0(page);
+      });
+    `;
+
+    expect(() => analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toThrow(
+      /exceeded 10 nested calls/
+    );
+  });
+
   it('fails closed on unsupported shared-helper import forms', () => {
     const helpers = new Map([
       ['./helpers', 'export async function wait(page, timeout = 45_000) {}'],

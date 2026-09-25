@@ -12,6 +12,7 @@ const BASELINE_PATH = join(PACKAGE_ROOT, 'scripts/e2e-timeout-budget-baseline.js
 const EXCEPTIONS_PATH = join(PACKAGE_ROOT, 'scripts/e2e-timeout-budget-exceptions.json');
 const PLAYWRIGHT_CONFIG_PATH = join(PACKAGE_ROOT, 'playwright.config.ts');
 const DEADLINE_NAME = /(timeout|deadline)/i;
+const MAX_HELPER_BODY_DEPTH = 10;
 // Statements that DECLARE a budget rather than wait for anything.
 const BUDGET_CALL_PATHS = new Set(['test.setTimeout', 'test.slow', 'test.describe.configure']);
 
@@ -33,29 +34,30 @@ function constantDeclarations(sourceFile) {
   return declarations;
 }
 
-function evaluateNumber(node, constants, resolving = new Set()) {
+function evaluateNumber(node, constants, resolving = new Set(), values = new Map()) {
   if (!node) return undefined;
   if (ts.isNumericLiteral(node)) return Number(node.text);
   if (ts.isParenthesizedExpression(node))
-    return evaluateNumber(node.expression, constants, resolving);
+    return evaluateNumber(node.expression, constants, resolving, values);
   if (ts.isPrefixUnaryExpression(node)) {
-    const value = evaluateNumber(node.operand, constants, resolving);
+    const value = evaluateNumber(node.operand, constants, resolving, values);
     if (value === undefined) return undefined;
     if (node.operator === ts.SyntaxKind.MinusToken) return -value;
     if (node.operator === ts.SyntaxKind.PlusToken) return value;
     return undefined;
   }
-  if (ts.isBinaryExpression(node)) return evaluateBinary(node, constants, resolving);
+  if (ts.isBinaryExpression(node)) return evaluateBinary(node, constants, resolving, values);
   if (!ts.isIdentifier(node) || resolving.has(node.text)) return undefined;
+  if (values.has(node.text)) return values.get(node.text);
   const initializer = constants.get(node.text);
   if (!initializer) return undefined;
   const nextResolving = new Set(resolving).add(node.text);
-  return evaluateNumber(initializer, constants, nextResolving);
+  return evaluateNumber(initializer, constants, nextResolving, values);
 }
 
-function evaluateBinary(node, constants, resolving) {
-  const left = evaluateNumber(node.left, constants, resolving);
-  const right = evaluateNumber(node.right, constants, resolving);
+function evaluateBinary(node, constants, resolving, values) {
+  const left = evaluateNumber(node.left, constants, resolving, values);
+  const right = evaluateNumber(node.right, constants, resolving, values);
   if (left === undefined || right === undefined) return undefined;
   if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) return left + right;
   if (node.operatorToken.kind === ts.SyntaxKind.MinusToken) return left - right;
@@ -68,7 +70,7 @@ function localHelpers(sourceFile, constants) {
   const helpers = new Map();
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name) {
-      helpers.set(statement.name.text, deadlineParameters(statement.parameters, constants));
+      helpers.set(statement.name.text, helperDefinition(statement, constants));
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
@@ -78,14 +80,21 @@ function localHelpers(sourceFile, constants) {
         (ts.isArrowFunction(declaration.initializer) ||
           ts.isFunctionExpression(declaration.initializer))
       ) {
-        helpers.set(
-          declaration.name.text,
-          deadlineParameters(declaration.initializer.parameters, constants)
-        );
+        helpers.set(declaration.name.text, helperDefinition(declaration.initializer, constants));
       }
     }
   }
+  for (const helper of helpers.values()) helper.helpers = helpers;
   return helpers;
+}
+
+function helperDefinition(node, constants) {
+  return {
+    body: node.body,
+    constants,
+    helpers: undefined,
+    parameters: deadlineParameters(node.parameters, constants),
+  };
 }
 
 function parsedSource(source, file) {
@@ -118,8 +127,8 @@ function exportedHelpers(source, file, cache) {
       for (const element of elements) {
         if (element.isTypeOnly) continue;
         const localName = element.propertyName?.text ?? element.name.text;
-        const parameters = helpers.get(localName);
-        if (parameters) exported.set(element.name.text, parameters);
+        const helper = helpers.get(localName);
+        if (helper) exported.set(element.name.text, helper);
       }
       continue;
     }
@@ -177,7 +186,13 @@ function importedHelpers(sourceFile, helperSources, exportedHelperCache) {
 function deadlineParameters(parameters, constants) {
   return parameters.flatMap((parameter, index) => {
     if (!ts.isIdentifier(parameter.name) || !DEADLINE_NAME.test(parameter.name.text)) return [];
-    return [{ defaultMs: evaluateNumber(parameter.initializer, constants), index }];
+    return [
+      {
+        defaultMs: evaluateNumber(parameter.initializer, constants),
+        index,
+        name: parameter.name.text,
+      },
+    ];
   });
 }
 
@@ -290,19 +305,27 @@ function blockStatements(callback) {
   return callback && ts.isBlock(callback.body) ? callback.body.statements : [];
 }
 
-function deadlineCandidates(callback, constants, helpers) {
+function deadlineCandidates(
+  callback,
+  constants,
+  helpers,
+  values = new Map(),
+  traversal = { active: new Set(), depth: 0 }
+) {
   const deadlines = [];
   const visit = (node) => {
     // A budget declaration is not a wait: test.setTimeout(MESH_TIMEOUT_MS)
     // would otherwise resolve its own constant into the deadline it has to beat.
     if (isBudgetStatement(node)) return;
     if (ts.isPropertyAssignment(node) && propertyName(node.name) === 'timeout') {
-      deadlines.push(evaluateNumber(node.initializer, constants));
+      deadlines.push(evaluateNumber(node.initializer, constants, new Set(), values));
     }
     if (ts.isIdentifier(node) && DEADLINE_NAME.test(node.text)) {
-      deadlines.push(evaluateNumber(node, constants));
+      deadlines.push(evaluateNumber(node, constants, new Set(), values));
     }
-    if (ts.isCallExpression(node)) collectCallDeadlines(node, constants, helpers, deadlines);
+    if (ts.isCallExpression(node)) {
+      collectCallDeadlines(node, constants, helpers, values, traversal, deadlines);
+    }
     ts.forEachChild(node, visit);
   };
   visit(callback.body);
@@ -322,18 +345,39 @@ function hookDeadline(statements, constants, helpers) {
   return Math.max(0, ...deadlines);
 }
 
-function collectCallDeadlines(call, constants, helpers, deadlines) {
+function collectCallDeadlines(call, constants, helpers, values, traversal, deadlines) {
   const path = callPath(call.expression);
   if (path.at(-1) === 'waitForTimeout')
-    deadlines.push(evaluateNumber(call.arguments[0], constants));
+    deadlines.push(evaluateNumber(call.arguments[0], constants, new Set(), values));
   if (path.at(-1)?.startsWith('wait')) {
-    for (const argument of call.arguments) deadlines.push(evaluateNumber(argument, constants));
+    for (const argument of call.arguments) {
+      deadlines.push(evaluateNumber(argument, constants, new Set(), values));
+    }
   }
   if (path.length !== 1) return;
-  for (const parameter of helpers.get(path[0]) ?? []) {
+  const helper = helpers.get(path[0]);
+  if (!helper) return;
+  const helperValues = new Map();
+  for (const parameter of helper.parameters) {
     const argument = call.arguments[parameter.index];
-    deadlines.push(argument ? evaluateNumber(argument, constants) : parameter.defaultMs);
+    const value = argument
+      ? evaluateNumber(argument, constants, new Set(), values)
+      : parameter.defaultMs;
+    deadlines.push(value);
+    if (value !== undefined) helperValues.set(parameter.name, value);
   }
+  if (!helper.body || traversal.active.has(helper)) return;
+  if (traversal.depth >= MAX_HELPER_BODY_DEPTH) {
+    throw new Error(
+      `Helper body traversal exceeded ${MAX_HELPER_BODY_DEPTH} nested calls at ${path[0]}.`
+    );
+  }
+  deadlines.push(
+    ...deadlineCandidates(helper, helper.constants, helper.helpers ?? new Map(), helperValues, {
+      active: new Set(traversal.active).add(helper),
+      depth: traversal.depth + 1,
+    })
+  );
 }
 
 function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
@@ -386,10 +430,12 @@ export function analyzeSpec(
 ) {
   const sourceFile = parsedSource(source, file);
   const constants = constantDeclarations(sourceFile);
+  const locals = localHelpers(sourceFile, constants);
   const helpers = new Map([
-    ...localHelpers(sourceFile, constants),
+    ...locals,
     ...importedHelpers(sourceFile, helperSources, exportedHelperCache),
   ]);
+  for (const helper of locals.values()) helper.helpers = helpers;
   return findTests(sourceFile, constants, helpers, file, projectTimeoutMs).filter(
     (violation) => violation.deadlineMs > thresholdMs
   );

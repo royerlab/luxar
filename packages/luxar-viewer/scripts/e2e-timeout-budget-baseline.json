@@ -1,10 +1,11 @@
 {
-  "note": "Per-file counts of tests whose imported shared-helper defaults exceed half the default Playwright budget. Counts may only stay level or decrease.",
+  "note": "Per-file counts of tests whose reachable helper deadlines exceed half the default Playwright budget. Counts may only stay level or decrease.",
   "files": {
     "src/tests/e2e/basic-rendering.spec.ts": 4,
     "src/tests/e2e/cache-hardening.spec.ts": 10,
     "src/tests/e2e/cache-persistence.spec.ts": 2,
     "src/tests/e2e/cache-system.spec.ts": 13,
+    "src/tests/e2e/cinematic-auto-framing.spec.ts": 2,
     "src/tests/e2e/colormap-system.spec.ts": 5,
     "src/tests/e2e/context-restore.spec.ts": 4,
     "src/tests/e2e/controls-interaction.spec.ts": 6,
@@ -21,11 +22,12 @@
     "src/tests/e2e/hover-overlay.spec.ts": 2,
     "src/tests/e2e/hover-tooltip.spec.ts": 6,
     "src/tests/e2e/keyboard-input-system.spec.ts": 21,
-    "src/tests/e2e/layers-panel.spec.ts": 15,
+    "src/tests/e2e/layers-panel.spec.ts": 16,
     "src/tests/e2e/line-join-artifact.spec.ts": 1,
     "src/tests/e2e/line-rendering-visual.spec.ts": 3,
     "src/tests/e2e/lines-nd-dimension-visibility.spec.ts": 1,
     "src/tests/e2e/lod-group.spec.ts": 6,
+    "src/tests/e2e/luxar-serve-integration.spec.ts": 1,
     "src/tests/e2e/mouse-interactions.spec.ts": 5,
     "src/tests/e2e/nd-navigation.spec.ts": 15,
     "src/tests/e2e/nd-transforms.spec.ts": 3,
@@ -45,6 +47,8 @@
     "src/tests/e2e/viewer-initialization.spec.ts": 4,
     "src/tests/e2e/visual-regression.spec.ts": 10,
     "src/tests/e2e/webgpu-native-smoke.spec.ts": 3,
-    "src/tests/e2e/worker-wasm-integration.spec.ts": 7
+    "src/tests/e2e/worker-wasm-integration.spec.ts": 7,
+    "src/tests/e2e/y-orientation.spec.ts": 2,
+    "src/tests/e2e/zipped-store-loading.spec.ts": 1
   }
 }
