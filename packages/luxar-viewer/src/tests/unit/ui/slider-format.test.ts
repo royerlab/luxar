@@ -1,5 +1,5 @@
 /**
- * Unit tests for the GUI value-formatting helpers.
+ * Unit tests for slider-kit formatting helpers.
  */
 
 import { describe, it, expect } from 'vitest';
