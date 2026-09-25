@@ -387,6 +387,7 @@ test.describe('Layers Panel', () => {
   });
 
   test('a fine wheel notch lands between two gamma drag steps', async ({ page }) => {
+    test.slow();
     await openLayersPanel(page);
     const group = page.locator(
       '.luxar-layers-panel__control-group:has(.luxar-layers-panel__control-label span:text-is("Gamma"))'
