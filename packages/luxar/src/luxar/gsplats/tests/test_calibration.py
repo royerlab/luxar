@@ -1433,15 +1433,17 @@ class TestEstimateFloor:
     """Unit tests for the background/DC floor estimator."""
 
     @staticmethod
-    def _specimen_mixture(medium_fraction: float = 0.56) -> np.ndarray:
+    def _specimen_mixture(
+        medium_fraction: float = 0.56, bright_fraction: float = 0.05
+    ) -> np.ndarray:
         rng = np.random.default_rng(1910)
         n = 200_000
-        specimen_fraction = 0.95 - medium_fraction
+        specimen_fraction = 1.0 - medium_fraction - bright_fraction
         return np.concatenate(
             [
                 rng.normal(204.0, 5.0, int(n * medium_fraction)),
                 rng.normal(675.0, 25.0, int(n * specimen_fraction)),
-                rng.normal(2500.0, 350.0, int(n * 0.05)),
+                rng.normal(2500.0, 350.0, int(n * bright_fraction)),
             ]
         ).astype(np.float32)
 
@@ -1458,6 +1460,21 @@ class TestEstimateFloor:
 
         result = estimate_floor_result(
             self._specimen_mixture(medium_fraction=0.90), method="specimen"
+        )
+
+        assert result.strategy == "specimen"
+        assert result.level == pytest.approx(675.0, abs=15.0)
+
+    @pytest.mark.parametrize(
+        "bright_fraction", [0.02, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30]
+    )
+    def test_specimen_in_medium_bright_fraction_sweep_selects_background(
+        self, bright_fraction: float
+    ) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        result = estimate_floor_result(
+            self._specimen_mixture(bright_fraction=bright_fraction), method="specimen"
         )
 
         assert result.strategy == "specimen"

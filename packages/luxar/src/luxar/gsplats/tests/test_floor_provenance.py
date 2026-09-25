@@ -1,12 +1,13 @@
 """Background-floor provenance: one key name, one location, every writer path.
 
 Issue #1175. ``docs/specs/GSPLATS_ZARR_FORMAT.md`` claims every fit persists its
-normalization block (``floor`` / ``image_min`` / ``image_max`` /
-``intensity_range``) into the store's ``pipeline/`` group. It used to be true of
-the flat non-tiled fit only: a ``kind=partition`` merge stamped a differently
-named ``applied_floor`` onto a node ``meta`` key the writer discarded, a content
-fit and a progressive fit recorded nothing at all, and ``concatenate`` built a
-fresh stats dict that dropped every tile's block on the way to the merge.
+normalization block (``floor`` / ``floor_strategy`` / ``image_min`` /
+``image_max`` / ``intensity_range``) into the store's ``pipeline/`` group. It
+used to be true of the flat non-tiled fit only: a ``kind=partition`` merge
+stamped a differently named ``applied_floor`` onto a node ``meta`` key the
+writer discarded, a content fit and a progressive fit recorded nothing at all,
+and ``concatenate`` built a fresh stats dict that dropped every tile's block on
+the way to the merge.
 
 These tests pin the contract at the two ends that matter: what a producer puts
 in memory, and what survives a save→load round trip.
@@ -284,6 +285,22 @@ def _one_splat_stub(ndim_default: int = 2) -> Any:
     return stub
 
 
+def _specimen_volume(shape: tuple[int, ...]) -> np.ndarray:
+    rng = np.random.default_rng(1910)
+    size = int(np.prod(shape))
+    medium_size = int(size * 0.56)
+    specimen_size = int(size * 0.39)
+    values = np.concatenate(
+        [
+            rng.normal(204.0, 5.0, medium_size),
+            rng.normal(675.0, 25.0, specimen_size),
+            rng.normal(2500.0, 350.0, size - medium_size - specimen_size),
+        ]
+    ).astype(np.float32)
+    rng.shuffle(values)
+    return values.reshape(shape)
+
+
 @pytest.mark.parametrize("partition", [False, True])
 def test_tiled_fit_persists_the_level_it_subtracted(
     monkeypatch, tmp_path: Path, partition: bool
@@ -321,6 +338,36 @@ def test_tiled_fit_persists_the_level_it_subtracted(
     # post-subtraction ones (the stub fitted data whose min it saw as 0.0).
     assert stats["image_min"] == pytest.approx(100.0)
     assert stats["image_max"] == pytest.approx(250.0)
+
+
+@pytest.mark.parametrize("partition", [False, True])
+def test_tiled_fit_persists_specimen_strategy(
+    monkeypatch, tmp_path: Path, partition: bool
+) -> None:
+    pytest.importorskip("torch")
+    import luxar.gsplats.fit_tiled_gsplats as ftg
+
+    monkeypatch.setattr(ftg, "fit_gaussian_splats", _one_splat_stub())
+    result = ftg.fit_tiled(
+        _specimen_volume((96, 96)),
+        tile_size=48,
+        overlap=16,
+        floor="specimen",
+        cull_retention=None,
+        partition=partition,
+        verbose=False,
+    )
+
+    path = tmp_path / f"tiled_specimen_{partition}.gsplats.zarr"
+    if partition:
+        write_gsplats_tree(path, result)
+        _, stats = load_gsplat_node(path, include_stats=True)
+    else:
+        result.save(path)
+        stats = load_gsplats(path, include_stats=True).stats
+
+    assert stats["floor"] == pytest.approx(675.0, abs=15.0)
+    assert stats["floor_strategy"] == "specimen"
 
 
 def test_progressive_fit_records_the_level_it_subtracted(tmp_path: Path) -> None:
@@ -367,6 +414,30 @@ def test_progressive_fit_records_the_level_it_subtracted(tmp_path: Path) -> None
     assert attrs["image_min"] == pytest.approx(100.0, abs=1e-3)
     reloaded = load_gsplats(path, include_stats=True).stats
     assert reloaded["floor"] == pytest.approx(100.0)
+
+
+def test_progressive_fit_records_specimen_strategy(tmp_path: Path) -> None:
+    pytest.importorskip("torch")
+    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+
+    result = fit_progressive_gaussian_splats(
+        _specimen_volume((16, 16, 16)),
+        floor="specimen",
+        max_splats=40,
+        max_splats_per_pass=20,
+        iters_per_pass=15,
+        residual_pass_min_iters=15,
+        max_passes=2,
+        device="cpu",
+        verbose=False,
+    )
+
+    assert result.stats["floor"] == pytest.approx(675.0, abs=15.0)
+    assert result.stats["floor_strategy"] == "specimen"
+    path = tmp_path / "progressive_specimen.gsplats.zarr"
+    result.save(path)
+    reloaded = load_gsplats(path, include_stats=True).stats
+    assert reloaded["floor_strategy"] == "specimen"
 
 
 def test_progressive_and_flat_agree_on_a_floor_below_the_data_minimum() -> None:
@@ -597,6 +668,27 @@ def test_a_merge_with_no_tiles_still_answers_the_floor_question() -> None:
         applied_floor=100.0,
     )
     assert merged.stats["floor"] == pytest.approx(100.0)
+
+
+def test_a_merge_records_the_parent_resolved_floor_strategy() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+
+    merged = merge_tile_results(
+        [_leaf(n=1, ndim=2, stats={"floor": 100.0}) for _ in range(2)],
+        volume_shape=(32, 32),
+        tile_size=16,
+        overlap=4,
+        num_tiles=2,
+        progressive=False,
+        cull_retention=None,
+        elapsed=0.0,
+        verbose=False,
+        applied_floor=100.0,
+        floor_strategy="specimen",
+    )
+
+    assert merged.stats["floor"] == pytest.approx(100.0)
+    assert merged.stats["floor_strategy"] == "specimen"
 
 
 def test_a_partition_merge_with_no_surviving_region_still_answers() -> None:

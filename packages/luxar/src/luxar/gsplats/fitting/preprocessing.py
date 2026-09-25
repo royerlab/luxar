@@ -1595,11 +1595,11 @@ def _denoise_probe_correction(
 ) -> "tuple[float, float, int, str | None] | None":
     """Shift ``level_raw`` onto the denoised basis with a bounded probe.
 
-    Returns ``(level, delta, probe_voxels)``, or ``None`` when there is nothing
-    to correct or nothing trustworthy to correct WITH — an unreadable probe, a
-    raising denoiser, a degenerate or non-finite estimate. Every ``None`` but the
-    "denoising left this estimator alone" one says why out loud, and the caller
-    then keeps ``level_raw``: this function degrades, it never raises.
+    Returns ``(level, delta, probe_voxels, strategy)``, or ``None`` when there is
+    nothing trustworthy to correct WITH — an unreadable probe, a raising
+    denoiser, or a degenerate or non-finite estimate. Every ``None`` says why out
+    loud, and the caller then keeps ``level_raw``: this function degrades, it
+    never raises.
 
     The whole probe pipeline — the READ, the denoise pass and both estimator
     calls — is inside one ``try``, and the denoised probe is checked for

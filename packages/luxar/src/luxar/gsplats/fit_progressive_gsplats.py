@@ -319,6 +319,9 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.fitting.preprocessing import (
+        _resolve_applied_norm_bounds_with_strategy,
+    )
     from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
@@ -357,10 +360,6 @@ def fit_progressive_gaussian_splats(
 
     start_time = time.time()
     V_original = V.astype(np.float32)
-    from luxar.gsplats.fitting.preprocessing import (
-        _resolve_applied_norm_bounds_with_strategy,
-    )
-
     _, image_max, applied_floor, floor_strategy = (
         _resolve_applied_norm_bounds_with_strategy(
             V_original,

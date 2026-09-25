@@ -230,17 +230,6 @@ def estimate_floor_result(V: np.ndarray, method: str = "mode") -> FloorEstimate:
     return FloorEstimate(mode, "mode")
 
 
-def floor_strategy_for(
-    V: np.ndarray, floor: "str | float | None", applied_floor: "float | None"
-) -> "str | None":
-    """Return specimen estimator provenance only when a floor was applied."""
-    if applied_floor is None or not isinstance(floor, str):
-        return None
-    if floor.strip().lower() != "specimen":
-        return None
-    return estimate_floor_result(V, method="specimen").strategy
-
-
 def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
     """Estimate the background pedestal / DC offset to subtract before fitting.
 
@@ -259,10 +248,10 @@ def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
         pedestal ``mode ≈ min(V)`` → effectively a no-op → backward-compatible.
         ``"percentile"``: the 10th intensity percentile (cheaper; matches the
         :func:`_background_mad` threshold).
-        ``"specimen"``: opt-in bimodal-background mode. Otsu splits the same
-        sub-p95 low band used by ``mode``; when both populations are compact and
-        separated, the upper population's mode is returned. Otherwise it falls
-        back to ``mode``.
+        ``"specimen"``: opt-in bimodal-background mode. Otsu first excludes the
+        bright signal class, then splits the remaining background band; when
+        both populations are compact and separated, the upper population's mode
+        is returned. Otherwise it falls back to ``mode``.
 
     Notes
     -----
