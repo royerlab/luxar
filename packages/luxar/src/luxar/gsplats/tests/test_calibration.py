@@ -1430,6 +1430,74 @@ class TestExponentFitSerialization:
 
 
 class TestEstimateFloor:
+    @staticmethod
+    def _specimen_mixture(medium_fraction: float = 0.56) -> np.ndarray:
+        rng = np.random.default_rng(1910)
+        n = 200_000
+        specimen_fraction = 0.95 - medium_fraction
+        return np.concatenate(
+            [
+                rng.normal(204.0, 5.0, int(n * medium_fraction)),
+                rng.normal(675.0, 25.0, int(n * specimen_fraction)),
+                rng.normal(2500.0, 350.0, int(n * 0.05)),
+            ]
+        ).astype(np.float32)
+
+    def test_specimen_selects_second_compact_low_band_mode(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        result = estimate_floor_result(self._specimen_mixture(), method="specimen")
+
+        assert result.strategy == "specimen"
+        assert result.level == pytest.approx(675.0, abs=15.0)
+
+    def test_specimen_accepts_medium_dominated_mixture(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        result = estimate_floor_result(
+            self._specimen_mixture(medium_fraction=0.90), method="specimen"
+        )
+
+        assert result.strategy == "specimen"
+        assert result.level == pytest.approx(675.0, abs=15.0)
+
+    def test_specimen_falls_back_on_specimen_only_crop(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = np.concatenate(
+            [
+                rng.normal(675.0, 25.0, 140_000),
+                rng.normal(2500.0, 350.0, 60_000),
+            ]
+        ).astype(np.float32)
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen-fallback-auto"
+        assert result.level == pytest.approx(675.0, abs=8.0)
+
+    def test_specimen_falls_back_on_single_population(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = rng.normal(1000.0, 25.0, 200_000).astype(np.float32)
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen-fallback-auto"
+        assert result.level == pytest.approx(1000.0, abs=8.0)
+
+    def test_specimen_falls_back_on_sparse_signal(self) -> None:
+        from luxar.gsplats.calibration.noise_floor import estimate_floor_result
+
+        rng = np.random.default_rng(1910)
+        values = np.concatenate(
+            [np.full(198_000, 100.0), rng.normal(2863.0, 350.0, 2_000)]
+        ).astype(np.float32)
+        result = estimate_floor_result(values, method="specimen")
+
+        assert result.strategy == "specimen-fallback-auto"
+        assert result.level == pytest.approx(100.0, abs=1.0)
+
     """Unit tests for the background/DC floor estimator."""
 
     def _pedestal_volume(self, pedestal: float = 110.0, seed: int = 0) -> np.ndarray:

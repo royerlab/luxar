@@ -1572,6 +1572,15 @@ def test_resolve_batch_floor_needs_no_volume_for_concrete_specs(tmp_path: Path) 
     assert resolve_batch_floor(missing, None) == (None, None)
 
 
+def test_batch_rejects_specimen_floor(tmp_path: Path) -> None:
+    from typer import BadParameter
+
+    from luxar.cli.gsplat_ops.batch.planning import resolve_batch_floor
+
+    with pytest.raises(BadParameter, match="not supported by batch-fit"):
+        resolve_batch_floor(tmp_path / "unused.zarr", "specimen")
+
+
 def _spy_on_floor_sampling(monkeypatch) -> "list":
     """Record every object the bounded floor SAMPLER is handed, calling through.
 

@@ -197,6 +197,17 @@ def effective_floor_spec(fit: FitConfig) -> "str | float | None":
     )
 
 
+def _reject_unsupported_batch_floor(floor_spec: "str | float | None") -> None:
+    if not isinstance(floor_spec, str) or floor_spec.strip().lower() != "specimen":
+        return
+    raise typer.BadParameter(
+        "--floor specimen is not supported by batch-fit: a slice whose "
+        "bimodality gate falls back to auto would lower the shared floor "
+        "for every timepoint. Use fit/cal on one volume, or pass the "
+        "measured numeric floor explicitly."
+    )
+
+
 def effective_norm_percentile(fit: FitConfig) -> float:
     """The ``norm_percentile`` every task will inherit from preset/config."""
     from luxar.cli.gsplat_config import load_fit_config
@@ -861,6 +872,8 @@ def resolve_batch_floor(
     disabled/refused/unset) and the value to put in ``fit_args["floor"]``
     (``None`` = emit no ``--floor`` at all).
     """
+    _reject_unsupported_batch_floor(floor_spec)
+
     from luxar.cli.gsplat_ops.fitting.fit_utils import (
         floor_spec_needs_volume,
         resolve_shared_floor,

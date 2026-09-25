@@ -171,6 +171,7 @@ def calibrate(
     # floor-suppressed scale. (A per-fit floor would subtract only inside each
     # fit, mismatching the raw held-out reference and tanking the PSNR.) Default
     # is on ("auto"); K* is thus measured the same way you will fit.
+    from luxar.gsplats.calibration.noise_floor import floor_strategy_for
     from luxar.gsplats.fitting.preprocessing import _resolve_floor
     from luxar.gsplats.fitting.validation import _validate_floor
 
@@ -190,6 +191,7 @@ def calibrate(
             stacklevel=2,
         )
         applied_floor = None
+    floor_strategy = floor_strategy_for(V, floor_spec, applied_floor)
     if applied_floor is not None:
         V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
     # V is already floor-subtracted; the per-K fits must not subtract again.
@@ -442,6 +444,9 @@ def calibrate(
         fit_config={
             **{k: v for k, v in fit_kwargs.items() if _json_safe(v)},
             "floor_subtracted": applied_floor,
+            **(
+                {"floor_strategy": floor_strategy} if floor_strategy is not None else {}
+            ),
         },
         volume_shape=list(V.shape),
         volume_dtype=str(V.dtype),

@@ -40,6 +40,14 @@ class NoiseFloor:
     """``-20 log10(sigma_hat)`` for [0,1] data; ``+inf`` when ``sigma_hat == 0``."""
 
 
+@dataclass(frozen=True)
+class FloorEstimate:
+    """Resolved floor level and the estimator branch that produced it."""
+
+    level: float
+    strategy: str
+
+
 def _laplacian_mad(V: np.ndarray) -> float:
     """Sigma estimate via the discrete-Laplacian MAD (Immerkaer 1996).
 
@@ -142,6 +150,81 @@ def estimate_noise_floor(V: np.ndarray) -> NoiseFloor:
     )
 
 
+def _histogram_mode(values: np.ndarray) -> float:
+    hi = float(np.percentile(values, 95.0))
+    low_band = values[values <= hi].astype(np.float64, copy=False)
+    hist, edges = np.histogram(low_band, bins=512)
+    index = int(hist.argmax())
+    return 0.5 * (float(edges[index]) + float(edges[index + 1]))
+
+
+def _otsu_threshold(values: np.ndarray) -> float:
+    hist, edges = np.histogram(values.astype(np.float64, copy=False), bins=512)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    weights = np.cumsum(hist, dtype=np.float64)
+    moments = np.cumsum(hist * centers, dtype=np.float64)
+    total_weight = weights[-1]
+    total_moment = moments[-1]
+    denominator = weights[:-1] * (total_weight - weights[:-1])
+    score = np.zeros_like(denominator)
+    valid = denominator > 0.0
+    score[valid] = (
+        total_moment * weights[:-1][valid] - moments[:-1][valid] * total_weight
+    ) ** 2 / denominator[valid]
+    return float(edges[int(score.argmax()) + 1])
+
+
+def _specimen_floor(values: np.ndarray, auto_level: float) -> FloorEstimate:
+    hi = float(np.percentile(values, 95.0))
+    low_band = values[values <= hi]
+    threshold = _otsu_threshold(low_band)
+    lower = low_band[low_band <= threshold]
+    upper = low_band[low_band > threshold]
+    min_class_size = max(2, int(math.ceil(0.02 * low_band.size)))
+    if lower.size < min_class_size or upper.size < min_class_size:
+        return FloorEstimate(auto_level, "specimen-fallback-auto")
+
+    lower_median = float(np.median(lower))
+    upper_median = float(np.median(upper))
+    separation = upper_median - lower_median
+    lower_mad = float(np.median(np.abs(lower - lower_median)))
+    upper_mad = float(np.median(np.abs(upper - upper_median)))
+    if separation <= 0.0 or max(lower_mad, upper_mad) > 0.1 * separation:
+        return FloorEstimate(auto_level, "specimen-fallback-auto")
+
+    candidate = _histogram_mode(upper)
+    if not threshold < candidate <= hi:
+        return FloorEstimate(auto_level, "specimen-fallback-auto")
+    return FloorEstimate(candidate, "specimen")
+
+
+def estimate_floor_result(V: np.ndarray, method: str = "mode") -> FloorEstimate:
+    """Estimate a floor and report which estimator branch produced it."""
+    V = np.asarray(V)
+    values = V[V != 0.0] if np.any(V != 0.0) else V
+    if values.size == 0:
+        return FloorEstimate(float(np.min(V)), method)
+    if method == "percentile":
+        return FloorEstimate(float(np.percentile(values, 10.0)), "percentile")
+    if method not in ("mode", "specimen"):
+        raise ValueError(f"estimate_floor: unknown method {method!r}")
+    mode = float(min(_histogram_mode(values), float(np.median(values))))
+    if method == "specimen":
+        return _specimen_floor(values, mode)
+    return FloorEstimate(mode, "mode")
+
+
+def floor_strategy_for(
+    V: np.ndarray, floor: "str | float | None", applied_floor: "float | None"
+) -> "str | None":
+    """Return specimen estimator provenance only when a floor was applied."""
+    if applied_floor is None or not isinstance(floor, str):
+        return None
+    if floor.strip().lower() != "specimen":
+        return None
+    return estimate_floor_result(V, method="specimen").strategy
+
+
 def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
     """Estimate the background pedestal / DC offset to subtract before fitting.
 
@@ -153,13 +236,17 @@ def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
     ----------
     V : np.ndarray
         Input volume (any shape / dtype convertible to float).
-    method : {"mode", "percentile"}
+    method : {"mode", "specimen", "percentile"}
         ``"mode"`` (default): histogram mode of the low-intensity bulk (the
         pedestal peak), capped at the median so an image that is *mostly*
         signal can never have real signal subtracted. On clean data with no
         pedestal ``mode ≈ min(V)`` → effectively a no-op → backward-compatible.
         ``"percentile"``: the 10th intensity percentile (cheaper; matches the
         :func:`_background_mad` threshold).
+        ``"specimen"``: opt-in bimodal-background mode. Otsu splits the same
+        sub-p95 low band used by ``mode``; when both populations are compact and
+        separated, the upper population's mode is returned. Otherwise it falls
+        back to ``mode``.
 
     Notes
     -----
@@ -168,24 +255,4 @@ def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
     :func:`luxar.gsplats.fitting.preprocessing.resolve_volume_floor` for a lazy
     whole volume.
     """
-    V = np.asarray(V)
-    Vf = V[V != 0.0] if np.any(V != 0.0) else V
-    if Vf.size == 0:
-        return float(np.min(V))
-    if method == "percentile":
-        return float(np.percentile(Vf, 10.0))
-    if method != "mode":
-        raise ValueError(f"estimate_floor: unknown method {method!r}")
-    hi = float(np.percentile(Vf, 95.0))
-    # Histogram in float64: on a float32 volume whose background sits at a large
-    # offset, 512 bins across the sub-p95 band are narrower than float32 spacing and
-    # np.histogram raises "Too many bins for data range". float64 has the dynamic
-    # range to place them, and a band that is a single repeated value is fine too —
-    # numpy widens equal outer edges by +-0.5 before binning. On data float32 could
-    # already bin the edges are merely re-rounded, so the peak bin is the same one
-    # except in a near-tie, where the winner can move a bin: a fraction of the
-    # pedestal's own noise, not a different floor (#1671).
-    hist, edges = np.histogram(Vf[Vf <= hi].astype(np.float64, copy=False), bins=512)
-    i = int(hist.argmax())
-    mode = 0.5 * (float(edges[i]) + float(edges[i + 1]))
-    return float(min(mode, float(np.median(Vf))))
+    return estimate_floor_result(V, method).level

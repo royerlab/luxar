@@ -63,8 +63,10 @@ from .metrics import (
     predict_zero_baseline_mse,
 )
 from .noise_floor import (
+    FloorEstimate,
     NoiseFloor,
     estimate_floor,
+    estimate_floor_result,
     estimate_noise_floor,
 )
 from .result import CalibrationResult, _json_safe, _rehydrate_nan_dict
@@ -72,6 +74,7 @@ from .result import CalibrationResult, _json_safe, _rehydrate_nan_dict
 __all__ = [
     "CalibrationResult",
     "ExponentFit",
+    "FloorEstimate",
     "HeldOutPeak",
     "NoiseFloor",
     "ProgressCallback",
@@ -89,6 +92,7 @@ __all__ = [
     "cv_mask",
     "donut_median_fill",
     "estimate_floor",
+    "estimate_floor_result",
     "estimate_noise_floor",
     "feature_threshold",
     "find_k_star",

@@ -305,7 +305,13 @@ _HEADER_STATS_KEYS = (
 #: must shift its inner bounds back into those units before recording them —
 #: otherwise ``image_min`` would mean the tile's post-subtraction minimum on one
 #: path and the applied level on another.
-NORMALIZATION_STATS_KEYS = ("floor", "image_min", "image_max", "intensity_range")
+NORMALIZATION_STATS_KEYS = (
+    "floor",
+    "floor_strategy",
+    "image_min",
+    "image_max",
+    "intensity_range",
+)
 
 
 def agreed_normalization_stats(

@@ -327,6 +327,10 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             )
         )
 
+    from luxar.gsplats.calibration.noise_floor import floor_strategy_for
+
+    floor_strategy = floor_strategy_for(V, config.floor, applied_floor)
+
     # Rescale pre-initialized amplitudes to match normalized image scale
     # (convention-dependent — see _rescale_init_amps).
     _rescale_init_amps(init_ctx, image_min, intensity_range, config.verbose)
@@ -369,6 +373,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         image_max=image_max,
         intensity_range=intensity_range,
         floor=applied_floor,
+        floor_strategy=floor_strategy,
         d=d,
         N=N,
         max_abs_error=max_abs_error,
@@ -962,10 +967,11 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
         f = floor.strip().lower()
         if f in ("none", ""):
             return None
-        if f == "auto":
+        if f in ("auto", "specimen"):
             from luxar.gsplats.calibration import estimate_floor
 
-            return float(estimate_floor(V, method="mode"))
+            method = "mode" if f == "auto" else "specimen"
+            return float(estimate_floor(V, method=method))
         if f.startswith("p"):
             pct = float(f[1:])
             V = np.asarray(V)
@@ -1387,7 +1393,7 @@ _DENOISE_PROBE_BLOCKS = 3
 def _floor_spec_is_volume_derived(floor: "str | float | None") -> bool:
     """Whether resolving this ``floor`` spec has to look at the data.
 
-    ``"auto"`` and ``"pNN"`` are measured ON the volume; everything else
+    ``"auto"``, ``"specimen"`` and ``"pNN"`` are measured ON the volume; everything else
     (``None``, ``"none"``, a number, a numeric string) is a user absolute that
     no measurement may move. Mirrors the spec branching of
     :func:`resolve_volume_floor`.
@@ -1395,7 +1401,7 @@ def _floor_spec_is_volume_derived(floor: "str | float | None") -> bool:
     if not isinstance(floor, str):
         return False
     f = floor.strip().lower()
-    return f == "auto" or f.startswith("p")
+    return f in ("auto", "specimen") or f.startswith("p")
 
 
 def _floor_spec_is_percentile(floor: "str | float | None") -> bool:

@@ -999,14 +999,14 @@ def validate_floor_spec(floor_spec: "str | float | None") -> None:
 def floor_spec_needs_volume(floor_spec: "str | float | None") -> bool:
     """Whether resolving this ``--floor`` spec has to read the volume.
 
-    ``auto`` / ``pNN`` are volume-derived; ``none`` / ``None`` / a numeric spec
-    are already concrete, so a caller that would have to LOAD data purely to
-    resolve them can skip the load entirely.
+    ``auto`` / ``specimen`` / ``pNN`` are volume-derived; ``none`` / ``None`` /
+    a numeric spec are already concrete, so a caller that would have to LOAD
+    data purely to resolve them can skip the load entirely.
     """
     if not isinstance(floor_spec, str):
         return False
     f = floor_spec.strip().lower()
-    return f == "auto" or f.startswith("p")
+    return f in ("auto", "specimen") or f.startswith("p")
 
 
 def _calibration_floor_level(cal: "Path") -> "Optional[float]":

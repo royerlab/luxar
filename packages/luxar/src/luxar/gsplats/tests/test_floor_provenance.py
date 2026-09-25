@@ -31,10 +31,46 @@ from luxar.gsplats.utils.trils import tril_size
 
 BLOCK = {
     "floor": 110.0,
+    "floor_strategy": "specimen",
     "image_min": 110.0,
     "image_max": 4095.0,
     "intensity_range": 3985.0,
 }
+
+
+def test_specimen_preprocessing_records_selected_branch() -> None:
+    pytest.importorskip("torch")
+    from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+    from luxar.gsplats.fitting.config import FitParameters
+    from luxar.gsplats.fitting.preprocessing import preprocess_data
+    from luxar.gsplats.fitting.validation import prepare_fit_config
+
+    rng = np.random.default_rng(1910)
+    volume = (
+        np.concatenate(
+            [
+                rng.normal(204.0, 5.0, 3_000),
+                rng.normal(675.0, 25.0, 2_000),
+                rng.normal(2500.0, 350.0, 300),
+            ]
+        )
+        .astype(np.float32)
+        .reshape(53, 10, 10)
+    )
+
+    config = prepare_fit_config(
+        GaussianSplatFitter(),
+        FitParameters(
+            V=volume,
+            seeds=np.array([[26.0, 5.0, 5.0]], dtype=np.float32),
+            floor="specimen",
+            verbose=False,
+        ),
+    )
+    preprocessed = preprocess_data(config)
+
+    assert preprocessed.floor == pytest.approx(675.0, abs=15.0)
+    assert preprocessed.floor_strategy == "specimen"
 
 
 def _leaf(n: int = 6, ndim: int = 3, stats: Optional[dict] = None) -> GSplatData:

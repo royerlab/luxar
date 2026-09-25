@@ -665,6 +665,11 @@ def finalize_results(
         "image_max": preprocessed_data.image_max,
         "intensity_range": preprocessed_data.intensity_range,
         "floor": preprocessed_data.floor,
+        **(
+            {"floor_strategy": preprocessed_data.floor_strategy}
+            if preprocessed_data.floor_strategy is not None
+            else {}
+        ),
         **diagnostic_stats,
         # What the splats are a representation OF. Without this, a stored
         # .gsplats.zarr cannot say how much it compressed: the source grid is
