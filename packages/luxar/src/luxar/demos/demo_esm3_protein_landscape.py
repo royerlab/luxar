@@ -2,9 +2,9 @@
 ESM-3 Protein Landscape — Swiss-Prot 3D Embedding
 ===================================================
 
-Visualizes ~572K Swiss-Prot protein embeddings from ESM-3 (or ESM C) as a
-3D UMAP point cloud. Each point is a protein, colored by taxonomic kingdom,
-with hover labels showing protein name, organism, and kingdom.
+Visualizes ~575K Swiss-Prot protein embeddings from ESM C (or ESM-3) as a
+3D UMAP point cloud. Each point is a protein, colored by taxonomic group (from
+its UniProt lineage), with hover labels showing protein name, organism and group.
 
 Run behavior:
   First run: Download Swiss-Prot, compute ESM embeddings, run UMAP (~5h)
@@ -40,7 +40,7 @@ Cache hygiene:
 DEMO_META = {
     "key": "esm3_protein_landscape",
     "title": "ESM3 Protein Landscape",
-    "description": "~572K Swiss-Prot protein embeddings from ESM-3 as a 3D UMAP, colored by taxonomic kingdom.",
+    "description": "~575K Swiss-Prot protein embeddings from ESM C (or ESM-3) as a 3D UMAP, colored by taxonomic group.",
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
@@ -328,6 +328,146 @@ def _classify_organism(organism: str) -> str:
 
     # Default: other eukaryotes (amoeba, algae, protists, etc.)
     return "Other Eukaryotes"
+
+
+# =============================================================================
+# Taxon categories from the UniProt lineage
+# =============================================================================
+
+#: Every reviewed entry's taxonomic lineage (~6 MB gzipped TSV), the source of
+#: truth for the taxon categories. The organism-name rules above are only the
+#: fallback for an entry the table does not cover.
+SWISSPROT_LINEAGE_URL = (
+    "https://rest.uniprot.org/uniprotkb/stream?compressed=true"
+    "&fields=accession%2Clineage&format=tsv&query=%28reviewed%3Atrue%29"
+)
+LINEAGE_CACHE_NAME = "uniprot_sprot_lineage.tsv.gz"
+#: Stamped into the metadata cache once its categories come from the lineage.
+KINGDOM_SOURCE = "uniprot-lineage"
+
+#: Ordered (markers, category): the first rule whose markers meet the lineage
+#: wins, so the bacterial phyla precede "Bacteria" and the named animals
+#: precede "Eukaryota".
+_LINEAGE_RULES: tuple[tuple[frozenset[str], str], ...] = (
+    (frozenset({"Viruses"}), "Viruses"),
+    (frozenset({"Archaea"}), "Archaea"),
+    (frozenset({"Pseudomonadota", "Proteobacteria"}), "Proteobacteria"),
+    (
+        frozenset({"Bacillota", "Firmicutes", "Actinomycetota", "Actinobacteria"}),
+        "Firmicutes & Actino",
+    ),
+    (frozenset({"Bacteria"}), "Other Bacteria"),
+    (frozenset({"Homo"}), "Human"),
+    (frozenset({"Mus", "Rattus"}), "Mouse & Rat"),
+    (frozenset({"Vertebrata"}), "Other Vertebrates"),
+    (frozenset({"Insecta", "Nematoda", "Platyhelminthes"}), "Insects & Worms"),
+    (frozenset({"Viridiplantae"}), "Plants"),
+    (frozenset({"Fungi"}), "Fungi"),
+    (frozenset({"Eukaryota"}), "Other Eukaryotes"),
+)
+
+
+def _classify_lineage(lineage: str) -> str | None:
+    """Map a UniProt lineage ("Bacteria (domain), Pseudomonadota (phylum), ...")
+    onto the twelve categories, or ``None`` when it names no domain."""
+    taxa = {part.rsplit(" (", 1)[0].strip() for part in lineage.split(",")}
+    for markers, category in _LINEAGE_RULES:
+        if taxa & markers:
+            return category
+    return None
+
+
+def _lineage_table(cache_dir: Path) -> dict[str, str] | None:
+    """Accession → lineage, downloaded once into ``cache_dir``; ``None`` offline."""
+    path = cache_dir / LINEAGE_CACHE_NAME
+    if not path.exists():
+        import urllib.request
+
+        part = path.with_name(path.name + ".part")
+        with asection("Downloading the Swiss-Prot taxonomic lineages (~6 MB)"):
+            try:
+                with (
+                    urllib.request.urlopen(  # nosec B310 - fixed https URL
+                        SWISSPROT_LINEAGE_URL, timeout=900
+                    ) as response,
+                    open(part, "wb") as out,
+                ):
+                    while chunk := response.read(1 << 20):
+                        out.write(chunk)
+                part.replace(path)
+            except OSError as e:
+                part.unlink(missing_ok=True)
+                aprint(f"  ⚠ lineage download failed ({e}); keeping name-based taxa")
+                return None
+    table: dict[str, str] = {}
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        next(f, None)  # header
+        for line in f:
+            acc, _, lineage = line.rstrip("\n").partition("\t")
+            table[acc] = lineage
+    return table
+
+
+def _recover_accessions(
+    cache_dir: Path, meta: dict[str, np.ndarray]
+) -> np.ndarray | None:
+    """Accessions for a cache written before they were stored, re-read from
+    the cached FASTA — only when its entries match the cache row for row."""
+    fasta = cache_dir / "uniprot_sprot.fasta.gz"
+    names = meta.get("names")
+    if names is None or not fasta.exists():
+        return None
+    accessions, fasta_names, _, _ = _parse_swissprot_fasta(fasta)
+    if len(fasta_names) != len(names) or any(
+        str(a) != str(b)
+        for a, b in zip(fasta_names, names)  # noqa: B905 - lengths checked
+    ):
+        aprint("  ⓘ Cached FASTA does not match the cache; keeping name-based taxa")
+        return None
+    return np.array(accessions, dtype=object)
+
+
+def refresh_kingdoms(
+    cache_dir: Path,
+    metadata_cache: Path,
+    meta: dict[str, np.ndarray],
+) -> np.ndarray:
+    """Return the taxon categories, re-deriving them from the UniProt lineage
+    (and rewriting ``metadata_cache``) when the cache predates that.
+
+    Idempotent: a cache already stamped :data:`KINGDOM_SOURCE` is returned as
+    is. A cache without accessions, or a machine that cannot reach UniProt,
+    keeps its existing categories.
+    """
+    kingdoms = np.asarray(meta["kingdoms"], dtype=object)
+    if str(meta.get("kingdom_source", "")) == KINGDOM_SOURCE:
+        return kingdoms
+    accessions = meta.get("accessions")
+    if accessions is None or len(accessions) != len(kingdoms):
+        accessions = _recover_accessions(cache_dir, meta)
+        if accessions is None:
+            return kingdoms
+        meta = {**meta, "accessions": accessions}
+    table = _lineage_table(cache_dir)
+    if table is None:
+        return kingdoms
+    organisms = meta["organisms"]
+    fresh = np.array(
+        [
+            _classify_lineage(table.get(str(acc), "")) or _classify_organism(str(org))
+            for acc, org in zip(accessions, organisms)  # noqa: B905 - same length
+        ],
+        dtype=object,
+    )
+    changed = int((fresh != kingdoms).sum())
+    aprint(f"✓ Taxon categories from the UniProt lineage ({changed:,} relabelled)")
+    np.savez(
+        metadata_cache,
+        **{k: v for k, v in meta.items() if k != "kingdoms"},
+        kingdoms=fresh,
+        kingdom_source=np.array(KINGDOM_SOURCE),
+    )
+    return fresh
 
 
 # =============================================================================
@@ -725,6 +865,11 @@ def generate_esm3_landscape(
             # cache is expensive to rebuild, so the protein name becomes a
             # UniProt search key rather than forcing regeneration.
             accessions = list(meta["accessions"]) if "accessions" in meta.files else []
+            kingdoms = list(
+                refresh_kingdoms(
+                    cache_dir, metadata_cache, {k: meta[k] for k in meta.files}
+                )
+            )
             n = len(positions)
             aprint(f"✓ Loaded {n:,} proteins from cache")
     else:
@@ -748,7 +893,12 @@ def generate_esm3_landscape(
         accessions, protein_names, organism_names, sequences = _parse_swissprot_fasta(
             fasta_path
         )
-        kingdoms = [_classify_organism(org) for org in organism_names]
+        lineages = _lineage_table(cache_dir)
+        kingdoms = [
+            (_classify_lineage(lineages.get(acc, "")) if lineages else None)
+            or _classify_organism(org)
+            for acc, org in zip(accessions, organism_names)  # noqa: B905 - same length
+        ]
 
         # Subsample
         n = len(sequences)
@@ -775,6 +925,7 @@ def generate_esm3_landscape(
             # "<protein name> — <organism> (<kingdom>)", which no URL can be
             # built from.
             accessions=np.array(accessions, dtype=object),
+            **({"kingdom_source": np.array(KINGDOM_SOURCE)} if lineages else {}),
         )
 
         # --- Step 3: Compute ESM embeddings ---

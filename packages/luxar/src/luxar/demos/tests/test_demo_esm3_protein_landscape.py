@@ -628,3 +628,103 @@ class TestCitationNamesTheModelThatRan:
         assert citation["short"] == demo.DEMO_META["citation"]["short"], (
             "the default run's credit disagrees with DEMO_META's"
         )
+
+
+# ---------------------------------------------------------------------------
+# Taxon categories from the UniProt lineage
+# ---------------------------------------------------------------------------
+
+_LINEAGES = {
+    # The organism-name rules got each of these wrong ("influenzae" read as a
+    # virus; an unknown genus defaulted to a eukaryote).
+    "P43747": "cellular organisms (no rank), Bacteria (domain), Pseudomonadati "
+    "(kingdom), Pseudomonadota (phylum), Gammaproteobacteria (class), "
+    "Pasteurellales (order), Haemophilus (genus)",
+    "Q8YXR5": "cellular organisms (no rank), Bacteria (domain), "
+    "Bacillati (kingdom), Cyanobacteriota (phylum), Nostoc (genus)",
+    "P0DMV8": "cellular organisms (no rank), Eukaryota (domain), Metazoa "
+    "(kingdom), Chordata (phylum), Vertebrata (clade), Mammalia (class), Homo "
+    "(genus)",
+    "Q9LXX0": "cellular organisms (no rank), Eukaryota (domain), Viridiplantae "
+    "(kingdom), Streptophyta (phylum), Arabidopsis (genus)",
+    "P0DTC2": "Viruses (no rank), Riboviria (realm), Coronaviridae (family)",
+    "Q57XX0": "cellular organisms (no rank), Archaea (domain), "
+    "Methanobacteriota (phylum)",
+}
+
+
+@pytest.mark.parametrize(
+    ("acc", "expected"),
+    [
+        ("P43747", "Proteobacteria"),
+        ("Q8YXR5", "Other Bacteria"),
+        ("P0DMV8", "Human"),
+        ("Q9LXX0", "Plants"),
+        ("P0DTC2", "Viruses"),
+        ("Q57XX0", "Archaea"),
+    ],
+)
+def test_lineage_categories(acc: str, expected: str) -> None:
+    assert demo._classify_lineage(_LINEAGES[acc]) == expected
+
+
+def test_lineage_without_a_domain_defers_to_the_name_rules() -> None:
+    assert demo._classify_lineage("") is None
+
+
+def test_refresh_kingdoms_upgrades_an_old_cache_once(tmp_path: Path) -> None:
+    import gzip
+
+    with gzip.open(tmp_path / demo.LINEAGE_CACHE_NAME, "wt") as f:
+        f.write("Entry\tTaxonomic lineage\n")
+        for acc, lineage in _LINEAGES.items():
+            f.write(f"{acc}\t{lineage}\n")
+    accs = np.array(["P43747", "Q8YXR5", "NOT_IN_TABLE"], dtype=object)
+    meta = {
+        "names": np.array(["a", "b", "c"], dtype=object),
+        "organisms": np.array(
+            ["Haemophilus influenzae", "Nostoc sp.", "Homo sapiens"], dtype=object
+        ),
+        "kingdoms": np.array(["Viruses", "Other Eukaryotes", "Human"], dtype=object),
+        "accessions": accs,
+    }
+    cache = tmp_path / "metadata_all.npz"
+    np.savez(cache, **meta)
+    fresh = demo.refresh_kingdoms(tmp_path, cache, meta)
+    # The last one is not in the table, so the name rules still decide it.
+    assert list(fresh) == ["Proteobacteria", "Other Bacteria", "Human"]
+    stored = np.load(cache, allow_pickle=True)
+    assert str(stored["kingdom_source"]) == demo.KINGDOM_SOURCE
+    assert list(stored["kingdoms"]) == list(fresh)
+    # Stamped: a second call touches nothing, even with the table gone.
+    (tmp_path / demo.LINEAGE_CACHE_NAME).unlink()
+    again = demo.refresh_kingdoms(tmp_path, cache, {k: stored[k] for k in stored.files})
+    assert list(again) == list(fresh)
+    assert not (tmp_path / demo.LINEAGE_CACHE_NAME).exists()
+
+
+def test_refresh_kingdoms_leaves_a_cache_without_accessions(tmp_path: Path) -> None:
+    meta = {
+        "organisms": np.array(["x"], dtype=object),
+        "kingdoms": np.array(["Plants"], dtype=object),
+    }
+    assert list(demo.refresh_kingdoms(tmp_path, tmp_path / "m.npz", meta)) == ["Plants"]
+    assert not (tmp_path / "m.npz").exists()
+
+
+def test_accessions_are_recovered_from_the_matching_cached_fasta(
+    tmp_path: Path,
+) -> None:
+    import gzip
+
+    with gzip.open(tmp_path / "uniprot_sprot.fasta.gz", "wt") as f:
+        f.write(">sp|P43747|X_HAEIN Protein one OS=Haemophilus influenzae OX=71421\n")
+        f.write("MKV\n")
+        f.write(">sp|Q8YXR5|Y_NOSS1 Protein two OS=Nostoc sp. OX=103690\n")
+        f.write("MAL\n")
+    names = np.array(["Protein one", "Protein two"], dtype=object)
+    got = demo._recover_accessions(tmp_path, {"names": names})
+    assert got is not None and list(got) == ["P43747", "Q8YXR5"]
+    # A cache the FASTA does not describe row for row is left alone.
+    other = np.array(["Protein two", "Protein one"], dtype=object)
+    assert demo._recover_accessions(tmp_path, {"names": other}) is None
