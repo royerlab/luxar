@@ -12,6 +12,7 @@
 
 import type { SimpleDims } from '../../types/dims';
 import { clamp } from '../../utils/clamp';
+import { applyModifierTier } from '../../utils/cross-layer/modifier-tiers';
 
 /** Keyboard navigation configuration */
 export interface NavigationConfig {
@@ -77,13 +78,10 @@ export function calculateStepSize(
   // Apply modifiers. Shift and Ctrl do not cancel out when held together:
   // Ctrl+Shift is one more rung in the fine direction (÷100), not a
   // coarse/fine tug-of-war.
-  if (modifiers.shift && modifiers.ctrl) {
-    stepSize /= config.fineStepDivisor * config.fineStepDivisor; // Extra-fine
-  } else if (modifiers.shift) {
-    stepSize /= config.fineStepDivisor; // Fine control
-  } else if (modifiers.ctrl) {
-    stepSize *= config.coarseStepMultiplier; // Coarse control
-  }
+  stepSize = applyModifierTier(stepSize, modifiers, {
+    fineDivisor: config.fineStepDivisor,
+    coarseMultiplier: config.coarseStepMultiplier,
+  });
 
   // Apply global multiplier
   stepSize *= config.stepSizeMultiplier;

@@ -141,7 +141,8 @@ their leaf modules under this folder.
 ## Subpackages
 
 - [controllers/](./controllers/README.md) — Concrete subclasses: `NumberController`, `BooleanController`, `StringController`, `OptionController`, `FunctionController`.
-- [format/](./format/README.md) — Input formatting helpers: `applyAutoBlur`, `clamp`, `formatNumber`, `parseNumber`.
+- [format/](./format/README.md) — Input focus cleanup via `applyAutoBlur`.
+- [../slider-kit/](../slider-kit/README.md) — Shared slider formatting and interactions.
 - [dom/](./dom/README.md) — DOM plumbing for the GUI; currently the centralized `EventManager` used by every controller for guaranteed listener cleanup.
 - [styles/](./styles/README.md) — Scoped CSS for the GUI, split into `gui.css`, `controller.css`, and `folder.css`; namespaced under `.luxar-gui`.
 

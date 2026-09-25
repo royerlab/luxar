@@ -29,7 +29,7 @@ multi-period overshoot (e.g. `value = max + 5` does not become
 `max + 5 - period`). Callers that need full modular wrap should compose
 this helper with a normalization pass.
 
-`clampInteger` delegates to `clamp` from `../gui/format/value-formatting`
+`clampInteger` delegates to the canonical `clamp` in `../../utils/clamp`
 so the codebase shares one clamp implementation.
 
 ## Consumers

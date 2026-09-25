@@ -657,6 +657,38 @@ Thumbs and `accent-color` are `--luxar-highlight`; the mono values are
 `text-primary` (instrument voice, not an accent); focus goes through
 `--luxar-border-focus`.
 
+#### 7.6.1 Slider interaction contract
+
+Single-thumb numeric sliders have three deliberate resolutions. Pointer dragging
+snaps to the declared base `step`; wheel and arrow-key stepping use that base
+with the modifier ladder below; clicking the visible numeric readout opens an
+inline editor for an exact value. Double-clicking a track restores its
+construction value. Shift-drag precision is not part of the native range-input
+contract; fine pointer adjustments use wheel stepping or exact entry instead.
+
+| Modifiers | Step multiplier |
+| --- | --- |
+| none | ×1 |
+| Shift | ÷10 |
+| Control | ×10 |
+| Control+Shift | ÷100 |
+
+Control+Shift is deliberately extra-fine rather than cancellation. Wheel code
+must also read `deltaX` when `deltaY` is zero because browsers can move a
+Shift+wheel gesture onto the horizontal axis.
+
+A fine-capable native range input carries `step = baseStep / 100` and records
+the authored step in `data-base-step`. Its drag handler snaps back to the base
+grid, anchored at `min`; wheel and arrow handlers may therefore represent fine
+values between drag stops. Round values are drag-reachable only when `min` is
+aligned to the base step. Degenerate steps use `step="any"`, never `step="0"`.
+Readouts widen their displayed precision for values off the base grid. The
+Layers display-range pair is the deliberate exception: its overlapping thumbs
+retain native drag/arrow behavior, while exact bound editing and adaptive tiered
+wheel stepping live on the bound labels. The shared single-thumb implementation
+lives in `src/ui/slider-kit/`; modifier tier math lives in
+`src/utils/cross-layer/modifier-tiers.ts` so nD navigation uses the same law.
+
 For any flex row that pairs a fixed label with a dataset-controlled value,
 protect the label with `flex: 0 0 auto; white-space: nowrap` and give the value
 `min-width: 0`, single-line ellipsis, and a tooltip carrying the full text. This

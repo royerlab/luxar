@@ -7,10 +7,20 @@
  * The bound labels (left/right of the track) are click-to-edit: clicking on
  * them opens a tiny text input so the user can type a custom slider limit,
  * napari-style.
+ *
+ * The overlapping range thumbs retain native drag and arrow behavior. Their
+ * adaptive wheel stepping lives on the editable bound labels, so they are not
+ * fine-grid members of the single-thumb slider interaction contract.
  */
 
-import { clamp } from '../gui/format/value-formatting';
+import {
+  attachInlineNumberEdit,
+  INLINE_NUMBER_EDIT_HINT,
+  WHEEL_INTERACTION_HINT,
+} from '../slider-kit';
 import { normalizeWheelDeltaWithAxisFallback } from '../../utils/wheel-delta';
+import { applyModifierTier } from '../../utils/cross-layer/modifier-tiers';
+import { clamp } from '../../utils/clamp';
 
 export interface RangeSliderOptions {
   container: HTMLElement;
@@ -31,14 +41,13 @@ export interface RangeSliderOptions {
  *
  * Strategy: step = 10^(floor(log10(range)) - 1), giving ~10–100 clean
  * power-of-10 increments across the full range.
- * Shift key divides by 10 for fine control.
+ * The caller applies the shared Shift/Ctrl modifier ladder.
  */
-function computeWheelStep(min: number, max: number, fine: boolean): number {
+function computeWheelStep(min: number, max: number): number {
   const range = Math.abs(max - min);
-  if (range < 1e-10) return fine ? 0.01 : 0.1;
+  if (range < 1e-10) return 0.1;
   const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
-  const step = magnitude / 10; // ~10 steps per order of magnitude
-  return fine ? step / 10 : step;
+  return magnitude / 10; // ~10 steps per order of magnitude
 }
 
 export class RangeSlider {
@@ -60,6 +69,8 @@ export class RangeSlider {
   // Bound click handlers (stored for removeEventListener in dispose)
   private onClickLow: () => void;
   private onClickHigh: () => void;
+  private disposeLowValueEdit: () => void = () => {};
+  private disposeHighValueEdit: () => void = () => {};
 
   constructor(options: RangeSliderOptions) {
     this.options = options;
@@ -104,7 +115,10 @@ export class RangeSlider {
     // Editable bounds label — low (left of track)
     this.boundsLowLabel = document.createElement('span');
     this.boundsLowLabel.className = 'luxar-range-slider__bound';
-    this.boundsLowLabel.title = 'Click to edit · Scroll to adjust (Shift = fine)';
+    this.boundsLowLabel.setAttribute('role', 'button');
+    this.boundsLowLabel.tabIndex = 0;
+    this.boundsLowLabel.setAttribute('aria-label', `${options.label ?? 'Range'} lower bound`);
+    this.boundsLowLabel.title = `${INLINE_NUMBER_EDIT_HINT} · ${WHEEL_INTERACTION_HINT}`;
     this.boundsLowLabel.textContent = this.formatValue(options.min);
     this.onClickLow = () => this.editBound('low');
     this.boundsLowLabel.addEventListener('click', this.onClickLow);
@@ -112,10 +126,27 @@ export class RangeSlider {
     // Editable bounds label — high (right of track)
     this.boundsHighLabel = document.createElement('span');
     this.boundsHighLabel.className = 'luxar-range-slider__bound';
-    this.boundsHighLabel.title = 'Click to edit · Scroll to adjust (Shift = fine)';
+    this.boundsHighLabel.setAttribute('role', 'button');
+    this.boundsHighLabel.tabIndex = 0;
+    this.boundsHighLabel.setAttribute('aria-label', `${options.label ?? 'Range'} upper bound`);
+    this.boundsHighLabel.title = `${INLINE_NUMBER_EDIT_HINT} · ${WHEEL_INTERACTION_HINT}`;
     this.boundsHighLabel.textContent = this.formatValue(options.max);
     this.onClickHigh = () => this.editBound('high');
     this.boundsHighLabel.addEventListener('click', this.onClickHigh);
+    this.boundsLowLabel.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.editBound('low');
+      }
+    });
+    this.boundsHighLabel.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.editBound('high');
+      }
+    });
 
     // Mousewheel adjustment on bound labels
     this.onWheelLow = (e: WheelEvent) => this.handleBoundWheel(e, 'low');
@@ -153,6 +184,7 @@ export class RangeSlider {
     this.highInput.max = String(options.max);
     this.highInput.step = String(options.step ?? 0.001);
     this.highInput.value = String(options.valueHigh);
+    this.updateAccessibleNames();
 
     trackContainer.appendChild(track);
     trackContainer.appendChild(this.lowInput);
@@ -166,6 +198,19 @@ export class RangeSlider {
     // Event listeners
     this.lowInput.addEventListener('input', this.onLowChange);
     this.highInput.addEventListener('input', this.onHighChange);
+
+    this.disposeLowValueEdit = attachInlineNumberEdit(this.lowLabel, {
+      ariaLabel: `${options.label ?? 'Range'} minimum value`,
+      getValue: () => parseFloat(this.lowInput.value),
+      formatValue: (value) => String(value),
+      onCommit: (value) => this.commitValue('low', value),
+    });
+    this.disposeHighValueEdit = attachInlineNumberEdit(this.highLabel, {
+      ariaLabel: `${options.label ?? 'Range'} maximum value`,
+      getValue: () => parseFloat(this.highInput.value),
+      formatValue: (value) => String(value),
+      onCommit: (value) => this.commitValue('high', value),
+    });
 
     options.container.appendChild(this.wrapper);
     this.updateLabels();
@@ -203,6 +248,38 @@ export class RangeSlider {
     const high = parseFloat(this.highInput.value);
     this.lowLabel.textContent = this.formatValue(low);
     this.highLabel.textContent = this.formatValue(high);
+  }
+
+  private updateAccessibleNames(): void {
+    if (!this.lowInput || !this.highInput) return;
+    const label = this.options.label ?? 'Range';
+    this.lowInput.setAttribute('aria-label', `${label} minimum slider`);
+    this.highInput.setAttribute('aria-label', `${label} maximum slider`);
+    this.lowLabel.setAttribute('aria-label', `${label} minimum value`);
+    this.highLabel.setAttribute('aria-label', `${label} maximum value`);
+    this.boundsLowLabel?.setAttribute('aria-label', `${label} lower bound`);
+    this.boundsHighLabel?.setAttribute('aria-label', `${label} upper bound`);
+  }
+
+  private commitValue(which: 'low' | 'high', parsed: number): void {
+    let min = parseFloat(this.lowInput.min);
+    let max = parseFloat(this.lowInput.max);
+    const low = parseFloat(this.lowInput.value);
+    const high = parseFloat(this.highInput.value);
+    const value = which === 'low' ? Math.min(parsed, high) : Math.max(parsed, low);
+    if (value === parsed) {
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+      if (min !== parseFloat(this.lowInput.min) || max !== parseFloat(this.lowInput.max)) {
+        this.setBounds(min, max);
+        this.options.onBoundsChange?.(min, max);
+      }
+    }
+    if (which === 'low') this.lowInput.value = String(value);
+    else this.highInput.value = String(value);
+    this.updateLabels();
+    this.updateTrackFill();
+    this.options.onChange(parseFloat(this.lowInput.value), parseFloat(this.highInput.value));
   }
 
   private updateTrackFill(): void {
@@ -315,7 +392,7 @@ export class RangeSlider {
 
     const curMin = parseFloat(this.lowInput.min);
     const curMax = parseFloat(this.lowInput.max);
-    const step = computeWheelStep(curMin, curMax, e.shiftKey);
+    const step = applyModifierTier(computeWheelStep(curMin, curMax), e);
     // Scroll up → increase, scroll down → decrease.
     const wheelDelta = normalizeWheelDeltaWithAxisFallback(e);
     if (wheelDelta === 0) return;
@@ -359,6 +436,8 @@ export class RangeSlider {
 
   /** Update the visible label and its explanatory tooltip. */
   setLabel(label: string, tooltip?: string): void {
+    this.options.label = label;
+    this.updateAccessibleNames();
     if (!this.labelEl) return;
     this.labelEl.textContent = label;
     this.labelEl.classList.toggle('luxar-range-slider__label--with-tooltip', Boolean(tooltip));
@@ -385,6 +464,8 @@ export class RangeSlider {
     this.boundsHighLabel.removeEventListener('wheel', this.onWheelHigh);
     this.boundsLowLabel.removeEventListener('click', this.onClickLow);
     this.boundsHighLabel.removeEventListener('click', this.onClickHigh);
+    this.disposeLowValueEdit();
+    this.disposeHighValueEdit();
     this.wrapper.remove();
   }
 }

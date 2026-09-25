@@ -57,9 +57,10 @@ utils/
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
 ├── wheel-delta.ts           # deltaMode normalization + opt-in Shift-axis fallback
-├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
+├── cross-layer/             # Cross-layer plumbing (events, notifier, listeners, modifier tiers)
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
 │   ├── event-group.ts       # DOM-listener group with single dispose() teardown
+│   ├── modifier-tiers.ts    # Shared Shift/Ctrl slider step ladder
 │   └── notifier.ts          # Notifier facade + setNotifierBackend dependency inversion
 ├── dom/                     # Pure DOM focus predicates
 │   └── focus.ts             # Typing-surface and scene-canvas focus checks
@@ -160,7 +161,7 @@ Union type and helpers so the codebase can treat perspective and orthographic ca
 
 ### clamp.ts - Generic Numeric Clamp
 
-`clamp(value, min?, max?)` — Either bound may be omitted; both omitted is a pass-through. The canonical home for this primitive; `ui/gui/format/value-formatting.ts` re-exports it for back-compat (the original lived there and was unreachable from `rendering` under the dependency-cruiser layer order).
+`clamp(value, min?, max?)` — Either bound may be omitted; both omitted is a pass-through. The canonical home for this primitive; it moved here from the former GUI formatting helper so lower layers can import it without crossing the dependency-cruiser layer order.
 
 ### event-bus.ts - Typed Cross-Layer Pub/Sub
 

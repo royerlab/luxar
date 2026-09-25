@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { LabeledSlider } from '../../../../ui/layers/labeled-slider';
+import { absorptionSliderRange } from '../../../../ui/layers/absorption-range';
+import { INLINE_NUMBER_EDIT_HINT } from '../../../../ui/slider-kit';
 
 describe('LabeledSlider', () => {
   let container: HTMLElement;
@@ -38,10 +40,139 @@ describe('LabeledSlider', () => {
     const input = findInput();
     expect(input.min).toBe('0.2');
     expect(input.max).toBe('5');
-    expect(input.step).toBe('0.01');
+    expect(input.step).toBe('0.0001');
+    expect(input.dataset.baseStep).toBe('0.01');
     expect(input.value).toBe('1.5');
+    expect(input.getAttribute('aria-label')).toBe('Gamma slider');
 
     expect(findReadout().textContent).toBe('1.50');
+    expect(findReadout().getAttribute('aria-label')).toBe('Gamma value');
+    expect(findReadout().getAttribute('role')).toBe('button');
+    expect(findReadout().title).toBe(INLINE_NUMBER_EDIT_HINT);
+  });
+
+  it('supports tiered wheel and arrow stepping, reset, and base-grid dragging', () => {
+    const onChange = vi.fn();
+    new LabeledSlider({
+      container,
+      label: 'Gamma',
+      min: 0.2,
+      max: 5,
+      step: 0.01,
+      initialValue: 1,
+      onChange,
+    });
+
+    const input = findInput();
+    input.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaX: -120,
+        deltaY: 0,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    expect(input.valueAsNumber).toBeCloseTo(1.001, 9);
+    expect(findReadout().textContent).toBe('1.0010');
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    expect(input.valueAsNumber).toBeCloseTo(1.0011, 9);
+
+    input.value = '1.006';
+    input.dispatchEvent(new Event('input'));
+    expect(input.valueAsNumber).toBeCloseTo(1.01, 9);
+
+    input.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(input.valueAsNumber).toBe(1);
+    expect(onChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it('ignores slider gestures while inert', () => {
+    const onChange = vi.fn();
+    const slider = new LabeledSlider({
+      container,
+      label: 'Clearcoat roughness',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: 0.5,
+      onChange,
+    });
+    slider.setInert('Clearcoat is disabled');
+
+    findInput().dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true })
+    );
+
+    expect(findInput().valueAsNumber).toBe(0.5);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('disables exact readout editing while inert and restores it when live', () => {
+    const onChange = vi.fn();
+    const slider = new LabeledSlider({
+      container,
+      label: 'Clearcoat roughness',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: 0.5,
+      onChange,
+    });
+    const readout = findReadout();
+
+    slider.setInert('Clearcoat is disabled');
+    expect(readout.hasAttribute('role')).toBe(false);
+    expect(readout.tabIndex).toBe(-1);
+    expect(readout.title).toBe('');
+    readout.click();
+    expect(container.querySelector('.luxar-slider-kit__inline-input')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+
+    slider.setInert(null);
+    expect(readout.getAttribute('role')).toBe('button');
+    expect(readout.tabIndex).toBe(0);
+    expect(readout.title).toBe(INLINE_NUMBER_EDIT_HINT);
+    readout.click();
+    const editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+    expect(editor).not.toBeNull();
+
+    slider.setInert('Clearcoat is disabled');
+    editor.value = '0.9';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(findReadout().textContent).toBe('0.50');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('commits exact typed values and widens the track when needed', () => {
+    const onChange = vi.fn();
+    const slider = new LabeledSlider({
+      container,
+      label: 'Gamma',
+      min: 0.2,
+      max: 5,
+      step: 0.01,
+      initialValue: 1,
+      onChange,
+    });
+
+    findReadout().click();
+    const editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+    editor.value = '6.125';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(slider.getRange()).toEqual([0.2, 6.125]);
+    expect(findInput().valueAsNumber).toBeCloseTo(6.125, 9);
+    expect(onChange).toHaveBeenLastCalledWith(6.125);
   });
 
   it('fires onChange with constrained value on input event', () => {
@@ -163,6 +294,7 @@ describe('LabeledSlider', () => {
         step: 0.05, // ignored on a log track
         scale: 'log',
         initialValue,
+        rangeForValue: absorptionSliderRange,
         onChange,
       });
       return { slider, onChange };
@@ -247,6 +379,40 @@ describe('LabeledSlider', () => {
       input.value = '1';
       input.dispatchEvent(new Event('input'));
       expect(onChange).toHaveBeenLastCalledWith(expect.closeTo(10000, 3));
+    });
+
+    it('uses the live range when double-click resetting', () => {
+      const { slider, onChange } = makeLog();
+      const input = findInput();
+      slider.setRange(0.0001, 10);
+
+      input.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+      expect(onChange).toHaveBeenLastCalledWith(1);
+      expect(parseFloat(input.value)).toBeCloseTo(pos(0.8), 6);
+    });
+
+    it('keeps typed zero and extreme values within the absorption range policy', () => {
+      const { slider, onChange } = makeLog();
+
+      findReadout().click();
+      let editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+      editor.value = '0';
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(slider.getRange()).toEqual([0.001, 10]);
+      expect(onChange).toHaveBeenLastCalledWith(0);
+
+      findReadout().click();
+      editor = container.querySelector('.luxar-slider-kit__inline-input') as HTMLInputElement;
+      editor.value = '1e12';
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const range = absorptionSliderRange(1e12);
+      expect(slider.getRange()).toEqual([range.min, range.max]);
+
+      const input = findInput();
+      input.value = '0.5';
+      input.dispatchEvent(new Event('input'));
+      expect(onChange.mock.lastCall?.[0]).toBeGreaterThan(0);
     });
 
     it('a linear track keeps driving the input in value space (unchanged default)', () => {

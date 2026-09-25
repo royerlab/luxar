@@ -8,13 +8,8 @@
 
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import {
-  clampWithCyclicWrap,
-  valueToFraction,
-  fractionToValue,
-  fractionToThumbLeft,
-  clampInteger,
-} from '../../../ui/dimension-sliders/slider-math';
+import { clampWithCyclicWrap, clampInteger } from '../../../ui/dimension-sliders/slider-math';
+import { fractionToThumbLeft, fractionToValue, valueToFraction } from '../../../ui/slider-kit';
 
 describe('clampWithCyclicWrap', () => {
   it('returns the input unchanged when in range', () => {

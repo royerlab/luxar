@@ -34,22 +34,21 @@ The most complex controller. Optionally renders a range slider (when both `min` 
 
 **Slider behavior**
 
-| Interaction  | Effect                                                                                                                                       |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Drag         | Live `change` events; `finishChange` on `mouseup` / `touchend`.                                                                              |
-| Wheel scroll | Fine-tune by `step × 0.1`; `Shift` finer, `Ctrl` coarse, `Ctrl+Shift` finest (below). Debounced `finishChange` 150 ms after scrolling stops. |
-| Double-click | Reset to the value captured at construction (`initialValue`).                                                                                |
-| Alt+click    | Focus and select the companion number input for keyboard entry.                                                                              |
+| Interaction  | Effect                                                                                                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Drag         | Live `change` events; `finishChange` on `mouseup` / `touchend`.                                                                                |
+| Wheel scroll | Move by one authored `step`; `Shift` finer, `Ctrl` coarse, `Ctrl+Shift` finest (below). Debounced `finishChange` 150 ms after scrolling stops. |
+| Double-click | Reset to the value captured at construction (`initialValue`).                                                                                  |
+| Alt+click    | Focus and select the companion number input for keyboard entry.                                                                                |
 
 The slider's `title` tooltip advertises these shortcuts.
 
-The wheel modifier tiers are relative to the `step × 0.1` base and match every
-other slider in the app (dimension sliders, layers range sliders): `Shift`
-divides by 10, `Ctrl` multiplies by 10 (one full `step`), `Ctrl+Shift` divides
-by 100. The handler reads whichever scroll axis carries the motion — Shift+wheel
-arrives as a horizontal scroll on a standard mouse. The window-level
-`Ctrl`+wheel FOV path is gated to the scene canvas, so controller-originated
-wheel events never enter it alongside the coarse tier.
+The wheel modifier tiers are relative to the authored `step` and match every
+other single-thumb slider in the app: `Shift` divides by 10, `Ctrl` multiplies
+by 10, and `Ctrl+Shift` divides by 100. The handler reads whichever scroll axis
+carries the motion — Shift+wheel arrives as a horizontal scroll on a standard
+mouse. The window-level `Ctrl`+wheel FOV path is gated to the scene canvas, so
+controller-originated wheel events never enter it alongside the coarse tier.
 
 **Number input behavior**
 
@@ -58,9 +57,9 @@ Live `change` events on every keystroke; `finishChange` on commit (`change` even
 **Constraints**
 
 - `min(value)`, `max(value)`, `step(value)` — chainable; mutate both slider and input attributes.
-- `constrainValue(v)` clamps to `[minValue, maxValue]` using `clamp` from `../format/value-formatting`.
+- `constrainValue(v)` clamps to `[minValue, maxValue]` using `clamp` from `../../../utils/clamp`.
 - Default step (when only `min`/`max` given) is `1%` of the range.
-- Display formatting goes through `formatNumber(value, step)`.
+- Display formatting goes through `formatSliderValue(value, step, min, 0)`.
 
 **Custom display override**
 
@@ -98,6 +97,6 @@ Renders a single `<button>` whose textContent is the controller label. Clicks in
 - `../controller.ts` — Abstract `Controller<T>` base (target/property binding, event callbacks, `createBaseElement`, `dispose`).
 - `../types.ts` — `ControllerType` enum and `ControllerOptions` shape.
 - `../format/auto-blur.ts` — `applyAutoBlur` helper.
-- `../format/value-formatting.ts` — `clamp` and `formatNumber` (used by `NumberController`).
+- `packages/luxar-viewer/src/ui/slider-kit/format.ts` — slider precision and readout formatting helpers used by `NumberController`.
 - `../gui.ts` / `../folder.ts` — `Folder.add(object, property, ...args)` selects the appropriate controller subclass based on the value's runtime type and the optional args.
 - `../../rendering-controls/` — Consumer of the GUI library (imports `NumberController`); the slider hooks `setCustomUpdateDisplay` and `$input` exist for custom display logic such as logarithmic sliders.

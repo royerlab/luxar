@@ -52,7 +52,7 @@ import {
   type PhysicalMeshKnobKey,
 } from '../../rendering/materials/mesh-physical/config';
 import { clampGamma } from './attrs-utils';
-import { clamp } from '../gui/format/value-formatting';
+import { clamp } from '../../utils/clamp';
 import type { LayerApplyEngine } from './layer-apply';
 
 const SCALAR_RANGE_LABEL = 'Display range';
@@ -307,6 +307,7 @@ export class LayerControls {
       format: formatAbsorption,
       initialValue: 1.0,
       constrain: (v) => Math.max(0, v),
+      rangeForValue: absorptionSliderRange,
       onChange: (val) => {
         this.controlsInteracting = true;
         this.deps.state.applyToSelected((l) => {

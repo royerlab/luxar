@@ -48,29 +48,24 @@ export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-contr
  * Largest power of ten at or below `v`, floored at 1e-6 — a slider step whose
  * `String()` form is an exact short decimal.
  *
- * The GUI derives a controller's displayed decimal count from
- * `String(step).split('.')[1].length` (`gui/format/value-formatting.ts`), so the
- * step's *textual* form is load-bearing, not just its magnitude:
+ * The GUI derives a controller's displayed decimal count from the textual
+ * step representation (`slider-kit/format.ts`), so that representation is
+ * load-bearing, not just its magnitude:
  *
  *  - A scene-derived value carries float noise. `String(1.05e-4)` is
  *    `"0.00010499999999999999"` → 20 decimals → a near of 117.5 renders as
  *    `"117.50000000000000000000"`.
- *  - Below 1e-6, `String` switches to exponential (`String(1e-7) === "1e-7"`),
- *    where that split reads the decimal count off the MANTISSA — or finds no
- *    `.` at all and reports 0, rendering every small value as `"0"`.
  *
- * What is load-bearing is only that the result is a POWER OF TEN (so `String()`
- * is short and exact) and that the exponent is floored at -6 (so `String()`
- * stays decimal). The literal spelling is not: `Number('1e'+e)` and
- * `Math.pow(10, e)` were measured identical at every exponent from -13 to +12,
- * so either works — the literal just reads as the intent.
+ * `decimalsForStep` now handles exponent form, so only the POWER-OF-TEN result
+ * remains load-bearing: its `String()` is short and exact. The -6 floor is no
+ * longer required for display precision; it preserves the established minimum
+ * interaction step. Only that power-of-ten result is load-bearing; the literal
+ * spelling is not: `Number('1e'+e)` and `Math.pow(10, e)` were measured
+ * identical at every exponent from -13 to +12, so either works — the literal
+ * just reads as the intent.
  *
- * The 1e-6 floor costs slider granularity on sub-micron scenes and buys a
- * correct readout, which is the right trade for a control that is a read-only
- * live display whenever dynamic clipping is on.
- *
- * Exported for test. The underlying `formatNumber` limitation is the GUI's, not
- * this module's — this is the caller-side accommodation.
+ * Exported for test. The float-noise accommodation belongs at this caller,
+ * where the scene-derived step is chosen.
  */
 export function decadeStep(v: number): number {
   if (!Number.isFinite(v) || v <= 0) return 1e-6;
@@ -775,12 +770,12 @@ export class RenderingControls {
    * trigger, same structural cast, same reason.
    *
    * The STEP is not simply the range minimum, because the GUI derives the
-   * displayed decimal count from `String(step)` (`format/value-formatting.ts`).
+   * displayed decimal count from `String(step)` (`slider-kit/format.ts`).
    * A scene-derived step carries float noise into that string — `String(1.05e-4)`
    * is `"0.00010499999999999999"`, which renders every value with TWENTY
-   * decimals — and below 1e-6 `String` switches to exponential, where the
-   * decimal count is read off the mantissa and is meaningless. `decadeStep`
-   * exists to hand this function a clean value; see it for the exact bounds.
+   * decimals. `decimalsForStep` handles exponential notation, but it cannot
+   * distinguish meaningful precision from that binary float noise, so
+   * `decadeStep` hands it a clean value; see that helper for the exact bounds.
    */
   private updateClippingSliderRanges(scale: number): void {
     type ChainableNumber = {

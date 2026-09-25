@@ -10,9 +10,16 @@
 
 import { Controller } from '../controller';
 import { ControllerType, type ControllerOptions } from '../types';
-import { clamp, formatNumber } from '../format/value-formatting';
+import {
+  fineTrackStep,
+  formatSliderValue,
+  SLIDER_INTERACTION_HINT,
+  snapToGrid,
+} from '../../slider-kit';
 import { applyAutoBlur } from '../format/auto-blur';
 import { normalizeWheelDeltaWithAxisFallback } from '../../../utils/wheel-delta';
+import { applyModifierTier } from '../../../utils/cross-layer/modifier-tiers';
+import { clamp } from '../../../utils/clamp';
 
 export class NumberController extends Controller<number> {
   protected type = ControllerType.NUMBER;
@@ -56,12 +63,15 @@ export class NumberController extends Controller<number> {
       this.slider.className = 'luxar-gui__slider';
       this.slider.min = String(this.minValue);
       this.slider.max = String(this.maxValue);
-      this.slider.step = String(this.stepValue);
+      this.slider.step = fineTrackStep(this.stepValue ?? 0);
+      this.slider.dataset.baseStep = String(this.stepValue);
 
       // Update on input (real-time)
       this.eventManager.add(this.slider, 'input', () => {
         if (!this.slider) return; // Safety check
-        const value = this.constrainValue(parseFloat(this.slider.value));
+        const min = this.minValue ?? 0;
+        const snapped = snapToGrid(parseFloat(this.slider.value), min, this.stepValue ?? 0);
+        const value = this.constrainValue(snapped);
         this.object[this.property] = value;
         this.updateDisplay();
         this.triggerChange();
@@ -76,10 +86,7 @@ export class NumberController extends Controller<number> {
         this.triggerFinishChange();
       });
 
-      // Mousewheel fine-tuning: scroll = 1/10th step. Modifiers follow the
-      // app-wide slider convention (dimension sliders, layers range
-      // sliders): Shift = finer (÷10), Ctrl = coarse (×10), Ctrl+Shift =
-      // finest (÷100) — relative to the 1/10th-step base.
+      // Mousewheel stepping follows the app-wide modifier tiers.
       this.eventManager.add(
         this.slider,
         'wheel',
@@ -87,11 +94,7 @@ export class NumberController extends Controller<number> {
           const wheelEvent = e as WheelEvent;
           wheelEvent.preventDefault();
           if (!this.slider || !this.stepValue) return;
-          let multiplier = 0.1;
-          if (wheelEvent.shiftKey && wheelEvent.ctrlKey) multiplier = 0.001;
-          else if (wheelEvent.shiftKey) multiplier = 0.01;
-          else if (wheelEvent.ctrlKey) multiplier = 1;
-          const delta = this.stepValue * multiplier;
+          const delta = applyModifierTier(this.stepValue, wheelEvent);
           const wheelDelta = normalizeWheelDeltaWithAxisFallback(wheelEvent);
           if (wheelDelta === 0) return;
           const direction = wheelDelta < 0 ? 1 : -1;
@@ -106,6 +109,23 @@ export class NumberController extends Controller<number> {
         },
         { passive: false }
       );
+
+      this.eventManager.add(this.slider, 'keydown', (event: Event) => {
+        const keyboardEvent = event as KeyboardEvent;
+        const direction =
+          keyboardEvent.key === 'ArrowRight' || keyboardEvent.key === 'ArrowUp'
+            ? 1
+            : keyboardEvent.key === 'ArrowLeft' || keyboardEvent.key === 'ArrowDown'
+              ? -1
+              : 0;
+        if (direction === 0 || !this.stepValue) return;
+        keyboardEvent.preventDefault();
+        keyboardEvent.stopPropagation();
+        const delta = applyModifierTier(this.stepValue, keyboardEvent);
+        this.object[this.property] = this.constrainValue(this.getValue() + direction * delta);
+        this.updateDisplay();
+        this.triggerChange();
+      });
 
       // Double-click to reset to initial value
       this.eventManager.add(this.slider, 'dblclick', () => {
@@ -125,7 +145,7 @@ export class NumberController extends Controller<number> {
       });
 
       // Cursor hint and tooltip
-      this.slider.title = 'Scroll: fine-tune · ⇧: finer · ⌃: coarse · Double-click: reset';
+      this.slider.title = SLIDER_INTERACTION_HINT;
 
       // Auto-blur after interaction
       applyAutoBlur(this.slider, this.eventManager);
@@ -143,7 +163,9 @@ export class NumberController extends Controller<number> {
 
     if (this.minValue !== undefined) this.input.min = String(this.minValue);
     if (this.maxValue !== undefined) this.input.max = String(this.maxValue);
-    if (this.stepValue !== undefined) this.input.step = String(this.stepValue);
+    if (this.stepValue !== undefined) {
+      this.input.step = this.stepValue > 0 ? String(this.stepValue) : 'any';
+    }
 
     // Update on change (when user commits value)
     this.eventManager.add(this.input, 'change', () => {
@@ -203,7 +225,10 @@ export class NumberController extends Controller<number> {
       this.slider.value = String(value);
     }
 
-    this.input.value = formatNumber(value, this.stepValue);
+    this.input.value =
+      this.stepValue === undefined
+        ? String(value)
+        : formatSliderValue(value, this.stepValue, this.minValue ?? 0, 0);
 
     return this;
   }
@@ -235,8 +260,11 @@ export class NumberController extends Controller<number> {
 
   public step(value: number): this {
     this.stepValue = value;
-    if (this.slider) this.slider.step = String(value);
-    if (this.input) this.input.step = String(value);
+    if (this.slider) {
+      this.slider.step = fineTrackStep(value);
+      this.slider.dataset.baseStep = String(value);
+    }
+    if (this.input) this.input.step = value > 0 ? String(value) : 'any';
     return this;
   }
 
@@ -246,7 +274,8 @@ export class NumberController extends Controller<number> {
 
   private getDefaultStep(): number {
     const range = this.maxValue! - this.minValue!;
-    return range / 100; // 1% of range
+    const step = range / 100;
+    return step > 0 ? step : 0;
   }
 
   private constrainValue(value: number): number {

@@ -386,6 +386,30 @@ test.describe('Layers Panel', () => {
     expect(gamma).toBeCloseTo(2.0, 1);
   });
 
+  test('a fine wheel notch lands between two gamma drag steps', async ({ page }) => {
+    await openLayersPanel(page);
+    const group = page.locator(
+      '.luxar-layers-panel__control-group:has(.luxar-layers-panel__control-label span:text-is("Gamma"))'
+    );
+    const slider = group.locator('input[type="range"]');
+    await expect(slider).toHaveAttribute('data-base-step', '0.01');
+    await expect(slider).toHaveAttribute('step', '0.0001');
+
+    await slider.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      input.value = '1';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await slider.dispatchEvent('wheel', {
+      deltaX: -120,
+      deltaY: 0,
+      shiftKey: true,
+    });
+
+    await expect(slider).toHaveValue('1.001');
+    await expect(group.locator('.luxar-layers-panel__control-value')).toHaveText('1.0010');
+  });
+
   test('should not crash with no WebGL errors after layer operations', async ({ page }) => {
     await openLayersPanel(page);
 

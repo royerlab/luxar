@@ -19,6 +19,15 @@
  * which sync the slider to the primary selected layer without re-applying.
  */
 
+import {
+  attachInlineNumberEdit,
+  attachSliderInteractions,
+  fineTrackStep,
+  formatSliderValue,
+  INLINE_NUMBER_EDIT_HINT,
+  snapToGrid,
+} from '../slider-kit';
+
 /** Value scale of the slider track — see the module note. */
 export type SliderScale = 'linear' | 'log';
 
@@ -54,6 +63,8 @@ export interface LabeledSliderOptions {
   format?: (value: number) => string;
   /** Constrain the parsed value before invoking onChange. */
   constrain?: (value: number) => number;
+  /** Derive value-space bounds after exact entry widens a specialised track. */
+  rangeForValue?: (value: number) => { min: number; max: number };
   /** Fired with the constrained value on each `input` event. */
   onChange: (value: number) => void;
 }
@@ -64,6 +75,8 @@ export class LabeledSlider {
   private valueEl: HTMLElement;
   private options: LabeledSliderOptions;
   private inputHandler: () => void;
+  private disposeInteractions: () => void;
+  private disposeInlineEdit: () => void;
   private scale: SliderScale;
   private min: number;
   private max: number;
@@ -103,29 +116,78 @@ export class LabeledSlider {
     if (this.scale === 'log') {
       this.input.min = '0';
       this.input.max = '1';
-      this.input.step = String(1 / LOG_STEPS);
+      this.input.step = fineTrackStep(1 / LOG_STEPS);
+      this.input.dataset.baseStep = String(1 / LOG_STEPS);
     } else {
       this.input.min = String(options.min);
       this.input.max = String(options.max);
-      this.input.step = String(options.step);
+      this.input.step = fineTrackStep(options.step);
+      this.input.dataset.baseStep = String(options.step);
     }
     this.input.value = String(this.toPosition(options.initialValue));
     this.input.className = 'luxar-layers-panel__slider';
+    this.input.setAttribute('aria-label', `${options.label} slider`);
     this.syncAriaValueText(options.initialValue);
 
     this.inputHandler = (): void => {
-      const raw = this.toValue(parseFloat(this.input.value));
-      const value = options.constrain ? options.constrain(raw) : raw;
-      this.lastValue = value;
-      this.valueEl.textContent = this.formatValue(value);
-      this.syncAriaValueText(value);
-      options.onChange(value);
+      const position =
+        this.scale === 'log'
+          ? parseFloat(this.input.value)
+          : snapToGrid(parseFloat(this.input.value), this.min, options.step);
+      this.applyPosition(position);
     };
     this.input.addEventListener('input', this.inputHandler);
+    const baseStep = this.scale === 'log' ? 1 / LOG_STEPS : options.step;
+    this.disposeInteractions = attachSliderInteractions({
+      input: this.input,
+      baseStep,
+      resetValue: () => this.applyValue(options.initialValue),
+      getValue: () => parseFloat(this.input.value),
+      setValue: (position) => this.applyPosition(position),
+    });
+    this.disposeInlineEdit = attachInlineNumberEdit(this.valueEl, {
+      ariaLabel: `${options.label} value`,
+      getValue: () => this.lastValue,
+      formatValue: (value) => String(value),
+      isEnabled: () => !this.input.disabled,
+      onCommit: (parsed) => this.commitTypedValue(parsed),
+    });
 
     this.wrapper.appendChild(labelEl);
     this.wrapper.appendChild(this.input);
     options.container.appendChild(this.wrapper);
+  }
+
+  private applyPosition(position: number): void {
+    const clampedPosition = Math.min(
+      parseFloat(this.input.max),
+      Math.max(parseFloat(this.input.min), position)
+    );
+    const raw = this.toValue(clampedPosition);
+    const value = this.options.constrain ? this.options.constrain(raw) : raw;
+    this.applyValue(value);
+  }
+
+  private applyValue(value: number): void {
+    this.lastValue = value;
+    this.input.value = String(this.toPosition(value));
+    this.valueEl.textContent = this.formatValue(value);
+    this.syncAriaValueText(value);
+    this.options.onChange(value);
+  }
+
+  private commitTypedValue(parsed: number): void {
+    const value = this.options.constrain ? this.options.constrain(parsed) : parsed;
+    if (value === parsed) {
+      const range = this.options.rangeForValue?.(value);
+      if (range) {
+        this.setRange(range.min, range.max);
+      } else {
+        const min = this.scale === 'log' && value <= 0 ? this.min : Math.min(this.min, value);
+        this.setRange(min, Math.max(this.max, value));
+      }
+    }
+    this.applyValue(value);
   }
 
   /** Thumb position (DOM input space) for a value. */
@@ -161,7 +223,11 @@ export class LabeledSlider {
   }
 
   private formatValue(v: number): string {
-    return this.options.format ? this.options.format(v) : v.toFixed(2);
+    return this.options.format
+      ? this.options.format(v)
+      : this.scale === 'log'
+        ? v.toFixed(2)
+        : formatSliderValue(v, this.options.step, this.min);
   }
 
   /** Programmatically set the slider value + readout. Does not fire onChange. */
@@ -209,9 +275,19 @@ export class LabeledSlider {
    * of reading as broken. `null` restores the live state.
    */
   setInert(reason: string | null): void {
-    this.input.disabled = reason !== null;
-    this.wrapper.classList.toggle('luxar-layers-panel__control-group--inert', reason !== null);
+    const inert = reason !== null;
+    this.input.disabled = inert;
+    this.wrapper.classList.toggle('luxar-layers-panel__control-group--inert', inert);
     this.wrapper.title = reason ?? '';
+    if (inert) {
+      this.valueEl.removeAttribute('role');
+      this.valueEl.tabIndex = -1;
+      this.valueEl.title = '';
+    } else {
+      this.valueEl.setAttribute('role', 'button');
+      this.valueEl.tabIndex = 0;
+      this.valueEl.title = INLINE_NUMBER_EDIT_HINT;
+    }
   }
 
   /** The hover text of the whole group (the inert reason, or empty). */
@@ -222,6 +298,8 @@ export class LabeledSlider {
   /** Remove from DOM and detach listeners. */
   dispose(): void {
     this.input.removeEventListener('input', this.inputHandler);
+    this.disposeInteractions();
+    this.disposeInlineEdit();
     this.wrapper.remove();
   }
 }
