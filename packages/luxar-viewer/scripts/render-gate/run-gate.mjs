@@ -65,6 +65,9 @@ const opts = {
   chromeArgs: list(arg('chrome-args', '')) ?? [],
   label: arg('label', null),
   scenes: arg('scenes', join(here, 'gate-scenes.json')),
+  // Prebuilt dist/ for an arm (calibration: a baseline patched by hand).
+  baseDist: arg('base-dist', null),
+  candDist: arg('cand-dist', null),
 };
 if (!['exact', 'perf', 'all'].includes(opts.suite)) throw new Error(`bad --suite ${opts.suite}`);
 if (!['IDENTICAL', 'ULP'].includes(opts.cls)) throw new Error(`bad --class ${opts.cls}`);
@@ -476,8 +479,13 @@ function markdown(meta, exact, perf) {
 
 async function main() {
   const cacheRoot = join(repoRoot, 'delme', 'gate-builds');
-  const base = ensureBuild({ repoRoot, cacheRoot, ref: opts.base, log });
-  const cand = ensureBuild({ repoRoot, cacheRoot, ref: opts.cand, log });
+  const prebuilt = (dir, label) => ({ ref: label, sha: `dist:${dir}`, distDir: resolve(dir) });
+  const base = opts.baseDist
+    ? prebuilt(opts.baseDist, 'base-dist')
+    : ensureBuild({ repoRoot, cacheRoot, ref: opts.base, log });
+  const cand = opts.candDist
+    ? prebuilt(opts.candDist, 'cand-dist')
+    : ensureBuild({ repoRoot, cacheRoot, ref: opts.cand, log });
   const label = opts.label ?? `${base.sha.slice(0, 8)}-vs-${cand.sha.slice(0, 8)}-${opts.suite}`;
   const outDir = resolve(arg('out', join(repoRoot, 'delme', 'gate', label)));
   mkdirSync(outDir, { recursive: true });
