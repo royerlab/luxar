@@ -351,7 +351,10 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       // the sibling shaders. Kept at the file's highp default rather than
       // mediump like the appearance uniforms: only the RESULT is in [0, 1], and
       // the depths being compared are not (same as the line shader's twin).
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewPos.z, max(uNearCull, 1e-20));
+      // Ortho test from three's per-draw 'isOrthographic' (the camera being
+      // drawn with), not a CPU-pushed flag; the fragment stage has no
+      // projectionMatrix to read it from.
+      float nearFade = perspectiveNearFade(isOrthographic ? 1 : 0, vViewPos.z, max(uNearCull, 1e-20));
       // Rejected in EVERY mode, at the siblings' 0.01 threshold. Not optional in
       // the depth-writing ones: 'opaque' always writes depth and 'normal' does at
       // opacity >= 0.99 (blending-state.ts::normalModeDepthWrite, which mesh feeds

@@ -51,11 +51,15 @@ layout( std140 ) uniform object {
 	float nodeUniform10;
 	float nodeUniform11;
 	float nodeUniform12;
-	float nodeUniform13;
 	float nodeUniform14;
 	float nodeUniform15;
 	float nodeUniform16;
 	mat4 nodeUniform18;
+};
+
+layout( std140 ) uniform render {
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
 };
 uniform sampler2D nodeUniform1;
 
@@ -83,11 +87,12 @@ vec3 nodeVar13;
 vec3 nodeVar14;
 float nodeVar15;
 float nodeVar16;
-float nodeVar17;
+int nodeVar17;
 float nodeVar18;
 float nodeVar19;
+float nodeVar20;
 vec4 Output;
-vec4 nodeVar20;
+vec4 nodeVar21;
 
 // codes
 
@@ -155,7 +160,18 @@ void main() {
 	nodeVar14 = ( ( pow( nodeVar13, vec3( nodeUniform9 ) ) * vec3( nodeVar11 ) ) + vec3( ( nodeUniform10 * pow( max( dot( nodeVar9, normalize( ( nodeVar10 + vec3( 0.0, 0.0, 1.0 ) ) ) ), 0.0 ), nodeUniform11 ) ) ) );
 	nodeVar15 = ( nodeVarying1 * nodeUniform12 );
 
-	if ( ( int( nodeUniform13 ) == 1 ) ) {
+	if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
+
+		nodeVar17 = 1;
+
+	} else {
+
+		nodeVar17 = 0;
+
+	}
+
+
+	if ( ( nodeVar17 == 1 ) ) {
 
 		nodeVar16 = 1.0;
 
@@ -164,22 +180,22 @@ void main() {
 
 		if ( ( nodeVarying2.z >= 0.0 ) ) {
 
-			nodeVar17 = 0.0;
+			nodeVar18 = 0.0;
 
 		} else {
 
-			nodeVar18 = max( nodeUniform14, 1e-20 );
-			nodeVar17 = smoothstep( nodeVar18, ( nodeVar18 * 2.0 ), ( - nodeVarying2.z ) );
+			nodeVar19 = max( nodeUniform14, 1e-20 );
+			nodeVar18 = smoothstep( nodeVar19, ( nodeVar19 * 2.0 ), ( - nodeVarying2.z ) );
 
 		}
 
-		nodeVar16 = nodeVar17;
+		nodeVar16 = nodeVar18;
 
 	}
 
-	nodeVar19 = nodeVar16;
+	nodeVar20 = nodeVar16;
 
-	if ( ( nodeVar19 < 0.01 ) ) {
+	if ( ( nodeVar20 < 0.01 ) ) {
 
 		discard;
 
@@ -194,12 +210,12 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( ( nodeVar14 * vec3( nodeVar19 ) ), 1.0 );
+	DiffuseColor = vec4( ( nodeVar14 * vec3( nodeVar20 ) ), 1.0 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform16 );
-	nodeVar20 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar20;
+	nodeVar21 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar21;
 
 	// result
-	fragColor = nodeVar20;
+	fragColor = nodeVar21;
 
 }

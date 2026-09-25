@@ -60,6 +60,7 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import {
+  isOrthoProjectionTSL,
   sanitizeAlpha,
   perspectiveNearFadeTSL,
   type TSLNode,
@@ -141,7 +142,6 @@ export function meshPickWebGPUFactory(
   const uAlphaCutoff = nodes.uAlphaCutoff;
   const uAlphaCutout = nodes.uAlphaCutout;
   const uSurfaceDepth = nodes.uSurfaceDepth;
-  const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
 
   // ---- Varyings ----
@@ -242,7 +242,9 @@ export function meshPickWebGPUFactory(
     // Same fade, same 1e-20 degenerate-smoothstep floor and same 0.01 reject as the
     // visual graph — pick coverage must keep matching visible coverage as the camera
     // flies into the surface. Per FRAGMENT, because a triangle spans depth.
-    nearFade.assign(perspectiveNearFadeTSL(uIsOrtho, vViewZ, max(uNearCull, float(1e-20))));
+    nearFade.assign(
+      perspectiveNearFadeTSL(isOrthoProjectionTSL(), vViewZ, max(uNearCull, float(1e-20)))
+    );
     // Assigned before `brightness`, whose select reads it, and before the cutout
     // `Discard` in `colorNode` reads it.
     cutoutOn.assign(int(uAlphaCutout).equal(int(1)));

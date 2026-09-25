@@ -154,11 +154,13 @@ describe('the mesh GLSL sources carry the fade', () => {
     // Per fragment and not per vertex: a triangle spans depth, so a per-vertex value
     // would interpolate the RAMP across the face. The varying it reads is the one
     // the shade term already carries, so no new vertex output was needed.
+    // The ortho test is three's per-draw `isOrthographic` (the camera being
+    // drawn with), not the CPU-pushed uIsOrtho.
     expect(MESH_FRAGMENT_SHADER).toContain(
-      'perspectiveNearFade(uIsOrtho, vViewPos.z, max(uNearCull, 1e-20))'
+      'perspectiveNearFade(isOrthographic ? 1 : 0, vViewPos.z, max(uNearCull, 1e-20))'
     );
     expect(MESH_FRAGMENT_SHADER).toContain('float perspectiveNearFade(');
-    expect(MESH_FRAGMENT_SHADER).toContain('uniform int uIsOrtho;');
+    expect(MESH_FRAGMENT_SHADER).not.toMatch(/perspectiveNearFade\(uIsOrtho/);
     expect(MESH_FRAGMENT_SHADER).toContain('uniform float uNearCull;');
     // The vertex stage is untouched — no fade varying was added there.
     expect(MESH_VERTEX_SHADER).not.toContain('perspectiveNearFade');
@@ -208,7 +210,7 @@ describe('the mesh-pick GLSL sources carry the same fade', () => {
     // surface the user can barely see stays fully pickable AND keeps depth-occluding
     // whatever is behind it.
     expect(MESH_PICK_FRAGMENT_SHADER).toContain(
-      'perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20))'
+      'perspectiveNearFade(isOrthographic ? 1 : 0, vViewZ, max(uNearCull, 1e-20))'
     );
     expect(MESH_PICK_FRAGMENT_SHADER).toContain('if (nearFade < 0.01) discard;');
     expect(MESH_PICK_FRAGMENT_SHADER).toContain(

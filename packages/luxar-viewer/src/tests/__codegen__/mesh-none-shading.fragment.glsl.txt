@@ -47,11 +47,15 @@ layout( std140 ) uniform object {
 	float nodeUniform6;
 	float nodeUniform7;
 	float nodeUniform8;
-	float nodeUniform9;
 	float nodeUniform10;
 	float nodeUniform11;
 	float nodeUniform12;
 	mat4 nodeUniform14;
+};
+
+layout( std140 ) uniform render {
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
 };
 uniform sampler2D nodeUniform1;
 
@@ -74,11 +78,12 @@ vec3 nodeVar7;
 vec3 nodeVar8;
 float nodeVar9;
 float nodeVar10;
-float nodeVar11;
-float nodeVar13;
+int nodeVar11;
+float nodeVar12;
 float nodeVar14;
+float nodeVar15;
 vec4 Output;
-vec4 nodeVar15;
+vec4 nodeVar16;
 
 // codes
 
@@ -131,7 +136,18 @@ void main() {
 	nodeVar8 = pow( nodeVar7, vec3( nodeUniform7 ) );
 	nodeVar9 = ( nodeVarying1 * nodeUniform8 );
 
-	if ( ( int( nodeUniform9 ) == 1 ) ) {
+	if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
+
+		nodeVar11 = 1;
+
+	} else {
+
+		nodeVar11 = 0;
+
+	}
+
+
+	if ( ( nodeVar11 == 1 ) ) {
 
 		nodeVar10 = 1.0;
 
@@ -140,22 +156,22 @@ void main() {
 
 		if ( ( nodeVarying2.z >= 0.0 ) ) {
 
-			nodeVar11 = 0.0;
+			nodeVar12 = 0.0;
 
 		} else {
 
-			nodeVar13 = max( nodeUniform10, 1e-20 );
-			nodeVar11 = smoothstep( nodeVar13, ( nodeVar13 * 2.0 ), ( - nodeVarying2.z ) );
+			nodeVar14 = max( nodeUniform10, 1e-20 );
+			nodeVar12 = smoothstep( nodeVar14, ( nodeVar14 * 2.0 ), ( - nodeVarying2.z ) );
 
 		}
 
-		nodeVar10 = nodeVar11;
+		nodeVar10 = nodeVar12;
 
 	}
 
-	nodeVar14 = nodeVar10;
+	nodeVar15 = nodeVar10;
 
-	if ( ( nodeVar14 < 0.01 ) ) {
+	if ( ( nodeVar15 < 0.01 ) ) {
 
 		discard;
 
@@ -170,12 +186,12 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( ( nodeVar8 * vec3( nodeVar14 ) ), 1.0 );
+	DiffuseColor = vec4( ( nodeVar8 * vec3( nodeVar15 ) ), 1.0 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform12 );
-	nodeVar15 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar15;
+	nodeVar16 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar16;
 
 	// result
-	fragColor = nodeVar15;
+	fragColor = nodeVar16;
 
 }

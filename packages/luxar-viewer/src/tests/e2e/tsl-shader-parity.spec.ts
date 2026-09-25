@@ -2801,6 +2801,26 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     }
   });
 
+  test('mesh near fade: the ortho branch is the identity under an orthographic camera', async ({
+    page,
+  }) => {
+    // `mesh-ortho-near-cull` is `mesh` with the perspective entries' uNearCull (0.8),
+    // which would fade the quad to 0.15625 under perspective. The ortho test is read
+    // from the camera being drawn with (three's isOrthographic / P[3][3]), so under
+    // the ortho default camera the fade must be the identity and the frame must equal
+    // `mesh` exactly — on both backends.
+    await bootHarness(page);
+
+    const plain = await runGLSL(page, 'mesh');
+    const nearCull = await runGLSL(page, 'mesh-ortho-near-cull');
+    const plainTsl = (await runTSL(page, 'mesh')).pixels;
+    const nearCullTsl = (await runTSL(page, 'mesh-ortho-near-cull')).pixels;
+
+    assertBothRendered(nearCull, nearCullTsl, 'mesh-ortho-near-cull');
+    expect(nearCull, 'GLSL: ortho near cull is not a fade').toEqual(plain);
+    expect(nearCullTsl, 'TSL: ortho near cull is not a fade').toEqual(plainTsl);
+  });
+
   test('mesh near fade: parity under perspective, on the visual AND the pick pass', async ({
     page,
   }) => {
@@ -2824,7 +2844,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // against two backends that BOTH ignored the fade.
     //
     // The two visual references are the `*-near-fade-reference` entries: same camera,
-    // same `uNearCull`, `uIsOrtho` flipped to 1 so the fade is the identity. Using the
+    // a `uNearCull` far inside the quad's depth so the fade is the identity. Using the
     // ortho-camera `mesh` / `mesh-additive` entries instead would compare across two
     // framings — the ortho frame is 2.0 wide at z = 0 against the perspective frame's
     // 2·tan(30°) = 1.155 — so pixel (i, j) would be a different point on the quad in

@@ -234,7 +234,10 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
       // the visual shader — pick coverage must keep matching visible coverage as
       // the camera flies into the surface. Rejected before anything is written, so
       // a faded-out fragment contributes neither an id nor depth.
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20));
+      // Ortho test from three's per-draw 'isOrthographic' (the camera being
+      // drawn with), not a CPU-pushed flag; the fragment stage has no
+      // projectionMatrix to read it from.
+      float nearFade = perspectiveNearFade(isOrthographic ? 1 : 0, vViewZ, max(uNearCull, 1e-20));
       if (nearFade < 0.01) discard;
 
       if (uAlphaCutout == 1) {

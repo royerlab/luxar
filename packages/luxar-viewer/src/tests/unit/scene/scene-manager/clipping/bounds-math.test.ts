@@ -473,9 +473,10 @@ describe('bounds-math', () => {
       // ...and mesh, also per-fragment (a triangle spans depth), but WITH the
       // 0.01 reject: it writes depth in `opaque` / `normal`, so a faded-out
       // fragment left rasterizing would occlude whatever is behind it. This
-      // pair is what makes the derivation cover the fourth type.
+      // pair is what makes the derivation cover the fourth type. Its ortho test
+      // is three's per-draw `isOrthographic` (the camera being drawn with).
       expect(MESH_FRAGMENT_SHADER).toMatch(
-        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*vViewPos\.z\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
+        /perspectiveNearFade\s*\(\s*isOrthographic \? 1 : 0\s*,\s*vViewPos\.z\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
       );
       expect(MESH_FRAGMENT_SHADER).toMatch(new RegExp(`nearFade\\s*${reject}`));
     });

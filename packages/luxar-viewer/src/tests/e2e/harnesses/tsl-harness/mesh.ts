@@ -27,7 +27,8 @@
  * fade; the arithmetic is on `NEAR_FADE_UNIFORMS` below.
  *
  * The two `*-near-fade-reference` entries render under the SAME perspective camera
- * with the fade switched off (`uIsOrtho: 1`), and exist because the anti-vacuity
+ * with the fade made the identity (a `uNearCull` far inside the quad's depth), and
+ * exist because the anti-vacuity
  * half of the parity test needs an un-faded frame of the *same surface points*. The
  * ortho default camera cannot supply one: its frame is 2.0 wide at z = 0 against the
  * perspective frame's 2·tan(30°) = 1.155, so pixel (i, j) is a different point on the
@@ -217,20 +218,22 @@ const ORTHO_FADE_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.1 } as const;
 const NEAR_FADE_UNIFORMS = { uIsOrtho: 0, uNearCull: 0.8 } as const;
 
 /**
- * The un-faded reference for the perspective entries: the SAME `uNearCull`, the SAME
- * camera, only `uIsOrtho` flipped — so `perspectiveNearFade` returns 1.0 and every
- * other term of the fragment is untouched. Dividing one frame by the other therefore
- * isolates the fade and nothing else.
- *
- * `uIsOrtho: 1` under a PERSPECTIVE camera is deliberately mismatched. The uniform is
- * read by exactly one thing — the fade — so it is the switch that turns the fade off
- * without moving a pixel of framing, which is the whole job here. It also buys the
- * harness its first non-vacuous coverage of mesh's ortho branch: every ortho-camera
- * entry sets `uIsOrtho: 1` too, but there the quad sits at viewZ = -1 against a
- * `uNearCull` of 0.1, so BOTH branches return 1.0 and the flag proves nothing. Here
- * the two branches differ by 0.15625 vs 1.0.
+ * The un-faded reference for the perspective entries: the SAME camera, with a
+ * `uNearCull` so small that the quad's depth (1.0) is far past the fade band, so
+ * `perspectiveNearFade` = smoothstep(1e-6, 2e-6, 1.0) = 1.0 exactly and every other
+ * term of the fragment is untouched. Dividing one frame by the other therefore
+ * isolates the fade and nothing else. (The ortho test is read from the camera the
+ * frame is drawn with, so a mismatched `uIsOrtho` can no longer switch the fade off;
+ * the ortho branch has its own entry, `mesh-ortho-near-cull`.)
  */
-const UNFADED_REFERENCE_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.8 } as const;
+const UNFADED_REFERENCE_UNIFORMS = { uIsOrtho: 0, uNearCull: 1e-6 } as const;
+
+/**
+ * The ortho branch, non-vacuously: the `mesh` quad under an ORTHOGRAPHIC camera with
+ * the perspective entries' `uNearCull` of 0.8. A perspective fade would be 0.15625
+ * here; the ortho branch must return 1.0, so this frame equals `mesh`'s exactly.
+ */
+const ORTHO_NEAR_CULL_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.8 } as const;
 
 /** Uniforms mirroring the production `MeshMaterial` constructor. */
 function meshUniforms(
@@ -316,6 +319,15 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
   mesh: {
     source: MESH_SOURCE,
     buildUniforms: () => meshUniforms(),
+    buildDefines: () => ({ LUXAR_MESH_ALPHA_CUTOUT: '' }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque' }),
+    buildMesh: buildMeshObject(),
+  },
+  // `mesh` with a uNearCull (0.8) that WOULD fade the quad under perspective: under
+  // the ortho default camera the fade is the identity, so the frame equals `mesh`.
+  'mesh-ortho-near-cull': {
+    source: MESH_SOURCE,
+    buildUniforms: () => meshUniforms(false, ORTHO_NEAR_CULL_UNIFORMS),
     buildDefines: () => ({ LUXAR_MESH_ALPHA_CUTOUT: '' }),
     buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque' }),
     buildMesh: buildMeshObject(),
