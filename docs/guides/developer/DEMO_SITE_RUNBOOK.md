@@ -818,10 +818,13 @@ Section 2's rule — hosted cost is **requests**, not bytes — is right, but "o
 request per node" is an *upper bound*, not a measurement. After
 `optimize --profile archive` (1 MB target) a big array spans many chunks while a
 small one spans exactly one, so cutting node count only cuts fetches in one of two
-regimes. The following counts come from the consolidated metadata at published
-prefix `2026-08-27b`; `arrays` excludes zero-shaped `array_ref` placeholders,
-`chunks` is the root `chunk_layout.chunks_after` value, and the eager columns apply
-the viewer's `default_level` deferral rule in
+regimes. The following historical counts come from consolidated metadata at the
+retired published prefix `2026-08-27b`. The live prefix is per store (8.1; resolve
+it from the `/d/<demo-key>` route): `data/2026-09-12` backs most rows here, while
+`biodiversity_planetary_scale` is at `data/2026-09-19`. `arrays` excludes
+zero-shaped `array_ref` placeholders, `chunks` is the root
+`chunk_layout.chunks_after` value, and the eager columns apply the viewer's
+`default_level` deferral rule in
 `packages/luxar-viewer/src/data/scene-loader/nodes/load-lod-group-node.ts`. They
 count every array under that default-level subtree, including all additive rungs;
 the first-rung columns keep only `additive_0` inside each ladder:
@@ -843,21 +846,27 @@ Two regimes, and the ratio tells you which one you are in:
 
 - **Node-bound (ratio ≈ 1).** Every eager array is a single chunk, so removing an
   eagerly loaded array removes approximately one request from the converged
-  default-level load. `codex_pancreas` is exactly 1.00 both store-wide and for
-  its eager subset; that load converges at 3,440 arrays/chunks, not all 10,320,
-  while its first committed rung needs 860. The 63-request
+  default-level load. In the retired `2026-08-27b` generation,
+  `codex_pancreas` was exactly 1.00 both store-wide and for its eager subset;
+  that load converged at 3,440 arrays/chunks, not all 10,320, while its first
+  committed rung needed 860. The 63-request
   stacked-leaf versus 689-request partition measurement in
   `packages/luxar/src/luxar/demos/_lod_policy.py` is not a reusable sublinear
   node-to-request law: it compares a byte-bound leaf with a node-bound partition.
+
 - **Byte-bound (ratio >> 1).** Arrays span many chunks, so request count tracks
   total bytes and is nearly indifferent to node count. `cmu1`'s converged load
   fetches 508 chunks from 60 arrays, while its first rung fetches 127 from 15;
   both have ratio 8.47, so halving its node count would barely move either.
 
 **The ratio is a property of a pipeline STAGE, not of a store.** `optimize` is
-what moves these stores toward the node-bound regime. The same published roots
-record both pipeline stages in `chunk_layout`, so this comparison is reproducible
-from their `zarr.json` files without a separate local build:
+what moves these stores toward the node-bound regime. The same historical
+published roots recorded both pipeline stages in `chunk_layout`, so this
+comparison was reproducible from their `zarr.json` files while the retired
+`2026-08-27b` prefix was live. The live prefix is per store (8.1; resolve it
+from the `/d/<demo-key>` route): `data/2026-09-12` backs most rows here, while
+`biodiversity_planetary_scale` is at `data/2026-09-19`. The table is retained
+as a historical measurement, not re-measured:
 
 | store | arrays | chunks before | before ratio | chunks after | after ratio |
 |---|---:|---:|---:|---:|---:|
@@ -889,6 +898,34 @@ Corollary for the other direction: adding nodes is only expensive in the
 node-bound regime. A per-part additive ladder that multiplies groups is cheap on a
 byte-bound store and costly on a node-bound one — so the same structural change
 has opposite cost depending on chunk layout.
+
+#### Measured: re-tiling `codex_pancreas` at a 4x coarser partition
+
+**Measured 2026-08-28 in commit `99c1b0820` on the since-deleted
+`runbook-followup-codex-and-review-loop` branch; hosted topology re-checked
+2026-09-24.** The rebuilt row's eager and first-rung pairs were derived from that
+live re-check. The then-live `2026-08-27b` store was rebuilt at a 4x coarser
+partition (172 parts → 43) and taken through `optimize --profile archive`:
+
+| generation | parts | geometry groups | all groups | arrays | chunks | eager arrays | eager chunks | first-rung arrays | first-rung chunks | chunks:arrays |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| published `2026-08-27b` | 172 | 2764 | 2767 | 10320 | 10320 | 3440 | 3440 | 860 | 860 | 1.00 |
+| rebuilt | 43 | 700 | 703 | 2580 | 2828 | 860 | 860 | 215 | 215 | 1.10 |
+
+The three extra groups in the all-group count are the overlay wrapper and its
+two text overlays; stating both counts keeps the structural comparison
+like-for-like. The old prefix has since been retired. The current `2026-09-12`
+root metadata independently confirms that the hosted store is the 43-part
+rebuild: 700 geometry groups (703 including overlays), `arrays_total=2580`, and
+`chunks_after=2828`.
+
+The full-detail chunk total fell by **3.65x**, short of the 4.00x reduction in
+arrays because the coarser partition made each array larger. That shortfall is
+whole-store only: both the converged eager load and first committed rung fell by
+the full **4.00x**, to 860 and 215 arrays/chunks respectively, and the eager
+subset remains exactly 1.00 chunks:arrays. The whole-store ratio moved from
+1.00 → 1.10 toward byte-bound without leaving the node-bound regime. Only
+re-running `optimize` gives the real request count.
 
 #### Worked example: is a per-part ladder worth its nodes?
 
@@ -1332,7 +1369,10 @@ internal node. The algebra on it lives in `core/group/partition.py`:
 `serialized_bsp_tree_straddles_centers`,
 `serialized_bsp_tree_axis_overlap_floors`, and `persist_pruned_bsp_tree`.
 
-Measured on published prefix `2026-08-27b`:
+Historical measurement from the retired published prefix `2026-08-27b`. The
+live prefix is per store (8.1; resolve it from the `/d/<demo-key>` route):
+`data/2026-09-12` backs `ocean_currents_earth`, while
+`biodiversity_planetary_scale` is at `data/2026-09-19`:
 
 | store | node | depth | leaves | axes |
 |---|---|---:|---:|---|
@@ -1397,15 +1437,20 @@ number, and never put both in one table.
 
 ## 8. Current state, and what a fresh operator needs
 
-Written 2026-09-13. Read this before touching the site; several items below
+Updated 2026-09-25. Read this before touching the site; several items below
 change what the earlier sections tell you to do.
 
 ### 8.1 Where the site stands right now
 
-- Gallery data prefixes: **`data/2026-09-12`** backs 85 tiles;
-  **`data/2026-09-13`** backs `esm3_protein_stories`,
-  `esm_protein_universe`, and `gsplats_4d_h2afva_timelapse`, the three tiles
-  republished by an incremental wave.
+- Gallery data prefixes, re-resolved from the stable `/d/` routes on
+  2026-09-25: **`data/2026-09-12`** backs 64 tiles and
+  **`data/2026-09-16`** backs 16 tiles. The later waves are one tile at
+  **`data/2026-09-18`** (`gsplats_4d_drosophila_embryogenesis`), two at
+  **`data/2026-09-19`** (`biodiversity_planetary_scale`,
+  `gsplats_3d_opencell_map4`), two at **`data/2026-09-20`**
+  (`gsplats_4d_h2afva_timelapse`, `gsplats_4d_neuromast_2ch`), and
+  three at **`data/2026-09-22`** (`gsplats_3d_blastocyst_dapi_nuclei`,
+  `gsplats_3d_blastocyst_multichannel`, `protein_landscape`).
 - **There is no rollback prefix.** `2026-09-01` was purged after verification.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with

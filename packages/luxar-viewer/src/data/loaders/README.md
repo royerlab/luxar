@@ -381,9 +381,9 @@ narrowly-scoped helpers each spatial-index loader composes:
   on demand. Decoded blobs are cached as blob URLs in a 50 MB-default LRU;
   eviction revokes the URL. Detects JPEG / PNG / WebP from magic bytes.
 - **`picking/label-loader.ts`** — `LabelLoader`: lazy CSR-style string-label
-  fetching from `label_offsets` + `label_bytes`. Bulk-loads the whole node's
-  labels on first hover; concurrent requests for the same node share one
-  in-flight promise.
+  fetching from `label_offsets` + `label_bytes`. Slice-reads one element's two
+  offsets and exact byte range, retains open array handles per node, and keeps
+  decoded labels in a shared bounded LRU.
 - **`environment/environment-loader.ts`** — `loadBakedEnvironment(rootLoc,
 rootContentHash)`: reads the root-level `environment/` sidecar group a
   `luxar env bake` left (six half-float cube faces as `uint16` bits, named by

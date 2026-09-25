@@ -433,9 +433,9 @@ least diagnosable way for a diagnostic test to fail.
 `pnpm check:e2e-timeout-budgets` enforces that rule for deadlines above half the
 default project's test timeout (30 s with today's 60 s budget). It reads
 explicit `timeout` options, numeric arguments passed to wait helpers, local
-wait-helper defaults, module-level timeout/deadline constants used by each test,
-and imported parameter defaults from `./helpers` and `./helpers/*` — except where
-such a constant IS the budget, since the argument to
+wait-helper defaults, imported parameter defaults from `./helpers` and
+`./helpers/*`, and module-level timeout/deadline constants used by each test —
+except where such a constant IS the budget, since the argument to
 `test.setTimeout`, `test.slow` or `describe.configure` is what the deadline has
 to beat rather than a deadline of its own.
 Deadlines inside helper bodies, local or imported, and `beforeAll`/`afterAll`
@@ -454,12 +454,12 @@ irrelevant and it reaches down through nested suites. In a **test body** it is
 a live call against the resolved slot, so a preceding `setTimeout` is what gets
 tripled and a following one replaces the result. Either way it lands **once per
 test**, since a suite-level `slow` makes an in-test one a no-op, and a
-_conditional_ `test.slow(cond)` declares nothing at all — the condition is a
-run-time value, so the check falls back to demanding a real budget. If the
-static
-heuristic cannot model a case, add its file, source line, test title, and a specific reason
-to `scripts/e2e-timeout-budget-exceptions.json`; stale exceptions fail the
-check and must be removed when the test gains a budget or stops using the long
+_conditional_ `test.slow(...)` with any arguments declares nothing at all — the
+check treats every argument form as unmodelled, including literal conditions,
+and falls back to demanding a real budget. If the static heuristic cannot model
+a case, add its file, source line, test title, and a specific reason to
+`scripts/e2e-timeout-budget-exceptions.json`; stale exceptions fail the check
+and must be removed when the test gains a budget or stops using the long
 deadline. Existing imported-default exposure is recorded by per-file count in
 `scripts/e2e-timeout-budget-baseline.json`; a higher count fails, and a lower
 count also fails until the baseline is tightened. Adding an exact exception

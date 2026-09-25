@@ -103,8 +103,25 @@ function exportedHelpers(source, file, cache) {
   const helpers = localHelpers(sourceFile, constants);
   const exported = new Map();
   for (const statement of sourceFile.statements) {
-    if (ts.isExportDeclaration(statement) && statement.moduleSpecifier) {
-      throw new Error(`Shared helper module ${file} uses an unsupported re-export.`);
+    if (ts.isExportDeclaration(statement)) {
+      const elements =
+        statement.exportClause && ts.isNamedExports(statement.exportClause)
+          ? statement.exportClause.elements
+          : [];
+      const isTypeOnly =
+        statement.isTypeOnly ||
+        (elements.length > 0 && elements.every((element) => element.isTypeOnly));
+      if (isTypeOnly) continue;
+      if (statement.moduleSpecifier) {
+        throw new Error(`Shared helper module ${file} uses an unsupported re-export.`);
+      }
+      for (const element of elements) {
+        if (element.isTypeOnly) continue;
+        const localName = element.propertyName?.text ?? element.name.text;
+        const parameters = helpers.get(localName);
+        if (parameters) exported.set(element.name.text, parameters);
+      }
+      continue;
     }
     const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
     if (!modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
@@ -132,6 +149,7 @@ function importedHelpers(sourceFile, helperSources, exportedHelperCache) {
     if (!/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
     const importClause = statement.importClause;
     if (!importClause) continue;
+    if (importClause.isTypeOnly) continue;
     if (importClause.name) {
       throw new Error(`Shared helper module ${specifier} uses an unsupported default import.`);
     }
@@ -140,12 +158,14 @@ function importedHelpers(sourceFile, helperSources, exportedHelperCache) {
       throw new Error(`Shared helper module ${specifier} uses an unsupported namespace import.`);
     }
     if (!bindings) continue;
+    if (bindings.elements.every((element) => element.isTypeOnly)) continue;
     const helperSource = helperSources.get(specifier);
     if (helperSource === undefined) {
       throw new Error(`Could not resolve shared helper module ${specifier}.`);
     }
     const exported = exportedHelpers(helperSource, specifier, exportedHelperCache);
     for (const element of bindings.elements) {
+      if (element.isTypeOnly) continue;
       const importedName = element.propertyName?.text ?? element.name.text;
       const parameters = exported.get(importedName);
       if (parameters) helpers.set(element.name.text, parameters);
@@ -251,7 +271,8 @@ function testBudget(statements, constants, enclosing, projectTimeoutMs) {
   for (const call of budgetCalls(statements)) {
     const path = callPath(call.expression).join('.');
     if (path === 'test.setTimeout') {
-      budgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+      const directBudgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+      if (directBudgetMs !== undefined) budgetMs = directBudgetMs;
     } else if (path === 'test.slow' && !slowApplied && isUnconditionalSlow(call)) {
       slowApplied = true;
       budgetMs = (budgetMs ?? projectTimeoutMs) * 3;
@@ -489,6 +510,15 @@ export function helperSourcesForSpec(source, path, helperModuleCache = new Map()
     }
     const specifier = statement.moduleSpecifier.text;
     if (!/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
+    const importClause = statement.importClause;
+    if (
+      importClause?.isTypeOnly ||
+      (importClause?.namedBindings &&
+        ts.isNamedImports(importClause.namedBindings) &&
+        importClause.namedBindings.elements.every((element) => element.isTypeOnly))
+    ) {
+      continue;
+    }
     const base = resolve(dirname(path), specifier);
     const modulePath = [`${base}.ts`, join(base, 'index.ts'), base].find(
       (candidate) => existsSync(candidate) && statSync(candidate).isFile()
@@ -601,6 +631,11 @@ export function runCheck({ updateBaseline = false } = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const options = parseArgs(process.argv.slice(2));
-  if (!runCheck(options)) process.exitCode = 1;
+  try {
+    const options = parseArgs(process.argv.slice(2));
+    if (!runCheck(options)) process.exitCode = 1;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

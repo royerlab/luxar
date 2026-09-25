@@ -233,11 +233,11 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   let keyLoader: LabelLoader | undefined;
   if (store) {
     const rootLoc = zarr.root(store);
-    labelLoader = hasAnyLabels ? new LabelLoader(store, rootLoc) : undefined;
+    labelLoader = hasAnyLabels ? new LabelLoader(rootLoc) : undefined;
     imageLabelLoader = hasAnyImageLabels ? new ImageLabelLoader(store, rootLoc) : undefined;
     // Same class, `'keys'` channel — only built when some node declares one,
     // so a scene without keys pays nothing.
-    keyLoader = hasAnyKeys ? new LabelLoader(store, rootLoc, 'keys') : undefined;
+    keyLoader = hasAnyKeys ? new LabelLoader(rootLoc, 'keys') : undefined;
   } else if (!wantsSelection) {
     log.warning(Modules.APP, 'Cannot init picking: zarr store not available');
     return {

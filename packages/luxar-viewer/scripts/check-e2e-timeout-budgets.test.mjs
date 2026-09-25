@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
@@ -316,6 +317,25 @@ describe('analyzeSpec', () => {
     expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toHaveLength(1);
   });
 
+  it('keeps an enclosing budget when a direct timeout cannot be resolved', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      const BACKENDS = ['webgl', 'webgpu'];
+
+      test.describe('group', () => {
+        test.describe.configure({ timeout: 300_000 });
+
+        test('scales with the backend axis', async ({ page }) => {
+          test.setTimeout(Math.max(300_000, 90_000 * BACKENDS.length));
+          await page.waitForTimeout(90_000);
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([]);
+  });
+
   it('lets a direct test budget override an enclosing describe budget', () => {
     const source = `
       import { test } from '@playwright/test';
@@ -481,6 +501,38 @@ describe('analyzeSpec', () => {
     ]);
   });
 
+  it('resolves helpers exposed through a local export list', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForReady } from './helpers';
+
+      test('uses the exported alias', async ({ page }) => {
+        await waitForReady(page);
+      });
+    `;
+    const helpers = `
+      async function wait(page, timeout = 45_000) {}
+      export { wait as waitForReady };
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helpers]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'uses the exported alias',
+      },
+    ]);
+  });
+
   it('ignores unrelated imports and unknown named helper exports', () => {
     const source = `
       import { test } from '@playwright/test';
@@ -577,6 +629,47 @@ describe('analyzeSpec', () => {
         new Map([['./helpers', "export { wait } from './waits';"]])
       )
     ).toThrow(/re-export/);
+  });
+
+  it('ignores type-only shared-helper imports and re-exports', () => {
+    const runtimeImport = `
+      import { test } from '@playwright/test';
+      import { wait } from './helpers';
+
+      test('uses the runtime helper', async ({ page }) => {
+        await wait(page);
+      });
+    `;
+    const helperWithTypeReExport = `
+      export type { HelperOptions } from './types';
+      export async function wait(page, timeout = 45_000) {}
+    `;
+
+    expect(
+      analyzeSpec(
+        runtimeImport,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helperWithTypeReExport]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'uses the runtime helper',
+      },
+    ]);
+    expect(
+      analyzeSpec("import type Helpers from './helpers';", 'src/tests/e2e/example.spec.ts')
+    ).toEqual([]);
+    expect(
+      analyzeSpec("import type * as Helpers from './helpers';", 'src/tests/e2e/example.spec.ts')
+    ).toEqual([]);
+    expect(
+      analyzeSpec("import { type HelperOptions } from './helpers';", 'example.spec.ts')
+    ).toEqual([]);
   });
 
   it('includes long deadlines from file-level hooks in a test.only', () => {
@@ -805,6 +898,18 @@ describe('baseline updates', () => {
     expect(parseArgs([])).toEqual({ updateBaseline: false });
     expect(parseArgs(['--update-baseline'])).toEqual({ updateBaseline: true });
     expect(() => parseArgs(['--unknown'])).toThrow(/Unknown argument/);
+  });
+
+  it('reports command errors without a stack trace', () => {
+    const result = spawnSync(
+      process.execPath,
+      [join(import.meta.dirname, 'check-e2e-timeout-budgets.mjs'), '--unknown'],
+      { encoding: 'utf8' }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('Unknown argument: --unknown\n');
   });
 
   it('rewrites sorted counts while preserving baseline metadata', () => {
