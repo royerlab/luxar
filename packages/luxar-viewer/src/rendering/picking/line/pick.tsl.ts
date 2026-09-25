@@ -56,6 +56,7 @@ import {
   INV_ONE_MINUS_FALLOFF_FLOOR,
 } from '../../materials/_shared/falloff';
 import {
+  projectionSizeScaleTSL,
   perspectiveNearFadeStaticTSL,
   sanitizeNonNegative,
   type TSLNode,
@@ -150,8 +151,10 @@ export function linePickWebGPUFactory(
   const uNodeId = nodes.uNodeId;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
-  const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
-  const uOrthoLineScale = nodes.uOrthoLineScale;
+  // Pixels per view unit at unit depth: resY * |P11|, read from the
+  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It is
+  // the historical uPerspectiveLineScale AND uOrthoLineScale.
+  const lineScale: TSLNode = uResolution.y.mul(projectionSizeScaleTSL());
 
   // ---- Vertex computation (mirrors line shader-tsl.ts exactly) ----
   //
@@ -323,10 +326,10 @@ export function linePickWebGPUFactory(
     // flips. View-space depth (-mvPos.z) matches the visual shader.
     let rawPixelWidth: TSLNode;
     if (config.isOrtho) {
-      rawPixelWidth = width.mul(uOrthoLineScale).toVar();
+      rawPixelWidth = width.mul(lineScale).toVar();
     } else {
       const distView: TSLNode = max(mvPos.z.negate(), nearCull);
-      rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView).toVar();
+      rawPixelWidth = width.mul(lineScale).div(distView).toVar();
     }
 
     const minPixelWidth = uPixelRatio.max(float(1.0)).mul(1.5);
@@ -347,11 +350,11 @@ export function linePickWebGPUFactory(
     let pathological: TSLNode | null = null;
     if (!config.isOrtho) {
       const startPixelWidth: TSLNode = mix(startW, endW, tA)
-        .mul(uPerspectiveLineScale)
+        .mul(lineScale)
         .div(max(mvStart.z.negate(), nearCull))
         .toVar();
       const endPixelWidth: TSLNode = mix(startW, endW, tB)
-        .mul(uPerspectiveLineScale)
+        .mul(lineScale)
         .div(max(mvEnd.z.negate(), nearCull))
         .toVar();
       const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
@@ -374,8 +377,8 @@ export function linePickWebGPUFactory(
           mix(startW, endW, tEnd),
           mvZ,
           nearCull,
-          uOrthoLineScale,
-          uPerspectiveLineScale
+          lineScale,
+          lineScale
         ),
         minPixelWidth,
         maxPW

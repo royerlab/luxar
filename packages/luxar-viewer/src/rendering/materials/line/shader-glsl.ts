@@ -52,6 +52,8 @@
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
+  GLSL_LINE_SCALE,
   GLSL_SORTED_INDEX,
   GLSL_LINE_JOINT_CODE,
   GLSL_LINE_JOIN,
@@ -77,6 +79,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
+    ${GLSL_PROJECTION_FUNCTIONS}
+    ${GLSL_LINE_SCALE}
 
     // Static geometry attribute (per quad vertex)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
@@ -133,6 +137,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     out mediump float vAlpha; // per-endpoint opacity, interpolated along t (texel5.zw; 1.0 for RGB data)
 
     void main() {
+      // Line pixel-width scale for this draw: resY * |P11| (glsl-lib GLSL_LINE_SCALE).
+      luxarLineScale = uResolution.y * luxarProjectionSizeScale();
       // === Line-texture fetch prologue ===
       // texelFetch reads reconstruct the per-segment values into the exact
       // local names the math below has always used — zero changes
@@ -385,7 +391,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       float rawPixelWidth;
       if (uIsOrtho == 1) {
         // Orthographic: constant screen size regardless of distance.
-        rawPixelWidth = width * uOrthoLineScale;
+        rawPixelWidth = width * luxarLineScale;
       } else {
         // View-space depth instead of Euclidean distance — drops a
         // sqrt per vertex and is more projection-correct (screen-space
@@ -394,7 +400,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         // width vs the old length(mvPos.xyz) form; this is the
         // intended correctness improvement.
         float dist = max(-mvPos.z, nearCull);
-        rawPixelWidth = width * uPerspectiveLineScale / dist;
+        rawPixelWidth = width * luxarLineScale / dist;
       }
 
       // Enforce minimum pixel width to prevent sub-pixel rendering artifacts
@@ -414,7 +420,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // the clamp by 2× (a clear pathological case, not a normal
       // close-up).
       // PERSPECTIVE ONLY: under ortho rawPixelWidth is depth-independent
-      // (width * uOrthoLineScale), so a depth gate here would make a
+      // (width * resY * |P11|), so a depth gate here would make a
       // legitimately wide line vanish only while inside the 2*nearCull
       // slab and pop back one unit deeper — depth-dependent visibility
       // with no physical rationale in a depth-independent projection.
@@ -428,9 +434,9 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // the per-vertex rawPixelWidth over the quad (only t∈{0,1} occur),
       // so it never culls a segment a current vertex wouldn't have.
       float startPixelWidth =
-        mix(startW, endW, tA) * uPerspectiveLineScale / max(-mvStart.z, nearCull);
+        mix(startW, endW, tA) * luxarLineScale / max(-mvStart.z, nearCull);
       float endPixelWidth =
-        mix(startW, endW, tB) * uPerspectiveLineScale / max(-mvEnd.z, nearCull);
+        mix(startW, endW, tB) * luxarLineScale / max(-mvEnd.z, nearCull);
       float segMaxPixelWidth = max(startPixelWidth, endPixelWidth);
       if (
         uIsOrtho == 0 &&

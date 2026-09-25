@@ -37,7 +37,13 @@ import {
   getActiveSortedIndexAttribute,
 } from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
-import { buildBehindCamera, buildColormapTexture } from './shared';
+import {
+  buildBehindCamera,
+  buildColormapTexture,
+  buildCubeFaceCamera,
+  buildCubeFaceEquivalentCamera,
+  buildOrthoCamera,
+} from './shared';
 
 /**
  * Single-segment texel source shared by the mesh builder and the
@@ -60,6 +66,8 @@ interface LineFixtureStyle {
   readonly endSharpness?: number;
   readonly startJointCode?: number;
   readonly endJointCode?: number;
+  /** World length of the segment (texel slot); defaults to 1.0. */
+  readonly segmentLength?: number;
 }
 
 function lineTexelSource(
@@ -82,7 +90,7 @@ function lineTexelSource(
     // beta = 2^(6s - 2). 0.5 -> beta=2 (a true Gaussian, the default).
     startSharpness: new Float32Array([style.startSharpness ?? 0.5]),
     endSharpness: new Float32Array([style.endSharpness ?? 0.5]),
-    segmentLengths: new Float32Array([1.0]),
+    segmentLengths: new Float32Array([style.segmentLength ?? 1.0]),
     startJointCode: new Float32Array([style.startJointCode ?? 0]),
     endJointCode: new Float32Array([style.endJointCode ?? 0]),
     startScalars: scalars ? new Float32Array([scalars[0]]) : undefined,
@@ -1111,7 +1119,92 @@ function jointCodeEntry(jointCode: number): RegistryEntry {
  * test name. Each entry carries the GLSL source and a `buildUniforms` factory;
  * merged into `SHADER_REGISTRY` and driven by the parity/codegen specs.
  */
+
+/** A slanted segment 3 units down +X, for the cube-capture face cases. */
+const CUBE_LINE_START: readonly [number, number, number] = [3, -0.3, 0.2];
+const CUBE_LINE_END: readonly [number, number, number] = [3, 0.3, -0.25];
+/** Wide enough (~5 px at 3 units) that a clamped-to-floor width would be obvious. */
+const CUBE_LINE_STYLE: LineFixtureStyle = { startWidth: 0.5, endWidth: 0.5 };
+
+/**
+ * A perspective line seen through a CubeCamera face (fov −90, a flipped
+ * projection) or its 180°-rolled +90° equivalent: the same image, because the
+ * pixel-width scale is resY·|P11|, never negative.
+ */
+function buildCubeCaptureLineEntry(buildCamera: () => THREE.Camera): RegistryEntry {
+  return {
+    source: LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture(CUBE_LINE_START, CUBE_LINE_END, undefined, undefined, CUBE_LINE_STYLE),
+        false
+      ),
+    buildTSLMaterial: (uniforms) => buildVisualLineTSLMaterial(uniforms, false),
+    buildMesh: (material) =>
+      buildLineInstancedMesh(
+        material,
+        CUBE_LINE_START,
+        CUBE_LINE_END,
+        undefined,
+        undefined,
+        CUBE_LINE_STYLE
+      ),
+    buildCamera,
+  };
+}
+
+/** Scale of the nanometre case: every length, width included, times 1e-5. */
+const TINY = 1e-5;
+
+/**
+ * The `line` fixture shrunk by {@link TINY} in every length (segment, width,
+ * segment length) and seen through an ortho frustum shrunk by the same factor
+ * (height 2e-5): under an orthographic projection that is the SAME image. The
+ * historical CPU scale clamped the frustum height to 1e-4 before dividing, so
+ * this line rendered 5x narrower than its unit-scale twin.
+ */
+const TINY_ORTHO_LINE: RegistryEntry = {
+  source: LINE_SOURCE,
+  buildUniforms: () =>
+    buildVisualLineUniforms(
+      buildLineDataTexture([-0.5 * TINY, 0, 0], [0.5 * TINY, 0, 0], undefined, undefined, {
+        startWidth: 0.1 * TINY,
+        endWidth: 0.1 * TINY,
+        segmentLength: TINY,
+      }),
+      true
+    ),
+  buildTSLMaterial: (uniforms) => buildVisualLineTSLMaterial(uniforms, true),
+  buildMesh: (material) =>
+    buildLineInstancedMesh(
+      material,
+      [-0.5 * TINY, 0, 0],
+      [0.5 * TINY, 0, 0],
+      undefined,
+      undefined,
+      {
+        startWidth: 0.1 * TINY,
+        endWidth: 0.1 * TINY,
+        segmentLength: TINY,
+      }
+    ),
+  buildCamera: () => buildOrthoCamera(2 * TINY),
+};
+
+/** The unit-scale twin of {@link TINY_ORTHO_LINE}, through the same builders. */
+const UNIT_ORTHO_LINE: RegistryEntry = {
+  source: LINE_SOURCE,
+  buildUniforms: () => buildVisualLineUniforms(buildLineDataTexture(), true),
+  buildTSLMaterial: (uniforms) => buildVisualLineTSLMaterial(uniforms, true),
+  buildMesh: (material) => buildLineInstancedMesh(material),
+  buildCamera: () => buildOrthoCamera(2),
+};
+
 export const LINE_SHADERS: Record<string, RegistryEntry> = {
+  'line-cube-face': buildCubeCaptureLineEntry(buildCubeFaceCamera),
+  'line-cube-face-equivalent': buildCubeCaptureLineEntry(buildCubeFaceEquivalentCamera),
+  'line-tiny-ortho': TINY_ORTHO_LINE,
+  'line-unit-ortho': UNIT_ORTHO_LINE,
   // Line parity: instanced quad line with width, sharpness, GOG.
   // Ortho camera so screen-space conversion is deterministic.
   line: {

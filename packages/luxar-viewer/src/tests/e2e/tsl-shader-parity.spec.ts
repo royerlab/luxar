@@ -2100,6 +2100,51 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(1.0);
   });
 
+  test('line-cube-face: a cube-capture face renders a line as its +90° equivalent does', async ({
+    page,
+  }) => {
+    // The line pixel-width scale is resY·|P11| read from the projection; a
+    // signed P11 would negate the width under the CubeCamera's fov −90.
+    await bootHarness(page);
+
+    const face = await runGLSL(page, 'line-cube-face');
+    const equivalent = await runGLSL(page, 'line-cube-face-equivalent');
+    const faceTsl = (await runTSL(page, 'line-cube-face')).pixels;
+    const equivalentTsl = (await runTSL(page, 'line-cube-face-equivalent')).pixels;
+
+    assertBothRendered(face, faceTsl, 'line-cube-face');
+    expect(nonUniformPixelCount(face), 'a real line, not the width floor').toBeGreaterThan(40);
+    expect(meanAbsDiffPerCoveredPixel(face, equivalent), 'GLSL face vs equivalent').toBeLessThan(
+      1.0
+    );
+    expect(
+      meanAbsDiffPerCoveredPixel(faceTsl, equivalentTsl),
+      'TSL face vs equivalent'
+    ).toBeLessThan(1.0);
+  });
+
+  test('line-tiny-ortho: a nanometre-scale ortho line renders as its unit-scale twin', async ({
+    page,
+  }) => {
+    // The same line and frustum shrunk 1e5x: identical under orthographic
+    // projection. The historical CPU scale clamped the frustum height to 1e-4
+    // first, so this line came out 5x narrower than its twin.
+    await bootHarness(page);
+
+    const tiny = await runGLSL(page, 'line-tiny-ortho');
+    const unit = await runGLSL(page, 'line-unit-ortho');
+    const tinyTsl = (await runTSL(page, 'line-tiny-ortho')).pixels;
+    const unitTsl = (await runTSL(page, 'line-unit-ortho')).pixels;
+
+    assertBothRendered(tiny, tinyTsl, 'line-tiny-ortho');
+    expect(nonUniformPixelCount(unit), 'the unit-scale line is drawn').toBeGreaterThan(40);
+    expect(nonUniformPixelCount(tiny), 'as many pixels as its unit-scale twin').toBe(
+      nonUniformPixelCount(unit)
+    );
+    expect(meanAbsDiffPerCoveredPixel(tiny, unit), 'GLSL tiny vs unit').toBeLessThan(1.0);
+    expect(meanAbsDiffPerCoveredPixel(tinyTsl, unitTsl), 'TSL tiny vs unit').toBeLessThan(1.0);
+  });
+
   test('point-near-fade: mid-band near fade renders identically across backends (B9c)', async ({
     page,
   }) => {

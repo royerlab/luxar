@@ -21,6 +21,8 @@
 import type { ShaderSource } from '../../materials/_shared/shader-source';
 import {
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
+  GLSL_LINE_SCALE,
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_SORTED_INDEX,
   GLSL_LINE_JOINT_CODE,
@@ -41,6 +43,8 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
+    ${GLSL_PROJECTION_FUNCTIONS}
+    ${GLSL_LINE_SCALE}
 
     in vec2 aQuadCorner;
 
@@ -81,6 +85,8 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp vec2 vElementId;
 
     void main() {
+      // Line pixel-width scale for this draw: resY * |P11| (glsl-lib GLSL_LINE_SCALE).
+      luxarLineScale = uResolution.y * luxarProjectionSizeScale();
       // === Line-texture fetch prologue (visual-shader parity) ===
       // Width is a multiple of 6, so a segment's texels share one row.
       // Colors (texels 2/3 .rgb) and scalars (texel 5) are not needed
@@ -217,12 +223,12 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       float rawPixelWidth;
       if (uIsOrtho == 1) {
-        rawPixelWidth = width * uOrthoLineScale;
+        rawPixelWidth = width * luxarLineScale;
       } else {
         // View-space depth: drops a sqrt, more projection-correct.
         // Visual-shader parity — see shader-glsl.ts.
         float dist = max(-mvPos.z, nearCull);
-        rawPixelWidth = width * uPerspectiveLineScale / dist;
+        rawPixelWidth = width * luxarLineScale / dist;
       }
 
       float minPixelWidth = 1.5 * max(uPixelRatio, 1.0);
@@ -237,9 +243,9 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // visible wedge (issue #849). Gate on the MAX of the pixel width at
       // both clipped endpoints so all four vertices take the same branch.
       float startPixelWidth =
-        mix(startW, endW, tA) * uPerspectiveLineScale / max(-mvStart.z, nearCull);
+        mix(startW, endW, tA) * luxarLineScale / max(-mvStart.z, nearCull);
       float endPixelWidth =
-        mix(startW, endW, tB) * uPerspectiveLineScale / max(-mvEnd.z, nearCull);
+        mix(startW, endW, tB) * luxarLineScale / max(-mvEnd.z, nearCull);
       float segMaxPixelWidth = max(startPixelWidth, endPixelWidth);
       if (
         uIsOrtho == 0 &&

@@ -99,6 +99,21 @@ float luxarProjectionSizeScale() {
 `;
 
 /**
+ * The line pixel-width scale, resY * |P11| (the historical uPerspectiveLineScale
+ * AND uOrthoLineScale). Declared once as a vertex-stage global and assigned as
+ * the FIRST statement of `main()` (`luxarLineScale = uResolution.y *
+ * luxarProjectionSizeScale();`), so every consumer — the line shader body and
+ * the shared width/join helpers — reads it exactly where the uniform used to be
+ * read, in the same expression shape (`width * luxarLineScale / dist`).
+ * Inlining the product at each use site instead lets the compiler associate it
+ * differently per site, a per-vertex rounding change measured at ~10x the flips
+ * of a 1-ulp change in the scale itself (ANGLE/Metal, render gate).
+ */
+export const GLSL_LINE_SCALE = `
+float luxarLineScale;
+`;
+
+/**
  * The pick buffer's 16-bit element-id split, as a standalone function of an
  * arbitrary index.
  *
@@ -285,8 +300,8 @@ export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
  * what the eye sees, so this lives here rather than being written twice.
  *
  * REQUIRED GLOBALS (same implicit-context pattern as `GLSL_SORTED_INDEX`):
- * `uLineTex`, `uResolution`, `uIsOrtho`, `uOrthoLineScale`,
- * `uPerspectiveLineScale`, `modelViewMatrix`, `projectionMatrix`, and
+ * `uLineTex`, `uResolution`, `uIsOrtho`, `luxarProjectionSizeScale`
+ * (GLSL_PROJECTION_FUNCTIONS), `modelViewMatrix`, `projectionMatrix`, and
  * `luxarSortedIndex()`. Include this block AFTER those declarations — GLSL
  * resolves names top-down. `uLineJoin` is declared here, so an including
  * shader must not declare it again.
@@ -327,8 +342,8 @@ vec3 luxarLinePixelPos(vec3 localPos, float nearCullValue) {
 // joint also read the SAME shared vertex, so they still agree on the gate.
 float luxarLineEndPixelWidth(float widthAtEnd, float viewZ, float nearCullValue) {
   return (uIsOrtho == 1)
-    ? (widthAtEnd * uOrthoLineScale)
-    : (widthAtEnd * uPerspectiveLineScale / max(-viewZ, nearCullValue));
+    ? (widthAtEnd * luxarLineScale)
+    : (widthAtEnd * luxarLineScale / max(-viewZ, nearCullValue));
 }
 
 // The corner offset and endpoint cap for one end of one segment.

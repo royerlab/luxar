@@ -25,6 +25,8 @@
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
+  GLSL_LINE_SCALE,
   GLSL_LINE_JOINT_CODE,
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
@@ -63,6 +65,8 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
+    ${GLSL_PROJECTION_FUNCTIONS}
+    ${GLSL_LINE_SCALE}
     ${GLSL_LINE_JOINT_CODE}
 
     in vec2 aQuadCorner;
@@ -141,6 +145,8 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     }
 
     void main() {
+      // Line pixel-width scale for this draw: resY * |P11| (glsl-lib GLSL_LINE_SCALE).
+      luxarLineScale = uResolution.y * luxarProjectionSizeScale();
       int lineBase = int(luxarSortedIndex()) * 6;
       int lineTexW = LUXAR_LINE_TEX_W;
       ivec2 texel0 = ivec2(lineBase % lineTexW, lineBase / lineTexW);
@@ -213,11 +219,11 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       float rawA;
       float rawB;
       if (uIsOrtho == 1) {
-        rawA = wEffA * uOrthoLineScale * ${G.RADIUS_FACTOR};
-        rawB = wEffB * uOrthoLineScale * ${G.RADIUS_FACTOR};
+        rawA = wEffA * luxarLineScale * ${G.RADIUS_FACTOR};
+        rawB = wEffB * luxarLineScale * ${G.RADIUS_FACTOR};
       } else {
-        rawA = wEffA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
-        rawB = wEffB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
+        rawA = wEffA * luxarLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
+        rawB = wEffB * luxarLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
       }
       float appearancePixelRatio = max(uPixelRatio, 1.0);
       float minRadius = ${G.MIN_RADIUS} * appearancePixelRatio;
@@ -304,9 +310,9 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                   float wFarA = farA.w;
                   float rpFarA;
                   if (uIsOrtho == 1) {
-                    rpFarA = wFarA * uOrthoLineScale * ${G.RADIUS_FACTOR};
+                    rpFarA = wFarA * luxarLineScale * ${G.RADIUS_FACTOR};
                   } else {
-                    rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
+                    rpFarA = wFarA * luxarLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
                   }
                   rpFarA = clamp(rpFarA, minRadius, uMaxLinePixelWidth);
                   // Packet gate (#1495, #1501): a hard cut is only exact
@@ -376,9 +382,9 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                   float wFarB = farB.w;
                   float rpFarB;
                   if (uIsOrtho == 1) {
-                    rpFarB = wFarB * uOrthoLineScale * ${G.RADIUS_FACTOR};
+                    rpFarB = wFarB * luxarLineScale * ${G.RADIUS_FACTOR};
                   } else {
-                    rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
+                    rpFarB = wFarB * luxarLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
                   }
                   rpFarB = clamp(rpFarB, minRadius, uMaxLinePixelWidth);
                   // Packet gate (#1495, #1501): a hard cut is only exact

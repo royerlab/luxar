@@ -73,6 +73,7 @@ import {
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import {
+  projectionSizeScaleTSL,
   perspectiveNearFadeStaticTSL,
   sanitizeAlpha,
   sanitizeNonNegative,
@@ -242,8 +243,10 @@ export function lineWebGPUFactory(
   const uPixelRatio = nodes.uPixelRatio;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
-  const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
-  const uOrthoLineScale = nodes.uOrthoLineScale;
+  // Pixels per view unit at unit depth: resY * |P11|, read from the
+  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It is
+  // the historical uPerspectiveLineScale AND uOrthoLineScale.
+  const lineScale: TSLNode = uResolution.y.mul(projectionSizeScaleTSL());
   const uOpacity = nodes.uOpacity;
   const uInvGamma = nodes.uInvGamma;
   const uIntensity = nodes.uIntensity;
@@ -507,10 +510,10 @@ export function lineWebGPUFactory(
     // distance from the camera position).
     let rawPixelWidth: TSLNode;
     if (config.isOrtho) {
-      rawPixelWidth = width.mul(uOrthoLineScale).toVar();
+      rawPixelWidth = width.mul(lineScale).toVar();
     } else {
       const distView: TSLNode = max(mvPos.z.negate(), nearCull);
-      rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView).toVar();
+      rawPixelWidth = width.mul(lineScale).div(distView).toVar();
     }
 
     // Preserve the historical framebuffer-pixel floor below 1× render scale.
@@ -535,11 +538,11 @@ export function lineWebGPUFactory(
     let pathological: TSLNode | null = null;
     if (!config.isOrtho) {
       const startPixelWidth: TSLNode = mix(startW, endW, tA)
-        .mul(uPerspectiveLineScale)
+        .mul(lineScale)
         .div(max(mvStart.z.negate(), nearCull))
         .toVar();
       const endPixelWidth: TSLNode = mix(startW, endW, tB)
-        .mul(uPerspectiveLineScale)
+        .mul(lineScale)
         .div(max(mvEnd.z.negate(), nearCull))
         .toVar();
       const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
@@ -566,8 +569,8 @@ export function lineWebGPUFactory(
           mix(startW, endW, tEnd),
           mvZ,
           nearCull,
-          uOrthoLineScale,
-          uPerspectiveLineScale
+          lineScale,
+          lineScale
         ),
         minPixelWidth,
         maxPW
