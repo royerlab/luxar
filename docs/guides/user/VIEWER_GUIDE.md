@@ -239,6 +239,19 @@ Append parameters to the viewer URL to control startup behavior.
 
 Flag parameters do not take a value; their presence activates the feature.
 
+### Layer settings in the URL
+
+The hash fragment `#layers=<url-encoded JSON>` is written by the viewer itself, not
+typed by you: as you edit layers (display range, gamma, opacity, blending mode,
+colormap, visibility, layer order, sound gain) the address bar is updated with the
+fields that differ from the scene's authored defaults, so copying the URL shares
+exactly what you see. On load the fragment is applied after the scene's layers are
+set up; layers it names that the scene lacks are skipped. Switching datasets from the
+browser drops it. The same document can be copied, downloaded as
+`layer-settings.json`, or loaded from a file through the Layers panel header's
+right-click menu; its shape is published as
+`packages/luxar-viewer/schemas/layer-settings.v1.schema.json`.
+
 Example:
 
 ```

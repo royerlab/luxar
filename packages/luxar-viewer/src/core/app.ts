@@ -321,6 +321,8 @@ export class LuxarApp {
       // so read it lazily rather than capturing.
       this.layersPanel?.setPickBufferInvalidator(() => this.pickingSystem?.markDirty());
 
+      this.bindLayerSettingsUrl();
+
       // Dataset routing: subsystems are wired up, fields are assigned —
       // the orchestrator delegates can now safely read `this.*`.
       // Install this before routing so O / the rail control can open the
@@ -411,6 +413,17 @@ export class LuxarApp {
         this.datasetBrowser = undefined;
       },
     });
+  }
+
+  /**
+   * Layer edits are mirrored into `#layers=` so the address bar doubles as a
+   * share link — under the same opt-in as the `?src=` rewrite, so an embedded
+   * viewer never touches its host page's URL.
+   */
+  private bindLayerSettingsUrl(): void {
+    if (this.options.updateBrowserUrl === true && typeof window !== 'undefined') {
+      this.layersPanel?.bindUrl(window);
+    }
   }
 
   /**

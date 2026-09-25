@@ -39,6 +39,15 @@ import { LayerApplyEngine } from './layer-apply';
 import { LayerControls } from './layer-controls';
 import { ALWAYS_GLOBAL_KEYS } from '../help-overlay/type-to-filter';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
+import {
+  diffLayerSettings,
+  parseLayerSettings,
+  readLayerSettingsHash,
+  startLayerSettingsUrlSync,
+  type LayerSettingsDoc,
+  type LayerSettingsUrlWindow,
+} from './layer-settings';
+import { downloadBlob } from '../recording-panel/screenshot-exporter';
 
 /**
  * What the panel needs from the sound layer for its `sound` rows
@@ -217,6 +226,10 @@ export class LayersPanel {
   // State change unsubscribe handle
   private unsubscribeState: (() => void) | null = null;
 
+  /** Window whose `#layers=` mirrors the layer-settings document (see bindUrl). */
+  private urlWindow: LayerSettingsUrlWindow | null = null;
+  private stopUrlSync: (() => void) | null = null;
+
   // Tracks layers panel height to reposition the rendering controls (GUI) below
   private resizeObserver: ResizeObserver | null = null;
 
@@ -279,6 +292,36 @@ export class LayersPanel {
     if (layers.length > 0) {
       this.state.select(layers[0].path, 'single');
     }
+
+    // A shared / reloaded URL carries the edits it was copied with.
+    const fromUrl = this.urlWindow && readLayerSettingsHash(this.urlWindow.location.hash ?? '');
+    if (fromUrl) {
+      const skipped = this.applyLayerPatches(fromUrl);
+      if (skipped.length > 0) {
+        log.warning(
+          Modules.UI,
+          `#layers= names ${skipped.length} layer(s) this scene lacks: ${skipped.join(', ')}`
+        );
+      }
+    }
+  }
+
+  /**
+   * Keep `win`'s `#layers=` fragment equal to {@link getLayerSettings} (so the
+   * address bar is a share link) and apply that fragment on every subsequent
+   * `initFromScene`. The standalone bootstrap opts in alongside its `?src=`
+   * rewrite; embedded viewers leave the host page's URL alone.
+   */
+  bindUrl(win: LayerSettingsUrlWindow): void {
+    this.stopUrlSync?.();
+    this.urlWindow = win;
+    this.stopUrlSync = startLayerSettingsUrlSync(
+      {
+        onChange: (listener) => this.state.onChange(listener),
+        getLayerSettings: () => this.getLayerSettings(),
+      },
+      win
+    );
   }
 
   /**
@@ -602,7 +645,118 @@ export class LayersPanel {
       { label: 'Hide all layers', action: () => this.setAllVisible(false) },
       { label: 'Invert visibility', action: () => this.invertVisibility() },
       { label: 'Reset all layers', separatorBefore: true, action: () => this.resetAllLayers() },
+      {
+        label: 'Copy layer settings',
+        separatorBefore: true,
+        action: () => this.copyLayerSettings(),
+      },
+      {
+        label: 'Download layer settings…',
+        action: () =>
+          downloadBlob(
+            new Blob([this.layerSettingsJson()], { type: 'application/json' }),
+            'layer-settings.json'
+          ),
+      },
+      { label: 'Load layer settings…', action: () => this.pickLayerSettingsFile() },
     ];
+  }
+
+  // ---- layer-settings document (see layer-settings.ts) ----
+
+  /** Pretty JSON of {@link getLayerSettings}, the form users copy or download. */
+  private layerSettingsJson(): string {
+    return JSON.stringify(this.getLayerSettings(), null, 2);
+  }
+
+  private copyLayerSettings(): void {
+    // Same two failure modes as "Copy layer path" above.
+    if (!navigator.clipboard) {
+      showToast('Clipboard unavailable (needs a secure context)');
+      return;
+    }
+    navigator.clipboard.writeText(this.layerSettingsJson()).then(
+      () => showToast('Layer settings copied'),
+      () => showToast('Could not copy layer settings')
+    );
+  }
+
+  /** Open the native file picker and load the chosen settings file. */
+  private pickLayerSettingsFile(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      file.text().then(
+        (text) => this.loadLayerSettings(text),
+        () => showToast(`Could not read ${file.name}`)
+      );
+    });
+    input.click();
+  }
+
+  private loadLayerSettings(text: string): void {
+    let doc: LayerSettingsDoc;
+    try {
+      doc = parseLayerSettings(text);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Invalid layer settings');
+      return;
+    }
+    const skipped = this.applyLayerSettings(doc);
+    showToast(
+      skipped.length > 0
+        ? `Layer settings loaded (${skipped.length} unknown layer${skipped.length > 1 ? 's' : ''} skipped)`
+        : 'Layer settings loaded'
+    );
+  }
+
+  /**
+   * The user's changes as a {@link LayerSettingsDoc}: only the fields that
+   * differ from the authored scene, so an untouched scene encodes to nothing.
+   * The authored baseline is rebuilt from the scene graph on every call — the
+   * same scratch-manager idiom `resetLayer` uses.
+   */
+  getLayerSettings(): LayerSettingsDoc {
+    // ponytail: re-deriving the baseline is O(scene graph) per call; cache it
+    // per initFromScene if a large scene ever makes the debounced URL write slow.
+    return diffLayerSettings(
+      this.getLayerSummaries(),
+      this.authoredLayers().map((l) => this.summarize(l))
+    );
+  }
+
+  /**
+   * Make the panel match `doc`: return every layer to its authored state,
+   * then apply each patch through {@link setLayer}. Returns the paths the
+   * current scene does not have (they are skipped, not an error, so a file
+   * saved from a sibling scene still applies where it can).
+   */
+  applyLayerSettings(doc: LayerSettingsDoc): string[] {
+    this.resetAllLayers();
+    return this.applyLayerPatches(doc);
+  }
+
+  /** {@link applyLayerSettings} without the reset — for a freshly initialised scene. */
+  private applyLayerPatches(doc: LayerSettingsDoc): string[] {
+    const skipped: string[] = [];
+    for (const [path, patch] of Object.entries(doc.layers)) {
+      if (this.state.getLayer(path)) this.setLayer(path, patch);
+      else skipped.push(path);
+    }
+    return skipped;
+  }
+
+  /** Every layer as the scene authored it (a fresh, throwaway state manager). */
+  private authoredLayers(): LayerInfo[] {
+    if (!this.sceneGraph) return [];
+    const scratch = new LayerStateManager();
+    scratch.initFromSceneGraph(this.sceneGraph);
+    const layers = scratch.getLayers();
+    scratch.dispose();
+    return layers;
   }
 
   // ---- menu actions ----
@@ -679,7 +833,11 @@ export class LayersPanel {
    * (`LuxarApp.getLayers()`). Copies, in panel display order.
    */
   getLayerSummaries(): LayerSummary[] {
-    return this.state.getLayers().map((l) => ({
+    return this.state.getLayers().map((l) => this.summarize(l));
+  }
+
+  private summarize(l: LayerInfo): LayerSummary {
+    return {
       path: l.path,
       name: l.name,
       type: l.type,
@@ -694,7 +852,7 @@ export class LayersPanel {
       absorption: l.absorption,
       layerOrder: l.layerOrderExplicit && l.layerOrder !== undefined ? l.layerOrder : null,
       ...(l.sound ? { gain: l.sound.gain } : {}),
-    }));
+    };
   }
 
   /**
@@ -858,6 +1016,9 @@ export class LayersPanel {
 
   dispose(): void {
     this.contextMenuClose?.();
+    this.stopUrlSync?.();
+    this.stopUrlSync = null;
+    this.urlWindow = null;
     this.clear();
     this.state.dispose();
   }
