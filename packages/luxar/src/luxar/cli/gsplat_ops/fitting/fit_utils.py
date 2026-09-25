@@ -566,10 +566,7 @@ def _weighted_uniform_seed_counts(
         resolve_tile_intensity_scale,
         uniform_tile_occupancy_weights,
     )
-    from luxar.gsplats.fitting.preprocessing import (
-        resolve_volume_floor_denoised,
-        resolve_volume_floor_with_strategy,
-    )
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
@@ -1477,7 +1474,10 @@ def fit_single_tile(
     # same whole volume, so this worker and its siblings still agree on one
     # level. The denoise keys are PEEKED at: they stay in `fit_config` for
     # `fit_tile` (which pops them) to denoise the tile with.
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
+    from luxar.gsplats.fitting.preprocessing import (
+        resolve_volume_floor_denoised,
+        resolve_volume_floor_with_strategy,
+    )
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
