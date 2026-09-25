@@ -420,7 +420,8 @@ def test_carried_stories_keep_their_vetted_facts() -> None:
     assert len(carried) == 7
     for s in carried:
         b = base[s.key]
-        assert s.mystery == b.mystery, s.key
+        # The viral question is re-aimed: this map is built from metagenomes.
+        assert s.mystery == b.mystery or s.key == "Viral surface proteins", s.key
         assert s.pdb_id == b.pdb_id or s.key == "Viral surface proteins", s.key
         assert len(s.facts) == len(b.facts), s.key
         unchanged = sum(f in b.facts for f in s.facts)
