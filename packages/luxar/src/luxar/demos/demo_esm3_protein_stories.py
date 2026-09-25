@@ -72,9 +72,10 @@ DEMO_META = {
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
-        # The CC0 ambient bed (OpenGameArt "Calm Ambient 1", ~6 MiB); narration
-        # is synthesised locally, never downloaded.
-        "download_mb": 7,
+        # The CC0 ambient bed (OpenGameArt "Calm Ambient 1", ~6 MiB), plus
+        # ~19 MiB of RCSB assemblies when the turntable renderer is present;
+        # narration is synthesised locally, never downloaded.
+        "download_mb": 25,
         "compute": "light",
         "gpu": "none",
         "local_data": None,
@@ -198,7 +199,7 @@ STORIES: tuple[Story, ...] = (
     Story(
         key="Hemoglobin",
         title="Hemoglobin — the molecule of breath",
-        subtitle="~570 hemoglobin chains from fish to humans, in one tight knot",
+        subtitle="~550 hemoglobin chains from fish to humans, in one tight knot",
         pattern=r"^Hemoglobin subunit",
         color=(0.98, 0.22, 0.28),
         facts=(
@@ -221,7 +222,7 @@ STORIES: tuple[Story, ...] = (
             "cradling four heme groups. Nobel Prize 1962, shared with John "
             "Kendrew for myoglobin.",
             "Look elsewhere in the map: myoglobin (muscle) and leghemoglobin "
-            "(legume root nodules — and the “bleeding” in plant-based "
+            "(legume root nodules — and the “bleeding” in some plant-based "
             "burgers) share hemoglobin's fold, yet the model places them in "
             "other neighbourhoods. It reads sequences, and theirs drifted "
             "apart long ago.",
@@ -261,25 +262,21 @@ STORIES: tuple[Story, ...] = (
             "Cyanobacteria running this machine drove the Great Oxidation "
             "Event about 2.4 billion years ago — the moment Earth's atmosphere "
             "began to fill with oxygen.",
-            # D1 turns over fastest of all thylakoid proteins; half-life ~2 h in
-            # growth light, faster in high light (Aro et al. 1993; Photosynth.
-            # Res. reviews).
-            # Half-life ~90 min at a moderate 125 umol/m2/s; 30-60 min under
-            # intense illumination (pulse-chase measurements). D1 is the
-            # fastest-turning-over subunit of photosystem II in the light.
-            # Also ~2 h at growth irradiance in higher plants vs 30-60 min
-            # under strong illumination in cyanobacteria, which is the same
-            # roughly-halving the sentence below states.
+            # D1 turns over fastest of all thylakoid proteins: half-life ~2 h
+            # at growth irradiance in leaves (Sundby et al., J. Biol. Chem.
+            # 268:25476 (1993)); 30-60 min under intense illumination in
+            # pulse-chase measurements (Aro et al., BBA 1143:113 (1993)).
             "Splitting water has a price: D1 is damaged by its own chemistry "
             "and is replaced faster than any other protein of photosystem II "
-            "— a half-life of about ninety minutes in ordinary light, half "
-            "that in full sun. A leaf rebuilds this protein all day long.",
+            "— a half-life of one to two hours in ordinary light, as little "
+            "as half an hour in strong light. A leaf rebuilds this protein all "
+            "day long.",
             # Purple-bacteria reaction centre L/M chains are homologous to
             # D1/D2. Deisenhofer, Huber & Michel solved that reaction centre,
             # the first membrane protein seen atom by atom (Nobel 1988).
             "Its neighbours in this map are the L and M chains of "
             "purple-bacteria reaction centres: D1's distant cousins, which "
-            "harvest light but never learned to split water. When their "
+            "harvest light but do not split water. When their "
             "reaction centre became the first membrane protein solved atom by "
             "atom (Nobel Prize in Chemistry 1988), it became the blueprint for "
             "photosystem II.",
@@ -293,7 +290,7 @@ STORIES: tuple[Story, ...] = (
         tags=("photosynthesis", "deep time"),
         pdb_id="3WU2",
         narration=(
-            "Photosystem II, the protein that made the sky breathable. Its D1 "
+            "Photosystem II, the machine that made the sky breathable. Its D1 "
             "subunit sits at the heart of the only enzyme known that splits "
             "water. Cyanobacteria running this machine began filling Earth's air "
             "with oxygen, some 2.4 billion years ago. The chemistry is so "
@@ -306,7 +303,7 @@ STORIES: tuple[Story, ...] = (
     Story(
         key="Hsp70",
         title="Hsp70 — the oldest job in the cell",
-        subtitle="Bacteria, archaea, plants and animals share one blob",
+        subtitle="Hundreds of bacteria, and a few archaea, share one blob; our own copy sits apart",
         pattern=r"Heat shock 70|Heat shock cognate 71|Chaperone protein [Dd]naK",
         color=(1.0, 0.82, 0.25),
         radius=0.7,
@@ -319,18 +316,21 @@ STORIES: tuple[Story, ...] = (
             "the shredder. Almost every bacterium and every eukaryote carries "
             "one; archaea are the odd ones out, and those that have it "
             "borrowed it from bacteria.",
-            # Human Hsp70 vs E. coli DnaK: ~47–48% identity (Brocchieri et al.
-            # 2008; Frontiers Mol. Biosci. 2021).
-            # Eukaryotic Hsp70 descends from the bacterial gene the
-            # mitochondrial endosymbiont brought, some two billion years ago.
-            "After perhaps two billion years of separate evolution, human Hsp70 "
+            # Human HSPA1A vs E. coli DnaK: 47.9% identity (global alignment,
+            # UniProt P0DMV8 / P0A6Y8). The cytosolic eukaryotic lineage has a
+            # prokaryotic ancestor of uncertain identity (Brocchieri et al.,
+            # BMC Evol. Biol. 8:19 (2008)), so the separation is at least as
+            # old as eukaryotes.
+            "After some two billion years of separate evolution, human Hsp70 "
             "and E. coli DnaK are still about 47% identical, letter for "
             "letter — one of the most conserved proteins known.",
-            "That is why this blob mixes colours: bacteria, archaea, plants "
-            "and animals interleave here. The map is showing a protein older "
-            "than complex life, passed between the great branches of the tree.",
-            # Ritossa, Experientia 18:571 (1962); Ritossa's own account in
-            # Cell Stress & Chaperones (PMC4147064).
+            # Map audit: all 567 members are named DnaK, from bacteria and a
+            # few archaea; the nearest eukaryotic Hsp70 sits ~10 units away.
+            "This blob is DnaK in hundreds of bacteria, with a few archaea "
+            "among them. Our own Hsp70 sits far off on the map: the model "
+            "reads sequence, and ours has drifted, though it does the same job.",
+            # Ritossa, Experientia 18:571 (1962); Ritossa's own account,
+            # Cell Stress Chaperones 1:97 (1996).
             "Its story began by accident. In 1962 Ferruccio Ritossa saw new "
             "“puffs” on fruit-fly chromosomes after someone in the lab "
             "had nudged his incubator's temperature — the first observation "
@@ -348,9 +348,9 @@ STORIES: tuple[Story, ...] = (
             "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
             "refolds the damaged ones, and hands the hopeless ones to the "
             "shredder. Almost every bacterium and every eukaryote has one. After "
-            "perhaps two billion years apart, the human and E. coli "
-            "versions are still nearly half identical, letter for letter. That "
-            "is why this cluster mixes bacteria, plants and animals. Cancer "
+            "some two billion years apart, the human and E. coli "
+            "versions are still nearly half identical, letter for letter. This "
+            "cluster is the bacterial form; ours sits far away. Cancer "
             "cells over-produce it to survive their own chaos, and drugs against "
             "it have been tried for decades. None has been approved. Why "
             "is such a universal protein so hard to target?"
@@ -461,14 +461,14 @@ STORIES: tuple[Story, ...] = (
             "proposed the heresy that the agent is a protein alone; it proved "
             "to be a misfolded shape that converts healthy copies into itself. Mad cow disease later "
             "proved it could cross species through food. Every mammal carries "
-            "the healthy form on its neurons. Forty years on, we still do not "
-            "know what it is for."
+            "the healthy form on its neurons. Forty years on, its day job is "
+            "still not settled."
         ),
     ),
     Story(
         key="ATP synthase",
         title="ATP synthase — the turbine in almost every cell",
-        subtitle="The rotary motor that makes the currency of life, in bacteria and in us",
+        subtitle="The rotary motor that makes the currency of life, in bacteria and in the cells that took them in",
         pattern=r"ATP synthase subunit beta\b",
         color=(1.0, 0.5, 0.12),
         radius=0.6,
@@ -486,9 +486,11 @@ STORIES: tuple[Story, ...] = (
             "You make and spend roughly your own body weight in ATP every day "
             "— some 50 to 75 kilograms — recycling each molecule hundreds of "
             "times.",
-            "This blob holds the beta subunit from bacteria, plant chloroplasts "
-            "and animal mitochondria side by side: the same motor, inherited "
-            "from the bacteria that became mitochondria and chloroplasts.",
+            # Map audit: 372 members, 3 plastid and 1 mitochondrial.
+            "This blob is the beta subunit of hundreds of bacteria, with a few "
+            "chloroplast and mitochondrial copies among them: the same motor, "
+            "inherited from the bacteria that became mitochondria and "
+            "chloroplasts.",
         ),
         mystery=(
             "F₁ is one of the most efficient motors known: almost all of the "
@@ -546,9 +548,9 @@ STORIES: tuple[Story, ...] = (
         narration=(
             "RuBisCO, perhaps the most abundant enzyme on Earth, and one of the "
             "slowest. Nearly every carbon atom in every living thing has passed "
-            "through it. It fixes about one CO2 every thirty seconds and keeps "
-            "confusing oxygen with carbon dioxide, so plants make it by the "
-            "tonne. Three billion years of evolution never produced a fast, "
+            "through it. Averaged over day and night, it fixes only about one "
+            "CO2 every thirty seconds, and it keeps confusing oxygen with "
+            "carbon dioxide, so plants make it by the tonne. Three billion years of evolution never produced a fast, "
             "accurate RuBisCO. Is that a wall that cannot be climbed, or has "
             "nobody found the path?"
         ),
@@ -580,8 +582,11 @@ STORIES: tuple[Story, ...] = (
             "whose gene is one of the two, with BRCA1, behind many inherited "
             "breast and ovarian cancers. When it fails, repair fails, and "
             "errors accumulate.",
-            "This blob mixes bacteria and eukaryotes: the recombinase predates "
-            "their split, and its shape has barely moved since.",
+            # Map audit: all 372 members are bacterial RecA; the nearest
+            # RAD51 sits ~10 units away.
+            "This blob is bacterial RecA alone. Our RAD51 sits elsewhere on "
+            "the map, its sequence drifted, yet it builds the same filament: "
+            "the recombinase predates the split between bacteria and us.",
         ),
         mystery=(
             "A RecA filament finds one matching stretch among millions of base "
@@ -602,9 +607,9 @@ STORIES: tuple[Story, ...] = (
             "RecA and Rad51, the machine that mends broken DNA. It coats a "
             "broken strand and searches the entire genome for the matching "
             "sequence. Our version, RAD51, is loaded by BRCA2, whose gene lies "
-            "behind many inherited breast cancers. Bacteria "
-            "and humans share this cluster; the shape has barely moved in "
-            "billions of years. It finds one match among millions of base "
+            "behind many inherited breast cancers. Bacteria fill this "
+            "cluster; our RAD51 sits elsewhere, yet builds the same filament. "
+            "The shape has barely moved in billions of years. It finds one match among millions of base "
             "pairs in minutes. How it searches that fast is still argued over."
         ),
     ),
@@ -616,11 +621,12 @@ STORIES: tuple[Story, ...] = (
         color=(1.0, 0.55, 0.65),
         radius=0.6,
         facts=(
-            # Banting & Best isolate insulin 27 July 1921; Leonard Thompson,
-            # 14, first injection 11 Jan 1922 (U. Toronto Fisher Library;
-            # UMass Chan). Nobel 1923 to Banting and Macleod.
+            # Banting & Best isolate insulin 27 July 1921; Leonard Thompson
+            # (born July 1908, so 13 by his birth date, though often given as
+            # 14), first injection 11 Jan 1922. Nobel 1923 to Banting and
+            # Macleod.
             "Isolated by Frederick Banting and Charles Best in the summer of "
-            "1921; on 11 January 1922 a 14-year-old, Leonard Thompson, became "
+            "1921; on 11 January 1922 a teenage boy, Leonard Thompson, became "
             "the first patient injected. Diabetes stopped being a death "
             "sentence. Nobel Prize 1923.",
             # Sanger 1955; Nobel 1958.
@@ -644,7 +650,7 @@ STORIES: tuple[Story, ...] = (
         tags=("medicine", "history"),
         pdb_id="4INS",
         narration=(
-            "Insulin, a century of firsts. In January 1922 a fourteen-year-old "
+            "Insulin, a century of firsts. In January 1922 a teenage "
             "boy received the first injection, and diabetes stopped being a "
             "death sentence. It was the first protein ever sequenced, by "
             "Frederick Sanger, and in 1982 the first drug ever made by "
@@ -656,7 +662,7 @@ STORIES: tuple[Story, ...] = (
     Story(
         key="Cone-snail toxins",
         title="Conotoxins — venom that became medicine",
-        subtitle="One superfamily of cone-snail peptides; the rest are scattered across the map",
+        subtitle="One knot of cone-snail peptides; the rest are scattered across the map",
         pattern=r"onotoxin",
         color=(0.3, 1.0, 0.75),
         radius=0.6,
@@ -680,8 +686,8 @@ STORIES: tuple[Story, ...] = (
             "the spinal cord — the first medicine ever made from a venom of "
             "the sea. (The first from the sea at all came earlier: "
             "cytarabine, in 1969, modelled on a Caribbean sponge's chemistry.)",
-            "Swiss-Prot holds over 1,200 conotoxins. This knot is one "
-            "superfamily of them; the others are strewn across the whole map, "
+            "Swiss-Prot holds over 1,200 conotoxins. This knot holds a few "
+            "hundred of them; the others are strewn across the whole map, "
             "because venom evolves faster than almost anything else.",
         ),
         mystery=(
@@ -695,8 +701,8 @@ STORIES: tuple[Story, ...] = (
             "Conotoxins, venom that became medicine. Cone snails hunt with a "
             "harpoon and a cocktail of hundreds of peptides, each a precise key "
             "for one ion channel. One of them is now a drug for severe pain, "
-            "the first ever made from a venom of the sea. This knot is a single "
-            "superfamily; the rest are scattered across the whole map, because "
+            "the first ever made from a venom of the sea. This knot holds a few "
+            "hundred of them; the rest are scattered across the whole map, because "
             "venom evolves faster than almost anything else. Why so fast is "
             "still being worked out."
         ),
@@ -776,21 +782,16 @@ AMBIENT_BED_LOOP_CROSSFADE_S = 15.0
 NARRATION_CACHE_DIR = (
     Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "narration"
 )
-#: `alloy` is KEPT DELIBERATELY. It is OpenAI's neutral voice and the one
-#: listeners describe as gender-ambiguous — the owner heard it as female in
-#: some stories and male in others and, offered all eleven voices side by side
-#: on the same narration (2026-09-17), chose to keep it: "the ambiguity is
-#: perhaps a feature and not a bug". A kiosk narrator reading twenty pieces of
-#: science wants no persona of its own. So this is a decision, not a default —
-#: do not "fix" it to `fable` or `onyx` because a blog ranks those higher for
-#: audiobooks. The voice is part of the narration cache key, so changing it
-#: re-synthesises all 21 clips.
+#: `alloy` is OpenAI's neutral voice, kept on purpose: a kiosk narrator reading
+#: pieces of science wants no persona of its own, so do not swap in a persona
+#: voice such as `fable` or `onyx`. The voice is part of the narration
+#: cache key, so changing it re-synthesises every clip on both tours.
 NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
 #: Licence stamped on a narration clip, per engine. The macOS system voices
 #: are licensed for personal, non-commercial use only, so a `say` build is
 #: not fit for a public kiosk or a published store.
 NARRATION_LICENSES = {
-    "openai": "CC0",
+    "openai": "CC0 (dedicated by this project)",
     "say": "Apple macOS system voice: personal, non-commercial use only",
 }
 NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
