@@ -451,7 +451,7 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # normalization; output amplitudes are background-relative. auto = histogram-mode
 # estimate (capped at the median; a no-op on clean data with no pedestal).
 # `--floor specimen` is the opt-in specimen-in-medium mode: it splits the
-# sub-p95 low band, uses the upper mode only when both populations are compact,
+# signal-excluded background band, uses the upper mode only when both populations are compact,
 # and otherwise falls back to `auto`. The selected/fallback branch is recorded
 # as `floor_strategy`. `batch-fit` rejects this spec; pass a measured number.
 #

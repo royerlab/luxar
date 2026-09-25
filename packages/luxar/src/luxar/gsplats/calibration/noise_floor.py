@@ -17,6 +17,7 @@ import numpy as np
 _SPECIMEN_MIN_CLASS_FRACTION = 0.02
 _SPECIMEN_MAX_MAD_SEPARATION_RATIO = 0.10
 _SPECIMEN_MAX_LOWER_P90_DEVIATION_RATIO = 0.20
+_SPECIMEN_MAX_MODE_MAD_MULTIPLE = 4.0
 
 
 @dataclass
@@ -182,8 +183,8 @@ def _otsu_threshold(values: np.ndarray) -> float:
 
 
 def _specimen_floor(values: np.ndarray, auto_level: float) -> FloorEstimate:
-    hi = float(np.percentile(values, 95.0))
-    low_band = values[values <= hi]
+    signal_threshold = _otsu_threshold(values)
+    low_band = values[values <= signal_threshold]
     threshold = _otsu_threshold(low_band)
     lower = low_band[low_band <= threshold]
     upper = low_band[low_band > threshold]
@@ -201,14 +202,14 @@ def _specimen_floor(values: np.ndarray, auto_level: float) -> FloorEstimate:
     lower_tail = float(np.percentile(np.abs(lower - lower_median), 90.0))
     if (
         separation <= 0.0
-        or max(lower_mad, upper_mad)
-        > _SPECIMEN_MAX_MAD_SEPARATION_RATIO * separation
+        or max(lower_mad, upper_mad) > _SPECIMEN_MAX_MAD_SEPARATION_RATIO * separation
         or lower_tail > _SPECIMEN_MAX_LOWER_P90_DEVIATION_RATIO * separation
     ):
         return FloorEstimate(auto_level, "specimen-fallback-auto")
 
     candidate = _histogram_mode(upper)
-    if not threshold < candidate <= hi:
+    candidate_ceiling = upper_median + _SPECIMEN_MAX_MODE_MAD_MULTIPLE * upper_mad
+    if not threshold < candidate <= candidate_ceiling:
         return FloorEstimate(auto_level, "specimen-fallback-auto")
     return FloorEstimate(candidate, "specimen")
 

@@ -1581,6 +1581,30 @@ def test_batch_rejects_specimen_floor(tmp_path: Path) -> None:
         resolve_batch_floor(tmp_path / "unused.zarr", "specimen")
 
 
+def test_batch_plan_rejects_deferred_specimen_floor_before_sampling(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from typer import BadParameter
+
+    import luxar.cli.gsplat_ops.batch.planning as planning
+
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+
+    def _unexpected_sampling(*args, **kwargs):
+        raise AssertionError("floor validation must precede batch sampling")
+
+    monkeypatch.setattr(planning, "_sample_batch_slices", _unexpected_sampling)
+
+    with pytest.raises(BadParameter, match="not supported by batch-fit"):
+        _plan(
+            src,
+            tmp_path / "out",
+            floor="specimen",
+            denoise_kwargs={"denoise": True, "preprocess": True},
+        )
+
+
 def _spy_on_floor_sampling(monkeypatch) -> "list":
     """Record every object the bounded floor SAMPLER is handed, calling through.
 

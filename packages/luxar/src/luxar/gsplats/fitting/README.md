@@ -154,7 +154,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    constant background pedestal / DC offset before normalization by raising the
    effective `image_min` (`_resolve_floor` → `estimate_floor`). `auto` = capped
    histogram mode (a no-op on clean data), `specimen` = the upper compact mode
-   after a bimodal split of that same low band (falling back to `auto` when the
+   after excluding bright signal and splitting the remaining background band (falling back to `auto` when the
    split is not credible), `pN` = Nth percentile of non-zero intensities, `<float>` =
    fixed, `none` = disabled. Whole-volume/tiled floor resolution reads at most
    `FLOOR_SAMPLE_BUDGET_VOXELS` from deterministic contiguous slabs; oversized

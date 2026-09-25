@@ -400,6 +400,8 @@ def lift_normalization_stats(
     dest: dict[str, Any],
     passes: "Sequence[Any]",
     applied_floor: "float | None",
+    *,
+    floor_strategy: "str | None" = None,
 ) -> None:
     """Record a multi-pass fit's normalization provenance on ``dest`` (#1175).
 
@@ -423,6 +425,8 @@ def lift_normalization_stats(
     ``intensity_range`` as a flat fit.
     """
     dest["floor"] = applied_floor
+    if floor_strategy is not None:
+        dest["floor_strategy"] = floor_strategy
     if not passes:
         return
     first = getattr(passes[0], "stats", None) or {}

@@ -73,6 +73,28 @@ def test_specimen_preprocessing_records_selected_branch() -> None:
     assert preprocessed.floor_strategy == "specimen"
 
 
+def test_denoised_resolver_returns_strategy_from_resolving_sample() -> None:
+    from luxar.gsplats.fitting.preprocessing import (
+        resolve_volume_floor_denoised_with_strategy,
+    )
+
+    rng = np.random.default_rng(1910)
+    volume = np.concatenate(
+        [
+            rng.normal(204.0, 5.0, 30_000),
+            rng.normal(675.0, 25.0, 20_000),
+            rng.normal(2500.0, 350.0, 3_000),
+        ]
+    ).astype(np.float32)
+
+    level, strategy = resolve_volume_floor_denoised_with_strategy(
+        volume, "specimen", guard_numeric=True
+    )
+
+    assert level == pytest.approx(675.0, abs=15.0)
+    assert strategy == "specimen"
+
+
 def _leaf(n: int = 6, ndim: int = 3, stats: Optional[dict] = None) -> GSplatData:
     """A tiny valid splat set (positive Cholesky diagonal)."""
     rng = np.random.default_rng(0)

@@ -18,6 +18,7 @@ from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
 from luxar.gsplats.utils.device import resolve_torch_device
 
 if TYPE_CHECKING:
+    from luxar.gsplats.calibration import FloorEstimate
     from luxar.gsplats.gsplat_data import GSplatData
 
 
@@ -317,19 +318,20 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
 
     # Normalize input data
     with asection("Normalizing input data"):
-        V_normalized, image_min, image_max, intensity_range, applied_floor = (
-            _normalize_data(
-                V,
-                config.norm_percentile,
-                config.verbose,
-                config.floor,
-                config.norm_range,
-            )
+        (
+            V_normalized,
+            image_min,
+            image_max,
+            intensity_range,
+            applied_floor,
+            floor_strategy,
+        ) = _normalize_data_with_strategy(
+            V,
+            config.norm_percentile,
+            config.verbose,
+            config.floor,
+            config.norm_range,
         )
-
-    from luxar.gsplats.calibration.noise_floor import floor_strategy_for
-
-    floor_strategy = floor_strategy_for(V, config.floor, applied_floor)
 
     # Rescale pre-initialized amplitudes to match normalized image scale
     # (convention-dependent — see _rescale_init_amps).
@@ -950,17 +952,12 @@ def _add_grid_fallback_seeds(
         return existing_seeds, 0.0
 
 
-def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None":
-    """Resolve a ``floor`` spec to a concrete background level, or ``None``.
+def _resolve_floor_result(
+    V: np.ndarray, floor: "str | float | None"
+) -> "FloorEstimate | None":
+    """Resolve a floor spec while retaining estimator provenance."""
+    from luxar.gsplats.calibration import FloorEstimate
 
-    ``None`` means "no explicit floor" — the caller keeps its default
-    ``image_min`` (hard ``min``/``norm_percentile``). Accepted forms:
-
-    - ``"auto"`` → histogram-mode estimate (see :func:`estimate_floor`).
-    - ``"pN"`` (e.g. ``"p10"``) → the Nth percentile of non-zero intensities.
-    - ``"none"`` / ``"0"`` / ``0`` / ``None`` → disabled (returns ``None``).
-    - ``float`` / numeric string → that fixed intensity value.
-    """
     if floor is None:
         return None
     if isinstance(floor, str):
@@ -968,21 +965,37 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
         if f in ("none", ""):
             return None
         if f in ("auto", "specimen"):
-            from luxar.gsplats.calibration import estimate_floor
+            from luxar.gsplats.calibration import estimate_floor_result
 
             method = "mode" if f == "auto" else "specimen"
-            return float(estimate_floor(V, method=method))
+            return estimate_floor_result(V, method=method)
         if f.startswith("p"):
             pct = float(f[1:])
             V = np.asarray(V)
             values = V[V != 0.0] if np.any(V != 0.0) else V
-            return float(np.percentile(values, pct))
-        value = float(f)  # numeric string
+            return FloorEstimate(float(np.percentile(values, pct)), "percentile")
+        value = float(f)
     else:
         value = float(floor)
     if value == 0.0:
         return None
-    return value
+    return FloorEstimate(value, "numeric")
+
+
+def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None":
+    """Resolve a ``floor`` spec to a concrete background level, or ``None``.
+
+    ``None`` means "no explicit floor" — the caller keeps its default
+    ``image_min`` (hard ``min``/``norm_percentile``). Accepted forms:
+
+    - ``"auto"`` → histogram-mode estimate (see :func:`estimate_floor`).
+    - ``"specimen"`` → compact upper background mode, or ``auto`` fallback.
+    - ``"pN"`` (e.g. ``"p10"``) → the Nth percentile of non-zero intensities.
+    - ``"none"`` / ``"0"`` / ``0`` / ``None`` → disabled (returns ``None``).
+    - ``float`` / numeric string → that fixed intensity value.
+    """
+    result = _resolve_floor_result(V, floor)
+    return None if result is None else float(result.level)
 
 
 # Sampling budget for resolve_volume_floor: the floor level is estimated from
@@ -1245,7 +1258,7 @@ def _floor_level_and_sample_max(
     *,
     guard_numeric: bool = False,
     sample_budget: int | None = None,
-) -> "tuple[float | None, float | None]":
+) -> "tuple[float | None, float | None, str | None]":
     """The resolved whole-volume floor level AND the sampled max it was judged on.
 
     The shared body of :func:`resolve_volume_floor` (which drops the max) and
@@ -1253,7 +1266,7 @@ def _floor_level_and_sample_max(
     corrected level on the SAME basis, without a second bounded read). Every
     message, guard and return value is the public function's — see there.
 
-    Returns ``(level, sample_max)``. ``sample_max`` is ``None`` whenever no
+    Returns ``(level, sample_max, strategy)``. ``sample_max`` is ``None`` whenever no
     sample was drawn (a spec that needs no data, or an empty volume) or the spec
     resolved to "nothing to subtract" before the guard was reached. A non-``None``
     level with a ``None`` max therefore identifies exactly one case — the
@@ -1261,12 +1274,12 @@ def _floor_level_and_sample_max(
     keeps that path SILENT, as it was before this body was split out.
     """
     if floor is None:
-        return None, None
+        return None, None, None
     needs_data = guard_numeric
     if isinstance(floor, str):
         f = floor.strip().lower()
         if f in ("none", ""):
-            return None, None
+            return None, None, None
         # One predicate for "measured ON the volume", so this function and the
         # denoise-basis regime rule below can never disagree about a spec.
         if _floor_spec_is_volume_derived(floor):
@@ -1274,24 +1287,35 @@ def _floor_level_and_sample_max(
     if not needs_data:
         # Numeric spec: echo the constant back — never sample the volume.
         # 0 disables; a negative level is legitimate (see Notes).
-        return _resolve_floor(np.empty(0, dtype=np.float32), floor), None
+        result = _resolve_floor_result(np.empty(0, dtype=np.float32), floor)
+        return (
+            None if result is None else float(result.level),
+            None,
+            None,
+        )
 
     budget = FLOOR_SAMPLE_BUDGET_VOXELS if sample_budget is None else sample_budget
     sample = _sample_volume_for_floor(volume, int(budget))
     if sample is None:
-        return None, None
+        return None, None, None
 
-    resolved = _resolve_floor(sample, floor)
-    if resolved is None:
-        return None, None
+    result = _resolve_floor_result(sample, floor)
+    if result is None:
+        return None, None, None
+    resolved = float(result.level)
     sample_max = float(sample.max())
     if resolved >= sample_max:
         aprint(
             f"Warning: floor {resolved:.6g} >= sampled volume max "
             f"{sample_max:.6g}; ignoring (would erase all signal)."
         )
-        return None, sample_max
-    return float(resolved), sample_max
+        return None, sample_max, None
+    strategy = (
+        result.strategy
+        if isinstance(floor, str) and floor.strip().lower() == "specimen"
+        else None
+    )
+    return resolved, sample_max, strategy
 
 
 def resolve_volume_floor(
@@ -1358,7 +1382,7 @@ def resolve_volume_floor(
       ``None`` is returned. For numeric specs the guard runs only with
       ``guard_numeric=True``.
     """
-    resolved, sample_max = _floor_level_and_sample_max(
+    resolved, sample_max, _ = _floor_level_and_sample_max(
         volume,
         floor,
         guard_numeric=guard_numeric,
@@ -1385,34 +1409,15 @@ def resolve_volume_floor_with_strategy(
     verbose: bool = False,
 ) -> "tuple[float | None, str | None]":
     """Resolve specimen level and branch from the same bounded sample."""
-    if not (isinstance(floor, str) and floor.strip().lower() == "specimen"):
-        return (
-            resolve_volume_floor(
-                volume,
-                floor,
-                guard_numeric=guard_numeric,
-                sample_budget=sample_budget,
-                verbose=verbose,
-            ),
-            None,
-        )
-    from luxar.gsplats.calibration import estimate_floor_result
-
-    budget = FLOOR_SAMPLE_BUDGET_VOXELS if sample_budget is None else sample_budget
-    sample = _sample_volume_for_floor(volume, int(budget))
-    if sample is None:
-        return None, None
-    estimate = estimate_floor_result(sample, method="specimen")
-    sample_max = float(sample.max())
-    if estimate.level >= sample_max:
-        aprint(
-            f"Warning: floor {estimate.level:.6g} >= sampled volume max "
-            f"{sample_max:.6g}; ignoring (would erase all signal)."
-        )
-        return None, None
-    if verbose:
-        aprint(f"Resolved whole-volume background floor: {estimate.level:.6g}")
-    return float(estimate.level), estimate.strategy
+    resolved, sample_max, strategy = _floor_level_and_sample_max(
+        volume,
+        floor,
+        guard_numeric=guard_numeric,
+        sample_budget=sample_budget,
+    )
+    if verbose and resolved is not None and sample_max is not None:
+        aprint(f"Resolved whole-volume background floor: {resolved:.6g}")
+    return resolved, strategy
 
 
 # Voxel budget for the denoise-correction probe of
@@ -1587,7 +1592,7 @@ def _denoise_probe_correction(
     denoise_h: float,
     denoise_params: "dict[str, Any]",
     probe_cache: "dict[str, Any] | None" = None,
-) -> "tuple[float, float, int] | None":
+) -> "tuple[float, float, int, str | None] | None":
     """Shift ``level_raw`` onto the denoised basis with a bounded probe.
 
     Returns ``(level, delta, probe_voxels)``, or ``None`` when there is nothing
@@ -1624,8 +1629,8 @@ def _denoise_probe_correction(
             )
             return None
         raw_flat, denoised_flat = probe
-        probe_raw = _resolve_floor(raw_flat, floor)
-        probe_denoised = _resolve_floor(denoised_flat, floor)
+        raw_result = _resolve_floor_result(raw_flat, floor)
+        denoised_result = _resolve_floor_result(denoised_flat, floor)
     except Exception as exc:  # noqa: BLE001 - never let a probe break a fit
         aprint(
             f"Note: denoise floor probe failed ({type(exc).__name__}: {exc}); "
@@ -1633,7 +1638,7 @@ def _denoise_probe_correction(
         )
         return None
 
-    if probe_raw is None or probe_denoised is None:
+    if raw_result is None or denoised_result is None:
         # Defensive only: a volume-derived spec ("auto"/"pNN") always resolves to
         # a number on a non-empty array, and an empty one already returned above.
         aprint(
@@ -1642,24 +1647,36 @@ def _denoise_probe_correction(
         )
         return None
 
-    delta = float(probe_denoised) - float(probe_raw)
+    probe_raw = float(raw_result.level)
+    probe_denoised = float(denoised_result.level)
+    delta = probe_denoised - probe_raw
     if delta == 0.0:
         # Nothing to correct (denoising left this estimator's answer alone, or
         # the probe is constant). No note: the two bases agree. Returning here
         # rather than computing `level` keeps `level_raw` BIT-exact — the
         # reconstruction below is only exactly the identity for a `delta` of 0
         # when no rounding creeps into the two additions.
-        return None
+        strategy = (
+            denoised_result.strategy
+            if isinstance(floor, str) and floor.strip().lower() == "specimen"
+            else None
+        )
+        return float(level_raw), 0.0, int(raw_flat.size), strategy
 
     # Algebraically ``level_raw + delta``, grouped so that the whole-volume-probe
     # case is EXACT: there ``probe_raw == level_raw`` bit for bit (same
     # estimator, same values), the offset is a hard 0.0, and the result is the
     # denoised-whole-volume estimate itself rather than a rounded reconstruction.
-    level = float(probe_denoised) + (float(level_raw) - float(probe_raw))
-    return level, delta, int(raw_flat.size)
+    level = probe_denoised + (float(level_raw) - probe_raw)
+    strategy = (
+        denoised_result.strategy
+        if isinstance(floor, str) and floor.strip().lower() == "specimen"
+        else None
+    )
+    return level, delta, int(raw_flat.size), strategy
 
 
-def resolve_volume_floor_denoised(
+def resolve_volume_floor_denoised_with_strategy(
     volume: Any,
     floor: "str | float | None",
     *,
@@ -1669,8 +1686,8 @@ def resolve_volume_floor_denoised(
     sample_budget: int | None = None,
     probe_cache: dict[str, Any] | None = None,
     verbose: bool = False,
-) -> "float | None":
-    """Resolve a ``floor`` spec as a property of the DENOISED data.
+) -> "tuple[float | None, str | None]":
+    """Resolve a denoised-basis floor and its specimen estimator branch.
 
     The tiled paths denoise each tile and then subtract a global level, while
     the non-tiled path denoises the whole volume and estimates the level from
@@ -1811,7 +1828,7 @@ def resolve_volume_floor_denoised(
     ):
         # Denoise off, or a user absolute no measurement may move: identical to
         # the pre-#1178 behaviour, with no probe and no extra read.
-        return resolve_volume_floor(
+        return resolve_volume_floor_with_strategy(
             volume,
             floor,
             guard_numeric=guard_numeric,
@@ -1826,7 +1843,7 @@ def resolve_volume_floor_denoised(
     if not _volume_fits_probe_budget(
         volume, int(DENOISE_PROBE_BUDGET_VOXELS)
     ) and not _floor_spec_is_percentile(floor):
-        level = resolve_volume_floor(
+        level, strategy = resolve_volume_floor_with_strategy(
             volume,
             floor,
             guard_numeric=guard_numeric,
@@ -1835,7 +1852,7 @@ def resolve_volume_floor_denoised(
         )
         if level is not None:
             aprint(
-                f"Note: --floor auto keeps its RAW-basis level {level:.6g}. This "
+                f"Note: --floor {floor} keeps its RAW-basis level {level:.6g}. This "
                 "volume is larger than the denoise probe budget, and the "
                 "histogram-mode shift denoising induces is not measurable on a "
                 "bounded sample of it — measured, applying it was as likely to "
@@ -1844,11 +1861,11 @@ def resolve_volume_floor_denoised(
                 "--floor pNN (whose shift does transfer) or a fit that is not "
                 "tiled."
             )
-        return level
+        return level, strategy
 
     # The sampled max comes back with the level so the guard below can judge the
     # CORRECTED level on the very same basis, without a second bounded read.
-    level_raw, raw_sample_max = _floor_level_and_sample_max(
+    level_raw, raw_sample_max, raw_strategy = _floor_level_and_sample_max(
         volume,
         floor,
         guard_numeric=guard_numeric,
@@ -1857,7 +1874,7 @@ def resolve_volume_floor_denoised(
     if level_raw is None:
         # Disabled, or refused by the "erases all signal" guard — nothing to
         # correct.
-        return None
+        return None, None
 
     corrected = _denoise_probe_correction(
         volume,
@@ -1870,8 +1887,10 @@ def resolve_volume_floor_denoised(
     if corrected is None:
         # Nothing to correct, or nothing trustworthy to correct with — the helper
         # has already explained itself where that was worth saying.
-        return level_raw
-    level, delta, probe_voxels = corrected
+        return level_raw, raw_strategy
+    level, delta, probe_voxels, strategy = corrected
+    if delta == 0.0:
+        return level, strategy
 
     # Re-guard on the RAW SAMPLED max, the basis `resolve_volume_floor` uses (see
     # Notes): the probe's denoised max is a tighter bound but an unreliable one,
@@ -1882,13 +1901,38 @@ def resolve_volume_floor_denoised(
             f"Warning: denoised-basis floor {level:.6g} >= sampled volume max "
             f"{raw_sample_max:.6g}; ignoring (would erase all signal)."
         )
-        return None
+        return None, None
     if verbose:
         aprint(
             f"Resolved whole-volume background floor on the DENOISED basis: "
             f"{level:.6g} (raw {level_raw:.6g} {delta:+.6g} from a "
             f"{probe_voxels:,}-voxel denoise probe)"
         )
+    return level, strategy
+
+
+def resolve_volume_floor_denoised(
+    volume: Any,
+    floor: "str | float | None",
+    *,
+    denoise_h: "float | None" = None,
+    denoise_params: "dict[str, Any] | None" = None,
+    guard_numeric: bool = False,
+    sample_budget: int | None = None,
+    probe_cache: dict[str, Any] | None = None,
+    verbose: bool = False,
+) -> "float | None":
+    """Resolve a denoised-basis floor while discarding provenance."""
+    level, _ = resolve_volume_floor_denoised_with_strategy(
+        volume,
+        floor,
+        denoise_h=denoise_h,
+        denoise_params=denoise_params,
+        guard_numeric=guard_numeric,
+        sample_budget=sample_budget,
+        probe_cache=probe_cache,
+        verbose=verbose,
+    )
     return level
 
 
@@ -1937,12 +1981,28 @@ def _resolve_applied_norm_bounds(
     norm_range: "tuple[float, float] | None" = None,
 ) -> tuple[float, float, "float | None"]:
     """Resolve the normalization bounds and effective floor for one fit."""
+    image_min, image_max, applied_floor, _ = _resolve_applied_norm_bounds_with_strategy(
+        V, norm_percentile, verbose, floor, norm_range
+    )
+    return image_min, image_max, applied_floor
+
+
+def _resolve_applied_norm_bounds_with_strategy(
+    V: np.ndarray,
+    norm_percentile: float,
+    verbose: bool,
+    floor: "str | float | None" = None,
+    norm_range: "tuple[float, float] | None" = None,
+) -> tuple[float, float, "float | None", "str | None"]:
+    """Resolve normalization bounds, floor, and specimen provenance."""
     # Configurable normalization - store parameters for intensity rescaling
     image_min, image_max = _resolve_norm_bounds(V, norm_percentile, verbose, norm_range)
 
     # Background floor suppression: raise image_min to the resolved floor.
-    resolved_floor = _resolve_floor(V, floor)
+    floor_result = _resolve_floor_result(V, floor)
+    resolved_floor = None if floor_result is None else float(floor_result.level)
     applied_floor: "float | None" = None
+    floor_strategy: "str | None" = None
     if resolved_floor is not None:
         guard_max = image_max if norm_range is not None else float(np.max(V))
         if resolved_floor >= guard_max:
@@ -1968,12 +2028,15 @@ def _resolve_applied_norm_bounds(
                         f"{image_max:.6g} so floor {image_min:.6g} preserves signal"
                     )
             applied_floor = image_min
+            if isinstance(floor, str) and floor.strip().lower() == "specimen":
+                assert floor_result is not None
+                floor_strategy = floor_result.strategy
             if verbose:
                 aprint(
                     f"Floor suppression: subtracting background level {image_min:.6g}"
                 )
 
-    return image_min, image_max, applied_floor
+    return image_min, image_max, applied_floor, floor_strategy
 
 
 def _normalize_data(
@@ -2002,8 +2065,24 @@ def _normalize_data(
     a bounded sample, a value above ``image_max`` is real signal rather than an
     outlier and is left unclipped when ``norm_percentile == 0``.
     """
-    image_min, image_max, applied_floor = _resolve_applied_norm_bounds(
+    normalized = _normalize_data_with_strategy(
         V, norm_percentile, verbose, floor, norm_range
+    )
+    return normalized[:5]
+
+
+def _normalize_data_with_strategy(
+    V: np.ndarray,
+    norm_percentile: float,
+    verbose: bool,
+    floor: "str | float | None" = None,
+    norm_range: "tuple[float, float] | None" = None,
+) -> tuple[np.ndarray, float, float, float, "float | None", "str | None"]:
+    """Normalize data while retaining specimen-floor provenance."""
+    image_min, image_max, applied_floor, floor_strategy = (
+        _resolve_applied_norm_bounds_with_strategy(
+            V, norm_percentile, verbose, floor, norm_range
+        )
     )
 
     intensity_range = image_max - image_min
@@ -2024,7 +2103,7 @@ def _normalize_data(
         ceiling = None if (norm_range is not None and norm_percentile == 0.0) else 1.0
         V = np.clip((V - image_min) / intensity_range, 0.0, ceiling)
 
-    return V, image_min, image_max, intensity_range, applied_floor
+    return V, image_min, image_max, intensity_range, applied_floor, floor_strategy
 
 
 def _set_convergence_threshold(max_abs_error: float | None, verbose: bool) -> float:

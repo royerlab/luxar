@@ -566,13 +566,15 @@ def _weighted_uniform_seed_counts(
         resolve_tile_intensity_scale,
         uniform_tile_occupancy_weights,
     )
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
+    from luxar.gsplats.fitting.preprocessing import (
+        resolve_volume_floor_denoised_with_strategy,
+    )
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
     probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
     _validate_floor(floor_spec)
-    applied_floor = resolve_volume_floor_denoised(
+    applied_floor, floor_strategy = resolve_volume_floor_denoised_with_strategy(
         volume,
         floor_spec,
         denoise_h=fit_config.get("_denoise_h"),
@@ -585,6 +587,7 @@ def _weighted_uniform_seed_counts(
         and fit_config.get("_denoise_params") is not None,
     )
     fit_config["floor"] = applied_floor if applied_floor is not None else "none"
+    fit_config["_floor_strategy"] = floor_strategy
     fit_config["_floor_resolved"] = True
     _ensure_tile_norm_range(
         volume,
@@ -960,6 +963,7 @@ def dispatch_parallel_tiled(
                     [int(s) for s in volume.shape] if ds_factors is not None else None
                 ),
                 source_dtype=fit_config.get("source_dtype"),
+                floor_strategy=fit_config.get("_floor_strategy"),
                 volume=reference_volume,
                 device=ctx.device,
                 fold_tile_slivers=True,
@@ -1475,7 +1479,7 @@ def fit_single_tile(
     # level. The denoise keys are PEEKED at: they stay in `fit_config` for
     # `fit_tile` (which pops them) to denoise the tile with.
     from luxar.gsplats.fitting.preprocessing import (
-        resolve_volume_floor_denoised,
+        resolve_volume_floor_denoised_with_strategy,
         resolve_volume_floor_with_strategy,
     )
     from luxar.gsplats.fitting.validation import _validate_floor
@@ -1497,21 +1501,15 @@ def fit_single_tile(
             guard_numeric=not (floor_resolved or preselected_tile),
         )
     else:
-        resolved_floor = resolve_volume_floor_denoised(
+        resolved_floor, floor_strategy = resolve_volume_floor_denoised_with_strategy(
             volume,
             floor_spec,
             denoise_h=denoise_h,
             denoise_params=denoise_params,
             probe_cache=probe_cache,
             guard_numeric=not (floor_resolved or preselected_tile),
-        # Log the raw level and the measured denoise shift — but ONLY where
-        # denoising made this a new resolution to report. With `--denoise` off
-        # this worker's log stays byte-identical to what it printed before #1178
-        # (and it would not be read anyway: `build_worker_cmd` hardcodes
-        # ``--quiet`` and the parent discards a successful worker's stdout).
-        # Gated on a volume-derived spec too: an absolute level is not resolved
-        # here, and `warn_if_level_erases_volume` below is the line that matters
-        # for one of those.
+            # Log the raw level and measured denoise shift only where denoising
+            # made this a new volume-derived resolution to report.
             verbose=bool(fit_config.get("verbose", False))
             and floor_spec_needs_volume(floor_spec),
         )

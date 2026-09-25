@@ -815,6 +815,8 @@ def _stamp_merge_normalization(
     target: dict[str, Any],
     sources: "Sequence[Any]",
     applied_floor: "float | None",
+    *,
+    floor_strategy: "str | None" = None,
 ) -> None:
     """Record a MERGE's normalization provenance on ``target`` (#1175).
 
@@ -839,6 +841,8 @@ def _stamp_merge_normalization(
     target.update(agreed_normalization_stats([r.stats for r in sources]))
     if applied_floor is not None:
         target["floor"] = applied_floor
+    if floor_strategy is not None:
+        target["floor_strategy"] = floor_strategy
 
 
 def _empty_merge(
@@ -1163,6 +1167,7 @@ def fit_tiled(
     floor_spec = fit_kwargs.pop("floor", "auto")
     probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
     floor_already_resolved = fit_kwargs.pop("_floor_resolved", False)
+    floor_strategy = fit_kwargs.pop("_floor_strategy", None)
     if floor_already_resolved:
         applied_floor = None if floor_spec == "none" else float(floor_spec)
     else:
@@ -1172,7 +1177,11 @@ def fit_tiled(
         # otherwise this path removes a different pedestal than `--tiling none`
         # does on the same input. PEEK at the denoise keys: `fit_kwargs` is
         # forwarded to `fit_tile`, which pops them itself.
-        applied_floor = resolve_volume_floor_denoised(
+        from luxar.gsplats.fitting.preprocessing import (
+            resolve_volume_floor_denoised_with_strategy,
+        )
+
+        applied_floor, floor_strategy = resolve_volume_floor_denoised_with_strategy(
             volume,
             floor_spec,
             denoise_h=fit_kwargs.get("_denoise_h"),
@@ -1256,6 +1265,8 @@ def fit_tiled(
                     max_passes=max_passes,
                     **_tile_fit_kwargs(fit_kwargs, tile_seed_counts, spec.index),
                 )
+                if floor_strategy is not None:
+                    tile_result.stats["floor_strategy"] = floor_strategy
                 n = tile_result.n_splats
                 if verbose:
                     t_tile = tile_result.stats.get("time_seconds", 0)
@@ -1292,6 +1303,7 @@ def fit_tiled(
         recipe=recipe,
         recipe_params=recipe_params,
         applied_floor=applied_floor,
+        floor_strategy=floor_strategy,
         # The grid above is in voxels; with a voxel_size and real-space output
         # every tile's splats were offset by `origin * voxel_size`, so the
         # partition's split planes need the same factor (#1587).
@@ -1318,6 +1330,7 @@ def merge_tile_results(
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
     applied_floor: "float | None" = None,
+    floor_strategy: "str | None" = None,
     grid_scale: "tuple[float, ...] | None" = None,
     source_shape: Optional[Sequence[int]] = None,
     source_dtype: Optional[str] = None,
@@ -1461,7 +1474,9 @@ def merge_tile_results(
         # A partition has no flat stats dict, so the block rides on the ROOT
         # node's meta and `save_fit_output` splits it into the store's root
         # fitting/config/provenance/pipeline groups.
-        _stamp_merge_normalization(node.meta, regions, applied_floor)
+        _stamp_merge_normalization(
+            node.meta, regions, applied_floor, floor_strategy=floor_strategy
+        )
         from luxar.gsplats.tree import total_splats
 
         fit_stats = _merged_fit_stats(
@@ -1537,7 +1552,9 @@ def merge_tile_results(
             source_stored_bytes=source_stored_bytes,
         )
     )
-    _stamp_merge_normalization(merged.stats, results, applied_floor)
+    _stamp_merge_normalization(
+        merged.stats, results, applied_floor, floor_strategy=floor_strategy
+    )
 
     _score_merged_if_reference(
         merged,

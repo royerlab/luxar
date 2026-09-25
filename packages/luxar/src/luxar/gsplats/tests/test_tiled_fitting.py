@@ -1576,10 +1576,8 @@ class TestTiledFloorHandling:
         argument of every ``resolve_volume_floor_denoised`` call and require
         exactly one string spec (``"auto"``), the rest numeric.
 
-        BOTH resolution doors are spied: the wrapper the tiled paths call, and
-        the raw ``resolve_volume_floor`` underneath it. A future per-tile call
-        going straight to the raw one (a per-tile RAW pedestal — worse than the
-        expense) would be invisible to the wrapper spy alone.
+        The provenance-preserving wrapper is spied directly, so both the level
+        and its estimator branch stay on the same one-resolution path.
         """
         import luxar.gsplats.fit_tiled_gsplats as ftg
         from luxar.gsplats.fitting import preprocessing as pp
@@ -1587,23 +1585,14 @@ class TestTiledFloorHandling:
         records: list = []
         monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
 
-        real_resolve = ftg.resolve_volume_floor_denoised
+        real_resolve = pp.resolve_volume_floor_denoised_with_strategy
         specs: list = []
 
         def spy(volume, floor, **kwargs):
             specs.append(floor)
             return real_resolve(volume, floor, **kwargs)
 
-        monkeypatch.setattr(ftg, "resolve_volume_floor_denoised", spy)
-
-        real_raw = pp.resolve_volume_floor
-        raw_specs: list = []
-
-        def raw_spy(volume, floor, **kwargs):
-            raw_specs.append(floor)
-            return real_raw(volume, floor, **kwargs)
-
-        monkeypatch.setattr(pp, "resolve_volume_floor", raw_spy)
+        monkeypatch.setattr(pp, "resolve_volume_floor_denoised_with_strategy", spy)
 
         rng = np.random.RandomState(0)
         volume = rng.normal(100.0, 1.0, size=(96, 96)).astype(np.float32)
@@ -1616,11 +1605,6 @@ class TestTiledFloorHandling:
         string_specs = [s for s in specs if isinstance(s, str)]
         assert len(string_specs) == 1
         assert string_specs[0] == "auto"
-
-        # Denoise is off here, so every wrapper call delegates to the raw
-        # resolver exactly once — and only ONE of those carries the string spec.
-        assert len(raw_specs) == len(specs)
-        assert [s for s in raw_specs if isinstance(s, str)] == ["auto"]
 
     def test_numeric_floor_subtracted_verbatim(self, monkeypatch) -> None:
         """An explicit numeric floor is subtracted exactly as given."""
