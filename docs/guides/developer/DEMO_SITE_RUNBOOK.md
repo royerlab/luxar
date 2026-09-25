@@ -1603,7 +1603,9 @@ from pathlib import Path
 
 from luxar._zarr_compat import read_node_attrs
 
-attrs = read_node_attrs(Path(sys.argv[1])) or {}
+attrs = read_node_attrs(Path(sys.argv[1]))
+if attrs is None:
+    sys.exit(f"no readable scene at {sys.argv[1]}")
 print(json.dumps(attrs.get("input_digests", {}), indent=2, sort_keys=True))
 PY
 ```
@@ -1614,13 +1616,12 @@ post-build generation check. An empty map means either that the demo recorded no
 manifest inputs or that the stamp is absent, including a scene built before
 #2475. For a manifest-backed demo that should have archive inputs, treat an empty
 map as failed provenance and rebuild it. As a log-side cross-check, also confirm
-that current local files were verified, no superseded pair was accepted, and the
-legacy dual-contract warning never appeared:
+that input files were verified, no superseded generation was actually used, and
+the legacy dual-contract warning never appeared:
 
 ```bash
-grep -c "SHA256 verified (local)" <build-log>       # want: > 0
-grep -c "SHA256 verified (superseded)" <build-log>  # want: 0
-grep -c "SUPERSEDED positional pair" <build-log>    # want: 0
+grep -c "SHA256 verified" <build-log>               # want: > 0
+grep -c "SUPERSEDED" <build-log>                    # want: 0 (an earlier generation was used)
 grep -c "record hosts a newer build" <build-log>    # want: 0 (dormant legacy guard)
 ```
 
