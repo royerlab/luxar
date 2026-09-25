@@ -200,7 +200,7 @@ STORIES: tuple[Story, ...] = (
     Story(
         key="Hemoglobin",
         title="Hemoglobin — the molecule of breath",
-        subtitle="~550 hemoglobin chains from fish to humans, in one tight knot",
+        subtitle="About 550 hemoglobin chains from fish to humans, in one tight knot",
         pattern=r"^Hemoglobin subunit",
         color=(0.98, 0.22, 0.28),
         facts=(
@@ -211,22 +211,20 @@ STORIES: tuple[Story, ...] = (
             # Pauling, Itano, Singer & Wells, Science 110:543 (1949); Ingram,
             # Nature 178:792 (1956) and Nature 180:326 (1957) for the
             # substitution.
-            "In 1949 Linus Pauling and Harvey Itano showed that sickle-cell "
-            "anaemia is caused by an altered hemoglobin — the first "
-            "“molecular disease”. In 1956–57 Vernon Ingram found the culprit: a "
-            "single amino acid, glutamate swapped for valine at position 6 of "
-            "the beta chain.",
+            "In 1949 Linus Pauling and Harvey Itano showed that sickle-cell anaemia "
+            "comes from a faulty hemoglobin — the first “molecular disease”. Seven "
+            "years later Vernon Ingram pinned the fault to a single letter: one "
+            "amino acid, glutamate, swapped for valine.",
             # Perutz's low-resolution model, 1959; Nobel 1962 with Kendrew
             # (MRC LMB; Britannica).
             "Max Perutz needed 22 years of X-ray work to see the molecule: "
             "his 1959 model, carved from balsa wood, showed four chains "
             "cradling four heme groups. Nobel Prize 1962, shared with John "
             "Kendrew for myoglobin.",
-            "Look elsewhere in the map: myoglobin (muscle) and leghemoglobin "
-            "(legume root nodules — and the “bleeding” in some plant-based "
-            "burgers) share hemoglobin's fold, yet the model places them in "
-            "other neighbourhoods. It reads sequences, and theirs drifted "
-            "apart long ago.",
+            "The same fold turns up elsewhere: in muscle as myoglobin, and in the "
+            "roots of beans and peas as leghemoglobin, the ingredient that makes "
+            "some plant-based burgers look as if they bleed. Their sequences "
+            "drifted apart long ago, so the map files them far from blood.",
         ),
         # Biagioli et al., PNAS 106:15454 (2009); reviews since.
         mystery=(
@@ -237,13 +235,14 @@ STORIES: tuple[Story, ...] = (
         tags=("blood", "medicine", "structure"),
         pdb_id="2HHB",
         narration=(
-            "Hemoglobin, the molecule of breath. Each red blood cell carries "
-            "some two hundred and eighty million of these, and each one holds "
-            "four oxygens. In 1949 Linus Pauling traced sickle-cell anaemia to "
-            "an altered hemoglobin, the first molecular disease; the cause "
-            "proved to be a single swapped amino acid. Max Perutz needed twenty-two years to see its "
-            "shape. And yet hemoglobin also turns up inside dopamine neurons, "
-            "nowhere near blood. What it does there, nobody quite knows."
+            "Hemoglobin, the molecule of breath. Each red blood cell carries some "
+            "two hundred and eighty million of these, and each one holds four "
+            "oxygens. In 1949 Linus Pauling showed that sickle-cell anaemia is a "
+            "disease of this molecule, the first molecular disease, and it comes "
+            "down to a single swapped amino acid. Max Perutz needed twenty-two "
+            "years to see its shape. And yet hemoglobin also turns up inside "
+            "dopamine neurons, nowhere near blood. What it does there, nobody quite "
+            "knows."
         ),
     ),
     Story(
@@ -255,10 +254,9 @@ STORIES: tuple[Story, ...] = (
         radius=0.6,
         facts=(
             # Umena, Kawakami, Shen & Kamiya, Nature 473:55 (2011).
-            "D1 sits at the heart of photosystem II, the only enzyme known "
-            "that splits water. Its manganese–calcium cluster, "
-            "Mn₄CaO₅, was finally seen atom by atom in 2011, at "
-            "1.9 Å resolution.",
+            "D1 sits at the heart of photosystem II, the only enzyme known that "
+            "splits water. Its manganese–calcium cluster, the spot where water is "
+            "pulled apart, was finally seen atom by atom in 2011.",
             # Great Oxidation Event ~2.3–2.4 Gya (Current Biology 2009; ScienceDirect).
             "Cyanobacteria running this machine drove the Great Oxidation "
             "Event about 2.4 billion years ago — the moment Earth's atmosphere "
@@ -267,95 +265,85 @@ STORIES: tuple[Story, ...] = (
             # at growth irradiance in leaves (Sundby et al., J. Biol. Chem.
             # 268:25476 (1993)); 30-60 min under intense illumination in
             # pulse-chase measurements (Aro et al., BBA 1143:113 (1993)).
-            "Splitting water has a price: D1 is damaged by its own chemistry "
-            "and is replaced faster than any other protein of photosystem II "
-            "— a half-life of one to two hours in ordinary light, as little "
-            "as half an hour in strong light. A leaf rebuilds this protein all "
-            "day long.",
+            "Splitting water has a price: the chemistry wrecks D1 itself. A leaf "
+            "replaces half its D1 every hour or two, faster in strong sun, and no "
+            "other part of photosystem II is rebuilt so often.",
             # Purple-bacteria reaction centre L/M chains are homologous to
             # D1/D2. Deisenhofer, Huber & Michel solved that reaction centre,
             # the first membrane protein seen atom by atom (Nobel 1988).
-            "Its neighbours in this map are the L and M chains of "
-            "purple-bacteria reaction centres: D1's distant cousins, which "
-            "harvest light but do not split water. When their "
-            "reaction centre became the first membrane protein solved atom by "
-            "atom (Nobel Prize in Chemistry 1988), it became the blueprint for "
-            "photosystem II.",
+            "Its neighbours in this map are the L and M chains of purple bacteria: "
+            "D1's distant cousins, which harvest light without splitting water. "
+            "Their reaction centre was the first membrane protein whose structure "
+            "was ever solved (Nobel Prize in Chemistry 1988), and it became the "
+            "blueprint for understanding photosystem II.",
         ),
         # Cardona et al., Geobiology / PMC6492235: early Archean origin.
         mystery=(
-            "Some molecular clocks place a water-splitting photosystem deep in the "
-            "Archean, perhaps a billion years before oxygen rose. Why did the "
-            "planet wait so long to change?"
+            "Molecular clocks hint that water-splitting began perhaps a billion "
+            "years before oxygen ever rose. Why did the planet wait so long to "
+            "change?"
         ),
         tags=("photosynthesis", "deep time"),
         pdb_id="3WU2",
         narration=(
             "Photosystem II, the machine that made the sky breathable. Its D1 "
-            "subunit sits at the heart of the only enzyme known that splits "
-            "water. Cyanobacteria running this machine began filling Earth's air "
-            "with oxygen, some 2.4 billion years ago. The chemistry is so "
-            "violent that D1 wrecks itself within the hour in bright sun; a "
-            "leaf rebuilds it all day long. Some molecular clocks say water-splitting is "
-            "far older than the rise of oxygen. So why did the planet wait so "
-            "long to change?"
+            "subunit sits at the heart of the only enzyme known that splits water. "
+            "Cyanobacteria running this machine began filling Earth's air with "
+            "oxygen some 2.4 billion years ago. The chemistry is so violent that D1 "
+            "wrecks itself, and a leaf rebuilds it all day long. Molecular clocks "
+            "hint that water-splitting is far older than the rise of oxygen. So why "
+            "did the planet wait so long to change?"
         ),
     ),
     Story(
         key="Hsp70",
         title="Hsp70 — the oldest job in the cell",
-        subtitle="Hundreds of bacteria, and a few archaea, share one blob; our own copy sits apart",
+        subtitle="Hundreds of bacteria share one knot; our own copy sits far away",
         pattern=r"Heat shock 70|Heat shock cognate 71|Chaperone protein [Dd]naK",
         color=(1.0, 0.82, 0.25),
         radius=0.7,
         facts=(
-            "Hsp70 — DnaK in bacteria — is a chaperone: it holds unfolded "
-            "proteins, refolds the damaged ones and hands the hopeless ones to "
-            # dnaK in 98.9% of bacterial genomes (Pan et al., mSystems 9:e01154-23 (2024));
-            # archaeal copies came from bacteria by lateral transfer
-            # (Gribaldo et al., J. Bacteriol. 181:434 (1999)).
-            "the shredder. Almost every bacterium and every eukaryote carries "
-            "one; archaea are the odd ones out, and those that have it "
-            "borrowed it from bacteria.",
+            "Hsp70 — DnaK in bacteria — is a chaperone: it holds unfolded proteins, "
+            "refolds the damaged ones and hands the hopeless ones to the shredder. "
+            "Almost every bacterium and every plant, animal and fungus carries one.",
             # Human HSPA1A vs E. coli DnaK: 47.9% identity (global alignment,
             # UniProt P0DMV8 / P0A6Y8). The cytosolic eukaryotic lineage has a
             # prokaryotic ancestor of uncertain identity (Brocchieri et al.,
             # BMC Evol. Biol. 8:19 (2008)), so the separation is at least as
             # old as eukaryotes.
-            "After some two billion years of separate evolution, human Hsp70 "
-            "and E. coli DnaK are still about 47% identical, letter for "
-            "letter — one of the most conserved proteins known.",
+            "Separated for some two billion years, human Hsp70 and E. coli DnaK are "
+            "still about 47% identical, letter for letter — one of the most "
+            "conserved proteins known.",
             # Map audit: all 567 members are named DnaK: 541 bacteria, 12
             # archaea, 14 algal chloroplast copies; the nearest eukaryotic
             # cytosolic Hsp70 sits ~10 units away.
-            "This blob is DnaK in hundreds of bacteria, with a few archaea "
-            "and the chloroplast copies of some algae among them. Our own Hsp70 sits far off on the map: the model "
-            "reads sequence, and ours has drifted, though it does the same job.",
+            "This knot is DnaK from hundreds of bacteria, joined by a few archaea "
+            "and algal chloroplasts. Our own Hsp70 sits far across the map: its "
+            "sequence has drifted, but it still does the same job.",
             # Ritossa, Experientia 18:571 (1962); Ritossa's own account,
             # Cell Stress Chaperones 1:97 (1996).
-            "Its story began by accident. In 1962 Ferruccio Ritossa saw new "
-            "“puffs” on fruit-fly chromosomes after someone in the lab "
-            "had nudged his incubator's temperature — the first observation "
-            "of the heat-shock response.",
+            "It was found by accident. In 1962 Ferruccio Ritossa saw new “puffs” on "
+            "fruit-fly chromosomes after someone in the lab had nudged his "
+            "incubator's temperature — the first glimpse of the heat-shock "
+            "response.",
         ),
         mystery=(
-            "Cancer cells over-produce Hsp70 to survive their own chaos, and "
-            "drugs that turn this against them have been tried for decades. "
-            "None has yet been approved. Why is such a universal protein "
-            "so hard to target?"
+            "Cancer cells over-produce Hsp70 to survive their own chaos, and drugs "
+            "that turn this against them have been tried for decades, but none has "
+            "yet been approved. Why is such a universal protein so hard to target?"
         ),
         tags=("chaperone", "evolution"),
         pdb_id="2KHO",
         narration=(
-            "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
-            "refolds the damaged ones, and hands the hopeless ones to the "
-            "shredder. Almost every bacterium and every eukaryote has one. After "
-            "some two billion years apart, the human and E. coli "
-            "versions are still nearly half identical, letter for letter. This "
-            "cluster is the bacterial form; ours sits far away. Cancer "
-            "cells over-produce it to survive their own chaos, and drugs against "
-            "it have been tried for decades. None has been approved. Why "
-            "is such a universal protein so hard to target?"
+            "Hsp70, the oldest job in the cell. It was found because somebody "
+            "nudged a thermostat: fruit-fly chromosomes lit up with new activity "
+            "when the heat went up. It holds unfolded proteins, refolds the damaged "
+            "ones, and hands the hopeless ones to the shredder. Separated for some "
+            "two billion years, the human and E. coli versions are still nearly "
+            "half identical, letter for letter. This cluster is the bacterial form; "
+            "ours sits far away. Cancer cells over-produce it to survive their own "
+            "chaos, and drugs against it have been tried for decades, but none has "
+            "been approved. Why is such a universal protein so hard to target?"
         ),
     ),
     Story(
@@ -380,24 +368,18 @@ STORIES: tuple[Story, ...] = (
             "Ebola's glycoprotein belong to unrelated viruses, yet they pull "
             "the same trick: class I fusion proteins that snap into a "
             "six-helix bundle, dragging virus and cell membranes together.",
-            "Haemagglutinin gives influenza its “H” (H1N1, H5N1...). "
-            # Johnson & Mueller, Bull. Hist. Med. 76:105 (2002): 50 million,
-            # possibly 100 million; Spreeuwenberg et al., Am. J. Epidemiol.
-            # 187:2561 (2018): 17.4 million. No single figure is settled.
-            "The 1918 pandemic, an H1N1 virus, killed tens of millions of "
-            "people — estimates run from 17 to 100 million.",
-            "The SARS-CoV-2 spike grips the human ACE2 receptor to open a "
-            "cell; COVID-19 vaccines teach the immune system this spike, and "
-            "the strongest antibodies grab its receptor-binding tip. Its "
-            "cousins pick other "
-            "locks — MERS uses DPP4, not ACE2.",
+            "Haemagglutinin is the “H” in H1N1 and H5N1. The 1918 pandemic, an H1N1 "
+            "virus, killed tens of millions of people.",
+            "The SARS-CoV-2 spike grips the ACE2 receptor on our cells to get in. "
+            "COVID-19 vaccines teach the immune system to recognise it, and the "
+            "strongest antibodies grab its tip, the part that touches the receptor.",
             # Whether class I fusion proteins share an ancestor is unresolved:
             # the fold recurs in viruses otherwise unrelated, and for class II
             # the same pattern is read as descent plus gene exchange
             # (Guardado-Calvo & Rey, Viruses 13:2368 (2021)).
-            "Here they gather into one continent although no shared ancestor "
-            "can be traced in their sequences. The language model groups them "
-            "by how they are built and what they do, visible as geography.",
+            "Here they gather into one continent, though their sequences show no "
+            "family tie. The language model groups them by how they are built and "
+            "what they do, visible as geography.",
         ),
         mystery=(
             "Most viral proteins have no known relatives at all — the "
@@ -407,15 +389,13 @@ STORIES: tuple[Story, ...] = (
         tags=("virology", "pandemics", "convergence"),
         pdb_id="1RUZ",
         narration=(
-            "The intruders' continent. Influenza's haemagglutinin, the "
-            "coronavirus spike, HIV's envelope: unrelated viruses, one trick. "
-            "Each snaps into a bundle that drags virus and cell together. The "
-            "1918 flu killed tens of millions of people with a protein like this "
-            "one. "
-            "They gather here though no shared ancestor can be traced; the model groups "
-            "them by how they are built and what they do. Most viral proteins "
-            "have no known relatives at all. Where would that dark matter land "
-            "on this map?"
+            "The intruders' continent. Influenza's haemagglutinin, the coronavirus "
+            "spike, HIV's envelope: unrelated viruses, one trick. Each snaps into a "
+            "bundle that drags virus and cell together. The 1918 flu killed tens of "
+            "millions of people with a protein like this one. They gather here "
+            "though their sequences show no family tie; the model groups them by "
+            "how they are built and what they do. Most viral proteins have no known "
+            "relatives at all. Where would that dark matter land on this map?"
         ),
     ),
     Story(
@@ -430,22 +410,22 @@ STORIES: tuple[Story, ...] = (
             # funerary-feast route was proposed by Glasse and Lindenbaum
             # (Liberski et al., Viruses 11:232 (2019)).
             "Kuru among the Fore people of New Guinea, scrapie in sheep, "
-            "Creutzfeldt–Jakob disease in humans: brain diseases that "
-            "spread like infections, yet no virus was ever found. Carleton "
-            "Gajdusek showed kuru could be passed on (Nobel Prize 1976); it "
-            "spread through funeral feasts.",
+            "Creutzfeldt–Jakob disease in humans: brain diseases that spread like "
+            "infections, yet no virus was ever found. Carleton Gajdusek showed that "
+            "kuru could be passed on (Nobel Prize 1976); it had spread through "
+            "funeral feasts.",
             # Prusiner 1982 'prion'; Nobel 1997 (NobelPrize.org press release).
-            "In 1982 Stanley Prusiner proposed the heresy that the agent is a "
-            "protein alone, and called it a prion; it proved to be a misfolded "
-            "shape that converts healthy copies into itself. Nobel Prize 1997.",
+            "In 1982 Stanley Prusiner proposed a heresy: the agent is a protein "
+            "alone. He called it a prion, and it turned out to be a misfolded shape "
+            "that converts healthy copies into itself. Nobel Prize 1997.",
             # BSE evident 1985–86 in the UK; vCJD first identified March 1996
             # (ECDC; Stanford prion timeline).
             "Mad cow disease surfaced in British cattle in the mid-1980s; its "
             "human form, variant CJD, was identified in 1996 — prions had "
             "crossed from one species to another through food.",
-            "Every mammal carries the healthy form, PrPᶜ, on the surface "
-            "of its neurons. In this map its neighbours are small "
-            "neuropeptides, the brain's short messengers.",
+            "Every mammal carries the healthy form on the surface of its neurons. "
+            "On this map it sits among the brain's own short chemical messengers, "
+            "the neuropeptides.",
         ),
         # Bremer et al., Nat. Neurosci. 2010 (myelin maintenance); reviews
         # BMC Biol. 2017, Front. Mol. Biosci. 2017.
@@ -457,20 +437,19 @@ STORIES: tuple[Story, ...] = (
         tags=("neuroscience", "mystery"),
         pdb_id="1QLX",
         narration=(
-            "A protein that is its own pathogen. Kuru, scrapie, "
-            "Creutzfeldt-Jakob disease: brain diseases that spread like "
-            "infections, yet no virus was ever found. In 1982 Stanley Prusiner "
-            "proposed the heresy that the agent is a protein alone; it proved "
-            "to be a misfolded shape that converts healthy copies into itself. Mad cow disease later "
-            "proved it could cross species through food. Every mammal carries "
-            "the healthy form on its neurons. Forty years on, its day job is "
-            "still not settled."
+            "A protein that is its own pathogen. Kuru, scrapie, Creutzfeldt-Jakob "
+            "disease: brain diseases that spread like infections, yet no virus was "
+            "ever found. In 1982 Stanley Prusiner proposed a heresy: the agent is a "
+            "protein alone, a misfolded shape that turns healthy copies into "
+            "itself. Mad cow disease later showed it could cross species through "
+            "food. Every mammal carries the healthy form on its neurons. Forty "
+            "years on, what it normally does is still not settled."
         ),
     ),
     Story(
         key="ATP synthase",
-        title="ATP synthase — the turbine in almost every cell",
-        subtitle="The rotary motor that makes the currency of life, in bacteria and in the cells that took them in",
+        title="ATP synthase — the cell's turbine",
+        subtitle="The rotary motor that makes life's energy currency",
         pattern=r"ATP synthase subunit beta\b",
         color=(1.0, 0.5, 0.12),
         radius=0.6,
@@ -481,64 +460,60 @@ STORIES: tuple[Story, ...] = (
             "Boyer proposed the mechanism, John Walker solved the structure — "
             "Nobel Prize 1997.",
             # Noji, Yasuda, Yoshida & Kinosita, Nature 386:299 (1997).
-            "In 1997 the rotation was watched directly: a single F₁ motor, "
-            "with a fluorescent actin filament glued to its axle, spun under "
-            "the microscope at several revolutions per second.",
+            "In 1997 the rotation was watched directly: a single motor, with a "
+            "glowing filament glued to its axle, spun under the microscope at "
+            "several turns a second.",
             # ~100–150 mol ATP/day ≈ 50–75 kg (BNID 105606; NIGMS Biobeat).
             "You make and spend roughly your own body weight in ATP every day "
             "— some 50 to 75 kilograms — recycling each molecule hundreds of "
             "times.",
             # Map audit: 372 members, 3 plastid and 1 mitochondrial.
-            "This blob is the beta subunit of hundreds of bacteria, with a few "
-            "chloroplast and mitochondrial copies among them: the same motor, "
-            "inherited from the bacteria that became mitochondria and "
-            "chloroplasts.",
+            "This knot is the beta subunit from hundreds of bacteria, with a few "
+            "copies from chloroplasts and mitochondria among them: the same motor, "
+            "inherited from the bacteria that became those organelles.",
         ),
         mystery=(
-            "F₁ is one of the most efficient motors known: almost all of the "
-            "energy that goes in comes out as rotation, with next to nothing "
-            "lost as heat. How a protein manages that is still debated."
+            "This motor is one of the most efficient known: almost all of the "
+            "energy that goes in comes out as rotation, with next to nothing lost "
+            "as heat. How a protein manages that is still debated."
         ),
         tags=("energy", "structure"),
         # The WHOLE machine — F1 head, stalk and Fo rotor in the membrane —
         # not the F1 head alone (1BMF): a visitor should recognise a turbine.
         pdb_id="6N2Y",
         narration=(
-            "ATP synthase, the turbine in almost every cell. Protons flowing through "
-            "it turn an axle, and each turn presses out three molecules of "
-            "ATP. In 1997 a single motor was filmed spinning under a "
-            "microscope. You make and spend roughly your own body weight in "
-            "ATP every day. It is one of the most efficient motors known, "
-            "wasting almost nothing as heat. How a protein manages that is "
-            "still debated."
+            "ATP synthase, the cell's turbine. Protons flowing through it turn an "
+            "axle, and each turn presses out three molecules of ATP. In 1997 a "
+            "single motor was filmed spinning under a microscope. You make and "
+            "spend roughly your own body weight in ATP every day. It is one of the "
+            "most efficient motors known, wasting almost nothing as heat. How a "
+            "protein manages that is still debated."
         ),
     ),
     Story(
         key="RuBisCO",
-        title="RuBisCO — perhaps the most abundant enzyme, and one of the slowest",
+        title="RuBisCO — the enzyme that feeds the world, and one of the slowest",
         subtitle="The protein that pulls carbon out of the air for almost all life",
         pattern=r"^Ribulose bisphosphate carboxylase large chain",
         color=(0.72, 1.0, 0.3),
         radius=0.6,
         facts=(
             # Bar-On & Milo, PNAS 116:4738 (2019): ~0.7 Gt; Raven 2013.
-            "Nearly every carbon atom in every living thing passed through "
-            "this enzyme. Earth carries about 0.7 billion tonnes of it, a "
-            "strong contender for the most abundant protein on the planet.",
+            "Nearly every carbon atom in every living thing passed through this "
+            "enzyme. Earth carries about 0.7 billion tonnes of it — roughly a "
+            "person's weight for every person alive.",
             # Time-averaged ~0.03 s⁻¹ on land, an annual mean over day and
             # night (Bar-On & Milo 2019); plant kcat a few per second, the
             # fastest known form ~22/s (Davidi et al., EMBO J 39:e104081 (2020)).
-            "It is also remarkably slow: a few reactions per second in plants, "
-            "and averaged over day and night, all year round, a land plant's "
-            "RuBisCO fixes about one CO₂ every thirty seconds. Plants compensate by making "
-            "enormous amounts of it.",
+            "It is also remarkably slow: a few reactions a second in plants, and "
+            "counting nights and winters, about one CO₂ every thirty seconds. "
+            "Plants make up for it by making enormous amounts.",
             "It makes mistakes, too: it cannot tell O₂ from CO₂ well, and every "
-            "time it grabs oxygen the plant pays in lost carbon and energy "
-            "(photorespiration). Cyanobacteria and algae pack the enzyme into "
-            "compartments — carboxysomes, pyrenoids — to feed it concentrated "
-            "CO₂.",
-            "Here the large chain forms one tight knot; its distant relatives "
-            "in other microbes sit elsewhere in the map.",
+            "time it grabs oxygen the plant loses carbon and burns energy putting "
+            "the mistake right. Cyanobacteria and algae pack the enzyme into tiny "
+            "compartments to feed it concentrated CO₂.",
+            "The large chain, the part that does the chemistry, forms one tight "
+            "knot here; its distant microbial relatives sit far off across the map.",
         ),
         mystery=(
             "Three billion years of evolution have not produced a fast, "
@@ -548,13 +523,13 @@ STORIES: tuple[Story, ...] = (
         tags=("photosynthesis", "enzyme"),
         pdb_id="8RUC",
         narration=(
-            "RuBisCO, perhaps the most abundant enzyme on Earth, and one of the "
-            "slowest. Nearly every carbon atom in every living thing has passed "
-            "through it. Averaged over day and night, it fixes only about one "
-            "CO2 every thirty seconds, and it keeps confusing oxygen with "
-            "carbon dioxide, so plants make it by the tonne. Three billion years of evolution never produced a fast, "
-            "accurate RuBisCO. Is that a wall that cannot be climbed, or has "
-            "nobody found the path?"
+            "RuBisCO, the enzyme that feeds the world, and one of the slowest. "
+            "Nearly every carbon atom in every living thing has passed through it. "
+            "Counting nights and winters, it fixes only about one CO2 every thirty "
+            "seconds, and it keeps confusing oxygen with carbon dioxide, so plants "
+            "make it by the tonne. Three billion years of evolution never produced "
+            "a fast, accurate RuBisCO. Is that a wall that cannot be climbed, or "
+            "has nobody found the path?"
         ),
     ),
     Story(
@@ -580,15 +555,14 @@ STORIES: tuple[Story, ...] = (
             # Human RAD51 is loaded onto resected ends by BRCA2's BRC repeats.
             # BRCA1 and BRCA2 together explain many breast-ovarian cancer
             # families, BRCA1 the larger share (Ford et al., AJHG 62:676 (1998)).
-            "Our version is RAD51. It is loaded onto broken DNA by BRCA2, "
-            "whose gene is one of the two, with BRCA1, behind many inherited "
-            "breast and ovarian cancers. When it fails, repair fails, and "
-            "errors accumulate.",
+            "Our version is RAD51, loaded onto broken DNA by BRCA2. Inherited "
+            "faults in BRCA2, as in BRCA1, are behind many hereditary breast and "
+            "ovarian cancers: repair fails, and errors accumulate.",
             # Map audit: all 372 members are bacterial RecA; the nearest
             # RAD51 sits ~10 units away.
-            "This blob is bacterial RecA alone. Our RAD51 sits elsewhere on "
-            "the map, its sequence drifted, yet it builds the same filament: "
-            "the recombinase predates the split between bacteria and us.",
+            "This knot is bacterial RecA. Our RAD51 sits elsewhere on the map, its "
+            "sequence drifted, yet it builds the same filament: a design older than "
+            "the split between bacteria and us.",
         ),
         mystery=(
             "A RecA filament finds one matching stretch among millions of base "
@@ -606,13 +580,13 @@ STORIES: tuple[Story, ...] = (
         # `demo_esm_protein_universe` too, so the swap fixes both tours.
         pdb_id="1U94",
         narration=(
-            "RecA and Rad51, the machine that mends broken DNA. It coats a "
-            "broken strand and searches the entire genome for the matching "
-            "sequence. Our version, RAD51, is loaded by BRCA2, whose gene lies "
-            "behind many inherited breast cancers. Bacteria fill this "
-            "cluster; our RAD51 sits elsewhere, yet builds the same filament. "
-            "The shape has barely moved in billions of years. It finds one match among millions of base "
-            "pairs in minutes. How it searches that fast is still argued over."
+            "RecA and Rad51, the machine that mends broken DNA. It coats a broken "
+            "strand and searches the entire genome for the matching sequence. Our "
+            "version, RAD51, is loaded by BRCA2, a gene well known from inherited "
+            "breast cancer. Bacteria fill this cluster; our RAD51 sits elsewhere, "
+            "yet builds the same filament, a shape that has barely moved in "
+            "billions of years. It finds one match among millions of base pairs in "
+            "minutes. How it searches that fast is still argued over."
         ),
     ),
     Story(
@@ -672,22 +646,19 @@ STORIES: tuple[Story, ...] = (
             # ~800 Conus species, 100–1,000+ peptides each, >80,000 estimated
             # (Toxins 2019; Frontiers Mar. Sci. 2022).
             "Cone snails hunt fish, worms and other snails with a harpoon and a "
-            "venom cocktail. There are around 800 species and each makes "
-            "hundreds to a thousand different peptides — tens of thousands of "
-            "toxins in all, each a precise key for one ion channel or "
-            "receptor.",
+            "venom cocktail. There are around 800 species and each makes hundreds "
+            "of different peptides, perhaps a hundred thousand toxins in all, each "
+            "a precise key for one ion channel or receptor.",
             # Olivera (U. Utah), cone snails from the Philippines.
             "Much of what is known began with Baldomero Olivera collecting "
             "snails on Philippine reefs; his lab turned their toxins into "
             "tools that mapped the ion channels of the nervous system.",
             # Ziconotide = ω-conotoxin MVIIA (Conus magus), 25 aa; FDA 28 Dec
             # 2004 as Prialt — first marine natural product approved.
-            "One of them, a 25-amino-acid peptide from Conus magus, is now a "
-            "drug: ziconotide (Prialt), approved in 2004 for severe chronic "
-            "pain. It blocks the calcium channels that carry pain signals in "
-            "the spinal cord — the first medicine ever made from a venom of "
-            "the sea. (The first from the sea at all came earlier: "
-            "cytarabine, in 1969, modelled on a Caribbean sponge's chemistry.)",
+            "One of them, a 25-amino-acid peptide from Conus magus, is now a drug: "
+            "ziconotide (Prialt), approved in 2004 for severe chronic pain. It "
+            "blocks the calcium channels that carry pain signals in the spinal cord "
+            "— the first medicine ever made from a venom of the sea.",
             "Swiss-Prot holds over 1,200 conotoxins. This knot holds a few "
             "hundred of them; the others are strewn across the whole map, "
             "because venom evolves faster than almost anything else.",
@@ -717,14 +688,14 @@ OVERVIEW_TITLE = "Ten stories in the protein universe"
 # Overview panel (story 0) rather than a standalone overlay.
 ATTRIBUTION = f"{DEMO_META['citation']['ref']} · {DEMO_META['citation']['license']}"
 OVERVIEW_HTML = (
-    "Every point is one of {n:,} Swiss-Prot proteins, placed by a protein "
-    "language model (ESM C) so that proteins with similar sequences sit close "
-    "together, then projected to 3D with UMAP. Colours are taxonomic groups."
-    "<br><br>Step the <b>story</b> dimension to fly to ten clusters that each "
-    "tell a piece of biology: blood, sunlight, the oldest chaperone, the coats "
-    "of viruses, a protein that infects without genes, the cell's turbine, "
-    "a famously slow enzyme, the machine that mends DNA, a century of "
-    "insulin, and venom that became medicine."
+    "Every point is one of {n:,} Swiss-Prot proteins, placed by a protein language "
+    "model so that proteins with similar sequences sit close together, then spread "
+    "out in three dimensions. Colours are taxonomic groups.<br><br>Step the "
+    "<b>story</b> dimension to fly to ten clusters that each tell a piece of "
+    "biology: blood, sunlight, the oldest job in the cell, the coats of viruses, a "
+    "protein that infects without genes, the cell's turbine, a famously slow "
+    "enzyme, the machine that mends DNA, a century of insulin, and venom that "
+    "became medicine."
 )
 
 # Backdrop / highlight appearance. The backdrop keeps the base demo's taxon
