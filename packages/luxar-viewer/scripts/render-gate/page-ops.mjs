@@ -355,6 +355,53 @@ export async function gpuCost({ k = 20, warm = 10, reps = 5 }) {
  * @returns {Promise<{ frames: number, renders: number, frameMs: number,
  *   p95Ms: number, rendersPerFrame: number }>}
  */
+/**
+ * The cost of WAKING a stopped loop: stop it, let two animation frames pass,
+ * then call `startAnimation()` as an input handler would, and measure
+ *
+ * - `renders`: how many times the pipeline rendered from the wake up to and
+ *   including the first animation frame after it (the frame that paints).
+ *   One is the minimum a wake needs; a wake that also renders inline inside
+ *   the handler costs two.
+ * - `blockMs`: how long the `startAnimation()` call itself blocked its
+ *   caller, i.e. the input latency a wake adds to the handler that caused it.
+ *
+ * Our own rAF is registered AFTER the wake, so the loop's armed frame (if
+ * any) runs before it in the same animation frame. Medians over `reps`.
+ */
+export async function wake({ reps = 9 }) {
+  const dbg = window.__luxarDebug;
+  const ac = dbg.animationController;
+  const pp = dbg.app.sceneManager.postProcessing;
+  const tick = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const med = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
+  let renders = 0;
+  const original = pp.render;
+  pp.render = function countedRender(...args) {
+    renders++;
+    return original.apply(this, args);
+  };
+  const perWake = [];
+  const blocked = [];
+  try {
+    for (let i = 0; i < reps; i++) {
+      ac.stopAnimation();
+      await tick();
+      await tick();
+      renders = 0;
+      const t0 = performance.now();
+      ac.startAnimation();
+      blocked.push(performance.now() - t0);
+      await tick();
+      perWake.push(renders);
+    }
+  } finally {
+    pp.render = original;
+    ac.startAnimation();
+  }
+  return { renders: med(perWake), blockMs: med(blocked) };
+}
+
 export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose }) {
   const dbg = window.__luxarDebug;
   const pp = dbg.app.sceneManager.postProcessing;
