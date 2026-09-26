@@ -628,6 +628,8 @@ interface LODGroupEntryCache {
   /** Whether any child needs the optional robust-bounds metric fold. */
   hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
+  /** Local (group-space) box of the robust metric bounds; distinct from the raw one. */
+  metricLocalBoxScratch: BoundingBox;
   worldBoxOptions: WorldBoxOptions;
   metricWorldBoxOptions: WorldBoxOptions;
 }
@@ -711,6 +713,8 @@ const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4().makeScale(
   1
 );
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
+/** projection × view × a group's matrixWorld: local box corners → clip space. */
+const LOCAL_PROJ_SCRATCH = new THREE.Matrix4();
 const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
 // Bit flags returned by evaluatePartitionEntry so one child scan reports both effects.
 const PARTITION_VISIBILITY_CHANGED = 1;
@@ -1103,6 +1107,10 @@ export class LODGroupRegistry {
       footprintPx: new Array<number>(entry.children.length),
       hasLodBounds: entry.children.some((c) => c.lodBounds != null),
       localBoxScratch: {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 0, y: 0, z: 0 },
+      },
+      metricLocalBoxScratch: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
       },
@@ -1881,9 +1889,20 @@ export class LODGroupRegistry {
         if (forceFinest) {
           coverageMetric = Infinity;
         } else {
-          const metricWorldBox = cache.hasLodBounds
-            ? (this.computeWorldBox(entry, displayDims, true) ?? worldBox)
-            : worldBox;
+          // The screen metrics project the group's LOCAL box through
+          // projView × matrixWorld, i.e. the 8 corners of the box as oriented
+          // on screen. Projecting the corners of its world AABB instead (the
+          // frustum gate's box) inflated a rotated group twice and picked too
+          // fine a level. computeWorldBox refreshed matrixWorld above.
+          const rawLocal = cache.localBoxScratch;
+          const metricLocal =
+            cache.hasLodBounds && this.computeWorldBox(entry, displayDims, true)
+              ? cache.metricLocalBoxScratch
+              : rawLocal;
+          LOCAL_PROJ_SCRATCH.multiplyMatrices(
+            FRUSTUM_MATRIX_SCRATCH,
+            entry.groupObject.matrixWorld
+          );
           if (entry.selector === 'screen-area') {
             // Screen-area selector: the metric IS the fraction of the viewport
             // area the group's projected bbox rect covers (viewport-size
@@ -1891,29 +1910,23 @@ export class LODGroupRegistry {
             // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
             // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
             // Camera inside the box → +Infinity → finest, same as the diagonal path.
-            coverageMetric = projectBoxAreaFraction(
-              metricWorldBox,
-              view.camera,
-              FRUSTUM_MATRIX_SCRATCH
-            );
+            coverageMetric = projectBoxAreaFraction(metricLocal, view.camera, LOCAL_PROJ_SCRATCH);
             if (cache.hasLodBounds) {
               // The thin-rectangle ramp is not monotone under box containment:
               // trimming the thin axis can increase the robust metric. Robust
               // bounds may only keep or reduce the raw-bounds selection.
               coverageMetric = Math.min(
                 coverageMetric,
-                projectBoxAreaFraction(worldBox, view.camera, FRUSTUM_MATRIX_SCRATCH)
+                projectBoxAreaFraction(rawLocal, view.camera, LOCAL_PROJ_SCRATCH)
               );
             }
           } else {
             // Legacy 'coverage' selector (the default for older stores).
-            // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
-            // built in evaluatePerFrame) instead of recomputing it per group.
             const diagonalPx = projectBoxDiagonalPx(
-              metricWorldBox,
+              metricLocal,
               view.camera,
               viewport,
-              FRUSTUM_MATRIX_SCRATCH
+              LOCAL_PROJ_SCRATCH
             );
             // Normalise the projected pixel diagonal to a dimensionless **coverage
             // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
@@ -2324,7 +2337,7 @@ export class LODGroupRegistry {
     return computeEntryWorldBox(
       entry,
       displayDims,
-      cache.localBoxScratch,
+      useLodBounds ? cache.metricLocalBoxScratch : cache.localBoxScratch,
       this.matrixScratch,
       useLodBounds ? cache.metricWorldBoxOptions : cache.worldBoxOptions
     );

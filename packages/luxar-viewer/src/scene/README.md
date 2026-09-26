@@ -338,7 +338,10 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    outside the camera frustum, hold the group at its coarsest _ready_
    level instead of loading a fine level the renderer would
    frustum-cull. Eviction also keeps using this complete-geometry box.
-4. Otherwise, project the 8 corners of the metric world box to NDC and
+4. Otherwise, project the 8 corners of the metric box to NDC (the
+   group-space box through `projView × matrixWorld`, so a rotated group is
+   measured by its own corners rather than by its world AABB, which would
+   inflate it twice) and
    measure how much of the screen the group covers, in the units its
    `selector` attr names. A DERIVED ladder stamps `screen-area`: the
    metric is the screen-space AABB's **area** as a fraction of the viewport area

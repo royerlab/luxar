@@ -1684,6 +1684,33 @@ describe('LODGroupRegistry — auto evaluation', () => {
     expect(selectedAtBias(1, false)).toBe(0);
   });
 
+  it('sizes a rotated group by its own corners, not by its world bounding box', () => {
+    // A 4 × 4 card 10 units in front of the camera covers 0.090 of the screen
+    // facing it. Turned 30° about the vertical it covers LESS (0.088), but the
+    // corners of its world AABB — wider and deeper — cover 0.097, which
+    // used to cross a 0.093 threshold and upgrade the level.
+    function selectedAt(yawDeg: number): number {
+      const camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 1000);
+      camera.updateMatrixWorld(true);
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+      });
+      const card = { min: [-2, -2, -0.01], max: [2, 2, 0.01] };
+      const children = [0, 0.093].map((t) => ({ ...makeChild(t), positionBounds: card }));
+      const entry = makeEntry(children, 0, `/rotated-card-${yawDeg}`);
+      entry.selector = 'screen-area';
+      entry.groupObject.position.set(0, 0, -10);
+      entry.groupObject.rotation.y = (yawDeg * Math.PI) / 180;
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      return entry.activeChildIndex;
+    }
+    expect(selectedAt(0)).toBe(0);
+    expect(selectedAt(30)).toBe(0);
+  });
+
   it('selects from the camera pose as written, not a stale matrixWorldInverse', () => {
     // Fly controls write position/quaternion without refreshing the matrices;
     // the selection must follow the pose the frame renders, not the last one
