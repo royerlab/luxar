@@ -186,3 +186,7 @@ header then says how many relaunches happened. A case that kills the browser a
 second time is reported as an error. On a laptop, run the gate under
 `caffeinate -dims` (macOS): a machine that sleeps stalls the run without
 failing it.
+
+`report.json` is written before `report.md`. To rewrite the markdown from a
+saved run without measuring again, pass
+`--from-json <dir>/report.json`.
