@@ -171,3 +171,10 @@ cost. Keep the two apart when reading a result.
 - **INCOMPLETE** (exit 3): no failure, but some views were excluded as
   nondeterministic. Fix the nondeterminism or remove the case; do not ignore it.
 - exit 2: the harness itself crashed (build failure, server port in use).
+
+A browser that dies mid-run (a GPU-process crash, or the OOM killer on a busy
+host) is relaunched, and the case it interrupted is retried once; the report
+header then says how many relaunches happened. A case that kills the browser a
+second time is reported as an error. On a laptop, run the gate under
+`caffeinate -dims` (macOS): a machine that sleeps stalls the run without
+failing it.
