@@ -11,6 +11,11 @@
  * that way: a mesh parked on a non-default layer between frames would vanish from every
  * other pass at once.
  *
+ * The two transient bits sit at the TOP of three's 32-layer range, clear of layers 1
+ * and 2: those are the eye layers three's WebXR manager enables on its left and right
+ * eye cameras, so an object on layer 1 or 2 during an XR frame would draw in one eye
+ * only.
+ *
  * @module rendering/render-layers
  */
 
@@ -22,7 +27,7 @@ export const RENDER_LAYER_DEFAULT = 0;
  * render call (passes A and C hide it, pass B draws only it), restoring the previous
  * mask in a `finally`. Never persistent.
  */
-export const RENDER_LAYER_REFRACTING_GLASS = 1;
+export const RENDER_LAYER_REFRACTING_GLASS = 29;
 
 /**
  * The layer the refraction split moves the UNPARTITIONED meshes onto for one render
@@ -31,4 +36,4 @@ export const RENDER_LAYER_REFRACTING_GLASS = 1;
  * depth and are therefore drawn whole in pass A and left out of pass C. Restored in the
  * same `finally`. Never persistent.
  */
-export const RENDER_LAYER_UNPARTITIONED = 2;
+export const RENDER_LAYER_UNPARTITIONED = 30;
