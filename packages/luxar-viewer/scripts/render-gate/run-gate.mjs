@@ -7,6 +7,8 @@
  *   node scripts/render-gate/run-gate.mjs --base origin/main --cand HEAD \
  *     [--suite exact|perf|all] [--class IDENTICAL|ULP] [--intended id,id] \
  *     [--only id,id] [--backends webgl,webgpu] [--rounds 7] [--out <dir>]
+ *   node scripts/render-gate/run-gate.mjs --from-json <dir>/report.json
+ *     (rewrite <dir>/report.md from a saved report, measuring nothing)
  *
  * Both builds are served from their own `dist/` (cached per commit SHA, see
  * `builds.mjs`) with the checkout's `datasets/` mounted at `/datasets/`, and
@@ -68,6 +70,8 @@ const opts = {
   // Prebuilt dist/ for an arm (calibration: a baseline patched by hand).
   baseDist: arg('base-dist', null),
   candDist: arg('cand-dist', null),
+  // Re-render report.md from a saved report.json, measuring nothing.
+  fromJson: arg('from-json', null),
 };
 if (!['exact', 'perf', 'all'].includes(opts.suite)) throw new Error(`bad --suite ${opts.suite}`);
 if (!['IDENTICAL', 'ULP'].includes(opts.cls)) throw new Error(`bad --class ${opts.cls}`);
@@ -484,6 +488,11 @@ async function runPerf(session, servers) {
 // Report
 // ---------------------------------------------------------------------------
 
+/** A perf statistic, or '-' when it is undefined (a ratio or CI over a zero base median). */
+function fmtNum(x, digits) {
+  return typeof x === 'number' && Number.isFinite(x) ? x.toFixed(digits) : '-';
+}
+
 function fmtScore(s) {
   if (!s) return '';
   return `${s.differing} px, drift ${s.maxDriftUlp.toFixed(1)}, p99.99 ${s.p9999Ulp.toFixed(1)}, flips ${s.flips}`;
@@ -535,7 +544,7 @@ function markdown(meta, exact, perf) {
       }
       for (const [m, v] of Object.entries(r.metrics)) {
         lines.push(
-          `| ${r.case} | ${r.backend} | ${m} | ${v.baseMedian.toFixed(3)} | ${v.candMedian.toFixed(3)} | ${v.ratio.toFixed(3)} | ${v.lo.toFixed(3)}–${v.hi.toFixed(3)} | ${(v.floor * 100).toFixed(1)}% | ${v.verdict} |`
+          `| ${r.case} | ${r.backend} | ${m} | ${fmtNum(v.baseMedian, 3)} | ${fmtNum(v.candMedian, 3)} | ${fmtNum(v.ratio, 3)} | ${fmtNum(v.lo, 3)}–${fmtNum(v.hi, 3)} | ${typeof v.floor === 'number' ? `${fmtNum(v.floor * 100, 1)}%` : '-'} | ${v.verdict} |`
         );
       }
     }
@@ -615,7 +624,14 @@ async function main() {
   process.exit(verdict === 'PASS' ? 0 : verdict === 'FAIL' ? 1 : 3);
 }
 
-main().catch((e) => {
+function rerender(jsonPath) {
+  const { meta, exact, perf } = JSON.parse(readFileSync(jsonPath, 'utf8'));
+  const mdPath = join(dirname(resolve(jsonPath)), 'report.md');
+  writeFileSync(mdPath, markdown(meta, exact, perf));
+  log(`${meta.verdict}: ${mdPath}`);
+}
+
+(opts.fromJson ? Promise.resolve().then(() => rerender(opts.fromJson)) : main()).catch((e) => {
   console.error(e);
   process.exit(2);
 });
