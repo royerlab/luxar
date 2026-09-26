@@ -441,10 +441,13 @@ deadline has to beat rather than a deadline of its own.
 Helper-body traversal follows at most ten nested calls and fails closed past that
 limit; it stops when a helper is already active, so recursive helpers cannot make
 the check recurse forever.
-`beforeAll`/`afterAll` hooks remain out of scope. So is the sum — deadlines are
-modelled as the largest single wait, not their total, so three sequential 40 s
+`beforeAll`/`afterAll` hooks remain out of scope (see #2916). Budget declarations
+inside helpers are not modelled; declare the budget in the test or enclosing suite.
+Sequential waits are also out of scope: deadlines are modelled as the largest
+single wait, not their total, so three sequential 40 s
 waits under a 45 s budget pass the check even though the rule above asks for
-headroom over their sum. Summing across branches and loops is not something a
+headroom over their sum. Each nested helper and repeated helper call can compound
+that understatement. Summing across branches and loops is not something a
 static pass can honestly claim to do, so the budget still has to be sized by hand.
 `test.slow()`, `test.setTimeout()`, or an enclosing
 `test.describe.configure({ timeout })` supplies the budget. `test.slow()` is
