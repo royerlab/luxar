@@ -88,6 +88,17 @@ export function applyView(view) {
     up: view.pose.up,
   };
   if (view.projection === 'ortho' && typeof view.pose.zoom === 'number') pose.zoom = view.pose.zoom;
+  // Orient the camera to the pose first. Before "Camera: a restored pose keeps
+  // its up vector", setCameraPose set position and up but not the orientation,
+  // and orbit's reinitialize() read the stale quaternion: a freshly swapped
+  // ortho camera (identity) or the previous pose's roll survived until a
+  // controls update happened to run, which an uncapped frame rate could lose.
+  // Such a baseline measured a different view from the candidate.
+  const cam = dbg.camera;
+  cam.position.fromArray(pose.position);
+  cam.up.fromArray(pose.up);
+  cam.lookAt(pose.target[0], pose.target[1], pose.target[2]);
+  cam.updateMatrixWorld();
   dbg.app.setCameraPose(pose);
   dbg.renderOnce();
 }
@@ -413,9 +424,16 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
   const phase = Math.atan2(dz, dx);
   const place = (i) => {
     const a = phase + (i * degPerFrame * Math.PI) / 180;
+    const position = [tx + radius * Math.cos(a), pose.position[1], tz + radius * Math.sin(a)];
+    // Orient first, as applyView does (serialized into the page: no shared helper).
+    const cam = dbg.camera;
+    cam.position.fromArray(position);
+    cam.up.fromArray(pose.up);
+    cam.lookAt(pose.target[0], pose.target[1], pose.target[2]);
+    cam.updateMatrixWorld();
     dbg.app.setCameraPose({
       ...dbg.app.getCameraPose(),
-      position: [tx + radius * Math.cos(a), pose.position[1], tz + radius * Math.sin(a)],
+      position,
       target: pose.target,
       up: pose.up,
     });
