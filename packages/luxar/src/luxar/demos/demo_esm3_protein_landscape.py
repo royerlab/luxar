@@ -65,6 +65,7 @@ DEMO_META = {
 }
 
 import gzip
+import http.client
 import re
 import sys
 import tempfile
@@ -395,7 +396,7 @@ def _lineage_table(cache_dir: Path) -> dict[str, str] | None:
                     while chunk := response.read(1 << 20):
                         out.write(chunk)
                 part.replace(path)
-            except OSError as e:
+            except (OSError, http.client.HTTPException) as e:
                 part.unlink(missing_ok=True)
                 aprint(f"  ⚠ lineage download failed ({e}); keeping name-based taxa")
                 return None
@@ -431,9 +432,9 @@ def refresh_kingdoms(
     cache_dir: Path,
     metadata_cache: Path,
     meta: dict[str, np.ndarray],
-) -> np.ndarray:
-    """Return the taxon categories, re-deriving them from the UniProt lineage
-    (and rewriting ``metadata_cache``) when the cache predates that.
+) -> dict[str, np.ndarray]:
+    """Return the metadata with current taxon categories and accessions,
+    rewriting ``metadata_cache`` when its categories predate the lineage.
 
     Idempotent: a cache already stamped :data:`KINGDOM_SOURCE` is returned as
     is. A cache without accessions, or a machine that cannot reach UniProt,
@@ -441,16 +442,16 @@ def refresh_kingdoms(
     """
     kingdoms = np.asarray(meta["kingdoms"], dtype=object)
     if str(meta.get("kingdom_source", "")) == KINGDOM_SOURCE:
-        return kingdoms
+        return meta
     accessions = meta.get("accessions")
     if accessions is None or len(accessions) != len(kingdoms):
         accessions = _recover_accessions(cache_dir, meta)
         if accessions is None:
-            return kingdoms
+            return meta
         meta = {**meta, "accessions": accessions}
     table = _lineage_table(cache_dir)
     if table is None:
-        return kingdoms
+        return meta
     organisms = meta["organisms"]
     fresh = np.array(
         [
@@ -461,13 +462,20 @@ def refresh_kingdoms(
     )
     changed = int((fresh != kingdoms).sum())
     aprint(f"✓ Taxon categories from the UniProt lineage ({changed:,} relabelled)")
-    np.savez(
-        metadata_cache,
-        **{k: v for k, v in meta.items() if k != "kingdoms"},
-        kingdoms=fresh,
-        kingdom_source=np.array(KINGDOM_SOURCE),
-    )
-    return fresh
+    updated = {**meta, "kingdoms": fresh, "kingdom_source": np.array(KINGDOM_SOURCE)}
+    with tempfile.NamedTemporaryFile(
+        dir=metadata_cache.parent,
+        prefix=metadata_cache.stem + ".",
+        suffix=".npz",
+        delete=False,
+    ) as tmp:
+        temp_path = Path(tmp.name)
+    try:
+        np.savez(temp_path, **updated)
+        temp_path.replace(metadata_cache)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return updated
 
 
 # =============================================================================
@@ -860,16 +868,14 @@ def generate_esm3_landscape(
             meta = np.load(metadata_cache, allow_pickle=True)
             protein_names = list(meta["names"])
             organism_names = list(meta["organisms"])
-            kingdoms = list(meta["kingdoms"])
             # Absent from caches written before accessions were persisted. The
             # cache is expensive to rebuild, so the protein name becomes a
             # UniProt search key rather than forcing regeneration.
-            accessions = list(meta["accessions"]) if "accessions" in meta.files else []
-            kingdoms = list(
-                refresh_kingdoms(
-                    cache_dir, metadata_cache, {k: meta[k] for k in meta.files}
-                )
+            refreshed = refresh_kingdoms(
+                cache_dir, metadata_cache, {k: meta[k] for k in meta.files}
             )
+            kingdoms = list(refreshed["kingdoms"])
+            accessions = list(refreshed.get("accessions", []))
             n = len(positions)
             aprint(f"✓ Loaded {n:,} proteins from cache")
     else:

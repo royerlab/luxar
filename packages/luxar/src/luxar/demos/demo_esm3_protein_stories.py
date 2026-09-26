@@ -1272,12 +1272,11 @@ def load_landscape_cache(cache_dir: Path) -> tuple[np.ndarray, dict[str, np.ndar
     fields = {k: meta[k] for k in ("names", "organisms", "kingdoms")}
     # Taxon categories come from the UniProt lineage; an older cache is
     # upgraded in place (one ~6 MB download), so the colours are right here too.
-    fields["kingdoms"] = refresh_kingdoms(
+    refreshed = refresh_kingdoms(
         cache_dir, metadata_cache, {k: meta[k] for k in meta.files}
     )
-    fields["accessions"] = (
-        meta["accessions"] if "accessions" in meta.files else np.array([], dtype=object)
-    )
+    fields["kingdoms"] = refreshed["kingdoms"]
+    fields["accessions"] = refreshed.get("accessions", np.array([], dtype=object))
     return positions, fields
 
 
