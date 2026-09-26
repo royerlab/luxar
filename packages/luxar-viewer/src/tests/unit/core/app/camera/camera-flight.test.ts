@@ -209,7 +209,8 @@ describe('CameraFlight', () => {
     expect(driver.addPerFrameCallback).toHaveBeenCalledWith(
       FLIGHT_CALLBACK_ID,
       expect.any(Function),
-      { continuous: true }
+      // `camera` phase: the step moves the camera before clipping/LOD read it.
+      { continuous: true, phase: 'camera' }
     );
     expect(driver.startAnimation).toHaveBeenCalledTimes(1);
     expect(flight.isActive).toBe(true);

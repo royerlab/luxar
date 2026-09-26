@@ -1565,7 +1565,7 @@ describe('LuxarApp', () => {
       expect(mockAnimationController.addPerFrameCallback).toHaveBeenCalledWith(
         'camera-flight',
         expect.any(Function),
-        { continuous: true }
+        { continuous: true, phase: 'camera' }
       );
       expect(mockAnimationController.startAnimation).toHaveBeenCalled();
 
@@ -1638,7 +1638,7 @@ describe('LuxarApp', () => {
         expect(mockAnimationController.addPerFrameCallback).toHaveBeenCalledWith(
           'camera-flight',
           expect.any(Function),
-          { continuous: true }
+          { continuous: true, phase: 'camera' }
         );
 
         const flightsStarted = (): number =>

@@ -276,8 +276,12 @@ export class CameraFlight {
       };
       this.attachCancelListeners();
       // Register + start: registration alone never starts a stopped loop.
+      // The `camera` phase: the step moves the camera before clipping, depth
+      // sort and LOD read it, so each flight frame renders with its own
+      // near/far rather than the previous frame's.
       this.deps.animationController.addPerFrameCallback(FLIGHT_CALLBACK_ID, () => this.step(), {
         continuous: true,
+        phase: 'camera',
       });
       this.deps.animationController.startAnimation();
     });

@@ -150,6 +150,104 @@ describe('AnimationController', () => {
     });
   });
 
+  describe('frame phases', () => {
+    const order: string[] = [];
+    const push = (name: string) => () => {
+      order.push(name);
+    };
+
+    beforeEach(() => {
+      order.length = 0;
+    });
+
+    it('runs camera → view → pre-render → ui whatever the registration order', () => {
+      controller.addPerFrameCallback('ui', push('ui'), { phase: 'ui' });
+      controller.addPerFrameCallback('pre', push('pre-render'), { phase: 'pre-render' });
+      controller.addPerFrameCallback('view', push('view'), { phase: 'view' });
+      controller.addPerFrameCallback('cam', push('camera'), { phase: 'camera' });
+
+      controller.tick();
+
+      expect(order).toEqual(['camera', 'view', 'pre-render', 'ui']);
+    });
+
+    it('defaults to the view phase and keeps registration order within a phase', () => {
+      controller.addPerFrameCallback('v1', push('v1'));
+      controller.addPerFrameCallback('ui', push('ui'), { phase: 'ui' });
+      controller.addPerFrameCallback('v2', push('v2'), { phase: 'view' });
+      controller.addPerFrameCallback('v3', push('v3'));
+
+      controller.tick();
+
+      expect(order).toEqual(['v1', 'v2', 'v3', 'ui']);
+    });
+
+    it('a camera writer registered after the view callbacks still runs before them', () => {
+      // The flight case: clipping/LOD register at init, the flight when it starts.
+      controller.addPerFrameCallback('dynamic-clipping', push('clipping'));
+      controller.addPerFrameCallback('lod', push('lod'));
+      controller.startAnimation();
+      order.length = 0;
+
+      controller.addPerFrameCallback('flight', push('flight'), { phase: 'camera' });
+      controller.tick();
+
+      expect(order).toEqual(['flight', 'clipping', 'lod']);
+    });
+
+    it('re-registering in the same phase keeps the position; a new phase moves it', () => {
+      controller.addPerFrameCallback('a', push('a'));
+      controller.addPerFrameCallback('b', push('b'));
+      controller.addPerFrameCallback('a', push('a2'));
+      controller.tick();
+      expect(order).toEqual(['a2', 'b']);
+
+      order.length = 0;
+      controller.addPerFrameCallback('b', push('b-camera'), { phase: 'camera' });
+      controller.tick();
+      expect(order).toEqual(['b-camera', 'a2']);
+      expect(controller.hasPerFrameCallback('b')).toBe(true);
+    });
+
+    it('removes a callback from whichever phase holds it', () => {
+      controller.addPerFrameCallback('cam', push('camera'), { phase: 'camera' });
+      controller.addPerFrameCallback('ui', push('ui'), { phase: 'ui' });
+
+      expect(controller.removePerFrameCallback('cam')).toBe(true);
+      expect(controller.removePerFrameCallback('cam')).toBe(false);
+      expect(controller.hasPerFrameCallback('cam')).toBe(false);
+      controller.tick();
+
+      expect(order).toEqual(['ui']);
+    });
+
+    it('keeps the mid-frame semantics: a later-phase add runs this frame, a pending removal is skipped', () => {
+      controller.addPerFrameCallback(
+        'cam',
+        () => {
+          order.push('camera');
+          controller.addPerFrameCallback('late-ui', push('late-ui'), { phase: 'ui' });
+          controller.removePerFrameCallback('doomed');
+        },
+        { phase: 'camera' }
+      );
+      controller.addPerFrameCallback('doomed', push('doomed'));
+
+      controller.tick();
+
+      expect(order).toEqual(['camera', 'late-ui']);
+    });
+
+    it('a continuous callback in any phase keeps the loop awake', () => {
+      controller.addPerFrameCallback('cam', () => {}, { continuous: true, phase: 'camera' });
+      controller.startAnimation();
+
+      vi.advanceTimersByTime(config.animation.idleTimeoutMs + 10);
+
+      expect(controller.isActive).toBe(true);
+    });
+  });
+
   describe('per-frame callback isolation', () => {
     let logError: MockInstance;
     const events: string[] = [];

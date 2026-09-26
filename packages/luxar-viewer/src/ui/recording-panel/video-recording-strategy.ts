@@ -387,7 +387,8 @@ export class VideoRecordingStrategy implements CaptureStrategy {
           this.abort();
         }
       },
-      { continuous: true }
+      // `camera`: the turn moves the camera before the view callbacks read it.
+      { continuous: true, phase: 'camera' }
     );
   }
 

@@ -1066,18 +1066,22 @@ export class LayersPanel {
     // evaluatePerFrame), but the controls only re-render on layer-state
     // changes — so without this the readout went stale and disagreed
     // with the data-monitor chip. Non-continuous: it must not keep the
-    // loop awake (no swaps happen while idle anyway), and the pipeline's
-    // own 'lod-group-selector' callback is registered first, so by the
-    // time this runs activeChildIndex is already updated for the frame.
+    // loop awake (no swaps happen while idle anyway), and it runs in the
+    // `ui` phase, after the pipeline's own 'lod-group-selector' (`view`
+    // phase), so activeChildIndex is already updated for the frame.
     // Removed (and re-registered fresh) symmetrically in clear().
-    this.animationController.addPerFrameCallback('layers-lod-status', () => {
-      this.controls.refreshLodStatus();
-      // Refresh per-row load-failure badges as the failed set changes. Gated on
-      // visibility (like refreshLodStatus) so a hidden panel doesn't run the
-      // signature build every frame — a real cost when a batch-fit leaves
-      // thousands of failed tile paths. show() refreshes when the panel opens.
-      if (this.visible) this.updateRowErrorStates();
-    });
+    this.animationController.addPerFrameCallback(
+      'layers-lod-status',
+      () => {
+        this.controls.refreshLodStatus();
+        // Refresh per-row load-failure badges as the failed set changes. Gated on
+        // visibility (like refreshLodStatus) so a hidden panel doesn't run the
+        // signature build every frame — a real cost when a batch-fit leaves
+        // thousands of failed tile paths. show() refreshes when the panel opens.
+        if (this.visible) this.updateRowErrorStates();
+      },
+      { phase: 'ui' }
+    );
   }
 
   // ─── Layer List ────────────────────────────────────────
