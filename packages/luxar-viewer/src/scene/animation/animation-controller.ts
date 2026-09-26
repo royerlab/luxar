@@ -41,7 +41,7 @@ export type FramePhase = 'camera' | 'view' | 'pre-render' | 'ui';
 const FRAME_PHASES: readonly FramePhase[] = ['camera', 'view', 'pre-render', 'ui'];
 
 /** A registered per-frame callback. */
-interface PerFrameEntry {
+export interface PerFrameEntry {
   callback: () => void;
   continuous: boolean;
 }
