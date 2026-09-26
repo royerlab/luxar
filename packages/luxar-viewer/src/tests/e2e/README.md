@@ -438,8 +438,14 @@ wait-helper defaults, imported parameter defaults from `./helpers` and
 except where such a constant IS the budget, since the argument to
 `test.setTimeout`, `test.slow` or `describe.configure` is what the deadline has
 to beat rather than a deadline of its own.
-Deadlines inside helper bodies, local or imported, and `beforeAll`/`afterAll`
-hooks remain out of scope (see #2901). So is the sum — deadlines are modelled as
+Deadlines inside helper bodies, local or imported, remain out of scope (see
+#2901). `beforeAll` and `afterAll` are checked once at their declaration lines.
+Each has a separate timeout equal to the project timeout; suite-level
+`describe.configure`, `test.setTimeout`, and `test.slow` do not extend it.
+Declare `test.setTimeout`, `testInfo.setTimeout`, `test.slow()`, or
+`testInfo.slow()` inside the hook to give it more time. An unconditional
+hook-local `slow()` triples that hook's current timeout once. The sum also
+remains out of scope — deadlines are modelled as
 the largest single wait, not their total,
 so three sequential 40 s waits under a 45 s budget pass the check even though
 the rule above asks for headroom over their sum. Summing across branches and
