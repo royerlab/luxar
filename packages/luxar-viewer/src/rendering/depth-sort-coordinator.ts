@@ -1279,20 +1279,25 @@ function formatOrderingBytes(bytes: number, uploaded: boolean): string {
     : `${Math.round(bytes / 1000)} KB ${suffix}`;
 }
 
+/** Result of {@link computeModelView}; every caller copies out of it synchronously. */
+const MODEL_VIEW_SCRATCH = new THREE.Matrix4();
+
 /**
- * The model-view matrix to sort against.
+ * The model-view matrix to sort against, in a shared scratch (copy it before
+ * the next call).
  *
  * Both matrices are normally renderer-maintained (updated during render), but
  * a commit can fire BEFORE the next frame — the first commit of a load, or
  * while the on-demand loop is idle-paused — and would otherwise read a
- * stale/identity pose. Refresh them here and derive the view matrix locally
- * (`camera.matrixWorldInverse` is only refreshed by `renderer.render`, not by
- * `updateMatrixWorld`).
+ * stale/identity pose, so both are refreshed here. The view is the plain
+ * `inverse(camera.matrixWorld)`, the same one the per-frame trigger and the
+ * frame's view snapshot use (three's `matrixWorldInverse`, which
+ * `updateMatrixWorld` also refreshes, is built with the scale removed).
  */
 function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.Matrix4 {
   mesh.updateWorldMatrix(true, false);
   camera.updateMatrixWorld();
-  return new THREE.Matrix4().copy(camera.matrixWorld).invert().multiply(mesh.matrixWorld);
+  return MODEL_VIEW_SCRATCH.copy(camera.matrixWorld).invert().multiply(mesh.matrixWorld);
 }
 
 /**
@@ -1411,12 +1416,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   state.inFlight = true;
 
   const generation = state.generation;
-  // Both matrices are normally renderer-maintained (updated during
-  // render), but a commit can fire BEFORE the next frame — the first
-  // commit of a load, or while the on-demand loop is idle-paused — and
-  // would otherwise read a stale/identity pose. Refresh them here and
-  // derive the view matrix locally (camera.matrixWorldInverse is only
-  // refreshed by renderer.render, not by updateMatrixWorld).
+  // Fresh matrices even between frames (see computeModelView).
   const modelView = computeModelView(mesh, camera);
   recordSortPose(state, modelView);
 
@@ -1851,10 +1851,11 @@ export function evaluateDepthSortPerFrame(): void {
     }
 
     if (!viewComputed) {
-      // One-frame-stale matrices are fine for the TRIGGER test (the
-      // dispatch itself re-derives fresh ones in scheduleSort), but the
-      // camera's matrixWorld must at least exist post-move — cheap when
-      // nothing changed.
+      // Derived here from the live camera rather than read from the frame's
+      // view snapshot: resortForCapture runs this pass straight after a pose
+      // is set, outside the frame loop, where a snapshot would be the
+      // previous frame's. (The dispatch re-derives fresh matrices in
+      // scheduleSort either way.)
       camera.updateMatrixWorld();
       scratch.view.copy(camera.matrixWorld).invert();
       scratch.camPos.setFromMatrixPosition(camera.matrixWorld);
