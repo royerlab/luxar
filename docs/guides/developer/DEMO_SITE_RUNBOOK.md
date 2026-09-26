@@ -1455,7 +1455,8 @@ change what the earlier sections tell you to do.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
-- Gallery: 88 tiles, 88 stills, 86 videos. Two demos are deliberately
+- Gallery, derived from `scripts/gallery/manifest.json` on 2026-09-25: 88
+  tiles and 86 videos. Every tile retains a still; two are deliberately
   still-only (§8.2).
 - 95 stable `/d/` routes (§8.1.1).
 - **Tiles and `/d/` routes open the STANDALONE viewer**,
@@ -1553,66 +1554,89 @@ and checks it against the tiles actually in the built page, which CI cannot see.
 
 ### 8.2 `noOrbitVideo` — two tiles are deliberately static
 
-PR #2477 adds `"noOrbitVideo": true` to `gsplats_lod_embryo_line` and
-`gsplats_2d_codex_pancreas` in `scripts/gallery/manifest.json`. Until that change
-lands, regenerating the gallery still emits orbit clips for both. Their subjects
-are planar arrangements viewed face-on, so any rock swings them toward edge-on:
-embryo_line's mean luminance swings **13x** over ±20°, twice per loop, which
-reads as violent flashing. Measured, at ±6° it is still 8.2x — no amplitude
-fixes it. Same convention as `exotic_surfaces` ("near face-on only, NO orbit
-video").
+Since #2477, `gsplats_lod_embryo_line` and `gsplats_2d_codex_pancreas` carry
+`"noOrbitVideo": true` in `scripts/gallery/manifest.json` (verified
+2026-09-25). Regenerating the gallery therefore keeps both tiles static. Their
+subjects are planar arrangements viewed face-on, so any rock swings them toward
+edge-on: embryo_line's mean luminance swings **13x** over ±20°, twice per loop,
+which reads as violent flashing. Measured, at ±6° it is still 8.2x — no
+amplitude fixes it. Same convention as `exotic_surfaces` ("near face-on only,
+NO orbit video").
 
 **The `.webp` IS the animated loop** — `build_gallery_data.py` uses it as the
 tile's `still`, and `has_media` is `video or still`. So dropping only the
 `.webm` leaves the pulsing in place; the flag encodes a **static single-frame
-webp** and skips the webm. If you re-enable a video for these, delete the stale
-static webp too, and vice versa: a skipped encode does not remove an existing
-file. Their `.webm` objects were deleted from both the deploy tree and R2.
+webp**, skips the webm, and removes any stale staged webm. Their published
+`.webm` objects were deleted from both the deploy tree and R2. If you re-enable
+orbit video for either demo, regenerate and publish both media variants rather
+than reviving one old object by hand.
 
-### 8.3 Build from the record archives — and distrust the cache
+### 8.3 Build from the record archives — and verify provenance
 
 The site is normally built from the **Zenodo record generation**, held at
 `~/luxar-zenodo-archives/` (52 files, `MANIFEST.json`, `SHA256SUMS`). Datasets
 with a manifest `base_url` instead use their pinned mirror archives under
 `inputs/<slug>/`; preserve those objects because they may have no Zenodo or Git
 LFS copy. Verify the local record archive before use — it takes seconds and the
-whole failure below came from not doing it:
+stale-generation incident below began with an unverified local archive:
 
 ```bash
 cd ~/luxar-zenodo-archives && shasum -c SHA256SUMS    # expect: 52 OK, 0 failed
 ```
 
-**Two defects make the resolver feed you the wrong generation. Both are filed as
-royerlab/luxar#2454; until it is fixed, assume the cache is wrong.**
-
-1. **Warn-and-proceed.** When a cached file matches the *in-repo* digest but the
-   record hosts a newer build, the resolver prints exactly that and uses the
-   stale file anyway:
-   `✓ Cached (sha256 verified): X matches the in-repo sha256, but the record hosts a newer build`
-   This silently published a whole pre-refit generation — `cmu1_pathology` was
-   missing ~9M splats (20.6M vs 29.6M), `cells3d` had 40,253 where the record
-   holds 99,921.
-2. **Running a demo reverts a correctly-seeded cache.** Reseed to 52/52, run the
-   demo, re-verify: the same files are stale again. A manual fix does **not**
-   survive the next run.
-
-So, before any rebuild, and again immediately before publishing:
+Verified on 2026-09-25, the manifest declares one current checksum contract per
+artifact and contains no `hosted_sha256` fields: #2454 fixed the stale-cache
+acceptance and repair paths, and #2431 removed the former dual pins. The resolver
+still supports that legacy field, so keep the dormant guard below. Do not assume
+a verified cache entry is the wrong generation. Instead, verify the generation
+the scene actually records. Every manifest-backed demo stamps a canonical
+scene-root `input_digests` map from the exact bytes accepted by the resolver.
+When stamped before finalization, as the demos do, that map participates in
+`content_hash` (#2475):
 
 ```bash
-# every pinned file in ~/.cache/luxar must match the archive of the same name
+SCENE=/path/to/scene.luxar.zarr
+hatch run python - "$SCENE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from luxar._zarr_compat import read_node_attrs
+
+attrs = read_node_attrs(Path(sys.argv[1]))
+if attrs is None:
+    sys.exit(f"no readable scene at {sys.argv[1]}")
+print(json.dumps(attrs.get("input_digests", {}), indent=2, sort_keys=True))
+PY
 ```
 
-and afterwards, check the build logs actually read the record:
+Compare each basename and digest with the record's `SHA256SUMS`, or with the
+manifest `sha256` for a dataset using a pinned mirror. This is the primary
+post-build generation check. An empty map means either that the demo recorded no
+manifest inputs or that the stamp is absent, including a scene built before
+#2475. For a manifest-backed demo that should have archive inputs, treat an empty
+map as failed provenance and rebuild it. As a log-side cross-check, also confirm
+that input files were verified, no superseded generation was actually used, and
+the legacy dual-contract warning never appeared:
 
 ```bash
-grep -c "SHA256 verified (hosted)" <build-log>     # want: > 0
-grep -c "record hosts a newer build" <build-log>   # want: 0
+grep -c "SHA256 verified" <build-log>               # want: > 0
+grep -c "SUPERSEDED" <build-log>                    # want: 0 (an earlier generation was used)
+grep -c "record hosts a newer build" <build-log>    # want: 0 (dormant legacy guard)
 ```
 
-**Checking element counts is not enough on its own.** Archive splat counts equal
-the compiled scene count only for pass-through demos. `celegans_tracking`
-compiles 4,173,532 loaded splats into a 1,283,624 store. Compare
-scene-from-old against scene-from-new, or use the hosted-digest check above.
+**Checking element counts is not enough on its own.** The stale-generation
+incident produced large pass-through discrepancies, but a transformed demo can
+produce a larger discrepancy legitimately:
+
+| demo | archive/reference | compiled/served | interpretation |
+|---|---:|---:|---|
+| `cmu1_pathology` | 29,579,229 | 20,591,415 | stale generation |
+| `cells3d` | 99,921 | 40,253 | stale generation |
+| `celegans_tracking` | 4,173,532 | 1,283,624 | expected compilation |
+
+Compare scene-from-old against scene-from-new, or use `input_digests` as above;
+do not infer the input generation from the size of one compiled scene.
 
 ### 8.4 Environment traps on this machine
 
