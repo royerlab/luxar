@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
@@ -12,6 +12,7 @@ const BASELINE_PATH = join(PACKAGE_ROOT, 'scripts/e2e-timeout-budget-baseline.js
 const EXCEPTIONS_PATH = join(PACKAGE_ROOT, 'scripts/e2e-timeout-budget-exceptions.json');
 const PLAYWRIGHT_CONFIG_PATH = join(PACKAGE_ROOT, 'playwright.config.ts');
 const DEADLINE_NAME = /(timeout|deadline)/i;
+const MAX_HELPER_BODY_DEPTH = 10;
 // Statements that DECLARE a budget rather than wait for anything.
 const BUDGET_CALL_PATHS = new Set(['test.setTimeout', 'test.slow', 'test.describe.configure']);
 
@@ -33,29 +34,30 @@ function constantDeclarations(sourceFile) {
   return declarations;
 }
 
-function evaluateNumber(node, constants, resolving = new Set()) {
+function evaluateNumber(node, constants, resolving = new Set(), values = new Map()) {
   if (!node) return undefined;
   if (ts.isNumericLiteral(node)) return Number(node.text);
   if (ts.isParenthesizedExpression(node))
-    return evaluateNumber(node.expression, constants, resolving);
+    return evaluateNumber(node.expression, constants, resolving, values);
   if (ts.isPrefixUnaryExpression(node)) {
-    const value = evaluateNumber(node.operand, constants, resolving);
+    const value = evaluateNumber(node.operand, constants, resolving, values);
     if (value === undefined) return undefined;
     if (node.operator === ts.SyntaxKind.MinusToken) return -value;
     if (node.operator === ts.SyntaxKind.PlusToken) return value;
     return undefined;
   }
-  if (ts.isBinaryExpression(node)) return evaluateBinary(node, constants, resolving);
+  if (ts.isBinaryExpression(node)) return evaluateBinary(node, constants, resolving, values);
   if (!ts.isIdentifier(node) || resolving.has(node.text)) return undefined;
+  if (values.has(node.text)) return values.get(node.text);
   const initializer = constants.get(node.text);
   if (!initializer) return undefined;
   const nextResolving = new Set(resolving).add(node.text);
-  return evaluateNumber(initializer, constants, nextResolving);
+  return evaluateNumber(initializer, constants, nextResolving, values);
 }
 
-function evaluateBinary(node, constants, resolving) {
-  const left = evaluateNumber(node.left, constants, resolving);
-  const right = evaluateNumber(node.right, constants, resolving);
+function evaluateBinary(node, constants, resolving, values) {
+  const left = evaluateNumber(node.left, constants, resolving, values);
+  const right = evaluateNumber(node.right, constants, resolving, values);
   if (left === undefined || right === undefined) return undefined;
   if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) return left + right;
   if (node.operatorToken.kind === ts.SyntaxKind.MinusToken) return left - right;
@@ -68,7 +70,7 @@ function localHelpers(sourceFile, constants) {
   const helpers = new Map();
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name) {
-      helpers.set(statement.name.text, deadlineParameters(statement.parameters, constants));
+      helpers.set(statement.name.text, helperDefinition(statement, constants));
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
@@ -78,14 +80,21 @@ function localHelpers(sourceFile, constants) {
         (ts.isArrowFunction(declaration.initializer) ||
           ts.isFunctionExpression(declaration.initializer))
       ) {
-        helpers.set(
-          declaration.name.text,
-          deadlineParameters(declaration.initializer.parameters, constants)
-        );
+        helpers.set(declaration.name.text, helperDefinition(declaration.initializer, constants));
       }
     }
   }
+  for (const helper of helpers.values()) helper.helpers = helpers;
   return helpers;
+}
+
+function helperDefinition(node, constants) {
+  return {
+    body: node.body,
+    constants,
+    helpers: undefined,
+    parameters: deadlineParameters(node.parameters, constants),
+  };
 }
 
 function parsedSource(source, file) {
@@ -94,7 +103,7 @@ function parsedSource(source, file) {
     : source;
 }
 
-function exportedHelpers(source, file, cache) {
+function exportedHelpers(source, file, cache, helperSources) {
   const sourceFile = parsedSource(source, file);
   const cacheKey = sourceFile.fileName;
   const cached = cache.get(cacheKey);
@@ -118,15 +127,15 @@ function exportedHelpers(source, file, cache) {
       for (const element of elements) {
         if (element.isTypeOnly) continue;
         const localName = element.propertyName?.text ?? element.name.text;
-        const parameters = helpers.get(localName);
-        if (parameters) exported.set(element.name.text, parameters);
+        const helper = helpers.get(localName);
+        if (helper) exported.set(element.name.text, helper);
       }
       continue;
     }
     const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
     if (!modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
     if (ts.isFunctionDeclaration(statement) && statement.name) {
-      exported.set(statement.name.text, helpers.get(statement.name.text) ?? []);
+      exported.set(statement.name.text, helpers.get(statement.name.text));
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
@@ -136,17 +145,26 @@ function exportedHelpers(source, file, cache) {
     }
   }
   cache.set(cacheKey, exported);
+  try {
+    for (const [name, helper] of importedHelpers(sourceFile, helperSources, cache, file)) {
+      helpers.set(name, helper);
+    }
+  } catch (error) {
+    cache.delete(cacheKey);
+    throw error;
+  }
   return exported;
 }
 
-function importedHelpers(sourceFile, helperSources, exportedHelperCache) {
+function importedHelpers(sourceFile, helperSources, exportedHelperCache, moduleKey) {
   const helpers = new Map();
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
       continue;
     }
     const specifier = statement.moduleSpecifier.text;
-    if (!/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
+    if (moduleKey === undefined && !/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
+    if (moduleKey !== undefined && !specifier.startsWith('.')) continue;
     const importClause = statement.importClause;
     if (!importClause) continue;
     if (importClause.isTypeOnly) continue;
@@ -159,11 +177,17 @@ function importedHelpers(sourceFile, helperSources, exportedHelperCache) {
     }
     if (!bindings) continue;
     if (bindings.elements.every((element) => element.isTypeOnly)) continue;
-    const helperSource = helperSources.get(specifier);
+    const sourceKey =
+      moduleKey === undefined
+        ? specifier
+        : isAbsolute(sourceFile.fileName)
+          ? resolvedHelperPath(sourceFile.fileName, specifier)
+          : relativeHelperKey(moduleKey, specifier);
+    const helperSource = helperSources.get(sourceKey);
     if (helperSource === undefined) {
       throw new Error(`Could not resolve shared helper module ${specifier}.`);
     }
-    const exported = exportedHelpers(helperSource, specifier, exportedHelperCache);
+    const exported = exportedHelpers(helperSource, sourceKey, exportedHelperCache, helperSources);
     for (const element of bindings.elements) {
       if (element.isTypeOnly) continue;
       const importedName = element.propertyName?.text ?? element.name.text;
@@ -174,10 +198,27 @@ function importedHelpers(sourceFile, helperSources, exportedHelperCache) {
   return helpers;
 }
 
+function relativeHelperKey(moduleKey, specifier) {
+  return `./${join(dirname(moduleKey), specifier)}`;
+}
+
+function resolvedHelperPath(importerPath, specifier) {
+  const base = resolve(dirname(importerPath), specifier);
+  return [`${base}.ts`, join(base, 'index.ts'), base].find(
+    (candidate) => existsSync(candidate) && statSync(candidate).isFile()
+  );
+}
+
 function deadlineParameters(parameters, constants) {
   return parameters.flatMap((parameter, index) => {
     if (!ts.isIdentifier(parameter.name) || !DEADLINE_NAME.test(parameter.name.text)) return [];
-    return [{ defaultMs: evaluateNumber(parameter.initializer, constants), index }];
+    return [
+      {
+        defaultMs: evaluateNumber(parameter.initializer, constants),
+        index,
+        name: parameter.name.text,
+      },
+    ];
   });
 }
 
@@ -290,50 +331,89 @@ function blockStatements(callback) {
   return callback && ts.isBlock(callback.body) ? callback.body.statements : [];
 }
 
-function deadlineCandidates(callback, constants, helpers) {
-  const deadlines = [];
+function deadlineCandidates(
+  callback,
+  constants,
+  helpers,
+  values = new Map(),
+  traversal = { active: new Set(), depth: 0 }
+) {
+  let deadlineMs = 0;
+  const include = (value) => {
+    if (Number.isFinite(value)) deadlineMs = Math.max(deadlineMs, value);
+  };
   const visit = (node) => {
     // A budget declaration is not a wait: test.setTimeout(MESH_TIMEOUT_MS)
     // would otherwise resolve its own constant into the deadline it has to beat.
     if (isBudgetStatement(node)) return;
     if (ts.isPropertyAssignment(node) && propertyName(node.name) === 'timeout') {
-      deadlines.push(evaluateNumber(node.initializer, constants));
+      include(evaluateNumber(node.initializer, constants, new Set(), values));
     }
     if (ts.isIdentifier(node) && DEADLINE_NAME.test(node.text)) {
-      deadlines.push(evaluateNumber(node, constants));
+      include(evaluateNumber(node, constants, new Set(), values));
     }
-    if (ts.isCallExpression(node)) collectCallDeadlines(node, constants, helpers, deadlines);
+    if (ts.isCallExpression(node)) {
+      include(collectCallDeadline(node, constants, helpers, values, traversal));
+    }
     ts.forEachChild(node, visit);
   };
   visit(callback.body);
-  return deadlines.filter((value) => value !== undefined && Number.isFinite(value));
+  return deadlineMs;
 }
 
 function hookDeadline(statements, constants, helpers) {
-  const deadlines = statements.flatMap((statement) => {
+  let deadlineMs = 0;
+  for (const statement of statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
-      return [];
+      continue;
     }
     const path = callPath(statement.expression.expression).join('.');
-    if (path !== 'test.beforeEach' && path !== 'test.afterEach') return [];
+    if (path !== 'test.beforeEach' && path !== 'test.afterEach') continue;
     const callback = callbackArgument(statement.expression);
-    return callback ? deadlineCandidates(callback, constants, helpers) : [];
-  });
-  return Math.max(0, ...deadlines);
+    if (callback)
+      deadlineMs = Math.max(deadlineMs, deadlineCandidates(callback, constants, helpers));
+  }
+  return deadlineMs;
 }
 
-function collectCallDeadlines(call, constants, helpers, deadlines) {
+function collectCallDeadline(call, constants, helpers, values, traversal) {
+  let deadlineMs = 0;
+  const include = (value) => {
+    if (Number.isFinite(value)) deadlineMs = Math.max(deadlineMs, value);
+  };
   const path = callPath(call.expression);
   if (path.at(-1) === 'waitForTimeout')
-    deadlines.push(evaluateNumber(call.arguments[0], constants));
+    include(evaluateNumber(call.arguments[0], constants, new Set(), values));
   if (path.at(-1)?.startsWith('wait')) {
-    for (const argument of call.arguments) deadlines.push(evaluateNumber(argument, constants));
+    for (const argument of call.arguments) {
+      include(evaluateNumber(argument, constants, new Set(), values));
+    }
   }
-  if (path.length !== 1) return;
-  for (const parameter of helpers.get(path[0]) ?? []) {
+  if (path.length !== 1) return deadlineMs;
+  const helper = helpers.get(path[0]);
+  if (!helper) return deadlineMs;
+  const helperValues = new Map();
+  for (const parameter of helper.parameters) {
     const argument = call.arguments[parameter.index];
-    deadlines.push(argument ? evaluateNumber(argument, constants) : parameter.defaultMs);
+    const value = argument
+      ? evaluateNumber(argument, constants, new Set(), values)
+      : parameter.defaultMs;
+    include(value);
+    if (value !== undefined) helperValues.set(parameter.name, value);
   }
+  if (!helper.body || traversal.active.has(helper)) return deadlineMs;
+  if (traversal.depth >= MAX_HELPER_BODY_DEPTH) {
+    throw new Error(
+      `Helper body traversal exceeded ${MAX_HELPER_BODY_DEPTH} nested calls at ${path[0]}.`
+    );
+  }
+  include(
+    deadlineCandidates(helper, helper.constants, helper.helpers ?? new Map(), helperValues, {
+      active: new Set(traversal.active).add(helper),
+      depth: traversal.depth + 1,
+    })
+  );
+  return deadlineMs;
 }
 
 function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
@@ -352,8 +432,10 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
         return;
       }
       if (callback && (path.join('.') === 'test' || path.join('.') === 'test.only')) {
-        const deadlines = deadlineCandidates(callback, constants, helpers);
-        const deadlineMs = Math.max(inheritedDeadlineMs, ...deadlines);
+        const deadlineMs = Math.max(
+          inheritedDeadlineMs,
+          deadlineCandidates(callback, constants, helpers)
+        );
         const budgetMs = testBudget(statements, constants, enclosing, projectTimeoutMs);
         if (deadlineMs > 0 && (budgetMs === undefined || budgetMs <= deadlineMs)) {
           violations.push({
@@ -386,13 +468,19 @@ export function analyzeSpec(
 ) {
   const sourceFile = parsedSource(source, file);
   const constants = constantDeclarations(sourceFile);
+  const locals = localHelpers(sourceFile, constants);
   const helpers = new Map([
-    ...localHelpers(sourceFile, constants),
+    ...locals,
     ...importedHelpers(sourceFile, helperSources, exportedHelperCache),
   ]);
-  return findTests(sourceFile, constants, helpers, file, projectTimeoutMs).filter(
-    (violation) => violation.deadlineMs > thresholdMs
-  );
+  for (const helper of locals.values()) helper.helpers = helpers;
+  try {
+    return findTests(sourceFile, constants, helpers, file, projectTimeoutMs).filter(
+      (violation) => violation.deadlineMs > thresholdMs
+    );
+  } catch (error) {
+    throw new Error(`${file}: ${error.message}`, { cause: error });
+  }
 }
 
 export function projectTestTimeout(sourceText) {
@@ -504,38 +592,41 @@ function loadBaseline(path = BASELINE_PATH) {
 export function helperSourcesForSpec(source, path, helperModuleCache = new Map()) {
   const sourceFile = parsedSource(source, path);
   const sources = new Map();
-  for (const statement of sourceFile.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
-      continue;
+  const collect = (module, modulePath, moduleKey) => {
+    for (const statement of module.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+        continue;
+      }
+      const specifier = statement.moduleSpecifier.text;
+      if (moduleKey === undefined && !/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
+      if (moduleKey !== undefined && !specifier.startsWith('.')) continue;
+      const clause = statement.importClause;
+      if (
+        clause?.isTypeOnly ||
+        (clause?.namedBindings &&
+          ts.isNamedImports(clause.namedBindings) &&
+          clause.namedBindings.elements.every((element) => element.isTypeOnly))
+      )
+        continue;
+      const resolvedPath = resolvedHelperPath(modulePath, specifier);
+      const key = moduleKey === undefined ? specifier : resolvedPath;
+      if (!resolvedPath) throw new Error(`Could not resolve shared helper module ${specifier}.`);
+      if (sources.has(key)) continue;
+      let helperSource = helperModuleCache.get(resolvedPath);
+      if (!helperSource) {
+        helperSource = ts.createSourceFile(
+          resolvedPath,
+          readFileSync(resolvedPath, 'utf8'),
+          ts.ScriptTarget.Latest,
+          true
+        );
+        helperModuleCache.set(resolvedPath, helperSource);
+      }
+      sources.set(key, helperSource);
+      collect(helperSource, resolvedPath, key);
     }
-    const specifier = statement.moduleSpecifier.text;
-    if (!/^\.\/helpers(?:\/|$)/.test(specifier)) continue;
-    const importClause = statement.importClause;
-    if (
-      importClause?.isTypeOnly ||
-      (importClause?.namedBindings &&
-        ts.isNamedImports(importClause.namedBindings) &&
-        importClause.namedBindings.elements.every((element) => element.isTypeOnly))
-    ) {
-      continue;
-    }
-    const base = resolve(dirname(path), specifier);
-    const modulePath = [`${base}.ts`, join(base, 'index.ts'), base].find(
-      (candidate) => existsSync(candidate) && statSync(candidate).isFile()
-    );
-    if (!modulePath) throw new Error(`Could not resolve shared helper module ${specifier}.`);
-    let helperSource = helperModuleCache.get(modulePath);
-    if (!helperSource) {
-      helperSource = ts.createSourceFile(
-        modulePath,
-        readFileSync(modulePath, 'utf8'),
-        ts.ScriptTarget.Latest,
-        true
-      );
-      helperModuleCache.set(modulePath, helperSource);
-    }
-    sources.set(specifier, helperSource);
-  }
+  };
+  collect(sourceFile, path);
   return sources;
 }
 

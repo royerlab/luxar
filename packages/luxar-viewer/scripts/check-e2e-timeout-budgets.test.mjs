@@ -580,6 +580,212 @@ describe('analyzeSpec', () => {
     ).toHaveLength(1);
   });
 
+  it('propagates hardcoded deadlines from local helper bodies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      async function loadScene(page) {
+        await page.waitForFunction(() => window.ready, undefined, { timeout: 45_000 });
+      }
+
+      test('loads through a local helper', async ({ page }) => {
+        await loadScene(page);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 8,
+        test: 'loads through a local helper',
+      },
+    ]);
+  });
+
+  it('propagates imported helper defaults through a local helper body', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForLuxarReady, waitForPointsLoaded } from './helpers';
+
+      async function loadScene(page) {
+        await waitForLuxarReady(page);
+        await waitForPointsLoaded(page);
+      }
+
+      test('loads through imported helpers', async ({ page }) => {
+        await loadScene(page);
+      });
+    `;
+    const helpers = `
+      export async function waitForLuxarReady(page, timeout = 45_000) {}
+      export async function waitForPointsLoaded(page, count = 1, timeout = 45_000) {}
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helpers]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 10,
+        test: 'loads through imported helpers',
+      },
+    ]);
+  });
+
+  it('propagates deadlines from imported helper bodies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { openPanel } from './helpers';
+
+      test('opens through an imported wrapper', async ({ page }) => {
+        await openPanel(page);
+      });
+    `;
+    const helpers = `
+      async function waitForPanel(page) {
+        await page.waitForFunction(() => window.panelOpen, undefined, { timeout: 45_000 });
+      }
+
+      export async function openPanel(page) {
+        await waitForPanel(page);
+      }
+    `;
+
+    expect(
+      analyzeSpec(
+        source,
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', helpers]])
+      )
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'opens through an imported wrapper',
+      },
+    ]);
+  });
+
+  it('propagates caller timeout arguments through nested helper bodies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      async function waitForScene(page, timeout = 45_000) {
+        await page.waitForFunction(() => window.ready, undefined, { timeout });
+      }
+
+      async function prepareScene(page, deadline = 45_000) {
+        await waitForScene(page, deadline);
+      }
+
+      test('overrides the nested helper deadline', async ({ page }) => {
+        await prepareScene(page, 75_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 75_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 12,
+        test: 'overrides the nested helper deadline',
+      },
+    ]);
+  });
+
+  it('guards mutually recursive helper bodies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+
+      async function loadScene(page) {
+        await retryLoad(page);
+      }
+
+      async function retryLoad(page) {
+        await loadScene(page);
+        await page.waitForTimeout(45_000);
+      }
+
+      test('loads through recursive helpers', async ({ page }) => {
+        await loadScene(page);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 13,
+        test: 'loads through recursive helpers',
+      },
+    ]);
+  });
+
+  it('fails closed on deeply nested helper-body traversal', () => {
+    const helperChain = Array.from({ length: 20 }, (_, index) => {
+      const next = index === 19 ? 'page.waitForTimeout(45_000)' : `helper${index + 1}(page)`;
+      return `async function helper${index}(page) { await ${next}; }`;
+    }).join('\n');
+    const source = `
+      import { test } from '@playwright/test';
+      ${helperChain}
+
+      test('does not traverse an unbounded helper chain', async ({ page }) => {
+        await helper0(page);
+      });
+    `;
+
+    expect(() => analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toThrow(
+      /src\/tests\/e2e\/example.spec.ts: Helper body traversal exceeded 10 nested calls/
+    );
+  });
+
+  it('handles a wide helper graph without spreading every call path', () => {
+    const levels = Array.from({ length: 10 }, (_, depth) =>
+      Array.from({ length: 4 }, (_, index) =>
+        depth === 9
+          ? `async function h${depth}_${index}(page) { await page.waitForTimeout(${index === 3 ? '75_000' : '45_000'}); }`
+          : `async function h${depth}_${index}(page) { ${Array.from({ length: 4 }, (_, child) => `await h${depth + 1}_${child}(page);`).join(' ')} }`
+      ).join('\n')
+    ).join('\n');
+    const source = `${levels}\ntest('wide graph', async ({ page }) => { await h0_0(page); });`;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/wide.spec.ts')).toEqual([
+      { deadlineMs: 75_000, file: 'src/tests/e2e/wide.spec.ts', line: 41, test: 'wide graph' },
+    ]);
+  });
+
+  it('follows a helper imported by another helper module', () => {
+    const source = `import { outer } from './helpers';
+test('nested import', async ({ page }) => { await outer(page); });`;
+    const helpers = new Map([
+      [
+        './helpers',
+        `import { inner as renamed } from './helpers/inner';
+export async function outer(page) { await renamed(page); }`,
+      ],
+      [
+        './helpers/inner',
+        'export async function inner(page) { await page.waitForTimeout(45_000); }',
+      ],
+    ]);
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts', 30_000, 60_000, helpers)).toEqual([
+      { deadlineMs: 45_000, file: 'src/tests/e2e/example.spec.ts', line: 2, test: 'nested import' },
+    ]);
+  });
+
   it('fails closed on unsupported shared-helper import forms', () => {
     const helpers = new Map([
       ['./helpers', 'export async function wait(page, timeout = 45_000) {}'],
@@ -849,6 +1055,66 @@ describe('specFiles', () => {
 });
 
 describe('helperSourcesForSpec', () => {
+  it('loads relative imports inside helper modules for analysis', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-helpers-'));
+    try {
+      const specPath = join(fixture, 'example.spec.ts');
+      const source =
+        "import { outer } from './helpers';\ntest('nested', async ({ page }) => { await outer(page); });";
+      writeFileSync(specPath, source);
+      writeFileSync(
+        join(fixture, 'helpers.ts'),
+        "import { inner } from './inner'; export async function outer(page) { await inner(page); }"
+      );
+      writeFileSync(
+        join(fixture, 'inner.ts'),
+        'export async function inner(page) { await page.waitForTimeout(45_000); }'
+      );
+
+      const sources = helperSourcesForSpec(source, specPath);
+      expect([...sources.keys()]).toEqual(['./helpers', join(fixture, 'inner.ts')]);
+      expect(analyzeSpec(source, 'example.spec.ts', 30_000, 60_000, sources)).toEqual([
+        { deadlineMs: 45_000, file: 'example.spec.ts', line: 2, test: 'nested' },
+      ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps nested imports distinct when a helper resolves through index.ts', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-helpers-'));
+    try {
+      const specPath = join(fixture, 'example.spec.ts');
+      const source =
+        "import { a } from './helpers';\nimport { b } from './helpers/other';\ntest('nested', async ({ page }) => { await a(page); await b(page); });";
+      mkdirSync(join(fixture, 'helpers'));
+      writeFileSync(specPath, source);
+      writeFileSync(
+        join(fixture, 'helpers/index.ts'),
+        "import { w } from './wait'; export async function a(page) { await w(page); }"
+      );
+      writeFileSync(
+        join(fixture, 'helpers/other.ts'),
+        "import { w } from '../wait'; export async function b(page) { await w(page); }"
+      );
+      writeFileSync(
+        join(fixture, 'helpers/wait.ts'),
+        'export async function w(page) { await page.waitForTimeout(1_000); }'
+      );
+      writeFileSync(
+        join(fixture, 'wait.ts'),
+        'export async function w(page) { await page.waitForTimeout(45_000); }'
+      );
+
+      const sources = helperSourcesForSpec(source, specPath);
+      expect(analyzeSpec(source, 'example.spec.ts', 30_000, 60_000, sources)).toEqual([
+        { deadlineMs: 45_000, file: 'example.spec.ts', line: 3, test: 'nested' },
+      ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('resolves helper modules through each supported candidate', () => {
     const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-helpers-'));
     try {
