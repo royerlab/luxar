@@ -283,7 +283,8 @@ function testBudget(statements, constants, enclosing, projectTimeoutMs) {
 }
 
 // beforeAll/afterAll run in their own slot, initially set to the project
-// timeout. Suite and per-test declarations do not change that slot.
+// timeout. Suite and per-test declarations do not change that slot; hook-local
+// slow() triples its current value at most once.
 function allHookBudget(callback, constants, projectTimeoutMs, infoName) {
   let budgetMs;
   let slowApplied = false;
