@@ -496,6 +496,9 @@ def fit_channel_tiled(
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
+        # A global amplitude cull discards both weak halves of the Hann
+        # overlap, leaving a dark grid at tile boundaries in this slide.
+        cull_retention=None,
     )
 
     n_splats = len(result.amplitudes)
