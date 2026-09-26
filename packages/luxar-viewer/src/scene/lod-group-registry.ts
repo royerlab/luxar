@@ -69,6 +69,7 @@ import { clearChildFailure } from '../utils/lod-child-failure';
 import * as THREE from 'three';
 
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
+import { ViewContextProvider, type ViewContext } from './view-context';
 import { log, Modules } from '../utils/log';
 import { isEffectivelyVisible } from '../utils/object-visibility';
 import type { LODGroupSelectorMode } from '../types/lod-group';
@@ -664,7 +665,7 @@ function pickStampedFootprintChild(
   entry: LODGroupEntry,
   cache: LODGroupEntryCache,
   worldBox: BoundingBox,
-  camera: THREE.Camera,
+  view: ViewContext,
   options: FootprintPickOptions
 ): number | null {
   if (!cache.medianFootprints || !cache.footprintDims) return null;
@@ -686,7 +687,7 @@ function pickStampedFootprintChild(
     const projected = projectWorldRadiusPx(
       cache.medianFootprints[i] * worldScale,
       FOOTPRINT_CENTER_SCRATCH,
-      camera,
+      view,
       options.viewportHeight,
       FOOTPRINT_VIEW_CENTER_SCRATCH
     );
@@ -833,6 +834,11 @@ export interface LODGroupRegistryDeps {
   getCamera(): THREE.Camera;
   /** Viewport size in CSS pixels (matches the renderer canvas). */
   getViewportSize(): { width: number; height: number };
+  /**
+   * The frame's shared camera snapshot. When omitted the registry builds its
+   * own from ``getCamera`` / ``getViewportSize``, refreshed every evaluation.
+   */
+  getViewContext?(): ViewContext;
   /** Which dimensions of the data are being projected to screen. */
   getDisplayDims(): readonly number[];
   /** Whether the owning loader has latched an archive fault. */
@@ -1049,7 +1055,25 @@ export class LODGroupRegistry {
    */
   private readonly partitionResyncPending = new Map<string, Set<string>>();
 
-  constructor(private deps: LODGroupRegistryDeps) {}
+  /** Snapshot source when no shared ``getViewContext`` is injected. */
+  private readonly ownViews: ViewContextProvider | null;
+
+  constructor(private deps: LODGroupRegistryDeps) {
+    this.ownViews = deps.getViewContext
+      ? null
+      : new ViewContextProvider({
+          getCamera: () => deps.getCamera(),
+          getViewportCss: () => deps.getViewportSize(),
+          getDrawingBuffer: () => null,
+        });
+  }
+
+  private view(): ViewContext {
+    if (this.deps.getViewContext) return this.deps.getViewContext();
+    const own = this.ownViews as ViewContextProvider;
+    own.invalidate();
+    return own.get();
+  }
 
   /** Register a newly-loaded lod_group (called by the scene loader). */
   register(entry: LODGroupEntry): void {
@@ -1624,23 +1648,24 @@ export class LODGroupRegistry {
    */
   evaluatePerFrame(): boolean {
     if (this.entries.size === 0 && this.partitionEntries.size === 0) return false;
-    const camera = this.deps.getCamera();
-    const viewport = this.deps.getViewportSize();
     const displayDims = this.deps.getDisplayDims();
-    if (viewport.width === 0 || viewport.height === 0) return false;
     if (displayDims.length < 2) return false;
+    // The frame's view snapshot: the camera matrices as this frame renders
+    // them, whichever callbacks ran before (fly controls do not refresh
+    // ``matrixWorldInverse``; the snapshot derives the view itself). A collapsed
+    // canvas has no viewport to select for, so the frame is skipped.
+    const view = this.view();
+    const viewport = view.viewportCss;
+    if (viewport === null) return false;
+    const camera = view.camera;
 
     this.tick++;
-    // Build the camera frustum once per frame. ``camera.matrixWorldInverse`` /
-    // ``projectionMatrix`` are current here (``controls.update()`` →
-    // ``updateMatrixWorld()`` runs before per-frame callbacks), and the default
-    // WebGL coordinate system matches the NDC convention used by the manual
-    // projection×view divide inside ``projectBoxDiagonalPx``. The projection×view
-    // product (``FRUSTUM_MATRIX_SCRATCH``) is shared three ways: it seeds the
-    // frustum for the off-screen LOD gate and eviction ranking, and is passed
-    // into ``projectBoxDiagonalPx`` so the per-group pixel-diagonal reuses it.
-    FRUSTUM_MATRIX_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-    FRUSTUM_SCRATCH.setFromProjectionMatrix(FRUSTUM_MATRIX_SCRATCH);
+    // ``view.projView`` (projection×view, default WebGL coordinate system, the
+    // NDC convention of the manual divide inside ``projectBoxDiagonalPx``) is
+    // shared three ways: its frustum gates off-screen groups and ranks
+    // eviction, and the per-group projections reuse the matrix.
+    FRUSTUM_MATRIX_SCRATCH.copy(view.projView);
+    FRUSTUM_SCRATCH.copy(view.frustum);
     PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(FRUSTUM_MATRIX_SCRATCH).premultiply(
       PARTITION_FRUSTUM_SCALE
     );
@@ -1680,7 +1705,7 @@ export class LODGroupRegistry {
       this.deps.requestRender?.();
     }
     for (const entry of this.entries.values()) {
-      if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
+      if (this.evaluateEntry(entry, view, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
         changed = true;
       }
       // A lazy level loading (initial or a settled fine reload) commits
@@ -1812,7 +1837,7 @@ export class LODGroupRegistry {
   /** Returns ``true`` if this entry's displayed child changed. */
   private evaluateEntry(
     entry: LODGroupEntry,
-    camera: THREE.Camera,
+    view: ViewContext,
     viewport: { width: number; height: number },
     displayDims: readonly number[],
     frustum: THREE.Frustum,
@@ -1866,14 +1891,18 @@ export class LODGroupRegistry {
             // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
             // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
             // Camera inside the box → +Infinity → finest, same as the diagonal path.
-            coverageMetric = projectBoxAreaFraction(metricWorldBox, camera, FRUSTUM_MATRIX_SCRATCH);
+            coverageMetric = projectBoxAreaFraction(
+              metricWorldBox,
+              view.camera,
+              FRUSTUM_MATRIX_SCRATCH
+            );
             if (cache.hasLodBounds) {
               // The thin-rectangle ramp is not monotone under box containment:
               // trimming the thin axis can increase the robust metric. Robust
               // bounds may only keep or reduce the raw-bounds selection.
               coverageMetric = Math.min(
                 coverageMetric,
-                projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH)
+                projectBoxAreaFraction(worldBox, view.camera, FRUSTUM_MATRIX_SCRATCH)
               );
             }
           } else {
@@ -1882,7 +1911,7 @@ export class LODGroupRegistry {
             // built in evaluatePerFrame) instead of recomputing it per group.
             const diagonalPx = projectBoxDiagonalPx(
               metricWorldBox,
-              camera,
+              view.camera,
               viewport,
               FRUSTUM_MATRIX_SCRATCH
             );
@@ -1911,7 +1940,7 @@ export class LODGroupRegistry {
         const footprintDesired =
           forceFinest || entry.selector !== 'screen-area'
             ? null
-            : pickStampedFootprintChild(entry, cache, worldBox, camera, {
+            : pickStampedFootprintChild(entry, cache, worldBox, view, {
                 viewportHeight: viewport.height,
                 lodBias,
                 displayDims,

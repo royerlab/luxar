@@ -18,7 +18,6 @@
  */
 
 import * as THREE from 'three';
-import type { LuxarCamera } from '../utils/camera-utils';
 
 /** Width and height, in the unit named by the field that holds it. */
 export interface ViewSize {
@@ -29,7 +28,7 @@ export interface ViewSize {
 /** One frame's camera snapshot. Read-only for consumers. */
 export interface ViewContext {
   /** The camera the snapshot was taken from (replaced on an ortho/perspective swap). */
-  readonly camera: LuxarCamera;
+  readonly camera: THREE.Camera;
   /** Camera position in world space. */
   readonly cameraWorldPosition: THREE.Vector3;
   /** Unit view direction in world space (the camera's -Z). */
@@ -52,7 +51,7 @@ export interface ViewContext {
 
 /** Where a {@link ViewContextProvider} reads the live view from. */
 export interface ViewContextDeps {
-  getCamera(): LuxarCamera;
+  getCamera(): THREE.Camera;
   /** CSS-pixel canvas size; null (or a zero dimension) when collapsed. */
   getViewportCss(): ViewSize | null;
   /** Physical-pixel drawing-buffer size; null (or a zero dimension) when empty. */
@@ -60,7 +59,7 @@ export interface ViewContextDeps {
 }
 
 interface MutableViewContext {
-  camera: LuxarCamera;
+  camera: THREE.Camera;
   cameraWorldPosition: THREE.Vector3;
   viewDirection: THREE.Vector3;
   viewMatrix: THREE.Matrix4;

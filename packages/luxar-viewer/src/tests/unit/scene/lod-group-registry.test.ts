@@ -1611,12 +1611,49 @@ describe('LODGroupRegistry — auto evaluation', () => {
     const center = new THREE.Vector3(0, 0, -10);
     const perspective = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 100);
     perspective.updateMatrixWorld(true);
-    const at600 = projectWorldRadiusPx(1, center, perspective, 600);
-    const at1200 = projectWorldRadiusPx(1, center, perspective, 1200);
+    const view = perspective.matrixWorld.clone().invert();
+    const at600 = projectWorldRadiusPx(1, center, { camera: perspective, viewMatrix: view }, 600);
+    const at1200 = projectWorldRadiusPx(1, center, { camera: perspective, viewMatrix: view }, 1200);
     expect(at1200).toBeCloseTo(at600! * 2);
+    // r · H / (2 · depth · tan(fov/2)) at depth 10.
+    expect(at600).toBeCloseTo(600 / (20 * Math.tan(Math.PI / 6)), 9);
 
     const ortho = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
-    expect(projectWorldRadiusPx(1, center, ortho, 600)).toBeCloseTo(30);
+    expect(projectWorldRadiusPx(1, center, { camera: ortho, viewMatrix: view }, 600)).toBeCloseTo(
+      30
+    );
+  });
+
+  it('sizes footprints with the zoom the projection carries', () => {
+    const center = new THREE.Vector3(0, 0, -10);
+    const perspective = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 100);
+    perspective.updateMatrixWorld(true);
+    const view = perspective.matrixWorld.clone().invert();
+    const plain = projectWorldRadiusPx(1, center, { camera: perspective, viewMatrix: view }, 600)!;
+    perspective.zoom = 2;
+    perspective.updateProjectionMatrix();
+    expect(
+      projectWorldRadiusPx(1, center, { camera: perspective, viewMatrix: view }, 600)
+    ).toBeCloseTo(plain * 2, 9);
+
+    const ortho = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
+    ortho.zoom = 4;
+    ortho.updateProjectionMatrix();
+    expect(projectWorldRadiusPx(1, center, { camera: ortho, viewMatrix: view }, 600)).toBeCloseTo(
+      120
+    );
+  });
+
+  it('refuses a footprint for a camera that is neither perspective nor orthographic', () => {
+    const view = new THREE.Matrix4();
+    expect(
+      projectWorldRadiusPx(
+        1,
+        new THREE.Vector3(),
+        { camera: new THREE.Camera(), viewMatrix: view },
+        600
+      )
+    ).toBeNull();
   });
 
   it('uses complete footprint stamps before occupancy and keeps lod bias in area units', () => {
@@ -1645,6 +1682,34 @@ describe('LODGroupRegistry — auto evaluation', () => {
     expect(selectedAtBias(1)).toBe(1);
     expect(selectedAtBias(4)).toBe(2);
     expect(selectedAtBias(1, false)).toBe(0);
+  });
+
+  it('selects from the camera pose as written, not a stale matrixWorldInverse', () => {
+    // Fly controls write position/quaternion without refreshing the matrices;
+    // the selection must follow the pose the frame renders, not the last one
+    // some other callback happened to refresh.
+    const camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 1000);
+    camera.updateMatrixWorld(true);
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+    const bounds = { min: [-0.1, -0.1, -10.1], max: [0.1, 0.1, -9.9] };
+    const children = [0.1, 0.02, 0.005].map((medianFootprint, index) => ({
+      ...makeChild([0, 0.25, 0.5][index]),
+      positionBounds: bounds,
+      medianFootprint,
+      footprintDims: [0, 1, 2],
+    }));
+    const entry = makeEntry(children, 0, '/footprint-stale-view');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    // At depth 10 the 0.1 level spans 5.2 px (> 1.5), so level 1 would be picked;
+    // at depth 100 it spans 0.52 px and the coarsest level suffices.
+    camera.position.set(0, 0, 90);
+    reg.evaluatePerFrame();
+    expect(entry.activeChildIndex).toBe(0);
   });
 
   it('keeps authored coverage ladders and mismatched dimensions on occupancy', () => {

@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
 import { ViewContextProvider, type ViewSize } from '../../../scene/view-context';
-import type { LuxarCamera } from '../../../utils/camera-utils';
 
 function perspectiveAt(position: THREE.Vector3, target: THREE.Vector3): THREE.PerspectiveCamera {
   const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.1, 500);
@@ -13,7 +12,7 @@ function perspectiveAt(position: THREE.Vector3, target: THREE.Vector3): THREE.Pe
 }
 
 function provider(
-  getCamera: () => LuxarCamera,
+  getCamera: () => THREE.Camera,
   css: ViewSize | null = { width: 800, height: 450 },
   buffer: ViewSize | null = { width: 1600, height: 900 }
 ): ViewContextProvider {
@@ -97,7 +96,7 @@ describe('ViewContextProvider', () => {
   });
 
   it('follows a camera swap', () => {
-    let camera: LuxarCamera = perspectiveAt(new THREE.Vector3(0, 0, 10), new THREE.Vector3());
+    let camera: THREE.Camera = perspectiveAt(new THREE.Vector3(0, 0, 10), new THREE.Vector3());
     const views = provider(() => camera);
     expect(views.get().camera).toBe(camera);
     const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
