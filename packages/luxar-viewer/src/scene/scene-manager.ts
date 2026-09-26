@@ -1186,8 +1186,15 @@ export class SceneManager extends THREE.EventDispatcher<{
    * a `ResizeObserver` already get browser-batched delivery (~once/frame).
    */
   public resizeToCanvas(): void {
+    const canvas = this.renderer.domElement;
+    const before = `${canvas.width}x${canvas.height}`;
     const { width, height } = this.measureViewport();
     this.resizer.resizeNow(width, height, this.makeResizeCtx());
+    // A real size change clears the drawing buffer and changes the aspect:
+    // wake the loop to repaint it (and mark picking dirty). The container
+    // ResizeObserver lands here, and on an idle loop nothing else would draw
+    // until the next interaction, leaving the cleared canvas blank.
+    if (`${canvas.width}x${canvas.height}` !== before) this.dispatchEvent({ type: 'change' });
   }
 
   /** Build the per-call ResizeCtx snapshot used by the resize orchestrator. */

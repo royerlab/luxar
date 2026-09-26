@@ -634,6 +634,41 @@ describe('SceneManager', () => {
       expect(spy).toHaveBeenLastCalledWith(640, 480, expect.anything());
     });
 
+    it('wakes the loop (one scene change) when the drawing buffer actually changes size', async () => {
+      // An idle loop has nothing else to repaint the canvas the resize just
+      // cleared: the container ResizeObserver path lands here.
+      await sceneManager.init({ canvas: mockCanvas as any });
+      const sm = sceneManager as unknown as { resizer: { resizeNow: () => void } };
+      const canvas = sceneManager.renderer.domElement;
+      canvas.width = 800;
+      canvas.height = 600;
+      vi.spyOn(sm.resizer, 'resizeNow').mockImplementation(() => {
+        canvas.width = 1024;
+        canvas.height = 600;
+      });
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.resizeToCanvas();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays quiet when a resize leaves the drawing buffer the same size', async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+      const sm = sceneManager as unknown as { resizer: { resizeNow: () => void } };
+      const canvas = sceneManager.renderer.domElement;
+      canvas.width = 800;
+      canvas.height = 600;
+      vi.spyOn(sm.resizer, 'resizeNow').mockImplementation(() => {});
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.resizeToCanvas();
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+
     it('falls back to window dimensions when the canvas reports zero', async () => {
       await sceneManager.init({ canvas: mockCanvas as any });
       const sm = sceneManager as unknown as { resizer: { resizeNow: () => void } };
