@@ -197,7 +197,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
 
     // Helper to trigger a single frame render (for stable screenshots)
     renderOnce: () => {
-      ports.animationController.startAnimation();
+      ports.animationController.renderOnce();
     },
 
     // Effective cross-node draw order of every data mesh: opaque bucket
@@ -355,8 +355,8 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           // which runs for this debug injection).
           syncLineMaterialWithGeometry(mesh);
           scene.add(mesh);
-          // Kick the renderer so the new mesh is uploaded before the
-          // bench's first measurement frame.
+          // Wake the renderer: the mesh uploads at the next animation frame,
+          // before the bench's first measured frame (the benches wait one).
           ports.animationController.startAnimation();
           return { type: 'lines', segmentCount: cfg.segmentCount, elementCount: clamped, mesh };
         }

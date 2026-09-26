@@ -47,17 +47,23 @@ describe('RafDriver', () => {
     for (const [, cb] of pending) cb(0);
   };
 
-  it('start() runs the first frame synchronously and reports the edge once', () => {
+  it('start() arms the first frame (runs nothing synchronously) and reports the edge once', () => {
     const onFrame = vi.fn();
     const driver = new RafDriver(onFrame);
     expect(driver.isRunning).toBe(false);
 
     expect(driver.start()).toBe(true);
     expect(driver.isRunning).toBe(true);
-    expect(onFrame).toHaveBeenCalledTimes(1);
+    // Armed, not run: the frame waits for the next animation frame.
+    expect(onFrame).not.toHaveBeenCalled();
+    expect(rafCallbacks.size).toBe(1);
 
-    // Already running: no second loop, no extra frame.
+    // Already running: no second loop, nothing extra armed.
     expect(driver.start()).toBe(false);
+    expect(onFrame).not.toHaveBeenCalled();
+    expect(rafCallbacks.size).toBe(1);
+
+    flushFrame();
     expect(onFrame).toHaveBeenCalledTimes(1);
     expect(rafCallbacks.size).toBe(1);
     driver.stop();
@@ -69,7 +75,9 @@ describe('RafDriver', () => {
       armedWhenWorkRan = rafCallbacks.size;
       throw new Error('frame work failed');
     });
-    expect(() => driver.start()).toThrow('frame work failed');
+    expect(driver.start()).toBe(true);
+    expect(armedWhenWorkRan).toBe(-1);
+    expect(() => flushFrame()).toThrow('frame work failed');
     expect(armedWhenWorkRan).toBe(1);
     expect(driver.isRunning).toBe(true);
     // The loop survived: the next frame is armed and runs.
@@ -91,7 +99,7 @@ describe('RafDriver', () => {
 
     // A callback the browser had already dequeued must not resurrect the loop.
     pendingCb(0);
-    expect(onFrame).toHaveBeenCalledTimes(1);
+    expect(onFrame).not.toHaveBeenCalled();
     expect(rafCallbacks.size).toBe(0);
   });
 
@@ -99,6 +107,7 @@ describe('RafDriver', () => {
     const onFrame = vi.fn();
     const driver = new RafDriver(onFrame);
     driver.start();
+    flushFrame();
     flushFrame();
     flushFrame();
     expect(onFrame).toHaveBeenCalledTimes(3);

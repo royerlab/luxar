@@ -594,7 +594,7 @@ describe('VideoRecordingStrategy', () => {
     // user has read the panel and confirmed the dialog (the loop idle-stops
     // after ~2s). Registering the `continuous` keep-alive keeps a RUNNING
     // loop alive but never restarts a stopped one, so without
-    // `startAnimation()` the recorded video would hold the opening pose for
+    // `renderOnce()` the recorded video would hold the opening pose for
     // its whole length. Drive the real run() so both halves are pinned.
     it('wakes the idle-stopped loop, keeps it alive, and actually rotates', async () => {
       vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
@@ -611,7 +611,7 @@ describe('VideoRecordingStrategy', () => {
       const recordingPromise = panel.startVideoRecording();
       await new Promise((r) => setTimeout(r, 0));
 
-      expect(mockAnimController.startAnimation).toHaveBeenCalled();
+      expect(mockAnimController.renderOnce).toHaveBeenCalled();
       // The keep-alive must be continuous — a plain callback does not stop
       // the idle timer from halting the loop two seconds in.
       expect(mockAnimController.addPerFrameCallback).toHaveBeenCalledWith(

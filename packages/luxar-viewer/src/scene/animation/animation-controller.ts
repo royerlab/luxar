@@ -533,20 +533,70 @@ export class AnimationController {
    *
    * Continuous effects (noise, auto-rotate) will keep animation running.
    *
+   * On a stopped loop this ARMS the next animation frame; it does not draw
+   * synchronously (see RafDriver.start). Use {@link renderOnce} for a frame
+   * now.
+   *
    * Uses arrow function to maintain 'this' context when used as event handler.
    */
   startAnimation = (): void => {
     // Only start if not already running - prevents duplicate loops
-    if (!this.driver.isRunning) {
-      // Resuming from a rest: let the adaptive DPR manager snap back to
-      // its remembered operating DPR in one step (stopped→running edge
-      // only — this must not fire on every interaction poke).
-      this.adaptiveDPRManager?.notifyResumed?.();
-      // Runs the first frame synchronously; later frames are scheduled by
-      // the driver.
-      this.driver.start();
-    }
+    this.resumeIfStopped();
+    this.resetIdleTimer();
+  };
 
+  /**
+   * Draw a frame NOW if the loop is stopped, then keep it running as
+   * {@link startAnimation} does.
+   *
+   * `startAnimation()` only arms the next animation frame. This is for the
+   * few callers that must have a frame on the canvas before they return: a
+   * resize made inside an animation-frame callback (arming there would land a
+   * frame late and composite one cleared frame), or a video capture that
+   * starts recording the canvas in the same turn. When the loop is already
+   * running it draws nothing extra: the running loop paints at the next
+   * animation frame.
+   */
+  renderOnce(): void {
+    if (this.resumeIfStopped()) this.tick();
+    this.resetIdleTimer();
+  }
+
+  /**
+   * Bring the view state up to date for the current camera without drawing:
+   * `controls.update()` and every per-frame callback, as a frame would run
+   * them, but no render and no frame events.
+   *
+   * For a caller that renders its own pipeline pass outside the loop (an
+   * embedder screenshot): after a camera change the per-frame view callbacks
+   * (clipping planes, LOD selection, depth sort) have not run yet until the
+   * loop's next frame, so a pass drawn before it would use the previous
+   * pose's near/far and LOD.
+   */
+  prepareFrame(): void {
+    this.controls.update();
+    this.runPerFrameCallbacks();
+  }
+
+  /**
+   * Start the driver if it is stopped.
+   *
+   * @returns true on the stopped→running edge
+   */
+  private resumeIfStopped(): boolean {
+    if (this.driver.isRunning) return false;
+    // Resuming from a rest: let the adaptive DPR manager snap back to
+    // its remembered operating DPR in one step (stopped→running edge
+    // only — this must not fire on every interaction poke).
+    this.adaptiveDPRManager?.notifyResumed?.();
+    // Arms the first frame for the next animation frame; later frames are
+    // scheduled by the driver.
+    this.driver.start();
+    return true;
+  }
+
+  /** Restart the idle countdown (see {@link handleIdleTimeout}). */
+  private resetIdleTimer(): void {
     // Reset the idle timeout - this is called on every user interaction
     // Clear any existing timeout to prevent premature stopping
     if (this.idleTimeout !== null) {
@@ -556,7 +606,7 @@ export class AnimationController {
     // Set new timeout to check for idle - will continue if continuous effects are active
     // This is the key power-saving optimization for static scenes
     this.idleTimeout = setTimeout(this.handleIdleTimeout, config.animation.idleTimeoutMs);
-  };
+  }
 
   /**
    * Stop animation loop and clean up timers

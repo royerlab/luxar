@@ -95,12 +95,15 @@ export function createMockSceneManager(): any {
  * Models the real controller's stopped-loop semantics: the rAF loop
  * starts STOPPED (the viewer idle-stops after ~2s of no interaction,
  * which is the normal state by the time a user has read the Recording
- * panel and confirmed a dialog), only `startAnimation()` flips it to
- * running, and per-frame callbacks fire only while it runs. Registering
+ * panel and confirmed a dialog), only `startAnimation()` or `renderOnce()`
+ * flips it to running, and per-frame callbacks fire only while it runs. Registering
  * a `continuous` callback KEEPS a running loop alive but never restarts
  * a stopped one — so a double that fires callbacks unconditionally is
  * structurally blind to the whole "capture emits N identical frames"
- * class of bug (a deleted `startAnimation()` would fail nothing).
+ * class of bug (a deleted `startAnimation()` / `renderOnce()` would fail
+ * nothing). The real `renderOnce()` also runs one frame synchronously; this
+ * double models only the stopped→running edge, since its callbacks run at
+ * registration (see the fidelity note below).
  *
  * The options argument of each registration is recorded by `vi.fn()`
  * itself, so `{ continuous: true }` is assertable with
@@ -121,6 +124,9 @@ export function createMockAnimationController({
   const registered = new Set<string>();
   return {
     startAnimation: vi.fn(() => {
+      isAnimating = true;
+    }),
+    renderOnce: vi.fn(() => {
       isAnimating = true;
     }),
     stopAnimation: vi.fn(() => {

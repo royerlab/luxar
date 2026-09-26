@@ -15,7 +15,7 @@
  *     reflect the CURRENT result of the supplied port closures, not
  *     a snapshot at install time.
  *   - `getState()` returns the current scene/dim snapshot.
- *   - `renderOnce()` triggers a single startAnimation.
+ *   - `renderOnce()` triggers a single animationController.renderOnce().
  *
  * Heavy collaborators (SceneLoaderManager, worker-pool, console-interceptor)
  * are mocked at the module boundary — those are external trust boundaries
@@ -90,6 +90,7 @@ function makePorts(overrides: Partial<Parameters<typeof installDebugInterface>[0
   const animationController = {
     isActive: false,
     startAnimation: vi.fn(),
+    renderOnce: vi.fn(),
   };
   const inputHandler = { id: 'input' };
   const renderingControls = { id: 'rendering' };
@@ -269,16 +270,18 @@ describe('installDebugInterface', () => {
       expect(dbg.getOverlayManager!()).toEqual({ id: 'overlay' });
     });
 
-    it('renderOnce() invokes animationController.startAnimation', () => {
+    it('renderOnce() invokes animationController.renderOnce (not startAnimation)', () => {
       const ports = makePorts();
       installDebugInterface(ports);
 
       const dbg = window.__luxarDebug!;
       dbg.renderOnce!();
-      expect(
-        (ports.animationController as unknown as { startAnimation: ReturnType<typeof vi.fn> })
-          .startAnimation
-      ).toHaveBeenCalledOnce();
+      const anim = ports.animationController as unknown as {
+        renderOnce: ReturnType<typeof vi.fn>;
+        startAnimation: ReturnType<typeof vi.fn>;
+      };
+      expect(anim.renderOnce).toHaveBeenCalledOnce();
+      expect(anim.startAnimation).not.toHaveBeenCalled();
     });
   });
 

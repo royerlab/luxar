@@ -145,7 +145,10 @@ export class VideoRecordingStrategy implements CaptureStrategy {
           `mode: ${mode})`
       );
 
-      this.animationController.startAnimation();
+      // A frame NOW, not at the next animation frame: the capture stream and
+      // the MediaRecorder start below in this same turn, on a canvas the
+      // recording-state resize has just cleared.
+      this.animationController.renderOnce();
       this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {}, {
         continuous: true,
       });
