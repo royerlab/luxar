@@ -36,20 +36,15 @@ export interface PipelineCtx {
 
 /**
  * Stage (0) of the pipeline, shared with the raw HDR capture path: the scene into the
- * HDR target. Binds the target, then either lets the refraction split draw the frame
- * in its passes (glass depth, data behind, glass, data in front) — when some visible
- * glass asks to refract the data — or renders the scene once, exactly as before
- * Phase 3. Leaves the HDR target bound.
- *
- * Each path clears the target itself: the split's first HDR pass renders with
- * `autoClear` on, and so does the plain render in every pipeline configuration. An
- * explicit `clear()` here as well cleared the full HDR target a second time every
- * frame; it is kept only for a caller that has turned `autoClear` off.
+ * HDR target. Binds and clears the target, then either lets the refraction split draw
+ * the frame in its passes (glass depth, data behind, glass, data in front) — when some
+ * visible glass asks to refract the data — or renders the scene once, exactly as
+ * before Phase 3. Leaves the HDR target bound.
  */
 export function renderSceneToHdr(ctx: PipelineCtx): void {
   ctx.renderer.setRenderTarget(ctx.hdrTarget);
+  ctx.renderer.clear();
   if (ctx.refractionSplit?.render(ctx.renderer, ctx.scene, ctx.camera, ctx.hdrTarget)) return;
-  if (!ctx.renderer.autoClear) ctx.renderer.clear();
   ctx.renderer.render(ctx.scene, ctx.camera);
 }
 
