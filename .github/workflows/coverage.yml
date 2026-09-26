@@ -55,8 +55,9 @@ jobs:
       PYTEST_ADDOPTS: ${{ vars.LUXAR_CI_FORCE_HOSTED != '1' && '-n 2 --dist loadfile' || '' }}
     steps:
       - name: Reclaim disk space
-        # Keep forced-hosted runs within their ~14 GB starting disk (#1816),
-        # and reduce each obsidian container's share of the host root (#2874).
+        # Keep forced-hosted runs within available disk by removing preinstalled
+        # tooling (#1816); these paths are absent from the self-hosted container.
+        if: runner.environment == 'github-hosted'
         run: |
           df -h /
           sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
@@ -65,11 +66,19 @@ jobs:
           df -h /
 
       - name: Require 25 GiB free disk
-        # Match the self-hosted runner admission floor. If reclaim was not
-        # enough, fail before checkout and the multi-gigabyte Hatch environment
-        # instead of surfacing ENOSPC as an unrelated mid-suite test failure.
+        # Match the runner-kit host heartbeat's 25 GB danger line, below its
+        # 30 GB admission guard. Fail before the multi-gigabyte Hatch environment.
         run: |
-          available_kib=$(df --output=avail -k / | tail -n 1 | tr -d ' ')
+          if df_output=$(df --output=avail -k / 2>&1); then
+            available_kib=$(printf '%s\n' "$df_output" | tail -n 1 | tr -d ' ')
+          else
+            available_kib=
+          fi
+          if [[ ! $available_kib =~ ^[0-9]+$ ]]; then
+            echo "$df_output"
+            echo "::error title=Disk check failed::Could not measure free root-disk space."
+            exit 1
+          fi
           minimum_kib=$((25 * 1024 * 1024))
           if (( available_kib < minimum_kib )); then
             echo "::error title=Insufficient disk space::Root filesystem has ${available_kib} KiB free; 25 GiB required before Python environment setup."

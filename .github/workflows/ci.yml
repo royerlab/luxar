@@ -626,9 +626,9 @@ jobs:
       PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2 --dist loadfile' || '' }}
     steps:
       - name: Reclaim disk space
-        # The full suite exhausts the ~14 GB GitHub-hosted runner (#1816), and
-        # concurrent obsidian containers can exhaust their shared host root
-        # (#2874). Reclaim preinstalled tooling we never use on either path.
+        # The full suite can exhaust GitHub-hosted disk (#1816). Reclaim
+        # preinstalled tooling that is absent from the self-hosted container.
+        if: runner.environment == 'github-hosted'
         working-directory: ${{ github.workspace }}
         run: |
           df -h /
@@ -638,11 +638,20 @@ jobs:
           df -h /
 
       - name: Require 25 GiB free disk
-        # Match the self-hosted runner admission floor. If reclaim was not
-        # enough, fail before checkout and the multi-gigabyte Hatch environment
-        # instead of surfacing ENOSPC as an unrelated mid-suite test failure.
+        # Match the runner-kit host heartbeat's 25 GB danger line, below its
+        # 30 GB admission guard. Fail before the multi-gigabyte Hatch environment.
+        if: needs.changes.outputs.dom_py != 'false'
         run: |
-          available_kib=$(df --output=avail -k / | tail -n 1 | tr -d ' ')
+          if df_output=$(df --output=avail -k / 2>&1); then
+            available_kib=$(printf '%s\n' "$df_output" | tail -n 1 | tr -d ' ')
+          else
+            available_kib=
+          fi
+          if [[ ! $available_kib =~ ^[0-9]+$ ]]; then
+            echo "$df_output"
+            echo "::error title=Disk check failed::Could not measure free root-disk space."
+            exit 1
+          fi
           minimum_kib=$((25 * 1024 * 1024))
           if (( available_kib < minimum_kib )); then
             echo "::error title=Insufficient disk space::Root filesystem has ${available_kib} KiB free; 25 GiB required before Python environment setup."

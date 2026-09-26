@@ -29,14 +29,14 @@ def _named_step(steps: list[dict[str, object]], name: str) -> dict[str, object]:
 
 
 @pytest.mark.parametrize(("workflow_path", "job_name"), WORKFLOWS)
-def test_long_python_jobs_reclaim_disk_on_every_runner(
+def test_long_python_jobs_reclaim_disk_on_hosted_runners(
     workflow_path: str, job_name: str
 ) -> None:
-    """Hosted and self-hosted legs must both run the existing reclaim commands."""
+    """The hosted cleanup must not run in an empty self-hosted container."""
     steps = _steps(workflow_path, job_name)
     reclaim = _named_step(steps, "Reclaim disk space")
 
-    assert "if" not in reclaim, "disk reclaim must not skip self-hosted runners"
+    assert reclaim["if"] == "runner.environment == 'github-hosted'"
     script = str(reclaim["run"])
     assert "/usr/local/lib/android" in script
     assert "docker image prune --all --force" in script
@@ -68,23 +68,28 @@ def test_disk_guard_runs_before_checkout_and_environment_setup(
     )
 
     assert reclaim_index < guard_index < checkout_index < install_index
+    guard = steps[guard_index]
+    if job_name == "python-tests":
+        assert guard["if"] == "needs.changes.outputs.dom_py != 'false'"
+    else:
+        assert "if" not in guard
 
 
 def _run_guard(
-    tmp_path: Path, script: str, available_kib: int
+    tmp_path: Path, script: str, available_kib: int | str, df_exit: int = 0
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True)
     fake_df = fake_bin / "df"
     fake_df.write_text(
-        f"#!/bin/sh\nprintf 'Available\\n{available_kib}\\n'\n",
+        f"#!/bin/sh\nprintf 'Available\\n{available_kib}\\n'\nexit {df_exit}\n",
         encoding="utf-8",
     )
     fake_df.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     return subprocess.run(
-        ["bash", "-c", f"set -euo pipefail\n{script}"],
+        ["bash", "-e", "-c", script],
         check=False,
         capture_output=True,
         text=True,
@@ -93,7 +98,7 @@ def _run_guard(
 
 
 @pytest.mark.parametrize(("workflow_path", "job_name"), WORKFLOWS)
-def test_disk_guard_enforces_the_runner_admission_floor(
+def test_disk_guard_enforces_the_host_danger_line(
     tmp_path: Path, workflow_path: str, job_name: str
 ) -> None:
     """The guard accepts 25 GiB exactly and emits a clear annotation below it."""
@@ -107,3 +112,24 @@ def test_disk_guard_enforces_the_runner_admission_floor(
     assert rejected.returncode == 1
     assert "::error title=Insufficient disk space::" in rejected.stdout
     assert "25 GiB required" in rejected.stdout
+
+
+@pytest.mark.parametrize(("workflow_path", "job_name"), WORKFLOWS)
+@pytest.mark.parametrize(
+    ("df_output", "df_exit"),
+    [("unavailable", 0), (MINIMUM_FREE_KIB, 1)],
+)
+def test_disk_guard_reports_measurement_failure(
+    tmp_path: Path,
+    workflow_path: str,
+    job_name: str,
+    df_output: int | str,
+    df_exit: int,
+) -> None:
+    guard = _named_step(_steps(workflow_path, job_name), "Require 25 GiB free disk")
+    result = _run_guard(tmp_path, str(guard["run"]), df_output, df_exit)
+
+    assert result.returncode == 1
+    assert "Available" in result.stdout
+    assert "::error title=Disk check failed::" in result.stdout
+    assert "::error title=Insufficient disk space::" not in result.stdout
