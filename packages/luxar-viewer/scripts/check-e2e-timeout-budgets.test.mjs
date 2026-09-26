@@ -88,6 +88,67 @@ describe('analyzeSpec', () => {
     expect(analyzeSpec(source, 'example.spec.ts')).toEqual([]);
   });
 
+  it('does not count a named testInfo budget as a hook deadline', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      const HOOK_TIMEOUT_MS = 90_000;
+      test.beforeAll(async ({ page }, info) => {
+        info.setTimeout(HOOK_TIMEOUT_MS);
+        await page.waitForTimeout(45_000);
+      });
+      test.afterAll(async ({ page }, info) => {
+        info.setTimeout(HOOK_TIMEOUT_MS);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([]);
+  });
+
+  it('applies hook-local slow once and respects timeout declaration order', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }, info) => {
+        test.slow();
+        info.slow();
+        await page.waitForTimeout(90_000);
+      });
+      test.afterAll(async ({ page }, info) => {
+        info.setTimeout(45_000);
+        info.slow();
+        await page.waitForTimeout(90_000);
+      });
+      test.beforeAll(async ({ page }, info) => {
+        info.slow();
+        test.setTimeout(45_000);
+        await page.waitForTimeout(90_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 90_000, file: 'example.spec.ts', line: 13, test: 'beforeAll' },
+    ]);
+  });
+
+  it('does not multiply a hook budget twice or assume a conditional slow applies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }, info) => {
+        test.slow();
+        info.slow();
+        await page.waitForTimeout(200_000);
+      });
+      test.afterAll(async ({ page }, info) => {
+        info.slow(false);
+        await page.waitForTimeout(90_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 200_000, file: 'example.spec.ts', line: 3, test: 'beforeAll' },
+      { deadlineMs: 90_000, file: 'example.spec.ts', line: 8, test: 'afterAll' },
+    ]);
+  });
+
   it('follows a helper default used only by a beforeAll hook', () => {
     const source = `
       import { test } from '@playwright/test';
