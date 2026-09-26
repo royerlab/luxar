@@ -54,16 +54,27 @@ jobs:
       NUMEXPR_NUM_THREADS: '1'
       PYTEST_ADDOPTS: ${{ vars.LUXAR_CI_FORCE_HOSTED != '1' && '-n 2 --dist loadfile' || '' }}
     steps:
-      - name: Free disk space on hosted runners
-        # No-op on obsidian (ample disk); kept so a forced-hosted fallback stays
-        # green under the ~14 GB GitHub-hosted disk (see ci.yml, #1816).
-        if: runner.environment == 'github-hosted'
+      - name: Reclaim disk space
+        # Keep forced-hosted runs within their ~14 GB starting disk (#1816),
+        # and reduce each obsidian container's share of the host root (#2874).
         run: |
           df -h /
           sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
             /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
           sudo docker image prune --all --force 2>/dev/null || true
           df -h /
+
+      - name: Require 25 GiB free disk
+        # Match the self-hosted runner admission floor. If reclaim was not
+        # enough, fail before checkout and the multi-gigabyte Hatch environment
+        # instead of surfacing ENOSPC as an unrelated mid-suite test failure.
+        run: |
+          available_kib=$(df --output=avail -k / | tail -n 1 | tr -d ' ')
+          minimum_kib=$((25 * 1024 * 1024))
+          if (( available_kib < minimum_kib )); then
+            echo "::error title=Insufficient disk space::Root filesystem has ${available_kib} KiB free; 25 GiB required before Python environment setup."
+            exit 1
+          fi
 
       # LFS intentionally disabled (see ci.yml): payload tests skip on pointer
       # stubs, so a checkout never needs LFS bandwidth.

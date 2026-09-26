@@ -625,13 +625,10 @@ jobs:
       # stays machine-agnostic for local use.
       PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2 --dist loadfile' || '' }}
     steps:
-      - name: Free disk space on hosted runners
-        # The full suite exhausts the ~14 GB GitHub-hosted runner and fails with
-        # `[Errno 28] No space left on device`, turning forced-hosted runs red
-        # (#1816). Reclaim
-        # preinstalled tooling we never use. obsidian has ample disk, so skip it
-        # there.
-        if: runner.environment == 'github-hosted'
+      - name: Reclaim disk space
+        # The full suite exhausts the ~14 GB GitHub-hosted runner (#1816), and
+        # concurrent obsidian containers can exhaust their shared host root
+        # (#2874). Reclaim preinstalled tooling we never use on either path.
         working-directory: ${{ github.workspace }}
         run: |
           df -h /
@@ -639,6 +636,18 @@ jobs:
             /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
           sudo docker image prune --all --force 2>/dev/null || true
           df -h /
+
+      - name: Require 25 GiB free disk
+        # Match the self-hosted runner admission floor. If reclaim was not
+        # enough, fail before checkout and the multi-gigabyte Hatch environment
+        # instead of surfacing ENOSPC as an unrelated mid-suite test failure.
+        run: |
+          available_kib=$(df --output=avail -k / | tail -n 1 | tr -d ' ')
+          minimum_kib=$((25 * 1024 * 1024))
+          if (( available_kib < minimum_kib )); then
+            echo "::error title=Insufficient disk space::Root filesystem has ${available_kib} KiB free; 25 GiB required before Python environment setup."
+            exit 1
+          fi
 
       # LFS intentionally disabled. Payload-dependent tests detect unpulled
       # pointer stubs and skip themselves. `check-data-manifest` still catches
