@@ -764,7 +764,7 @@ NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
 #: are licensed for personal, non-commercial use only, so a `say` build is
 #: not fit for a public kiosk or a published store.
 NARRATION_LICENSES = {
-    "openai": "CC0 (dedicated by this project)",
+    "openai": "CC0",
     "say": "Apple macOS system voice: personal, non-commercial use only",
 }
 NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
