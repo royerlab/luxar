@@ -317,7 +317,8 @@ export class DataRefractionSplit {
   }
 
   /**
-   * Render `scene` into `hdrTarget` (already bound and cleared by the caller) with the
+   * Render `scene` into `hdrTarget` (already bound by the caller; the behind pass clears
+   * it) with the
    * refracting glass drawn after — and sampling — the data behind it, and the data in
    * front of it drawn last. Returns false, having drawn nothing, when no visible glass
    * asks for it (or the one unsupported renderer + MSAA combination is in force), so

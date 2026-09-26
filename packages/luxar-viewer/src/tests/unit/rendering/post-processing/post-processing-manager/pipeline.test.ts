@@ -193,9 +193,24 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
     renderSceneToHdr(ctx);
 
-    expect(rig.raw.clear).toHaveBeenCalledTimes(1);
+    // The render clears the target itself (autoClear): no second, explicit clear.
+    expect(rig.raw.clear).not.toHaveBeenCalled();
     expect(rig.calls).toHaveLength(1);
     expect(rig.calls[0]).toMatchObject({ what: 'scene', target: hdrTarget, autoClear: true });
+  });
+
+  it('still clears explicitly for a caller that turned autoClear off', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const rig = makeRig(scene, { glass: [] });
+    rig.raw.autoClear = false;
+    const { ctx, hdrTarget } = makeCtx(rig.renderer, scene, camera, null);
+
+    renderSceneToHdr(ctx);
+
+    expect(rig.raw.clear).toHaveBeenCalledTimes(1);
+    expect(rig.calls).toHaveLength(1);
+    expect(rig.calls[0]).toMatchObject({ what: 'scene', target: hdrTarget, autoClear: false });
   });
 
   it('renders once without allocating the depth target when no visible glass asks to refract', () => {
@@ -209,19 +224,20 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     renderSceneToHdr(ctx);
 
     expect(rig.raw.setRenderTarget.mock.calls.map((c) => c[0])).toEqual([hdrTarget]);
-    expect(rig.raw.clear).toHaveBeenCalledTimes(1);
+    expect(rig.raw.clear).not.toHaveBeenCalled();
     expect(rig.calls).toHaveLength(1);
     expect(rig.calls[0]).toMatchObject({ what: 'scene', target: hdrTarget, cameraMask: DEFAULT });
     expect(split.framesSplit).toBe(0);
     expect(rig.partitionWrites).toEqual([]);
     expect(scene.children).not.toContain(split.screenQuad);
 
-    // Resizing still must not allocate a target until glass actually needs the split.
+    // Resizing still must not allocate a target until glass actually needs the split
+    // (priming it would clear the depth target: no clear at all is the proof).
     renderSceneToHdr(ctx);
-    expect(rig.raw.clear).toHaveBeenCalledTimes(2);
+    expect(rig.raw.clear).not.toHaveBeenCalled();
     split.setSize(8, 8);
     renderSceneToHdr(ctx);
-    expect(rig.raw.clear).toHaveBeenCalledTimes(3);
+    expect(rig.raw.clear).not.toHaveBeenCalled();
   });
 
   it('releases geometry from surplus depth proxies when the glass set shrinks', () => {
