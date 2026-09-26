@@ -32,12 +32,18 @@ export function updateOrientation(camera: LuxarCamera, orientation: THREE.Quater
  * `target` from the current camera position, then sync the camera.
  *
  * @param smoothness - 0 = snap, 1 = no change.
+ * @param up - The up direction the new orientation keeps. Defaults to the
+ *   camera's own `up`, which for fly controls is the current up (roll
+ *   included): a look-at turns the view without dropping the roll. It was a
+ *   hard-coded world +Y, so re-targeting (a restored pose, a framing on a
+ *   Z-up scene) silently replaced the authored up.
  */
 export function lookAtSmooth(
   camera: LuxarCamera,
   orientation: THREE.Quaternion,
   target: THREE.Vector3,
-  smoothness: number
+  smoothness: number,
+  up: THREE.Vector3 = camera.up
 ): void {
   // Calculate desired look direction
   const direction = new THREE.Vector3();
@@ -47,7 +53,7 @@ export function lookAtSmooth(
   // Create a quaternion that looks in the target direction
   const targetQuaternion = new THREE.Quaternion();
   const tempMatrix = new THREE.Matrix4();
-  tempMatrix.lookAt(camera.position, target, new THREE.Vector3(0, 1, 0));
+  tempMatrix.lookAt(camera.position, target, up);
   targetQuaternion.setFromRotationMatrix(tempMatrix);
 
   // Smoothly interpolate to target orientation

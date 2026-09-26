@@ -422,8 +422,12 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
    * @param target - Target position to look at
    * @param smoothness - Smoothing factor (0-1, higher = smoother)
    */
-  public lookAtSmooth(target: THREE.Vector3, smoothness: number = 0.9): void {
-    lookAtSmoothHelper(this.camera, this.orientation, target, smoothness);
+  public lookAtSmooth(
+    target: THREE.Vector3,
+    smoothness: number = 0.9,
+    up: THREE.Vector3 = this.camera.up
+  ): void {
+    lookAtSmoothHelper(this.camera, this.orientation, target, smoothness, up);
   }
 
   /**

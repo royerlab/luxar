@@ -1602,6 +1602,7 @@ describe('LuxarApp', () => {
         near: 0.1,
         far: 100,
         updateProjectionMatrix: vi.fn(),
+        lookAt: vi.fn(),
       };
       mockSceneManager.getSceneViewerConfig.mockReturnValue({
         waypoints: [
@@ -1678,6 +1679,7 @@ describe('LuxarApp', () => {
         near: 0.1,
         far: 100,
         updateProjectionMatrix: vi.fn(),
+        lookAt: vi.fn(),
       };
       const dimensions = ['x', 'y', 'z', 'story'].map((name, index) => ({
         name,

@@ -132,9 +132,17 @@ export function restoreCamera(sceneManager: SceneManager, cam: CameraSnapshot): 
   }
   camera.updateProjectionMatrix();
 
-  // setTarget mirrors the orbit/fly difference internally; reinitialize()
-  // re-derives orbit distance/orientation from the new (position, target).
-  sceneManager.controls.setTarget(new THREE.Vector3(cam.target[0], cam.target[1], cam.target[2]));
+  // Orient the camera to the pose (its up included) before the controls
+  // re-derive their state: orbit's reinitialize() reads the orientation from
+  // camera.quaternion, not camera.up, so without this it kept the PREVIOUS
+  // orientation's roll and the pose's up was dropped.
+  const target = new THREE.Vector3(cam.target[0], cam.target[1], cam.target[2]);
+  camera.lookAt(target);
+
+  // setTarget mirrors the orbit/fly difference internally (fly re-orients
+  // with the camera's up, i.e. the pose's); reinitialize() re-derives orbit
+  // distance/orientation from the new (position, target, orientation).
+  sceneManager.controls.setTarget(target);
   sceneManager.controls.reinitialize();
 
   // Publish it like an interactive move: one controls 'change' (the scene
