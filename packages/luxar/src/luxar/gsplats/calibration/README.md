@@ -88,7 +88,7 @@ print(f"Sigma: Laplacian={nf.sigma_laplacian:.5f}, Haar={nf.sigma_haar:.5f}, "
       f"Background={nf.sigma_background:.5f}, Ensemble={nf.sigma_hat:.5f}")
 
 # DC offset / pedestal subtraction (applied ONCE before fitting)
-floor = estimate_floor(V, method="mode")  # or "percentile"
+floor = estimate_floor(V, method="mode")  # or "specimen" / "percentile"
 V_suppressed = np.clip(V - floor, 0.0, None)
 
 # Feature content estimation (drives density model + planner)

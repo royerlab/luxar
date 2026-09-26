@@ -30,12 +30,12 @@ DEFAULT_SIGMA_MIN_DIAG = _DEFAULT_SIGMA_MIN_DIAG
 
 
 def _validate_floor(floor: "str | float | None") -> None:
-    """Validate a ``floor`` spec: ``auto`` / ``none`` / ``pN`` / float >= 0."""
+    """Validate a floor spec, including the opt-in ``specimen`` estimator."""
     if floor is None:
         return
     if isinstance(floor, str):
         f = floor.strip().lower()
-        if f in ("auto", "none", ""):
+        if f in ("auto", "specimen", "none", ""):
             return
         if f.startswith("p"):
             try:
@@ -51,7 +51,8 @@ def _validate_floor(floor: "str | float | None") -> None:
             value = float(f)
         except ValueError as exc:
             raise ValueError(
-                f"floor must be 'auto'/'none'/'pN'/a number >= 0, got {floor!r}"
+                "floor must be 'auto'/'specimen'/'none'/'pN'/a number >= 0, "
+                f"got {floor!r}"
             ) from exc
     else:
         value = float(floor)

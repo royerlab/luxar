@@ -258,7 +258,9 @@ def run_fit_volume(
         "--floor",
         help="Background floor / DC-offset suppression before normalization "
         "(default: auto). auto = histogram-mode estimate (capped at median; "
-        "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
+        "no-op on clean data) | specimen = upper compact mode above a "
+        "bimodal low-band split, falling back to auto | pN = Nth percentile "
+        "(e.g. p10) | <float> = "
         "fixed value | none or 0 = disable (hard-min normalization). auto and "
         "pN ignore exact-zero padding. Negative user levels are rejected; a "
         "negative estimate from dark-frame-corrected data is preserved. The "

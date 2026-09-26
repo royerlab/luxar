@@ -319,7 +319,9 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.fitting.preprocessing import _resolve_applied_norm_bounds
+    from luxar.gsplats.fitting.preprocessing import (
+        _resolve_applied_norm_bounds_with_strategy,
+    )
     from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
@@ -358,12 +360,14 @@ def fit_progressive_gaussian_splats(
 
     start_time = time.time()
     V_original = V.astype(np.float32)
-    _, image_max, applied_floor = _resolve_applied_norm_bounds(
-        V_original,
-        float(kwargs.get("norm_percentile", 0.0)),
-        verbose,
-        floor_spec,
-        kwargs.get("norm_range"),
+    _, image_max, applied_floor, floor_strategy = (
+        _resolve_applied_norm_bounds_with_strategy(
+            V_original,
+            float(kwargs.get("norm_percentile", 0.0)),
+            verbose,
+            floor_spec,
+            kwargs.get("norm_range"),
+        )
     )
     if applied_floor is not None:
         V_original = np.clip(V_original - applied_floor, 0.0, None).astype(np.float32)
@@ -699,7 +703,9 @@ def fit_progressive_gaussian_splats(
     # removed from V_original up front and every pass then ran with
     # floor="none", so without this a progressive fit ships no record at all of
     # the background it subtracted.
-    lift_normalization_stats(overall_stats, accumulated_lods, applied_floor)
+    lift_normalization_stats(
+        overall_stats, accumulated_lods, applied_floor, floor_strategy=floor_strategy
+    )
     final_result = GSplatData.from_additive_sublods(
         accumulated_lods, stats=overall_stats
     )

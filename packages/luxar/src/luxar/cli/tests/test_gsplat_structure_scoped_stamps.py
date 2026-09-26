@@ -101,6 +101,7 @@ _TOPOLOGY: Dict[str, Any] = {
 _EXEMPT: Dict[str, Any] = {
     "coarsen_dims": [0, 1, 2],
     "floor": 113.0,
+    "floor_strategy": "specimen",
     "image_min": 0.0,
     "image_max": 4095.0,
     "intensity_range": 4095.0,

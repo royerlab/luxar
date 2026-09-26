@@ -414,6 +414,10 @@ class PreprocessedData:
     # inspection/reproducibility; NOT added back to output amplitudes.
     floor: Optional[float] = None
 
+    # Estimator branch for an opt-in specimen floor. ``None`` for every other
+    # floor spec; recorded next to ``floor`` so a fallback remains auditable.
+    floor_strategy: Optional[str] = None
+
     # Computed L1 regularization values (set during preprocessing)
     # These are stored here instead of mutating FitConfig
     l1_amp: Optional[float] = None
