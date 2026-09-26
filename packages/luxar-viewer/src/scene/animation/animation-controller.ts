@@ -12,6 +12,7 @@ import { config } from '../../config';
 import { PostProcessingManager } from '../../rendering';
 import { AdaptiveDPRManager } from '../../rendering/adaptive-dpr-manager';
 import { eventBus } from '../../utils/cross-layer/event-bus';
+import { log, Modules } from '../../utils/log';
 import { RafDriver } from './raf-driver';
 
 /**
@@ -43,6 +44,9 @@ export class AnimationController {
 
   /** Per-frame callbacks for additional updates (keyed by ID for safe add/remove) */
   private perFrameCallbacks: Map<string, { callback: () => void; continuous: boolean }> = new Map();
+
+  /** Ids of per-frame callbacks whose failure has already been logged. */
+  private readonly failedCallbackIds = new Set<string>();
 
   /** Adaptive DPR manager for dynamic resolution scaling */
   private adaptiveDPRManager: AdaptiveDPRManager | null = null;
@@ -148,6 +152,9 @@ export class AnimationController {
    * ```
    */
   removePerFrameCallback(id: string): boolean {
+    // A later registration under the same id is a new callback: report its
+    // first failure too.
+    this.failedCallbackIds.delete(id);
     return this.perFrameCallbacks.delete(id);
   }
 
@@ -274,7 +281,19 @@ export class AnimationController {
     // PerformanceMonitor UI panel) can record the start timestamp
     // without animation-controller importing UI code directly.
     eventBus.emit('frame-start', {});
+    try {
+      this.frameWork();
+    } finally {
+      // End frame timing — pair with the frame-start emit above, even when
+      // the work threw: the PerformanceMonitor UI panel subscribes to both
+      // events when visible and feeds them into stats.js for FPS /
+      // frame-time readouts, and an unpaired start corrupts its timing.
+      eventBus.emit('frame-end', {});
+    }
+  }
 
+  /** {@link tick} between its frame-start and frame-end. */
+  private frameWork(): void {
     // Record frame for adaptive DPR - tracks FPS and adjusts pixel
     // ratio. Skipped while the rendering context is lost AND while the
     // render-skip predicate is on: both kinds of frame do no GPU work of
@@ -289,8 +308,8 @@ export class AnimationController {
     // resets; and the isolated-hiccup interactions — a paced interval read off
     // a freshly cleared window as a collapsed frame rate, or a
     // just-under-`gapResetMs` frame pushed just over it — cannot arise at all,
-    // because pacing requires a STREAK (see PACING_SLOW_FRAME_STREAK in raf-driver.ts) and an
-    // isolated slow frame is therefore never paced.
+    // because pacing requires a STREAK (see PACING_SLOW_FRAME_STREAK in
+    // raf-driver.ts) and an isolated slow frame is therefore never paced.
     if (this.adaptiveDPRManager && !this.isContextLost?.() && !this.shouldSkipRender?.()) {
       this.adaptiveDPRManager.recordFrame(performance.now());
     }
@@ -300,9 +319,7 @@ export class AnimationController {
     this.controls.update();
 
     // Call all registered per-frame callbacks (e.g., dynamic clipping, dimension animation)
-    for (const entry of this.perFrameCallbacks.values()) {
-      entry.callback();
-    }
+    this.runPerFrameCallbacks();
 
     // Skip GPU rendering while the WebGL context is lost. The
     // post-processing render() would otherwise issue draw calls
@@ -315,21 +332,39 @@ export class AnimationController {
     // offline capture owns the pipeline for its whole run, so the
     // loop's render would be discarded work drawn between the
     // capture's own passes.
-    if (this.isContextLost?.() || this.shouldSkipRender?.()) {
-      eventBus.emit('frame-end', {});
-      return;
-    }
+    if (this.isContextLost?.() || this.shouldSkipRender?.()) return;
 
     // Render through HDR post-processing pipeline
     // This executes the complete chain: Scene → HDR buffer → Bloom → Tone mapping → Display
     // Includes vertex shaders, fragment shaders, HDR buffers, bloom blur, ACES tone mapping
     this.postProcessing.render();
+  }
 
-    // End frame timing — pair with the frame-start emit above. The
-    // PerformanceMonitor UI panel subscribes to both events when
-    // visible and feeds them into stats.js for FPS / frame-time
-    // readouts.
-    eventBus.emit('frame-end', {});
+  /**
+   * Run every per-frame callback, each isolated from the others.
+   *
+   * A callback that throws is logged (once per id, not once per frame: a
+   * callback that fails every frame would otherwise flood the console at the
+   * frame rate) and the remaining callbacks and the render still run.
+   * Without the isolation one broken subsystem skipped every callback
+   * registered after it, and the render, on every frame, freezing the view
+   * while the loop kept spinning.
+   */
+  private runPerFrameCallbacks(): void {
+    for (const [id, entry] of this.perFrameCallbacks) {
+      try {
+        entry.callback();
+      } catch (error) {
+        if (!this.failedCallbackIds.has(id)) {
+          this.failedCallbackIds.add(id);
+          log.error(
+            Modules.ANIMATION,
+            `Per-frame callback '${id}' threw; skipping it this frame`,
+            error
+          );
+        }
+      }
+    }
   }
 
   /**

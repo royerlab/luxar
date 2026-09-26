@@ -35,6 +35,8 @@ vi.mock('../../../rendering/adaptive-dpr-manager', () => ({
 
 import { AnimationController } from '../../../scene/animation/animation-controller';
 import { config } from '../../../config';
+import { log } from '../../../utils/log';
+import { eventBus } from '../../../utils/cross-layer/event-bus';
 
 describe('AnimationController', () => {
   let controller: AnimationController;
@@ -145,6 +147,77 @@ describe('AnimationController', () => {
 
       expect(callback1).not.toHaveBeenCalled();
       expect(callback2).toHaveBeenCalled();
+    });
+  });
+
+  describe('per-frame callback isolation', () => {
+    let logError: MockInstance;
+    const events: string[] = [];
+    let offs: Array<() => void> = [];
+
+    beforeEach(() => {
+      logError = vi.spyOn(log, 'error').mockImplementation(() => {});
+      events.length = 0;
+      offs = [
+        eventBus.on('frame-start', () => events.push('frame-start')),
+        eventBus.on('frame-end', () => events.push('frame-end')),
+      ];
+    });
+
+    afterEach(() => {
+      for (const off of offs) off();
+    });
+
+    it('a throwing callback does not skip the callbacks after it, or the render', () => {
+      const before = vi.fn();
+      const after = vi.fn();
+      controller.addPerFrameCallback('before', before);
+      controller.addPerFrameCallback('broken', () => {
+        throw new Error('broken subsystem');
+      });
+      controller.addPerFrameCallback('after', after);
+
+      controller.tick();
+
+      expect(before).toHaveBeenCalledTimes(1);
+      expect(after).toHaveBeenCalledTimes(1);
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+      expect(events).toEqual(['frame-start', 'frame-end']);
+    });
+
+    it('logs a failing callback once, not once per frame', () => {
+      controller.addPerFrameCallback('broken', () => {
+        throw new Error('broken subsystem');
+      });
+
+      controller.tick();
+      controller.tick();
+      controller.tick();
+
+      expect(logError).toHaveBeenCalledTimes(1);
+      expect(String(logError.mock.calls[0][1])).toContain("'broken'");
+    });
+
+    it('a re-registered callback reports its own first failure', () => {
+      const broken = (): void => {
+        throw new Error('broken subsystem');
+      };
+      controller.addPerFrameCallback('broken', broken);
+      controller.tick();
+      controller.removePerFrameCallback('broken');
+      controller.addPerFrameCallback('broken', broken);
+      controller.tick();
+
+      expect(logError).toHaveBeenCalledTimes(2);
+    });
+
+    it('frame-end still pairs frame-start when the render throws', () => {
+      mockPostProcessing.render.mockImplementation(() => {
+        throw new Error('render failed');
+      });
+
+      expect(() => controller.tick()).toThrow('render failed');
+      expect(events).toEqual(['frame-start', 'frame-end']);
     });
   });
 
