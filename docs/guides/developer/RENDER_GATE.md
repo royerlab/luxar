@@ -151,6 +151,14 @@ between rounds. Each arm records:
     `ScriptDuration`;
   - `rendersPerFrame`: `postProcessing.render` calls per frame. A frame that
     renders twice costs twice.
+- **`wakeRenders`, `wakeBlockMs`**: waking a stopped loop the way an input
+  handler does (`startAnimation()` after two idle frames), repeated nine times.
+  `wakeRenders` counts renders from the wake up to and including the first
+  animation frame after it (one is the minimum; a wake that also renders inside
+  the handler costs two). `wakeBlockMs` is how long the call blocked its caller:
+  input latency added to the handler. Chrome coarsens `performance.now()` to
+  100 µs here, so `wakeBlockMs` differences within 0.2 ms are never judged (a
+  0/0 or x/0 ratio would otherwise decide the verdict).
 
 A metric fails when its point ratio `median(candidate) / median(baseline)`
 exceeds `1 + floor`, and is reported as a win below `1 − floor`. `floor` is the

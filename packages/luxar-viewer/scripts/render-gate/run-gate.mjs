@@ -403,19 +403,37 @@ async function measureArm(browser, origin, c, backend) {
     const s0 = await script();
     const mo = await page.evaluate(ops.motion, { pose: c.pose ?? d.pose });
     const s1 = await script();
+    const wk = await page.evaluate(ops.wake, {});
     return {
       gpuMs: gpu.minMs,
       frameMs: mo.frameMs,
       frameP95Ms: mo.p95Ms,
       cpuMs: ((s1 - s0) * 1000) / Math.max(1, mo.frames),
       rendersPerFrame: mo.rendersPerFrame,
+      wakeRenders: wk.renders,
+      wakeBlockMs: wk.blockMs,
     };
   } finally {
     await context.close();
   }
 }
 
-const PERF_METRICS = ['gpuMs', 'frameMs', 'frameP95Ms', 'cpuMs', 'rendersPerFrame'];
+const PERF_METRICS = [
+  'gpuMs',
+  'frameMs',
+  'frameP95Ms',
+  'cpuMs',
+  'rendersPerFrame',
+  'wakeRenders',
+  'wakeBlockMs',
+];
+/**
+ * Absolute tolerance per metric, in the metric's own unit, for metrics that
+ * sit near the timer's resolution. Chrome coarsens `performance.now()` to
+ * 100 µs without cross-origin isolation, so a wake that blocks for ~0 ms reads
+ * 0 or 0.1 ms: two quanta are never judged.
+ */
+const PERF_ABS_TOLERANCE = { wakeBlockMs: 0.2 };
 const ROTATIONS = [
   ['base', 'cand', 'base2'],
   ['cand', 'base2', 'base'],
@@ -452,7 +470,7 @@ async function runPerf(session, servers) {
         row.metrics[m] = {
           baseMedian: median(base),
           candMedian: median(cand),
-          ...judgePerf(base, cand, noiseFloor(base, base2)),
+          ...judgePerf(base, cand, noiseFloor(base, base2), PERF_ABS_TOLERANCE[m] ?? 0),
         };
       }
       row.status = Object.values(row.metrics).some((v) => v.verdict === 'fail') ? 'fail' : 'pass';

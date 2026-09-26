@@ -62,6 +62,18 @@ describe('judgePerf', () => {
     expect(v.verdict).toBe('pass');
   });
 
+  it('does not judge a difference within the absolute tolerance (timer-resolution metrics)', () => {
+    // A wake that blocks ~0 ms reads 0 or one 0.1 ms timer quantum: 0.1/0 is
+    // an infinite ratio, which without the tolerance is a false FAIL.
+    const zeros = [0, 0, 0, 0, 0, 0, 0];
+    const quantum = [0, 0.1, 0, 0.1, 0.1, 0, 0.1];
+    expect(judgePerf(zeros, quantum, 0.01).verdict).toBe('fail');
+    expect(judgePerf(zeros, quantum, 0.01, 0.2).verdict).toBe('pass');
+    // ...but a real change beyond it is still judged.
+    expect(judgePerf([3, 3.1, 2.9, 3], [0, 0.1, 0, 0], 0.01, 0.2).verdict).toBe('win');
+    expect(judgePerf([0, 0.1, 0, 0], [3, 3.1, 2.9, 3], 0.01, 0.2).verdict).toBe('fail');
+  });
+
   it('reports a clear improvement as a win', () => {
     expect(
       judgePerf(

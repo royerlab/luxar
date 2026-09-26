@@ -90,10 +90,15 @@ export function noiseFloor(baseA, baseB, minFloor = 0.01) {
  * @returns {{ ratio: number, lo: number, hi: number, floor: number,
  *   verdict: 'pass'|'fail'|'win' }} `fail` above 1 + floor, `win` below 1 − floor.
  */
-export function judgePerf(base, cand, floor) {
+export function judgePerf(base, cand, floor, absTolerance = 0) {
   const ci = ratioCI(base, cand);
+  // A metric near the timer's resolution (a wake that blocks ~0 ms) has a
+  // ratio of 0/0 or x/0: a difference within `absTolerance` of the baseline
+  // is too small to judge either way.
+  const delta = median(cand) - median(base);
   let verdict = 'pass';
-  if (ci.ratio > 1 + floor) verdict = 'fail';
+  if (Math.abs(delta) <= absTolerance) verdict = 'pass';
+  else if (ci.ratio > 1 + floor) verdict = 'fail';
   else if (ci.ratio < 1 - floor) verdict = 'win';
   return { ...ci, floor, verdict };
 }
