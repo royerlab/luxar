@@ -168,8 +168,14 @@ export class RafDriver {
   }
 
   /**
-   * Start the loop and run its first frame synchronously. No-op when already
-   * running.
+   * Start the loop: arm its first frame for the next animation frame. No-op
+   * when already running.
+   *
+   * Deliberately does NOT run a frame synchronously. A wake comes from an
+   * input or state-change handler, and the next paint is already at the next
+   * animation frame; a frame run here as well rendered every wake twice
+   * before that paint. A caller that needs the frame NOW uses
+   * AnimationController.renderOnce().
    *
    * @returns true when this call started the loop (the stopped→running edge)
    */
@@ -185,8 +191,8 @@ export class RafDriver {
     this.appliedPacingDelayMs = 0;
     this.lastFrameCostMs = 0;
     this.consecutiveSlowFrames = 0;
-    // Kick off the first frame - subsequent frames are scheduled by frame()
-    this.frame();
+    // Arm the first frame - subsequent frames are scheduled by frame()
+    this.animationId = requestAnimationFrame(this.frame);
     return true;
   }
 

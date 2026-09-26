@@ -1433,6 +1433,12 @@ export class LuxarApp {
     if (!this.isInitialized) {
       throw new Error('LuxarApp.screenshot called before init()');
     }
+    // The capture draws its own pipeline pass, outside the loop. Bring the
+    // per-frame view state (clipping planes, LOD selection, depth sort) up to
+    // the current camera first: after `setCameraPose()` the loop only runs
+    // them at its next animation frame, so without this a screenshot taken
+    // right after a camera change used the previous pose's near/far and LOD.
+    this.animationController.prepareFrame();
     return captureScreenshot(this.sceneManager, this.overlayManager ?? null, opts);
   }
 

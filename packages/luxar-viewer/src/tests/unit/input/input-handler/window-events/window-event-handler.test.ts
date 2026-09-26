@@ -44,10 +44,12 @@ function makeSceneManager(camera?: LuxarCamera): {
 function makeAnimationController(): {
   animationController: AnimationController;
   startAnimation: ReturnType<typeof vi.fn>;
+  renderOnce: ReturnType<typeof vi.fn>;
 } {
   const startAnimation = vi.fn();
-  const animationController = { startAnimation } as unknown as AnimationController;
-  return { animationController, startAnimation };
+  const renderOnce = vi.fn();
+  const animationController = { startAnimation, renderOnce } as unknown as AnimationController;
+  return { animationController, startAnimation, renderOnce };
 }
 
 function dispatchWheel(target: EventTarget, init: WheelEventInit): WheelEvent {
@@ -476,9 +478,9 @@ describe('WindowEventHandler', () => {
       expect(canvas.hasAttribute('style')).toBe(false);
     });
 
-    it('schedules updateSize + startAnimation via requestAnimationFrame', async () => {
+    it('schedules updateSize + renderOnce via requestAnimationFrame', async () => {
       const { sceneManager, updateSize } = makeSceneManager();
-      const { animationController, startAnimation } = makeAnimationController();
+      const { animationController, renderOnce } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
@@ -486,11 +488,12 @@ describe('WindowEventHandler', () => {
 
       // updateSize should NOT be called synchronously — it's deferred.
       expect(updateSize).not.toHaveBeenCalled();
+      expect(renderOnce).not.toHaveBeenCalled();
 
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
       expect(updateSize).toHaveBeenCalledTimes(1);
-      expect(startAnimation).toHaveBeenCalledTimes(1);
+      expect(renderOnce).toHaveBeenCalledTimes(1);
     });
   });
 });
