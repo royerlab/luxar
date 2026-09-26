@@ -45,6 +45,14 @@ import {
 import type { SceneBoundsCache } from './scene-bounds-cache';
 
 /**
+ * Camera position in WORLD space: the clipping sphere is a world-space
+ * sphere, and a camera under a parent (an XR rig) has a local `position` in
+ * the parent's frame. `getWorldPosition` refreshes the camera's world matrix,
+ * so a pose written this frame (fly controls do not refresh it) is honoured.
+ */
+const CAMERA_WORLD_SCRATCH = new THREE.Vector3();
+
+/**
  * Ctx supplied by SceneManager to the policy helpers. Kept narrow:
  * helpers read these refs but never mutate the host class.
  */
@@ -178,11 +186,8 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): {
   far: number;
   applied: boolean;
 } {
-  const cameraPos = {
-    x: ctx.camera.position.x,
-    y: ctx.camera.position.y,
-    z: ctx.camera.position.z,
-  };
+  const world = ctx.camera.getWorldPosition(CAMERA_WORLD_SCRATCH);
+  const cameraPos = { x: world.x, y: world.y, z: world.z };
   // Read from the LIVE camera, never cached: the viewer swaps projections at
   // runtime (V key), and the ratio bound must not follow a stale one.
   const boundRatio = !isOrthographicCamera(ctx.camera);
@@ -259,7 +264,7 @@ export function updateDynamicFromCache(ctx: ClippingCtx): void {
   const s = ctx.boundsCache.getSphere();
   if (!s) return;
 
-  const cam = ctx.camera.position;
+  const cam = ctx.camera.getWorldPosition(CAMERA_WORLD_SCRATCH);
   const dx = cam.x - s.center.x;
   const dy = cam.y - s.center.y;
   const dz = cam.z - s.center.z;

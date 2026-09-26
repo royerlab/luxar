@@ -245,6 +245,26 @@ describe('updateDynamicFromCache', () => {
     expect(camera.far).toBe(1000);
   });
 
+  it('measures from the camera world position when the camera is parented', () => {
+    // An XR-style rig: the camera's local position (0, 0, 20) sits 80 further
+    // out in world space. Its planes must match an unparented camera at the
+    // same WORLD position, not one at its local position.
+    const bounds = { positionBounds: { min: [-10, -10, -10], max: [10, 10, 10] } };
+    function planesFor(camera: THREE.PerspectiveCamera): [number, number] {
+      const scene = new THREE.Scene();
+      scene.userData = bounds;
+      const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
+      updateDynamicFromCache(ctx);
+      return [camera.near, camera.far];
+    }
+    const rig = new THREE.Group();
+    rig.position.set(0, 0, 80);
+    const parented = makeCamera(new THREE.Vector3(0, 0, 20), 0.001, 10000);
+    rig.add(parented);
+    const reference = makeCamera(new THREE.Vector3(0, 0, 100), 0.001, 10000);
+    expect(planesFor(parented)).toEqual(planesFor(reference));
+  });
+
   it('updates near/far when changes exceed 0.1% threshold', () => {
     const scene = new THREE.Scene();
     scene.userData = { positionBounds: { min: [-10, -10, -10], max: [10, 10, 10] } };
