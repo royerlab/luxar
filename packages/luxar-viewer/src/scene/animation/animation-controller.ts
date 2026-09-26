@@ -16,6 +16,37 @@ import { log, Modules } from '../../utils/log';
 import { RafDriver } from './raf-driver';
 
 /**
+ * The phases of a frame's per-frame callbacks, run in this order after
+ * `controls.update()`:
+ *
+ * - `camera`: callbacks that MOVE the camera (a flight, the recording
+ *   turntable, the offline capture's orbit step). They run first so that
+ *   everything reading the camera this frame reads its final pose.
+ * - `view`: callbacks that DERIVE state from the camera and the scene
+ *   (dynamic clipping planes, depth sort, projected density, LOD selection,
+ *   dimension playback). The default.
+ * - `pre-render`: work that needs the frame's final view state (the
+ *   scene-captured environment).
+ * - `ui`: read-only overlays (scale bar, Layers-panel LOD status).
+ *
+ * Within a phase callbacks run in registration order. Before phases existed
+ * everything ran in registration order alone, so a camera writer registered
+ * after the view callbacks (every flight is: it registers when it starts)
+ * moved the camera after clipping, depth sort and LOD had already read it,
+ * and every flight frame rendered with the previous frame's near/far.
+ */
+export type FramePhase = 'camera' | 'view' | 'pre-render' | 'ui';
+
+/** Phase run order. */
+const FRAME_PHASES: readonly FramePhase[] = ['camera', 'view', 'pre-render', 'ui'];
+
+/** A registered per-frame callback. */
+interface PerFrameEntry {
+  callback: () => void;
+  continuous: boolean;
+}
+
+/**
  * AnimationController manages the main rendering loop and performance optimization
  *
  * Key Features:
@@ -42,8 +73,22 @@ export class AnimationController {
   /** Timeout ID for auto-pause functionality */
   private idleTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  /** Per-frame callbacks for additional updates (keyed by ID for safe add/remove) */
-  private perFrameCallbacks: Map<string, { callback: () => void; continuous: boolean }> = new Map();
+  /**
+   * Per-frame callbacks, one insertion-ordered map per phase (keyed by ID for
+   * safe add/remove). Iterating the live maps, rather than a sorted snapshot,
+   * keeps the long-standing semantics for a callback that registers or
+   * removes another mid-frame: a removed one that has not run yet is skipped,
+   * one added to the phase being run (or a later one) runs this frame.
+   */
+  private readonly callbacksByPhase: Record<FramePhase, Map<string, PerFrameEntry>> = {
+    camera: new Map(),
+    view: new Map(),
+    'pre-render': new Map(),
+    ui: new Map(),
+  };
+
+  /** Phase each registered callback id lives in. */
+  private readonly phaseOf = new Map<string, FramePhase>();
 
   /** Ids of per-frame callbacks whose failure has already been logged. */
   private readonly failedCallbackIds = new Set<string>();
@@ -112,7 +157,9 @@ export class AnimationController {
    * - Camera-based LOD updates
    * - Custom animations or effects
    *
-   * The callback is executed after controls.update() but before rendering.
+   * The callback is executed after controls.update() but before rendering,
+   * in its phase's turn (camera → view → pre-render → ui), and within a phase
+   * in registration order.
    *
    * @param id - Unique identifier for this callback (for later removal)
    * @param callback - Function to call each frame
@@ -121,6 +168,10 @@ export class AnimationController {
    *   auto-pausing due to idle timeout. Use for callbacks that need every frame (e.g.,
    *   dimension animation, recording). Default: false (on-demand callbacks that only run
    *   when animation is active but don't prevent pausing).
+   * @param options.phase - Which {@link FramePhase} the callback runs in.
+   *   `'camera'` for callbacks that move the camera, `'pre-render'` for work
+   *   that needs the frame's final view state, `'ui'` for read-only overlays.
+   *   Default: `'view'`.
    *
    * @example
    * ```typescript
@@ -135,8 +186,19 @@ export class AnimationController {
    * }, { continuous: true });
    * ```
    */
-  addPerFrameCallback(id: string, callback: () => void, options?: { continuous?: boolean }): void {
-    this.perFrameCallbacks.set(id, { callback, continuous: options?.continuous ?? false });
+  addPerFrameCallback(
+    id: string,
+    callback: () => void,
+    options?: { continuous?: boolean; phase?: FramePhase }
+  ): void {
+    const phase = options?.phase ?? 'view';
+    const previous = this.phaseOf.get(id);
+    // Re-registering in the SAME phase keeps the callback's position (the
+    // map's own overwrite rule); a phase change moves it to the end of its
+    // new phase.
+    if (previous !== undefined && previous !== phase) this.callbacksByPhase[previous].delete(id);
+    this.callbacksByPhase[phase].set(id, { callback, continuous: options?.continuous ?? false });
+    this.phaseOf.set(id, phase);
   }
 
   /**
@@ -155,7 +217,10 @@ export class AnimationController {
     // A later registration under the same id is a new callback: report its
     // first failure too.
     this.failedCallbackIds.delete(id);
-    return this.perFrameCallbacks.delete(id);
+    const phase = this.phaseOf.get(id);
+    if (phase === undefined) return false;
+    this.phaseOf.delete(id);
+    return this.callbacksByPhase[phase].delete(id);
   }
 
   /**
@@ -165,7 +230,7 @@ export class AnimationController {
    * @returns true if callback exists
    */
   hasPerFrameCallback(id: string): boolean {
-    return this.perFrameCallbacks.has(id);
+    return this.phaseOf.has(id);
   }
 
   /**
@@ -351,18 +416,23 @@ export class AnimationController {
    * while the loop kept spinning.
    */
   private runPerFrameCallbacks(): void {
-    for (const [id, entry] of this.perFrameCallbacks) {
-      try {
-        entry.callback();
-      } catch (error) {
-        if (!this.failedCallbackIds.has(id)) {
-          this.failedCallbackIds.add(id);
-          log.error(
-            Modules.ANIMATION,
-            `Per-frame callback '${id}' threw; skipping it this frame`,
-            error
-          );
-        }
+    for (const phase of FRAME_PHASES) {
+      for (const [id, entry] of this.callbacksByPhase[phase]) this.runCallback(id, entry);
+    }
+  }
+
+  /** Run one callback, logging its first failure (see {@link runPerFrameCallbacks}). */
+  private runCallback(id: string, entry: PerFrameEntry): void {
+    try {
+      entry.callback();
+    } catch (error) {
+      if (!this.failedCallbackIds.has(id)) {
+        this.failedCallbackIds.add(id);
+        log.error(
+          Modules.ANIMATION,
+          `Per-frame callback '${id}' threw; skipping it this frame`,
+          error
+        );
       }
     }
   }
@@ -390,8 +460,8 @@ export class AnimationController {
 
     // Check if any continuous per-frame callbacks are active (e.g., turntable recording, dimension animation)
     // On-demand callbacks (continuous: false) like dynamic-clipping and scale-bar don't prevent idle pause
-    const hasContinuousCallbacks = [...this.perFrameCallbacks.values()].some(
-      (entry) => entry.continuous
+    const hasContinuousCallbacks = FRAME_PHASES.some((phase) =>
+      [...this.callbacksByPhase[phase].values()].some((entry) => entry.continuous)
     );
 
     return autoCamera || gesture || hasEffects || hasContinuousCallbacks;
@@ -541,6 +611,7 @@ export class AnimationController {
    */
   dispose(): void {
     this.stopAnimation();
-    this.perFrameCallbacks.clear();
+    for (const phase of FRAME_PHASES) this.callbacksByPhase[phase].clear();
+    this.phaseOf.clear();
   }
 }

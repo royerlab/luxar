@@ -62,14 +62,20 @@ async function orbitToFrame(
   i: number
 ): Promise<void> {
   const { plan, animationController, captureCallbackId } = deps;
-  animationController.addPerFrameCallback(captureCallbackId, () => {
-    if (i > 0) controls.applyOrbitRotation(plan.anglePerFrame);
-    // Called on frame 0 too, deliberately: switching the interactive
-    // dolly off leaves the camera wherever the swing had reached, so
-    // this is what drives the phase to 0 and puts the capture on the
-    // true baseline distance rather than on a leftover offset.
-    if (plan.dollyCycles > 0) controls.applyOrbitDolly(plan.dollyPhaseFor(i));
-  });
+  // `camera`: the orbit step moves the camera before the view callbacks
+  // (clipping, depth sort, LOD) read it, so they follow this frame's pose.
+  animationController.addPerFrameCallback(
+    captureCallbackId,
+    () => {
+      if (i > 0) controls.applyOrbitRotation(plan.anglePerFrame);
+      // Called on frame 0 too, deliberately: switching the interactive
+      // dolly off leaves the camera wherever the swing had reached, so
+      // this is what drives the phase to 0 and puts the capture on the
+      // true baseline distance rather than on a leftover offset.
+      if (plan.dollyCycles > 0) controls.applyOrbitDolly(plan.dollyPhaseFor(i));
+    },
+    { phase: 'camera' }
+  );
 
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 

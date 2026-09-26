@@ -584,7 +584,7 @@ describe('VideoRecordingStrategy', () => {
       expect(mockAnimController.addPerFrameCallback).toHaveBeenCalledWith(
         'recording-turntable',
         expect.any(Function),
-        { continuous: true }
+        { continuous: true, phase: 'camera' }
       );
     });
 

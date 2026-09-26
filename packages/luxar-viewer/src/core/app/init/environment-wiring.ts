@@ -56,9 +56,15 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
   const { sceneManager, animationController, events, options, isSettled } = deps;
   sceneManager.attachEnvironmentRuntime(isSettled);
 
-  animationController.addPerFrameCallback('environment-capture', () => {
-    sceneManager.environment?.tick();
-  });
+  // `pre-render`: a capture this frame sees the frame's final view state
+  // (camera writers and view callbacks, including a dimension step, have run).
+  animationController.addPerFrameCallback(
+    'environment-capture',
+    () => {
+      sceneManager.environment?.tick();
+    },
+    { phase: 'pre-render' }
+  );
   events.add(() => animationController.removePerFrameCallback('environment-capture'));
 
   const markStale = (): void => sceneManager.environment?.markStale();
