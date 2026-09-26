@@ -848,7 +848,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded
 - `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari), and also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal (replacing the 512 MB fallback in either direction when `deviceMemory` is unavailable, capped at 2 GB)
 
-The hash fragment `#layers=<url-encoded JSON>` is not a startup parameter but the viewer's own record of your Layers-panel edits (display range, gamma, opacity, blending, colormap, visibility, order, gain — only the fields that differ from the scene's authored defaults). It is rewritten as you edit and applied when a scene loads, so copying the address bar shares the view; switching datasets drops it. The same document is behind the Layers header menu's **Copy / Download / Load layer settings** and is described by `schemas/layer-settings.v1.schema.json`.
+The hash fragment `#!<url-encoded JSON>` is not a startup parameter but the viewer's own record of the view state, Neuroglancer-style: the camera pose plus your Layers-panel edits (display range, gamma, opacity, blending, colormap, visibility, order, gain — only the fields that differ from the scene's authored defaults). It is rewritten as you orbit and edit and applied when a scene loads, so copying the address bar shares exactly what you see; switching datasets drops it. The same document is behind the Layers header menu's **Copy / Download / Load view state** and is described by `schemas/view-state.v1.schema.json`.
 
 ### Programmatic Usage
 

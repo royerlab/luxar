@@ -1368,8 +1368,8 @@ describe('LuxarApp', () => {
     });
   });
 
-  describe('layer settings in the URL (#layers=)', () => {
-    it('binds the layers panel to the window when updateBrowserUrl is true', async () => {
+  describe('view state in the URL (#!)', () => {
+    it('gives the layers panel the view-state port and mirrors edits into the URL when updateBrowserUrl is true', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({
         canvas: mockCanvas,
@@ -1377,14 +1377,16 @@ describe('LuxarApp', () => {
         updateBrowserUrl: true,
       });
       const panel = (LayersPanel as any).mock.instances.at(-1);
-      expect(panel.bindUrl).toHaveBeenCalledExactlyOnceWith(window);
+      expect(panel.setViewStatePort).toHaveBeenCalledOnce();
+      expect(panel.onChange).toHaveBeenCalledOnce(); // the URL writer subscribed
     });
 
-    it('leaves the host URL alone by default (embedded use)', async () => {
+    it('still offers the port but leaves the host URL alone by default (embedded use)', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
       const panel = (LayersPanel as any).mock.instances.at(-1);
-      expect(panel.bindUrl).not.toHaveBeenCalled();
+      expect(panel.setViewStatePort).toHaveBeenCalledOnce();
+      expect(panel.onChange).not.toHaveBeenCalled();
     });
   });
 

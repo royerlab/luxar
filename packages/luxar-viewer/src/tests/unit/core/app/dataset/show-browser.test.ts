@@ -166,20 +166,16 @@ describe('showDatasetBrowser', () => {
       );
     });
 
-    it('drops a #layers= fragment so settings do not carry onto the new dataset', async () => {
+    it('drops the #! view-state fragment so it does not carry onto the new dataset', async () => {
       const ports = makePorts();
       ports.updateBrowserUrl = true;
-      window.history.replaceState(
-        null,
-        '',
-        '#foo=1&layers=%7B%22version%22%3A1%2C%22layers%22%3A%7B%7D%7D'
-      );
+      window.history.replaceState(null, '', '#!%7B%22version%22%3A1%2C%22layers%22%3A%7B%7D%7D');
       showDatasetBrowser(ports);
       const opts = mocks.DatasetBrowserCtor.mock.calls[0][0] as CapturedOpts;
 
       await opts.onDatasetSelect('http://example.com/data.zarr');
 
-      expect(window.location.hash).toBe('#foo=1');
+      expect(window.location.hash).toBe('');
       window.history.replaceState(null, '', window.location.pathname);
     });
 

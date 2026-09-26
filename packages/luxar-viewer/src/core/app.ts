@@ -8,6 +8,13 @@ import {
   type ViewerSnapshot,
   type CameraSnapshot,
 } from './app/snapshot/viewer-snapshot';
+import { LAYER_SETTINGS_VERSION, type LayerSettingsDoc } from '../ui/layers/layer-settings';
+import {
+  VIEW_STATE_VERSION,
+  readViewStateHash,
+  startViewStateUrlSync,
+  type ViewStateDoc,
+} from '../ui/view-state';
 import { createEventBus, type Unsubscribe } from '../utils/cross-layer/event-bus';
 import type {
   LuxarEmbedderEventMap,
@@ -321,7 +328,7 @@ export class LuxarApp {
       // so read it lazily rather than capturing.
       this.layersPanel?.setPickBufferInvalidator(() => this.pickingSystem?.markDirty());
 
-      this.bindLayerSettingsUrl();
+      this.bindViewState();
 
       // Dataset routing: subsystems are wired up, fields are assigned —
       // the orchestrator delegates can now safely read `this.*`.
@@ -416,14 +423,62 @@ export class LuxarApp {
   }
 
   /**
-   * Layer edits are mirrored into `#layers=` so the address bar doubles as a
-   * share link — under the same opt-in as the `?src=` rewrite, so an embedded
-   * viewer never touches its host page's URL.
+   * The view state — layer edits plus the camera pose — as one document (see
+   * `ui/view-state.ts`). The Layers header menu copies / downloads / loads it
+   * in any mode; mirroring it into the URL fragment (`#!<json>`, so the
+   * address bar doubles as a share link) follows the same opt-in as the
+   * `?src=` rewrite, so an embedded viewer never touches its host page's URL.
    */
-  private bindLayerSettingsUrl(): void {
-    if (this.options.updateBrowserUrl === true && typeof window !== 'undefined') {
-      this.layersPanel?.bindUrl(window);
+  private bindViewState(): void {
+    this.layersPanel?.setViewStatePort({
+      get: () => this.getViewState(),
+      apply: (doc) => this.applyViewState(doc, true),
+    });
+    if (this.options.updateBrowserUrl !== true || typeof window === 'undefined') return;
+    this.viewStateWindow = window;
+    const stop = startViewStateUrlSync(
+      {
+        onChange: (listener) => {
+          const offLayers = this.layersPanel?.onChange(listener);
+          const offCamera = this.embedderEvents.on('camera-changed', listener);
+          return () => {
+            offLayers?.();
+            offCamera();
+          };
+        },
+        getViewState: () => this.getViewState(),
+      },
+      window
+    );
+    this.events.add(stop);
+  }
+
+  /** Window whose `#!` fragment is read at load and rewritten as the view changes. */
+  private viewStateWindow: Window | undefined;
+
+  private getViewState(): ViewStateDoc {
+    const doc: ViewStateDoc = { version: VIEW_STATE_VERSION };
+    const layers = this.layersPanel?.getLayerSettings()?.layers;
+    if (layers && Object.keys(layers).length > 0) doc.layers = layers;
+    if (this.isInitialized) doc.camera = captureViewerSnapshot(this.sceneManager).camera;
+    return doc;
+  }
+
+  /**
+   * Make the viewer match `doc`. `reset` returns every layer to its authored
+   * state first ("Load view state…" means exactly the file); a freshly loaded
+   * scene is already there. Returns the layer paths this scene lacks.
+   */
+  private applyViewState(doc: ViewStateDoc, reset: boolean): string[] {
+    let skipped: string[] = [];
+    if (doc.layers && this.layersPanel) {
+      const layers: LayerSettingsDoc = { version: LAYER_SETTINGS_VERSION, layers: doc.layers };
+      skipped = reset
+        ? this.layersPanel.applyLayerSettings(layers)
+        : this.layersPanel.applyLayerPatches(layers);
     }
+    if (doc.camera) restoreCamera(this.sceneManager, doc.camera);
+    return skipped;
   }
 
   /**
@@ -438,6 +493,12 @@ export class LuxarApp {
     this.disposeWaypoints();
     // ...and its sounds must stop before the new store loads.
     this.audioEngine?.detachScene();
+    // Read the shared link's view state now: the load below moves the camera
+    // (authored pose, waypoint snap), and the URL writer would mirror that
+    // over the fragment before it could be applied.
+    const fromUrl = this.viewStateWindow
+      ? readViewStateHash(this.viewStateWindow.location.hash)
+      : null;
     try {
       await loadDatasetImpl(src, {
         inputHandler: this.inputHandler,
@@ -457,6 +518,15 @@ export class LuxarApp {
         openCacheStatsView: () => this.openCacheStatsView(),
       });
       this.currentDatasetSrc = src;
+      if (fromUrl) {
+        const skipped = this.applyViewState(fromUrl, false);
+        if (skipped.length > 0) {
+          log.warning(
+            Modules.APP,
+            `#! view state names ${skipped.length} layer(s) this scene lacks: ${skipped.join(', ')}`
+          );
+        }
+      }
       const sceneLoader = getSceneLoader();
       this.datasetFaultLoader = sceneLoader ?? undefined;
       // A replayed latched fault is post-load state, so preserve the public

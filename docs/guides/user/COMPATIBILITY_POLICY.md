@@ -139,7 +139,7 @@ and falls back to defaults**; it does not attempt to migrate the old shape:
 | User settings (`luxar.settings`) | `SETTINGS_VERSION` in `src/config/user-settings.ts` | defaults |
 | Per-scene rendering settings (`luxar.rendering.<scene-id>`) | `RENDERING_SETTINGS_VERSION` in `src/ui/rendering-controls/settings-persistence.ts` | defaults (the scene's own `viewer_config` applies again) |
 | OPFS chunk cache | `OPFS_ENCODING_VERSION` in `src/cache/types.ts` | the cache is dropped and refilled |
-| Layer-settings document (`#layers=`, `layer-settings.json`) | `LAYER_SETTINGS_VERSION` in `src/ui/layers/layer-settings.ts` (schema `schemas/layer-settings.v1.schema.json`) | ignored (URL) / refused with a message (file) |
+| View-state document (`#!<json>`, `view-state.json`) | `VIEW_STATE_VERSION` in `src/ui/view-state.ts` (schema `schemas/view-state.v1.schema.json`) | ignored (URL) / refused with a message (file) |
 
 Bumping any of these is therefore cheap for the code and mildly annoying for the
 user (a re-download, a re-tweaked slider), which is the intended trade: settings

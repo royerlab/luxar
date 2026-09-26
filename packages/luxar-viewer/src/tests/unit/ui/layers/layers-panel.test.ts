@@ -93,7 +93,6 @@ import {
   absorptionSliderRange,
 } from '../../../../ui/layers/absorption-range';
 import { getColormapTexture } from '../../../../rendering/colormap-textures';
-import { readLayerSettingsHash } from '../../../../ui/layers/layer-settings';
 
 /**
  * Normalised thumb position for a κ value on a log track — the inverse of
@@ -4792,44 +4791,30 @@ describe('LayersPanel layer-settings document (getLayerSettings / applyLayerSett
     panel.dispose();
   });
 
-  it('bindUrl mirrors edits into #layers= and a later panel on the same window restores them', () => {
-    vi.useFakeTimers();
-    try {
-      const win = {
-        location: { pathname: '/v/', search: '?src=a', hash: '' },
-        history: {
-          replaceState: vi.fn((_s: unknown, _t: string, url: string) => {
-            const i = url.indexOf('#');
-            win.location.hash = i < 0 ? '' : url.slice(i);
-          }),
-        },
-      };
-      const panel = new LayersPanel(container, animationController);
-      panel.bindUrl(win);
-      panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph('points'));
-      panel.setLayer('/cloud', { gamma: 2 });
-      vi.advanceTimersByTime(300);
-      expect(readLayerSettingsHash(win.location.hash)).toEqual({
-        version: 1,
-        layers: { '/cloud': { gamma: 2 } },
-      });
-
-      // A reload: a fresh panel bound to the same window picks the edit up on scene init.
-      const other = document.createElement('div');
-      document.body.appendChild(other);
-      const again = new LayersPanel(other, animationController);
-      again.bindUrl(win);
-      again.initFromScene(new THREE.Group(), makeLayeredSceneGraph('points'));
-      expect(again.layerState.getLayer('/cloud')!.gamma).toBe(2);
-
-      panel.dispose();
-      again.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
+  it('onChange notifies the URL writer on every edit, and applyLayerPatches skips the reset', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph('points'));
+    const listener = vi.fn();
+    const off = panel.onChange(listener);
+    panel.setLayer('/cloud', { gamma: 2 });
+    expect(listener).toHaveBeenCalled();
+    off();
+    listener.mockClear();
+    const skipped = panel.applyLayerPatches({
+      version: 1,
+      layers: { '/cloud': { opacity: 0.5 }, '/ghost': { gamma: 3 } },
+    });
+    expect(skipped).toEqual(['/ghost']);
+    // No reset: the earlier gamma edit survives alongside the new opacity.
+    expect(panel.getLayerSettings()).toEqual({
+      version: 1,
+      layers: { '/cloud': { gamma: 2, opacity: 0.5 } },
+    });
+    expect(listener).not.toHaveBeenCalled();
+    panel.dispose();
   });
 
-  it('the header menu offers copy / download / load of the layer settings', () => {
+  it('the header menu offers copy / download / load of the view state', () => {
     const panel = openPanel();
     const closeBtn = container.querySelector<HTMLElement>('.luxar-layers-panel__close')!;
     closeBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
@@ -4838,9 +4823,9 @@ describe('LayersPanel layer-settings document (getLayerSettings / applyLayerSett
     ).map((el) => el.textContent?.trim());
     expect(labels).toEqual(
       expect.arrayContaining([
-        'Copy layer settings',
-        'Download layer settings…',
-        'Load layer settings…',
+        'Copy view state',
+        'Download view state…',
+        'Load view state…',
       ])
     );
     panel.dispose();
