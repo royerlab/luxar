@@ -25,6 +25,7 @@ a CI build stays offline and silent.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import shutil
@@ -90,7 +91,7 @@ def _transient(error: Exception) -> bool:
     """A failure worth retrying: a network error, a timeout, 429 or a 5xx."""
     if isinstance(error, urllib.error.HTTPError):
         return error.code == 429 or error.code >= 500
-    return isinstance(error, OSError)
+    return isinstance(error, (OSError, http.client.HTTPException))
 
 
 def _post_with_retry(request: urllib.request.Request) -> bytes:
@@ -98,7 +99,7 @@ def _post_with_retry(request: urllib.request.Request) -> bytes:
         try:
             with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_S) as resp:  # noqa: S310 - fixed https URL
                 return resp.read()
-        except OSError as e:  # URLError, HTTPError and timeouts are all OSError
+        except (OSError, http.client.HTTPException) as e:
             if attempt == OPENAI_ATTEMPTS or not _transient(e):
                 if isinstance(e, urllib.error.HTTPError):
                     detail = e.read().decode("utf-8", "replace")[:300]

@@ -161,16 +161,23 @@ class _Resp:
 
 
 def test_openai_request_retries_a_dropped_read(monkeypatch, tmp_path) -> None:
+    import http.client
     import urllib.request
 
     from luxar.demos import _narration
 
     calls = []
 
+    class BrokenRead(_Resp):
+        def read(self) -> bytes:
+            raise http.client.IncompleteRead(b"", 100)
+
     def flaky(request, timeout):  # noqa: ANN001 - urlopen's shape
         calls.append(1)
-        if len(calls) < 3:
+        if len(calls) == 1:
             raise TimeoutError("The read operation timed out")
+        if len(calls) == 2:
+            return BrokenRead(b"")
         return _Resp(b"mp3-bytes")
 
     monkeypatch.setenv("OPENAI_API_KEY", "test")
