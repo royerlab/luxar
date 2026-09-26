@@ -381,6 +381,7 @@ export async function runInitPipeline(
     capOverride: ports.options.densityCap,
     energyComp: lodEnergyCompEnabled,
     sceneManager,
+    getViewContext: () => viewContext.get(),
     registerMaterial: (material) => materialManager.register(material),
     setRefinementDensityProvider: (provider, caps) =>
       loaderManager.setRefinementDensityProvider(provider, caps),

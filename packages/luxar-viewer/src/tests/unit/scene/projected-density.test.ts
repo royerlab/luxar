@@ -8,6 +8,7 @@ import {
   snapshotProjectedDensity,
 } from '../../../scene/projected-density';
 import { setCommittedData } from '../../../types/committed-data';
+import { ViewContextProvider } from '../../../scene/view-context';
 
 /** A committed gsplats node the tracker can measure. */
 function node(path: string, radius: number, splats: number, position = new THREE.Vector3()) {
@@ -84,6 +85,54 @@ describe('projectSphereAreaPx', () => {
 
 describe('ProjectedDensityTracker', () => {
   afterEach(() => getProjectedDensityTracker().reset());
+
+  it('measures from the shared view snapshot when one is injected', () => {
+    const root = new THREE.Scene();
+    root.add(node('/dense', 1, 1_000_000));
+    root.updateMatrixWorld(true);
+    const near = perspective(1600, 1000, 100);
+    const far = perspective(1600, 1000, 200);
+    const views = new ViewContextProvider({
+      getCamera: () => near,
+      getViewportCss: () => null,
+      getDrawingBuffer: () => ({ width: 1600, height: 1000 }),
+    });
+    const own = new ProjectedDensityTracker();
+    own.configure({
+      enabled: () => true,
+      getRoot: () => root,
+      getCamera: () => near,
+      getDrawingBufferSize: () => ({ width: 1600, height: 1000 }),
+    });
+    const shared = new ProjectedDensityTracker();
+    shared.configure({
+      enabled: () => true,
+      getRoot: () => root,
+      // The getters disagree with the snapshot; the snapshot wins.
+      getCamera: () => far,
+      getDrawingBufferSize: () => ({ width: 10, height: 10 }),
+      getViewContext: () => views.get(),
+    });
+    expect(own.evaluate()).toBe(true);
+    expect(shared.evaluate()).toBe(true);
+    expect(shared.get('/dense')!.areaPx).toBe(own.get('/dense')!.areaPx);
+
+    // No drawing buffer in the snapshot → no evaluation.
+    const empty = new ViewContextProvider({
+      getCamera: () => near,
+      getViewportCss: () => null,
+      getDrawingBuffer: () => null,
+    });
+    const blind = new ProjectedDensityTracker();
+    blind.configure({
+      enabled: () => true,
+      getRoot: () => root,
+      getCamera: () => near,
+      getDrawingBufferSize: () => ({ width: 1600, height: 1000 }),
+      getViewContext: () => empty.get(),
+    });
+    expect(blind.evaluate()).toBe(false);
+  });
 
   it('measures elements per drawing-buffer pixel for committed, named emissive meshes only', () => {
     const root = new THREE.Scene();

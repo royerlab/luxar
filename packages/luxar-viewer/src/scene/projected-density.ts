@@ -27,6 +27,7 @@ import * as THREE from 'three';
 import { readVisibleElementCount } from '../data/scene-loader/monitor/visible-counts';
 import { hasCommittedData } from '../types/committed-data';
 import { isEffectivelyVisible } from '../utils/object-visibility';
+import { ViewContextProvider, type ViewContext } from './view-context';
 
 /** One node's projected footprint for the last evaluated frame. */
 export interface NodeDensity {
@@ -60,6 +61,11 @@ export interface ProjectedDensityDeps {
   /** Drawing-buffer size in physical pixels (`renderer.domElement.width/height`). */
   getDrawingBufferSize(): { width: number; height: number } | null;
   /**
+   * The frame's shared camera snapshot. When omitted the tracker builds its
+   * own from ``getCamera`` / ``getDrawingBufferSize`` on every evaluation.
+   */
+  getViewContext?(): ViewContext;
+  /**
    * Called for every committed data mesh after its record is refreshed (on-
    * or off-screen). The density guard hooks here so it sees the mesh itself,
    * which the path-keyed records deliberately do not retain.
@@ -67,7 +73,6 @@ export interface ProjectedDensityDeps {
   onVisit?(mesh: THREE.Mesh, record: NodeDensity): void;
 }
 
-const VIEW_SCRATCH = new THREE.Matrix4();
 const CENTER_SCRATCH = new THREE.Vector3();
 const SCALE_SCRATCH = new THREE.Vector3();
 
@@ -128,6 +133,8 @@ export class ProjectedDensityTracker {
   private width = 0;
   private height = 0;
   private camera: THREE.Camera | null = null;
+  private viewMatrix: THREE.Matrix4 | null = null;
+  private ownViews: ViewContextProvider | null = null;
   private readonly visit = (obj: THREE.Object3D): void => this.visitObject(obj);
 
   configure(deps: ProjectedDensityDeps): void {
@@ -142,21 +149,34 @@ export class ProjectedDensityTracker {
     const deps = this.deps;
     if (!deps || !deps.enabled()) return false;
     const root = deps.getRoot();
-    const camera = deps.getCamera();
-    const size = deps.getDrawingBufferSize();
-    if (!root || !camera || !size || size.width <= 0 || size.height <= 0) return false;
+    if (!root) return false;
+    const view = this.view(deps);
+    const size = view?.drawingBuffer;
+    if (!view || !size) return false;
     this.frame += 1;
     this.width = size.width;
     this.height = size.height;
-    this.camera = camera;
-    camera.updateMatrixWorld();
-    VIEW_SCRATCH.copy(camera.matrixWorld).invert();
+    this.camera = view.camera;
+    this.viewMatrix = view.viewMatrix;
     root.traverse(this.visit);
     // Drop records for nodes that no longer exist (disposed / dataset switch).
     for (const [path, rec] of this.byPath) {
       if (rec.frame !== this.frame) this.byPath.delete(path);
     }
     return true;
+  }
+
+  /** The frame's snapshot: the injected one, or one rebuilt now from the getters. */
+  private view(deps: ProjectedDensityDeps): ViewContext | null {
+    if (deps.getViewContext) return deps.getViewContext();
+    if (!deps.getCamera()) return null;
+    this.ownViews ??= new ViewContextProvider({
+      getCamera: () => this.deps?.getCamera() as THREE.Camera,
+      getViewportCss: () => null,
+      getDrawingBuffer: () => this.deps?.getDrawingBufferSize() ?? null,
+    });
+    this.ownViews.invalidate();
+    return this.ownViews.get();
   }
 
   private visitObject(obj: THREE.Object3D): void {
@@ -210,7 +230,9 @@ export class ProjectedDensityTracker {
     camera: THREE.Camera,
     rec: NodeDensity
   ): void {
-    CENTER_SCRATCH.copy(bs.center).applyMatrix4(mesh.matrixWorld).applyMatrix4(VIEW_SCRATCH);
+    CENTER_SCRATCH.copy(bs.center)
+      .applyMatrix4(mesh.matrixWorld)
+      .applyMatrix4(this.viewMatrix as THREE.Matrix4);
     SCALE_SCRATCH.setFromMatrixScale(mesh.matrixWorld);
     const radius = bs.radius * Math.max(SCALE_SCRATCH.x, SCALE_SCRATCH.y, SCALE_SCRATCH.z);
     const { areaPx, onScreen } = projectSphereAreaPx(

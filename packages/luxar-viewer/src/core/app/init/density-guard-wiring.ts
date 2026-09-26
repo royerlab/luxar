@@ -19,6 +19,7 @@ import type {
   ProjectedDensityProvider,
 } from '../../../data/scene-loader/progressive/density-gate';
 import { DensityGuard, getDensityGuard } from '../../../scene/density-guard';
+import type { ViewContext } from '../../../scene/view-context';
 import {
   ProjectedDensityTracker,
   getProjectedDensityTracker,
@@ -42,6 +43,8 @@ export interface DensityGuardWiringDeps {
   capOverride?: number;
   /** The `?noLodEnergy` flag, passed through to `applyLodFade`. */
   energyComp: boolean;
+  /** The frame's shared camera snapshot (the tracker builds its own without it). */
+  getViewContext?: () => ViewContext;
   sceneManager: {
     readonly scene: THREE.Object3D | null;
     readonly camera: THREE.Camera | null;
@@ -172,6 +175,7 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
       const canvas = deps.sceneManager.renderer?.domElement;
       return canvas ? { width: canvas.width, height: canvas.height } : null;
     },
+    getViewContext: deps.getViewContext,
     onVisit: (mesh, record) => guard.observe(mesh, record),
   });
 
