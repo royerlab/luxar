@@ -1047,6 +1047,40 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.sort).not.toHaveBeenCalled(); // worker path stays inert
   });
 
+  it('orders partition parts by view direction under an orthographic camera', async () => {
+    // One split at x = 0. The camera sits on the x < 0 side but looks toward
+    // -x, so its parallel rays reach the x > 0 part first: under ortho that
+    // part is the NEAR one, although the eye is on the other side of the
+    // plane. The eye-side test is right only for perspective, where the rays
+    // diverge from the eye.
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    async function ranksFor(camera: THREE.Camera): Promise<number[]> {
+      const coord = await loadCoordinator();
+      coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+      const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+      makePartitionWrapper(bspTree, parts);
+      for (const part of parts) {
+        coord.noteDepthSortCommit(part, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      }
+      await flush();
+      coord.evaluateDepthSortPerFrame();
+      return parts.map((part) => part.renderOrder);
+    }
+    function posed<T extends THREE.Camera>(camera: T): T {
+      camera.position.set(-30, 0, 100);
+      camera.lookAt(-130, 0, 0);
+      camera.updateMatrixWorld();
+      return camera;
+    }
+
+    const [pLeft, pRight] = await ranksFor(posed(new THREE.PerspectiveCamera(60, 1, 0.1, 1000)));
+    expect(pRight).toBeLessThan(pLeft); // eye's side (left) is near: right draws first
+
+    const ortho = posed(new THREE.OrthographicCamera(-50, 50, 50, -50, 0.1, 1000));
+    const [oLeft, oRight] = await ranksFor(ortho);
+    expect(oLeft).toBeLessThan(oRight); // rays reach the right part first: left draws first
+  });
+
   it('keeps partition renderOrder a permutation while a load sweep is in progress', async () => {
     const bspTree = {
       axis: 0,

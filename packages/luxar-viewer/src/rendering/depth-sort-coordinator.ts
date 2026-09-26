@@ -1279,6 +1279,14 @@ function formatOrderingBytes(bytes: number, uploaded: boolean): string {
     : `${Math.round(bytes / 1000)} KB ${suffix}`;
 }
 
+/**
+ * How far behind an orthographic camera the BSP eye is placed (world units):
+ * beyond any scene extent, so every split plane the view crosses at an angle
+ * is decided by the view direction, and small enough to stay finite through
+ * the wrapper's inverse matrix.
+ */
+const ORTHO_BSP_EYE_DISTANCE = 1e15;
+
 /** Result of {@link computeModelView}; every caller copies out of it synchronously. */
 const MODEL_VIEW_SCRATCH = new THREE.Matrix4();
 
@@ -1859,6 +1867,17 @@ export function evaluateDepthSortPerFrame(): void {
       camera.updateMatrixWorld();
       scratch.view.copy(camera.matrixWorld).invert();
       scratch.camPos.setFromMatrixPosition(camera.matrixWorld);
+      if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+        // Parallel rays: which side of a BSP split plane is near depends on
+        // the view direction alone, not on where the eye sits (the ortho
+        // camera keeps the perspective pose's position, often on the far
+        // side of a plane the view looks back across). An eye pushed
+        // effectively to infinity behind the camera gives that answer through
+        // the same eye-side test. camPos feeds only the BSP ranks.
+        const e = camera.matrixWorld.elements;
+        scratch.axis.set(e[8], e[9], e[10]).normalize();
+        scratch.camPos.addScaledVector(scratch.axis, ORTHO_BSP_EYE_DISTANCE);
+      }
       viewComputed = true;
     }
 
