@@ -21,7 +21,7 @@
     "src/tests/e2e/hover-overlay.spec.ts": 2,
     "src/tests/e2e/hover-tooltip.spec.ts": 6,
     "src/tests/e2e/keyboard-input-system.spec.ts": 21,
-    "src/tests/e2e/layers-panel.spec.ts": 16,
+    "src/tests/e2e/layers-panel.spec.ts": 15,
     "src/tests/e2e/line-join-artifact.spec.ts": 1,
     "src/tests/e2e/line-rendering-visual.spec.ts": 3,
     "src/tests/e2e/lines-nd-dimension-visibility.spec.ts": 1,
