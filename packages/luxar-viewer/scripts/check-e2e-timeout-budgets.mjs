@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
@@ -177,7 +177,12 @@ function importedHelpers(sourceFile, helperSources, exportedHelperCache, moduleK
     }
     if (!bindings) continue;
     if (bindings.elements.every((element) => element.isTypeOnly)) continue;
-    const sourceKey = moduleKey === undefined ? specifier : relativeHelperKey(moduleKey, specifier);
+    const sourceKey =
+      moduleKey === undefined
+        ? specifier
+        : isAbsolute(sourceFile.fileName)
+          ? resolvedHelperPath(sourceFile.fileName, specifier)
+          : relativeHelperKey(moduleKey, specifier);
     const helperSource = helperSources.get(sourceKey);
     if (helperSource === undefined) {
       throw new Error(`Could not resolve shared helper module ${specifier}.`);
@@ -195,6 +200,13 @@ function importedHelpers(sourceFile, helperSources, exportedHelperCache, moduleK
 
 function relativeHelperKey(moduleKey, specifier) {
   return `./${join(dirname(moduleKey), specifier)}`;
+}
+
+function resolvedHelperPath(importerPath, specifier) {
+  const base = resolve(dirname(importerPath), specifier);
+  return [`${base}.ts`, join(base, 'index.ts'), base].find(
+    (candidate) => existsSync(candidate) && statSync(candidate).isFile()
+  );
 }
 
 function deadlineParameters(parameters, constants) {
@@ -596,13 +608,10 @@ export function helperSourcesForSpec(source, path, helperModuleCache = new Map()
           clause.namedBindings.elements.every((element) => element.isTypeOnly))
       )
         continue;
-      const key = moduleKey === undefined ? specifier : relativeHelperKey(moduleKey, specifier);
+      const resolvedPath = resolvedHelperPath(modulePath, specifier);
+      const key = moduleKey === undefined ? specifier : resolvedPath;
+      if (!resolvedPath) throw new Error(`Could not resolve shared helper module ${specifier}.`);
       if (sources.has(key)) continue;
-      const base = resolve(dirname(modulePath), specifier);
-      const resolvedPath = [`${base}.ts`, join(base, 'index.ts'), base].find(
-        (candidate) => existsSync(candidate) && statSync(candidate).isFile()
-      );
-      if (!resolvedPath) throw new Error(`Could not resolve shared helper module ${key}.`);
       let helperSource = helperModuleCache.get(resolvedPath);
       if (!helperSource) {
         helperSource = ts.createSourceFile(

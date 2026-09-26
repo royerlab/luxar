@@ -1072,9 +1072,43 @@ describe('helperSourcesForSpec', () => {
       );
 
       const sources = helperSourcesForSpec(source, specPath);
-      expect([...sources.keys()]).toEqual(['./helpers', './inner']);
+      expect([...sources.keys()]).toEqual(['./helpers', join(fixture, 'inner.ts')]);
       expect(analyzeSpec(source, 'example.spec.ts', 30_000, 60_000, sources)).toEqual([
         { deadlineMs: 45_000, file: 'example.spec.ts', line: 2, test: 'nested' },
+      ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps nested imports distinct when a helper resolves through index.ts', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-helpers-'));
+    try {
+      const specPath = join(fixture, 'example.spec.ts');
+      const source =
+        "import { a } from './helpers';\nimport { b } from './helpers/other';\ntest('nested', async ({ page }) => { await a(page); await b(page); });";
+      mkdirSync(join(fixture, 'helpers'));
+      writeFileSync(specPath, source);
+      writeFileSync(
+        join(fixture, 'helpers/index.ts'),
+        "import { w } from './wait'; export async function a(page) { await w(page); }"
+      );
+      writeFileSync(
+        join(fixture, 'helpers/other.ts'),
+        "import { w } from '../wait'; export async function b(page) { await w(page); }"
+      );
+      writeFileSync(
+        join(fixture, 'helpers/wait.ts'),
+        'export async function w(page) { await page.waitForTimeout(1_000); }'
+      );
+      writeFileSync(
+        join(fixture, 'wait.ts'),
+        'export async function w(page) { await page.waitForTimeout(45_000); }'
+      );
+
+      const sources = helperSourcesForSpec(source, specPath);
+      expect(analyzeSpec(source, 'example.spec.ts', 30_000, 60_000, sources)).toEqual([
+        { deadlineMs: 45_000, file: 'example.spec.ts', line: 3, test: 'nested' },
       ]);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
