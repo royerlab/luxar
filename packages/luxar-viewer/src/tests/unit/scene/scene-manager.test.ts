@@ -6,7 +6,7 @@
  * and resource management without requiring actual WebGL rendering.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import * as THREE from 'three';
 import {
   boundingBoxToSphere,
@@ -289,29 +289,47 @@ vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
 // The dead mock was silently ignored — SceneManager was being constructed
 // with the real ControlsManager, defeating test isolation.
 vi.mock('../../../controls/controls-manager', () => ({
-  ControlsManager: vi.fn().mockImplementation(() => ({
-    update: vi.fn(),
-    dispose: vi.fn(),
-    setCamera: vi.fn(),
-    setControlType: vi.fn(),
-    returnAutoDollyToBaseline: vi.fn(),
-    getControlType: vi.fn(() => 'orbit'),
-    getControls: vi.fn(() => ({
-      target: new THREE.Vector3(),
+  ControlsManager: vi.fn().mockImplementation(() => {
+    // A minimal working event dispatcher: commitCameraChange counts the
+    // `change` events a write fires and dispatches one itself when none did,
+    // and SceneManager relays controls `change` onto its own `change`.
+    const listeners = new Map<string, Set<(event: { type: string }) => void>>();
+    return {
       update: vi.fn(),
-    })),
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    saveState: vi.fn(),
-    reset: vi.fn(),
-    lookAt: vi.fn(),
-    getFocusTarget: vi.fn(() => new THREE.Vector3()),
-    setSceneScale: vi.fn(),
-    setTarget: vi.fn(),
-    setDistanceLimits: vi.fn(),
-    setZoomLimits: vi.fn(),
-    reinitialize: vi.fn(),
-  })),
+      dispose: vi.fn(),
+      setCamera: vi.fn(),
+      setControlType: vi.fn(),
+      returnAutoDollyToBaseline: vi.fn(),
+      getControlType: vi.fn(() => 'orbit'),
+      getControls: vi.fn(() => ({
+        target: new THREE.Vector3(),
+        update: vi.fn(),
+      })),
+      addEventListener: vi.fn((type: string, fn: (event: { type: string }) => void) => {
+        let set = listeners.get(type);
+        if (!set) {
+          set = new Set();
+          listeners.set(type, set);
+        }
+        set.add(fn);
+      }),
+      removeEventListener: vi.fn((type: string, fn: (event: { type: string }) => void) => {
+        listeners.get(type)?.delete(fn);
+      }),
+      dispatchEvent: vi.fn((event: { type: string }) => {
+        for (const fn of [...(listeners.get(event.type) ?? [])]) fn(event);
+      }),
+      saveState: vi.fn(),
+      reset: vi.fn(),
+      lookAt: vi.fn(),
+      getFocusTarget: vi.fn(() => new THREE.Vector3()),
+      setSceneScale: vi.fn(),
+      setTarget: vi.fn(),
+      setDistanceLimits: vi.fn(),
+      setZoomLimits: vi.fn(),
+      reinitialize: vi.fn(),
+    };
+  }),
 }));
 
 // Mock the data module (scene-manager imports from '../data', not '../data/zarr-loader')
@@ -1323,6 +1341,126 @@ describe('SceneManager', () => {
       expect(updateProjectionMatrix).toHaveBeenCalledOnce();
       expect(setZoomLimits).toHaveBeenCalledOnce();
       expect(updateMaterials).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('commitCameraChange', () => {
+    // Every consumer of a camera change (the scene-manager relay, the input
+    // handler, the embedder's camera-changed) listens on the CONTROLS
+    // manager's `change`. commitCameraChange guarantees exactly one reaches
+    // it per programmatic write, whether or not the write fired one itself.
+
+    let sceneChange: Mock<() => void>;
+
+    const controlsChanges = (): number =>
+      vi
+        .mocked(sceneManager.controls.dispatchEvent)
+        .mock.calls.filter(([event]) => (event as { type: string }).type === 'change').length;
+
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+      vi.mocked(sceneManager.controls.dispatchEvent).mockClear();
+      sceneChange = vi.fn();
+      sceneManager.addEventListener('change', sceneChange);
+    });
+
+    it('dispatches ONE controls change when the write fires none (fly-mode semantics)', () => {
+      sceneManager.commitCameraChange(() => {});
+
+      expect(controlsChanges()).toBe(1);
+      expect(sceneChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('dispatches ONE controls change with no write at all', () => {
+      sceneManager.commitCameraChange();
+
+      expect(controlsChanges()).toBe(1);
+      expect(sceneChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('adds nothing when the write already made the controls fire change', () => {
+      sceneManager.commitCameraChange(() => {
+        // What an orbit update() does when the pose moved.
+        sceneManager.controls.dispatchEvent({ type: 'change' } as any);
+      });
+
+      expect(controlsChanges()).toBe(1);
+      expect(sceneChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not leave its counting listener registered', () => {
+      sceneManager.commitCameraChange(() => {
+        sceneManager.controls.dispatchEvent({ type: 'change' } as any);
+      });
+      sceneManager.commitCameraChange();
+
+      const added = vi
+        .mocked(sceneManager.controls.addEventListener)
+        .mock.calls.filter(([type]) => type === 'change').length;
+      const removed = vi
+        .mocked(sceneManager.controls.removeEventListener)
+        .mock.calls.filter(([type]) => type === 'change').length;
+      // One permanent relay listener from init; every counter is removed.
+      expect(added - removed).toBe(1);
+      expect(controlsChanges()).toBe(2);
+    });
+
+    it('updates the camera world matrix after the write', () => {
+      const order: string[] = [];
+      const updateMatrixWorld = vi
+        .spyOn(sceneManager.camera, 'updateMatrixWorld')
+        .mockImplementation(() => {
+          order.push('updateMatrixWorld');
+        });
+
+      sceneManager.commitCameraChange(() => {
+        order.push('write');
+      });
+
+      expect(updateMatrixWorld).toHaveBeenCalled();
+      expect(order).toEqual(['write', 'updateMatrixWorld']);
+    });
+
+    it('setCameraZoom on an orthographic camera now publishes one controls change', () => {
+      sceneManager.setControlType('ortho');
+      vi.mocked(sceneManager.controls.dispatchEvent).mockClear();
+      sceneChange.mockClear();
+
+      sceneManager.setCameraZoom(2.5);
+
+      expect(controlsChanges()).toBe(1);
+      expect(sceneChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('setFov in perspective publishes exactly one controls change (the embedder hook)', () => {
+      expect(sceneManager.setFov(63)).toBe(true);
+
+      expect(controlsChanges()).toBe(1);
+      expect(sceneChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('centerOnOrigin publishes exactly one controls change when controls.update fires none', () => {
+      sceneManager.centerOnOrigin();
+
+      expect(controlsChanges()).toBe(1);
+      expect(sceneChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('centerCameraOnScene publishes exactly one controls change when controls.update fires none', () => {
+      sceneManager.centerCameraOnScene();
+
+      expect(controlsChanges()).toBe(1);
+      expect(sceneChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('fitCameraToObject publishes exactly one controls change when controls.update fires none', () => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
+      sceneManager.scene.add(mesh);
+
+      sceneManager.fitCameraToObject(mesh);
+
+      expect(controlsChanges()).toBe(1);
+      expect(sceneChange).toHaveBeenCalledTimes(1);
     });
   });
 

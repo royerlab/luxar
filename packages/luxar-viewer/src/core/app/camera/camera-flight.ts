@@ -350,7 +350,10 @@ export class CameraFlight {
 
     sceneManager.controls.setTarget(target);
     sceneManager.controls.reinitialize();
-    sceneManager.controls.dispatchEvent({ type: 'change' });
+    // Also brings the world matrices up to date: this runs AFTER the frame's
+    // controls.update(), so without it the view-phase callbacks (LOD, depth
+    // sort) read the previous frame's view matrix.
+    sceneManager.commitCameraChange();
   }
 
   private finish(completed: boolean): void {

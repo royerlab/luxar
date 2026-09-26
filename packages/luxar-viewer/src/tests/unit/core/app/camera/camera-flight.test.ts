@@ -6,7 +6,7 @@
  * under jsdom) with an injected clock, so every assertion is about the pose
  * the flight WROTE, not about timing luck.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import * as THREE from 'three';
 import {
   CameraFlight,
@@ -23,7 +23,7 @@ interface FakeControls {
   getFocusTarget: () => THREE.Vector3;
   setTarget: (v: THREE.Vector3) => void;
   reinitialize: ReturnType<typeof vi.fn>;
-  dispatchEvent: ReturnType<typeof vi.fn>;
+  dispatchEvent: Mock<(event: { type: string }) => void>;
 }
 
 function makeSceneManager(dynamicClipping = false): {
@@ -44,6 +44,13 @@ function makeSceneManager(dynamicClipping = false): {
   const sm = {
     camera,
     controls,
+    // Like production: run the write, sync matrices, publish ONE controls
+    // `change` (the fake controls fire none on their own).
+    commitCameraChange: vi.fn((write?: () => void) => {
+      write?.();
+      camera.updateMatrixWorld();
+      controls.dispatchEvent({ type: 'change' });
+    }),
     // The SceneManager surface the clipping rule reads; planes as the
     // per-frame updater would have left them for the current view.
     getDynamicClippingState: () => ({
@@ -200,7 +207,7 @@ describe('CameraFlight', () => {
       inputElement,
       now: () => now,
     });
-    return { flight, camera, controls };
+    return { flight, camera, controls, sm };
   }
 
   it('registers a continuous per-frame callback AND starts the loop', () => {
@@ -217,7 +224,7 @@ describe('CameraFlight', () => {
   });
 
   it('moves the camera along the path and lands exactly on the pose', async () => {
-    const { flight, camera, controls } = makeFlight();
+    const { flight, camera, controls, sm } = makeFlight();
     const done = flight.flyTo(DEST, { durationMs: 1000, easing: 'linear' });
 
     now = 1500;
@@ -227,6 +234,7 @@ describe('CameraFlight', () => {
     expect(camera.position.distanceTo(target)).toBeCloseTo(10, 5);
     expect(target.x).toBeCloseTo(5, 5);
     expect(controls.reinitialize).toHaveBeenCalled();
+    expect(sm.commitCameraChange).toHaveBeenCalled();
     expect(controls.dispatchEvent).toHaveBeenCalledWith({ type: 'change' });
     expect(flight.isActive).toBe(true);
 

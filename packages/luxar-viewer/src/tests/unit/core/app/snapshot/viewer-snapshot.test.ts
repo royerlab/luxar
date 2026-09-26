@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import * as THREE from 'three';
 import {
   captureSnapshot,
@@ -12,12 +12,26 @@ interface FakeControls {
   getFocusTarget: () => THREE.Vector3;
   setTarget: (v: THREE.Vector3) => void;
   reinitialize: () => void;
-  dispatchEvent: ReturnType<typeof vi.fn>;
+  dispatchEvent: Mock<(event: { type: string }) => void>;
 }
 
 interface FakeSceneManager {
   camera: THREE.Camera;
   controls: FakeControls;
+  commitCameraChange: ReturnType<typeof vi.fn>;
+}
+
+/** Like production: run the write, sync matrices, publish ONE controls `change`. */
+function withCommit(camera: THREE.Camera, controls: FakeControls): FakeSceneManager {
+  return {
+    camera,
+    controls,
+    commitCameraChange: vi.fn((write?: () => void) => {
+      write?.();
+      camera.updateMatrixWorld();
+      controls.dispatchEvent({ type: 'change' });
+    }),
+  };
 }
 
 function makePerspectiveSceneManager(): FakeSceneManager {
@@ -25,15 +39,12 @@ function makePerspectiveSceneManager(): FakeSceneManager {
   camera.position.set(10, 20, 30);
   camera.up.set(0, 1, 0);
   const target = new THREE.Vector3(1, 2, 3);
-  return {
-    camera,
-    controls: {
-      getFocusTarget: () => target.clone(),
-      setTarget: (v) => target.copy(v),
-      reinitialize: vi.fn(),
-      dispatchEvent: vi.fn(),
-    },
-  };
+  return withCommit(camera, {
+    getFocusTarget: () => target.clone(),
+    setTarget: (v) => target.copy(v),
+    reinitialize: vi.fn(),
+    dispatchEvent: vi.fn(),
+  });
 }
 
 function makeOrthoSceneManager(): FakeSceneManager {
@@ -42,15 +53,12 @@ function makeOrthoSceneManager(): FakeSceneManager {
   camera.up.set(0, 1, 0);
   camera.zoom = 2.0;
   const target = new THREE.Vector3(0, 0, 0);
-  return {
-    camera,
-    controls: {
-      getFocusTarget: () => target.clone(),
-      setTarget: (v) => target.copy(v),
-      reinitialize: vi.fn(),
-      dispatchEvent: vi.fn(),
-    },
-  };
+  return withCommit(camera, {
+    getFocusTarget: () => target.clone(),
+    setTarget: (v) => target.copy(v),
+    reinitialize: vi.fn(),
+    dispatchEvent: vi.fn(),
+  });
 }
 
 function loadDimsScene(ndim: number, currentStep: number[]): THREE.Scene {
@@ -201,6 +209,7 @@ describe('restoreSnapshot', () => {
     // LOD evaluation sees the new pose), refreshes ortho materials, and
     // dirties the picking system (regression: setCameraPose left the
     // previous LOD level pinned).
+    expect(sm.commitCameraChange).toHaveBeenCalledOnce();
     expect(sm.controls.dispatchEvent).toHaveBeenCalledWith({ type: 'change' });
   });
 

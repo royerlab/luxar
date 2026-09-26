@@ -204,6 +204,14 @@ describe('LuxarApp', () => {
       // Embedder-API delegation targets.
       resizeToCanvas: vi.fn(),
       centerCameraOnScene: vi.fn(),
+      // Like production: run the write, then publish ONE controls `change`
+      // (the fake controls fire none on their own). Reads the controls
+      // lazily because a test may swap them out.
+      commitCameraChange: vi.fn((write?: () => void) => {
+        write?.();
+        mockSceneManager.camera.updateMatrixWorld?.();
+        mockSceneManager.controls.dispatchEvent?.({ type: 'change' });
+      }),
     };
 
     mockAnimationController = {
