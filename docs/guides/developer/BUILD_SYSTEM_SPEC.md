@@ -1018,6 +1018,31 @@ find no active obsidian job. A dispatched run checks out the scanner from `dev`.
 former scheduled queue redispatcher was removed because cancelling a queued run and
 creating a fresh attempt merely returns it to the same queue.
 
+### Recovering a rootless Podman runner outage
+
+If every obsidian slot logs `invalid internal status, try resetting the pause process`
+and `podman info` fails the same way, stop the regular and CUDA slot services before
+resetting Podman's rootless pause state. The supervisors otherwise retry container
+starts every few seconds and keep requesting GitHub registration tokens. On obsidian,
+as the `royer` user:
+
+```bash
+systemctl --user stop luxar-ci-cuda.service luxar-ci-slot@{1..6}.service
+podman system migrate
+podman info
+gh api repos/royerlab/luxar/actions/runners --jq .total_count
+systemctl --user start luxar-ci-cuda.service luxar-ci-slot@{1..6}.service
+podman ps --format '{{.Names}} {{.Status}}'
+```
+
+Only start the services if the API check succeeds. If it returns a rate-limit error,
+leave the slots stopped until the `X-RateLimit-Reset` time from a read-only
+`gh api -i repos/royerlab/luxar/actions/runners` request. A failed token request can
+otherwise be passed to the container as an invalid multiline token, causing another
+retry loop. After restarting, confirm the slots register through the same API
+endpoint and that a queued job is dispatched. The 2026-09-26 outage is tracked
+in #2921.
+
 The promotion service requests repair windows with `workflow_dispatch --ref dev`.
 That makes `github.sha`, the check-run attachment, the tree checked out by `changes`,
 and the captured `dev_sha` the same immutable dev commit. Every downstream suite and
