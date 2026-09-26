@@ -283,10 +283,13 @@ function testBudget(statements, constants, enclosing, projectTimeoutMs) {
 
 // beforeAll/afterAll run in their own slot, initially set to the project
 // timeout. Suite and per-test declarations do not change that slot.
-function allHookBudget(statements, constants) {
+function allHookBudget(callback, constants) {
   let budgetMs;
-  for (const call of budgetCalls(statements)) {
-    if (callPath(call.expression).join('.') === 'test.setTimeout') {
+  const testInfo = callback.parameters[1]?.name;
+  const infoPath = testInfo && ts.isIdentifier(testInfo) ? `${testInfo.text}.setTimeout` : '';
+  for (const call of budgetCalls(blockStatements(callback))) {
+    const path = callPath(call.expression).join('.');
+    if (path === 'test.setTimeout' || path === infoPath) {
       const directBudgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
       if (directBudgetMs !== undefined) budgetMs = directBudgetMs;
     }
@@ -364,12 +367,21 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
         );
         return;
       }
-      if (callback && path[0] === 'test' && ['beforeAll', 'afterAll'].includes(path[1])) {
-        const deadlineMs = Math.max(0, ...deadlineCandidates(callback, constants, helpers));
-        const budgetMs = allHookBudget(statements, constants);
+      if (
+        callback &&
+        path.length === 2 &&
+        path[0] === 'test' &&
+        ['beforeAll', 'afterAll'].includes(path[1])
+      ) {
+        const candidates = deadlineCandidates(callback, constants, helpers);
+        const deadlineMs = typeof candidates === 'number' ? candidates : Math.max(0, ...candidates);
+        const budgetMs = allHookBudget(callback, constants);
         if (deadlineMs > 0 && (budgetMs === undefined || budgetMs <= deadlineMs)) {
           const title = node.arguments[0];
-          const suffix = ts.isStringLiteral(title) ? `: ${title.text}` : '';
+          const suffix =
+            ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title)
+              ? `: ${title.text}`
+              : '';
           violations.push({
             deadlineMs,
             file,
@@ -644,7 +656,7 @@ export function runCheck({ updateBaseline = false } = {}) {
   }
   if (baseline.regressions.length) {
     console.error(
-      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }); use an exact reasoned exception only when the heuristic is wrong; regenerate intentional count changes with pnpm update:e2e-timeout-budget-baseline.'
+      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }) for tests; beforeAll/afterAll need a timeout inside the hook. Use an exact reasoned exception only when the heuristic is wrong; regenerate intentional count changes with pnpm update:e2e-timeout-budget-baseline.'
     );
   }
   if (

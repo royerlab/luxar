@@ -75,6 +75,32 @@ describe('analyzeSpec', () => {
     expect(analyzeSpec(source, 'example.spec.ts')).toEqual([]);
   });
 
+  it('honors the hook testInfo timeout without treating it as a wait', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }, info) => {
+        info.setTimeout(90_000);
+        await page.waitForTimeout(45_000);
+      });
+      test('runs', async () => {});
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([]);
+  });
+
+  it('follows a helper default used only by a beforeAll hook', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      function waitReady(timeout = 45_000) {}
+      test.beforeAll(async () => { await waitReady(); });
+      test('runs', async () => {});
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 4, test: 'beforeAll' },
+    ]);
+  });
+
   it('flags a long explicit wait without a test budget', () => {
     const source = `
       import { test } from '@playwright/test';
