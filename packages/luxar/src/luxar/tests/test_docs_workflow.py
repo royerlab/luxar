@@ -16,6 +16,7 @@ WORKFLOW = REPO / ".github/workflows/docs.yml"
 GITATTRIBUTES = REPO / ".gitattributes"
 DEMO_SITE_RUNBOOK = DOCS / "guides/developer/DEMO_SITE_RUNBOOK.md"
 DEMO_DATA_MANIFEST = REPO / "packages/luxar/src/luxar/demos/data_manifest.json"
+GALLERY_MANIFEST = REPO / "scripts/gallery/manifest.json"
 
 
 def _workflow() -> dict[str, Any]:
@@ -159,6 +160,32 @@ def test_runbook_archive_size_example_matches_active_manifest_pin() -> None:
     )
     _, byte_text = labelled_pin.groups()
     assert int(byte_text.replace(",", "")) == cmu1_ch0["bytes"]
+
+
+def test_runbook_gallery_counts_match_manifest() -> None:
+    """Keep the published tile and video counts derived from the manifest."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    gallery_bullet = re.search(
+        r"^- Gallery,.*?(?=^- )",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert gallery_bullet is not None, "runbook gallery count bullet not found"
+    counts = re.search(
+        r"([\d,]+)\s+tiles and ([\d,]+)\s+videos",
+        gallery_bullet.group(),
+    )
+    assert counts is not None, "runbook gallery tile/video counts not found"
+
+    demos = json.loads(GALLERY_MANIFEST.read_text())["demos"]
+    expected_tiles = len(demos)
+    expected_videos = expected_tiles - sum(
+        demo.get("noOrbitVideo", False) for demo in demos
+    )
+    tile_text, video_text = counts.groups()
+
+    assert int(tile_text.replace(",", "")) == expected_tiles
+    assert int(video_text.replace(",", "")) == expected_videos
 
 
 def test_runbook_publish_constraint_is_recorded_as_discharged() -> None:

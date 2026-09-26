@@ -18,6 +18,150 @@ import {
 } from './check-e2e-timeout-budgets.mjs';
 
 describe('analyzeSpec', () => {
+  it('reports beforeAll and afterAll once at their own lines, without charging tests', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }) => {
+        await page.waitForTimeout(45_000);
+      });
+      test('first', async () => {});
+      test('second', async () => {});
+      test.afterAll('cleanup', async ({ page }) => {
+        await page.waitForTimeout(50_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 3, test: 'beforeAll' },
+      { deadlineMs: 50_000, file: 'example.spec.ts', line: 8, test: 'afterAll: cleanup' },
+    ]);
+  });
+
+  it('checks nested suite hooks against the project budget, not suite or test budgets', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.describe('outer', () => {
+        test.describe.configure({ timeout: 120_000 });
+        test.slow();
+        test.beforeAll(async ({ page }) => { await page.waitForTimeout(45_000); });
+        test.describe('inner', () => {
+          test.setTimeout(120_000);
+          test.afterAll(async ({ page }) => { await page.waitForTimeout(46_000); });
+          test('has its own budget', async () => {});
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 6, test: 'beforeAll' },
+      { deadlineMs: 46_000, file: 'example.spec.ts', line: 9, test: 'afterAll' },
+    ]);
+  });
+
+  it('honors test.setTimeout within each hook, including zero', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }) => {
+        test.setTimeout(120_000);
+        await page.waitForTimeout(45_000);
+      });
+      test.afterAll(async ({ page }) => {
+        test.setTimeout(0);
+        await page.waitForTimeout(45_000);
+      });
+      test('runs', async () => {});
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([]);
+  });
+
+  it('honors the hook testInfo timeout without treating it as a wait', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }, info) => {
+        info.setTimeout(90_000);
+        await page.waitForTimeout(45_000);
+      });
+      test('runs', async () => {});
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([]);
+  });
+
+  it('does not count a named testInfo budget as a hook deadline', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      const HOOK_TIMEOUT_MS = 90_000;
+      test.beforeAll(async ({ page }, info) => {
+        info.setTimeout(HOOK_TIMEOUT_MS);
+        await page.waitForTimeout(45_000);
+      });
+      test.afterAll(async ({ page }, info) => {
+        info.setTimeout(HOOK_TIMEOUT_MS);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([]);
+  });
+
+  it('applies hook-local slow once and respects timeout declaration order', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }, info) => {
+        test.slow();
+        info.slow();
+        await page.waitForTimeout(90_000);
+      });
+      test.afterAll(async ({ page }, info) => {
+        info.setTimeout(45_000);
+        info.slow();
+        await page.waitForTimeout(90_000);
+      });
+      test.beforeAll(async ({ page }, info) => {
+        info.slow();
+        test.setTimeout(45_000);
+        await page.waitForTimeout(90_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 90_000, file: 'example.spec.ts', line: 13, test: 'beforeAll' },
+    ]);
+  });
+
+  it('does not multiply a hook budget twice or assume a conditional slow applies', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }, info) => {
+        test.slow();
+        info.slow();
+        await page.waitForTimeout(200_000);
+      });
+      test.afterAll(async ({ page }, info) => {
+        info.slow(false);
+        await page.waitForTimeout(90_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 200_000, file: 'example.spec.ts', line: 3, test: 'beforeAll' },
+      { deadlineMs: 90_000, file: 'example.spec.ts', line: 8, test: 'afterAll' },
+    ]);
+  });
+
+  it('follows a helper default used only by a beforeAll hook', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      function waitReady(timeout = 45_000) {}
+      test.beforeAll(async () => { await waitReady(); });
+      test('runs', async () => {});
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 4, test: 'beforeAll' },
+    ]);
+  });
+
   it('flags a long explicit wait without a test budget', () => {
     const source = `
       import { test } from '@playwright/test';
