@@ -747,8 +747,43 @@ describe('analyzeSpec', () => {
     `;
 
     expect(() => analyzeSpec(source, 'src/tests/e2e/example.spec.ts')).toThrow(
-      /exceeded 10 nested calls/
+      /src\/tests\/e2e\/example.spec.ts: Helper body traversal exceeded 10 nested calls/
     );
+  });
+
+  it('handles a wide helper graph without spreading every call path', () => {
+    const levels = Array.from({ length: 10 }, (_, depth) =>
+      Array.from({ length: 4 }, (_, index) =>
+        depth === 9
+          ? `async function h${depth}_${index}(page) { await page.waitForTimeout(${index === 3 ? '75_000' : '45_000'}); }`
+          : `async function h${depth}_${index}(page) { ${Array.from({ length: 4 }, (_, child) => `await h${depth + 1}_${child}(page);`).join(' ')} }`
+      ).join('\n')
+    ).join('\n');
+    const source = `${levels}\ntest('wide graph', async ({ page }) => { await h0_0(page); });`;
+
+    expect(analyzeSpec(source, 'src/tests/e2e/wide.spec.ts')).toEqual([
+      { deadlineMs: 75_000, file: 'src/tests/e2e/wide.spec.ts', line: 41, test: 'wide graph' },
+    ]);
+  });
+
+  it('follows a helper imported by another helper module', () => {
+    const source = `import { outer } from './helpers';
+test('nested import', async ({ page }) => { await outer(page); });`;
+    const helpers = new Map([
+      [
+        './helpers',
+        `import { inner as renamed } from './helpers/inner';
+export async function outer(page) { await renamed(page); }`,
+      ],
+      [
+        './helpers/inner',
+        'export async function inner(page) { await page.waitForTimeout(45_000); }',
+      ],
+    ]);
+
+    expect(analyzeSpec(source, 'src/tests/e2e/example.spec.ts', 30_000, 60_000, helpers)).toEqual([
+      { deadlineMs: 45_000, file: 'src/tests/e2e/example.spec.ts', line: 2, test: 'nested import' },
+    ]);
   });
 
   it('fails closed on unsupported shared-helper import forms', () => {
@@ -1020,6 +1055,32 @@ describe('specFiles', () => {
 });
 
 describe('helperSourcesForSpec', () => {
+  it('loads relative imports inside helper modules for analysis', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-helpers-'));
+    try {
+      const specPath = join(fixture, 'example.spec.ts');
+      const source =
+        "import { outer } from './helpers';\ntest('nested', async ({ page }) => { await outer(page); });";
+      writeFileSync(specPath, source);
+      writeFileSync(
+        join(fixture, 'helpers.ts'),
+        "import { inner } from './inner'; export async function outer(page) { await inner(page); }"
+      );
+      writeFileSync(
+        join(fixture, 'inner.ts'),
+        'export async function inner(page) { await page.waitForTimeout(45_000); }'
+      );
+
+      const sources = helperSourcesForSpec(source, specPath);
+      expect([...sources.keys()]).toEqual(['./helpers', './inner']);
+      expect(analyzeSpec(source, 'example.spec.ts', 30_000, 60_000, sources)).toEqual([
+        { deadlineMs: 45_000, file: 'example.spec.ts', line: 2, test: 'nested' },
+      ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('resolves helper modules through each supported candidate', () => {
     const fixture = mkdtempSync(join(tmpdir(), 'luxar-timeout-helpers-'));
     try {
