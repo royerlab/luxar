@@ -147,6 +147,7 @@ import { InputHandler } from '../../../input';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
+import { LayersPanel } from '../../../ui/layers';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
 import { clearError as mockClearError } from '../../../ui/error-overlay';
 import { showToast as mockShowToast } from '../../../ui/toast';
@@ -1364,6 +1365,28 @@ describe('LuxarApp', () => {
       await switching;
       openBrowser?.();
       expect(DatasetBrowser).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('view state in the URL (#!)', () => {
+    it('gives the layers panel the view-state port and mirrors edits into the URL when updateBrowserUrl is true', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        updateBrowserUrl: true,
+      });
+      const panel = (LayersPanel as any).mock.instances.at(-1);
+      expect(panel.setViewStatePort).toHaveBeenCalledOnce();
+      expect(panel.onChange).toHaveBeenCalledOnce(); // the URL writer subscribed
+    });
+
+    it('still offers the port but leaves the host URL alone by default (embedded use)', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+      const panel = (LayersPanel as any).mock.instances.at(-1);
+      expect(panel.setViewStatePort).toHaveBeenCalledOnce();
+      expect(panel.onChange).not.toHaveBeenCalled();
     });
   });
 

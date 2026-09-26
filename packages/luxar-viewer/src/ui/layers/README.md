@@ -26,7 +26,7 @@ The five mesh appearance values are the one control group that does **not** comp
 
 Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice — except inside the edited layer's own subtree, where the layer's single Blend control wins (see [Blending mode inside a layer's subtree](#blending-mode-inside-a-layers-subtree)). Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. `colormap` composes nearest-setter-wins too (#1600), so a palette authored on a group reaches every descendant that can use one; the panel's own colormap control still fans out **imperatively** to each affected leaf material rather than going through composition, because a live dropdown change has no authored attr to compose from.
 
-Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
+Edits made in the panel are viewer-only and never written back to the zarr store. They are, however, the `layers` block of the view-state document (`../view-state.ts`, `{ version: 1, layers?: { <path>: LayerPatch }, camera?: CameraSnapshot }`), which the app mirrors whole into the page URL as `#!<url-encoded JSON>` (Neuroglancer-style; only the layer fields that differ from the authored scene, plus the camera pose) and applies again when a scene loads, so the address bar is a share link; a dataset switch drops it. The Layers header's right-click menu also offers **Copy view state** (pretty JSON to the clipboard), **Download view state…** (`view-state.json`) and **Load view state…** (reset layers to authored, then apply the file — layers the scene lacks are skipped with a toast — and move the camera). The panel owns only the layers half: the app hands it a `ViewStatePort` (`setViewStatePort`) that adds the camera, and subscribes to `onChange` for the URL writer. The document is published as `schemas/view-state.v1.schema.json`; a unit test pins the schema's layer field list to the runtime validator, and adding a field to `LayerPatch` fails to compile until both are updated. The URL mirror is opt-in (the standalone bootstrap's `updateBrowserUrl`), so an embedded viewer never touches its host page's URL.
 
 ### Specialized groups (LOD / partition)
 
@@ -141,6 +141,7 @@ range-slider.ts    Dual-thumb [min, max] slider (click-to-edit + scroll-adjust b
 labeled-slider.ts  Single-thumb labeled slider (gamma, opacity, absorption, mesh shading); linear or log track
 absorption-range.ts κ slider log-track bounds (fixed nominal span, widened onto authored κ) + κ readout format
 attrs-utils.ts     Pure helpers: clampGamma, blending-state mapping, liveLayerAttrs
+layer-settings.ts  LayerSettingsDoc — diff vs authored, per-layer patch validation (the layers block of ../view-state.ts)
 ```
 
 The public entrypoint is `../layers.ts` (parent file); it re-exports only
@@ -420,5 +421,8 @@ control.
 | `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption); `linear` or `log` track                     |
 | `absorption-range.ts`                      | `absorptionSliderRange` / `formatAbsorption` — κ track bounds (fixed log span, widened onto authored κ) + readout format         |
 | `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)                                                       |
+| `layer-settings.ts`                        | `LayerSettingsDoc` — only-what-changed diff and per-layer patch validation; the `layers` block of `../view-state.ts` (no DOM)     |
+| `../view-state.ts`                         | `ViewStateDoc` (layers + camera) — JSON parse/validate, `#!` hash codec, debounced URL writer (no DOM)                          |
+| `../../../schemas/view-state.v1.schema.json` | Published JSON Schema of the document                                                                                      |
 | `../layers.ts`                             | Public entrypoint — re-exports `LayersPanel`                                                                                     |
 | `../../styles/components/layers-panel.css` | Themed CSS styles                                                                                                                |

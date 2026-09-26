@@ -39,6 +39,20 @@ import { LayerApplyEngine } from './layer-apply';
 import { LayerControls } from './layer-controls';
 import { ALWAYS_GLOBAL_KEYS } from '../help-overlay/type-to-filter';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
+import { LAYER_SETTINGS_VERSION, diffLayerSettings, type LayerSettingsDoc } from './layer-settings';
+import { parseViewState, type ViewStateDoc } from '../view-state';
+import { downloadBlob } from '../recording-panel/screenshot-exporter';
+
+/**
+ * The app-level view state (layers + camera) the header menu's Copy /
+ * Download / Load items work on. See `../view-state.ts`.
+ */
+export interface ViewStatePort {
+  /** The document "Copy / Download view state" emit. */
+  get(): ViewStateDoc;
+  /** Make the viewer match `doc` (layers reset first); returns the layer paths this scene lacks. */
+  apply(doc: ViewStateDoc): string[];
+}
 
 /**
  * What the panel needs from the sound layer for its `sound` rows
@@ -217,6 +231,13 @@ export class LayersPanel {
   // State change unsubscribe handle
   private unsubscribeState: (() => void) | null = null;
 
+  /**
+   * The whole view state (layers + camera) behind the header menu's Copy /
+   * Download / Load items. Late-bound by the app, which owns the camera; until
+   * then the panel offers its own layers block alone.
+   */
+  private viewStatePort: ViewStatePort | null = null;
+
   // Tracks layers panel height to reposition the rendering controls (GUI) below
   private resizeObserver: ResizeObserver | null = null;
 
@@ -279,6 +300,16 @@ export class LayersPanel {
     if (layers.length > 0) {
       this.state.select(layers[0].path, 'single');
     }
+  }
+
+  /** Notified on every layer-state change (the app's URL writer listens here). */
+  onChange(listener: () => void): () => void {
+    return this.state.onChange(listener);
+  }
+
+  /** Hand the panel the app-level view state its Copy / Download / Load items use. */
+  setViewStatePort(port: ViewStatePort | null): void {
+    this.viewStatePort = port;
   }
 
   /**
@@ -602,7 +633,127 @@ export class LayersPanel {
       { label: 'Hide all layers', action: () => this.setAllVisible(false) },
       { label: 'Invert visibility', action: () => this.invertVisibility() },
       { label: 'Reset all layers', separatorBefore: true, action: () => this.resetAllLayers() },
+      {
+        label: 'Copy view state',
+        separatorBefore: true,
+        action: () => this.copyViewState(),
+      },
+      {
+        label: 'Download view state…',
+        action: () =>
+          downloadBlob(
+            new Blob([this.viewStateJson()], { type: 'application/json' }),
+            'view-state.json'
+          ),
+      },
+      { label: 'Load view state…', action: () => this.pickViewStateFile() },
     ];
+  }
+
+  // ---- view-state document (see ../view-state.ts) ----
+
+  /** The current view state: the app's (layers + camera) when bound, else the layers alone. */
+  private viewState(): ViewStateDoc {
+    if (this.viewStatePort) return this.viewStatePort.get();
+    const { layers } = this.getLayerSettings();
+    return Object.keys(layers).length > 0 ? { version: 1, layers } : { version: 1 };
+  }
+
+  /** Pretty JSON of {@link viewState}, the form users copy or download. */
+  private viewStateJson(): string {
+    return JSON.stringify(this.viewState(), null, 2);
+  }
+
+  private copyViewState(): void {
+    // Same two failure modes as "Copy layer path" above.
+    if (!navigator.clipboard) {
+      showToast('Clipboard unavailable (needs a secure context)');
+      return;
+    }
+    navigator.clipboard.writeText(this.viewStateJson()).then(
+      () => showToast('View state copied'),
+      () => showToast('Could not copy view state')
+    );
+  }
+
+  /** Open the native file picker and load the chosen view-state file. */
+  private pickViewStateFile(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      file.text().then(
+        (text) => this.loadViewState(text),
+        () => showToast(`Could not read ${file.name}`)
+      );
+    });
+    input.click();
+  }
+
+  private loadViewState(text: string): void {
+    let doc: ViewStateDoc;
+    try {
+      doc = parseViewState(text);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Invalid view state');
+      return;
+    }
+    const skipped = this.viewStatePort
+      ? this.viewStatePort.apply(doc)
+      : this.applyLayerSettings({ version: LAYER_SETTINGS_VERSION, layers: doc.layers ?? {} });
+    showToast(
+      skipped.length > 0
+        ? `View state loaded (${skipped.length} unknown layer${skipped.length > 1 ? 's' : ''} skipped)`
+        : 'View state loaded'
+    );
+  }
+
+  /**
+   * The user's changes as a {@link LayerSettingsDoc}: only the fields that
+   * differ from the authored scene, so an untouched scene encodes to nothing.
+   * The authored baseline is rebuilt from the scene graph on every call — the
+   * same scratch-manager idiom `resetLayer` uses.
+   */
+  getLayerSettings(): LayerSettingsDoc {
+    // ponytail: re-deriving the baseline is O(scene graph) per call; cache it
+    // per initFromScene if a large scene ever makes the debounced URL write slow.
+    return diffLayerSettings(
+      this.getLayerSummaries(),
+      this.authoredLayers().map((l) => this.summarize(l))
+    );
+  }
+
+  /**
+   * Make the panel match `doc`: return every layer to its authored state,
+   * then apply each patch through {@link setLayer}. Returns the paths the
+   * current scene does not have (they are skipped, not an error, so a file
+   * saved from a sibling scene still applies where it can).
+   */
+  applyLayerSettings(doc: LayerSettingsDoc): string[] {
+    this.resetAllLayers();
+    return this.applyLayerPatches(doc);
+  }
+
+  /** {@link applyLayerSettings} without the reset — for a freshly initialised scene. */
+  applyLayerPatches(doc: LayerSettingsDoc): string[] {
+    const skipped: string[] = [];
+    for (const [path, patch] of Object.entries(doc.layers)) {
+      if (this.state.getLayer(path)) this.setLayer(path, patch);
+      else skipped.push(path);
+    }
+    return skipped;
+  }
+
+  /** Every layer as the scene authored it (a fresh, throwaway state manager). */
+  private authoredLayers(): LayerInfo[] {
+    if (!this.sceneGraph) return [];
+    const scratch = new LayerStateManager();
+    scratch.initFromSceneGraph(this.sceneGraph);
+    const layers = scratch.getLayers();
+    scratch.dispose();
+    return layers;
   }
 
   // ---- menu actions ----
@@ -679,7 +830,11 @@ export class LayersPanel {
    * (`LuxarApp.getLayers()`). Copies, in panel display order.
    */
   getLayerSummaries(): LayerSummary[] {
-    return this.state.getLayers().map((l) => ({
+    return this.state.getLayers().map((l) => this.summarize(l));
+  }
+
+  private summarize(l: LayerInfo): LayerSummary {
+    return {
       path: l.path,
       name: l.name,
       type: l.type,
@@ -694,7 +849,7 @@ export class LayersPanel {
       absorption: l.absorption,
       layerOrder: l.layerOrderExplicit && l.layerOrder !== undefined ? l.layerOrder : null,
       ...(l.sound ? { gain: l.sound.gain } : {}),
-    }));
+    };
   }
 
   /**
@@ -858,6 +1013,7 @@ export class LayersPanel {
 
   dispose(): void {
     this.contextMenuClose?.();
+    this.viewStatePort = null;
     this.clear();
     this.state.dispose();
   }

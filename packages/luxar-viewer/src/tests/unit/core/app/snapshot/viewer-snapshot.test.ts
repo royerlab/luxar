@@ -195,6 +195,12 @@ describe('restoreSnapshot', () => {
     expect(persp.far).toBe(5000);
     expect(persp.fov).toBe(45);
     expect(sm.controls.getFocusTarget().toArray()).toEqual([9, 8, 7]);
+    // The orbit controls re-derive orientation from the quaternion, so it
+    // must already face the restored target with the restored up
+    // (regression: a shared link came back at the previous view's rotation).
+    const forward = sm.camera.getWorldDirection(new THREE.Vector3());
+    const toTarget = new THREE.Vector3(9, 8, 7).sub(sm.camera.position).normalize();
+    expect(forward.dot(toTarget)).toBeCloseTo(1, 6);
     expect(sm.controls.reinitialize).toHaveBeenCalledOnce();
     // The programmatic path must fire the same CONTROLS 'change' event an
     // interactive camera move produces — it wakes the render loop (per-frame

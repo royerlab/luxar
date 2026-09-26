@@ -134,7 +134,15 @@ export function restoreCamera(sceneManager: SceneManager, cam: CameraSnapshot): 
 
   // setTarget mirrors the orbit/fly difference internally; reinitialize()
   // re-derives orbit distance/orientation from the new (position, target).
-  sceneManager.controls.setTarget(new THREE.Vector3(cam.target[0], cam.target[1], cam.target[2]));
+  const target = new THREE.Vector3(cam.target[0], cam.target[1], cam.target[2]);
+  sceneManager.controls.setTarget(target);
+  // The orbit controls read the camera QUATERNION, not `camera.up`, when
+  // they re-derive orientation — so without this the restored pose kept the
+  // previous view's rotation (and roll) at the new position and distance.
+  // lookAt() rebuilds the quaternion from position, target and the restored
+  // up, the same sync the authored-camera path does in camera-setup.ts.
+  camera.lookAt(target);
+  camera.updateMatrixWorld(true);
   sceneManager.controls.reinitialize();
 
   // Fire the same controls 'change' event an interactive camera move

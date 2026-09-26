@@ -4741,3 +4741,93 @@ describe('LayersPanel programmatic API (getLayerSummaries / setLayer)', () => {
     panel.dispose();
   });
 });
+
+describe('LayersPanel layer-settings document (getLayerSettings / applyLayerSettings)', () => {
+  let container: HTMLElement;
+  let animationController: AnimationController;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    animationController = makeAnimationController();
+  });
+
+  function openPanel(): LayersPanel {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph('points'));
+    return panel;
+  }
+
+  it('is empty until something changes, then holds only the changed fields', () => {
+    const panel = openPanel();
+    expect(panel.getLayerSettings()).toEqual({ version: 1, layers: {} });
+    panel.setLayer('/cloud', { gamma: 2, visible: false });
+    expect(panel.getLayerSettings()).toEqual({
+      version: 1,
+      layers: { '/cloud': { gamma: 2, visible: false } },
+    });
+    panel.dispose();
+  });
+
+  it('applyLayerSettings returns to the authored state first, applies the document, and reports unknown paths', () => {
+    const panel = openPanel();
+    const authoredGamma = panel.layerState.getLayer('/cloud')!.gamma;
+    panel.setLayer('/cloud', { gamma: authoredGamma + 1 });
+
+    const skipped = panel.applyLayerSettings({
+      version: 1,
+      layers: { '/cloud': { opacity: 0.5 }, '/ghost': { gamma: 3 } },
+    });
+
+    expect(skipped).toEqual(['/ghost']);
+    const live = panel.layerState.getLayer('/cloud')!;
+    expect(live.gamma).toBe(authoredGamma);
+    expect(live.opacity).toBe(0.5);
+    expect(panel.getLayerSettings()).toEqual({
+      version: 1,
+      layers: { '/cloud': { opacity: 0.5 } },
+    });
+    panel.dispose();
+  });
+
+  it('onChange notifies the URL writer on every edit, and applyLayerPatches skips the reset', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph('points'));
+    const listener = vi.fn();
+    const off = panel.onChange(listener);
+    panel.setLayer('/cloud', { gamma: 2 });
+    expect(listener).toHaveBeenCalled();
+    off();
+    listener.mockClear();
+    const skipped = panel.applyLayerPatches({
+      version: 1,
+      layers: { '/cloud': { opacity: 0.5 }, '/ghost': { gamma: 3 } },
+    });
+    expect(skipped).toEqual(['/ghost']);
+    // No reset: the earlier gamma edit survives alongside the new opacity.
+    expect(panel.getLayerSettings()).toEqual({
+      version: 1,
+      layers: { '/cloud': { gamma: 2, opacity: 0.5 } },
+    });
+    expect(listener).not.toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it('the header menu offers copy / download / load of the view state', () => {
+    const panel = openPanel();
+    const closeBtn = container.querySelector<HTMLElement>('.luxar-layers-panel__close')!;
+    closeBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const labels = Array.from(
+      document.querySelectorAll('.luxar-context-menu [role="menuitem"]')
+    ).map((el) => el.textContent?.trim());
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        'Copy view state',
+        'Download view state…',
+        'Load view state…',
+      ])
+    );
+    panel.dispose();
+  });
+});

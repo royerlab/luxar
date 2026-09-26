@@ -2,6 +2,7 @@ import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { clearError, showError } from '../../../ui/error-overlay';
 import { showToast } from '../../../ui/toast';
 import { replaceBrowserDataSourceUrl } from '../../../config/url-params';
+import { clearViewStateHash } from '../../../ui/view-state';
 import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
 import { KeyAction, type InputHandler } from '../../../input';
@@ -65,6 +66,9 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
         // to no host-page URL mutation.
         if (ports.updateBrowserUrl) {
           replaceBrowserDataSourceUrl(cleanUrl);
+          // Layer edits and the camera belong to the scene they were made
+          // in; the new dataset starts from its authored state.
+          if (typeof window !== 'undefined') clearViewStateHash(window);
         }
 
         // Track the new src in our options snapshot so a subsequent browser

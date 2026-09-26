@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/royerlab/luxar/main/packages/luxar-viewer/schemas/view-state.v1.schema.json",
+  "title": "Luxar view state",
+  "description": "What a Luxar viewer share link carries: per-layer appearance overrides (only the fields a user changed away from the scene's authored defaults) and the camera pose. Produced by 'Copy / Download view state', accepted by 'Load view state', and carried whole in the viewer URL as '#!<url-encoded JSON>' (Neuroglancer style). Both blocks are optional; a layers-only file is valid.",
+  "type": "object",
+  "required": [
+    "version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "layers": {
+      "type": "object",
+      "description": "Keyed by the layer's scene-graph path (the 'path' of LayerSummary / setLayer). Only fields that differ from the authored scene.",
+      "additionalProperties": {
+        "$ref": "#/$defs/layer"
+      }
+    },
+    "camera": {
+      "type": "object",
+      "description": "Camera pose, the block LuxarApp.getCameraPose() returns, in scene units.",
+      "required": [
+        "position",
+        "target",
+        "up",
+        "isOrtho",
+        "near",
+        "far"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Camera position [x, y, z]."
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Orbit / look-at target [x, y, z]."
+        },
+        "up": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Camera up vector."
+        },
+        "isOrtho": {
+          "type": "boolean",
+          "description": "Orthographic projection."
+        },
+        "fov": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 180,
+          "description": "Vertical field of view in degrees (perspective cameras)."
+        },
+        "zoom": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Zoom factor (orthographic cameras)."
+        },
+        "near": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "far": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "visible": {
+          "type": "boolean"
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "gamma": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "displayRange": {
+          "type": "array",
+          "description": "Display window [min, max] in data units.",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "colormap": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Colormap name, or null for direct colour."
+        },
+        "blendingMode": {
+          "type": "string",
+          "enum": [
+            "additive",
+            "volumetric",
+            "normal",
+            "max",
+            "opaque",
+            "luminous"
+          ]
+        },
+        "absorption": {
+          "type": "number",
+          "minimum": 0
+        },
+        "layerOrder": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Explicit compositing order, or null to release an explicit order."
+        },
+        "gain": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Sound layers only: linear gain."
+        }
+      }
+    }
+  }
+}
