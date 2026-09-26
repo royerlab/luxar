@@ -147,7 +147,7 @@ export class RafDriver {
   /**
    * Predicate that returns true while frame pacing must stay off because
    * some other owner depends on the loop's exact frame cadence. See
-   * {@link AnimationController.setPacingSuspendPredicate}.
+   * `AnimationController.setPacingSuspendPredicate`.
    */
   private isPacingSuspended: (() => boolean) | null = null;
 
@@ -162,7 +162,7 @@ export class RafDriver {
     return this.running;
   }
 
-  /** See {@link AnimationController.setPacingSuspendPredicate}. */
+  /** See `AnimationController.setPacingSuspendPredicate`. */
   setPacingSuspendPredicate(predicate: (() => boolean) | null): void {
     this.isPacingSuspended = predicate;
   }
