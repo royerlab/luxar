@@ -45,32 +45,35 @@ export async function captureHDRPixels(
     // Scene render only — no bloom, no mega-shader. Save/restore the
     // renderer's current target + autoClear so a caller invoking
     // capture while another target is bound doesn't get clobbered.
+    // Restored as soon as the readback is ISSUED (see startReadback).
     const prevTarget = ctx.renderer.getRenderTarget();
     const prevAutoClear = ctx.renderer.autoClear;
+    let read: Promise<CaptureResult>;
     try {
       // The pipeline's own stage (0), so a refract_data glass refracts the data in an
       // EXR capture exactly as it does on screen.
       renderSceneToHdr(ctx.pipelineCtx);
-      const result = await readTarget(ctx, ctx.hdrTarget, opts);
-      // Sanitize alpha: this mode reads the HDR target DIRECTLY — the
-      // only capture path that bypasses the mega-shader's unconditional
-      // alpha=1.0 write. Additive blending accumulates alpha unbounded
-      // (points/lines emit real alpha over SrcAlpha+One; gsplats emit
-      // 1.0 per overlapping splat), so the target's alpha channel is a
-      // meaningless overdraw count that can reach HalfFloat Inf on
-      // dense scenes. Exporting it (EXR alpha) hands external
-      // compositors garbage — force opaque here, once, for every
-      // geometry type. (This also lets the gsplat GLSL wrapper drop
-      // its historical alpha-MaxEquation blend guard, whose only
-      // remaining purpose was protecting this path.)
-      for (let i = 3; i < result.pixels.length; i += 4) {
-        result.pixels[i] = 1.0;
-      }
-      return result;
+      read = startReadback(ctx, ctx.hdrTarget, opts);
     } finally {
       ctx.renderer.setRenderTarget(prevTarget as THREE.WebGLRenderTarget | null);
       ctx.renderer.autoClear = prevAutoClear;
     }
+    const result = await read;
+    // Sanitize alpha: this mode reads the HDR target DIRECTLY — the
+    // only capture path that bypasses the mega-shader's unconditional
+    // alpha=1.0 write. Additive blending accumulates alpha unbounded
+    // (points/lines emit real alpha over SrcAlpha+One; gsplats emit
+    // 1.0 per overlapping splat), so the target's alpha channel is a
+    // meaningless overdraw count that can reach HalfFloat Inf on
+    // dense scenes. Exporting it (EXR alpha) hands external
+    // compositors garbage — force opaque here, once, for every
+    // geometry type. (This also lets the gsplat GLSL wrapper drop
+    // its historical alpha-MaxEquation blend guard, whose only
+    // remaining purpose was protecting this path.)
+    for (let i = 3; i < result.pixels.length; i += 4) {
+      result.pixels[i] = 1.0;
+    }
+    return result;
   }
 
   if (mode === 'hdr-effects-pre-tone') {
@@ -87,27 +90,55 @@ export async function captureHDRPixels(
     ctx.megaShader.toggleLensDistortion(false);
     ctx.megaShader.toggleRawHdrCapture(true);
 
+    let read: Promise<CaptureResult>;
     try {
       runPipeline(ctx.pipelineCtx, { applyFxaa: false, finalTarget: ctx.ldrTarget });
-      return await readTarget(ctx, ctx.ldrTarget, opts);
+      read = startReadback(ctx, ctx.ldrTarget, opts);
     } finally {
       ctx.megaShader.toggleRawHdrCapture(false);
       if (wasNoise) ctx.megaShader.toggleDetectorNoise(true);
       if (wasVignette) ctx.megaShader.toggleVignette(true);
       if (wasLens) ctx.megaShader.toggleLensDistortion(true);
     }
+    return read;
   }
 
   // 'visible-ldr': full pipeline (every enabled effect, EOG, tone
   // mapping) but skip the final sRGB encoding so the captured pixels
   // are post-tone-mapping LINEAR LDR.
   ctx.megaShader.toggleLinearLdrCapture(true);
+  let read: Promise<CaptureResult>;
   try {
     runPipeline(ctx.pipelineCtx, { applyFxaa: false, finalTarget: ctx.ldrTarget });
-    return await readTarget(ctx, ctx.ldrTarget, opts);
+    read = startReadback(ctx, ctx.ldrTarget, opts);
   } finally {
     ctx.megaShader.toggleLinearLdrCapture(false);
   }
+  return read;
+}
+
+/** A capture's float pixels. */
+type CaptureResult = { pixels: Float32Array; width: number; height: number };
+
+/**
+ * Issue the readback of `target` and return its pending result.
+ *
+ * Every renderer path ISSUES the GPU copy synchronously, before its first
+ * `await`: WebGLRenderer reads into a pixel-pack buffer then fences, and
+ * WebGPU submits `copyTextureToBuffer` then maps (the WebGL2 fallback backend
+ * does the same as WebGLRenderer). So once this returns, the pixels are
+ * captured in GPU order, and the capture restores its global state (shader
+ * capture flags, render target) BEFORE awaiting the transfer. Restoring after
+ * the await held those flags across it: any loop frame drawn meanwhile went
+ * through the raw-HDR or linear-LDR mega-shader and flashed a blown-out or
+ * mis-encoded frame on screen.
+ */
+function startReadback(
+  ctx: Pick<CaptureCtx, 'renderer' | 'capabilities'>,
+  target: THREE.WebGLRenderTarget,
+  opts: { flipY?: boolean }
+): Promise<CaptureResult> {
+  return readTarget(ctx, target, opts);
 }
 
 async function readTarget(
