@@ -281,6 +281,19 @@ function testBudget(statements, constants, enclosing, projectTimeoutMs) {
   return budgetMs;
 }
 
+// beforeAll/afterAll run in their own slot, initially set to the project
+// timeout. Suite and per-test declarations do not change that slot.
+function allHookBudget(statements, constants) {
+  let budgetMs;
+  for (const call of budgetCalls(statements)) {
+    if (callPath(call.expression).join('.') === 'test.setTimeout') {
+      const directBudgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+      if (directBudgetMs !== undefined) budgetMs = directBudgetMs;
+    }
+  }
+  return budgetMs;
+}
+
 function normalizedBudget(value) {
   if (value === 0) return Number.POSITIVE_INFINITY;
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -349,6 +362,21 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
           suiteScope(statements, constants, enclosing),
           Math.max(inheritedDeadlineMs, hookDeadline(statements, constants, helpers))
         );
+        return;
+      }
+      if (callback && path[0] === 'test' && ['beforeAll', 'afterAll'].includes(path[1])) {
+        const deadlineMs = Math.max(0, ...deadlineCandidates(callback, constants, helpers));
+        const budgetMs = allHookBudget(statements, constants);
+        if (deadlineMs > 0 && (budgetMs === undefined || budgetMs <= deadlineMs)) {
+          const title = node.arguments[0];
+          const suffix = ts.isStringLiteral(title) ? `: ${title.text}` : '';
+          violations.push({
+            deadlineMs,
+            file,
+            line: sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1,
+            test: `${path[1]}${suffix}`,
+          });
+        }
         return;
       }
       if (callback && (path.join('.') === 'test' || path.join('.') === 'test.only')) {

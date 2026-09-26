@@ -18,6 +18,63 @@ import {
 } from './check-e2e-timeout-budgets.mjs';
 
 describe('analyzeSpec', () => {
+  it('reports beforeAll and afterAll once at their own lines, without charging tests', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }) => {
+        await page.waitForTimeout(45_000);
+      });
+      test('first', async () => {});
+      test('second', async () => {});
+      test.afterAll('cleanup', async ({ page }) => {
+        await page.waitForTimeout(50_000);
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 3, test: 'beforeAll' },
+      { deadlineMs: 50_000, file: 'example.spec.ts', line: 8, test: 'afterAll: cleanup' },
+    ]);
+  });
+
+  it('checks nested suite hooks against the project budget, not suite or test budgets', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.describe('outer', () => {
+        test.describe.configure({ timeout: 120_000 });
+        test.slow();
+        test.beforeAll(async ({ page }) => { await page.waitForTimeout(45_000); });
+        test.describe('inner', () => {
+          test.setTimeout(120_000);
+          test.afterAll(async ({ page }) => { await page.waitForTimeout(46_000); });
+          test('has its own budget', async () => {});
+        });
+      });
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 6, test: 'beforeAll' },
+      { deadlineMs: 46_000, file: 'example.spec.ts', line: 9, test: 'afterAll' },
+    ]);
+  });
+
+  it('honors test.setTimeout within each hook, including zero', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      test.beforeAll(async ({ page }) => {
+        test.setTimeout(120_000);
+        await page.waitForTimeout(45_000);
+      });
+      test.afterAll(async ({ page }) => {
+        test.setTimeout(0);
+        await page.waitForTimeout(45_000);
+      });
+      test('runs', async () => {});
+    `;
+
+    expect(analyzeSpec(source, 'example.spec.ts')).toEqual([]);
+  });
+
   it('flags a long explicit wait without a test budget', () => {
     const source = `
       import { test } from '@playwright/test';
