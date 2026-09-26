@@ -36,7 +36,7 @@ import type { PointMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
-import { computePointSizeFactor, computeMaxPointSize } from '../_shared/camera-uniforms';
+import { computeMaxPointSize } from '../_shared/camera-uniforms';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -63,10 +63,8 @@ import { computeScalarRangeUniforms } from '../_shared/scalar-range';
  */
 interface PointMaterialTSLNodeTable {
   uPointTex: TSLNode;
-  pointSizeFactor: TSLNode;
   maxPointSize: TSLNode;
   radiusScale: TSLNode;
-  uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
   uDensityDrop: TSLNode;
   uGlassPartition: TSLNode;
@@ -124,9 +122,7 @@ export class PointTSLMaterial
     super();
 
     const gammaValue = clampGamma(materialConfig.gamma);
-    const defaultFov = (60 * Math.PI) / 180;
     const defaultResolutionY = 1080;
-    const defaultTanHalfFov = Math.tan(defaultFov / 2);
 
     this.tslNodes = {
       // Point data texture node. Starts on the shared placeholder; the
@@ -143,10 +139,8 @@ export class PointTSLMaterial
       // otherwise (no rebuild on value changes).
       uAbsorption: uniform(materialConfig.absorption ?? 1.0),
       uHasElementAlpha: uniform(materialConfig.hasElementAlpha ? 1 : 0),
-      pointSizeFactor: uniform((2.0 * defaultResolutionY) / defaultTanHalfFov),
       maxPointSize: uniform(defaultResolutionY * 0.5),
       radiusScale: uniform(materialConfig.radiusScale ?? 1.0),
-      uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
       // Refraction split: mode 0 outside the split; the shared glass depth texture.
@@ -172,10 +166,8 @@ export class PointTSLMaterial
       uOffset: proxyIUniform(this.tslNodes.uOffset),
       uAbsorption: proxyIUniform(this.tslNodes.uAbsorption),
       uHasElementAlpha: proxyIUniform(this.tslNodes.uHasElementAlpha),
-      pointSizeFactor: proxyIUniform(this.tslNodes.pointSizeFactor),
       maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
@@ -339,19 +331,18 @@ export class PointTSLMaterial
    * CameraAwareMaterial. Same body shape as `PointMaterial`: mutate
    * `this.uniforms.X.value`; the writes land directly on the
    * wrapper-owned TSL uniform nodes via the `proxyIUniform` bridges.
+   * The projection terms are read in the graph from
+   * `cameraProjectionMatrix`, so `_isOrtho` is accepted and ignored.
    */
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined && this.uniforms.uNearCull) {
       this.uniforms.uNearCull.value = nearCull;
     }
-    this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     this.uniforms.uPixelRatio.value = pixelRatio;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
@@ -595,18 +586,15 @@ export class PointTSLMaterial
     if (pointTex) cloned.updatePointTexture(pointTex);
 
     // Copy current uniform values
-    cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
     cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
     // Camera-state uniforms must ride along too (mirrors
     // LineTSLMaterial.clone, the reference implementation): a clone
-    // taken in ortho mode otherwise renders the perspective branch with
-    // stale resolution/nearCull until the next global
-    // updateCameraParams broadcast reaches it. Unlike lines, uIsOrtho
-    // is a RUNTIME uniform in the points TSL graph (no ortho graph
-    // variant), so a plain value copy suffices — no rebuild needed.
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    // otherwise renders with stale resolution/nearCull until the next
+    // global updateCameraParams broadcast reaches it. Unlike lines, the
+    // points TSL graph has no ortho variant (it reads the projection
+    // kind from cameraProjectionMatrix), so no rebuild is needed.
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(

@@ -65,6 +65,8 @@ import {
   sanitizeAlpha,
   sanitizeNonNegative,
   perspectiveNearFadeTSL,
+  isOrthoProjectionTSL,
+  projectionSizeScaleTSL,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -160,10 +162,8 @@ export interface PointTSLNodes {
    * `updatePointTexture`.
    */
   readonly uPointTex: TSLNode;
-  readonly pointSizeFactor: TSLNode;
   readonly maxPointSize: TSLNode;
   readonly radiusScale: TSLNode;
-  readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -231,14 +231,12 @@ export function pointWebGPUFactory(
   // wrapper class (or by `buildPointTSLNodesFromUniforms` for the
   // harness path). Mutations on `material.uniforms.X.value` go via
   // `proxyIUniform` straight to `node.value` — no per-render
-  // `.onUpdate` callbacks needed. Unlike lines, `uIsOrtho` stays a
-  // RUNTIME uniform here (the graph selects the ortho branch per
-  // vertex), so no rebuild is needed on camera-mode flips.
+  // `.onUpdate` callbacks needed. The ortho branch and the size scale
+  // are read per draw from `cameraProjectionMatrix`, so no rebuild is
+  // needed on camera-mode flips.
   const uPointTex = nodes.uPointTex;
-  const uPointSizeFactor = nodes.pointSizeFactor;
   const uMaxPointSize = nodes.maxPointSize;
   const uRadiusScale = nodes.radiusScale;
-  const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
   const uPixelRatio = nodes.uPixelRatio;
   const uResolution = nodes.uResolution;
@@ -380,10 +378,13 @@ export function pointWebGPUFactory(
     // absolute 1e-4 clamped VALID depths on tiny-unit scenes
     // (-z ~ 1e-6), shrinking every sprite ~100×. GLSL twin:
     // shader-glsl.ts.
-    const invDistance: TSLNode = int(uIsOrtho)
+    // One ortho test per vertex, shared by the size and near-fade branches.
+    const isOrtho: TSLNode = isOrthoProjectionTSL().toVar();
+    const invDistance: TSLNode = isOrtho
       .equal(int(1))
       .select(float(1.0), mvPos.z.negate().max(float(1e-20)).reciprocal());
-    const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance).toVar();
+    const sizeFactor: TSLNode = float(2.0).mul(uResolution.y).mul(projectionSizeScaleTSL());
+    const basePointSize: TSLNode = normalizedRadius.mul(sizeFactor).mul(invDistance).toVar();
 
     // No size compensation: the shifted-truncated super-Gaussian truncates at
     // the sprite edge (rho = 1), so basePointSize already IS the visible extent.
@@ -406,7 +407,7 @@ export function pointWebGPUFactory(
     // floor overrode the scene-relative value on tiny-unit scenes and
     // faded out the whole scene. GLSL twin: shader-glsl.ts.
     const depthFade: TSLNode = perspectiveNearFadeTSL(
-      uIsOrtho,
+      isOrtho,
       mvPos.z,
       max(uNearCull, float(1e-20))
     ).toVar();
@@ -596,10 +597,8 @@ export function buildPointTSLNodesFromUniforms(
     uPointTex: texture(
       (uniforms.uPointTex?.value as THREE.Texture | null) ?? getPlaceholderElementTexture()
     ),
-    pointSizeFactor: uniform((uniforms.pointSizeFactor?.value as number) ?? 1.0),
     maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     ...glassPartitionNodesFromUniforms(uniforms),

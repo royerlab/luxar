@@ -40,7 +40,6 @@ layout( location = 0 ) out vec4 fragColor;
 
 layout( std140 ) uniform object {
 	float nodeUniform0;
-	float nodeUniform1;
 	float nodeUniform2;
 	float nodeUniform3;
 	float nodeUniform4;
@@ -71,17 +70,18 @@ flat  in vec2 nodeVarying4;
 float meshPickCoverage;
 float meshPickNearFade;
 float nodeVar0;
-float nodeVar1;
+int nodeVar1;
 float nodeVar2;
+float nodeVar3;
 bool meshPickCutout;
 float meshPickBrightness;
-float nodeVar3;
 float nodeVar4;
-vec4 nodeVar8;
+float nodeVar5;
+vec4 nodeVar9;
 vec3 positionView;
 vec4 DiffuseColor;
 vec4 Output;
-vec4 nodeVar11;
+vec4 nodeVar12;
 
 // codes
 
@@ -95,7 +95,18 @@ void main() {
 	meshPickCoverage = ( nodeVarying0 * nodeUniform0 );
 	meshPickNearFade = 0.0;
 
-	if ( ( int( nodeUniform1 ) == 1 ) ) {
+	if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
+
+		nodeVar1 = 1;
+
+	} else {
+
+		nodeVar1 = 0;
+
+	}
+
+
+	if ( ( nodeVar1 == 1 ) ) {
 
 		nodeVar0 = 1.0;
 
@@ -104,16 +115,16 @@ void main() {
 
 		if ( ( nodeVarying1 >= 0.0 ) ) {
 
-			nodeVar1 = 0.0;
+			nodeVar2 = 0.0;
 
 		} else {
 
-			nodeVar2 = max( nodeUniform2, 1e-20 );
-			nodeVar1 = smoothstep( nodeVar2, ( nodeVar2 * 2.0 ), ( - nodeVarying1 ) );
+			nodeVar3 = max( nodeUniform2, 1e-20 );
+			nodeVar2 = smoothstep( nodeVar3, ( nodeVar3 * 2.0 ), ( - nodeVarying1 ) );
 
 		}
 
-		nodeVar0 = nodeVar1;
+		nodeVar0 = nodeVar2;
 
 	}
 
@@ -124,29 +135,29 @@ void main() {
 
 	if ( meshPickCutout ) {
 
-		nodeVar3 = 1.0;
+		nodeVar4 = 1.0;
 
 	} else {
 
-		nodeVar3 = meshPickCoverage;
+		nodeVar4 = meshPickCoverage;
 
 	}
 
-	meshPickBrightness = clamp( ( nodeVar3 * meshPickNearFade ), 0.0, 1.0 );
+	meshPickBrightness = clamp( ( nodeVar4 * meshPickNearFade ), 0.0, 1.0 );
 
 	if ( ( int( nodeUniform4 ) == 1 ) ) {
 
-		nodeVar8 = ( cameraProjectionMatrixInverse * v_clipSpace );
-		positionView = ( nodeVar8.xyz / vec3( nodeVar8.w ) );
-		nodeVar4 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
+		nodeVar9 = ( cameraProjectionMatrixInverse * v_clipSpace );
+		positionView = ( nodeVar9.xyz / vec3( nodeVar9.w ) );
+		nodeVar5 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
 
 	} else {
 
-		nodeVar4 = ( 1.0 - meshPickBrightness );
+		nodeVar5 = ( 1.0 - meshPickBrightness );
 
 	}
 
-	gl_FragDepth = nodeVar4;
+	gl_FragDepth = nodeVar5;
 
 	if ( ( meshPickNearFade < 0.01 ) ) {
 
@@ -165,10 +176,10 @@ void main() {
 
 	DiffuseColor = vec4( nodeVarying3, nodeVarying4.x, meshPickBrightness, nodeVarying4.y );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform13 );
-	nodeVar11 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar11;
+	nodeVar12 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar12;
 
 	// result
-	fragColor = nodeVar11;
+	fragColor = nodeVar12;
 
 }

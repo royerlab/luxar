@@ -42,7 +42,6 @@ import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
-import { computeFocalLength } from '../_shared/camera-uniforms';
 import {
   computeRayIntegralFactor,
   clampTruncationRadius,
@@ -87,8 +86,6 @@ export class GSplatTSLMaterial
     uSplatTex: TSLNode;
     uResolution: TSLNode;
     uPixelRatio: TSLNode;
-    uFx: TSLNode;
-    uFy: TSLNode;
     uTruncate: TSLNode;
     uTruncateSq: TSLNode;
     uShiftC: TSLNode;
@@ -101,7 +98,6 @@ export class GSplatTSLMaterial
     uInvGamma: TSLNode;
     uIntensity: TSLNode;
     uOffset: TSLNode;
-    uIsOrtho: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
     uGlassPartition: TSLNode;
@@ -152,8 +148,6 @@ export class GSplatTSLMaterial
       uSplatTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uPixelRatio: uniform(1),
-      uFx: uniform(500),
-      uFy: uniform(500),
       uTruncate: uniform(truncate),
       uTruncateSq: uniform(truncate * truncate),
       uShiftC: uniform(shiftC),
@@ -170,7 +164,6 @@ export class GSplatTSLMaterial
       uInvGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
       uOffset: uniform(materialConfig.offset ?? 0.0),
-      uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
       // Refraction split: mode 0 outside the split; the shared glass depth texture.
@@ -264,8 +257,6 @@ export class GSplatTSLMaterial
       uSplatTex: proxyIUniform(this.tslNodes.uSplatTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
-      uFx: proxyIUniform(this.tslNodes.uFx),
-      uFy: proxyIUniform(this.tslNodes.uFy),
       uTruncate: proxyIUniform(this.tslNodes.uTruncate),
       uTruncateSq: proxyIUniform(this.tslNodes.uTruncateSq),
       uShiftC: proxyIUniform(this.tslNodes.uShiftC),
@@ -278,7 +269,6 @@ export class GSplatTSLMaterial
       uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
       uOffset: proxyIUniform(this.tslNodes.uOffset),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
@@ -350,19 +340,13 @@ export class GSplatTSLMaterial
   }
 
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
-
-    const fy = computeFocalLength(fov, resolution.y, isOrtho);
-    this.uniforms.uFx.value = fy;
-    this.uniforms.uFy.value = fy;
 
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
@@ -622,17 +606,14 @@ export class GSplatTSLMaterial
 
     const splatTex = this.uniforms.uSplatTex?.value as THREE.DataTexture | null | undefined;
     if (splatTex) cloned.updateSplatTexture(splatTex);
-    cloned.uniforms.uFx.value = this.uniforms.uFx.value;
-    cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    // Camera-state uniforms ride along with the derived focal scales
-    // (mirrors LineTSLMaterial.clone / the points clone fix): uIsOrtho
-    // is a runtime uniform in the gsplat TSL graph, so a plain value
-    // copy suffices — no rebuild needed.
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    // Camera-state uniforms ride along (mirrors LineTSLMaterial.clone /
+    // the points clone fix). The gsplat TSL graph reads the projection
+    // kind from cameraProjectionMatrix, so a plain value copy suffices —
+    // no rebuild needed.
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;

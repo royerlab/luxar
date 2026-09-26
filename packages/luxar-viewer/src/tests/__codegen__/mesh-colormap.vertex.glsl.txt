@@ -55,7 +55,6 @@ layout( std140 ) uniform object {
 	float nodeUniform9;
 	float nodeUniform10;
 	float nodeUniform11;
-	float nodeUniform12;
 	float nodeUniform13;
 	float nodeUniform14;
 	float nodeUniform15;
@@ -89,14 +88,14 @@ vec3 nodeVar6;
 vec3 nodeVar10;
 vec3 nodeVar18;
 mat4 modelViewMatrix;
-vec4 nodeVar27;
-vec2 nodeVar28;
+vec4 nodeVar28;
 vec2 nodeVar29;
-bool nodeVar30;
-vec2 nodeVar31;
-vec4 nodeVar32;
-float nodeVar33;
-vec4 nodeVar34;
+vec2 nodeVar30;
+bool nodeVar31;
+vec2 nodeVar32;
+vec4 nodeVar33;
+float nodeVar34;
+vec4 nodeVar35;
 
 // codes
 
@@ -118,42 +117,42 @@ void main() {
 	nodeVarying0 = nodeVar18;
 	nodeVarying1 = 1.0;
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform17 );
-	nodeVar27 = ( modelViewMatrix * vec4( position, 1.0 ) );
-	nodeVar28 = ( nodeUniform19 * vec3( vec2( pow( clamp( ( ( aScalar - nodeUniform20 ) * nodeUniform21 ), 0.0, 1.0 ), nodeUniform22 ), 0.5 ), 1.0 ) ).xy;
-	nodeVar30 = bool( nodeUniform23 );
+	nodeVar28 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	nodeVar29 = ( nodeUniform19 * vec3( vec2( pow( clamp( ( ( aScalar - nodeUniform20 ) * nodeUniform21 ), 0.0, 1.0 ), nodeUniform22 ), 0.5 ), 1.0 ) ).xy;
+	nodeVar31 = bool( nodeUniform23 );
 
-	if ( nodeVar30 ) {
+	if ( nodeVar31 ) {
 
-		nodeVar31 = nodeVar28;
-		nodeVar29 = vec2( nodeVar31.x, 1.0 - nodeVar31.y );
+		nodeVar32 = nodeVar29;
+		nodeVar30 = vec2( nodeVar32.x, 1.0 - nodeVar32.y );
 
 	} else {
 
-		nodeVar29 = nodeVar28;
+		nodeVar30 = nodeVar29;
 
 	}
 
-	nodeVar32 = texture( nodeUniform18, nodeVar29 );
-	nodeVarying0 = nodeVar32.xyz;
+	nodeVar33 = texture( nodeUniform18, nodeVar30 );
+	nodeVarying0 = nodeVar33.xyz;
 
 	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
 
-		nodeVar33 = min( max( color.w, 0.0 ), 1.0 );
+		nodeVar34 = min( max( color.w, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar33 = 1.0;
+		nodeVar34 = 1.0;
 
 	}
 
-	nodeVarying1 = nodeVar33;
-	nodeVarying2 = nodeVar27.xyz;
+	nodeVarying1 = nodeVar34;
+	nodeVarying2 = nodeVar28.xyz;
 	nodeVarying3 = ( cameraViewMatrix * vec4( ( nodeUniform24 * normal ), 0.0 ) ).xyz;
-	nodeVar34 = ( cameraProjectionMatrix * nodeVar27 );
-	nodeVarying4 = nodeVar34.zw;
+	nodeVar35 = ( cameraProjectionMatrix * nodeVar28 );
+	nodeVarying4 = nodeVar35.zw;
 
 	// result
-	gl_Position = nodeVar34;
+	gl_Position = nodeVar35;
 
 	gl_PointSize = 1.0;
 

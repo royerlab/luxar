@@ -1634,7 +1634,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     // ABSOLUTE brightness assertion — parity alone is blind to this
     // bug because BOTH backends shared the maxLateralVar > 0.01 gate.
-    // projectedExtent = uFx·sigma·truncate = 3200·0.005·3 = 48 px sits
+    // projectedExtent = focal·sigma·truncate = 3200·0.005·3 = 48 px sits
     // mid-band (32, 64) → coverageFade = 0.5 → red-channel peak ≈ 127.
     // Pre-fix the gate skipped the fade for this sigma and the peak
     // saturated at ~255.
@@ -1927,9 +1927,9 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  // Behind-camera parity. A perspective camera (uIsOrtho:0) with the point
-  // behind it — the only cases exercising the perspective path and the
-  // behind-camera reject (`uIsOrtho == 0 && mvPosition.z >= 0`); every other
+  // Behind-camera parity. A perspective camera with the point behind it —
+  // the only cases exercising the perspective path and the perspective-only
+  // behind-camera reject (view z >= 0); every other
   // point case is ortho. Each asserts GLSL ↔ TSL produce identical frames and
   // that the frame is uniform (no fragments).
   //
@@ -2072,6 +2072,103 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     expect(nonUniformPixelCount(dpr2)).toBeGreaterThan(nonUniformPixelCount(dpr1));
     expect(dprHalf).toEqual(dpr1);
+  });
+
+  test('point-cube-face: a cube-capture face renders a point as its +90° equivalent does', async ({
+    page,
+  }) => {
+    // The scene-captured environment draws the data through CubeCamera faces
+    // (fov −90, a flipped projection). The point size is read from the
+    // projection as |P11|: a signed P11 would make it negative and clamp the
+    // sprite to the 1.5 px floor, so the face would show a speck where the
+    // equivalent camera shows a ~4 px point.
+    await bootHarness(page);
+
+    const face = await runGLSL(page, 'point-cube-face');
+    const equivalent = await runGLSL(page, 'point-cube-face-equivalent');
+    const faceTsl = (await runTSL(page, 'point-cube-face')).pixels;
+    const equivalentTsl = (await runTSL(page, 'point-cube-face-equivalent')).pixels;
+
+    assertBothRendered(face, faceTsl, 'point-cube-face');
+    expect(nonUniformPixelCount(face), 'a real sprite, not the size floor').toBeGreaterThan(9);
+    expect(meanAbsDiffPerCoveredPixel(face, equivalent), 'GLSL face vs equivalent').toBeLessThan(
+      1.0
+    );
+    expect(
+      meanAbsDiffPerCoveredPixel(faceTsl, equivalentTsl),
+      'TSL face vs equivalent'
+    ).toBeLessThan(1.0);
+  });
+
+  test('line-cube-face: a cube-capture face renders a line as its +90° equivalent does', async ({
+    page,
+  }) => {
+    // The line pixel-width scale is resY·|P11| read from the projection; a
+    // signed P11 would negate the width under the CubeCamera's fov −90.
+    await bootHarness(page);
+
+    const face = await runGLSL(page, 'line-cube-face');
+    const equivalent = await runGLSL(page, 'line-cube-face-equivalent');
+    const faceTsl = (await runTSL(page, 'line-cube-face')).pixels;
+    const equivalentTsl = (await runTSL(page, 'line-cube-face-equivalent')).pixels;
+
+    assertBothRendered(face, faceTsl, 'line-cube-face');
+    expect(nonUniformPixelCount(face), 'a real line, not the width floor').toBeGreaterThan(40);
+    expect(meanAbsDiffPerCoveredPixel(face, equivalent), 'GLSL face vs equivalent').toBeLessThan(
+      1.0
+    );
+    expect(
+      meanAbsDiffPerCoveredPixel(faceTsl, equivalentTsl),
+      'TSL face vs equivalent'
+    ).toBeLessThan(1.0);
+  });
+
+  test('gsplat-cube-face: a cube-capture face places a splat where its +90° equivalent does', async ({
+    page,
+  }) => {
+    // The scene-captured environment draws the data through CubeCamera faces
+    // (fov −90, a flipped P). Splat centres and Jacobians now go through P,
+    // so the face and its rolled +90° equivalent render the same image; the
+    // CPU focal length they used before carried no flip and put the splat on
+    // the point-reflected pixel (mirrored splats in reflections).
+    await bootHarness(page);
+
+    const face = await runGLSL(page, 'gsplat-cube-face');
+    const equivalent = await runGLSL(page, 'gsplat-cube-face-equivalent');
+    const faceTsl = (await runTSL(page, 'gsplat-cube-face')).pixels;
+    const equivalentTsl = (await runTSL(page, 'gsplat-cube-face-equivalent')).pixels;
+
+    assertBothRendered(face, faceTsl, 'gsplat-cube-face');
+    expect(nonUniformPixelCount(face), 'a visible splat').toBeGreaterThan(20);
+    expect(meanAbsDiffPerCoveredPixel(face, equivalent), 'GLSL face vs equivalent').toBeLessThan(
+      1.0
+    );
+    expect(
+      meanAbsDiffPerCoveredPixel(faceTsl, equivalentTsl),
+      'TSL face vs equivalent'
+    ).toBeLessThan(1.0);
+  });
+
+  test('line-tiny-ortho: a nanometre-scale ortho line renders as its unit-scale twin', async ({
+    page,
+  }) => {
+    // The same line and frustum shrunk 1e5x: identical under orthographic
+    // projection. The historical CPU scale clamped the frustum height to 1e-4
+    // first, so this line came out 5x narrower than its twin.
+    await bootHarness(page);
+
+    const tiny = await runGLSL(page, 'line-tiny-ortho');
+    const unit = await runGLSL(page, 'line-unit-ortho');
+    const tinyTsl = (await runTSL(page, 'line-tiny-ortho')).pixels;
+    const unitTsl = (await runTSL(page, 'line-unit-ortho')).pixels;
+
+    assertBothRendered(tiny, tinyTsl, 'line-tiny-ortho');
+    expect(nonUniformPixelCount(unit), 'the unit-scale line is drawn').toBeGreaterThan(40);
+    expect(nonUniformPixelCount(tiny), 'as many pixels as its unit-scale twin').toBe(
+      nonUniformPixelCount(unit)
+    );
+    expect(meanAbsDiffPerCoveredPixel(tiny, unit), 'GLSL tiny vs unit').toBeLessThan(1.0);
+    expect(meanAbsDiffPerCoveredPixel(tinyTsl, unitTsl), 'TSL tiny vs unit').toBeLessThan(1.0);
   });
 
   test('point-near-fade: mid-band near fade renders identically across backends (B9c)', async ({
@@ -2704,6 +2801,26 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     }
   });
 
+  test('mesh near fade: the ortho branch is the identity under an orthographic camera', async ({
+    page,
+  }) => {
+    // `mesh-ortho-near-cull` is `mesh` with the perspective entries' uNearCull (0.8),
+    // which would fade the quad to 0.15625 under perspective. The ortho test is read
+    // from the camera being drawn with (three's isOrthographic / P[3][3]), so under
+    // the ortho default camera the fade must be the identity and the frame must equal
+    // `mesh` exactly — on both backends.
+    await bootHarness(page);
+
+    const plain = await runGLSL(page, 'mesh');
+    const nearCull = await runGLSL(page, 'mesh-ortho-near-cull');
+    const plainTsl = (await runTSL(page, 'mesh')).pixels;
+    const nearCullTsl = (await runTSL(page, 'mesh-ortho-near-cull')).pixels;
+
+    assertBothRendered(nearCull, nearCullTsl, 'mesh-ortho-near-cull');
+    expect(nearCull, 'GLSL: ortho near cull is not a fade').toEqual(plain);
+    expect(nearCullTsl, 'TSL: ortho near cull is not a fade').toEqual(plainTsl);
+  });
+
   test('mesh near fade: parity under perspective, on the visual AND the pick pass', async ({
     page,
   }) => {
@@ -2727,7 +2844,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // against two backends that BOTH ignored the fade.
     //
     // The two visual references are the `*-near-fade-reference` entries: same camera,
-    // same `uNearCull`, `uIsOrtho` flipped to 1 so the fade is the identity. Using the
+    // a `uNearCull` far inside the quad's depth so the fade is the identity. Using the
     // ortho-camera `mesh` / `mesh-additive` entries instead would compare across two
     // framings — the ortho frame is 2.0 wide at z = 0 against the perspective frame's
     // 2·tan(30°) = 1.155 — so pixel (i, j) would be a different point on the quad in

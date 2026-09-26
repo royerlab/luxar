@@ -70,6 +70,7 @@ import {
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
 import {
+  projectionSizeScaleTSL,
   perspectiveNearFadeStaticTSL,
   sanitizeAlpha,
   sanitizeNonNegative,
@@ -105,8 +106,10 @@ export function capsuleLineWebGPUFactory(
   const uPixelRatio = nodes.uPixelRatio;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
-  const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
-  const uOrthoLineScale = nodes.uOrthoLineScale;
+  // Pixels per view unit at unit depth: resY * |P11|, read from the
+  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It
+  // replaces the former CPU-pushed perspective / ortho line-scale uniforms.
+  const lineScale: TSLNode = uResolution.y.mul(projectionSizeScaleTSL());
   const uOpacity = nodes.uOpacity;
   const uInvGamma = nodes.uInvGamma;
   const uIntensity = nodes.uIntensity;
@@ -230,17 +233,17 @@ export function capsuleLineWebGPUFactory(
     // Per-end pixel radius: 2σ-trimmed fraction of the quad half-width.
     const rawA: TSLNode = (
       isOrtho
-        ? wEffA.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+        ? wEffA.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
         : wEffA
-            .mul(uPerspectiveLineScale)
+            .mul(lineScale)
             .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
             .div(max(mvA.z.negate(), nearCull))
     ).toVar();
     const rawB: TSLNode = (
       isOrtho
-        ? wEffB.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+        ? wEffB.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
         : wEffB
-            .mul(uPerspectiveLineScale)
+            .mul(lineScale)
             .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
             .div(max(mvB.z.negate(), nearCull))
     ).toVar();
@@ -351,9 +354,9 @@ export function capsuleLineWebGPUFactory(
                 () => {
                   const rpFarA: TSLNode = clamp(
                     isOrtho
-                      ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                      ? pFarWidth.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
                       : pFarWidth
-                          .mul(uPerspectiveLineScale)
+                          .mul(lineScale)
                           .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
                           .div(pFarDepth),
                     minRadius,
@@ -411,9 +414,9 @@ export function capsuleLineWebGPUFactory(
                 () => {
                   const rpFarB: TSLNode = clamp(
                     isOrtho
-                      ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                      ? pFarWidth.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
                       : pFarWidth
-                          .mul(uPerspectiveLineScale)
+                          .mul(lineScale)
                           .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
                           .div(pFarDepth),
                     minRadius,

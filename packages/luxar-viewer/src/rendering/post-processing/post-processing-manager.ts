@@ -121,7 +121,7 @@ export class PostProcessingManager {
    *   camera keeps the hook correct across perspective/orthographic swaps.
    *   SceneManager wires this to `updateMaterialsForCurrentCamera()` so point/line/gsplat
    *   shaders pick up the new drawing-buffer size — otherwise their
-   *   pre-computed `pointSizeFactor` / `uResolution` uniforms go
+   *   cached `uResolution` / `maxPointSize` uniforms go
    *   stale on AA toggles and the scene looks subtly wrong until the
    *   next window resize.
    */
@@ -845,8 +845,8 @@ export class PostProcessingManager {
     );
 
     // Notify the host (SceneManager) that the canvas backbuffer
-    // dimensions changed. Scene materials cache pointSizeFactor /
-    // uResolution based on `renderer.getDrawingBufferSize()` and
+    // dimensions changed. Scene materials cache uResolution /
+    // maxPointSize based on `renderer.getDrawingBufferSize()` and
     // would otherwise stay at the pre-resize values until the next
     // window resize fired.
     this.onResize?.(this.getDisplaySize(), this.camera);

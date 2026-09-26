@@ -20,7 +20,7 @@
  *    indexes the per-vertex label CSR (§3.2) directly.
  * 3. **No quad expansion, and only half the camera uniforms.** A mesh has no
  *    screen-space footprint to size, so this pair binds no `uResolution` and no
- *    focal length. It does bind `uIsOrtho` + `uNearCull` and the wrapper IS a
+ *    focal length. It does bind `uNearCull` and the wrapper IS a
  *    `CameraAwareMaterial` — matching the visual mesh material, whose near fade
  *    the pick coverage has to reproduce or a fading surface would stay fully
  *    pickable (#1431).
@@ -199,10 +199,8 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
 
     uniform mediump float uOpacity;
     uniform mediump float uAlphaCutoff;
-    // Near-fade inputs, mirroring the visual material's pair: 0 = perspective,
-    // 1 = orthographic (fade is the identity there), and the scene-relative fade
-    // start in world units.
-    uniform int uIsOrtho;
+    // Near-fade start, world units (scene-relative), mirroring the visual
+    // material. The ortho test reads three's isOrthographic, not a uniform.
     uniform float uNearCull;
     // 1 = 'opaque': apply the visual shader's hard cutout. Runtime uniform, not a
     // define — a layers-panel mode switch must not recompile the pick program.
@@ -234,7 +232,10 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
       // the visual shader — pick coverage must keep matching visible coverage as
       // the camera flies into the surface. Rejected before anything is written, so
       // a faded-out fragment contributes neither an id nor depth.
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20));
+      // Ortho test from three's per-draw 'isOrthographic' (the camera being
+      // drawn with), not a CPU-pushed flag; the fragment stage has no
+      // projectionMatrix to read it from.
+      float nearFade = perspectiveNearFade(isOrthographic ? 1 : 0, vViewZ, max(uNearCull, 1e-20));
       if (nearFade < 0.01) discard;
 
       if (uAlphaCutout == 1) {

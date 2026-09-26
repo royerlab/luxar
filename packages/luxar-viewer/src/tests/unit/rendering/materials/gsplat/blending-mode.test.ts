@@ -253,14 +253,14 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     expect(cloned.defines.LUXAR_VOLUMETRIC).toBe('');
   });
 
-  it('clone() carries the camera-STATE uniforms (uIsOrtho, uNearCull, uResolution)', () => {
-    // Same class as the points/lines clone fix: a clone taken in ortho
-    // mode used to keep the constructor defaults (perspective branch,
-    // stale near-cull) until the next global camera broadcast.
+  it('clone() carries the camera-STATE uniforms (uNearCull, uResolution)', () => {
+    // Same class as the points/lines clone fix: a clone used to keep the
+    // constructor defaults (stale near-cull) until the next global camera
+    // broadcast. The ortho test is read in shader, so there is no flag.
     const mat = new GSplatMaterial();
-    mat.updateCameraParams(2.0, new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+    mat.updateCameraParams(new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
     const cloned = mat.clone();
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uIsOrtho).toBeUndefined();
     expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(640);
   });
@@ -461,13 +461,14 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     expect(cloned.userData.blendingMode).toBe('volumetric');
   });
 
-  it('clone() carries the camera-STATE uniforms (uIsOrtho, uNearCull, uResolution) (TSL)', () => {
-    // Same class as the points/lines clone fix; gsplat uIsOrtho is a
-    // runtime uniform in the TSL graph, so a value copy suffices.
+  it('clone() carries the camera-STATE uniforms (uNearCull, uResolution) (TSL)', () => {
+    // Same class as the points/lines clone fix; the gsplat TSL graph reads
+    // the projection kind from cameraProjectionMatrix, so a value copy of
+    // the remaining camera state suffices.
     const mat = new GSplatTSLMaterial();
-    mat.updateCameraParams(2.0, new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+    mat.updateCameraParams(new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
     const cloned = mat.clone();
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uIsOrtho).toBeUndefined();
     expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(640);
   });

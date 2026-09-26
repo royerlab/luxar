@@ -37,7 +37,13 @@ import {
   getActiveSortedIndexAttribute,
 } from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
-import { buildBehindCamera, buildColormapTexture } from './shared';
+import {
+  buildBehindCamera,
+  buildColormapTexture,
+  buildCubeFaceCamera,
+  buildCubeFaceEquivalentCamera,
+  buildOrthoCamera,
+} from './shared';
 
 /**
  * Single-segment texel source shared by the mesh builder and the
@@ -60,6 +66,8 @@ interface LineFixtureStyle {
   readonly endSharpness?: number;
   readonly startJointCode?: number;
   readonly endJointCode?: number;
+  /** World length of the segment (texel slot); defaults to 1.0. */
+  readonly segmentLength?: number;
 }
 
 function lineTexelSource(
@@ -82,7 +90,7 @@ function lineTexelSource(
     // beta = 2^(6s - 2). 0.5 -> beta=2 (a true Gaussian, the default).
     startSharpness: new Float32Array([style.startSharpness ?? 0.5]),
     endSharpness: new Float32Array([style.endSharpness ?? 0.5]),
-    segmentLengths: new Float32Array([1.0]),
+    segmentLengths: new Float32Array([style.segmentLength ?? 1.0]),
     startJointCode: new Float32Array([style.startJointCode ?? 0]),
     endJointCode: new Float32Array([style.endJointCode ?? 0]),
     startScalars: scalars ? new Float32Array([scalars[0]]) : undefined,
@@ -397,8 +405,6 @@ function buildVisualLineUniforms(
     uIsOrtho: { value: isOrtho ? 1 : 0 },
     uNearCull: { value: nearCull },
     uMaxLinePixelWidth: { value: 32.0 },
-    uPerspectiveLineScale: { value: isOrtho ? 1.0 : 64.0 },
-    uOrthoLineScale: { value: isOrtho ? 64.0 : 1.0 },
     uOpacity: { value: 1.0 },
     uInvGamma: { value: 1.0 },
     uIntensity: { value: 1.0 },
@@ -418,8 +424,6 @@ function buildPickLineUniforms(
     uNodeId: { value: 42 },
     uNearCull: { value: nearCull },
     uMaxLinePixelWidth: { value: 32.0 },
-    uPerspectiveLineScale: { value: isOrtho ? 1.0 : 64.0 },
-    uOrthoLineScale: { value: isOrtho ? 64.0 : 1.0 },
   };
 }
 
@@ -471,7 +475,7 @@ const REMAP_STYLE: LineFixtureStyle = {
  *   the miter limit) and the axial reach is 6.4 * sqrt(0.25) = 3.2 px against a
  *   half-segment of ~10.7 px — comfortably inside the overshoot guard, so the
  *   joint IS mitred rather than falling back.
- *   width 0.1 x uOrthoLineScale 64 = 6.4 px half-width, clear of the 2 px
+ *   width 0.1 x line scale 64 = 6.4 px half-width, clear of the 2 px
  *   rendered-width gate; a thinner line would skip the block and the fixture
  *   would silently go vacuous again.
  *
@@ -523,7 +527,7 @@ function buildJoinTexelSource(): LineTexelSource {
  *   AND clamp(-0.6, 0, 1) = 0 kept the soft endpoint cap, so the joint rendered
  *   DIMMER than with the join disabled. That inversion is what the parity spec
  *   asserts against.
- *   Widths are unchanged at 0.1 x uOrthoLineScale 64 = 6.4 px half-width, clear
+ *   Widths are unchanged at 0.1 x line scale 64 = 6.4 px half-width, clear
  *   of the 2 px rendered-HALF-width gate.
  *
  * Codes follow compute_joint_codes: seg 0's END meets seg 1's END, so
@@ -600,7 +604,7 @@ function perspectivePixelPos(px: number, py: number, depth: number): [number, nu
  *   turn = 0 (a right angle): grow = sqrt(2) is inside the miter limit but the
  *   axial reach 6.4 * sqrt(2 - 1) = 6.4 px exceeds 0.5 * min(10, 10) = 5 px, so
  *   both sides decline and derive cap = clamp(0, 0, 1) = 0.
- *   Widths follow the perspective branch, width * uPerspectiveLineScale / depth
+ *   Widths follow the perspective branch, width * lineScale / depth
  *   with the harness's scale of 64: seg 0 is 0.028 -> 1.79 px at t = 0 and
  *   0.1 -> 6.4 px at t = 1; seg 1 is 0.1 -> 6.4 px and 0.15 -> 6.4 px, i.e.
  *   constant on screen. Only the two 6.4 px ends name a partner (see above).
@@ -749,7 +753,7 @@ function buildFoldJoinTexelSource(width: number): LineTexelSource {
  * large, local and worth asserting on. See the dedicated divergent-pixel test
  * in `tsl-shader-parity.spec.ts`, which the shared mean cannot replace.
  *
- * Widths, and why each number matters (ortho, uOrthoLineScale 64, radius =
+ * Widths, and why each number matters (ortho, line scale 64, radius =
  * width x 64 x CAPSULE_RADIUS_PER_QUAD_HALFWIDTH = width x 42.18 px):
  *   Shared vertex 0.20 -> 8.44 px; both OUTER ends 0.06 -> 2.53 px. A fat
  *   vertex between two thin neighbours is precisely the case the deficit rule
@@ -839,7 +843,7 @@ function buildDeficitPacketJoinTexelSource(): LineTexelSource {
  * Geometry, every number derived at the harness's ortho mapping — the default
  * `OrthographicCamera(-1, 1, 1, -1)` over a 64x64 target is 32 px per world
  * unit, and the capsule pixel radius is
- * `width x uOrthoLineScale(64) x CAPSULE_RADIUS_PER_QUAD_HALFWIDTH(0.6590102)`
+ * `width x lineScale(64) x CAPSULE_RADIUS_PER_QUAD_HALFWIDTH(0.6590102)`
  * (offsets below are px from the viewport centre, where the joint sits):
  *
  *   seg 0 (the SHORT partner)  (0, 0) -> 0.08 x (cos60, sin60)   2.56 px long,
@@ -1111,7 +1115,92 @@ function jointCodeEntry(jointCode: number): RegistryEntry {
  * test name. Each entry carries the GLSL source and a `buildUniforms` factory;
  * merged into `SHADER_REGISTRY` and driven by the parity/codegen specs.
  */
+
+/** A slanted segment 3 units down +X, for the cube-capture face cases. */
+const CUBE_LINE_START: readonly [number, number, number] = [3, -0.3, 0.2];
+const CUBE_LINE_END: readonly [number, number, number] = [3, 0.3, -0.25];
+/** Wide enough (~5 px at 3 units) that a clamped-to-floor width would be obvious. */
+const CUBE_LINE_STYLE: LineFixtureStyle = { startWidth: 0.5, endWidth: 0.5 };
+
+/**
+ * A perspective line seen through a CubeCamera face (fov −90, a flipped
+ * projection) or its 180°-rolled +90° equivalent: the same image, because the
+ * pixel-width scale is resY·|P11|, never negative.
+ */
+function buildCubeCaptureLineEntry(buildCamera: () => THREE.Camera): RegistryEntry {
+  return {
+    source: LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture(CUBE_LINE_START, CUBE_LINE_END, undefined, undefined, CUBE_LINE_STYLE),
+        false
+      ),
+    buildTSLMaterial: (uniforms) => buildVisualLineTSLMaterial(uniforms, false),
+    buildMesh: (material) =>
+      buildLineInstancedMesh(
+        material,
+        CUBE_LINE_START,
+        CUBE_LINE_END,
+        undefined,
+        undefined,
+        CUBE_LINE_STYLE
+      ),
+    buildCamera,
+  };
+}
+
+/** Scale of the nanometre case: every length, width included, times 1e-5. */
+const TINY = 1e-5;
+
+/**
+ * The `line` fixture shrunk by {@link TINY} in every length (segment, width,
+ * segment length) and seen through an ortho frustum shrunk by the same factor
+ * (height 2e-5): under an orthographic projection that is the SAME image. The
+ * historical CPU scale clamped the frustum height to 1e-4 before dividing, so
+ * this line rendered 5x narrower than its unit-scale twin.
+ */
+const TINY_ORTHO_LINE: RegistryEntry = {
+  source: LINE_SOURCE,
+  buildUniforms: () =>
+    buildVisualLineUniforms(
+      buildLineDataTexture([-0.5 * TINY, 0, 0], [0.5 * TINY, 0, 0], undefined, undefined, {
+        startWidth: 0.1 * TINY,
+        endWidth: 0.1 * TINY,
+        segmentLength: TINY,
+      }),
+      true
+    ),
+  buildTSLMaterial: (uniforms) => buildVisualLineTSLMaterial(uniforms, true),
+  buildMesh: (material) =>
+    buildLineInstancedMesh(
+      material,
+      [-0.5 * TINY, 0, 0],
+      [0.5 * TINY, 0, 0],
+      undefined,
+      undefined,
+      {
+        startWidth: 0.1 * TINY,
+        endWidth: 0.1 * TINY,
+        segmentLength: TINY,
+      }
+    ),
+  buildCamera: () => buildOrthoCamera(2 * TINY),
+};
+
+/** The unit-scale twin of {@link TINY_ORTHO_LINE}, through the same builders. */
+const UNIT_ORTHO_LINE: RegistryEntry = {
+  source: LINE_SOURCE,
+  buildUniforms: () => buildVisualLineUniforms(buildLineDataTexture(), true),
+  buildTSLMaterial: (uniforms) => buildVisualLineTSLMaterial(uniforms, true),
+  buildMesh: (material) => buildLineInstancedMesh(material),
+  buildCamera: () => buildOrthoCamera(2),
+};
+
 export const LINE_SHADERS: Record<string, RegistryEntry> = {
+  'line-cube-face': buildCubeCaptureLineEntry(buildCubeFaceCamera),
+  'line-cube-face-equivalent': buildCubeCaptureLineEntry(buildCubeFaceEquivalentCamera),
+  'line-tiny-ortho': TINY_ORTHO_LINE,
+  'line-unit-ortho': UNIT_ORTHO_LINE,
   // Line parity: instanced quad line with width, sharpness, GOG.
   // Ortho camera so screen-space conversion is deterministic.
   line: {
@@ -1122,11 +1211,8 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      // Pre-baked pixel-width scales for this ortho config:
-      //   uOrthoLineScale = 2 * 64 / 2 = 64 (2*resY/frustumHeight)
-      //   uPerspectiveLineScale is unused (uIsOrtho=1) — benign 1.0.
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
+      // The pixel-width scale is read from the camera's projection:
+      //   resY * |P11| = 64 * 2 / 2 = 64 (2*resY/frustumHeight)
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1205,8 +1291,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1236,8 +1320,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 },
       uIntensity: { value: 1.0 },
@@ -1268,8 +1350,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 }, // gamma kept slow path; only no-GOG is exercised
       uIntensity: { value: 1.0 },
@@ -1302,8 +1382,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1333,8 +1411,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 0.02 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1373,8 +1449,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 0.7 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1414,8 +1488,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 0.7 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1452,8 +1524,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.5 },
@@ -1487,8 +1557,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
       // Pre-baked pixel-width scales (mirror `line` parity entry).
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
     }),
     buildTSLMaterial: (uniforms) =>
       linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
@@ -1507,8 +1575,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 64.0 },
-      uOrthoLineScale: { value: 1.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1534,8 +1600,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uNodeId: { value: 42 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 64.0 },
-      uOrthoLineScale: { value: 1.0 },
     }),
     buildTSLMaterial: (uniforms) =>
       linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
@@ -1635,8 +1699,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 64.0 },
-      uOrthoLineScale: { value: 1.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1673,8 +1735,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 64.0 },
-      uOrthoLineScale: { value: 1.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1708,8 +1768,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uNodeId: { value: 42 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 64.0 },
-      uOrthoLineScale: { value: 1.0 },
     }),
     buildTSLMaterial: (uniforms) =>
       linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
@@ -1739,8 +1797,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uNodeId: { value: 42 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 64.0 },
-      uOrthoLineScale: { value: 1.0 },
     }),
     buildTSLMaterial: (uniforms) =>
       linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
@@ -1762,8 +1818,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.5 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1798,8 +1852,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -1925,7 +1977,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: (material) => buildJoinMesh(buildFoldJoinTexelSource(0.02), material),
   },
   // The same fold at the width that lands INSIDE the band #1495 opens:
-  // 0.05 x uOrthoLineScale 64 x 0.659 = 2.11 px raw, so the joint is under
+  // 0.05 x line scale 64 x 0.659 = 2.11 px raw, so the joint is under
   // the 4 px packet width gate (rMax 2.61) yet at or above the 1.5 px AA
   // floor, and the fold's own axis dot is 0.54 > 0.5. That is exactly the
   // combination the floored sharp-turn exception opens — the wide fixture

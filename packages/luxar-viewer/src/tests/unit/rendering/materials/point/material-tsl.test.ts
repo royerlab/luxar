@@ -10,8 +10,9 @@
  *   - Proxy writes to `material.uniforms.X.value` land directly on the
  *     wrapper-owned TSL node (the property that replaced the old
  *     `.onUpdate('render')` per-frame callback bridge).
- *   - `updateCameraParams` routes the shared camera-uniform math into
- *     the right uniforms (perspective and ortho).
+ *   - `updateCameraParams` routes the viewport-only camera math into
+ *     the right uniforms (the projection terms are read in the graph
+ *     from `cameraProjectionMatrix`, so no projection uniform exists).
  *   - `applyBlendingMode` transitions toggle the full blend state +
  *     the LUXAR_MAX_RGB_CONTRIBUTION define, matching the GLSL twin
  *     (`materials/point/blending-mode.test.ts`).
@@ -23,10 +24,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { PointTSLMaterial } from '../../../../../rendering/materials/point/material-tsl';
-import {
-  computePointSizeFactor,
-  computeMaxPointSize,
-} from '../../../../../rendering/materials/_shared/camera-uniforms';
+import { computeMaxPointSize } from '../../../../../rendering/materials/_shared/camera-uniforms';
 
 /** Reach the private wrapper-owned node table (unit-test-only access). */
 function nodesOf(mat: PointTSLMaterial): Record<string, { value: unknown }> {
@@ -86,45 +84,39 @@ describe('PointTSLMaterial uniform proxies', () => {
 });
 
 describe('PointTSLMaterial updateCameraParams', () => {
-  it('perspective: derives pointSizeFactor / maxPointSize via the shared camera math', () => {
+  it('perspective: derives maxPointSize via the shared camera math', () => {
     const mat = new PointTSLMaterial();
-    const fov = Math.PI / 3;
     const res = new THREE.Vector2(1600, 900);
 
-    mat.updateCameraParams(fov, res, false, 0.25);
+    mat.updateCameraParams(res, false, 0.25);
 
-    expect(mat.uniforms.uIsOrtho.value).toBe(0);
     expect(mat.uniforms.uNearCull.value).toBe(0.25);
-    expect(mat.uniforms.pointSizeFactor.value).toBeCloseTo(
-      computePointSizeFactor(fov, res.y, false),
-      5
-    );
+    // The size scale is read from cameraProjectionMatrix in the graph.
+    expect(mat.uniforms.pointSizeFactor).toBeUndefined();
     expect(mat.uniforms.maxPointSize.value).toBeCloseTo(computeMaxPointSize(res.y), 5);
     const bound = mat.uniforms.uResolution.value as THREE.Vector2;
     expect(bound.x).toBe(1600);
     expect(bound.y).toBe(900);
   });
 
-  it('ortho: sets uIsOrtho = 1 with the ortho size factor (no graph-specialized rebuild needed)', () => {
+  it('ortho: writes no projection uniform and does not rebuild the graph', () => {
     const mat = new PointTSLMaterial();
     const graphBefore = mat.vertexNode;
 
-    mat.updateCameraParams(2.0, new THREE.Vector2(64, 64), true);
+    mat.updateCameraParams(new THREE.Vector2(64, 64), true);
 
-    expect(mat.uniforms.uIsOrtho.value).toBe(1);
-    expect(mat.uniforms.pointSizeFactor.value).toBeCloseTo(
-      computePointSizeFactor(2.0, 64, true),
-      5
-    );
-    // uIsOrtho is a RUNTIME uniform in the point graph (unlike the
-    // line factory's compile-time config.isOrtho), so flipping the
-    // camera mode must NOT rebuild the TSL graph.
+    // The ortho test is read per draw from cameraProjectionMatrix (unlike
+    // the line factory's compile-time config.isOrtho), so flipping the
+    // camera mode writes nothing projection-shaped and must NOT rebuild
+    // the TSL graph.
+    expect(mat.uniforms.uIsOrtho).toBeUndefined();
+    expect(mat.uniforms.pointSizeFactor).toBeUndefined();
     expect(mat.vertexNode).toBe(graphBefore);
   });
 
   it('accepts nearCull = 0 (no stale-value gate)', () => {
     const mat = new PointTSLMaterial();
-    mat.updateCameraParams(Math.PI / 3, new THREE.Vector2(64, 64), false, 0);
+    mat.updateCameraParams(new THREE.Vector2(64, 64), false, 0);
     expect(mat.uniforms.uNearCull.value).toBe(0);
   });
 });
@@ -194,32 +186,26 @@ describe('PointTSLMaterial clone', () => {
     expect(cloned.userData.gamma).toBeCloseTo(2.2, 5);
   });
 
-  it('carries the camera-STATE uniforms (uIsOrtho, uNearCull, uResolution) onto the clone', () => {
-    // A clone taken in ortho mode used to keep the constructor defaults
-    // (perspective, nearCull 0.1, 1920×1080) until the next global
-    // updateCameraParams broadcast — rendering the wrong projection
-    // branch in the meantime. Lines clones are the reference.
+  it('carries the camera-STATE uniforms (uNearCull, uResolution) onto the clone', () => {
+    // A clone used to keep the constructor defaults (nearCull 0.1,
+    // 1920×1080) until the next global updateCameraParams broadcast.
+    // Lines clones are the reference.
     const original = new PointTSLMaterial();
-    original.updateCameraParams(2.0, new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+    original.updateCameraParams(new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
 
     const cloned = original.clone();
 
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
     expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(640);
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).y).toBe(480);
   });
 
-  it('resyncs camera-derived uniforms (pointSizeFactor, maxPointSize) from source onto clone', () => {
+  it('resyncs camera-derived uniforms (maxPointSize) from source onto clone', () => {
     const original = new PointTSLMaterial();
-    original.updateCameraParams(Math.PI / 3, new THREE.Vector2(1600, 900), false);
+    original.updateCameraParams(new THREE.Vector2(1600, 900), false);
 
     const cloned = original.clone();
 
-    expect(cloned.uniforms.pointSizeFactor.value).toBeCloseTo(
-      original.uniforms.pointSizeFactor.value as number,
-      5
-    );
     expect(cloned.uniforms.maxPointSize.value).toBeCloseTo(
       original.uniforms.maxPointSize.value as number,
       5

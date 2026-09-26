@@ -129,7 +129,7 @@ The optional `onResize` callback runs after every render-target
 reallocation (resize, SSAA toggle, MSAA toggle, DPR change) and receives
 the logical display size and current camera. The SceneManager factory
 reasserts the camera projection from that size before refreshing the scene
-materials' cached `pointSizeFactor` / `uResolution` uniforms after the new
+materials' cached `uResolution` / `maxPointSize` uniforms after the new
 allocation is applied.
 
 ### Capture paths

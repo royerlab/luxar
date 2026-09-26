@@ -56,11 +56,7 @@ import { resolveOnDiskElementId } from './picking-system/element-id-map';
 import { applyLensDistortion } from './picking-system/lens-distortion';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr/pixel-utils';
-import {
-  getCameraFovRadians,
-  isOrthographicCamera,
-  getOrthoFrustumHeight,
-} from '../../utils/camera-utils';
+import { isOrthographicCamera } from '../../utils/camera-utils';
 import type { LuxarCamera } from '../../utils/camera-utils';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
@@ -123,13 +119,11 @@ export const MAX_PICK_BUFFER_DIM = 1024;
  *
  * The cap is applied as a SINGLE uniform scale on both axes so the pick
  * buffer always preserves the drawing-buffer (= camera) aspect ratio.
- * This is load-bearing for gsplat picking: the gsplat pick shader maps
- * view space to pick-buffer pixels manually with uFx == uFy (a
- * square-pixel assumption), so a pick buffer with a different aspect
- * than the camera displaces gsplat picks horizontally away from screen
- * center. Points/lines/mesh pick through the aspect-aware
- * projectionMatrix and tolerate any aspect — but only aspect-preserving
- * sizing keeps all four geometry types consistent.
+ * All four geometry types now pick through the aspect-aware
+ * projectionMatrix (the gsplat pick shader once mapped view space with a
+ * square-pixel focal length, which displaced picks off-centre in a pick
+ * buffer of a different aspect); aspect-preserving sizing keeps the
+ * pick buffer a uniform downscale of what the user sees.
  */
 export function computePickBufferSize(drawW: number, drawH: number): { w: number; h: number } {
   const halfW = Math.max(drawW / 2, 1);
@@ -840,7 +834,6 @@ export class PickingSystem {
     const pixelRatio = cssHeight > 0 ? pickRes.y / cssHeight : (renderer.getPixelRatio?.() ?? 1);
     const cam = this.camera as LuxarCamera;
     const isOrtho = isOrthographicCamera(cam);
-    const fov = isOrtho ? getOrthoFrustumHeight(cam) : getCameraFovRadians(cam);
 
     this._lastVisibleSig = this.computeVisibleSig();
 
@@ -867,7 +860,7 @@ export class PickingSystem {
       // Update pick material camera params to match half-res pick buffer
       const mat = (entry.pick as THREE.Mesh).material;
       if (isCameraAwareMaterial(mat)) {
-        mat.updateCameraParams(fov, pickRes, isOrtho, undefined, pixelRatio);
+        mat.updateCameraParams(pickRes, isOrtho, undefined, pixelRatio);
       }
       // Density-guard thinning sync: the pick pass must drop exactly the
       // elements the visual pass drops (same hash of the same storage

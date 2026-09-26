@@ -45,9 +45,10 @@ per-fragment near fade reaches zero so no seam is visible; pathological-quad
 discard when both are near AND the per-segment MAX raw pixel width — evaluated
 at both clipped endpoints, so the whole quad takes one branch — blows past
 `uMaxLinePixelWidth × 2`), converts world-space width to pixel width using
-either `uPerspectiveLineScale = resY / tan(fov/2)` or
-`uOrthoLineScale = 2·resY / frustumHeight` (precomputed CPU-side so the
-shader has no `tan()` or projection-mode divide), clamps to
+the line scale `luxarLineScale = resY · |P11|` read once per vertex from the
+projection matrix (`luxarProjectionSizeScale()`; `resY / tan(fov/2)` under
+perspective, `2·resY / frustumHeight` under ortho — no `tan()` in the shader,
+and correct for any projection the draw uses), clamps to
 `[1.5 px × max(render-target scale, 1), uMaxLinePixelWidth]` with an intensity-fading `vWidthFade` (CSS-invariant above 1×; the historical framebuffer floor below 1×), then
 offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × startEndPixelWidth` /
 `endEndPixelWidth` — the clamped pixel half-width of the END this corner sits at
@@ -530,7 +531,7 @@ at build time and emits a single-branch graph, so a mode flip in
 | Symbol                                        | Used for                                                                                                                                                                                        |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `clampGamma(g)`                               | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
-| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
+| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio)` reaches this material.                                                                           |
 | `ColormapAwareMaterial` interface             | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
 | `GLSL_SANITIZE_FUNCTIONS`                     | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
 | `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of those two GLSL sanitisers — same contract, called inline in the factory. `sanitizePositive` has no TSL twin: no TSL shader calls it.                                        |

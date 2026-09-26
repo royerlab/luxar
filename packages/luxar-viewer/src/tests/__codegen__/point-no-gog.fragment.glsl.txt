@@ -56,13 +56,11 @@ layout( std140 ) uniform object {
 	uint nodeUniform16;
 	float nodeUniform17;
 	mat4 nodeUniform19;
-	float nodeUniform21;
+	vec2 nodeUniform21;
 	float nodeUniform22;
 	float nodeUniform23;
 	float nodeUniform24;
 	float nodeUniform25;
-	float nodeUniform26;
-	vec2 nodeUniform27;
 };
 uniform sampler2D nodeUniform1;
 

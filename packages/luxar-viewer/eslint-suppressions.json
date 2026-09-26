@@ -769,11 +769,6 @@
       "count": 1
     }
   },
-  "src/rendering/materials/_shared/tsl-helpers.ts": {
-    "max-params": {
-      "count": 1
-    }
-  },
   "src/rendering/materials/gsplat/material-glsl.ts": {
     "complexity": {
       "count": 2

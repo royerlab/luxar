@@ -73,6 +73,7 @@ import {
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import {
+  projectionSizeScaleTSL,
   perspectiveNearFadeStaticTSL,
   sanitizeAlpha,
   sanitizeNonNegative,
@@ -179,8 +180,6 @@ export interface LineTSLNodes {
   readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
-  readonly uPerspectiveLineScale: TSLNode;
-  readonly uOrthoLineScale: TSLNode;
   readonly uOpacity: TSLNode;
   readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
@@ -233,8 +232,8 @@ export function lineWebGPUFactory(
   // harness path). Mutations on `material.uniforms.X.value` go via
   // `proxyIUniform` straight to `node.value` — no per-render
   // `.onUpdate` callbacks needed.
-  // No FOV uniform exists: the TSL graph reads the CPU-precomputed
-  // `uPerspectiveLineScale` / `uOrthoLineScale` instead.
+  // No FOV uniform exists: the pixel-width scale is read from the
+  // projection matrix (`lineScale` below).
   // uIsOrtho is also intentionally absent — projection mode is a
   // JS-level config branch (`config.isOrtho`), not a runtime uniform.
   const uLineTex = nodes.uLineTex;
@@ -242,8 +241,10 @@ export function lineWebGPUFactory(
   const uPixelRatio = nodes.uPixelRatio;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
-  const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
-  const uOrthoLineScale = nodes.uOrthoLineScale;
+  // Pixels per view unit at unit depth: resY * |P11|, read from the
+  // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It
+  // replaces the former CPU-pushed perspective / ortho line-scale uniforms.
+  const lineScale: TSLNode = uResolution.y.mul(projectionSizeScaleTSL());
   const uOpacity = nodes.uOpacity;
   const uInvGamma = nodes.uInvGamma;
   const uIntensity = nodes.uIntensity;
@@ -507,10 +508,10 @@ export function lineWebGPUFactory(
     // distance from the camera position).
     let rawPixelWidth: TSLNode;
     if (config.isOrtho) {
-      rawPixelWidth = width.mul(uOrthoLineScale).toVar();
+      rawPixelWidth = width.mul(lineScale).toVar();
     } else {
       const distView: TSLNode = max(mvPos.z.negate(), nearCull);
-      rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView).toVar();
+      rawPixelWidth = width.mul(lineScale).div(distView).toVar();
     }
 
     // Preserve the historical framebuffer-pixel floor below 1× render scale.
@@ -535,11 +536,11 @@ export function lineWebGPUFactory(
     let pathological: TSLNode | null = null;
     if (!config.isOrtho) {
       const startPixelWidth: TSLNode = mix(startW, endW, tA)
-        .mul(uPerspectiveLineScale)
+        .mul(lineScale)
         .div(max(mvStart.z.negate(), nearCull))
         .toVar();
       const endPixelWidth: TSLNode = mix(startW, endW, tB)
-        .mul(uPerspectiveLineScale)
+        .mul(lineScale)
         .div(max(mvEnd.z.negate(), nearCull))
         .toVar();
       const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
@@ -561,14 +562,7 @@ export function lineWebGPUFactory(
     // startEndPixelWidth exactly (symmetrically at t=1).
     const endPixelWidthAt = (tEnd: TSLNode, mvZ: TSLNode): TSLNode =>
       clamp(
-        tslLineEndPixelWidth(
-          !!config.isOrtho,
-          mix(startW, endW, tEnd),
-          mvZ,
-          nearCull,
-          uOrthoLineScale,
-          uPerspectiveLineScale
-        ),
+        tslLineEndPixelWidth(!!config.isOrtho, mix(startW, endW, tEnd), mvZ, nearCull, lineScale),
         minPixelWidth,
         maxPW
       );
@@ -910,8 +904,6 @@ export function buildLineTSLNodesFromUniforms(
     ...glassPartitionNodesFromUniforms(uniforms),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
-    uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),
-    uOrthoLineScale: uniform((uniforms.uOrthoLineScale?.value as number) ?? 1.0),
     uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),

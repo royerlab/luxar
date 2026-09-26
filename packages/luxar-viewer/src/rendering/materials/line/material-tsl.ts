@@ -65,8 +65,6 @@ interface LineMaterialTSLNodeTable {
   uGlassDepth: TSLNode;
   uNearCull: TSLNode;
   uMaxLinePixelWidth: TSLNode;
-  uPerspectiveLineScale: TSLNode;
-  uOrthoLineScale: TSLNode;
   uOpacity: TSLNode;
   uInvGamma: TSLNode;
   uIntensity: TSLNode;
@@ -126,8 +124,6 @@ export class LineTSLMaterial
       // 0.1 matches the point/gsplat ctor default (pre-first-broadcast only).
       uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
-      uPerspectiveLineScale: uniform(1.0),
-      uOrthoLineScale: uniform(1.0),
       uOpacity: uniform(materialConfig.opacity ?? 1.0),
       uInvGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
@@ -158,8 +154,6 @@ export class LineTSLMaterial
       uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
-      uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),
-      uOrthoLineScale: proxyIUniform(this.tslNodes.uOrthoLineScale),
       uOpacity: proxyIUniform(this.tslNodes.uOpacity),
       uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
@@ -380,7 +374,6 @@ export class LineTSLMaterial
   }
 
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
     nearCull?: number,
@@ -399,14 +392,6 @@ export class LineTSLMaterial
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
-    const safeFov = Math.max(fov, 1e-4);
-    if (isOrtho) {
-      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
-    } else {
-      this.uniforms.uPerspectiveLineScale.value =
-        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
-    }
     // Each projection mode is a separate TSL graph variant. Rebuild
     // when the mode flips so the unused branch is dropped from the
     // generated WGSL/GLSL.
@@ -600,8 +585,6 @@ export class LineTSLMaterial
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
-    cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
-    cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer

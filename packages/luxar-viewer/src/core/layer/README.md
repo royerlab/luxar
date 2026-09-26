@@ -181,7 +181,7 @@ blending when exposure should produce smooth surface transparency.
   singletons. Two owners share, then corrupt, each other's state. Same
   restriction as `LuxarApp`, same reason.
 - **No near-cull is pushed.** `SceneManager` derives a near-cull distance from
-  its dynamic scene-bounds cache and passes it as a fourth argument to
+  its dynamic scene-bounds cache and passes it as a third argument to
   `updateCameraParams`, which fades geometry approaching the near plane.
   `resize()` omits it, so the shared near fade stays at its default and elements
   pop instead of fading. Wiring it would mean reproducing the bounds cache. A

@@ -74,6 +74,46 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
 `;
 
 /**
+ * View scales read from the projection matrix three sets for the camera
+ * being drawn with (vertex shaders only: `projectionMatrix` is a vertex
+ * built-in). Deriving them here, instead of pushing CPU copies computed
+ * from `camera.fov`, keeps them right for every camera the scene is drawn
+ * with — a cube-capture face (fov −90, a flipped P), a zoomed or asymmetric
+ * frustum, an embedder's camera — and makes a stale copy impossible.
+ * CPU mirror and tests: `projection-math.ts`.
+ *
+ *   - `luxarIsOrthoProjection()`: 1 for an orthographic P (last row
+ *     (0,0,0,1)), 0 for perspective.
+ *   - `luxarProjectionSizeScale()`: |P11|, pixels per view unit at unit
+ *     depth per half viewport height. Every size scale is a multiple of
+ *     `uResolution.y * luxarProjectionSizeScale()`. The absolute value keeps
+ *     sizes positive under a flipped P; positions keep the sign.
+ */
+export const GLSL_PROJECTION_FUNCTIONS = `
+int luxarIsOrthoProjection() {
+  return projectionMatrix[3][3] > 0.5 ? 1 : 0;
+}
+float luxarProjectionSizeScale() {
+  return abs(projectionMatrix[1][1]);
+}
+`;
+
+/**
+ * The line pixel-width scale, resY * |P11| (replacing the former CPU-pushed
+ * perspective / ortho line-scale uniforms). Declared once as a vertex-stage global and assigned as
+ * the FIRST statement of `main()` (`luxarLineScale = uResolution.y *
+ * luxarProjectionSizeScale();`), so every consumer — the line shader body and
+ * the shared width/join helpers — reads it exactly where the uniform used to be
+ * read, in the same expression shape (`width * luxarLineScale / dist`).
+ * Inlining the product at each use site instead lets the compiler associate it
+ * differently per site, a per-vertex rounding change measured at ~10x the flips
+ * of a 1-ulp change in the scale itself (ANGLE/Metal, render gate).
+ */
+export const GLSL_LINE_SCALE = `
+float luxarLineScale;
+`;
+
+/**
  * The pick buffer's 16-bit element-id split, as a standalone function of an
  * arbitrary index.
  *
@@ -260,8 +300,8 @@ export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
  * what the eye sees, so this lives here rather than being written twice.
  *
  * REQUIRED GLOBALS (same implicit-context pattern as `GLSL_SORTED_INDEX`):
- * `uLineTex`, `uResolution`, `uIsOrtho`, `uOrthoLineScale`,
- * `uPerspectiveLineScale`, `modelViewMatrix`, `projectionMatrix`, and
+ * `uLineTex`, `uResolution`, `uIsOrtho`, `luxarProjectionSizeScale`
+ * (GLSL_PROJECTION_FUNCTIONS), `modelViewMatrix`, `projectionMatrix`, and
  * `luxarSortedIndex()`. Include this block AFTER those declarations — GLSL
  * resolves names top-down. `uLineJoin` is declared here, so an including
  * shader must not declare it again.
@@ -302,8 +342,8 @@ vec3 luxarLinePixelPos(vec3 localPos, float nearCullValue) {
 // joint also read the SAME shared vertex, so they still agree on the gate.
 float luxarLineEndPixelWidth(float widthAtEnd, float viewZ, float nearCullValue) {
   return (uIsOrtho == 1)
-    ? (widthAtEnd * uOrthoLineScale)
-    : (widthAtEnd * uPerspectiveLineScale / max(-viewZ, nearCullValue));
+    ? (widthAtEnd * luxarLineScale)
+    : (widthAtEnd * luxarLineScale / max(-viewZ, nearCullValue));
 }
 
 // The corner offset and endpoint cap for one end of one segment.

@@ -203,10 +203,8 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
     uniform mediump float uShininess;      // highlight exponent
     // Cutout threshold, read only under LUXAR_MESH_ALPHA_CUTOUT.
     uniform mediump float uAlphaCutoff;
-    // Near-fade inputs, the same pair the three siblings carry: 0 = perspective,
-    // 1 = orthographic (where the fade is the identity), and the scene-relative
-    // fade start in world units.
-    uniform int uIsOrtho;
+    // Near-fade start, world units (scene-relative). The fade's ortho test reads
+    // three's isOrthographic (the camera this draw uses), not a uniform.
     uniform float uNearCull;
 
     #ifdef LUXAR_MESH_BASE_COLOR_TEX
@@ -351,7 +349,10 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       // the sibling shaders. Kept at the file's highp default rather than
       // mediump like the appearance uniforms: only the RESULT is in [0, 1], and
       // the depths being compared are not (same as the line shader's twin).
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewPos.z, max(uNearCull, 1e-20));
+      // Ortho test from three's per-draw 'isOrthographic' (the camera being
+      // drawn with), not a CPU-pushed flag; the fragment stage has no
+      // projectionMatrix to read it from.
+      float nearFade = perspectiveNearFade(isOrthographic ? 1 : 0, vViewPos.z, max(uNearCull, 1e-20));
       // Rejected in EVERY mode, at the siblings' 0.01 threshold. Not optional in
       // the depth-writing ones: 'opaque' always writes depth and 'normal' does at
       // opacity >= 0.99 (blending-state.ts::normalModeDepthWrite, which mesh feeds

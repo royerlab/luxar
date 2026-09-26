@@ -60,6 +60,8 @@ import {
 } from '../../materials/_shared/falloff';
 import {
   perspectiveNearFadeTSL,
+  isOrthoProjectionTSL,
+  projectionSizeScaleTSL,
   sanitizeNonNegative,
   type TSLNode,
   sortedIndexNode,
@@ -91,10 +93,8 @@ export interface PointPickTSLNodes {
    * material sync.
    */
   readonly uPointTex: TSLNode;
-  readonly pointSizeFactor: TSLNode;
   readonly maxPointSize: TSLNode;
   readonly radiusScale: TSLNode;
-  readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -122,10 +122,8 @@ export function pointPickWebGPUFactory(
   const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
   const uPointTex = nodes.uPointTex;
-  const uPointSizeFactor = nodes.pointSizeFactor;
   const uMaxPointSize = nodes.maxPointSize;
   const uRadiusScale = nodes.radiusScale;
-  const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
   const uPixelRatio = nodes.uPixelRatio;
   const uNodeId = nodes.uNodeId;
@@ -214,10 +212,13 @@ export function pointPickWebGPUFactory(
     // pick footprint stays congruent with the visible sprite. 1e-20 =
     // pure INF guard (near-fade reject bounds surviving depths at the
     // scene-relative ~uNearCull; the size clamp bounds the output).
-    const invDistance: TSLNode = int(uIsOrtho)
+    // One ortho test per vertex, shared by the size and near-fade branches.
+    const isOrtho: TSLNode = isOrthoProjectionTSL().toVar();
+    const invDistance: TSLNode = isOrtho
       .equal(int(1))
       .select(float(1.0), mvPos.z.negate().max(float(1e-20)).reciprocal());
-    const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance).toVar();
+    const sizeFactor: TSLNode = float(2.0).mul(uResolution.y).mul(projectionSizeScaleTSL());
+    const basePointSize: TSLNode = normalizedRadius.mul(sizeFactor).mul(invDistance).toVar();
 
     // Picking footprint: × 0.8 vs the visual material (keep the 0.8 in sync
     // with shaders.ts). No sharpness size compensation — the shifted-truncated
@@ -238,7 +239,7 @@ export function pointPickWebGPUFactory(
     // authority). 1e-20 floor = degenerate-smoothstep guard only;
     // uNearCull is scene-bounds-scaled (see the visual point shader).
     const depthFade: TSLNode = perspectiveNearFadeTSL(
-      uIsOrtho,
+      isOrtho,
       mvPos.z,
       max(uNearCull, float(1e-20))
     ).toVar();
@@ -345,10 +346,8 @@ export function buildPointPickTSLNodesFromUniforms(
     uPointTex: texture(
       (uniforms.uPointTex?.value as THREE.Texture | null) ?? getPlaceholderElementTexture()
     ),
-    pointSizeFactor: uniform((uniforms.pointSizeFactor?.value as number) ?? 1.0),
     maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),

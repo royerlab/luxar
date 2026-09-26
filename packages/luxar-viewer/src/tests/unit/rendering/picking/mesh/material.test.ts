@@ -63,26 +63,26 @@ describe.each(BACKENDS)('MeshPickingMaterial [%s] — construction', (_name, mak
   it('is camera-aware — for the near fade, and only for the near fade', () => {
     // The guard is what routes a pick material into the camera broadcast, and the
     // mesh pick pass has to reproduce the visual near fade or a surface fading out
-    // of view stays fully pickable (#1431). It consumes only `isOrtho` / `nearCull`:
-    // there is still no screen-space footprint to size from fov/resolution, and the
-    // two ignored arguments are the honest shape of that.
+    // of view stays fully pickable (#1431). It consumes only `nearCull`: there is
+    // still no screen-space footprint to size from the resolution, the fade's ortho
+    // test reads the camera being drawn with, and the two ignored arguments are the
+    // honest shape of that.
     const m: unknown = build();
     expect(isCameraAwareMaterial(m as CameraAwareMaterial)).toBe(true);
-    expect((m as PickWrapper).uniforms.uIsOrtho.value).toBe(0);
+    expect((m as PickWrapper).uniforms.uIsOrtho).toBeUndefined();
     expect((m as PickWrapper).uniforms.uNearCull.value).toBe(0.1);
     expect((m as PickWrapper).uniforms.uResolution).toBeUndefined();
   });
 
-  it('writes both near-fade uniforms from updateCameraParams', () => {
+  it('writes the near-cull uniform from updateCameraParams', () => {
     const m = build();
-    m.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.42);
-    expect(m.uniforms.uIsOrtho.value).toBe(1);
+    m.updateCameraParams(new THREE.Vector2(800, 600), true, 0.42);
+    expect(m.uniforms.uIsOrtho).toBeUndefined();
     expect(m.uniforms.uNearCull.value).toBe(0.42);
     // An omitted nearCull must LEAVE the last one standing rather than resetting to
     // the default — the sibling materials all treat it as optional this way, and a
     // reset would fade a mid-session ortho toggle against the wrong plane.
-    m.updateCameraParams(1.0, new THREE.Vector2(800, 600), false);
-    expect(m.uniforms.uIsOrtho.value).toBe(0);
+    m.updateCameraParams(new THREE.Vector2(800, 600), false);
     expect(m.uniforms.uNearCull.value).toBe(0.42);
   });
 
@@ -165,7 +165,7 @@ describe.each(BACKENDS)('MeshPickingMaterial [%s] — clone', (_name, make) => {
     const m = build({ opacity: 0.8, alphaCutoff: 0.25 });
     m.setPickMode('additive');
     m.setPickSide(THREE.DoubleSide);
-    m.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.42);
+    m.updateCameraParams(new THREE.Vector2(800, 600), true, 0.42);
 
     const c = m.clone();
     expect(c).not.toBe(m);
@@ -175,10 +175,8 @@ describe.each(BACKENDS)('MeshPickingMaterial [%s] — clone', (_name, make) => {
     expect(c.uniforms.uAlphaCutout.value).toBe(0);
     expect(c.uniforms.uSurfaceDepth.value).toBe(0);
     expect(c.side).toBe(THREE.DoubleSide);
-    // Camera state too: a clone that reverted to the perspective/0.1 defaults would
-    // fade its pick coverage against the wrong near plane — and under ortho, where
-    // the fade is the identity, would fade at all.
-    expect(c.uniforms.uIsOrtho.value).toBe(1);
+    // Camera state too: a clone that reverted to the 0.1 default would fade its
+    // pick coverage against the wrong near plane.
     expect(c.uniforms.uNearCull.value).toBeCloseTo(0.42);
   });
 

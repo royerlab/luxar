@@ -33,7 +33,13 @@ import {
   getActiveSortedIndexAttribute,
 } from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
-import { buildBehindCamera, buildColormapTexture } from './shared';
+import {
+  buildBehindCamera,
+  buildColormapTexture,
+  buildCubeFaceCamera,
+  buildCubeFaceEquivalentCamera,
+  buildOrthoCamera,
+} from './shared';
 
 /**
  * Single-point texel source shared by the texture and mesh builders —
@@ -357,11 +363,11 @@ function buildSubpixelPointEntry(pixelRatio: number): RegistryEntry {
   return {
     source: POINT_SOURCE,
     buildUniforms: () => ({
-      uPointTex: { value: buildPointDataTexture([0.015625, 0.015625, 0]) },
-      pointSizeFactor: { value: 32.0 },
+      // World 0.0625 is pixel (32, 32)'s centre under the height-8 ortho
+      // camera below (NDC 0.015625), where the falloff is exactly 1.
+      uPointTex: { value: buildPointDataTexture([0.0625, 0.0625, 0]) },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 0.06 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uPixelRatio: { value: pixelRatio },
@@ -379,7 +385,46 @@ function buildSubpixelPointEntry(pixelRatio: number): RegistryEntry {
       material.blending = THREE.NoBlending;
       return material;
     },
-    buildMesh: (material) => buildPointInstancedMesh(material, 0.5, [0.015625, 0.015625, 0]),
+    buildMesh: (material) => buildPointInstancedMesh(material, 0.5, [0.0625, 0.0625, 0]),
+    // Size factor 4 * 64 / 8 = 32 (2 * resY * |P11| of this camera): the
+    // shader reads it from this camera's projection, so the camera is
+    // what makes the point sub-pixel (≈ 0.96 px raw).
+    buildCamera: () => buildOrthoCamera(8),
+  };
+}
+
+/**
+ * One additive point 3 units down +X, seen through a cube-capture face camera
+ * or its +90° equivalent (see `buildCubeFaceCamera`). Raw size ≈ 4.3 px
+ * (radius 0.5 × 0.2 × 2·64·|P11| / 3).
+ */
+function buildCubeCapturePointEntry(buildCamera: () => THREE.Camera): RegistryEntry {
+  const center: [number, number, number] = [3, 0.35, -0.25];
+  return {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture(center) },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 0.2 },
+      uNearCull: { value: 0.01 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uPixelRatio: { value: 1 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const material = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
+      material.transparent = false;
+      material.blending = THREE.NoBlending;
+      return material;
+    },
+    buildMesh: (material) => buildPointInstancedMesh(material, 0.5, center),
+    buildCamera,
   };
 }
 
@@ -397,10 +442,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -432,10 +475,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTextureMultiRow() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -461,10 +502,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture([0, 0, 0], 0.1) },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -486,10 +525,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture([0, 0, 0], 0.9) },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -515,10 +552,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 },
@@ -545,10 +580,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 }, // gamma kept slow path; only no-GOG is exercised
@@ -577,10 +610,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -606,10 +637,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 0.02 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -637,10 +666,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointVolumetricDataTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 0.7 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -674,10 +701,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointVolumetricColormapDataTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 0.7 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -711,10 +736,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture([0, 0, 0], 0.5, 0.5) },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -743,10 +766,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_PICK_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uNodeId: { value: 42 },
       uResolution: { value: new THREE.Vector2(64, 64) },
     }),
@@ -756,9 +777,9 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       ) as unknown as THREE.Material,
     buildMesh: buildPointInstancedMesh,
   },
-  // Behind-camera guard parity: perspective camera (uIsOrtho:0) with the point
-  // placed behind it (world z=3 → view z=+2). The visual point shader's
-  // `uIsOrtho == 0 && mvPosition.z >= 0` reject must fire IDENTICALLY in GLSL and
+  // Behind-camera guard parity: perspective camera with the point placed
+  // behind it (world z=3 → view z=+2). The visual point shader's
+  // perspective-only behind-camera reject must fire IDENTICALLY in GLSL and
   // TSL, so both backends produce an empty (background) frame. Without a behind-
   // camera case the guard ships with no rendered parity coverage (every other
   // point case is ortho, where the guard is a no-op).
@@ -766,10 +787,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture([0, 0, 3]) },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
@@ -795,10 +814,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_PICK_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture([0, 0, 3]) },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 0 },
       uNodeId: { value: 42 },
       uResolution: { value: new THREE.Vector2(64, 64) },
     }),
@@ -820,10 +837,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture([0, 0, 0]) },
-      pointSizeFactor: { value: 221.7 }, // 2*64/tan(30°) — fov 60 at 64px
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 0.1 }, // ~11px sprite at view depth 1
-      uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
@@ -847,10 +862,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture([0.5, 0, 0]) },
-      pointSizeFactor: { value: 221.7 }, // 2*64/tan(30°) — fov 60 at 64px
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 0.1 }, // ~11px sprite at view depth 1
-      uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
@@ -876,13 +889,19 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   // factor 32). The 1.5px sprite floor guarantees rasterization, and the
   // fragment's sizeScale² compensation scales the ALPHA output by
   // (0.96/1.5)² ≈ 0.41. The point is positioned so the sprite center
-  // lands EXACTLY on pixel (32,32)'s center (world 1.5/96 with the
-  // [-1,1] ortho frustum on 64px) — falloff there is exactly 1, so the
+  // lands EXACTLY on pixel (32,32)'s center (world 0.0625 with the
+  // height-8 ortho frustum on 64px) — falloff there is exactly 1, so the
   // written alpha is deterministically ≈ 0.41·255 ≈ 105 (pre-fix: 255,
   // indistinguishable from the opaque clear).
   'point-subpixel': buildSubpixelPointEntry(1),
   'point-subpixel-dpr2': buildSubpixelPointEntry(2),
   'point-subpixel-dpr-half': buildSubpixelPointEntry(0.5),
+  // Cube-capture face vs its +90° equivalent: the same image, because the
+  // size is |P11|-derived (a signed P11 would make the size negative and
+  // clamp the sprite to the 1.5 px floor) and the position already goes
+  // through the projection.
+  'point-cube-face': buildCubeCapturePointEntry(buildCubeFaceCamera),
+  'point-cube-face-equivalent': buildCubeCapturePointEntry(buildCubeFaceEquivalentCamera),
   // B9c: unified near fade, mid-band. Point at view depth 1 with
   // uNearCull 0.7 → smoothstep((1-0.7)/0.7) ≈ 0.39 fade — non-empty,
   // identical across backends (shared perspectiveNearFade helper).
@@ -890,10 +909,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildPointDataTexture() },
-      pointSizeFactor: { value: 221.7 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 0.1 },
-      uIsOrtho: { value: 0 },
       uNearCull: { value: 0.7 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
@@ -926,10 +943,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       uPointTex: { value: buildSortedPermutedPointTexture() },
-      pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },

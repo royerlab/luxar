@@ -23,6 +23,7 @@ import type { ShaderSource } from '../../materials/_shared/shader-source';
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
   GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import { requireTslMaterials } from '../../tsl/slot';
@@ -37,6 +38,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
+    ${GLSL_PROJECTION_FUNCTIONS}
 
     in vec2 aQuadCorner;
 
@@ -53,9 +55,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform highp sampler2D uSplatTex;
 
     uniform vec2 uResolution;
-    uniform float uFx, uFy;
     uniform float uTruncate;
-    uniform int uIsOrtho;
     uniform float uNearCull;
     uniform float uMaxExtentFactor;
     uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in CSS px² (visual-shader parity)
@@ -124,13 +124,23 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
         vec3 centerCam = centerCam4.xyz;
 
+        // Clip-space centre through the projection THIS draw uses. The screen
+        // centre, the covariance Jacobian, the coverage extent and the ortho
+        // branch all come from it and from P, so a splat is placed and sized
+        // for whatever camera three draws with: a cube-capture face (fov -90
+        // flips P), a zoomed or asymmetric frustum, an embedder's camera.
+        // CPU mirror + tests: projection-math.ts.
+        vec4 centerClip = projectionMatrix * centerCam4;
+        int isOrtho = luxarIsOrthoProjection();
+        float invW = 1.0 / centerClip.w;
+
         // Unified near handling — see the visual gsplat shader: the
         // shared perspectiveNearFade subsumes the old standalone
         // behind-camera reject; ortho falls through to NDC clipping.
         // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
         // scene-bounds-scaled (an absolute 1e-4 faded out tiny-unit
         // scenes entirely).
-        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-20));
+        float depthFade = perspectiveNearFade(isOrtho, centerCam.z, max(uNearCull, 1e-20));
         if (depthFade < 0.01) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
             return;
@@ -150,6 +160,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // maxExtent*0.5 the smoothstep is 0 and the fade is a no-op, so
         // no size gate is needed — the former maxLateralVar > 0.01 gate
         // skipped the fade for sigma < 0.1 world-unit splats.
+        float halfResY = 0.5 * uResolution.y;
         float coverageFade;
         {
             // 1e-20 floors = pure div-by-zero/sqrt guards, matching the
@@ -157,8 +168,8 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
             // 1e-8 floor coverage-culled every splat of a tiny-unit
             // scene); zDepth is bounded by the scene-relative near fade.
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-20);
-            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-20)) * uTruncate / extentDivisor;
+            float extentDivisor = (isOrtho == 1) ? 1.0 : max(zDepth, 1e-20);
+            float projectedExtent = (halfResY * luxarProjectionSizeScale()) * sqrt(max(maxLateralVar, 1e-20)) * uTruncate / extentDivisor;
             float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
             coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
             if (coverageFade < 0.01) {
@@ -169,19 +180,19 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
 
         float nearFade = min(depthFade, coverageFade);
 
-        float invZ = 1.0 / zDepth;
-        float invZ2 = invZ * invZ;
-
+        // Projection Jacobian at the splat centre, general form (valid for any
+        // P): J[k] = res/2 * (P[k].xy / w - clip.xy * P[k].w / w^2). For
+        // three's symmetric perspective P it is the classic
+        // [[fx/z, 0], [0, fy/z], [fx*x/z^2, fy*y/z^2]]; for ortho (w = 1,
+        // P[k].w = 0) it is [[fx, 0], [0, fy], [0, 0]]. The x terms use P00
+        // (not a shared fx = fy), so a camera aspect that differs from the
+        // buffer aspect is honoured instead of assumed away.
+        vec2 halfRes = 0.5 * uResolution;
+        vec2 clipTerm = centerClip.xy * (invW * invW);
         mat3x2 J;
-        if (uIsOrtho == 1) {
-            J[0] = vec2(uFx, 0.0);
-            J[1] = vec2(0.0, uFy);
-            J[2] = vec2(0.0, 0.0);
-        } else {
-            J[0] = vec2(uFx * invZ, 0.0);
-            J[1] = vec2(0.0, uFy * invZ);
-            J[2] = vec2(uFx * centerCam.x * invZ2, uFy * centerCam.y * invZ2);
-        }
+        J[0] = halfRes * (projectionMatrix[0].xy * invW - clipTerm * projectionMatrix[0].w);
+        J[1] = halfRes * (projectionMatrix[1].xy * invW - clipTerm * projectionMatrix[1].w);
+        J[2] = halfRes * (projectionMatrix[2].xy * invW - clipTerm * projectionMatrix[2].w);
 
         vec2 JS0 = J[0] * Sigma_cam[0][0] + J[1] * Sigma_cam[0][1] + J[2] * Sigma_cam[0][2];
         vec2 JS1 = J[0] * Sigma_cam[1][0] + J[1] * Sigma_cam[1][1] + J[2] * Sigma_cam[1][2];
@@ -242,24 +253,16 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
             extent2 *= clampScale;
         }
 
-        if (uIsOrtho == 1) {
-            vCenterScreen = vec2(
-                uFx * centerCam.x + uResolution.x * 0.5,
-                uFy * centerCam.y + uResolution.y * 0.5
-            );
-        } else {
-            vCenterScreen = vec2(
-                uFx * centerCam.x * invZ + uResolution.x * 0.5,
-                uFy * centerCam.y * invZ + uResolution.y * 0.5
-            );
-        }
+        // Screen centre in pixels from the clip-space centre (gl_FragCoord
+        // convention: origin at the viewport's bottom-left corner).
+        vCenterScreen = (centerClip.xy * invW * 0.5 + 0.5) * uResolution;
 
         vec2 quadOffset = aQuadCorner.x * majorAxis * extent1
                         + aQuadCorner.y * minorAxis * extent2;
         vec2 screenPos = vCenterScreen + quadOffset;
         vec2 ndcXY = (screenPos / uResolution) * 2.0 - 1.0;
 
-        vec4 centerClip = projectionMatrix * centerCam4;
+        // Depth through the same projection (the clip-space centre above).
         float ndcZ = centerClip.z / centerClip.w;
 
         gl_Position = vec4(ndcXY, ndcZ, 1.0);

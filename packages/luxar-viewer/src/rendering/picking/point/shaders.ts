@@ -20,6 +20,7 @@ import type { ShaderSource } from '../../materials/_shared/shader-source';
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
   GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import { FALLOFF_FLOOR, FALLOFF_K } from '../../materials/_shared/falloff';
@@ -34,6 +35,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
+    ${GLSL_PROJECTION_FUNCTIONS}
 
     // Per-vertex (4 corners shared across all instances)
     in vec2 aQuadCorner;
@@ -50,10 +52,8 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     // only (center/radius/sharpness) -- color and scalar are not fetched.
     uniform highp sampler2D uPointTex;
 
-    uniform float pointSizeFactor;
     uniform float maxPointSize;
     uniform float radiusScale;
-    uniform int uIsOrtho;
     uniform float uNearCull;
     uniform float uPixelRatio;
     uniform float uNodeId;
@@ -102,7 +102,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // [nearCull, 2*nearCull] fade; ortho = 1, NDC clip authority).
       // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
       // scene-bounds-scaled (see the visual point shader).
-      vNearFade = perspectiveNearFade(uIsOrtho, mvPosition.z, max(uNearCull, 1e-20));
+      vNearFade = perspectiveNearFade(luxarIsOrthoProjection(), mvPosition.z, max(uNearCull, 1e-20));
       if (vNearFade < 0.01) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         return;
@@ -114,8 +114,9 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // pick footprint stays congruent with the visible sprite. 1e-20 =
       // pure INF guard (near-fade reject bounds surviving depths at the
       // scene-relative ~uNearCull; the size clamp bounds the output).
-      float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-20);
-      float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
+      float invDistance = (luxarIsOrthoProjection() == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-20);
+      float sizeFactor = 2.0 * uResolution.y * luxarProjectionSizeScale();
+      float basePointSize = normalizedRadius * sizeFactor * invDistance;
 
       // Picking footprint: 80% of the visual radius (the 0.8 factor below).
       // Slightly tighter than the visible disc so dense/overlapping point

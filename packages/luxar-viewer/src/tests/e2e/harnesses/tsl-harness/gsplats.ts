@@ -25,7 +25,13 @@ import {
   writeSplatTexels,
 } from '../../../../rendering/gsplat-geometry';
 import type { RegistryEntry } from './types';
-import { buildBehindCamera, buildColormapTexture } from './shared';
+import {
+  buildBehindCamera,
+  buildColormapTexture,
+  buildCubeFaceCamera,
+  buildCubeFaceEquivalentCamera,
+  buildOrthoCamera,
+} from './shared';
 
 /**
  * Build a single-splat gsplat mesh. Isotropic covariance (identity
@@ -228,11 +234,8 @@ function buildSurfacePickUniforms(surfaceDepth: 0 | 1): Record<string, THREE.IUn
   return {
     uSplatTex: { value: buildSurfacePickSplatTexture() },
     uResolution: { value: new THREE.Vector2(64, 64) },
-    uFx: { value: 32.0 },
-    uFy: { value: 32.0 },
     uTruncate: { value: 1.5 },
     uTruncateSq: { value: 2.25 },
-    uIsOrtho: { value: 1 },
     uNearCull: { value: 0.01 },
     uMaxExtentFactor: { value: 1.0 },
     uNodeId: { value: 42 },
@@ -247,7 +250,53 @@ function buildSurfacePickUniforms(surfaceDepth: 0 | 1): Record<string, THREE.IUn
  * keyed by test name. Each entry carries the GLSL source and a `buildUniforms`
  * factory; merged into `SHADER_REGISTRY` and driven by the parity/codegen specs.
  */
+/** An off-axis splat 3 units down +X, for the cube-capture face cases. */
+const CUBE_SPLAT_CENTER: readonly [number, number, number] = [3, 0.35, -0.25];
+const CUBE_SPLAT_SIGMA = 0.3;
+
+/**
+ * A splat seen through a CubeCamera face (fov −90, a flipped projection) or
+ * its 180°-rolled +90° equivalent (see `buildCubeFaceCamera`): the same
+ * image, because the centre and the Jacobian go through P. Before the splat
+ * shader read P, its centre used a CPU focal length with no flip, so under
+ * the face camera the splat landed point-reflected through the image centre
+ * — the mirrored splats of the scene-captured environment.
+ */
+function buildCubeCaptureGSplatEntry(buildCamera: () => THREE.Camera): RegistryEntry {
+  return {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture(CUBE_SPLAT_CENTER, CUBE_SPLAT_SIGMA) },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'max',
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildGSplatInstancedMesh(m, CUBE_SPLAT_CENTER, CUBE_SPLAT_SIGMA),
+    buildCamera,
+  };
+}
+
 export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
+  'gsplat-cube-face': buildCubeCaptureGSplatEntry(buildCubeFaceCamera),
+  'gsplat-cube-face-equivalent': buildCubeCaptureGSplatEntry(buildCubeFaceEquivalentCamera),
   // GSplat parity: isotropic Gaussian splat at world origin with
   // identity Cholesky factor. Ortho camera for deterministic projection.
   // Tests the 3D→2D covariance Jacobian, Cholesky factorisation,
@@ -257,13 +306,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 }, // ortho frustum 2 units → 32 px/unit
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 }, // max projection — no Σ⁻¹ ray-integral path
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -299,13 +345,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTextureMultiRow() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -337,13 +380,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture([0, 0.5, 0]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -364,7 +404,7 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: (material) => buildGSplatInstancedMesh(material, [0, 0.5, 0]),
   },
   // TINY-SIGMA splat (sigma = 0.005, maxLateralVar = 2.5e-5) whose
-  // PROJECTED extent lands in the coverage-fade band: uFx = 3200 →
+  // PROJECTED extent lands in the coverage-fade band: focal 3200 px →
   // projectedExtent = 3200·0.005·3 = 48 px, band (32, 64) → fade 0.5.
   // Guards the fade being computed UNCONDITIONALLY: the former
   // maxLateralVar > 0.01 gate skipped it for sub-0.1-sigma splats, so
@@ -376,13 +416,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 0], 0.005) },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 3200.0 },
-      uFy: { value: 3200.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -401,8 +438,11 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: (material) => buildGSplatInstancedMesh(material, [0, 0, 0], 0.005),
+    // Focal length 3200 px: 0.5 * 64 * 2 / 0.02. The shader reads it from
+    // this camera's projection.
+    buildCamera: () => buildOrthoCamera(0.02),
   },
-  // TINY-SIGMA splat pushed PAST the fade band (uFx = 12800 →
+  // TINY-SIGMA splat pushed PAST the fade band (focal 12800 px →
   // projectedExtent = 192 px > maxExtent = 64) — the coverage cull must
   // reject the vertex entirely. Pre-fix, the gate skipped the fade and
   // the unconditional extent clamp squashed the 192-px quad into a
@@ -412,13 +452,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 0], 0.005) },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 12800.0 },
-      uFy: { value: 12800.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -437,6 +474,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: (material) => buildGSplatInstancedMesh(material, [0, 0, 0], 0.005),
+    // Focal length 12800 px: 0.5 * 64 * 2 / 0.005. The shader reads it from
+    // this camera's projection.
+    buildCamera: () => buildOrthoCamera(0.005),
   },
   // GSplat with the gamma==1 fast path enabled. Same geometry as `gsplat`
   // but uInvGamma=1 + `gammaOne: true`, so the fragment-stage color pow()
@@ -447,13 +487,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -487,13 +524,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -531,13 +565,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 0 }, // SUM ray-integral (volumetric = emissive)
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 0.7 },
@@ -577,13 +608,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 0], 0.1, 0.5) },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 0 }, // SUM ray-integral (volumetric = emissive)
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 0.7 },
@@ -618,13 +646,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 }, // peak projection (normal = surface)
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 0.6 },
@@ -658,13 +683,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 }, // peak projection (opaque = surface)
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -699,13 +721,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildThinCovSplatTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 }, // max projection (isolate dilation)
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uCov2DDilation: { value: 0.3 }, // the term under test — same on both backends
@@ -735,13 +754,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -774,11 +790,8 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 1.5 }, // tighter for picking (vs 3.0 visual)
       uTruncateSq: { value: 2.25 },
-      uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uNodeId: { value: 42 },
@@ -799,13 +812,10 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 3]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
       uProjectionMode: { value: 1 },
-      uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
@@ -831,11 +841,8 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => ({
       uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 3]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      uFx: { value: 32.0 },
-      uFy: { value: 32.0 },
       uTruncate: { value: 1.5 },
       uTruncateSq: { value: 2.25 },
-      uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uNodeId: { value: 42 },

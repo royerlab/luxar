@@ -64,7 +64,12 @@ import {
   glassPartitionNodesFromUniforms,
   type GlassPartitionTSLNodes,
 } from '../_shared/glass-partition-tsl';
-import { sanitizeAlpha, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
+import {
+  isOrthoProjectionTSL,
+  sanitizeAlpha,
+  perspectiveNearFadeTSL,
+  type TSLNode,
+} from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 import {
@@ -176,13 +181,6 @@ export interface MeshTSLNodes {
   readonly uShininess: TSLNode;
   /** Cutout threshold; read only when the graph was built in `opaque` mode. */
   readonly uAlphaCutoff: TSLNode;
-  /**
-   * Projection selector for the near fade: 0 = perspective, 1 = orthographic
-   * (where the fade is the identity). A runtime UNIFORM, not a build flag —
-   * which is why this graph uses `perspectiveNearFadeTSL` and not the
-   * compile-time-ortho `…StaticTSL` variant the line graphs take.
-   */
-  readonly uIsOrtho: TSLNode;
   /** Near-fade start distance, world units (scene-relative; see the fragment). */
   readonly uNearCull: TSLNode;
   /** Refraction split (glass-partition-tsl.ts): mode + shared glass depth texture. */
@@ -218,7 +216,6 @@ export function meshWebGPUFactory(
   const uSpecular = nodes.uSpecular;
   const uShininess = nodes.uShininess;
   const uAlphaCutoff = nodes.uAlphaCutoff;
-  const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
   if (config.useColormap) {
     if (!nodes.uColormapTex || !nodes.uScalarMin || !nodes.uScalarScale) {
@@ -468,13 +465,13 @@ export function meshWebGPUFactory(
 
     // Perspective near fade, PER FRAGMENT — a triangle spans depth, so a
     // per-vertex value would interpolate the RAMP across the face and smear the
-    // smoothstep over a large triangle. The runtime-uniform variant, matching
-    // point/gsplat: mesh's ortho flag is a uniform, not a build flag. The 1e-20
+    // smoothstep over a large triangle. The runtime variant, matching
+    // point/gsplat: the ortho test reads cameraProjectionMatrix per draw. The 1e-20
     // floor only guards the degenerate smoothstep when uNearCull is exactly 0;
     // an absolute floor would override the scene-relative value on a tiny-unit
     // scene. GLSL twin: shader-glsl.ts.
     const nearFade: TSLNode = perspectiveNearFadeTSL(
-      uIsOrtho,
+      isOrthoProjectionTSL(),
       vViewPos.z,
       max(uNearCull, float(1e-20))
     ).toVar();
@@ -560,9 +557,7 @@ export function buildMeshTSLNodesFromUniforms(
     uSpecular: uniform((uniforms.uSpecular?.value as number) ?? MESH_DEFAULTS.specular),
     uShininess: uniform((uniforms.uShininess?.value as number) ?? MESH_DEFAULTS.shininess),
     uAlphaCutoff: uniform((uniforms.uAlphaCutoff?.value as number) ?? MESH_DEFAULTS.alphaCutoff),
-    // 0 = perspective, and 0.1 is the same near-cull default the sibling
-    // materials construct with (overridden per scene by updateCameraParams).
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    // 0.1 is the same near-cull default the sibling materials construct with (overridden per scene by updateCameraParams).
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
     ...glassPartitionNodesFromUniforms(uniforms),
   };

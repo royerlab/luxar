@@ -8,6 +8,7 @@
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
 import {
@@ -29,6 +30,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
+    ${GLSL_PROJECTION_FUNCTIONS}
 
     // Quad corner attribute (static geometry)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
@@ -45,11 +47,9 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
 
     // Uniforms (modelViewMatrix and projectionMatrix are built-in THREE.js uniforms)
     uniform vec2 uResolution;
-    uniform float uFx, uFy;           // Focal lengths in pixels
     uniform float uTruncate;          // Truncation radius (in sigmas)
     uniform float uRayIntegralFactor; // Shifted Gaussian ray integral factor
     uniform int uProjectionMode;      // 0 = sum (ray-integral: additive/luminous/volumetric), 1 = peak (2D-projected surfaces: max/normal/opaque)
-    uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // Near cull distance (scene-scale-aware)
     uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
     uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in CSS px² (3DGS anti-aliasing)
@@ -150,6 +150,16 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
         vec3 centerCam = centerCam4.xyz;
 
+        // Clip-space centre through the projection THIS draw uses. The screen
+        // centre, the covariance Jacobian, the coverage extent and the ortho
+        // branch all come from it and from P, so a splat is placed and sized
+        // for whatever camera three draws with: a cube-capture face (fov -90
+        // flips P), a zoomed or asymmetric frustum, an embedder's camera.
+        // CPU mirror + tests: projection-math.ts.
+        vec4 centerClip = projectionMatrix * centerCam4;
+        int isOrtho = luxarIsOrthoProjection();
+        float invW = 1.0 / centerClip.w;
+
         // === Unified near handling (shared perspectiveNearFade helper;
         // point + line shaders use the same) ===
         // Perspective: behind-camera splats fade to 0 (subsumes the old
@@ -167,7 +177,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // by ~uNearCull, so the unguarded 1/zDepth below can get large
         // on a sub-camera-plane splat — J/Sigma2D then go non-finite
         // and the invalidCov2D reject drops the splat safely.)
-        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-20));
+        float depthFade = perspectiveNearFade(isOrtho, centerCam.z, max(uNearCull, 1e-20));
         if (depthFade < 0.01) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
             return;
@@ -202,11 +212,12 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // sqrt(1e-8) = 1e-4 world units — projectedExtent exploded and
         // coverageFade culled EVERY splat in the scene. zDepth is
         // likewise bounded below by the scene-relative near fade.
+        float halfResY = 0.5 * uResolution.y;
         float coverageFade;
         {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-20);
-            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-20)) * uTruncate / extentDivisor;
+            float extentDivisor = (isOrtho == 1) ? 1.0 : max(zDepth, 1e-20);
+            float projectedExtent = (halfResY * luxarProjectionSizeScale()) * sqrt(max(maxLateralVar, 1e-20)) * uTruncate / extentDivisor;
             float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
             coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
             if (coverageFade < 0.01) {
@@ -218,26 +229,19 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Combined fade: most restrictive wins (both use smoothstep → no popping)
         float nearFade = min(depthFade, coverageFade);
 
-        // Precompute depth reciprocals (used by perspective Jacobian and screen projection)
-        float invZ = 1.0 / zDepth;
-        float invZ2 = invZ * invZ;
-
-        // Projection Jacobian at splat center
+        // Projection Jacobian at the splat centre, general form (valid for any
+        // P): J[k] = res/2 * (P[k].xy / w - clip.xy * P[k].w / w^2). For
+        // three's symmetric perspective P it is the classic
+        // [[fx/z, 0], [0, fy/z], [fx*x/z^2, fy*y/z^2]]; for ortho (w = 1,
+        // P[k].w = 0) it is [[fx, 0], [0, fy], [0, 0]]. The x terms use P00
+        // (not a shared fx = fy), so a camera aspect that differs from the
+        // buffer aspect is honoured instead of assumed away.
+        vec2 halfRes = 0.5 * uResolution;
+        vec2 clipTerm = centerClip.xy * (invW * invW);
         mat3x2 J;
-        if (uIsOrtho == 1) {
-            // Orthographic: no depth dependence (parallel projection)
-            J[0] = vec2(uFx, 0.0);
-            J[1] = vec2(0.0, uFy);
-            J[2] = vec2(0.0, 0.0);
-        } else {
-            // Perspective projection Jacobian
-            // For camera looking down -Z, with z = -centerCam.z (positive depth):
-            // x_s = fx * centerCam.x / z, y_s = fy * centerCam.y / z
-            // ∂x_s/∂(centerCam.z) = fx * centerCam.x / z² (since z = -centerCam.z)
-            J[0] = vec2(uFx * invZ, 0.0);
-            J[1] = vec2(0.0, uFy * invZ);
-            J[2] = vec2(uFx * centerCam.x * invZ2, uFy * centerCam.y * invZ2);
-        }
+        J[0] = halfRes * (projectionMatrix[0].xy * invW - clipTerm * projectionMatrix[0].w);
+        J[1] = halfRes * (projectionMatrix[1].xy * invW - clipTerm * projectionMatrix[1].w);
+        J[2] = halfRes * (projectionMatrix[2].xy * invW - clipTerm * projectionMatrix[2].w);
 
         // Project covariance to 2D: Σ_2D = J · Σ_cam · Jᵀ
         // Compute J * Sigma_cam first
@@ -305,7 +309,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
             // inverse and clamp to a minimum determinant. The shader is
             // already paying for a covariance matrix-vector product, so
             // a one-off explicit inverse is a small constant factor.
-            vec3 rayDir = (uIsOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
+            vec3 rayDir = (isOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
             // Cofactor expansion for 3x3 inverse. Σ_cam is symmetric SPD,
             // so the inverse is symmetric SPD too.
             // SCALE-FREE inversion: normalize Σ_cam by its mean diagonal
@@ -399,20 +403,9 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
             extent2 *= clampScale;
         }
 
-        // Project center to screen (pixels)
-        if (uIsOrtho == 1) {
-            // Orthographic: direct linear mapping (no depth division)
-            vCenterScreen = vec2(
-                uFx * centerCam.x + uResolution.x * 0.5,
-                uFy * centerCam.y + uResolution.y * 0.5
-            );
-        } else {
-            // Perspective: reuse invZ from earlier computation
-            vCenterScreen = vec2(
-                uFx * centerCam.x * invZ + uResolution.x * 0.5,
-                uFy * centerCam.y * invZ + uResolution.y * 0.5
-            );
-        }
+        // Screen centre in pixels from the clip-space centre (gl_FragCoord
+        // convention: origin at the viewport's bottom-left corner).
+        vCenterScreen = (centerClip.xy * invW * 0.5 + 0.5) * uResolution;
 
         // Expand quad vertex in screen space (oriented)
         vec2 quadOffset = aQuadCorner.x * majorAxis * extent1
@@ -453,9 +446,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // does the same.
         vAlpha = sanitizeAlpha(aAlpha);
 
-        // Compute proper clip-space depth using projection matrix
-        // This ensures correct depth buffer behavior for overlapping splats
-        vec4 centerClip = projectionMatrix * centerCam4;
+        // Depth through the same projection (the clip-space centre above).
         float ndcZ = centerClip.z / centerClip.w;
 
         // Output final clip position

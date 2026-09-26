@@ -3,11 +3,12 @@
  *
  * Two helpers:
  *
- *   - `updateMaterialsForCurrentCamera` — push current camera
- *     projection (FOV-based for perspective, frustum-based for
- *     orthographic) + drawing-buffer size + near-cull margin into
- *     the global materialManager. Called on resize, camera swap,
- *     and FOV change.
+ *   - `updateMaterialsForCurrentCamera` — push the drawing-buffer
+ *     size, projection kind (orthographic or not), near-cull margin
+ *     and pixel ratio into the global materialManager. The
+ *     projection terms themselves (FOV, ortho zoom) are read in
+ *     shader from the projection matrix. Called on resize, camera
+ *     swap, and FOV change.
  *
  *   - `adjustFOV` — mutate `camera.fov` with clamping, refresh the
  *     projection matrix, and push the new value into materials.
@@ -25,8 +26,6 @@ import { materialManager } from '../../../rendering/material-manager';
 import type { Renderer } from '../../../rendering/renderer-capabilities';
 import {
   type LuxarCamera,
-  getCameraFovRadians,
-  getOrthoFrustumHeight,
   isOrthographicCamera,
   isPerspectiveCamera,
 } from '../../../utils/camera-utils';
@@ -58,10 +57,10 @@ export interface CameraMaterialsCtx {
 }
 
 /**
- * Push current camera projection into the global material manager.
- *
- * Perspective: projection = FOV radians, orthographic flag = false.
- * Orthographic: projection = frustum height, orthographic flag = true.
+ * Push the current camera state into the global material manager:
+ * drawing-buffer size, orthographic flag, near-cull margin, pixel ratio.
+ * No FOV / frustum height: every shader derives its projection terms
+ * from the projection matrix three binds per draw.
  *
  * Always ensures the bounds cache is populated (so the materials
  * see a consistent near-cull margin) and uses the supplied
@@ -74,18 +73,12 @@ export function updateMaterialsForCurrentCamera(ctx: CameraMaterialsCtx): void {
   const cssHeight = ctx.renderer.domElement.clientHeight;
   const pixelRatio = cssHeight > 0 ? ctx.bufferSize.y / cssHeight : ctx.renderer.getPixelRatio();
 
-  if (isOrthographicCamera(ctx.camera)) {
-    const frustumHeight = getOrthoFrustumHeight(ctx.camera);
-    materialManager.updateCameraParams(frustumHeight, ctx.bufferSize, true, nearCull, pixelRatio);
-  } else {
-    materialManager.updateCameraParams(
-      getCameraFovRadians(ctx.camera),
-      ctx.bufferSize,
-      false,
-      nearCull,
-      pixelRatio
-    );
-  }
+  materialManager.updateCameraParams(
+    ctx.bufferSize,
+    isOrthographicCamera(ctx.camera),
+    nearCull,
+    pixelRatio
+  );
 }
 
 /**

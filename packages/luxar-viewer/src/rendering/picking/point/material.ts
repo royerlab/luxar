@@ -10,10 +10,7 @@
 
 import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
-import {
-  computePointSizeFactor,
-  computeMaxPointSize,
-} from '../../materials/_shared/camera-uniforms';
+import { computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
 import { POINT_PICK_SOURCE } from './shaders';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 import {
@@ -33,19 +30,15 @@ export interface PointPickingMaterialConfig {
 
 export class PointPickingMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
   constructor(config: PointPickingMaterialConfig) {
-    const defaultFov = (60 * Math.PI) / 180;
     const defaultResolutionY = 1080;
-    const defaultTanHalfFov = Math.tan(defaultFov / 2);
 
     super({
       uniforms: {
         // Point data texture — rebound by the commit's material sync
         // (shared with the visual material's pool-owned storage).
         uPointTex: { value: null },
-        pointSizeFactor: { value: (2.0 * defaultResolutionY) / defaultTanHalfFov },
         maxPointSize: { value: defaultResolutionY * 0.5 },
         radiusScale: { value: config.radiusScale ?? 1.0 },
-        uIsOrtho: { value: 0 },
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
         // holds a whole permutation (runtime uniform: never a define — a
@@ -95,9 +88,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     // from the texture it actually binds (not the constructor's
     // session-width pre-stamp).
     cloned.updatePointTexture(this.uniforms.uPointTex.value as THREE.DataTexture | null);
-    cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
@@ -110,15 +101,12 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
   }
 
   updateCameraParams(
-    fov: number,
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
-    this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     this.uniforms.uPixelRatio.value = pixelRatio;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);

@@ -56,7 +56,6 @@ layout( std140 ) uniform object {
 	float nodeUniform10;
 	float nodeUniform11;
 	float nodeUniform12;
-	float nodeUniform13;
 	float nodeUniform14;
 	float nodeUniform15;
 	float nodeUniform16;
@@ -80,9 +79,9 @@ layout( location = 1 ) in vec4 color;
 vec3 nodeVar6;
 vec3 nodeVar12;
 mat4 modelViewMatrix;
-vec4 nodeVar21;
-float nodeVar22;
-vec4 nodeVar23;
+vec4 nodeVar22;
+float nodeVar23;
+vec4 nodeVar24;
 
 // codes
 
@@ -102,26 +101,26 @@ void main() {
 	nodeVarying0 = nodeVar12;
 	nodeVarying1 = 1.0;
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform18 );
-	nodeVar21 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	nodeVar22 = ( modelViewMatrix * vec4( position, 1.0 ) );
 	nodeVarying0 = color.xyz;
 
 	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
 
-		nodeVar22 = min( max( color.w, 0.0 ), 1.0 );
+		nodeVar23 = min( max( color.w, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar22 = 1.0;
+		nodeVar23 = 1.0;
 
 	}
 
-	nodeVarying1 = nodeVar22;
-	nodeVarying2 = nodeVar21.xyz;
-	nodeVar23 = ( cameraProjectionMatrix * nodeVar21 );
-	nodeVarying3 = nodeVar23.zw;
+	nodeVarying1 = nodeVar23;
+	nodeVarying2 = nodeVar22.xyz;
+	nodeVar24 = ( cameraProjectionMatrix * nodeVar22 );
+	nodeVarying3 = nodeVar24.zw;
 
 	// result
-	gl_Position = nodeVar23;
+	gl_Position = nodeVar24;
 
 	gl_PointSize = 1.0;
 

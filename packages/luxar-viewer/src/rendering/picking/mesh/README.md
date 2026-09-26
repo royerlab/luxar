@@ -25,7 +25,8 @@ Three differences from the point/line/gsplat pick materials, all from
   the index buffer is rewritten; a vertex ordinal is invariant, and it indexes the per-vertex
   label CSR directly.
 - **Camera-aware for half the usual reason.** A mesh has no screen-space footprint to size, so
-  there is no resolution/FOV uniform — but `uIsOrtho` / `uNearCull` are bound and the material
+  there is no resolution/FOV uniform, and the near fade's ortho test reads three's
+  `isOrthographic` — but `uNearCull` is bound and the material
   joins the camera broadcast, because the pick pass has to reproduce the visual near fade or a
   surface fading out of view would stay fully pickable. Matching the visual mesh material, which
   is camera-aware for exactly the same half.

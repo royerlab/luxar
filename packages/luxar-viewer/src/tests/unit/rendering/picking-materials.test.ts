@@ -47,25 +47,27 @@ describe('PointPickingMaterial', () => {
   it('implements updateCameraParams', () => {
     const material = new PointPickingMaterial({ nodeId: 1 });
     const resolution = new THREE.Vector2(1920, 1080);
-    const fov = (60 * Math.PI) / 180;
 
-    material.updateCameraParams(fov, resolution, false);
+    material.updateCameraParams(resolution, false, undefined, 2);
 
-    expect(material.uniforms.uIsOrtho.value).toBe(0);
     expect(material.uniforms.maxPointSize.value).toBe(540); // 1080 * 0.5
-    expect(material.uniforms.pointSizeFactor.value).toBeGreaterThan(0);
+    expect(material.uniforms.uResolution.value.y).toBe(1080);
+    expect(material.uniforms.uPixelRatio.value).toBe(2);
     material.dispose();
   });
 
-  it('handles orthographic camera params', () => {
+  it('reads the projection terms in shader, not from pushed uniforms', () => {
+    // The size scale and the ortho test come from the projection matrix of the
+    // camera being drawn with; the retired CPU-pushed pair must not reappear.
     const material = new PointPickingMaterial({ nodeId: 1 });
-    const resolution = new THREE.Vector2(800, 600);
-    const frustumHeight = 10; // world units
+    material.updateCameraParams(new THREE.Vector2(800, 600), true);
 
-    material.updateCameraParams(frustumHeight, resolution, true);
-
-    expect(material.uniforms.uIsOrtho.value).toBe(1);
-    expect(material.uniforms.pointSizeFactor.value).toBe(240); // 2 * 600 / (10 * 0.5)
+    expect(material.vertexShader).toContain('luxarProjectionSizeScale()');
+    expect(material.vertexShader).toContain('luxarIsOrthoProjection()');
+    expect(material.vertexShader).not.toContain('pointSizeFactor');
+    expect(material.vertexShader).not.toContain('uIsOrtho');
+    expect(material.uniforms.pointSizeFactor).toBeUndefined();
+    expect(material.uniforms.uIsOrtho).toBeUndefined();
     material.dispose();
   });
 
@@ -74,14 +76,12 @@ describe('PointPickingMaterial', () => {
   // three-geometry symmetry rule).
   it('clone preserves config and tuned uniforms (independent of source)', () => {
     const material = new PointPickingMaterial({ nodeId: 5, radiusScale: 0.5 });
-    material.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.25);
+    material.updateCameraParams(new THREE.Vector2(800, 600), true, 0.25);
 
     const cloned = material.clone();
     expect(cloned.uniforms.uNodeId.value).toBe(5);
     expect(cloned.uniforms.radiusScale.value).toBe(0.5);
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
-    expect(cloned.uniforms.pointSizeFactor.value).toBe(material.uniforms.pointSizeFactor.value);
     expect(cloned.uniforms.maxPointSize.value).toBe(material.uniforms.maxPointSize.value);
     expect(cloned.uniforms.uResolution.value.x).toBe(800);
     expect(cloned.uniforms.uResolution.value.y).toBe(600);
@@ -100,14 +100,12 @@ describe('PointPickingTSLMaterial', () => {
     // One-for-one mirror of the GLSL wrapper's clone test above
     // (GLSL ↔ TSL symmetry, same rule as the gsplat pick wrappers).
     const material = new PointPickingTSLMaterial({ nodeId: 5, radiusScale: 0.5 });
-    material.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.25);
+    material.updateCameraParams(new THREE.Vector2(800, 600), true, 0.25);
 
     const cloned = material.clone();
     expect(cloned.uniforms.uNodeId.value).toBe(5);
     expect(cloned.uniforms.radiusScale.value).toBe(0.5);
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
-    expect(cloned.uniforms.pointSizeFactor.value).toBe(material.uniforms.pointSizeFactor.value);
     expect(cloned.uniforms.maxPointSize.value).toBe(material.uniforms.maxPointSize.value);
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(800);
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).y).toBe(600);
@@ -142,7 +140,7 @@ describe('LinePickingMaterial', () => {
     const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 1 });
     const resolution = new THREE.Vector2(1920, 1080);
 
-    material.updateCameraParams(1.0, resolution, false);
+    material.updateCameraParams(resolution, false);
 
     expect(material.uniforms.uResolution.value.x).toBe(1920);
     expect(material.uniforms.uResolution.value.y).toBe(1080);
@@ -189,22 +187,22 @@ describe('LinePickingMaterial', () => {
   // three-geometry symmetry rule).
   it('clone preserves config and tuned uniforms (independent of source)', () => {
     const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 7 });
-    material.updateCameraParams(10, new THREE.Vector2(800, 600), true, 0.25);
+    material.updateCameraParams(new THREE.Vector2(800, 600), true, 0.25);
 
     const cloned = material.clone();
     expect(cloned.uniforms.uNodeId.value).toBe(7);
     expect(cloned.uniforms.uIsOrtho.value).toBe(1);
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
     expect(cloned.uniforms.uMaxLinePixelWidth.value).toBe(300); // 600 * 0.5
-    expect(cloned.uniforms.uOrthoLineScale.value).toBe(material.uniforms.uOrthoLineScale.value);
-    expect(cloned.uniforms.uPerspectiveLineScale.value).toBe(
-      material.uniforms.uPerspectiveLineScale.value
-    );
+    // The pixel-width scale is read in shader from the projection matrix; the
+    // retired perspective / ortho line-scale uniforms must not come back.
+    expect(cloned.uniforms.uOrthoLineScale).toBeUndefined();
+    expect(cloned.uniforms.uPerspectiveLineScale).toBeUndefined();
     expect(cloned.uniforms.uResolution.value.x).toBe(800);
     expect(cloned.uniforms.uResolution.value.y).toBe(600);
 
     // Clone is independent — mutating the source must not leak.
-    material.updateCameraParams(10, new THREE.Vector2(1920, 1080), true, 0.9);
+    material.updateCameraParams(new THREE.Vector2(1920, 1080), true, 0.9);
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
     expect(cloned.uniforms.uResolution.value.x).toBe(800);
 
@@ -236,32 +234,28 @@ describe('GSplatPickingMaterial', () => {
     const material = new GSplatPickingMaterial({ nodeId: 1 });
     const resolution = new THREE.Vector2(1920, 1080);
 
-    material.updateCameraParams(1.0, resolution, false, 0.5);
+    material.updateCameraParams(resolution, false, 0.5, 2);
 
     expect(material.uniforms.uNearCull.value).toBe(0.5);
-    expect(material.uniforms.uFx.value).toBeGreaterThan(0);
+    expect(material.uniforms.uResolution.value.y).toBe(1080);
+    expect(material.uniforms.uPixelRatio.value).toBe(2);
     material.dispose();
   });
 
-  // rendering.md G5 fix: GSplatPickingMaterial previously only had
-  // an instantiation test. Orthographic branch (uIsOrtho=1) is an
-  // independent code path in `computeFocalLength` (frustumHeight
-  // semantics, not tan(fov/2)), so it must be exercised separately
-  // to kill mutations to the `isOrtho ? 1 : 0` flag and the fy=fx
-  // assignment.
-  it('handles orthographic camera params (uIsOrtho=1)', () => {
+  // The focal length and the ortho test are read in shader from the
+  // projection matrix of the camera being drawn with (the full Jacobian
+  // comes from its columns), so an ortho push writes no projection uniform.
+  it('reads the projection in shader: no focal-length / ortho uniforms', () => {
     const material = new GSplatPickingMaterial({ nodeId: 1 });
-    const resolution = new THREE.Vector2(800, 600);
-    const frustumHeight = 10; // world units, ortho semantics
+    material.updateCameraParams(new THREE.Vector2(800, 600), true);
 
-    material.updateCameraParams(frustumHeight, resolution, true);
-
-    expect(material.uniforms.uIsOrtho.value).toBe(1);
-    // For ortho: focal = resolution.y / frustumHeight = 600 / 10 = 60.
-    // Both fx and fy must be set identically (square pixels assumption).
-    expect(material.uniforms.uFx.value).toBeCloseTo(60, 5);
-    expect(material.uniforms.uFy.value).toBeCloseTo(60, 5);
-    expect(material.uniforms.uFx.value).toBe(material.uniforms.uFy.value);
+    expect(material.uniforms.uIsOrtho).toBeUndefined();
+    expect(material.uniforms.uFx).toBeUndefined();
+    expect(material.uniforms.uFy).toBeUndefined();
+    expect(material.vertexShader).toContain('luxarIsOrthoProjection()');
+    expect(material.vertexShader).toContain('projectionMatrix[0].xy');
+    expect(material.vertexShader).not.toMatch(/\buF[xy]\b/);
+    expect(material.vertexShader).not.toContain('uIsOrtho');
     material.dispose();
   });
 
@@ -272,7 +266,7 @@ describe('GSplatPickingMaterial', () => {
     const initialNearCull = material.uniforms.uNearCull.value;
     const resolution = new THREE.Vector2(1920, 1080);
 
-    material.updateCameraParams(1.0, resolution, false);
+    material.updateCameraParams(resolution, false);
 
     expect(material.uniforms.uNearCull.value).toBe(initialNearCull);
     material.dispose();
@@ -359,37 +353,33 @@ describe('GSplatPickingTSLMaterial', () => {
     material.dispose();
   });
 
-  it('updateCameraParams (perspective) sets fx=fy and uIsOrtho=0', () => {
+  it('updateCameraParams (perspective) writes resolution, pixel ratio and nearCull', () => {
     const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
     const resolution = new THREE.Vector2(1920, 1080);
 
-    material.updateCameraParams(1.0, resolution, false, 0.5);
+    material.updateCameraParams(resolution, false, 0.5, 2);
 
-    expect(material.uniforms.uIsOrtho.value).toBe(0);
     expect(material.uniforms.uNearCull.value).toBe(0.5);
-    expect(material.uniforms.uFx.value).toBeGreaterThan(0);
-    expect(material.uniforms.uFx.value).toBe(material.uniforms.uFy.value);
+    expect((material.uniforms.uResolution.value as THREE.Vector2).y).toBe(1080);
+    expect(material.uniforms.uPixelRatio.value).toBe(2);
     material.dispose();
   });
 
-  it('updateCameraParams (orthographic) sets uIsOrtho=1 and matching ortho focal', () => {
+  it('updateCameraParams (orthographic) writes no projection uniform', () => {
+    // Mirror of the GLSL test: the graph reads cameraProjectionMatrix.
     const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
-    const resolution = new THREE.Vector2(800, 600);
-    const frustumHeight = 10;
+    material.updateCameraParams(new THREE.Vector2(800, 600), true);
 
-    material.updateCameraParams(frustumHeight, resolution, true);
-
-    expect(material.uniforms.uIsOrtho.value).toBe(1);
-    // Mirror the GLSL ortho test: focal = res.y / frustumHeight = 60.
-    expect(material.uniforms.uFx.value).toBeCloseTo(60, 5);
-    expect(material.uniforms.uFy.value).toBeCloseTo(60, 5);
+    expect(material.uniforms.uIsOrtho).toBeUndefined();
+    expect(material.uniforms.uFx).toBeUndefined();
+    expect(material.uniforms.uFy).toBeUndefined();
     material.dispose();
   });
 
   it('updateCameraParams without nearCull preserves uNearCull default', () => {
     const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
     const initial = material.uniforms.uNearCull.value;
-    material.updateCameraParams(1.0, new THREE.Vector2(800, 600), false);
+    material.updateCameraParams(new THREE.Vector2(800, 600), false);
     expect(material.uniforms.uNearCull.value).toBe(initial);
     material.dispose();
   });
@@ -458,22 +448,22 @@ describe('LinePickingTSLMaterial', () => {
     // Ortho camera params also exercise the clone's graph rebuild on
     // the copied projection mode (the pick graph is JS-specialized).
     const material = new LinePickingTSLMaterial({ nodeId: 7 });
-    material.updateCameraParams(10, new THREE.Vector2(800, 600), true, 0.25);
+    material.updateCameraParams(new THREE.Vector2(800, 600), true, 0.25);
 
     const cloned = material.clone();
     expect(cloned.uniforms.uNodeId.value).toBe(7);
     expect(cloned.uniforms.uIsOrtho.value).toBe(1);
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
     expect(cloned.uniforms.uMaxLinePixelWidth.value).toBe(300); // 600 * 0.5
-    expect(cloned.uniforms.uOrthoLineScale.value).toBe(material.uniforms.uOrthoLineScale.value);
-    expect(cloned.uniforms.uPerspectiveLineScale.value).toBe(
-      material.uniforms.uPerspectiveLineScale.value
-    );
+    // The pixel-width scale is read in shader from the projection matrix; the
+    // retired perspective / ortho line-scale uniforms must not come back.
+    expect(cloned.uniforms.uOrthoLineScale).toBeUndefined();
+    expect(cloned.uniforms.uPerspectiveLineScale).toBeUndefined();
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(800);
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).y).toBe(600);
 
     // Clone is independent — mutating the source must not leak.
-    material.updateCameraParams(10, new THREE.Vector2(1920, 1080), true, 0.9);
+    material.updateCameraParams(new THREE.Vector2(1920, 1080), true, 0.9);
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
     expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(800);
 

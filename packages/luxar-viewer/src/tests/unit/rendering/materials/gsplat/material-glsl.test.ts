@@ -148,8 +148,10 @@ describe('GSplatMaterial', () => {
       expect(material.uniforms.uOpacity.value).toBe(1.0);
       expect(material.uniforms.uTruncate.value).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);
-      expect(material.uniforms.uFx.value).toBe(500);
-      expect(material.uniforms.uFy.value).toBe(500);
+      // Focal length and ortho test are read in shader from the projection.
+      expect(material.uniforms.uFx).toBeUndefined();
+      expect(material.uniforms.uFy).toBeUndefined();
+      expect(material.uniforms.uIsOrtho).toBeUndefined();
 
       expect(material.transparent).toBe(true);
       expect(material.depthWrite).toBe(false);
@@ -289,7 +291,9 @@ describe('GSplatMaterial', () => {
 
       // Check for uniforms
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
-      expect(material.vertexShader).toContain('uniform float uFx, uFy');
+      expect(material.vertexShader).not.toMatch(/\buF[xy]\b/);
+      expect(material.vertexShader).not.toContain('uIsOrtho');
+      expect(material.vertexShader).toContain('int isOrtho = luxarIsOrthoProjection();');
       expect(material.vertexShader).toContain('uniform float uTruncate');
       expect(material.vertexShader).toContain('uniform int uProjectionMode');
 
@@ -355,9 +359,20 @@ describe('GSplatMaterial', () => {
       // fade, not hard discard) with the uNearCull uniform
       // 1e-20 floor = degenerate-smoothstep guard only (scene-relative
       // uNearCull is never overridden on tiny-unit scenes).
+      // The ortho branch is read from the projection matrix, not a uniform.
+      expect(material.vertexShader).toContain('int isOrtho = luxarIsOrthoProjection();');
       expect(material.vertexShader).toContain(
-        'perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-20))'
+        'perspectiveNearFade(isOrtho, centerCam.z, max(uNearCull, 1e-20))'
       );
+      // Centre, Jacobian and coverage extent come from P and the clip centre.
+      expect(material.vertexShader).toContain('vec4 centerClip = projectionMatrix * centerCam4;');
+      expect(material.vertexShader).toContain(
+        'J[2] = halfRes * (projectionMatrix[2].xy * invW - clipTerm * projectionMatrix[2].w);'
+      );
+      expect(material.vertexShader).toContain(
+        'vCenterScreen = (centerClip.xy * invW * 0.5 + 0.5) * uResolution;'
+      );
+      expect(material.vertexShader).not.toMatch(/\buFx\s*\*/);
       // Screen-coverage fade uses projected extent and uMaxExtentFactor
       expect(material.vertexShader).toContain('uMaxExtentFactor');
       expect(material.vertexShader).toContain('projectedExtent');
@@ -439,19 +454,16 @@ describe('GSplatMaterial', () => {
   describe('methods', () => {
     it('should update camera parameters', () => {
       const material = new GSplatMaterial();
-      const fov = (45 * Math.PI) / 180;
       const resolution = new THREE.Vector2(1920, 1080);
 
-      material.updateCameraParams(fov, resolution);
+      material.updateCameraParams(resolution, false, 0.3, 2);
 
       expect(material.uniforms.uResolution.value.x).toBe(1920);
       expect(material.uniforms.uResolution.value.y).toBe(1080);
-
-      // Check focal length computation (fy = height / (2 * tan(fov/2)))
-      const tanHalfFov = Math.tan(fov / 2);
-      const expectedFy = resolution.y / (2 * tanHalfFov);
-      expect(material.uniforms.uFy.value).toBeCloseTo(expectedFy, 5);
-      expect(material.uniforms.uFx.value).toBeCloseTo(expectedFy, 5); // Same for square pixels
+      expect(material.uniforms.uPixelRatio.value).toBe(2);
+      expect(material.uniforms.uNearCull.value).toBe(0.3);
+      // The focal length is read in shader from the projection matrix
+      // (the Jacobian's columns), so no focal uniform is written.
     });
 
     it('should update opacity', () => {

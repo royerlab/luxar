@@ -149,6 +149,7 @@ Features
    guides/developer/DEMO_SITE_RUNBOOK
    guides/developer/BENCHMARK_FLOOR_DECISION
    guides/developer/VIEWER_PERFORMANCE_AUDIT_2026_09
+   guides/developer/RENDER_GATE
 
 .. toctree::
    :maxdepth: 3

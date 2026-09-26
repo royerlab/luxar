@@ -89,15 +89,19 @@ shader's behind-camera guard.
 
 ## World-space sizing
 
-Sizing is FOV-independent and matches `..` siblings' implementation: per-frame
-camera changes update **only** the precomputed scalar uniforms, not the shader.
+Sizing matches the `..` siblings' implementation and reads the projection in
+shader: an FOV or zoom change touches no uniform at all, and a resize updates
+only the viewport-derived ones.
 
-- `pointSizeFactor = 2 · resolution.y / tan(fov/2)` (perspective) or
-  `4 · resolution.y / frustumHeight` (ortho) — computed by `computePointSizeFactor`
-  in `../_shared/camera-uniforms.ts`, the shared math module that both Point and
-  GSplat materials and their picking counterparts pull from.
-- `maxPointSize = resolution.y · 0.5` — `computeMaxPointSize`, same module.
-- `uIsOrtho` (`int`) branches the inverse-distance term: `1.0` for ortho,
+- `sizeFactor = 2 · uResolution.y · luxarProjectionSizeScale()` — the scale
+  `|P11|` read from the projection matrix this draw uses, which equals the
+  historical `2 · resY / tan(fov/2)` (perspective) and `4 · resY / frustumHeight`
+  (ortho) and stays correct for a flipped, zoomed or off-axis projection
+  (`../_shared/projection-math.ts` states the identity).
+- `maxPointSize = resolution.y · 0.5` — `computeMaxPointSize` in
+  `../_shared/camera-uniforms.ts`.
+- `luxarIsOrthoProjection()` (read from the same matrix) branches the
+  inverse-distance term: `1.0` for ortho,
   `1.0 / max(-mvPosition.z, 1e-20)` for perspective (the floor is a pure INF guard, not a scale floor) — VIEW-SPACE DEPTH, matching
   the line + gsplat shaders. (Euclidean camera distance shrank edge-of-screen
   points by `cos θ` relative to identical centered points.)
@@ -118,9 +122,9 @@ camera changes update **only** the precomputed scalar uniforms, not the shader.
   (mesh joined with #1431; it evaluates the same helper per FRAGMENT, since a
   triangle spans depth — see the stage table in `../_shared/README.md`).
 
-`MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` broadcasts to
-every registered material via the `CameraAwareMaterial` interface, so a single
-camera-change call updates every Point material in the scene.
+`MaterialManager.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio)`
+broadcasts to every registered material via the `CameraAwareMaterial`
+interface, so a single resize call updates every Point material in the scene.
 
 ## Sharpness → super-Gaussian exponent
 
@@ -267,23 +271,21 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 
 ## Uniforms (reference)
 
-| Name              | Type      | Source                                        | Notes                                                                                                      |
-| ----------------- | --------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `uOpacity`        | float     | `updateOpacity`                               | Multiplied into final alpha (historically the un-prefixed `opacity`; renamed for symmetry)                 |
-| `uInvGamma`       | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()`                                  |
-| `uIntensity`      | float     | `updateIntensity`                             | Per-node GOG gain                                                                                          |
-| `uOffset`         | float     | `updateOffset`                                | Per-node GOG offset                                                                                        |
-| `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                                                           |
-| `maxPointSize`    | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                                                  |
-| `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                                                             |
-| `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-20 (zero-guard only)               |
-| `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion                                      |
-| `uPixelRatio`     | float     | `updateCameraParams`                          | Render-target pixels per CSS pixel (DPR × SSAA, or the pick-target scale); floors clamp this to at least 1 |
-| `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                                                         |
-| `uPointTex`       | sampler2D | `updatePointTexture` (commit sync)            | RGBA32F point texture, 3 texels/point — the per-node data store                                            |
-| `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                                                             |
-| `uScalarMin`      | float     | `setScalarRange`                              | LUT normalisation min                                                                                      |
-| `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                                                    |
+| Name           | Type      | Source                                        | Notes                                                                                                      |
+| -------------- | --------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `uOpacity`     | float     | `updateOpacity`                               | Multiplied into final alpha (historically the un-prefixed `opacity`; renamed for symmetry)                 |
+| `uInvGamma`    | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()`                                  |
+| `uIntensity`   | float     | `updateIntensity`                             | Per-node GOG gain                                                                                          |
+| `uOffset`      | float     | `updateOffset`                                | Per-node GOG offset                                                                                        |
+| `maxPointSize` | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                                                  |
+| `uNearCull`    | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-20 (zero-guard only)               |
+| `uResolution`  | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion                                      |
+| `uPixelRatio`  | float     | `updateCameraParams`                          | Render-target pixels per CSS pixel (DPR × SSAA, or the pick-target scale); floors clamp this to at least 1 |
+| `radiusScale`  | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                                                         |
+| `uPointTex`    | sampler2D | `updatePointTexture` (commit sync)            | RGBA32F point texture, 3 texels/point — the per-node data store                                            |
+| `uColormapTex` | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                                                             |
+| `uScalarMin`   | float     | `setScalarRange`                              | LUT normalisation min                                                                                      |
+| `uScalarScale` | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                                                    |
 
 `clampGamma` (`../_shared/uniform-helpers.ts`) is the single source of truth
 for the `Math.max(0.001, γ ?? 1.0)` clamp — the GLSL `pow(color, 1/γ)` divides
@@ -299,8 +301,8 @@ The clone path:
    from `this.uniforms.*.value`, `this.userData.{gamma,depthTest,blendingMode,scalarRange}`,
    and `this.uniforms.uColormapTex?.value`. The constructor's
    `applyBlendingMode` re-establishes blending state and shader defines.
-2. Copies the runtime-only camera uniforms (`pointSizeFactor`, `maxPointSize`,
-   `uInvGamma`, `radiusScale`) verbatim so the clone starts at
+2. Copies the runtime-only camera uniforms (`maxPointSize`, `uNearCull`,
+   `uResolution`, `uPixelRatio`, `uInvGamma`, `radiusScale`) verbatim so the clone starts at
    the current camera frame, not the default.
 3. For `THREE.CustomBlending` (`max` or `opaque` mode), copies
    `blendEquation/Src/Dst` from the source — the constructor would set canonical
@@ -316,7 +318,7 @@ this file stays out of the manager's import graph.)
 
 - `../_shared/README.md` — `ShaderSource`, `buildMaterial`, `CameraAwareMaterial`,
   `ColormapAwareMaterial`, `clampGamma`, the shared GLSL/TSL sanitisers, the
-  shared `pointSizeFactor` / `maxPointSize` / `focalLength` math.
+  in-shader projection helpers and the shared `maxPointSize` math.
 - `../line/`, `../gsplat/` — sibling stacks with the same four-file layout and
   the same public surface (three-geometry symmetry).
 - `../../point-geometry.ts` — the 4-vertex unit-quad base geometry the

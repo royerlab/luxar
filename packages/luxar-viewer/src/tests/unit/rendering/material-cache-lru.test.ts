@@ -50,17 +50,18 @@ describe('MaterialManager per-node line materials (no LRU cache)', () => {
 
   it('per-node materials receive the current camera params immediately at creation', () => {
     const mm = new MaterialManager();
-    const fov = Math.PI / 4;
-    mm.updateCameraParams(fov, new THREE.Vector2(2560, 1440), false, 0.33, 1);
+    mm.updateCameraParams(new THREE.Vector2(2560, 1440), false, 0.33, 2);
     const material = mm.getLineMaterial(baseProps());
     // updateCameraParams flowed inside getLineMaterial — the material
-    // starts life with the manager's current resolution/FOV/nearCull,
+    // starts life with the manager's current resolution/nearCull/pixel ratio,
     // not the constructor defaults.
     expect(material.uniforms.uResolution.value.x).toBe(2560);
     expect(material.uniforms.uResolution.value.y).toBe(1440);
     expect(material.uniforms.uNearCull.value).toBe(0.33);
-    const expectedScale = 1440 / Math.max(Math.tan(fov * 0.5), 1e-4);
-    expect(material.uniforms.uPerspectiveLineScale.value).toBeCloseTo(expectedScale, 5);
+    expect(material.uniforms.uPixelRatio.value).toBe(2);
+    expect(material.uniforms.uMaxLinePixelWidth.value).toBe(1440 * 0.5);
+    // The pixel-width scale is read in shader from the projection matrix.
+    expect(material.uniforms.uPerspectiveLineScale).toBeUndefined();
   });
 
   it('EVERY created material is registered and keeps receiving camera broadcasts', () => {
@@ -72,7 +73,7 @@ describe('MaterialManager per-node line materials (no LRU cache)', () => {
     ];
     expect(mm.getCacheStats().totalRegistered).toBe(3);
 
-    mm.updateCameraParams(0.9, new THREE.Vector2(640, 480), false, 0.25, 1);
+    mm.updateCameraParams(new THREE.Vector2(640, 480), false, 0.25, 1);
     for (const m of materials) {
       expect(m.uniforms.uResolution.value.x).toBe(640);
       expect(m.uniforms.uResolution.value.y).toBe(480);
