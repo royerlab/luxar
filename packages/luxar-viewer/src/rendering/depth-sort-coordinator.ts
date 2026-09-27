@@ -1287,8 +1287,11 @@ function formatOrderingBytes(bytes: number, uploaded: boolean): string {
  */
 const ORTHO_BSP_EYE_DISTANCE = 1e15;
 
-/** Result of {@link computeModelView}; every caller copies out of it synchronously. */
-const MODEL_VIEW_SCRATCH = new THREE.Matrix4();
+/**
+ * Result of {@link computeModelView}; every caller copies out of it
+ * synchronously. Created on first use, like the per-frame scratch.
+ */
+let modelViewScratch: THREE.Matrix4 | null = null;
 
 /**
  * The model-view matrix to sort against, in a shared scratch (copy it before
@@ -1305,7 +1308,8 @@ const MODEL_VIEW_SCRATCH = new THREE.Matrix4();
 function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.Matrix4 {
   mesh.updateWorldMatrix(true, false);
   camera.updateMatrixWorld();
-  return MODEL_VIEW_SCRATCH.copy(camera.matrixWorld).invert().multiply(mesh.matrixWorld);
+  modelViewScratch ??= new THREE.Matrix4();
+  return modelViewScratch.copy(camera.matrixWorld).invert().multiply(mesh.matrixWorld);
 }
 
 /**
