@@ -58,7 +58,8 @@ export interface ViewContextDeps {
   getDrawingBuffer(): ViewSize | null;
 }
 
-interface MutableViewContext {
+/** The provider's writable view of a {@link ViewContext} (consumers get the read-only one). */
+export interface MutableViewContext {
   camera: THREE.Camera;
   cameraWorldPosition: THREE.Vector3;
   viewDirection: THREE.Vector3;
