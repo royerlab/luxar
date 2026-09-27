@@ -224,7 +224,7 @@
     {
       "id": "lod_ladder",
       "store": "gate/lod_ladder.luxar.zarr",
-      "urlParams": "noLodFade&noPrefetch&noBlendWarmup",
+      "liveLod": true,
       "poses": [
         {
           "position": [0, 6, 22],

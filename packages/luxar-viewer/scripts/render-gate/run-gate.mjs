@@ -190,11 +190,23 @@ function browserSession(perf) {
   };
 }
 
+/**
+ * A case's URL: the suite defaults, then the case's own `urlParams` appended.
+ * `liveLod: true` drops the defaults' `lodFinest`, which every other exact case
+ * wants (deterministic finest content) and which would otherwise pin a LOD
+ * case to its finest level, so the gate never saw LOD selection change.
+ */
 function caseUrl(origin, c, backend, dsf, urlParams) {
   const params = [];
   if (c.store) params.push(`src=${origin}/datasets/${c.store}`);
   params.push('debug', `dpr=${dsf}`, `renderer=${backend}`);
-  if (urlParams) params.push(urlParams);
+  const defaults = c.liveLod
+    ? urlParams
+        ?.split('&')
+        .filter((p) => p !== 'lodFinest')
+        .join('&')
+    : urlParams;
+  if (defaults) params.push(defaults);
   if (c.urlParams) params.push(c.urlParams);
   return `${origin}/?${params.join('&')}`;
 }

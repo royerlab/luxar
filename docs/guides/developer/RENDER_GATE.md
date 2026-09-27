@@ -44,7 +44,10 @@ view that differed, a heatmap PNG (black: identical; blue: drift; red: flip).
    exact case runs per backend (WebGL, WebGPU), per device scale factor (1 and 2;
    an odd 1277×719 viewport at 1.5 for two cases), per projection and per pose.
    The device scale factor comes from Playwright, not `?dpr=`, which is clamped to
-   the native ratio.
+   the native ratio. Exact cases load with `lodFinest` (deterministic finest
+   content) unless the case sets `"liveLod": true`, as `lod_ladder` does, so LOD
+   selection itself is compared; a case's own `urlParams` are appended to the
+   defaults, not substituted for them.
 
 ## Exactness
 
