@@ -91,8 +91,7 @@ describe('upload-counters', () => {
       expect(calls()).toBe(8);
     });
 
-    // Fails until texture uploads are counted by region (next commit).
-    it.fails('counts a known-format typed-array upload by the region it writes, not the view', () => {
+    it('counts a known-format typed-array upload by the region it writes, not the view', () => {
       const gl = fakeGL();
       wrapWebGLUploads(gl);
       const RGBA = 0x1908;
@@ -149,8 +148,7 @@ describe('upload-counters', () => {
       expect(textureBytes()).toBe(80);
     });
 
-    // Fails until texture uploads are counted by region (next commit).
-    it.fails('caps writeTexture at the bytesPerRow * rows region the layout describes', () => {
+    it('caps writeTexture at the bytesPerRow * rows region the layout describes', () => {
       const q = fakeQueue();
       wrapWebGPUUploads(q);
       // Two 64-B rows written out of a 1000-B buffer.

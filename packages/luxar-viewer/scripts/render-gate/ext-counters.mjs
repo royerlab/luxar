@@ -78,8 +78,70 @@ export function installExtCounters() {
       ext.gpuUploadBytesTexture += bytes;
     }
   };
-  /** Bytes of a tex(Sub)Image call: the first typed-array or image-like argument. */
-  const texBytes = (args) => {
+  // Bytes per pixel of a WebGL unpack format/type pair (0 = unknown).
+  const FORMAT_COMPONENTS = {
+    0x1902: 1,
+    0x1903: 1,
+    0x1906: 1,
+    0x1907: 3,
+    0x1908: 4,
+    0x1909: 1,
+    0x190a: 2,
+    0x8227: 2,
+    0x8228: 2,
+    0x8d94: 1,
+    0x8d98: 3,
+    0x8d99: 4,
+  };
+  const TYPE_BYTES = {
+    0x1400: 1,
+    0x1401: 1,
+    0x1402: 2,
+    0x1403: 2,
+    0x1404: 4,
+    0x1405: 4,
+    0x1406: 4,
+    0x140b: 2,
+  };
+  const PACKED_PIXEL_BYTES = {
+    0x8033: 2,
+    0x8034: 2,
+    0x8363: 2,
+    0x8368: 4,
+    0x84fa: 4,
+    0x8c3b: 4,
+    0x8c3e: 4,
+  };
+  const pixelBytes = (format, type) =>
+    PACKED_PIXEL_BYTES[type] ?? (FORMAT_COMPONENTS[format] ?? 0) * (TYPE_BYTES[type] ?? 0);
+  // Argument positions of the sized overloads (WebGL2 IDL): width, height,
+  // depth (or null), format, type, source.
+  const SIZED = {
+    texImage2D: [3, 4, null, 6, 7, 8],
+    texSubImage2D: [4, 5, null, 6, 7, 8],
+    texImage3D: [3, 4, 5, 7, 8, 9],
+    texSubImage3D: [5, 6, 7, 8, 9, 10],
+  };
+  /**
+   * Bytes of a tex(Sub)Image call. A typed-array upload counts the REGION it
+   * writes (width x height x depth x bytes per pixel), capped by the view:
+   * three's classic ranged path passes the whole image.data to every per-row
+   * texSubImage2D and selects the row with UNPACK_SKIP_ROWS, so the view
+   * length alone overcounts a ranged commit many times over (#2944). Other
+   * sources count the first typed-array or image-like argument as before.
+   */
+  const texBytes = (name, args) => {
+    const pos = SIZED[name];
+    if (pos && args.length > pos[5] && isView(args[pos[5]])) {
+      const [w, h, d, f, t, src] = pos;
+      const per = pixelBytes(args[f], args[t]);
+      const available = viewBytes(args[src], args[src + 1]);
+      if (per > 0) {
+        const depth = d === null ? 1 : args[d] || 1;
+        return Math.min(available, (args[w] || 0) * (args[h] || 0) * depth * per);
+      }
+      return available;
+    }
     for (let i = 5; i < args.length; i++) {
       const a = args[i];
       if (isView(a)) return viewBytes(a, args[i + 1]);
@@ -122,7 +184,7 @@ export function installExtCounters() {
       'buffer'
     );
     for (const n of ['texImage2D', 'texImage3D', 'texSubImage2D', 'texSubImage3D']) {
-      wrap(proto, n, texBytes, 'texture');
+      wrap(proto, n, (a) => texBytes(n, a), 'texture');
     }
   }
   const queue = window.GPUQueue?.prototype;
@@ -141,10 +203,17 @@ export function installExtCounters() {
   wrap(
     queue,
     'writeTexture',
-    (a) =>
-      isView(a[1])
+    (a) => {
+      const total = isView(a[1])
         ? viewBytes(a[1], a[2]?.offset ? a[2].offset / (a[1].BYTES_PER_ELEMENT || 1) : 0)
-        : a[1]?.byteLength || 0,
+        : Math.max(0, (a[1]?.byteLength || 0) - (a[2]?.offset || 0));
+      // A layout with bytesPerRow writes bytesPerRow x rows, not the whole buffer.
+      const size = a[3];
+      const height = Array.isArray(size) ? size[1] || 1 : size?.height || 1;
+      const layers = Array.isArray(size) ? size[2] || 1 : size?.depthOrArrayLayers || 1;
+      const bpr = a[2]?.bytesPerRow;
+      return bpr ? Math.min(total, bpr * (a[2]?.rowsPerImage || height) * layers) : total;
+    },
     'texture'
   );
 

@@ -12,6 +12,13 @@
  *
  * Byte rules: a typed-array source counts the bytes the call actually reads
  * (honouring the WebGL2 / WebGPU element-unit `srcOffset` / `length` args); a
+ * WebGL texture upload from a typed array with a known format / type counts
+ * the REGION it writes (`width * height * depth * bytesPerPixel`, capped by
+ * the view) — three's classic ranged path hands every per-row
+ * `texSubImage2D` the WHOLE `image.data` and selects the row with
+ * `UNPACK_SKIP_ROWS`, so the view length says nothing about the upload
+ * (#2944); a `writeTexture` counts its region (`bytesPerRow * rows`, capped
+ * by the data past `offset`) when the layout gives a `bytesPerRow`; a
  * numeric `bufferData` size counts that allocation; an image-like source
  * (image, canvas, ImageBitmap, video frame) counts `width * height * depth * 4`
  * when its size is determinable and 0 otherwise; a PBO offset or `null` counts
@@ -99,13 +106,63 @@ function imagePixels(source: unknown): number {
   return firstNumber(s, WIDTH_KEYS) * firstNumber(s, HEIGHT_KEYS);
 }
 
+/** Components per pixel of a WebGL2 unpack `format` (by GLenum value). */
+const GL_FORMAT_COMPONENTS: Readonly<Record<number, number>> = {
+  0x1902: 1, // DEPTH_COMPONENT
+  0x1903: 1, // RED
+  0x1906: 1, // ALPHA
+  0x1907: 3, // RGB
+  0x1908: 4, // RGBA
+  0x1909: 1, // LUMINANCE
+  0x190a: 2, // LUMINANCE_ALPHA
+  0x8227: 2, // RG
+  0x8228: 2, // RG_INTEGER
+  0x8d94: 1, // RED_INTEGER
+  0x8d98: 3, // RGB_INTEGER
+  0x8d99: 4, // RGBA_INTEGER
+};
+/** Bytes per component of a WebGL2 unpack `type`. */
+const GL_TYPE_COMPONENT_BYTES: Readonly<Record<number, number>> = {
+  0x1400: 1, // BYTE
+  0x1401: 1, // UNSIGNED_BYTE
+  0x1402: 2, // SHORT
+  0x1403: 2, // UNSIGNED_SHORT
+  0x1404: 4, // INT
+  0x1405: 4, // UNSIGNED_INT
+  0x1406: 4, // FLOAT
+  0x140b: 2, // HALF_FLOAT
+};
+/** Bytes per PIXEL of a packed WebGL2 unpack `type` (format-independent). */
+const GL_PACKED_TYPE_PIXEL_BYTES: Readonly<Record<number, number>> = {
+  0x8033: 2, // UNSIGNED_SHORT_4_4_4_4
+  0x8034: 2, // UNSIGNED_SHORT_5_5_5_1
+  0x8363: 2, // UNSIGNED_SHORT_5_6_5
+  0x8368: 4, // UNSIGNED_INT_2_10_10_10_REV
+  0x84fa: 4, // UNSIGNED_INT_24_8
+  0x8c3b: 4, // UNSIGNED_INT_10F_11F_11F_REV
+  0x8c3e: 4, // UNSIGNED_INT_5_9_9_9_REV
+};
+
+/** Bytes per pixel of a WebGL unpack `format` / `type` pair (0 when unknown). */
+function glPixelBytes(format: unknown, type: unknown): number {
+  if (typeof type !== 'number') return 0;
+  const packed = GL_PACKED_TYPE_PIXEL_BYTES[type];
+  if (packed !== undefined) return packed;
+  if (typeof format !== 'number') return 0;
+  return (GL_FORMAT_COMPONENTS[format] ?? 0) * (GL_TYPE_COMPONENT_BYTES[type] ?? 0);
+}
+
 /**
  * Bytes of a texture upload's pixel argument. `dims` is the explicit
- * width*height*depth when the overload carries one (0 when it does not).
+ * width*height*depth when the overload carries one (0 when it does not);
+ * `pixelBytes` is the unpack format/type's bytes per pixel (0 when unknown).
  */
-function texelBytes(source: unknown, srcOffset: unknown, dims: number): number {
+function texelBytes(source: unknown, srcOffset: unknown, dims: number, pixelBytes = 0): number {
   if (source === null || source === undefined || typeof source === 'number') return 0;
-  if (ArrayBuffer.isView(source)) return sourceBytes(source, srcOffset, undefined);
+  if (ArrayBuffer.isView(source)) {
+    const available = sourceBytes(source, srcOffset, undefined);
+    return dims > 0 && pixelBytes > 0 ? Math.min(available, dims * pixelBytes) : available;
+  }
   return (dims > 0 ? dims : imagePixels(source)) * 4;
 }
 
@@ -116,28 +173,48 @@ const num = (v: unknown): number => (typeof v === 'number' ? v : 0);
 const bufferDataBytes: ByteCounter = (a) =>
   typeof a[1] === 'number' ? a[1] : sourceBytes(a[1], a[3], a[4]);
 const bufferSubDataBytes: ByteCounter = (a) => sourceBytes(a[2], a[3], a[4]);
-// texImage2D: 6-arg (…, format, type, source) or 9/10-arg sized form.
+// texImage2D: 6-arg (…, format, type, source) or 9/10-arg sized form
+// (target, level, internalformat, width, height, border, format, type, source, srcOffset).
 const texImage2DBytes: ByteCounter = (a) =>
-  a.length === 6 ? texelBytes(a[5], undefined, 0) : texelBytes(a[8], a[9], num(a[3]) * num(a[4]));
+  a.length === 6
+    ? texelBytes(a[5], undefined, 0)
+    : texelBytes(a[8], a[9], num(a[3]) * num(a[4]), glPixelBytes(a[6], a[7]));
 const texImage3DBytes: ByteCounter = (a) =>
-  texelBytes(a[9], a[10], num(a[3]) * num(a[4]) * num(a[5]));
-// texSubImage2D: 7-arg (…, format, type, source) or 9/10-arg sized form.
+  texelBytes(a[9], a[10], num(a[3]) * num(a[4]) * num(a[5]), glPixelBytes(a[7], a[8]));
+// texSubImage2D: 7-arg (…, format, type, source) or 9/10-arg sized form
+// (target, level, x, y, width, height, format, type, source, srcOffset).
 const texSubImage2DBytes: ByteCounter = (a) =>
-  a.length === 7 ? texelBytes(a[6], undefined, 0) : texelBytes(a[8], a[9], num(a[4]) * num(a[5]));
+  a.length === 7
+    ? texelBytes(a[6], undefined, 0)
+    : texelBytes(a[8], a[9], num(a[4]) * num(a[5]), glPixelBytes(a[6], a[7]));
 const texSubImage3DBytes: ByteCounter = (a) =>
-  texelBytes(a[10], a[11], num(a[5]) * num(a[6]) * num(a[7]));
+  texelBytes(a[10], a[11], num(a[5]) * num(a[6]) * num(a[7]), glPixelBytes(a[8], a[9]));
 
 // --- WebGPU byte counters ----------------------------------------------------
 
 // writeBuffer(buffer, bufferOffset, data, dataOffset?, size?) — element units
 // for a typed array, bytes for an ArrayBuffer (sourceBytes handles both).
 const writeBufferBytes: ByteCounter = (a) => sourceBytes(a[2], a[3], a[4]);
-// writeTexture(destination, data, dataLayout, size)
+
+/** Row count (height * depth) of a GPUExtent3D (array or dictionary form); 0 when absent. */
+function extentRows(size: unknown): number {
+  if (Array.isArray(size)) return (num(size[1]) || 1) * (num(size[2]) || 1);
+  if (size === null || typeof size !== 'object') return 0;
+  const e = size as { height?: unknown; depthOrArrayLayers?: unknown };
+  return (num(e.height) || 1) * (num(e.depthOrArrayLayers) || 1);
+}
+
+// writeTexture(destination, data, dataLayout, size): the bytes past `offset`,
+// capped by the region the layout describes (rows * bytesPerRow, which for
+// three's tightly packed uploads is exact) when it gives a `bytesPerRow`.
 const writeTextureBytes: ByteCounter = (a) => {
-  const offset = num((a[2] as { offset?: unknown } | undefined)?.offset);
+  const layout = a[2] as { offset?: unknown; bytesPerRow?: unknown } | undefined;
+  const offset = num(layout?.offset);
   const data = a[1];
   const total = data instanceof ArrayBuffer || ArrayBuffer.isView(data) ? data.byteLength : 0;
-  return Math.max(0, total - offset);
+  const available = Math.max(0, total - offset);
+  const region = num(layout?.bytesPerRow) * extentRows(a[3]);
+  return region > 0 ? Math.min(available, region) : available;
 };
 /** Texel count of a GPUExtent3D (array or dictionary form). */
 function extentTexels(size: unknown): number {
