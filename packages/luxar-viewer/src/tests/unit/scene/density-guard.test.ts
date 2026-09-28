@@ -77,14 +77,21 @@ describe('nextKeepFraction — hysteresis band', () => {
 });
 
 interface StubMat {
-  uniforms: { uDensityDrop: { value: number }; uOpacity: { value: number } };
+  uniforms: {
+    uDensityDrop: { value: number };
+    uDensityAlphaExp: { value: number };
+    uOpacity: { value: number };
+  };
   userData: { blendingMode?: string };
   updateOpacity(v: number): void;
   getOpacity(): number;
 }
 function stubMaterial(mode: string, withUniform = true): StubMat {
   const uniforms = { uOpacity: { value: 1 } } as StubMat['uniforms'];
-  if (withUniform) uniforms.uDensityDrop = { value: 0 };
+  if (withUniform) {
+    uniforms.uDensityDrop = { value: 0 };
+    uniforms.uDensityAlphaExp = { value: 1 };
+  }
   return {
     uniforms,
     userData: { blendingMode: mode },
@@ -220,6 +227,71 @@ describe('DensityGuard.observe', () => {
     unconfigured.observe(m2, record(539));
     expect(m2.userData.densityKeep).toBeUndefined();
     expect(unconfigured.takeChanged()).toBe(false);
+  });
+
+  it.fails('thins an over-dense normal node, compensating ALPHA through the exponent, not opacity', () => {
+    // Alpha-over has no linear brightness knob, so the 1/keep opacity boost
+    // the sum modes get would be wrong; instead each survivor's alpha becomes
+    // 1 − (1 − α)^(1/keep), so keep·N survivors transmit what N elements did.
+    const { g } = guard();
+    const { mesh, mat } = leaf('normal');
+    const rec = record(539);
+    g.observe(mesh, rec);
+    expect(mesh.userData.densityKeep).toBe(1 / 64);
+    expect(rec.keep).toBe(1 / 64);
+    expect(mat.uniforms.uDensityDrop.value).toBeCloseTo(1 - 1 / 64, 12);
+    expect(mat.uniforms.uDensityAlphaExp.value).toBe(64);
+    expect(mat.getOpacity()).toBe(1);
+    expect(g.takeChanged()).toBe(true);
+    // The refinement rung gate keeps treating it as non-blendable.
+    expect(rec.blendable).toBe(false);
+
+    // Zoomed back in: keep 1 and the identity exponent.
+    g.observe(mesh, record(1));
+    expect(mesh.userData.densityKeep).toBe(1);
+    expect(mat.uniforms.uDensityDrop.value).toBe(0);
+    expect(mat.uniforms.uDensityAlphaExp.value).toBe(1);
+  });
+
+  it('keeps max and opaque nodes exempt', () => {
+    const { g } = guard();
+    for (const mode of ['max', 'opaque']) {
+      const { mesh, mat } = leaf(mode);
+      g.observe(mesh, record(539));
+      expect(mesh.userData.densityKeep ?? 1).toBe(1);
+      expect(mat.uniforms.uDensityDrop.value).toBe(0);
+      expect(mat.uniforms.uDensityAlphaExp.value).toBe(1);
+    }
+  });
+
+  it('sum-projected nodes keep the identity alpha exponent (their compensation is opacity)', () => {
+    const { g } = guard();
+    const { mesh, mat } = leaf('additive');
+    g.observe(mesh, record(539));
+    expect(mesh.userData.densityKeep).toBe(1 / 64);
+    expect(mat.uniforms.uDensityAlphaExp.value).toBe(1);
+  });
+
+  it.fails('stays off during an offline capture, and resumes after it', () => {
+    const { g } = guard();
+    const setCaptureActive = (g as unknown as { setCaptureActive?: (on: boolean) => void })
+      .setCaptureActive;
+    const { mesh, mat } = leaf('normal');
+    g.observe(mesh, record(539)); // thinned before the capture starts
+    expect(mesh.userData.densityKeep).toBe(1 / 64);
+    setCaptureActive?.call(g, true);
+    g.observe(mesh, record(539));
+    expect(mesh.userData.densityKeep).toBe(1);
+    expect(mat.uniforms.uDensityDrop.value).toBe(0);
+    expect(mat.uniforms.uDensityAlphaExp.value).toBe(1);
+    const additive = leaf('additive');
+    g.observe(additive.mesh, record(539));
+    expect(additive.mesh.userData.densityKeep ?? 1).toBe(1);
+    expect(additive.mat.getOpacity()).toBe(1);
+
+    setCaptureActive?.call(g, false);
+    g.observe(mesh, record(539));
+    expect(mesh.userData.densityKeep).toBe(1 / 64);
   });
 
   it('keepOf reads the material uniform; the module singleton is stable', () => {
