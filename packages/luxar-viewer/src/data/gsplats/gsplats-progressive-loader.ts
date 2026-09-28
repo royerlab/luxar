@@ -808,9 +808,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * This is fire-and-forget: the prefetched chunks land in the L0/L1 cache
    * and become fast cache hits on the next updateView() call.
    *
-   * Uses prefetchChunks() which performs the spatial index query and zarr
-   * get() calls (populating the cache) WITHOUT allocating full-size output
-   * buffers or running the accumulator — avoiding wasted memory.
+   * Uses prefetchChunks(), which performs the spatial index query and warms
+   * each touched chunk into L0 through the proxy's `warmChunk` (decode only —
+   * no zarr get(), so no output selection is assembled and the accumulator
+   * does not run).
    */
   private prefetchNextLODs(viewState: GSplatsViewState): void {
     // Same teardown race as the streaming loop: a dispose() between the

@@ -96,6 +96,14 @@ describe('PointsSpatialIndexLoader', () => {
       },
     };
 
+    // Prefetch warms chunk-by-chunk through getChunk (never zarr.get), so the
+    // attribute mocks need one; demand loads still go through zarr.get.
+    for (const arr of Object.values(mockArrays)) {
+      (arr as any).getChunk = vi
+        .fn()
+        .mockResolvedValue({ data: new Float32Array(1), shape: [1], stride: [1] });
+    }
+
     // Setup mock zarr location
     mockZarrLocation = {
       resolve: vi.fn().mockImplementation((path) => `mock://${path}`),
@@ -885,7 +893,14 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('prefetchChunks (commit 8.1)', () => {
-    it('warms the cache via zarr.get on every array × range without producing geometry', async () => {
+    /** Chunk warm-ups issued so far (prefetch warms via getChunk, not get). */
+    const warmCalls = (): number =>
+      Object.values(mockArrays).reduce(
+        (n: number, arr: any) => n + (arr.getChunk.mock.calls.length as number),
+        0
+      );
+
+    it('warms every touched chunk via getChunk (no zarr.get) without producing geometry', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 5],
@@ -898,8 +913,10 @@ describe('PointsSpatialIndexLoader', () => {
 
       await loader.prefetchChunks(viewState);
       const callsAfter = (zarr.get as any).mock.calls.length;
-      // Each available array × range adds a get() call.
-      expect(callsAfter).toBeGreaterThan(callsBefore);
+      // No output assembly: prefetch never calls get(); it warms each distinct
+      // chunk per array instead.
+      expect(callsAfter).toBe(callsBefore);
+      expect(warmCalls()).toBeGreaterThan(0);
     });
 
     it('warms scalar chunks for scalar-colored points', async () => {
@@ -916,11 +933,7 @@ describe('PointsSpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       });
 
-      expect(
-        (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
-          (call) => call[0] === mockArrays.scalars
-        )
-      ).toBe(true);
+      expect(mockArrays.scalars.getChunk).toHaveBeenCalled();
     });
 
     it('warms the predicted slice and only the nearest next chunk boundary', async () => {
@@ -941,7 +954,9 @@ describe('PointsSpatialIndexLoader', () => {
         SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
       ).mock.calls.map((call) => (call[1] as ViewState).slicePosition[3]);
       expect(queriedTimes).toEqual([1, 2, 4]);
-      expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(8);
+      // Two warmed views × four arrays; rows [100, 200) sit in chunk 0 of each.
+      expect(warmCalls()).toBe(8);
+      expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     });
 
     it('falls back to predicted-slice warming when boundary planning fails', async () => {
@@ -960,7 +975,8 @@ describe('PointsSpatialIndexLoader', () => {
         SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
       ).mock.calls.map((call) => (call[1] as ViewState).slicePosition[3]);
       expect(queriedTimes).toEqual([1, 2]);
-      expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(5);
+      // The predicted slice alone: four arrays × chunk 0.
+      expect(warmCalls()).toBe(4);
     });
 
     it('skips fetches when the spatial query returns no ranges', async () => {
@@ -978,9 +994,9 @@ describe('PointsSpatialIndexLoader', () => {
         slicePosition: [1000000, 1000000, 1000000, 1000000],
         tolerance: [0, 0, 0, 0],
       };
-      const callsBefore = (zarr.get as any).mock.calls.length;
+      const callsBefore = warmCalls();
       await loader.prefetchChunks(farViewState);
-      const callsAfter = (zarr.get as any).mock.calls.length;
+      const callsAfter = warmCalls();
       // Some test fixtures still emit ranges for far slices — the
       // weaker assertion is that prefetch did NOT throw and did not
       // produce a runaway storm of fetches.

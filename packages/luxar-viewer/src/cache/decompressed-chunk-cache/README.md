@@ -8,8 +8,8 @@ splices it onto a real zarr array without touching zarrita's source.
 ## Overview
 
 `wrapWithCache(array, cache, arrayPath, hooks?)` (hooks = `{ getProbe?,
-getSignal?, getOrigin? }`) returns a
-`Proxy<zarr.Array>` that intercepts `getChunk()`:
+getSignal?, getOrigin?, aliasOnMiss? }`) returns a
+`Proxy<zarr.Array>` that intercepts `getChunk()` (and adds `warmChunk()`):
 
 0. **Per-update abort chokepoint** — when an optional `getSignal` accessor is
    supplied, the interceptor calls `getSignal()?.throwIfAborted()` BEFORE the
@@ -22,11 +22,21 @@ getSignal?, getOrigin? }`) returns a
 1. Build a key via `DecompressedChunkCache.makeKey(arrayPath, coords)`.
 2. On L0 hit, return the cached `{ data, shape, stride }` immediately
    (~1μs, no Blosc decode).
-3. On miss, await the original `getChunk()`, clone the result's
-   `ArrayBufferView`, store it in the cache, and return the original.
-4. **Same-chunk decode coalescing** — a per-wrapper `Map<key, Promise>`
-   ensures concurrent `getChunk()` calls for the same key share one
-   underlying decompression instead of running Blosc twice.
+3. On miss, run the original `getChunk()`, clone the result's
+   `ArrayBufferView` (unless `aliasOnMiss`, below), store it in the cache, and
+   return the original.
+4. **Same-chunk decode coalescing, cache-wide** — the in-flight map lives on
+   the `DecompressedChunkCache` (`getInflight`/`setInflight`/`deleteInflight`,
+   keyed by the full L0 key), NOT on the proxy, so every proxy over one cache —
+   the foreground loaders and the SlicePrefetcher's shadow loaders wrap the
+   same arrays through different proxies — shares one decode per chunk.
+   **Abort isolation:** the shared decode runs under the entry's OWN
+   `AbortController`; each waiter races it against its own signal (the call's
+   `options.signal`, else `getSignal()`), rejecting only itself on abort. The
+   decode is cancelled only once EVERY waiter has aborted (and is then
+   deregistered, so a later caller starts afresh); a decode that is not fully
+   abandoned completes and is cached. Only a still-registered entry commits, so
+   `cache.clear()` also orphans in-flight decodes.
 5. **Residency reporting** — when an optional `getProbe` accessor is
    supplied, every `getChunk()` calls `getProbe()?.record(hit)` against
    the currently-active `ResidencyProbe` (see `../residency-probe`). L0
@@ -42,6 +52,19 @@ getSignal?, getOrigin? }`) returns a
    call signal's tag (`tagSignalOrigin` in `decode-origin.ts` — the shadow
    prefetcher, ladder lookahead, and `prefetchRangesIntoCache` tag their
    signals), else `hooks.getOrigin()`, else `'foreground'`.
+7. **`warmChunk(coords, { signal?, origin? })`** (`warm-chunk.ts`) — the
+   cache-warming entry point `prefetchRangesIntoCache` uses: L0 lookup + the
+   same shared decode, but with the caller's own signal only (never
+   `getSignal`), no residency-probe record, no output assembly, and origin
+   `'prefetch'` by default. The standalone `warmChunk(array, …)` helper falls
+   back to a bare `getChunk` for an unwrapped array.
+8. **`aliasOnMiss`** (opt-in; default clones) — store the decoded buffer without
+   the defensive clone. Safe ONLY for arrays read exclusively through zarrita
+   `get()` (which copies every chunk into its own output) or `warmChunk`; a view
+   that does not span its whole `ArrayBuffer` is still cloned so L0 never
+   retains bytes it does not account for. The Points/Lines/GSplats
+   spatial-index loaders enable it, with the per-file proof in a comment
+   (`L0_ALIAS_ON_MISS`).
 
 All other property access passes through unchanged. See
 [`../README.md`](../README.md) (the "L0 Decompressed Chunk Cache" section)
@@ -52,8 +75,9 @@ read-only chunk contract that this wrapper upholds via cloning.
 
 ```
 decompressed-chunk-cache/
-├── cached-zarr-array.ts   # Proxy wrapper, marker symbols, and clone helper
-└── decode-origin.ts      # AbortSignal -> decode-origin tags (perf counters)
+├── cached-zarr-array.ts   # Proxy wrapper, shared-decode core, marker symbols, clone helper
+├── decode-origin.ts      # AbortSignal -> decode-origin tags (perf counters)
+└── warm-chunk.ts         # warmChunk: dependency-free cache-warming entry point
 ```
 
 ## API
@@ -62,6 +86,7 @@ decompressed-chunk-cache/
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wrapWithCache(array, cache, arrayPath, hooks?)` | Wrap a `zarr.Array` with L0 caching. Idempotent — already-wrapped arrays are returned as-is. Optional `hooks.getProbe` reports hit/miss to the active `ResidencyProbe`; `hooks.getSignal` supplies the per-update `AbortSignal` checked at `getChunk` entry so superseded loads bail; `hooks.getOrigin` names a miss decode's origin for the perf counters. |
 | `tagSignalOrigin(signal, origin)`                | Attribute miss decodes of reads carrying `signal` to `decode.count.<origin>` (re-exported from `decode-origin.ts`).                                                                                                                                                                                                                                         |
+| `warmChunk(array, coords, options?)`             | Decode + cache one chunk with no probe record and no output assembly (proxy method, or a bare `getChunk` fallback for an unwrapped array). Re-exported from `warm-chunk.ts`.                                                                                                                                                                                |
 | `isCachedArray(array)`                           | Detect the wrapper via a private `Symbol` marker.                                                                                                                                                                                                                                                                                                           |
 | `unwrapCachedArray(array)`                       | Recover the original unwrapped array (or pass through if not wrapped).                                                                                                                                                                                                                                                                                      |
 | `cloneArrayBufferView(view)` _(internal)_        | Clone a `TypedArray` or `DataView` to a fresh underlying buffer. Exported only for unit tests.                                                                                                                                                                                                                                                              |
@@ -77,9 +102,9 @@ decompressed-chunk-cache/
 - **`Reflect.get(target, prop, target)` for everything else.** The
   receiver MUST be `target`, not the proxy; otherwise zarrita methods
   hit `Cannot read private member #e` on `#store`/`#e` access.
-- **Clone on cache insert.** The wrapper clones `chunk.data` via
-  `cloneArrayBufferView` before storing so a caller mutating their view
-  cannot corrupt the cached copy. Subsequent L0 hits return the cached
+- **Clone on cache insert (unless `aliasOnMiss`).** The wrapper clones
+  `chunk.data` via `cloneArrayBufferView` before storing so a caller mutating
+  their view cannot corrupt the cached copy. Subsequent L0 hits return the cached
   view by reference — downstream loaders must treat L0 chunks as
   read-only (see "L0 read-only chunk contract" in `../README.md`).
 - **No double-wrap.** `wrapWithCache` checks `isCachedArray` first and

@@ -1013,6 +1013,82 @@ describe('RangeLoader.loadRangesResolvingRef', () => {
     expect(written).toBe(2);
     expect(Array.from(output)).toEqual([7, 8]);
   });
+
+  // array_ref targets used to be re-opened (zarr.open) on EVERY update and read
+  // through an UNWRAPPED array, bypassing L0 (17 re-decodes per revisit step
+  // were measured on an array_ref store). The resolved target is now memoised
+  // per (store, target path) and wrapped once through the loader's L0 wrapper.
+  describe('array_ref target memoisation', () => {
+    const refAttrs: ArrayMetadata = {
+      encoding: { name: 'array_ref', target: '/Shared/colors', hash: 'sha-test' },
+    };
+    const placeholder = {} as ReturnType<typeof mockZarrArray>;
+
+    function wireTarget() {
+      const targetArray = { dtype: 'float32', shape: [100, 3], attrs: {} };
+      mockZarrRoot.mockReturnValue({ resolve: () => 'tloc' } as never);
+      mockZarrOpen.mockResolvedValue(targetArray as never);
+      setMockData(new Float32Array([1, 2, 3, 4, 5, 6]));
+      return targetArray;
+    }
+
+    const load = (rangeLoader: RangeLoader, store: object) =>
+      rangeLoader.loadRangesResolvingRef(
+        placeholder,
+        refAttrs,
+        [{ start: 0, end: 2 }],
+        new Float32Array(6),
+        2,
+        3,
+        store as never
+      );
+
+    it('opens the target once across repeated loads on the same store', async () => {
+      wireTarget();
+      const store = {};
+      await load(loader, store);
+      await load(loader, store);
+      expect(mockZarrOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it('wraps the target once and reads through the wrapped (L0) array every time', async () => {
+      const target = wireTarget();
+      const wrapped = { ...target, wrapped: true };
+      const wrap = vi.fn(() => wrapped as never);
+      loader.setRefTargetWrapper({ wrap, epoch: () => 0 });
+      const store = {};
+      await load(loader, store);
+      await load(loader, store);
+      expect(wrap).toHaveBeenCalledTimes(1);
+      expect(wrap).toHaveBeenCalledWith(target, '/Shared/colors');
+      expect(mockZarrGet).toHaveBeenCalledTimes(2);
+      expect(mockZarrGet.mock.calls.every((call) => call[0] === (wrapped as never))).toBe(true);
+    });
+
+    it('re-opens when the store changes or the wrapper epoch moves (L0 cleared)', async () => {
+      wireTarget();
+      let epoch = 0;
+      loader.setRefTargetWrapper({ wrap: (a) => a, epoch: () => epoch });
+      const storeA = {};
+      await load(loader, storeA);
+      await load(loader, {}); // a different dataset/store
+      expect(mockZarrOpen).toHaveBeenCalledTimes(2);
+      epoch = 1; // e.g. DecompressedChunkCache.clear()
+      await load(loader, storeA);
+      expect(mockZarrOpen).toHaveBeenCalledTimes(3);
+      await load(loader, storeA);
+      expect(mockZarrOpen).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not memoise a failed open', async () => {
+      wireTarget();
+      mockZarrOpen.mockRejectedValueOnce(new Error('HTTP 503'));
+      const store = {};
+      await expect(load(loader, store)).rejects.toThrow('HTTP 503');
+      await load(loader, store);
+      expect(mockZarrOpen).toHaveBeenCalledTimes(2);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

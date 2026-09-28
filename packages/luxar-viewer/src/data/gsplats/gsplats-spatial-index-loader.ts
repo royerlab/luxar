@@ -78,6 +78,22 @@ import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { SliceCache } from '../../cache/slice-cache';
 
 /**
+ * L0 `aliasOnMiss` for every array this loader wraps: store miss decodes
+ * without the defensive clone. PROOF of safety: `this.arrays` is private and
+ * each of its arrays is read ONLY through (a) `loadArrayRanges` (incl. both Cholesky halves) / `loadColorRanges` ->
+ * `RangeLoader` (`loadRangesResolvingRef`, `loadDirectTyped`) and the
+ * label_ids `readArray`, whose every
+ * encoding path (direct / quantized / lut / perchannel / broadcasted, and
+ * array_ref targets) calls `readArray` = zarrita `get()`, which copies each
+ * chunk into its own freshly allocated output and never hands the chunk view
+ * out; and (b) `prefetchRangesIntoCache` -> `warmChunk`, which returns no
+ * data. Nothing calls `getChunk()` on these arrays directly, so no consumer
+ * can mutate an L0 buffer. Re-check this before adding a direct `getChunk`
+ * consumer.
+ */
+const L0_ALIAS_ON_MISS = true;
+
+/**
  * One-shot latch for the ignored-`slice_dims` warning.
  *
  * The warning is a property of the STORE, not of the loader instance, and one store
@@ -383,6 +399,20 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     this.rangeLoader.setSignalSource(() => this._activeSignal);
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
+    // array_ref targets: opened once per (store, target) and read through L0
+    // with this loader's hooks, exactly like its own attribute arrays (the
+    // L0_ALIAS_ON_MISS proof covers them: RangeLoader reads them via readArray).
+    if (l0Cache) {
+      this.rangeLoader.setRefTargetWrapper({
+        wrap: (array, targetPath) =>
+          wrapWithCache(array, l0Cache, targetPath, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+            aliasOnMiss: L0_ALIAS_ON_MISS,
+          }),
+        epoch: () => l0Cache.generation,
+      });
+    }
     this.prefetcher = prefetcher || null;
     this.sliceCache = sliceCache || null;
     // Geometry-neutral counters: elementsLoaded / visibleElements count
@@ -452,6 +482,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         centersArray = wrapWithCache(centersArray, this.l0Cache, `${this.node.path}/centers`, {
           getProbe: () => this._activeProbe,
           getSignal: () => this._activeSignal,
+          aliasOnMiss: L0_ALIAS_ON_MISS,
         });
         amplitudesArray = wrapWithCache(
           amplitudesArray,
@@ -460,6 +491,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           {
             getProbe: () => this._activeProbe,
             getSignal: () => this._activeSignal,
+            aliasOnMiss: L0_ALIAS_ON_MISS,
           }
         );
       }
@@ -493,6 +525,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`, {
             getProbe: () => this._activeProbe,
             getSignal: () => this._activeSignal,
+            aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
         this.arrays.colors = colorsArray;
@@ -517,6 +550,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         labelIdsArray = wrapWithCache(labelIdsArray, this.l0Cache, `${this.node.path}/label_ids`, {
           getProbe: () => this._activeProbe,
           getSignal: () => this._activeSignal,
+          aliasOnMiss: L0_ALIAS_ON_MISS,
         });
       }
       this.arrays.label_ids = labelIdsArray;
@@ -956,6 +990,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         ? wrapWithCache(arr, this.l0Cache, `${this.node.path}/${name}`, {
             getProbe: () => this._activeProbe,
             getSignal: () => this._activeSignal,
+            aliasOnMiss: L0_ALIAS_ON_MISS,
           })
         : arr;
 
@@ -1225,16 +1260,16 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   }
 
   /**
-   * Prefetch chunks for the given view state into the cache without decoding.
+   * Prefetch chunks for the given view state into the cache without producing
+   * geometry.
    *
    * Uses planned visible ranges when supplied; otherwise performs the same
-   * spatial index query as updateView(). Issues zarr get() calls for each
-   * visible range on every array. The fetched data
-   * populates the HTTP cache and L0 decompressed-chunk cache but is NOT
-   * accumulated into output buffers — the typed-array results are immediately
-   * discarded.  This makes the subsequent updateView() call a fast cache hit
-   * without the memory cost of allocating full-size output arrays that would
-   * only be thrown away.
+   * spatial index query as updateView(). Every distinct chunk the visible
+   * ranges touch, on every array, is fetched (L1/L2) and decoded into the L0
+   * decompressed-chunk cache through the proxy's `warmChunk` — NOT through zarr
+   * `get()`, so no output selection is allocated or filled, and the demand
+   * load's abort signal and residency probe are not consulted (the warm-up
+   * uses `signal` only). The subsequent updateView() is then a fast L0 hit.
    */
   async prefetchChunks(
     viewState: GSplatsViewState,
@@ -1259,8 +1294,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
     if (splatRanges.length === 0) return;
 
-    // Warm every array over the visible ranges. The reads populate L0/L1/L2 as
-    // a side-effect; their assembled output selections are discarded.
+    // Warm every chunk the visible ranges touch into L0 (decode only — no
+    // output assembly, no demand-probe record).
     const arrays = this.prefetchArrays();
 
     await prefetchRangesIntoCache(arrays, splatRanges, signal);

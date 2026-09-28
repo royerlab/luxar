@@ -11,12 +11,19 @@
  */
 
 import type * as zarr from '../../data/zarr';
-import { DecompressedChunkCache, type DecompressedChunk } from '../decompressed-chunk-cache';
+import {
+  DecompressedChunkCache,
+  type DecodedChunkResult,
+  type DecompressedChunk,
+  type InflightDecode,
+} from '../decompressed-chunk-cache';
 import type { ResidencyProbe } from '../residency-probe';
 import { perfCounters, type PerfCounterSlot } from '../../profiling/perf-counters';
 import { signalOrigin } from './decode-origin';
+import { WARM_CHUNK_DEFAULT_ORIGIN, WARM_CHUNK_METHOD, type WarmableArray } from './warm-chunk';
 
 export { tagSignalOrigin } from './decode-origin';
+export { warmChunk, type WarmChunkOptions, type WarmableArray } from './warm-chunk';
 
 // ---------------------------------------------------------------------------
 // Perf counters (always-on; see profiling/perf-counters.ts). Resolved once at
@@ -142,9 +149,9 @@ export interface CachedArrayHooks {
    * (`AbortError`) BEFORE any L0 lookup, cache fetch, or Blosc decode — so a
    * superseded `updateView` bails on the warm-cache hit path too (zarrita's
    * own `throwIfAborted` only fires between chunks of a multi-chunk
-   * selection). Mirrors the `getProbe` thunk lifetime: it reads the owning
-   * loader's transient per-update field, so it is naturally per-caller and
-   * never aborts a coalesced chunk another live caller awaits.
+   * selection). When the call itself carries no signal, this one is also the
+   * caller's WAITER signal: aborting it rejects only this caller — a decode
+   * shared with a still-live caller keeps running (see {@link wrapWithCache}).
    */
   getSignal?: () => AbortSignal | null;
   /**
@@ -155,6 +162,19 @@ export interface CachedArrayHooks {
    * decoded.
    */
   getOrigin?: () => string;
+  /**
+   * Store a miss's decoded buffer in L0 WITHOUT the defensive clone (default
+   * `false` = clone). Only safe for an array whose every consumer reads it
+   * through zarrita `get()` (`readArray`) or `warmChunk`: `get()` copies each
+   * chunk into its own freshly allocated output (`setter.setFromChunk`) and
+   * never hands the chunk view out, so nothing can mutate the cached buffer.
+   * A direct `getChunk()` caller that mutates what it receives would corrupt
+   * L0 — do not enable it for such an array. A decoded view that does not span
+   * its whole `ArrayBuffer` (e.g. an uncompressed chunk sliced out of a larger
+   * shard/archive buffer) is still cloned, so L0 never retains more bytes than
+   * it accounts for.
+   */
+  aliasOnMiss?: boolean;
 }
 
 /**
@@ -163,7 +183,16 @@ export interface CachedArrayHooks {
  * The returned proxy intercepts `getChunk()` calls:
  * 1. Checks L0 cache for the requested chunk
  * 2. On hit: returns cached decompressed data immediately (~1μs)
- * 3. On miss: calls original `getChunk()`, caches result, returns data
+ * 3. If the chunk is already being decoded — through ANY proxy over the same
+ *    `cache` — joins that decode instead of starting another (the in-flight
+ *    map lives on the {@link DecompressedChunkCache}, not on the proxy)
+ * 4. On miss: calls original `getChunk()`, caches result, returns data
+ *
+ * Abort isolation: the shared decode runs under its own `AbortController`,
+ * never under a caller's signal. Each caller races the decode against its own
+ * signal (the call's `options.signal`, else `hooks.getSignal()`), and the
+ * decode is cancelled only once EVERY waiter has aborted. A decode that is not
+ * fully abandoned completes and is cached.
  *
  * All other zarr.Array properties and methods pass through unchanged.
  *
@@ -199,18 +228,11 @@ export function wrapWithCache<D extends zarr.DataType>(
     return array;
   }
   const { getProbe, getSignal, getOrigin } = hooks;
-  const historyPrefix = `${cacheIdentity(cache)}|`;
-
-  // Same-chunk decode coalescing: concurrent getChunk(coords) calls
-  // for the same key share a single underlying decompression. Without
-  // this, two parallel loaders requesting the same chunk both miss
-  // L0, both call target.getChunk(), and both run Blosc decode. Map
-  // is keyed by DecompressedChunkCache.makeKey so it's shared across
-  // every wrapped array routed through the same L0 cache instance.
-  const pendingChunks = new Map<
-    string,
-    Promise<{ data: zarr.TypedArray<D>; shape: number[]; stride: number[] }>
-  >();
+  const ctx: AcquireContext = {
+    cache,
+    historyPrefix: `${cacheIdentity(cache)}|`,
+    aliasOnMiss: hooks.aliasOnMiss === true,
+  };
 
   return new Proxy(array, {
     get(target, prop, _receiver) {
@@ -229,20 +251,7 @@ export function wrapWithCache<D extends zarr.DataType>(
       // Even with Reflect.get(target, prop, target), the getter can fail because the
       // property descriptor is retrieved from the proxy, not the original object.
       // Solution: Access these properties directly on target, bypassing Reflect entirely.
-      if (
-        prop === 'attrs' ||
-        prop === 'shape' ||
-        prop === 'dtype' ||
-        prop === 'chunks' ||
-        prop === 'order' ||
-        prop === 'fill_value' ||
-        prop === 'fillValue' ||
-        prop === 'dimensionNames' ||
-        prop === 'compressor' ||
-        prop === 'filters' ||
-        prop === 'codec' ||
-        prop === 'codecs'
-      ) {
+      if (DIRECT_PROPS.has(prop)) {
         return (target as unknown as Record<string, unknown>)[prop as string];
       }
 
@@ -250,88 +259,42 @@ export function wrapWithCache<D extends zarr.DataType>(
       if (prop === 'getChunk') {
         return async function (
           ...args: Parameters<typeof target.getChunk>
-        ): Promise<{ data: zarr.TypedArray<D>; shape: number[]; stride: number[] }> {
-          const [chunkCoords] = args;
-
+        ): Promise<ChunkResult<D>> {
+          const [chunkCoords, callOptions, opts] = args;
           // Per-update abort chokepoint: bail BEFORE the L0 lookup / fetch /
           // Blosc decode if the owning load was superseded. This covers the
-          // warm-cache hit and coalesced-pending paths below, which
-          // short-circuit before zarrita's between-chunk throwIfAborted would
-          // run. `getSignal` reads the loader's transient per-update field, so
-          // it is per-caller — it never aborts the shared `pendingChunks`
-          // promise that a different, still-live caller may be awaiting.
-          getSignal?.()?.throwIfAborted();
-
-          const key = DecompressedChunkCache.makeKey(arrayPath, chunkCoords);
-
-          // Check L0 cache first
-          const cached = cache.get(key);
-          if (cached) {
-            // Resident: served from L0 with no fresh fetch/decode.
-            perfCounters.add(S_L0_HITS);
-            getProbe?.()?.record(true);
-            // Return cached decompressed chunk
-            return {
-              data: cached.data as zarr.TypedArray<D>,
-              shape: cached.shape,
-              stride: cached.stride,
-            };
-          }
-
-          // Same-chunk coalescing: if another caller is already
-          // decompressing this chunk, await their promise instead of
-          // re-running Blosc. No fresh Blosc work is triggered for this
-          // caller, so treat the coalesced wait as a hit for residency.
-          const pending = pendingChunks.get(key);
-          if (pending) {
-            perfCounters.add(S_L0_COALESCED);
-            getProbe?.()?.record(true);
-            return pending;
-          }
-
-          // Genuine miss: a fetch + Blosc decode is about to run.
-          perfCounters.add(S_L0_MISSES);
-          getProbe?.()?.record(false);
-          const origin = resolveOrigin(args[1], getOrigin);
-
-          const chunkPromise = (async () => {
-            try {
-              // Cache miss — call original getChunk (triggers Blosc decompression)
-              const chunk = await target.getChunk(...args);
-              // `?? 0`: an object-dtype chunk is a plain array (no byteLength).
-              const decodedBytes = (chunk.data as { byteLength?: number }).byteLength ?? 0;
-              recordDecode(historyPrefix + key, origin, decodedBytes);
-
-              // Cache the decompressed result. Clone the data to
-              // prevent callers from mutating the cached copy
-              // (ArrayBufferViews are references to underlying
-              // ArrayBuffers). cloneArrayBufferView branches on
-              // TypedArray vs DataView — the union type's public d.ts
-              // doesn't expose a common slice() so a single cast hid
-              // the DataView gap. zarrita's TypedArray<D> union
-              // includes object-dtype as unknown[], which is not an
-              // ArrayBufferView; cast through ArrayBufferView since
-              // numeric chunks (the only kind we cache) always are.
-              const clonedData = cloneArrayBufferView(chunk.data as unknown as ArrayBufferView);
-              perfCounters.add(
-                S_L0_CLONE_BYTES,
-                (clonedData as { byteLength?: number }).byteLength ?? 0
-              );
-              const cacheEntry: DecompressedChunk = {
-                data: clonedData,
-                shape: chunk.shape.slice(),
-                stride: chunk.stride.slice(),
-              };
-              cache.set(key, cacheEntry);
-
-              return chunk;
-            } finally {
-              pendingChunks.delete(key);
-            }
-          })();
-          pendingChunks.set(key, chunkPromise);
-          return chunkPromise;
+          // warm-cache hit and coalesced paths, which short-circuit before
+          // zarrita's between-chunk throwIfAborted would run.
+          const activeSignal = getSignal?.() ?? undefined;
+          activeSignal?.throwIfAborted();
+          const result = await acquireChunk(ctx, {
+            key: DecompressedChunkCache.makeKey(arrayPath, chunkCoords),
+            // This caller's own abort: the call's signal, else the loader's
+            // per-update one. Only THIS waiter bails on it (see raceWaiter).
+            signal: callOptions?.signal ?? activeSignal,
+            probe: getProbe?.() ?? null,
+            origin: () => resolveOrigin(callOptions, getOrigin),
+            run: (signal) => target.getChunk(chunkCoords, { ...callOptions, signal }, opts),
+          });
+          return result as ChunkResult<D>;
         };
+      }
+
+      // Cache warm-up (see warm-chunk.ts): decode + cache through the shared
+      // in-flight map, but with the CALLER'S signal only — never `getSignal`
+      // (the demand load's) — no residency-probe record, no output assembly.
+      if (prop === WARM_CHUNK_METHOD) {
+        const warm: WarmableArray['warmChunk'] = async (chunkCoords, options = {}) => {
+          const { signal } = options;
+          await acquireChunk(ctx, {
+            key: DecompressedChunkCache.makeKey(arrayPath, chunkCoords),
+            signal,
+            probe: null,
+            origin: () => options.origin ?? signalOrigin(signal) ?? WARM_CHUNK_DEFAULT_ORIGIN,
+            run: (decodeSignal) => target.getChunk(chunkCoords, { signal: decodeSignal }),
+          });
+        };
+        return warm;
       }
 
       // Pass through all other property access
@@ -342,6 +305,185 @@ export function wrapWithCache<D extends zarr.DataType>(
       return Reflect.get(target, prop, target);
     },
   }) as zarr.Array<D, zarr.Readable>;
+}
+
+/** zarrita getters that read private fields and must bypass `Reflect.get`. */
+const DIRECT_PROPS = new Set<PropertyKey>([
+  'attrs',
+  'shape',
+  'dtype',
+  'chunks',
+  'order',
+  'fill_value',
+  'fillValue',
+  'dimensionNames',
+  'compressor',
+  'filters',
+  'codec',
+  'codecs',
+]);
+
+type ChunkResult<D extends zarr.DataType> = {
+  data: zarr.TypedArray<D>;
+  shape: number[];
+  stride: number[];
+};
+
+/** Per-wrap state shared by every call through one proxy. */
+interface AcquireContext {
+  cache: DecompressedChunkCache;
+  /** `<L0 cache id>|` — prefix of the decode-history identity. */
+  historyPrefix: string;
+  /** Store miss decodes without cloning (see {@link CachedArrayHooks.aliasOnMiss}). */
+  aliasOnMiss: boolean;
+}
+
+/** One L0 acquisition: a lookup that joins or starts a decode on a miss. */
+interface AcquireRequest {
+  key: string;
+  /** This waiter's own abort signal (never the shared decode's). */
+  signal: AbortSignal | undefined;
+  /** Residency probe to record hit/miss into, or `null` for none. */
+  probe: ResidencyProbe | null;
+  /** Origin of a miss decode — resolved only on a genuine miss. */
+  origin: () => string;
+  /** Run the underlying fetch + decode under the shared decode's signal. */
+  run: (signal: AbortSignal) => Promise<DecodedChunkResult>;
+}
+
+/**
+ * The L0 core: hit → return the cached chunk; in flight → join the cache-wide
+ * decode as another waiter; miss → start a decode every proxy over this cache
+ * can join.
+ */
+function acquireChunk(ctx: AcquireContext, req: AcquireRequest): Promise<DecodedChunkResult> {
+  const { cache } = ctx;
+  // An already-aborted waiter must not join (its abort listener would never fire).
+  if (req.signal?.aborted) return Promise.reject(req.signal.reason as Error);
+  const cached = cache.get(req.key);
+  if (cached) {
+    // Resident: served from L0 with no fresh fetch/decode.
+    perfCounters.add(S_L0_HITS);
+    req.probe?.record(true);
+    return Promise.resolve({ data: cached.data, shape: cached.shape, stride: cached.stride });
+  }
+
+  // Same-chunk coalescing: another caller (through ANY proxy over this cache)
+  // is already decoding it. No fresh Blosc work is triggered for this caller,
+  // so the coalesced wait counts as a hit for residency.
+  const pending = cache.getInflight(req.key);
+  if (pending) {
+    perfCounters.add(S_L0_COALESCED);
+    req.probe?.record(true);
+    pending.waiters++;
+    return raceWaiter(cache, req.key, pending, req.signal);
+  }
+
+  // Genuine miss: a fetch + Blosc decode is about to run.
+  perfCounters.add(S_L0_MISSES);
+  req.probe?.record(false);
+  const entry = startDecode(ctx, req);
+  return raceWaiter(cache, req.key, entry, req.signal);
+}
+
+/** Mutable view of an {@link InflightDecode} while it is being built. */
+type InflightBuilder = { -readonly [K in keyof InflightDecode]: InflightDecode[K] };
+
+/**
+ * Start the shared decode for `req.key` under its own controller and register
+ * it on the cache. Only a still-registered entry commits its result, so a
+ * decode that was fully abandoned (or orphaned by `cache.clear()`) is dropped.
+ */
+function startDecode(ctx: AcquireContext, req: AcquireRequest): InflightDecode {
+  const { cache, historyPrefix } = ctx;
+  const origin = req.origin();
+  const entry: InflightBuilder = {
+    controller: new AbortController(),
+    waiters: 1,
+    promise: undefined as unknown as Promise<DecodedChunkResult>,
+  };
+  entry.promise = (async () => {
+    // Cache miss — call original getChunk (triggers Blosc decompression)
+    const chunk = await req.run(entry.controller.signal);
+    // `?? 0`: an object-dtype chunk is a plain array (no byteLength).
+    const decodedBytes = (chunk.data as { byteLength?: number }).byteLength ?? 0;
+    recordDecode(historyPrefix + req.key, origin, decodedBytes);
+    if (cache.getInflight(req.key) === entry) {
+      cache.set(req.key, toCacheEntry(chunk, ctx.aliasOnMiss));
+    }
+    return chunk;
+  })();
+  // Deregister on settle. `then(f, f)` also marks a rejection as handled, so a
+  // fully-abandoned decode's AbortError is never an unhandled rejection.
+  const forget = (): void => cache.deleteInflight(req.key, entry);
+  entry.promise.then(forget, forget);
+  cache.setInflight(req.key, entry);
+  return entry;
+}
+
+/** True when `view` covers its whole underlying buffer (aliasing retains nothing extra). */
+function spansWholeBuffer(view: ArrayBufferView): boolean {
+  return view.byteOffset === 0 && view.byteLength === view.buffer.byteLength;
+}
+
+/**
+ * Build the L0 entry for a freshly decoded chunk. By default clone the data to
+ * prevent callers from mutating the cached copy (ArrayBufferViews are
+ * references to underlying ArrayBuffers); with `alias` (an array read only via
+ * `get()`, see {@link CachedArrayHooks.aliasOnMiss}) store the decoded view
+ * itself when it spans its whole buffer. cloneArrayBufferView branches on
+ * TypedArray vs DataView — the union type's public d.ts doesn't expose a common
+ * slice() so a single cast hid the DataView gap. zarrita's TypedArray<D> union
+ * includes object-dtype as unknown[], which is not an ArrayBufferView; cast
+ * through ArrayBufferView since numeric chunks (the only kind we cache) always
+ * are.
+ */
+function toCacheEntry(chunk: DecodedChunkResult, alias: boolean): DecompressedChunk {
+  const view = chunk.data as ArrayBufferView;
+  let data = view;
+  if (!alias || !spansWholeBuffer(view)) {
+    data = cloneArrayBufferView(view);
+    perfCounters.add(S_L0_CLONE_BYTES, (data as { byteLength?: number }).byteLength ?? 0);
+  }
+  return { data, shape: chunk.shape.slice(), stride: chunk.stride.slice() };
+}
+
+/**
+ * One waiter's view of a shared decode: settles with the decode, or rejects
+ * with THIS waiter's abort reason as soon as its own signal fires. A waiter
+ * that aborts leaves the decode running for the others; the last one to leave
+ * aborts the shared controller (and deregisters it so a later caller starts a
+ * fresh decode instead of joining a cancelled one). A waiter without a signal
+ * never leaves, so its decode is never cancelled.
+ */
+function raceWaiter(
+  cache: DecompressedChunkCache,
+  key: string,
+  entry: InflightDecode,
+  signal: AbortSignal | undefined
+): Promise<DecodedChunkResult> {
+  if (!signal) return entry.promise;
+  return new Promise<DecodedChunkResult>((resolve, reject) => {
+    const onAbort = (): void => {
+      entry.waiters--;
+      if (entry.waiters <= 0) {
+        cache.deleteInflight(key, entry);
+        entry.controller.abort(signal.reason);
+      }
+      reject(signal.reason as Error);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    entry.promise.then(
+      (chunk) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(chunk);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error as Error);
+      }
+    );
+  });
 }
 
 /**

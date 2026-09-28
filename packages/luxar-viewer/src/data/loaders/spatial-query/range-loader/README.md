@@ -55,7 +55,7 @@ range-loader/
 ├── lut.ts               # loadLUT       — index → palette row/scalar lookup
 ├── broadcasted.ts       # loadBroadcasted — one value replicated to N items
 ├── array-ref.ts         # loadArrayRef  — unresolved ref guard (throws)
-├── ref-resolution.ts    # resolveArrayRef — opens an array_ref target array
+├── ref-resolution.ts    # RefTargetMemo / resolveArrayRef — array_ref targets
 └── shared-instance.ts   # getSharedRangeLoader / getSharedRefRegistry singletons
 ```
 
@@ -99,10 +99,18 @@ keeping `uint8` colors as bytes for THREE.js 0–255→0–1 normalization); and
 `array_ref` encodings point one array at another (the encoder deduplicates
 identical arrays). They must be resolved **before** reaching `RangeLoader`:
 
-- `resolveArrayRef` (called by the spatial-index loaders) opens the target via
+- `RefTargetMemo` (behind `RangeLoader.loadRangesResolvingRef`, the entry point
+  the spatial-index loaders use) opens the target via
   `zarr.root(store).resolve(target)`, reads its attrs, and derives
   `elementsPerItem` from the target shape (product of the trailing axes, or 1 for
-  1-D). Returns `null` when no resolution is needed.
+  1-D). Returns `null` when no resolution is needed. The resolved target is
+  memoised per (store, target path) — it is opened ONCE, not per update — and,
+  when the owning loader has called `setRefTargetWrapper`, wrapped through that
+  loader's L0 proxy (keyed on the store-absolute target path) so revisits are L0
+  hits. Invalidation: a new store object misses the `WeakMap`; the wrapper's
+  `epoch()` (the L0 cache's `generation`, bumped by `clear()`) re-opens; a failed
+  open is not memoised. `resolveArrayRef` remains as the un-memoised, unwrapped
+  primitive.
 - `loadArrayRef` is a guard: if an unresolved `array_ref` ever reaches the
   dispatcher it throws with the offending `target`/`hash`, signalling a code path
   that bypassed resolution.

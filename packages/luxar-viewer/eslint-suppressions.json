@@ -9,11 +9,6 @@
       "count": 1
     }
   },
-  "src/cache/decompressed-chunk-cache/cached-zarr-array.ts": {
-    "complexity": {
-      "count": 2
-    }
-  },
   "src/cache/heap-budget.ts": {
     "complexity": {
       "count": 1

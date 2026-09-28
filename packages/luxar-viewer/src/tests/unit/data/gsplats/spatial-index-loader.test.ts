@@ -182,18 +182,49 @@ describe('GSplatsSpatialIndexLoader', () => {
     let mockZarrLocation: { resolve: ReturnType<typeof vi.fn> };
     let mockNode: SceneNode;
     let mockArrays: {
-      centers: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
-      amplitudes: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
+      centers: {
+        shape: number[];
+        chunks: number[];
+        dtype: string;
+        attrs?: object;
+        getChunk?: ReturnType<typeof vi.fn>;
+      };
+      amplitudes: {
+        shape: number[];
+        chunks: number[];
+        dtype: string;
+        attrs?: object;
+        getChunk?: ReturnType<typeof vi.fn>;
+      };
       // v3.1 split Cholesky layout (diagonal + off-diagonal).
-      cholesky_factors_diag: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
+      cholesky_factors_diag: {
+        shape: number[];
+        chunks: number[];
+        dtype: string;
+        attrs?: object;
+        getChunk?: ReturnType<typeof vi.fn>;
+      };
       cholesky_factors_offdiag: {
         shape: number[];
         chunks: number[];
         dtype: string;
         attrs?: object;
+        getChunk?: ReturnType<typeof vi.fn>;
       };
-      colors: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
-      label_ids: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
+      colors: {
+        shape: number[];
+        chunks: number[];
+        dtype: string;
+        attrs?: object;
+        getChunk?: ReturnType<typeof vi.fn>;
+      };
+      label_ids: {
+        shape: number[];
+        chunks: number[];
+        dtype: string;
+        attrs?: object;
+        getChunk?: ReturnType<typeof vi.fn>;
+      };
     };
     let chunkBoundsArray: { shape: number[]; dtype: string; attrs: object };
 
@@ -219,6 +250,13 @@ describe('GSplatsSpatialIndexLoader', () => {
         colors: { shape: [5000, 3], chunks: [256, 3], dtype: 'float32', attrs: {} },
         label_ids: { shape: [5000], chunks: [256], dtype: 'uint64', attrs: {} },
       };
+      // Prefetch warms chunk-by-chunk through getChunk (never zarr.get), so the
+      // attribute mocks need one; demand loads still go through zarr.get.
+      for (const arr of Object.values(mockArrays)) {
+        arr.getChunk = vi
+          .fn()
+          .mockResolvedValue({ data: new Float32Array(1), shape: [1], stride: [1] });
+      }
 
       mockZarrLocation = makeMockZarrLocation();
       mockNode = makeGSplatsNode();
@@ -1793,6 +1831,20 @@ describe('GSplatsSpatialIndexLoader', () => {
     // two test files (justified asymmetry).
     // ────────────────────────────────────────────────────────────────
     describe('prefetchChunks (gsplats-only)', () => {
+      /** Chunk warm-ups issued so far (prefetch warms via getChunk, not get). */
+      const warmCalls = (): number =>
+        Object.values(mockArrays).reduce(
+          (n: number, arr: any) => n + (arr.getChunk.mock.calls.length as number),
+          0
+        );
+      /** get() calls that read an attribute array (prefetch must issue none). */
+      const attributeGets = (): unknown[] => {
+        const attributeArrays = new Set<unknown>(Object.values(mockArrays));
+        return (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((call) =>
+          attributeArrays.has(call[0])
+        );
+      };
+
       it('does no initialization or query work for an already-aborted request', async () => {
         const controller = new AbortController();
         controller.abort();
@@ -1829,7 +1881,9 @@ describe('GSplatsSpatialIndexLoader', () => {
           [0, 0, 1],
           [0, 0, 2],
         ]);
-        expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(6);
+        // The predicted slice alone: chunk 0 of each of the five arrays.
+        expect(warmCalls()).toBe(5);
+        expect(attributeGets()).toHaveLength(0);
       });
 
       it('warms the predicted slice and only the nearest next chunk boundary', async () => {
@@ -1880,7 +1934,9 @@ describe('GSplatsSpatialIndexLoader', () => {
           SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>
         ).mock.calls.map((call) => (call[1] as ViewState).slicePosition[3]);
         expect(queriedTimes).toEqual([1, 2, 4]);
-        expect((zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(10);
+        // Two warmed views × five arrays; rows [100, 200) sit in chunk 0 of each.
+        expect(warmCalls()).toBe(10);
+        expect(attributeGets()).toHaveLength(0);
       });
 
       it('estimates the visible sliced working set from stored chunk dtypes', async () => {
@@ -1936,7 +1992,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(mockExecute).toHaveBeenCalledTimes(1);
       });
 
-      it('warms the cache with zarr.get on every array × range', async () => {
+      it('warms each touched chunk of every array without zarr.get', async () => {
         mockExecute.mockResolvedValueOnce([{ start: 0, end: 50 }]);
 
         const viewState: ViewState = {
@@ -1947,10 +2003,12 @@ describe('GSplatsSpatialIndexLoader', () => {
 
         await bodyLoader.prefetchChunks(viewState);
 
-        // Required arrays + colors = 4 arrays. With 1 range each → 4 get() calls.
-        // Plus 1 chunk_bounds get() during initialize().
-        const getCalls = (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls;
-        expect(getCalls.length).toBeGreaterThanOrEqual(4);
+        // Rows [0, 50) sit in chunk 0 of each of the five arrays (centers,
+        // amplitudes, both Cholesky halves, colors): one warm-up each and no
+        // output-assembling get() (initialize()'s chunk_bounds read aside).
+        expect(warmCalls()).toBe(5);
+        expect(mockArrays.centers.getChunk!.mock.calls[0][0]).toEqual([0, 0]);
+        expect(attributeGets()).toHaveLength(0);
       });
 
       it('includes label_ids when the categorical channel is declared', async () => {
@@ -1973,11 +2031,7 @@ describe('GSplatsSpatialIndexLoader', () => {
           tolerance: [0, 0, 0],
         });
 
-        expect(
-          (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
-            ([array]) => array === mockArrays.label_ids
-          )
-        ).toBe(true);
+        expect(mockArrays.label_ids.getChunk!).toHaveBeenCalled();
       });
 
       it('skips fetches when the spatial query returns no ranges', async () => {
@@ -1989,7 +2043,7 @@ describe('GSplatsSpatialIndexLoader', () => {
           tolerance: [0, 0, 0],
         });
 
-        const callsBefore = (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+        const callsBefore = warmCalls();
 
         // Second prefetch with no ranges → no additional fetches.
         mockExecute.mockResolvedValueOnce([]);
@@ -1999,7 +2053,7 @@ describe('GSplatsSpatialIndexLoader', () => {
           tolerance: [0, 0, 0],
         });
 
-        const callsAfter = (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+        const callsAfter = warmCalls();
         expect(callsAfter).toBe(callsBefore);
       });
     });

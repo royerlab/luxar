@@ -61,10 +61,15 @@ describe('cached-zarr-array', () => {
       // Call getChunk
       const result = await wrapped.getChunk([0, 1, 2]);
 
-      // Should have called original getChunk. The proxy forwards args
-      // via rest-spread (`target.getChunk(...args)`), so a no-options
-      // call shows up as a single positional arg, not `(coords, undefined)`.
-      expect(mockArray.getChunk).toHaveBeenCalledWith([0, 1, 2]);
+      // Should have called original getChunk. The underlying decode always
+      // runs under the shared in-flight entry's OWN AbortController (never a
+      // caller's signal — see l0-coalescing.test.ts), so the proxy forwards
+      // the coords plus `{ signal: <that controller's signal> }`.
+      expect(mockArray.getChunk).toHaveBeenCalledWith(
+        [0, 1, 2],
+        { signal: expect.any(AbortSignal) },
+        undefined
+      );
 
       // Should return the chunk data
       expect(result.data).toBeInstanceOf(Float32Array);
