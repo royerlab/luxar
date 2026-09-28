@@ -27,6 +27,28 @@ function index() {
 }
 
 describe('planChunkBoundaryViewStates', () => {
+  it('finds both boundary directions across a million disjoint ranges', () => {
+    const ranges = Array.from({ length: 1_000_000 }, (_, i) => ({
+      start: 400_000 + 2 * i,
+      end: 400_001 + 2 * i,
+    }));
+    const chunkIndex = index();
+    chunkIndex.chunkCount = 16;
+    chunkIndex.metadata.chunk_size = 200_000;
+    chunkIndex.chunkBounds = new Float32Array(16 * 4 * 2);
+    for (let atom = 0; atom < 16; atom++) {
+      chunkIndex.chunkBounds[atom * 8 + 6] = atom;
+      chunkIndex.chunkBounds[atom * 8 + 7] = atom;
+    }
+    const arrays = [{ shape: [3_200_000], chunks: [400_000] }];
+
+    const forward = planChunkBoundaryViewStates(view(1), view(2), ranges, chunkIndex, arrays);
+    expect(forward.map((candidate) => candidate.slicePosition[3])).toEqual([2, 12]);
+
+    const reverse = planChunkBoundaryViewStates(view(6), view(5), ranges, chunkIndex, arrays);
+    expect(reverse.map((candidate) => candidate.slicePosition[3])).toEqual([5, 1]);
+  });
+
   it('adds only the nearest future slice that enters a next zarr chunk', () => {
     const views = planChunkBoundaryViewStates(
       view(1),
