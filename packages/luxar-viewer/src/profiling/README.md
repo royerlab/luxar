@@ -39,6 +39,22 @@ panel) and mirrored into an allocation-free in-memory snapshot read by
 a runtime without `performance.mark` still gets the snapshot, and nothing
 throws into the load path.
 
+## Perf counters (`perf-counters.ts`)
+
+Always-on tallies for performance probes and the render gate
+(`scripts/render-gate/`): bytes uploaded, renders, decodes, requests, console
+calls, and so on. A hot path resolves its slot once at module scope
+(`const S = perfCounters.slot('gpu.uploadBytes')`) and then pays one typed-array
+store per event (`perfCounters.add(S, n)`); `max` keeps a high-water mark and
+`gauge` overwrites. `record(kind, rec)` appends to a bounded per-kind ring
+(4096) for per-tick traces.
+
+Read them through `__luxarDebug.getPerf().counters` (a flat `name -> number`
+map, available from bootstrap on), `__luxarDebug.getPerfRecords(kind)`, and
+reset with `__luxarDebug.resetPerfCounters()`. Counters are the base for every
+gated perf comparison, so a counter must exist on both the base and the
+candidate build before a commit can be judged on it.
+
 ## Quick Start
 
 ```typescript

@@ -45,6 +45,7 @@ import { log, Modules, LogEmoji } from '../utils/log';
 import { getErrorMessage } from '../utils/format-error';
 import { codecRegistry } from '../data/zarr';
 import { computePerfSnapshot } from './app/debug/perf-snapshot';
+import { perfCounters } from '../profiling/perf-counters';
 
 /**
  * Options for {@link bootstrapStandalone}.
@@ -400,6 +401,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       // runtime-aware snapshot once the components exist.
       perfReady: true,
       getPerf: () => computePerfSnapshot(),
+      getPerfRecords: (kind: string) => perfCounters.records(kind),
+      resetPerfCounters: () => perfCounters.reset(),
       showError: (message) =>
         showError(message, shortcutForAction, {
           datasetBrowser: KeyAction.toggleDatasetBrowser,

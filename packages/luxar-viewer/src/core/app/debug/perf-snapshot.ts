@@ -15,6 +15,7 @@
  */
 
 import { getLoadTimeline, type LoadTimelineSnapshot } from '../../../profiling/load-timeline';
+import { perfCounters } from '../../../profiling/perf-counters';
 import type { AdaptiveDPRDiagnostics } from '../../../rendering/adaptive-dpr-manager';
 import type { RendererInfoSnapshot } from './renderer-info-sampler';
 
@@ -45,6 +46,11 @@ export interface PerfSnapshot {
   /** True once the runtime hooks (renderer, loaders, DPR) are wired. */
   runtimeReady: boolean;
   timeline: LoadTimelineSnapshot;
+  /**
+   * Always-on perf counters (`profiling/perf-counters.ts`), a flat
+   * `name -> number` map. Available from bootstrap on.
+   */
+  counters: Record<string, number>;
   rendererInfo: RendererInfoSnapshot | null;
   adaptiveDpr: AdaptiveDPRDiagnostics | null;
   workers: unknown;
@@ -107,6 +113,7 @@ export function computePerfSnapshot(ctx: PerfSnapshotContext = {}): PerfSnapshot
     perfReady: true,
     runtimeReady,
     timeline,
+    counters: perfCounters.snapshot(),
     rendererInfo: readOrNull(ctx.rendererInfo),
     adaptiveDpr: readOrNull(ctx.adaptiveDpr),
     workers: readOrNull(ctx.workers),

@@ -49,6 +49,7 @@ import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { LuxarApp } from '../../app';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 import { computePerfSnapshot } from './perf-snapshot';
+import { perfCounters } from '../../../profiling/perf-counters';
 import { getRendererInfoSnapshot, installRendererInfoSampler } from './renderer-info-sampler';
 import { snapshotProjectedDensity } from '../../../scene/projected-density';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
@@ -486,6 +487,8 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // Every hook is read INSIDE the getter, per snapshot, for the same
     // reason `isLoading` is: capturing once here would freeze it.
     perfReady: true,
+    getPerfRecords: (kind: string) => perfCounters.records(kind),
+    resetPerfCounters: () => perfCounters.reset(),
     getPerf: () =>
       computePerfSnapshot({
         rendererInfo: getRendererInfoSnapshot,

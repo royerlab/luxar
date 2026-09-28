@@ -220,6 +220,10 @@ declare global {
       getPerf?: () => unknown;
       /** True as soon as `getPerf` exists (bootstrap), before `runtimeReady`. */
       perfReady?: boolean;
+      /** Structured perf records of one kind (`profiling/perf-counters.ts`), oldest first. */
+      getPerfRecords?: (kind: string) => unknown[];
+      /** Zero every perf counter and drop every perf record. */
+      resetPerfCounters?: () => void;
       /**
        * The scene environment (`rendering/environment/`): what lights
        * `material="physical"` meshes, and — under `?bakeEnv` — the last bake's
