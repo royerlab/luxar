@@ -9,7 +9,8 @@
  * - In-place data updates (fused texel writes into the pooled element
  *   texture for all three geometry types)
  * - Size-based bucketing for efficient matching
- * - LRU eviction after 300 frames of non-use
+ * - LRU eviction after 300 atomic commits of non-use (commits, NOT rendered
+ *   frames — see {@link GPUBufferPool.beginCommit})
  * - Multi-type support for all TypedArray formats
  *
  * TYPE SUPPORT (COMPLETE):
@@ -86,18 +87,22 @@ export class GPUBufferPool {
 
   /** @internal — shared with the per-type adapters. */
   activeBuffers = new Map<string, PooledBuffer>(); // nodeId → active geometry
-  /** @internal — shared with the per-type adapters; increments via beginFrame(). */
-  frameCount = 0;
+  /**
+   * Atomic-commit counter — the pool's unit of age (#2939). @internal —
+   * shared with the per-type adapters; increments via {@link beginCommit}.
+   */
+  commitCount = 0;
 
   private maxPoolSize: number;
-  private evictionFrames: number;
+  /** LRU age limit, in atomic commits (see {@link beginCommit}). */
+  private evictionCommits: number;
   /**
    * Maximum geometries the pool will dispose in a single
    * `evictUnused()` call when not over the hard limit. Without this
    * cap, a single eviction sweep can dispose dozens of buffers
    * synchronously — each `geometry.dispose()` is 5–20 ms on slow
    * GPUs, so a burst stutters visibly. Remaining evictable buffers
-   * are deferred to the next frame's eviction sweep. The
+   * are deferred to the next eviction sweep. The
    * `mustEvict` (pool-over-limit) path ignores this cap so the pool
    * never grows unbounded.
    */
@@ -161,12 +166,12 @@ export class GPUBufferPool {
 
   constructor(
     maxPoolSize: number = 20,
-    evictionFrames: number = 300,
+    evictionCommits: number = 300,
     evictBatchSize: number = 5,
     getByteBudget: () => number = () => 512_000_000
   ) {
     this.maxPoolSize = maxPoolSize;
-    this.evictionFrames = evictionFrames;
+    this.evictionCommits = evictionCommits;
     this.evictBatchSize = Math.max(1, evictBatchSize);
     this.getByteBudget = getByteBudget;
     this.points = new PointsBufferAdapter(this);
@@ -175,11 +180,23 @@ export class GPUBufferPool {
   }
 
   /**
-   * Advance the frame counter. Call once per frame before any acquire calls.
-   * This ensures eviction timing is based on rendered frames, not acquire calls.
+   * Advance the commit counter. Call once per ATOMIC COMMIT (a non-discarded
+   * update pass), before its acquire calls — the only production caller is
+   * `data/scene-loader/update-view/atomic-commit.ts`.
+   *
+   * The pool therefore ages pooled buffers in commits, not rendered frames
+   * (#2939): `evictionCommits` (default 300) is 300 commits, and the
+   * over-limit `mustEvict` grace below is 60 commits. That is deliberate —
+   * buffers are only acquired and released on commits — but it has two
+   * consequences worth knowing when tuning it:
+   *  - while the view orbits or sits idle no commit runs, so pooled buffers
+   *    do NOT age; they are freed only by the byte budget or `maxPoolSize`;
+   *  - during playback or scrubbing (many commits per second) 300 commits can
+   *    elapse in seconds.
+   * (There is no idle time-based sweep; one would be a separate policy.)
    */
-  beginFrame(): void {
-    this.frameCount++;
+  beginCommit(): void {
+    this.commitCount++;
   }
 
   /**
@@ -343,7 +360,7 @@ export class GPUBufferPool {
    * Public for testing and manual pool management.
    */
   evictUnused(fromAcquire: boolean = false): number {
-    const currentFrame = this.frameCount;
+    const currentCommit = this.commitCount;
 
     // Check total pool size
     const totalPooled =
@@ -354,13 +371,13 @@ export class GPUBufferPool {
     // If pool is over limit, evict aggressively
     const mustEvict = totalPooled > this.maxPoolSize;
 
-    // Per-call eviction batch cap. Without this, a frame in which many
+    // Per-call eviction batch cap. Without this, a sweep in which many
     // buckets simultaneously cross the eviction threshold (common after
     // a long pause + a viewport change) would burst-dispose every
     // qualifying buffer in a single frame. Each `geometry.dispose()`
     // can take 5–20 ms on slow GPUs; a 50-buffer burst stutters
     // visibly. By capping the per-call batch, the remaining evictable
-    // buffers are deferred to the next frame's `acquire*` call. The
+    // buffers are deferred to the next sweep (the next `acquire*`/release). The
     // `mustEvict` over-limit path bypasses the cap so we never let the
     // pool drift unbounded above its limit.
     const batchCap = mustEvict ? Number.POSITIVE_INFINITY : this.evictBatchSize;
@@ -369,7 +386,7 @@ export class GPUBufferPool {
     // when the per-call budget is exhausted. Buffers that WERE
     // eviction-eligible but couldn't run this call (batch cap exhausted)
     // are counted as `deferredEvictions` on the global stats so callers
-    // can observe the eviction queue stretching across frames.
+    // can observe the eviction queue stretching across sweeps.
     const evictFromPool = (pool: Map<number, PooledBuffer[]>, budget: number): number => {
       let poolEvicted = 0;
       if (budget <= 0) return 0;
@@ -378,11 +395,11 @@ export class GPUBufferPool {
         const toDispose: PooledBuffer[] = [];
 
         for (const buffer of buffers) {
-          const framesSinceUse = currentFrame - buffer.lastUsedFrame;
+          const commitsSinceUse = currentCommit - buffer.lastUsedCommit;
           const evictable =
-            framesSinceUse > this.evictionFrames || (mustEvict && framesSinceUse > 60);
+            commitsSinceUse > this.evictionCommits || (mustEvict && commitsSinceUse > 60);
 
-          // Evict if: unused for >evictionFrames OR pool over limit,
+          // Evict if: unused for >evictionCommits OR pool over limit,
           // AND we're under the per-call batch cap.
           if (evictable && poolEvicted < budget) {
             toDispose.push(buffer);
@@ -467,11 +484,11 @@ export class GPUBufferPool {
         maxPoolBytes: pooledTarget,
         maxPoolSize: this.maxPoolSize,
         typeEvictionCounters: this.typeStats,
-        // Same-frame grace applies ONLY to acquire-triggered sweeps —
+        // Same-commit grace applies ONLY to acquire-triggered sweeps —
         // the release path keeps its original semantics (a release
         // followed by evictUnused() may reclaim that very buffer).
-        // graceFrame -1 never matches a real frame counter.
-        graceFrame: fromAcquire ? this.frameCount : -1,
+        // graceCommit -1 never matches a real commit counter.
+        graceCommit: fromAcquire ? this.commitCount : -1,
       },
       sentinel
     );

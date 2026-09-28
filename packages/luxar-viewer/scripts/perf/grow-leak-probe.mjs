@@ -126,7 +126,7 @@ try {
     // pooled buffer (observed: a ladder leftover with capacity >= 32K
     // absorbed grows 0-3, so only ONE real grow ever happened and the
     // in-place-rebuild strand went unexercised).
-    for (let i = 0; i < 305; i++) pool.beginFrame();
+    for (let i = 0; i < 305; i++) pool.beginCommit();
     pool.evictUnused();
     steps.push({ step: 'drained', ...mem(), pool: pool.getStats().pooledBuffers });
 
@@ -159,7 +159,7 @@ try {
       pool.releaseGSplatsGeometry('synthetic-warm');
       // Drain the warm buffer too — it must not be best-fit-served to
       // the measured grows below.
-      for (let i = 0; i < 305; i++) pool.beginFrame();
+      for (let i = 0; i < 305; i++) pool.beginCommit();
       pool.evictUnused();
       steps.push({ step: 'prewarm', ...mem(), warmed, warmDraws });
     }
@@ -198,7 +198,7 @@ try {
     // window, evict everything evictable.
     dbg.scene.remove(wrapper);
     pool.releaseGSplatsGeometry('synthetic-grow');
-    for (let i = 0; i < 305; i++) pool.beginFrame();
+    for (let i = 0; i < 305; i++) pool.beginCommit();
     pool.evictUnused();
     await renderTick();
     steps.push({ step: 'after-evict', ...mem(), pool: pool.getStats() });

@@ -3,7 +3,7 @@
  *
  * Owns the points-specific pool state (per-capacity buckets) and
  * implements acquire/release/update for Points geometries. Shared
- * state (activeBuffers, stats, frame counter) is read from the
+ * state (activeBuffers, stats, commit counter) is read from the
  * GPUBufferPool reference passed at construction.
  *
  * Per-point data lives in the RGBA32F point texture attached at
@@ -19,7 +19,7 @@
  * the old per-attribute writes produced.
  *
  * The top-level GPUBufferPool owns only shared coordination logic
- * (eviction, frame counter, dispose); this adapter owns Points-specific
+ * (eviction, commit counter, dispose); this adapter owns Points-specific
  * buffer layout and update behavior.
  */
 
@@ -96,7 +96,7 @@ function createPointsGeometry(pointCapacity: number): THREE.InstancedBufferGeome
  */
 export interface PointsAdapterHost {
   activeBuffers: Map<string, PooledBuffer>;
-  readonly frameCount: number;
+  readonly commitCount: number;
   stats: {
     allocations: number;
     reuses: number;
@@ -138,7 +138,7 @@ export class PointsBufferAdapter {
     // this is defense-in-depth against an ordering where it survived).
     if (active && active.type === 'points' && !active.geometry.userData.luxarInvalidated) {
       if (active.capacity >= pointCount) {
-        active.lastUsedFrame = host.frameCount;
+        active.lastUsedCommit = host.commitCount;
         host.stats.reuses++;
         host.typeStats.points.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
@@ -155,7 +155,7 @@ export class PointsBufferAdapter {
       host.stats.capacityGrowths++;
       // OOM RE-CLAIM WINDOW. A grow is exactly when memory is tightest,
       // and everything from the release onward can throw: the release's
-      // own evict sweep (graceFrame −1, so it may even dispose the buffer
+      // own evict sweep (graceCommit −1, so it may even dispose the buffer
       // we just released), and above all the fresh allocation's big
       // Float32Array in createPointsGeometry — the realistic OOM throw
       // site. Without this catch, the throw propagates out of the commit
@@ -187,7 +187,7 @@ export class PointsBufferAdapter {
       // Post-grow reclaim — see the twin comment in `lines-adapter.ts` for why
       // the pair released above escapes BOTH existing sweeps (the release
       // sweep runs before the replacement registers; the acquire sweep
-      // grace-skips a buffer stamped with the current frame, and the adopt
+      // grace-skips a buffer stamped with the current commit, and the adopt
       // path sweeps not at all). Outside the try so a throwing dispose
       // listener is not mistaken for a failed grow.
       host.evictUnused(false);
@@ -234,7 +234,7 @@ export class PointsBufferAdapter {
       // previous tenant's content under this node's transform).
       (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
       candidate.inUse = true;
-      candidate.lastUsedFrame = host.frameCount;
+      candidate.lastUsedCommit = host.commitCount;
       host.activeBuffers.set(nodeId, candidate);
       host.stats.reuses++;
       host.typeStats.points.reuses++;
@@ -257,7 +257,7 @@ export class PointsBufferAdapter {
       capacity,
       type: 'points',
       inUse: true,
-      lastUsedFrame: host.frameCount,
+      lastUsedCommit: host.commitCount,
     };
 
     host.activeBuffers.set(nodeId, newBuffer);
@@ -306,7 +306,7 @@ export class PointsBufferAdapter {
       if (index !== -1) {
         pooled.splice(index, 1);
         released.inUse = true;
-        released.lastUsedFrame = host.frameCount;
+        released.lastUsedCommit = host.commitCount;
         host.activeBuffers.set(nodeId, released);
         this.disposeReplacementAfterReclaim(current);
         return;
@@ -347,12 +347,12 @@ export class PointsBufferAdapter {
     // is the other exit from "in use" and needs the same treatment.
     cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
 
-    // Stamp the release frame so acquire-triggered byte sweeps later in
-    // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
-    // released buffer otherwise carries the frame of its last ACQUIRE
+    // Stamp the release commit so acquire-triggered byte sweeps later in
+    // this same commit grace the buffer (see EvictorCtx.graceCommit) — a
+    // released buffer otherwise carries the commit of its last ACQUIRE
     // and the dataset-switch grace never matches. Also makes the
     // just-released buffer the freshest LRU reuse candidate.
-    buffer.lastUsedFrame = host.frameCount;
+    buffer.lastUsedCommit = host.commitCount;
 
     const bucket = host.getBucket(buffer.capacity);
     if (!this.pointBuffers.has(bucket)) {

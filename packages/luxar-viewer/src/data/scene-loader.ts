@@ -883,7 +883,7 @@ export class SceneLoader {
         Modules.GPU_BUFFER_POOL,
         `GPU buffer pool enabled (max size: ${appConfig.dataLoading.performance.gpuPoolMaxSize}, ` +
           `byte budget: ${mb} MB (live), ` +
-          `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionFrames} frames, ` +
+          `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionFrames} commits, ` +
           `batch cap: ${appConfig.dataLoading.performance.gpuPoolEvictBatchSize})`
       );
     }

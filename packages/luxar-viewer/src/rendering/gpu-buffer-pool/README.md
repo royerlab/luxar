@@ -2,7 +2,7 @@
 
 > Internal helpers for `rendering/gpu-buffer-pool.ts`: per-geometry-type adapters (Points, Lines, GSplats) that own bucketed buffer reuse, and a byte-budget evictor that disposes pooled buffers across all three type pools once the global byte ceiling is exceeded.
 
-The parent `GPUBufferPool` (`../gpu-buffer-pool.ts`) owns the shared coordination state — `activeBuffers`, `frameCount`, `stats`, eviction policy — and delegates per-type acquire / release / update to one adapter per geometry type. This split keeps each adapter focused on its own attribute layout and update path while eviction sees all three pools uniformly.
+The parent `GPUBufferPool` (`../gpu-buffer-pool.ts`) owns the shared coordination state — `activeBuffers`, `commitCount`, `stats`, eviction policy — and delegates per-type acquire / release / update to one adapter per geometry type. This split keeps each adapter focused on its own attribute layout and update path while eviction sees all three pools uniformly.
 
 ## File Structure
 
@@ -33,7 +33,7 @@ Each adapter (`PointsBufferAdapter`, `LinesBufferAdapter`, `GSplatsBufferAdapter
 - `releaseGeometry(nodeId)` — moves the buffer into a per-capacity bucket and calls `host.evictUnused()`.
 - `updateGeometry(geometry, data, count, …)` — one fused texel pass (`writePointTexels` / `writeLineTexels` / `writeSplatTexels`, each with a fail-loud pre-store guard) plus an identity `aSortedIndex` fill. Same-count recommits may preserve the prior permutation; Points/Lines appends extend it with an identity suffix, while GSplat appends reset the full ordering so alpha-over never draws an old sorted prefix and a new independently ordered suffix. All recompute `boundingBox` / `boundingSphere`; the lines adapter expands the box by max line width, the gsplats adapter by max Cholesky row-norm × truncation radius.
 
-Adapters interact with the parent pool only through the narrow `*AdapterHost` interfaces — they read `activeBuffers`, `frameCount`, `stats`, `typeStats`, call `host.getBucket(count)` and `host.evictUnused()`, and set `host._lastAcquireRebuilt` so the parent knows whether the returned geometry still has its previous attribute bindings.
+Adapters interact with the parent pool only through the narrow `*AdapterHost` interfaces — they read `activeBuffers`, `commitCount`, `stats`, `typeStats`, call `host.getBucket(count)` and `host.evictUnused()`, and set `host._lastAcquireRebuilt` so the parent knows whether the returned geometry still has its previous attribute bindings.
 
 ### Dtype-blind pooling
 
@@ -46,6 +46,10 @@ Points (texel2.x) and lines (texel5.xy) always carry scalar texel slots, written
 ### Capacity sizing
 
 `capacity.ts::chooseCapacity(requested)` is the single sizing primitive every adapter calls on each allocate / grow: it rounds up to `requested × 1.5` (headroom so the next update rarely re-grows) but never below a `DEFAULT_MIN_INSTANCE_CAPACITY` floor of 256 instances. The headroom is **capped at `MAX_CAPACITY_HEADROOM` = 262,144 elements**, so the factor does not scale into hundreds of wasted MiB on a very large node: headroom absorbs a per-slice count wobble of a few thousand elements, not a fixed share of however big the node is, and it is charged against a real per-element cost (a Lines geometry is 96 B/segment of element texture plus 8 B/segment of ordering pair, so an uncapped 1.5× is 52 B of slack per segment). `cosmicflows_laniakea_full` — nine sibling Lines nodes, 11.4M segments, no LOD ladder so all of it is resident — needed 1702 MiB of pool against a 2000 MiB budget and died with "Array buffer allocation failed"; the cap brings it to 1369 MiB. Nodes under 524,288 elements are unaffected and keep the full factor. Living in this leaf module lets the three adapters import it without a cycle against the parent `gpu-buffer-pool.ts` barrel (which re-exports `chooseCapacity` and the `__setMinInstanceCapacityForTesting` test hook). `__setMinInstanceCapacityForTesting(value | null)` lowers the floor so unit tests can exercise the grow paths at small instance counts.
+
+### LRU ageing is counted in commits
+
+The pool's clock is `commitCount`, advanced by `beginCommit()`, whose only production caller is the atomic commit (`data/scene-loader/update-view/atomic-commit.ts`, once per non-discarded update pass). Every age in the pool — `lastUsedCommit`, the `evictionCommits` threshold (default 300), the 60-commit `mustEvict` grace, the byte evictor's same-commit `graceCommit` — is therefore in **atomic commits, not rendered frames** (#2939). That is the intended policy (buffers are only acquired and released on commits), with two consequences: an orbiting or idle view runs no commit, so pooled buffers do not age and are freed only by the byte budget or `maxPoolSize`; and playback or scrubbing can run 300 commits in a few seconds. There is no idle time-based sweep.
 
 ### Eviction policy
 
@@ -64,8 +68,8 @@ The evictor sees pooled-only buffers — active (in-use) buffers are never candi
 
 ## Shared types — `pool-stats.ts`
 
-- `PooledBuffer` — one pooled geometry plus the metadata the pool needs: `capacity`, `type` (`'points' | 'lines' | 'gsplats'`), `inUse`, `lastUsedFrame`.
-- `TypePoolStats` / `PoolStats` — per-type counters plus aggregate totals. `PoolStats.deferredEvictions` is incremented when the per-call batch cap (`evictBatchSize`) trips, so a long pause + resume that stretches the eviction queue across multiple frames is observable. `PoolStats.byteBudgetEvictions` is the subset of `evictions` charged by the byte-budget pass alone: `evictions` is dominated by routine LRU recycling on any nD scene, so only this counter says the pool shed geometry it could not afford, and only it makes the rendered counts unreproducible (consumed by `core/app/debug/capture-readiness.ts`).
+- `PooledBuffer` — one pooled geometry plus the metadata the pool needs: `capacity`, `type` (`'points' | 'lines' | 'gsplats'`), `inUse`, `lastUsedCommit`.
+- `TypePoolStats` / `PoolStats` — per-type counters plus aggregate totals. `PoolStats.deferredEvictions` is incremented when the per-call batch cap (`evictBatchSize`) trips, so a long pause + resume that stretches the eviction queue across multiple sweeps is observable. `PoolStats.byteBudgetEvictions` is the subset of `evictions` charged by the byte-budget pass alone: `evictions` is dominated by routine LRU recycling on any nD scene, so only this counter says the pool shed geometry it could not afford, and only it makes the rendered counts unreproducible (consumed by `core/app/debug/capture-readiness.ts`).
 - `PooledBufferRef` — minimal `{ bytes, payload? }` shape consumed by the pure `selectBuffersToEvict` selector.
 
 ## Invariants

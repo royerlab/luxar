@@ -636,8 +636,8 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
       tight.releaseGSplatsGeometry('a');
       budget = 1; // now over budget
       // Advance past the eviction grace and trigger a sweep.
-      tight.beginFrame();
-      tight.beginFrame();
+      tight.beginCommit();
+      tight.beginCommit();
       tight.evictUnused();
       expect(disposed).toBe(true);
       expect(tight.getStats().pooledBuffers).toBe(0);

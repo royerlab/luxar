@@ -3,7 +3,7 @@
  *
  * Owns the lines-specific pool state (per-capacity buckets) and
  * implements acquire/release/update for Line geometries. Shared state
- * (activeBuffers, stats, frame counter) is read from the GPUBufferPool
+ * (activeBuffers, stats, commit counter) is read from the GPUBufferPool
  * reference passed at construction.
  *
  * Per-segment data lives in the RGBA32F line texture attached at
@@ -16,7 +16,7 @@
  * adapters): reuse keys on capacity alone.
  *
  * The top-level GPUBufferPool owns only shared coordination logic
- * (eviction, frame counter, dispose); this adapter owns Lines-specific
+ * (eviction, commit counter, dispose); this adapter owns Lines-specific
  * buffer layout and update behavior.
  */
 
@@ -89,7 +89,7 @@ function createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeom
  */
 export interface LinesAdapterHost {
   activeBuffers: Map<string, PooledBuffer>;
-  readonly frameCount: number;
+  readonly commitCount: number;
   stats: {
     allocations: number;
     reuses: number;
@@ -129,7 +129,7 @@ export class LinesBufferAdapter {
     // out-of-band `dispose()` already fired (defense-in-depth).
     if (active && active.type === 'lines' && !active.geometry.userData.luxarInvalidated) {
       if (active.capacity >= segmentCount) {
-        active.lastUsedFrame = host.frameCount;
+        active.lastUsedCommit = host.commitCount;
         host.stats.reuses++;
         host.typeStats.lines.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
@@ -161,9 +161,9 @@ export class LinesBufferAdapter {
       //    `budget - sumActiveBytes()` against PRE-GROWTH accounting, sees
       //    headroom that no longer exists, and evicts nothing;
       //  - the acquire-side sweep in `adoptOrAllocate` does see the new
-      //    accounting, but runs with `graceFrame = frameCount` while
+      //    accounting, but runs with `graceCommit = commitCount` while
       //    `releaseGeometry` has just stamped the released pair with that same
-      //    frame — so the grace skips exactly the buffer we need it to take.
+      //    commit — so the grace skips exactly the buffer we need it to take.
       //    (And on the ADOPT path there is no acquire sweep at all.)
       //
       // So it escapes both. One unconditional pass here, with the replacement
@@ -175,7 +175,7 @@ export class LinesBufferAdapter {
       // which would try to reinstate a buffer this node has already replaced.
       //
       // On the grace it overrides: that grace exists for the DATASET SWITCH
-      // (release everything, re-acquire in the same frame — without it each
+      // (release everything, re-acquire in the same commit — without it each
       // allocation's sweep disposes buffers later acquires would have
       // best-fit). A growth is not that shape: the released pair is by
       // construction SMALLER than what this node now needs, and co-growing
@@ -224,7 +224,7 @@ export class LinesBufferAdapter {
       // previous tenant's content under this node's transform).
       (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
       candidate.inUse = true;
-      candidate.lastUsedFrame = host.frameCount;
+      candidate.lastUsedCommit = host.commitCount;
       host.activeBuffers.set(nodeId, candidate);
       host.stats.reuses++;
       host.typeStats.lines.reuses++;
@@ -245,7 +245,7 @@ export class LinesBufferAdapter {
       capacity,
       type: 'lines',
       inUse: true,
-      lastUsedFrame: host.frameCount,
+      lastUsedCommit: host.commitCount,
     };
 
     host.activeBuffers.set(nodeId, newBuffer);
@@ -279,7 +279,7 @@ export class LinesBufferAdapter {
       if (index !== -1) {
         pooled.splice(index, 1);
         released.inUse = true;
-        released.lastUsedFrame = host.frameCount;
+        released.lastUsedCommit = host.commitCount;
         host.activeBuffers.set(nodeId, released);
         this.disposeReplacementAfterReclaim(current);
         return;
@@ -314,12 +314,12 @@ export class LinesBufferAdapter {
     // is the other exit from "in use" and needs the same treatment.
     cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
 
-    // Stamp the release frame so acquire-triggered byte sweeps later in
-    // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
-    // released buffer otherwise carries the frame of its last ACQUIRE
+    // Stamp the release commit so acquire-triggered byte sweeps later in
+    // this same commit grace the buffer (see EvictorCtx.graceCommit) — a
+    // released buffer otherwise carries the commit of its last ACQUIRE
     // and the dataset-switch grace never matches. Also makes the
     // just-released buffer the freshest LRU reuse candidate.
-    buffer.lastUsedFrame = host.frameCount;
+    buffer.lastUsedCommit = host.commitCount;
 
     const bucket = host.getBucket(buffer.capacity);
     if (!this.lineBuffers.has(bucket)) {

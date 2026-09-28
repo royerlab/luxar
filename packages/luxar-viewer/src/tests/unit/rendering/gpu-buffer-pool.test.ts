@@ -67,7 +67,7 @@ describe('GPUBufferPool', () => {
   };
 
   beforeEach(() => {
-    pool = new GPUBufferPool(20, 300); // maxPoolSize=20, evictionFrames=300
+    pool = new GPUBufferPool(20, 300); // maxPoolSize=20, evictionCommits=300
   });
 
   afterEach(() => {
@@ -657,9 +657,9 @@ describe('GPUBufferPool', () => {
   });
 
   describe('LRU Eviction', () => {
-    it('should evict geometries unused for >evictionFrames', () => {
+    it('should evict geometries unused for >evictionCommits', () => {
       // Create pool with short eviction time for testing
-      const testPool = new GPUBufferPool(20, 2); // Evict after 2 frames
+      const testPool = new GPUBufferPool(20, 2); // Evict after 2 commits
 
       // Acquire and release several different-sized geometries
       // This ensures they go to different buckets and won't be reused
@@ -669,9 +669,9 @@ describe('GPUBufferPool', () => {
       testPool.acquirePointsGeometry('node2', 10000);
       testPool.releasePointsGeometry('node2');
 
-      // Advance frameCount by 3 frames without touching the pooled geometries
+      // Advance commitCount by 3 commits without touching the pooled geometries
       for (let i = 0; i < 3; i++) {
-        testPool.beginFrame();
+        testPool.beginCommit();
         testPool.acquirePointsGeometry(`active${i}`, 100000); // Different size bucket
         // Don't release - keep active
       }
@@ -706,12 +706,12 @@ describe('GPUBufferPool', () => {
       // unreachable from the pool) — never leave a
       // disposed-but-adoptable zombie that a later acquire (or the
       // grow-reclaim path) could reinstate.
-      const testPool = new GPUBufferPool(20, 2); // evict after 2 frames
+      const testPool = new GPUBufferPool(20, 2); // evict after 2 commits
       const geomA = testPool.acquirePointsGeometry('a', 1000);
       const geomB = testPool.acquirePointsGeometry('b', 900); // same bucket as 'a'
       testPool.releasePointsGeometry('a');
       testPool.releasePointsGeometry('b');
-      for (let i = 0; i < 4; i++) testPool.beginFrame(); // both now stale
+      for (let i = 0; i < 4; i++) testPool.beginCommit(); // both now stale
 
       geomA.addEventListener('dispose', () => {
         throw new Error('listener boom');
@@ -735,20 +735,20 @@ describe('GPUBufferPool', () => {
       // Stress the pool's release → evict → acquire sequence.
       // Eviction in this codebase is triggered by `releasePointsGeometry`
       // (which calls `evictUnused()` internally), not by acquire — so
-      // this test fills the pool, advances frames past evictionFrames,
+      // this test fills the pool, advances commits past evictionCommits,
       // releases to trigger eviction, then asserts the next acquire
       // returns a valid, undisposed geometry. A dispose-during-pool-
       // churn bug would surface as either a thrown error inside
       // acquire or as an already-disposed point texture.
-      const tinyPool = new GPUBufferPool(2, 0); // maxPoolSize=2, evictionFrames=0
+      const tinyPool = new GPUBufferPool(2, 0); // maxPoolSize=2, evictionCommits=0
 
       tinyPool.acquirePointsGeometry('nodeA', 1000);
       tinyPool.releasePointsGeometry('nodeA');
       tinyPool.acquirePointsGeometry('nodeB', 2000);
       tinyPool.releasePointsGeometry('nodeB');
 
-      tinyPool.beginFrame();
-      tinyPool.beginFrame();
+      tinyPool.beginCommit();
+      tinyPool.beginCommit();
 
       const geomC = tinyPool.acquirePointsGeometry('nodeC', 100000);
 

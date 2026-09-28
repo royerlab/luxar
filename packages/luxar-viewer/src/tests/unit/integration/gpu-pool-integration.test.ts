@@ -212,15 +212,15 @@ describe('GPU Buffer Pool Integration Tests', () => {
         pool.releasePointsGeometry(`/node${i}`);
       }
 
-      // Advance frames
+      // Advance commits
       for (let i = 0; i < 5; i++) {
-        pool.beginFrame();
+        pool.beginCommit();
         pool.acquirePointsGeometry(`/active${i}`, 10000);
       }
 
       // Evict. Acquire paths now sweep idle buffers themselves
       // (byte-budget-on-growth fix), so evictions may already have
-      // fired during the frame-advance loop above — assert the
+      // fired during the commit-advance loop above — assert the
       // cumulative OUTCOME via stats after a final explicit sweep.
       // The deterministic total for this fixture is unchanged (2).
       pool.evictUnused();
