@@ -1331,6 +1331,8 @@ export class SceneLoader {
       // "Update queued" lines. (The queued pass's own version is decided when
       // it runs — it bumps only if the merged view actually changes.)
       const supersededPrevious = this.viewStateQueue.hasPending();
+      // Every minted generation must finish a pass (or be covered by a newer
+      // one); isAtViewState relies on _completedGen catching up to _requestSeq.
       const gen = ++this._requestSeq;
       this._requestGens.set(viewState, gen);
       this.viewStateQueue.setPending(viewState);
@@ -1368,6 +1370,8 @@ export class SceneLoader {
     this._queuedResyncPaths = null;
     this._pendingIsResyncOnly = false;
     this._passCount++;
+    // Keep the generation through finally, even when this pass is superseded.
+    // Every minted generation must finish there or be covered by a newer pass.
     // This pass's request generation: the one its queued state was tagged with
     // when it waited in the pending slot, else a fresh one (a direct call).
     const passGen = this._requestGens.get(viewState) ?? ++this._requestSeq;
@@ -1380,6 +1384,7 @@ export class SceneLoader {
     // the geometry commit below.
     const updateController = new AbortController();
     this._updateAbortController = updateController;
+    let supersededPassWait: Promise<void> | undefined;
     let sweepArchiveFault: ArchiveFaultError | undefined;
     const onArchiveFault = (fault: ArchiveFaultError): void => {
       sweepArchiveFault ??= fault;
@@ -1567,6 +1572,12 @@ export class SceneLoader {
       // committed nothing: its waiters ride on to the pass that supersedes it.
       if (!updateController.signal.aborted && !sweepArchiveFault && !this._archiveFault) {
         this.resolvePassWaiters(passGen);
+      } else if (updateController.signal.aborted && !this._disposed && !this._archiveFault) {
+        // A direct caller has no queued-branch waiter. Park it before
+        // queueNext can release the lock or settle a no-pending queue.
+        supersededPassWait = new Promise<void>((resolve) => {
+          this._passWaiters.push({ gen: passGen, resolve });
+        });
       }
 
       // Decide what runs next — pending state, GSplats refinement, or
@@ -1606,6 +1617,7 @@ export class SceneLoader {
         });
       }
     }
+    await supersededPassWait;
   }
 
   /** Any registered loader (points / lines / gsplats / mesh) with LODs left to stream. */

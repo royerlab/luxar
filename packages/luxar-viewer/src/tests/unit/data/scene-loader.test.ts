@@ -1479,11 +1479,10 @@ describe('SceneLoader', () => {
       expect(queuedResolved).toBe(false);
 
       releaseFirst();
-      await p1;
       // queueNext re-enters with the winning state (rAF or its timeout
       // backstop), which completes and settles the waiter — awaiting the
       // queued promise itself is the deterministic wait.
-      await p2;
+      await Promise.all([p1, p2]);
       expect(queuedResolved).toBe(true);
     });
 
@@ -1540,15 +1539,57 @@ describe('SceneLoader', () => {
       });
 
       release(0); // A completes (superseded)
-      await pA;
       await flush(); // queueNext re-enters B, whose pass parks on its gate
       expect(updateView).toHaveBeenCalledTimes(2);
       expect(bResolved).toBe(false); // B's pass has not committed yet
 
       release(1); // B's pass completes
-      await pB;
+      await Promise.all([pA, pB]);
       expect(bResolved).toBe(true);
     });
+
+    it('a direct caller waits for the pass that commits its superseded view', async () => {
+      const { release, updateView } = installPerCallGatedLoader();
+      let firstResolved = false;
+      const first = sceneLoader.updateView(vs(7)).then(() => {
+        firstResolved = true;
+      });
+      await Promise.resolve();
+      const replacement = sceneLoader.updateView({});
+
+      release(0);
+      await flush();
+      expect(updateView).toHaveBeenCalledTimes(2);
+      expect(firstResolved).toBe(false);
+
+      release(1);
+      await Promise.all([first, replacement]);
+      expect(firstResolved).toBe(true);
+    });
+
+    it.each([
+      ['running pass is budgeted', { frameBudgetMs: 8 }, {}],
+      ['incoming request is budgeted', {}, { frameBudgetMs: 8 }],
+      ['running pass has a ladder depth', { ladderDepth: 2 }, {}],
+      ['incoming request has a ladder depth', {}, { ladderDepth: 2 }],
+    ])(
+      '%s: same-view request supersedes instead of joining',
+      async (_name, firstOpts, nextOpts) => {
+        const { release, updateView, signals } = installPerCallGatedLoader();
+        const first = sceneLoader.updateView({ ...vs(5), ...firstOpts });
+        await Promise.resolve();
+        const next = sceneLoader.updateView({ ...vs(5), ...nextOpts });
+
+        expect(signals[0]?.aborted).toBe(true);
+        release(0);
+        await flush();
+        expect(updateView).toHaveBeenCalledTimes(2);
+
+        release(1);
+        await Promise.all([first, next]);
+        expect(signals[1]?.aborted).toBe(false);
+      }
+    );
 
     it('isAtViewState is false while the pass carrying that view state is still in flight (#2943)', async () => {
       const { release } = installPerCallGatedLoader();
@@ -1585,13 +1626,13 @@ describe('SceneLoader', () => {
         );
         const pB = sceneLoader.updateView(vs(2));
         release(0);
-        await pA;
+        await flush();
         expect(frames).toHaveLength(1);
         expect(sceneLoader.isAtViewState(interrupted)).toBe(false);
 
         frames[0]();
         release(1);
-        await pB;
+        await Promise.all([pA, pB]);
       } finally {
         hidden.mockRestore();
         vi.unstubAllGlobals();
@@ -1634,8 +1675,7 @@ describe('SceneLoader', () => {
       expect(resolved).toEqual([false, false, false]);
 
       releaseFirst();
-      await p1;
-      await Promise.all(queued);
+      await Promise.all([p1, ...queued]);
       expect(resolved).toEqual([true, true, true]);
 
       // Latest-wins: only ONE winning pass ran for the three queued states
