@@ -1333,6 +1333,73 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — drag commit guarantee (B5)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it.fails('a 3 s drag keeps committing: no supersede aborts a pass 150 ms after the last commit', async () => {
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+
+      // Every load takes 100 ms of (simulated) time; an aborted one bails at once.
+      const PASS_MS = 100;
+      const jobs: Array<{ start: number; done: boolean; finish: () => void }> = [];
+      const commits: number[] = [];
+      const mockLoader = {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn(
+          (_vs: unknown, _session: unknown, signal?: AbortSignal) =>
+            new Promise<null>((resolve, reject) => {
+              const job = {
+                start: now,
+                done: false,
+                finish: () => {
+                  if (job.done) return;
+                  job.done = true;
+                  if (signal?.aborted) {
+                    reject(new DOMException('Superseded', 'AbortError'));
+                    return;
+                  }
+                  commits.push(now);
+                  resolve(null);
+                },
+              };
+              jobs.push(job);
+              signal?.addEventListener('abort', () => job.finish());
+            })
+        ),
+        dispose: vi.fn(),
+      };
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+        '/node',
+        mockLoader
+      );
+
+      // A slider drag: a new slice every 50 ms for 3 s, never awaited.
+      for (let t = 0; t <= 3000; t += 10) {
+        now = t;
+        if (t % 50 === 0) {
+          void sceneLoader.updateView({
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0, t / 50],
+            tolerance: [0, 0, 0, 0],
+          });
+        }
+        for (const job of jobs) if (now - job.start >= PASS_MS) job.finish();
+        // Let the pass pipeline settle before simulated time moves on.
+        for (let turn = 0; turn < 5; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      // Superseded passes never commit, so without the guarantee a drag whose
+      // passes outlast the event interval commits nothing until it stops.
+      expect(commits.length).toBeGreaterThanOrEqual(12);
+      const gaps = commits.map((at, i) => at - (i === 0 ? 0 : commits[i - 1]));
+      expect(Math.max(...gaps)).toBeLessThanOrEqual(150 + PASS_MS + 50);
+    });
+  });
+
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
