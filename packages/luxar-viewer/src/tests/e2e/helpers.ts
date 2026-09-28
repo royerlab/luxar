@@ -1058,7 +1058,12 @@ export async function waitForRenderStable(
           const debug = (window as any).__luxarDebug;
           const info = debug?.renderer?.info;
           const frame = info?.render?.frame ?? info?.frame;
-          return typeof frame === 'number' && frame >= t;
+          const done = typeof frame === 'number' && frame >= t;
+          // Render-on-change: an unchanged frame is not re-rendered, so the
+          // counter only advances on a real change. Keep asking for frames
+          // until it has advanced far enough (each poll is one rAF).
+          if (!done) debug?.renderOnce?.();
+          return done;
         },
         target,
         { timeout: Math.min(timeout, 3000) }
@@ -1234,7 +1239,11 @@ export async function waitForNextRender(page: Page, frames = 2, timeout = 5000):
           const debug = (window as any).__luxarDebug;
           const info = debug?.renderer?.info;
           const frame = info?.render?.frame ?? info?.frame;
-          return typeof frame === 'number' && frame >= target;
+          const done = typeof frame === 'number' && frame >= target;
+          // Render-on-change: idle ticks no longer render, so one kick yields
+          // one frame. Re-kick on every poll until the counter has advanced.
+          if (!done) debug?.renderOnce?.();
+          return done;
         },
         targetFrame,
         { timeout: Math.min(timeout, 3000) }

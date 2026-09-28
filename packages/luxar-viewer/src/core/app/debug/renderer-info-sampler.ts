@@ -98,6 +98,27 @@ function sample(renderer: RendererInfoSource | null | undefined): void {
   snapshot.samples += 1;
 }
 
+/** The per-frame counters `info.reset()` zeroes, saved at frame-start. */
+const savedRender = { calls: 0, triangles: 0, points: 0, lines: 0 };
+
+type RenderCounters = NonNullable<NonNullable<RendererInfoSource['info']>['render']>;
+
+function saveRenderCounters(render: RenderCounters | undefined): void {
+  savedRender.calls = num(render?.calls);
+  savedRender.triangles = num(render?.triangles);
+  savedRender.points = num(render?.points);
+  savedRender.lines = num(render?.lines);
+}
+
+/** Undo a frame-start reset for a tick that drew nothing. */
+function restoreRenderCounters(render: RenderCounters | undefined): void {
+  if (!render) return;
+  render.calls = savedRender.calls;
+  render.triangles = savedRender.triangles;
+  render.points = savedRender.points;
+  render.lines = savedRender.lines;
+}
+
 /**
  * Start sampling `renderer.info` at every `frame-end`. Re-installing replaces
  * the previous subscription (an app re-init after dispose). Returns the
@@ -112,6 +133,12 @@ export function installRendererInfoSampler(
   // wipes the counters first, so frame-end would see only the last quad.
   // Own the reset instead: clear at frame-start, read at frame-end, and hand
   // `autoReset` back on uninstall.
+  //
+  // Render-on-change: a tick may render nothing, and it is only known at
+  // frame-end. So frame-start also saves the counters it resets, and a
+  // `rendered: false` frame-end writes them back — `renderer.info` then keeps
+  // holding the last RENDERED frame's counters between frames, as it did when
+  // every tick rendered, for the snapshot and for anyone reading it directly.
   const offStart = eventBus.on('frame-start', () => {
     const info = getRenderer()?.info;
     if (!info) return;
@@ -119,9 +146,16 @@ export function installRendererInfoSampler(
       info.autoReset = false;
       autoResetOwned = info;
     }
+    saveRenderCounters(info.render);
     info.reset?.();
   });
-  const offEnd = eventBus.on('frame-end', () => sample(getRenderer()));
+  const offEnd = eventBus.on('frame-end', (frame) => {
+    if (frame?.rendered === false) {
+      restoreRenderCounters(getRenderer()?.info?.render);
+      return;
+    }
+    sample(getRenderer());
+  });
   const off: Unsubscribe = () => {
     offStart();
     offEnd();

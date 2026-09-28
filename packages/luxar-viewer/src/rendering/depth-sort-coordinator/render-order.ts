@@ -1041,11 +1041,15 @@ export function authoredLayerOrder(mesh: THREE.Mesh): number | undefined {
  * and draw before the globally-farthest sorted mesh. Depth interleaving
  * with unsorted content stays out of scope, unchanged from the
  * per-wrapper scheme this replaces.
+ *
+ * @returns true when any mesh's renderOrder changed — the render-on-change
+ *   loop redraws on it (a draw-order change with no camera motion, e.g. a
+ *   layer entering a sorted mode)
  */
-export function assignGlobalRenderOrder(): void {
+export function assignGlobalRenderOrder(): boolean {
   const slots = orderSlots;
   orderSlots = [];
-  if (slots.length === 0) return;
+  if (slots.length === 0) return false;
 
   // Group by wrapper/leaf identity (insertion order is stable).
   const groups = new Map<THREE.Object3D, OrderGroup>();
@@ -1092,11 +1096,17 @@ export function assignGlobalRenderOrder(): void {
   const ordered = orderGroupsWithContainment(byDepth);
   warnBucketOrderConflict(ordered);
 
-  assignRenderOrderRanks(ordered);
+  return assignRenderOrderRanks(ordered);
 }
 
-/** Write the already ordered groups onto one renderOrder scale, reserving 0. */
-function assignRenderOrderRanks(ordered: OrderGroup[]): void {
+/**
+ * Write the already ordered groups onto one renderOrder scale, reserving 0.
+ *
+ * @returns true when any mesh's renderOrder changed (the draw order differs
+ *   from the last rendered frame's, so the frame must be redrawn)
+ */
+function assignRenderOrderRanks(ordered: OrderGroup[]): boolean {
+  let changed = false;
   let prefixSize = 0;
   let negativePrefixSize = 0;
   for (const group of ordered) {
@@ -1124,7 +1134,9 @@ function assignRenderOrderRanks(ordered: OrderGroup[]): void {
     );
     for (const slot of group.slots) {
       if (nextRank === 0) nextRank = 1;
+      if (slot.mesh.renderOrder !== nextRank) changed = true;
       slot.mesh.renderOrder = nextRank++;
     }
   }
+  return changed;
 }

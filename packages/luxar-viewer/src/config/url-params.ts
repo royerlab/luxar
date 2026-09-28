@@ -69,6 +69,8 @@ export const URL_PARAM_KEYS = {
   renderer: 'renderer',
   webgpuForceWebgl: 'webgpuForceWebgl',
   perfTimestamp: 'perfTimestamp',
+  renderAlways: 'renderAlways',
+  renderAudit: 'renderAudit',
   gpuBudgetMB: 'gpuBudgetMB',
   cacheBudgetMB: 'cacheBudgetMB',
   dpr: 'dpr',
@@ -575,6 +577,18 @@ export interface UrlParams {
    */
   perfTimestamp: boolean;
   /**
+   * `?renderAlways` — render every loop tick (the pre-render-on-change loop).
+   * A kill switch: the pixels are identical, only the redundant re-renders of
+   * an unchanged frame come back.
+   */
+  renderAlways: boolean;
+  /**
+   * `?renderAudit` — debug only (needs `?debug`): render every tick and count,
+   * in the perf counter `render.missedDirty`, ticks the scheduler would have
+   * skipped whose pixels nonetheless changed.
+   */
+  renderAudit: boolean;
+  /**
    * Override the adaptive GPU-geometry byte budget, in megabytes
    * (`?gpuBudgetMB=1536`). Pins the single VRAM budget shared by the
    * buffer pool and LOD-group retention, bypassing the auto-size
@@ -718,6 +732,8 @@ export function readUrlParams(search?: string, origin?: ControlSocketOrigin): Ur
     renderer: normalizeRendererParam(get(K.renderer)),
     webgpuForceWebGL: has(K.webgpuForceWebgl),
     perfTimestamp: has(K.perfTimestamp),
+    renderAlways: has(K.renderAlways),
+    renderAudit: has(K.renderAudit),
     gpuBudgetMB: parseNonNegativeInt(get(K.gpuBudgetMB)),
     cacheBudgetMB: parseNonNegativeInt(get(K.cacheBudgetMB)),
     dpr: parsePositiveFloat(get(K.dpr)),

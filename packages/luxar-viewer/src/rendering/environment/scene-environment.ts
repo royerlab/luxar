@@ -106,6 +106,12 @@ export interface CaptureRuntime {
   isSettled: () => boolean;
   /** Base URL of the store, for a store-relative `hdri` url. */
   baseUrl: () => string | undefined;
+  /**
+   * The environment changed outside any frame (an HDRI finished loading):
+   * ask for a redraw. Optional — omitted in tests and by embedders that
+   * render on their own schedule.
+   */
+  requestRender?: () => void;
 }
 
 /** The result of one live capture, also what the bake reads back. */
@@ -439,7 +445,9 @@ export class SceneEnvironment {
         }
         this.hdriLoading = null;
         this.hdriTexture = texture;
-        if (this.wanted && !this.baked && this.config.source === 'hdri') this.applyHdri();
+        if (this.wanted && !this.baked && this.config.source === 'hdri' && this.applyHdri()) {
+          this.runtime?.requestRender?.();
+        }
       },
       (error: unknown) => {
         this.hdriLoading = null;

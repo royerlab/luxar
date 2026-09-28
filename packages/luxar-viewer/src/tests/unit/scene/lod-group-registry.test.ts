@@ -632,6 +632,57 @@ describe('LODGroupRegistry — registration', () => {
   });
 });
 
+describe('LODGroupRegistry — takeDrawnStateChanged (render-on-change)', () => {
+  it('reports a partition part culled, then nothing on the steady frame', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const part = new THREE.Group();
+    groupObject.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+    expect(reg.takeDrawnStateChanged()).toBe(true);
+    // Read-and-clear, and a frame that changes nothing reports nothing.
+    expect(reg.takeDrawnStateChanged()).toBe(false);
+    reg.evaluatePerFrame();
+    expect(reg.takeDrawnStateChanged()).toBe(false);
+    // Restoring the parts (unregister) changes what is drawn too.
+    reg.unregister('/partition');
+    expect(reg.takeDrawnStateChanged()).toBe(true);
+  });
+
+  it('reports a level HIDDEN as well as shown (broader than the swap return)', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeChild(0.5), makeChild(1.0)];
+    reg.register(makeEntry(children, 1));
+    reg.evaluatePerFrame();
+    reg.takeDrawnStateChanged();
+    // Force-hide the shown level behind the registry's back: the next frame
+    // re-shows it (a swap) — and the flag reports that too.
+    const shown = children.findIndex((c) => c.object.visible);
+    children[shown].object.visible = false;
+    reg.evaluatePerFrame();
+    expect(children[shown].object.visible).toBe(true);
+    expect(reg.takeDrawnStateChanged()).toBe(true);
+    // And a stray extra visible level is hidden — no swap, still a change.
+    const other = (shown + 1) % children.length;
+    children[other].object.visible = true;
+    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(children[other].object.visible).toBe(false);
+    expect(reg.takeDrawnStateChanged()).toBe(true);
+  });
+});
+
 describe('LODGroupRegistry — partition frustum selection', () => {
   it('gates and restores every object emitted by a part', () => {
     const reg = makeRegistry();
@@ -4050,6 +4101,27 @@ describe('LODGroupRegistry — render keep-alive while loading', () => {
     reg.evaluatePerFrame();
     reg.evaluatePerFrame();
     expect(requestRender).toHaveBeenCalledTimes(2); // kept alive each frame
+  });
+
+  it('keeps the loop TICKING through requestTick when wired, without asking for a render', () => {
+    const requestRender = vi.fn();
+    const requestTick = vi.fn();
+    const loading = makeLazyChild(0.5, () => {});
+    loading.loading = true;
+    const camera = new THREE.Camera();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 1,
+      requestRender,
+      requestTick,
+    });
+    reg.register(makeEntry([makeGsplatChild(0, 1), loading], 0, '/g'));
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+    expect(requestTick).toHaveBeenCalledTimes(2);
+    expect(requestRender).not.toHaveBeenCalled();
   });
 
   it('does NOT request renders when nothing is loading (power-saving preserved)', () => {

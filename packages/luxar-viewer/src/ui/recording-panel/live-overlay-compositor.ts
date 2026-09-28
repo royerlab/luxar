@@ -99,8 +99,13 @@ export class LiveOverlayCompositor {
    *
    * Arrow-bound so `eventBus.on`/the matching unsubscribe see one stable
    * reference (the bind-a-new-function listener-leak trap).
+   *
+   * A `frame-end` of a tick that drew nothing (`rendered: false`) is ignored:
+   * the GL drawing buffer is not this tick's frame, and the mirror already
+   * holds the last one that was.
    */
-  private composite = (): void => {
+  private composite = (frame?: { rendered?: boolean }): void => {
+    if (frame?.rendered === false) return;
     try {
       const { width, height } = this.canvas;
       // The GL canvas is opaque in the common case, but a transparent

@@ -35,6 +35,26 @@ describe('FPSTracker', () => {
     expect(tracker.getFPS()).toBeCloseTo(10, 1);
   });
 
+  it('rebase shifts the window onto a new timestamp without adding a sample', () => {
+    const tracker = new FPSTracker(1000);
+    const last = pushAt(tracker, 0, 11, 50); // 20 fps, last at 500
+    const fps = tracker.getFPS();
+    const count = tracker.sampleCount();
+    tracker.rebase(last + 3000);
+    expect(tracker.lastTimestamp).toBe(last + 3000);
+    expect(tracker.sampleCount()).toBe(count);
+    expect(tracker.getFPS()).toBeCloseTo(fps, 9);
+    // The next interval is measured from the re-based timestamp.
+    tracker.push(last + 3050);
+    expect(tracker.getFPS()).toBeCloseTo(20, 6);
+  });
+
+  it('rebase on an empty window does nothing', () => {
+    const tracker = new FPSTracker(1000);
+    tracker.rebase(100);
+    expect(tracker.lastTimestamp).toBeNull();
+  });
+
   it('returns 0 for a degenerate non-positive span', () => {
     const tracker = new FPSTracker(1000);
     tracker.push(500);

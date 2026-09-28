@@ -116,7 +116,8 @@ describe('wireDensityGuard', () => {
     const wiring = wireDensityGuard(deps);
     const mesh = deps.sceneManager.scene!.children[0] as THREE.Mesh;
 
-    wiring.perFrame();
+    // Returns true on the frame the keep step changed (render-on-change).
+    expect(wiring.perFrame()).toBe(true);
     // 1 M points in a ~235 px footprint → floor of the ladder.
     expect(mesh.userData.densityKeep).toBe(densityGuardConfig.minKeepFraction);
     expect(deps.spies.notify).toHaveBeenCalledTimes(1);
@@ -128,8 +129,9 @@ describe('wireDensityGuard', () => {
     expect(sample!.areaPx).toBeGreaterThan(0);
     expect(wiring.thinning()).toEqual({ nodes: 1, minKeep: densityGuardConfig.minKeepFraction });
 
-    // Steady state: no further content-change signal, resume still polled.
-    wiring.perFrame();
+    // Steady state: no further content-change signal, resume still polled,
+    // and nothing drawn changed.
+    expect(wiring.perFrame()).toBe(false);
     expect(deps.spies.notify).toHaveBeenCalledTimes(1);
     expect(deps.spies.render).toHaveBeenCalledTimes(1);
     expect(deps.spies.resume).toHaveBeenCalledTimes(2);

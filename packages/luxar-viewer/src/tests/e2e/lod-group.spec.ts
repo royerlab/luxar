@@ -529,6 +529,7 @@ test.describe('lod_group node — volumetric blendable', () => {
                   scene?: { traverse: (cb: (o: Obj) => void) => void };
                   camera?: { position: { x: number; y: number; z: number } };
                   renderer?: { info?: { frame?: number; render?: { frame?: number } } };
+                  renderOnce?: () => void;
                 };
               };
             const debug = w.__luxarDebug;
@@ -611,6 +612,9 @@ test.describe('lod_group node — volumetric blendable', () => {
                 } else {
                   const f = frameNo();
                   if (f != null && f >= f0 + n) return true;
+                  // Render-on-change: an unchanged frame is not re-rendered,
+                  // so ask for the next one explicitly.
+                  debug.renderOnce?.();
                 }
               } while (performance.now() - t0 < budgetMs);
               return false;

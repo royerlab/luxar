@@ -918,6 +918,17 @@ export interface LODGroupRegistryDeps {
    */
   requestRender?: () => void;
   /**
+   * Keep the loop TICKING without asking for a redraw — the render-on-change
+   * counterpart of {@link requestRender} for the two keep-alive calls above
+   * (a lazy level loading, a pending partition resync): nothing drawn has
+   * changed yet, the loop just has to keep running the per-frame selector so
+   * the swap fires when the load lands (a swap marks the frame dirty through
+   * {@link LODGroupRegistry.takeDrawnStateChanged}). Wired to
+   * ``AnimationController.requestTick``. Omitted ⇒ those calls fall back to
+   * ``requestRender`` (an embedder whose host renders on every wake).
+   */
+  requestTick?: () => void;
+  /**
    * Re-run the current view update for the partition parts that just
    * re-entered the frustum. Culled children skip event-driven slice updates, so
    * the rising edge must resync any geometry that missed the latest view state.
@@ -1077,6 +1088,16 @@ export class LODGroupRegistry {
    * byte-identical (no material writes, no subtree traversal).
    */
   private fadeWasManaged = false;
+  /**
+   * Set when a per-frame evaluation changed what the next frame DRAWS — any
+   * level shown OR hidden, a fade opacity written with a new value. Broader
+   * than {@link evaluatePerFrame}'s return (which reports only a newly shown
+   * level, for the monitor tally): hiding a level, a time-driven stale-hold
+   * expiry, or a cross-fade weight step all change pixels too. Read and
+   * cleared by {@link takeDrawnStateChanged} — the render-on-change loop's
+   * signal to redraw.
+   */
+  private drawnStateChanged = false;
   /**
    * Partition rising edges waiting for their wrapper to be visible and the
    * loader to be idle: wrapper path → the re-entering PART paths. A set that
@@ -1273,6 +1294,7 @@ export class LODGroupRegistry {
   }
 
   private restorePartitionChildren(entry: PartitionGroupEntry): void {
+    this.drawnStateChanged = true;
     for (const child of entry.children) {
       for (const object of child.objects) {
         object.visible = true;
@@ -1726,7 +1748,10 @@ export class LODGroupRegistry {
         PARTITION_FRUSTUM_SCRATCH,
         RISING_PARTS_SCRATCH
       );
-      if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) changed = true;
+      if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) {
+        changed = true;
+        this.drawnStateChanged = true;
+      }
       if ((result & PARTITION_BECAME_VISIBLE) !== 0) {
         this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
       }
@@ -1737,7 +1762,7 @@ export class LODGroupRegistry {
       this.flushPartitionResyncs();
     }
     if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
-      this.deps.requestRender?.();
+      this.keepTicking();
     }
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, view, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
@@ -1758,7 +1783,7 @@ export class LODGroupRegistry {
         }
       }
     }
-    if (anyLoading) this.deps.requestRender?.();
+    if (anyLoading) this.keepTicking();
     // Record whether fade management was ON this frame — the falling-edge
     // detector behind ``evaluateEntry``'s one-shot residual-opacity restore
     // (see ``fadeWasManaged``). Written AFTER the entry loop so every entry in
@@ -1771,6 +1796,24 @@ export class LODGroupRegistry {
     // hidden-layer (undrawable) first, then off-screen / furthest-from-camera —
     // so no per-swap release, hence no reload churn.
     this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
+    return changed;
+  }
+
+  /** Keep the loop ticking (see {@link LODGroupRegistryDeps.requestTick}). */
+  private keepTicking(): void {
+    (this.deps.requestTick ?? this.deps.requestRender)?.();
+  }
+
+  /**
+   * Whether anything this registry drives changed what the next frame draws
+   * since the last call (level visibility either way, a fade opacity step, a
+   * partition part culled or restored) — then clear it. The app pipeline
+   * returns it from the `'lod-group-selector'` per-frame callback so the
+   * render-on-change loop redraws exactly then.
+   */
+  takeDrawnStateChanged(): boolean {
+    const changed = this.drawnStateChanged;
+    this.drawnStateChanged = false;
     return changed;
   }
 
@@ -2289,6 +2332,7 @@ export class LODGroupRegistry {
       const shouldShow = (isPrimary || i === blendPartnerIdx) && isReady(child);
       if (child.object.visible !== shouldShow) {
         child.object.visible = shouldShow;
+        this.drawnStateChanged = true;
         if (shouldShow) changed = true; // a new level became visible
       }
       if (manageFade) {
@@ -2504,7 +2548,9 @@ export class LODGroupRegistry {
    * keeps receiving per-frame camera-uniform updates.
    */
   private applyChildFade(child: LODGroupChild, weight: number | null, energyComp: boolean): void {
-    applyLodFade(child.object, weight, energyComp, this.deps.registerMaterial);
+    if (applyLodFade(child.object, weight, energyComp, this.deps.registerMaterial)) {
+      this.drawnStateChanged = true;
+    }
   }
 
   /**

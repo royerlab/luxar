@@ -168,3 +168,22 @@ describe('applyLodFade — opacity composition and fade-base rebase', () => {
     expect(liveOpacity(complete)).toBeCloseTo(0.5, 6); // weight only
   });
 });
+
+describe('applyLodFade — drawn-state change report (render-on-change)', () => {
+  it('reports true when it writes a new opacity, false on the idempotent rewrite', () => {
+    const mesh = leafMesh('additive');
+    expect(applyLodFade(mesh, 0.5, false)).toBe(true);
+    expect(liveOpacity(mesh)).toBeCloseTo(0.5, 9);
+    // The same weight next frame changes nothing drawn.
+    expect(applyLodFade(mesh, 0.5, false)).toBe(false);
+    expect(applyLodFade(mesh, 0.25, false)).toBe(true);
+  });
+
+  it('reports true when it restores a faded opacity, false when there is nothing to restore', () => {
+    const mesh = leafMesh('additive');
+    applyLodFade(mesh, 0.5, false);
+    expect(applyLodFade(mesh, null, false)).toBe(true);
+    expect(liveOpacity(mesh)).toBe(1);
+    expect(applyLodFade(mesh, null, false)).toBe(false);
+  });
+});

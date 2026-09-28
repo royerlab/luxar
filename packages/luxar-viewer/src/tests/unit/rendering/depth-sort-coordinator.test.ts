@@ -1265,16 +1265,18 @@ describe('depth-sort coordinator', () => {
     }
     await flush();
 
-    coord.evaluateDepthSortPerFrame();
+    // The return value is the render-on-change contract: true exactly when
+    // the pass changed a draw order (or ordering slot).
+    expect(coord.evaluateDepthSortPerFrame()).toBe(true);
     expect(parts.map((mesh) => mesh.renderOrder)).toEqual([1, 2]);
     const readsAfterFirstFrame = leafReads;
 
-    coord.evaluateDepthSortPerFrame();
+    expect(coord.evaluateDepthSortPerFrame()).toBe(false);
     expect(parts.map((mesh) => mesh.renderOrder)).toEqual([1, 2]);
     expect(leafReads).toBe(readsAfterFirstFrame);
 
     camera = cameraAt(-1000, 0, 0);
-    coord.evaluateDepthSortPerFrame();
+    expect(coord.evaluateDepthSortPerFrame()).toBe(true);
     expect(parts.map((mesh) => mesh.renderOrder)).toEqual([2, 1]);
     expect(leafReads).toBeGreaterThan(readsAfterFirstFrame);
   });

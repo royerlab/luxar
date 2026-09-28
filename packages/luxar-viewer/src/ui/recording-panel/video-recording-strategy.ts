@@ -149,8 +149,12 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       // the MediaRecorder start below in this same turn, on a canvas the
       // recording-state resize has just cleared.
       this.animationController.renderOnce();
+      // `renderEveryFrame`: the MediaRecorder films the canvas this loop
+      // paints, so every tick must draw even when nothing changed — a skipped
+      // tick would be a repeated (or, with an undrawn buffer, blank) frame.
       this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {}, {
         continuous: true,
+        renderEveryFrame: true,
       });
 
       // DOM overlays are not in the WebGL canvas, so capturing it directly

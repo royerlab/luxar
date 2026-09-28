@@ -60,6 +60,37 @@ describe('renderer-info-sampler', () => {
     expect(getRendererInfoSnapshot()?.calls).toBe(12);
   });
 
+  it('a tick that rendered nothing keeps the last rendered frame in renderer.info and the snapshot', () => {
+    const base = fakeRenderer();
+    const renderer = {
+      info: {
+        ...base.info,
+        autoReset: true,
+        reset(): void {
+          this.render.calls = 0;
+          this.render.triangles = 0;
+          this.render.points = 0;
+          this.render.lines = 0;
+        },
+      },
+    };
+    installRendererInfoSampler(() => renderer);
+    // A rendered frame: reset at start, filled by the render, sampled at end.
+    eventBus.emit('frame-start', {});
+    renderer.info.render.calls = 12;
+    renderer.info.render.triangles = 99;
+    eventBus.emit('frame-end', { rendered: true });
+    expect(getRendererInfoSnapshot()).toMatchObject({ calls: 12, triangles: 99, samples: 1 });
+
+    // A skipped (render-on-change) tick: the reset is undone, nothing sampled.
+    eventBus.emit('frame-start', {});
+    expect(renderer.info.render.calls).toBe(0);
+    eventBus.emit('frame-end', { rendered: false });
+    expect(renderer.info.render.calls).toBe(12);
+    expect(renderer.info.render.triangles).toBe(99);
+    expect(getRendererInfoSnapshot()).toMatchObject({ calls: 12, samples: 1 });
+  });
+
   it('owns the counter reset: autoReset off + reset() at frame-start, restored on uninstall', () => {
     const renderer = { info: { ...fakeRenderer().info, autoReset: true, reset: () => {} } };
     let resets = 0;

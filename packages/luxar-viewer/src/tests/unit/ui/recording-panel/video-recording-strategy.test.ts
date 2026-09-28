@@ -613,11 +613,13 @@ describe('VideoRecordingStrategy', () => {
 
       expect(mockAnimController.renderOnce).toHaveBeenCalled();
       // The keep-alive must be continuous — a plain callback does not stop
-      // the idle timer from halting the loop two seconds in.
+      // the idle timer from halting the loop two seconds in — and must make
+      // every tick RENDER: the MediaRecorder films the canvas the loop paints,
+      // and render-on-change would otherwise skip an unchanged frame.
       expect(mockAnimController.addPerFrameCallback).toHaveBeenCalledWith(
         'recording-keepalive',
         expect.any(Function),
-        { continuous: true }
+        { continuous: true, renderEveryFrame: true }
       );
       // The turntable callback ran. No frame ticked here: the shared
       // animation-controller double invokes a callback at REGISTRATION

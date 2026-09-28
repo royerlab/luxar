@@ -293,6 +293,8 @@ describe('AnimationController', () => {
       });
       controller.addPerFrameCallback('after', after);
 
+      // A dirty frame (render-on-change renders only when something changed).
+      controller.requestRender('test');
       controller.tick();
 
       expect(before).toHaveBeenCalledTimes(1);
@@ -332,6 +334,7 @@ describe('AnimationController', () => {
         throw new Error('render failed');
       });
 
+      controller.requestRender('test');
       expect(() => controller.tick()).toThrow('render failed');
       expect(events).toEqual(['frame-start', 'frame-end']);
     });
@@ -345,8 +348,10 @@ describe('AnimationController', () => {
 
       controller.setAdaptiveDPRManager(mockDPRManager as any);
 
-      // Verify it's used during animation
+      // Verify it's used during animation. A sample measures the PREVIOUS
+      // tick, so the frame after the wake's rendered frame records it.
       controller.startAnimation();
+      runArmedFrame();
       runArmedFrame();
 
       expect(mockDPRManager.recordFrame).toHaveBeenCalledWith(expect.any(Number));
@@ -361,6 +366,7 @@ describe('AnimationController', () => {
       controller.setAdaptiveDPRManager(mockDPRManager as any);
       controller.startAnimation();
       runArmedFrame();
+      runArmedFrame();
       expect(mockDPRManager.recordFrame).toHaveBeenCalled();
 
       // Clear the call history, set to null, then restart animation
@@ -368,6 +374,7 @@ describe('AnimationController', () => {
       controller.stopAnimation();
       controller.setAdaptiveDPRManager(null);
       controller.startAnimation();
+      runArmedFrame();
       runArmedFrame();
 
       // Should not call recordFrame after null
@@ -972,6 +979,10 @@ describe('AnimationController', () => {
       now = 1000;
       vi.spyOn(performance, 'now').mockImplementation(() => now);
       setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      // Pacing is about the frame PERIOD, rendered or not; these tests model
+      // a scene that changes every tick (e.g. a camera in motion), so every
+      // frame renders and adaptive DPR samples the stream.
+      controller.addPerFrameCallback('always-changed', () => true);
     });
 
     /**
@@ -1255,7 +1266,7 @@ describe('AnimationController', () => {
     // the interactions that once argued for one cannot arise, because an
     // isolated slow frame is never paced (the streak above).
     it('hands adaptive DPR the raw frame timestamps, paced frames included', () => {
-      const dprManager = { recordFrame: vi.fn() };
+      const dprManager = { recordFrame: vi.fn(), notifyStreamBreak: vi.fn() };
       controller.setAdaptiveDPRManager(dprManager as never);
 
       controller.startAnimation();
@@ -1268,10 +1279,16 @@ describe('AnimationController', () => {
       advancePacing(250);
       runNextFrame(266); // t=3282: our 250ms gap + a 16ms frame
 
+      // The first rendered frame after the (re)start has no rendered
+      // predecessor: it re-bases the interval clock at its own start instead
+      // of recording a sample. Every later tick records the one before it.
+      expect(dprManager.notifyStreamBreak.mock.calls.map((call) => call[0])).toEqual([1000]);
       const stamps = dprManager.recordFrame.mock.calls.map((call) => call[0] as number);
-      expect(stamps).toEqual([1000, 1016, 2016, 3016, 3282]);
+      expect(stamps).toEqual([1016, 2016, 3016, 3282]);
       // The paced frame's interval INCLUDES our cooldown — 266ms, not 16ms.
-      const intervals = stamps.slice(1).map((t, i) => t - stamps[i]);
+      // (Intervals from the re-based t=1000.)
+      const clock = [1000, ...stamps];
+      const intervals = stamps.map((t, i) => t - clock[i]);
       expect(intervals).toEqual([16, 1000, 1000, 266]);
     });
 
@@ -1484,16 +1501,32 @@ describe('AnimationController', () => {
   describe('perf counters', () => {
     beforeEach(() => perfCounters.reset());
 
-    it('counts ticks, loop renders and adaptive-DPR samples per rendered frame', () => {
+    it('counts ticks, renders by reason, skipped ticks and adaptive-DPR samples', () => {
       controller.setAdaptiveDPRManager({ recordFrame: vi.fn() } as never);
+      controller.requestRender('test');
+      controller.tick(); // dirty: renders (reason `event`), no predecessor to sample
+      controller.tick(); // clean: skipped, samples the rendered tick before it
+      controller.tick(); // clean: skipped, nothing rendered before it to sample
+
+      expect(perfCounters.get('render.ticks')).toBe(3);
+      expect(perfCounters.get('render.count')).toBe(1);
+      expect(perfCounters.get('render.byReason.event')).toBe(1);
+      expect(perfCounters.get('render.skippedTicks')).toBe(2);
+      expect(perfCounters.get('adaptiveDpr.samples')).toBe(1);
+      expect(perfCounters.get('render.once')).toBe(0);
+    });
+
+    it('under ?renderAlways every tick renders and samples, as before render-on-change', () => {
+      controller.setRenderOnChange(false);
+      controller.setAdaptiveDPRManager({ recordFrame: vi.fn() } as never);
+      perfCounters.reset();
       controller.tick();
       controller.tick();
 
       expect(perfCounters.get('render.ticks')).toBe(2);
       expect(perfCounters.get('render.count')).toBe(2);
-      expect(perfCounters.get('render.byReason.loop')).toBe(2);
+      expect(perfCounters.get('render.skippedTicks')).toBe(0);
       expect(perfCounters.get('adaptiveDpr.samples')).toBe(2);
-      expect(perfCounters.get('render.once')).toBe(0);
     });
 
     it('counts a tick but no render while the context is lost', () => {
@@ -1504,12 +1537,12 @@ describe('AnimationController', () => {
       expect(perfCounters.get('render.count')).toBe(0);
     });
 
-    it('counts a renderOnce() frame as both a once and a loop render', () => {
+    it('counts a renderOnce() frame as a once render', () => {
       controller.renderOnce();
 
       expect(perfCounters.get('render.once')).toBe(1);
       expect(perfCounters.get('render.count')).toBe(1);
-      expect(perfCounters.get('render.byReason.loop')).toBe(1);
+      expect(perfCounters.get('render.byReason.once')).toBe(1);
     });
   });
 });

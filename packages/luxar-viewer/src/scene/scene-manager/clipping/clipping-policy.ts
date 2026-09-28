@@ -258,11 +258,14 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): {
  *  - the sphere is degenerate (near >= far — e.g. a zero-extent
  *    single-point scene, whose radius-0 sphere yields no valid frustum);
  *  - changes are below the 0.1% threshold.
+ *
+ * @returns true when near/far were written (the projection changed and the
+ *   next frame must be drawn), false on any no-op.
  */
-export function updateDynamicFromCache(ctx: ClippingCtx): void {
+export function updateDynamicFromCache(ctx: ClippingCtx): boolean {
   ctx.boundsCache.ensure(ctx.scene);
   const s = ctx.boundsCache.getSphere();
-  if (!s) return;
+  if (!s) return false;
 
   const cam = ctx.camera.getWorldPosition(CAMERA_WORLD_SCRATCH);
   const dx = cam.x - s.center.x;
@@ -289,7 +292,7 @@ export function updateDynamicFromCache(ctx: ClippingCtx): void {
   // NaN bounds the gate happens to block the write too, since every NaN
   // comparison is false — but that is an accident of comparison semantics, not
   // a guard.) Cheap enough for a per-frame path: two register compares.
-  if (!Number.isFinite(near) || !Number.isFinite(far) || near >= far) return;
+  if (!Number.isFinite(near) || !Number.isFinite(far) || near >= far) return false;
 
   // Only update when values changed > 0.1% — avoids thrashing the projection
   // matrix on sub-pixel camera moves.
@@ -308,5 +311,7 @@ export function updateDynamicFromCache(ctx: ClippingCtx): void {
     ctx.camera.near = near;
     ctx.camera.far = far;
     ctx.camera.updateProjectionMatrix();
+    return true;
   }
+  return false;
 }

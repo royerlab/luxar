@@ -110,6 +110,24 @@ export class FPSTracker {
     return this.sampleCount() > 0 ? this.timestamps[this.timestamps.length - 1] : null;
   }
 
+  /**
+   * Re-base the window onto `timestamp` WITHOUT adding a sample: every
+   * in-window timestamp is shifted so the newest lands on `timestamp`. The
+   * intervals — and so {@link getFPS} and {@link span} — are unchanged, and
+   * the next {@link push} measures its interval from `timestamp` instead of
+   * across the gap. For a frame stream that paused while nothing needed
+   * drawing (render-on-change skipped ticks): the gap is idle time, not a
+   * slow frame, and unlike {@link clear} the estimate survives it. A no-op
+   * on an empty window.
+   */
+  rebase(timestamp: number): void {
+    const last = this.lastTimestamp;
+    if (last === null) return;
+    const shift = timestamp - last;
+    if (shift === 0) return;
+    for (let i = this.startIndex; i < this.timestamps.length; i++) this.timestamps[i] += shift;
+  }
+
   /** Drop all samples (pause, native-DPR change, gap reset). */
   clear(): void {
     this.timestamps = [];

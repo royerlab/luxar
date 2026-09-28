@@ -592,6 +592,62 @@ describe('AdaptiveDPRManager — pause / idle-restore / resume', () => {
     }
   });
 
+  // Render-on-change (#2944 A2): the loop skips unchanged frames, so the
+  // rendered stream has gaps that are idle time, not slow frames.
+  it('notifyStreamBreak re-bases the interval clock: no sample, nothing cleared', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      const t = reduceWithProbe(m);
+      const before = m.getState();
+      expect(before.probing).toBe(true);
+      const fpsBefore = m.getCurrentFPS();
+      expect(fpsBefore).toBeCloseTo(20, 0);
+
+      // 5 s of skipped ticks, then the stream resumes.
+      m.notifyStreamBreak(t + 5000);
+      // Re-based, not sampled and not cleared: the estimate and the probe survive.
+      expect(m.getCurrentFPS()).toBeCloseTo(fpsBefore, 6);
+      expect(m.getState().probing).toBe(true);
+      expect(m.getState().dprFloor).toBe(before.dprFloor);
+
+      // The next interval is measured from the re-based clock (50 ms, the
+      // same 20 fps cadence), not across the 5 s gap: no stall reset — the
+      // window keeps its samples (a stall would clear it to one, FPS 0).
+      // (The probe itself may now be judged: its age is wall-clock, and its
+      // window holds only real rendered intervals.)
+      m.recordFrame(t + 5050);
+      expect(m.getCurrentFPS()).toBeCloseTo(20, 0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('without the stream break the same gap reads as a stall and voids the probe', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      const t = reduceWithProbe(m);
+      m.recordFrame(t + 5000);
+      expect(m.getState().probing).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('notifyStreamBreak on an empty window is a no-op', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      m.notifyStreamBreak(1234);
+      expect(m.getCurrentFPS()).toBe(0);
+      m.recordFrame(1300);
+      expect(m.getCurrentFPS()).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
   it('prepareIdleFrame restores native for the resting frame and remembers the operating DPR', () => {
     const m = new AdaptiveDPRManager();
     try {

@@ -416,9 +416,9 @@ setDepthSortEnabled(depthSortEnabled);
 ### Per-Frame Registration
 
 ```typescript
-animationController.addPerFrameCallback('depth-sort-scheduler', () => {
-  evaluateDepthSortPerFrame();
-});
+// Returns true when the pass changed a renderOrder or an ordering-buffer
+// slot, so the render-on-change loop redraws exactly then.
+animationController.addPerFrameCallback('depth-sort-scheduler', () => evaluateDepthSortPerFrame());
 ```
 
 ### Commit-Time First Sort

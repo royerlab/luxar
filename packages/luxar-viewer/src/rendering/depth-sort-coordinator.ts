@@ -979,10 +979,19 @@ function applySortedIndexSlotToMaterial(
   }
 }
 
+/**
+ * Set when a per-frame pass changed drawn state (a slot uniform or a
+ * renderOrder) — read and cleared by {@link evaluateDepthSortPerFrame}, whose
+ * return value tells the render-on-change loop to redraw.
+ */
+let drawnStateChanged = false;
+
 /** Write one material's `uSortedIndexSlot`, if it has one. */
 function setSortedIndexSlotUniform(material: THREE.Material, slot: 0 | 1): void {
   const uniform = (material as THREE.ShaderMaterial | undefined)?.uniforms?.uSortedIndexSlot;
-  if (uniform) uniform.value = slot;
+  if (!uniform) return;
+  if (uniform.value !== slot) drawnStateChanged = true;
+  uniform.value = slot;
 }
 
 /**
@@ -1785,8 +1794,14 @@ function pumpChunkedOrderingApplies(): void {
  * Work is tiered by dependency: frame-state cleanup runs above every gate,
  * pure main-thread cross-node ordering runs above the loader gate, and only
  * work that touches the SortWorker stays below that gate.
+ *
+ * @returns true when this pass changed what the next render draws (a
+ *   renderOrder or an ordering-buffer slot) — the render-on-change loop's
+ *   per-frame callback contract. A chunked slice write or slot flip ALSO
+ *   calls `requestRender` (the pump must keep the loop alive), so both
+ *   routes agree.
  */
-export function evaluateDepthSortPerFrame(): void {
+export function evaluateDepthSortPerFrame(): boolean {
   syncSortElementsRemaining = Math.max(0, syncSortElementLimit());
   // Drop the previous frame's render-order state FIRST — before any
   // early-return — so a disposed/dataset-switched frame can't leave the
@@ -1804,9 +1819,9 @@ export function evaluateDepthSortPerFrame(): void {
   // documented degrade-to-unsorted-normal mode). The within-mesh
   // re-sort triggers are worker-dependent, but `scheduleSort` guards
   // both `api` and init readiness itself.
-  if (nodeStates.size === 0) return;
+  if (nodeStates.size === 0) return takeDrawnStateChanged();
   const camera = getCamera?.();
-  if (!camera) return;
+  if (!camera) return takeDrawnStateChanged();
   const loadInProgress = isLoadInProgress?.() ?? false;
   // Keep worker retry behind the load gate: a starved init must not run while
   // a view-update sweep is in flight, since that sweep IS the main-thread
@@ -1858,7 +1873,10 @@ export function evaluateDepthSortPerFrame(): void {
       // ahead of the unranked emissive layers it shares band 0 with (and ahead of
       // every ranked group, which is what band 0 means).
       const target = drawsBeforeEmissive(mesh) ? -1 : 0;
-      if (mesh.renderOrder !== target) mesh.renderOrder = target;
+      if (mesh.renderOrder !== target) {
+        mesh.renderOrder = target;
+        drawnStateChanged = true;
+      }
       continue;
     }
 
@@ -1946,7 +1964,14 @@ export function evaluateDepthSortPerFrame(): void {
     if (moved) scheduleSort(mesh, nodeId);
   }
 
-  assignGlobalRenderOrder();
+  return assignGlobalRenderOrder() || takeDrawnStateChanged();
+}
+
+/** Read and clear {@link drawnStateChanged}. */
+function takeDrawnStateChanged(): boolean {
+  const changed = drawnStateChanged;
+  drawnStateChanged = false;
+  return changed;
 }
 
 /**

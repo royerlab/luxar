@@ -1392,6 +1392,27 @@ export class AdaptiveDPRManager {
   }
 
   /**
+   * The frame stream resumed after one or more loop ticks that rendered
+   * nothing (render-on-change skipped an unchanged frame): re-base the
+   * frame-interval clock onto `timestamp` so the next `recordFrame` measures
+   * from here, not across the gap.
+   *
+   * NOT a pause: nothing is cleared. The FPS window keeps its samples (it is
+   * shifted, see `FPSTracker.rebase`, so the estimate is unchanged), and the
+   * stall detector's cadence memory, the hysteresis streak, any in-flight
+   * probe and every learned bound survive — a playback frame every sixth tick
+   * is one continuous session, and clearing on each break (as
+   * {@link notifyPaused} does) would leave the manager with nothing to judge.
+   * Records no sample, so no interval is read off the idle gap.
+   *
+   * @param timestamp - The rendering tick's start (`performance.now()` clock)
+   */
+  notifyStreamBreak(timestamp: number): void {
+    if (!this.isEnabled) return;
+    this.fpsTracker.rebase(timestamp);
+  }
+
+  /**
    * Restore full quality for the resting frame, just before the loop
    * idle-pauses. The static image the user is about to study should be
    * as sharp as this session allows — reduced DPR only ever traded

@@ -131,6 +131,22 @@ export interface LuxarAppOptions {
   perfTimestamp?: boolean;
 
   /**
+   * Render every loop tick, as the loop did before render-on-change (the
+   * `?renderAlways` kill switch). Default false: a tick re-renders only when
+   * something changed (`config.animation.renderOnChange`). Pixels are the
+   * same either way; this only brings back the redundant re-renders.
+   */
+  renderAlways?: boolean;
+
+  /**
+   * `?renderAudit` — debug only (ignored unless `debug` is on): render every
+   * tick and verify each one the scheduler would have skipped drew the same
+   * pixels as the last real frame, counting violations in the perf counter
+   * `render.missedDirty`. See `scene/animation/render-audit.ts`.
+   */
+  renderAudit?: boolean;
+
+  /**
    * Pin a fixed device pixel ratio for the whole session. Mirrors
    * `UrlParams.dpr` (`?dpr=1`) — the standalone bootstrap threads it
    * here. When set, the adaptive-DPR manager is disabled, the value is

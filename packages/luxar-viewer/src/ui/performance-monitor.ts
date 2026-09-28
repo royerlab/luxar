@@ -145,7 +145,11 @@ export class PerformanceMonitor {
     this.frameT0 = performance.now();
   };
 
-  private readonly onFrameEnd = (): void => {
+  private readonly onFrameEnd = (frame?: { rendered?: boolean }): void => {
+    // Only frames that drew count: a render-on-change tick that skipped an
+    // unchanged frame is not one the user saw (the readout freezes at the
+    // last value while nothing changes, as it does while the loop idles).
+    if (frame?.rendered === false) return;
     const now = performance.now();
     const dt = now - this.frameT0;
     this.msEma = this.msEma ? this.msEma * 0.9 + dt * 0.1 : dt;

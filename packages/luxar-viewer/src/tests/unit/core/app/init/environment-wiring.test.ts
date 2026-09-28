@@ -37,12 +37,13 @@ import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { AnimationController } from '../../../../../scene/animation/animation-controller';
 
 function makeHarness(options: { bakeEnvironment?: { probe?: string; resolution?: number } } = {}) {
-  const callbacks = new Map<string, () => void>();
+  const callbacks = new Map<string, () => void | boolean>();
   const animationController = {
-    addPerFrameCallback: vi.fn((id: string, cb: () => void) => {
+    addPerFrameCallback: vi.fn((id: string, cb: () => void | boolean) => {
       callbacks.set(id, cb);
     }),
     removePerFrameCallback: vi.fn((id: string) => callbacks.delete(id)),
+    requestRender: vi.fn(),
   } as unknown as AnimationController;
   const scene = new THREE.Scene();
   const root = new THREE.Group();
@@ -89,8 +90,11 @@ describe('wireSceneEnvironment', () => {
     expect(h.callbacks.has('environment-capture')).toBe(true);
     expect(h.callbacks.has('environment-bake')).toBe(false);
 
-    h.callbacks.get('environment-capture')!();
+    // The callback reports whether a capture landed (render-on-change).
+    h.environment.tick.mockReturnValueOnce(false).mockReturnValueOnce(true);
+    expect(h.callbacks.get('environment-capture')!()).toBe(false);
     expect(h.environment.tick).toHaveBeenCalledTimes(1);
+    expect(h.callbacks.get('environment-capture')!()).toBe(true);
 
     eventBus.emit('geometry-committed', {});
     expect(h.environment.markStale).toHaveBeenCalledTimes(1);
@@ -158,6 +162,10 @@ describe('wireSceneEnvironment', () => {
     expect(request.sceneContentHash).toBe('abc123');
 
     await vi.waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1));
+    // The bake swapped the scene's environment: the loop is asked to redraw.
+    await vi.waitFor(() =>
+      expect(h.animationController.requestRender).toHaveBeenCalledWith('environmentBake')
+    );
     expect(window.__luxarDebug?.environment?.lastBake).toMatchObject({
       base64: 'AQID',
       byteLength: 3,

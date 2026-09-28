@@ -130,7 +130,12 @@ describe('AnimationController.tick() (the frame work, without a driver)', () => 
       needsContinuousAnimation: () => false,
     };
     const controller = new AnimationController(controls as never, post as never);
-    controller.addPerFrameCallback('cb', () => order.push('callback'));
+    // Returns true (it changed drawn state), so the tick renders under
+    // render-on-change and the full controls → callback → render order shows.
+    controller.addPerFrameCallback('cb', () => {
+      order.push('callback');
+      return true;
+    });
     const events: string[] = [];
     const offStart = eventBus.on('frame-start', () => events.push('frame-start'));
     const offEnd = eventBus.on('frame-end', () => events.push('frame-end'));

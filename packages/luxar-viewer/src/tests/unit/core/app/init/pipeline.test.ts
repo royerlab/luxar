@@ -55,10 +55,15 @@ function makeAnimationStub() {
     setIdleRestorePredicate: vi.fn(),
     setRenderSkipPredicate: vi.fn(),
     setPacingSuspendPredicate: vi.fn(),
+    setRenderOnChange: vi.fn(),
+    setViewSignatureSource: vi.fn(),
+    setRenderAudit: vi.fn(),
     addPerFrameCallback: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
     setDensityGuardControl: vi.fn(),
     startAnimation: vi.fn(),
+    requestRender: vi.fn(),
+    requestTick: vi.fn(),
   };
 }
 function makeRenderingControlsStub() {

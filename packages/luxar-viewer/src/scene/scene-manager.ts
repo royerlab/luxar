@@ -954,6 +954,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       restoreCameraParams: () => this.updateMaterialsForCurrentCamera(),
       isSettled,
       baseUrl: () => root()?.userData?.zarrBaseUrl as string | undefined,
+      // An HDRI landing asynchronously: the 'change' event wakes the loop.
+      requestRender: () => this.dispatchEvent({ type: 'change' }),
     });
   }
 
@@ -1348,10 +1350,12 @@ export class SceneManager extends THREE.EventDispatcher<{
    * per-frame scene graph traversal. A metadata-less scene is the exception:
    * the cache has no negative caching, so the per-frame `ensure()` re-walks
    * the graph each frame (see `clipping/scene-bounds-cache.ts`).
+   *
+   * @returns true when near/far changed (the frame must be redrawn)
    */
-  updateDynamicClippingPlanes(): void {
-    if (!this.dynamicClippingEnabled) return;
-    updateDynamicFromCache(this.makeClippingCtx());
+  updateDynamicClippingPlanes(): boolean {
+    if (!this.dynamicClippingEnabled) return false;
+    return updateDynamicFromCache(this.makeClippingCtx());
   }
 
   /**

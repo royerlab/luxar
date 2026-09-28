@@ -177,13 +177,18 @@ export function isBlendableSubtree(root: THREE.Object3D): boolean {
  * ``registerMaterial`` keeps a clone-on-first-fade material receiving
  * per-frame camera-uniform updates (wired to `materialManager.register`;
  * omitted in unit tests, which run no camera loop).
+ *
+ * @returns true when any leaf's drawn opacity (or material) changed — the
+ *   render-on-change loop must redraw. False on the steady-state idempotent
+ *   rewrite of an unchanged value, which runs every frame.
  */
 export function applyLodFade(
   root: THREE.Object3D,
   weight: number | null,
   energyComp: boolean,
   registerMaterial?: (material: THREE.Material) => void
-): void {
+): boolean {
+  let changed = false;
   const coverageWeight = weight ?? 1;
   // Normal mode's depthWrite is opacity-gated (>= 0.99, see
   // normalModeDepthWrite) — but that gate is now the LINE gate only: point
@@ -229,6 +234,7 @@ export function applyLodFade(
         current.updateOpacity(ud._lodFadeBase);
         refreshNormalDepthWrite(current);
         ud._lodFadeBase = undefined;
+        changed = true;
       }
       return;
     }
@@ -239,14 +245,18 @@ export function applyLodFade(
       ud._layerMaterialCloned = true;
       registerMaterial?.(cloned); // keep camera uniforms live
       mat = cloned;
+      changed = true;
     }
     // Snapshot the composed authored opacity once; hold it steady while the
     // multiplier changes (per-frame as the ladder fills in), clear it on restore.
     if (ud._lodFadeBase == null) ud._lodFadeBase = mat.getOpacity();
-    mat.updateOpacity(ud._lodFadeBase * product);
+    const faded = ud._lodFadeBase * product;
+    if (mat.getOpacity() !== faded) changed = true;
+    mat.updateOpacity(faded);
     refreshNormalDepthWrite(mat);
   };
   const obj = root as THREE.Mesh;
   if (obj.material) visit(root);
   else root.traverse(visit);
+  return changed;
 }

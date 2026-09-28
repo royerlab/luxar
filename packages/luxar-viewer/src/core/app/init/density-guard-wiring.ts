@@ -73,8 +73,12 @@ export interface DensityGuardWiring extends DensityGuardControl {
    * (bytes-only admission) while it is off.
    */
   provider: ProjectedDensityProvider;
-  /** Register as the `'projected-density'` per-frame callback. */
-  perFrame(): void;
+  /**
+   * Register as the `'projected-density'` per-frame callback. Returns true
+   * when a keep-fraction step changed what the frame draws (the
+   * render-on-change loop's per-frame callback contract).
+   */
+  perFrame(): boolean;
   /** Per-path snapshot for the data monitor's lattice-glyph `1/K` density chip. */
   densityStates(): Map<string, NodeDensityState>;
 }
@@ -218,15 +222,17 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
     thinning: () => summarizeThinning(tracker),
     densityStates: () => collectDensityStates(tracker),
     perFrame: () => {
-      if (!tracker.evaluate()) return;
+      if (!tracker.evaluate()) return false;
       // A keep-step change is a CONTENT change for the DPR controller (its
       // probe baseline no longer describes the scene) and needs a frame.
-      if (guard.takeChanged()) {
+      const changed = guard.takeChanged();
+      if (changed) {
         deps.getAdaptiveDpr()?.notifyContentChanged();
         deps.requestRender();
       }
       // Deferred rungs resume once the camera has moved in.
       deps.getDefaultLoader()?.resumeDensityDeferredRefinement();
+      return changed;
     },
   };
 }

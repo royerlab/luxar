@@ -341,6 +341,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       (userSettings.advanced.renderer !== 'auto' ? userSettings.advanced.renderer : undefined),
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
     perfTimestamp: urlParams.perfTimestamp,
+    // `?renderAlways` (render every tick) and the debug-only `?renderAudit`.
+    renderAlways: urlParams.renderAlways,
+    renderAudit: urlParams.renderAudit,
     // `?dpr=<value>` pins a fixed pixel ratio for deterministic
     // E2E/visual runs; undefined → normal adaptive-DPR behavior.
     pinnedDPR: urlParams.dpr ?? undefined,

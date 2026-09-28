@@ -58,11 +58,10 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
 
   // `pre-render`: a capture this frame sees the frame's final view state
   // (camera writers and view callbacks, including a dimension step, have run).
+  // Returns whether a capture landed (a new environment map is drawn).
   animationController.addPerFrameCallback(
     'environment-capture',
-    () => {
-      sceneManager.environment?.tick();
-    },
+    () => sceneManager.environment?.tick() ?? false,
     { phase: 'pre-render' }
   );
   events.add(() => animationController.removePerFrameCallback('environment-capture'));
@@ -99,7 +98,11 @@ function scheduleBake(
       if (settledFrames < BAKE_SETTLED_FRAMES) return;
       started = true;
       animationController.removePerFrameCallback(id);
-      void runBake(sceneManager, request);
+      // The bake swaps the scene's environment (it captures afresh): redraw
+      // once it is done.
+      void runBake(sceneManager, request).finally(() =>
+        animationController.requestRender('environmentBake')
+      );
     },
     { continuous: true }
   );

@@ -5,6 +5,9 @@ import type { AnimationConfig } from './types';
  */
 export const animationConfig: AnimationConfig = {
   idleTimeoutMs: 2000, // Time in milliseconds before pausing animation when idle - saves power
+  // Skip re-rendering an unchanged frame (the loop still ticks). `?renderAlways`
+  // turns it off for one session; false here turns it off for good.
+  renderOnChange: true,
   pacing: {
     enabled: true, // Frame pacing on by default; false restores the back-to-back rAF loop
     // 250 ms is 4 fps — a scene already far past any interactive

@@ -38,7 +38,10 @@ runInitPipeline(ports, partial)
 │                              awaiting init so a throw stays disposable
 ├── 5. AnimationController    factories.animationController(controls,
 │                              postProcessing); setContextLostPredicate
-│                              → sceneManager.isWebGLContextLost
+│                              → sceneManager.isWebGLContextLost;
+│                              render-on-change: setRenderOnChange
+│                              (?renderAlways), setViewSignatureSource
+│                              (camera + canvas), ?debug&renderAudit
 ├── 6. PerformanceMonitor     subscribes to controller's per-frame bus
 ├── 7. DebugConsole
 ├── 8. Per-frame callback     'dynamic-clipping' → updateDynamicClippingPlanes
