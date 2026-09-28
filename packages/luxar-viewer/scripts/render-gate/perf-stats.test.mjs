@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { judgePerf, median, noiseFloor, ratioCI } from './perf-stats.mjs';
+import { anyMissing, judgeCounter, judgePerf, median, noiseFloor, ratioCI } from './perf-stats.mjs';
 
 describe('median', () => {
   it('handles odd, even and empty inputs', () => {
@@ -82,5 +82,92 @@ describe('judgePerf', () => {
         0.02
       ).verdict
     ).toBe('win');
+  });
+});
+
+describe('judgePerf better=higher', () => {
+  const base = [10, 10.1, 9.9, 10, 10.05, 9.95, 10];
+
+  it('wins above 1 + floor and fails below 1 - floor', () => {
+    const up = base.map((v) => v * 1.2);
+    const down = base.map((v) => v * 0.8);
+    expect(judgePerf(base, up, 0.02, 0, { better: 'higher' }).verdict).toBe('win');
+    expect(judgePerf(base, down, 0.02, 0, { better: 'higher' }).verdict).toBe('fail');
+    expect(judgePerf(base, base, 0.02, 0, { better: 'higher' }).verdict).toBe('pass');
+  });
+});
+
+describe('judgeCounter', () => {
+  const flat = [100, 100, 100, 100, 100];
+
+  it('compares exact counters exactly when both baseline arms agree', () => {
+    expect(judgeCounter(flat, flat, flat).verdict).toBe('pass');
+    // One unit less is a win: no noise floor applies to a deterministic counter.
+    expect(judgeCounter(flat, [99, 99, 99, 99, 99], flat).verdict).toBe('win');
+    expect(judgeCounter(flat, [101, 101, 101, 101, 101], flat).verdict).toBe('fail');
+    const v = judgeCounter(flat, [99, 99, 99, 99, 99], flat);
+    expect(v.exact).toBe(true);
+    expect(v.baseMedian).toBe(100);
+    expect(v.candMedian).toBe(99);
+  });
+
+  it('honours tol and better=higher on the exact path', () => {
+    expect(judgeCounter(flat, [101, 101, 101], flat, { tol: 1 }).verdict).toBe('pass');
+    expect(judgeCounter(flat, [102, 102, 102], flat, { better: 'higher' }).verdict).toBe('win');
+    expect(judgeCounter(flat, [98, 98, 98], flat, { better: 'higher' }).verdict).toBe('fail');
+  });
+
+  it('treats any increase over a constant-zero baseline as a fail', () => {
+    const zeros = [0, 0, 0, 0, 0];
+    expect(judgeCounter(zeros, zeros, zeros).verdict).toBe('pass');
+    expect(judgeCounter(zeros, [1, 1, 1, 1, 1], zeros).verdict).toBe('fail');
+  });
+
+  it('falls back to the A/A noise floor when the baseline arms vary', () => {
+    const a = [100, 104, 97, 101, 99, 103, 98];
+    const b = [101, 99, 103, 98, 100, 97, 102];
+    const v = judgeCounter(a, [100, 102, 99, 101, 98, 100, 101], b);
+    expect(v.exact).toBe(false);
+    expect(v.verdict).toBe('pass');
+    expect(v.floor).toBeGreaterThan(0.01);
+    expect(
+      judgeCounter(
+        a,
+        a.map((x) => x * 2),
+        b
+      ).verdict
+    ).toBe('fail');
+    expect(
+      judgeCounter(
+        a,
+        a.map((x) => x / 2),
+        b
+      ).verdict
+    ).toBe('win');
+    expect(
+      judgeCounter(
+        a,
+        a.map((x) => x * 2),
+        b,
+        { better: 'higher' }
+      ).verdict
+    ).toBe('win');
+  });
+
+  it('reads n/a when any arm has a missing sample', () => {
+    expect(judgeCounter(flat, [100, undefined, 100], flat).verdict).toBe('n/a');
+    expect(judgeCounter([100, null, 100], flat, flat).verdict).toBe('n/a');
+    expect(judgeCounter(flat, flat, [NaN, 100]).verdict).toBe('n/a');
+    expect(judgeCounter([], flat, flat).verdict).toBe('n/a');
+  });
+});
+
+describe('anyMissing', () => {
+  it('flags undefined, null, NaN and empty arms', () => {
+    expect(anyMissing([1, 2], [3])).toBe(false);
+    expect(anyMissing([1, undefined])).toBe(true);
+    expect(anyMissing([null])).toBe(true);
+    expect(anyMissing([NaN])).toBe(true);
+    expect(anyMissing([])).toBe(true);
   });
 });

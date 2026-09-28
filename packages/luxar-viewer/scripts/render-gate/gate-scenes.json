@@ -369,5 +369,219 @@
     },
     "rounds": 7,
     "urlParams": "noPrefetch&noBlendWarmup"
+  },
+  "serverProfiles": {
+    "local": {
+      "range": true
+    },
+    "hosted": {
+      "range": true,
+      "latencyMs": 100,
+      "bytesPerSec": 3125000,
+      "h2": true,
+      "etag": true,
+      "cacheControl": "max-age=300"
+    }
+  },
+  "suites": {
+    "counters": {
+      "defaults": {
+        "rounds": 5,
+        "backends": ["webgl", "webgpu"],
+        "viewport": { "width": 960, "height": 540 },
+        "dsf": 1,
+        "urlParams": "noBlendWarmup",
+        "serverProfile": "local"
+      },
+      "cases": [
+        {
+          "id": "idle_after_drag_mixed",
+          "store": "gate/mixed.luxar.zarr",
+          "pose": { "position": [14, 9, 16], "target": [0, 0, 0], "up": [0, 1, 0] },
+          "workload": { "kind": "drag", "px": 4, "tailMs": 3000 },
+          "staleFrameCheck": true,
+          "metrics": [
+            { "name": "render.count", "better": "lower", "kind": "counter" },
+            { "name": "renders", "better": "lower", "kind": "counter" },
+            { "name": "ext.gpuUploadBytes", "better": "lower", "kind": "counter" },
+            { "name": "gpu.uploadBytes", "better": "lower", "kind": "counter" }
+          ]
+        },
+        {
+          "id": "webgpu_idle_uploads",
+          "synthetic": { "type": "gsplats", "count": 1000000, "seed": 8, "blending": "normal" },
+          "backends": ["webgpu"],
+          "pose": { "position": [200, 140, 200], "target": [0, 0, 0], "up": [0, 1, 0] },
+          "workload": { "kind": "idle", "ms": 1000 },
+          "metrics": [
+            { "name": "gpu.uploadBytes", "better": "lower", "kind": "counter" },
+            { "name": "ext.gpuUploadBytes", "better": "lower", "kind": "counter" },
+            { "name": "ext.gpuUploadBytesBuffer", "better": "lower", "kind": "counter" },
+            { "name": "ext.gpuUploadBytesTexture", "better": "lower", "kind": "counter" }
+          ]
+        }
+      ]
+    },
+    "playback": {
+      "defaults": {
+        "rounds": 5,
+        "backends": ["webgl", "webgpu"],
+        "viewport": { "width": 960, "height": 540 },
+        "dsf": 1,
+        "urlParams": "noBlendWarmup",
+        "serverProfile": "local"
+      },
+      "cases": [
+        {
+          "id": "playback_tp50",
+          "store": "gate/tp50.luxar.zarr",
+          "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
+          "metrics": [
+            { "name": "achievedFps", "better": "higher", "kind": "timing" },
+            { "name": "render.count", "better": "lower", "kind": "counter" },
+            { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
+            { "name": "decode.duplicates", "better": "lower", "kind": "counter" },
+            { "name": "console.calls", "better": "lower", "kind": "counter" }
+          ]
+        },
+        {
+          "id": "playback_lod_timelapse",
+          "store": "gate/lod_timelapse.luxar.zarr",
+          "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
+          "metrics": [
+            { "name": "achievedFps", "better": "higher", "kind": "timing" },
+            { "name": "render.count", "better": "lower", "kind": "counter" },
+            { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
+            { "name": "lod.levelSwaps", "better": "lower", "kind": "counter" },
+            { "name": "decode.duplicates", "better": "lower", "kind": "counter" }
+          ]
+        },
+        {
+          "id": "scrub_tp50_drag",
+          "store": "gate/tp50.luxar.zarr",
+          "workload": { "kind": "scrub", "mode": "drag", "steps": 20, "intervalMs": 50 },
+          "metrics": [
+            { "name": "commitsDuringDrag", "better": "lower", "kind": "counter" },
+            { "name": "render.count", "better": "lower", "kind": "counter" },
+            { "name": "decode.count", "better": "lower", "kind": "counter" }
+          ]
+        }
+      ]
+    },
+    "hosted": {
+      "defaults": {
+        "rounds": 3,
+        "backends": ["webgl"],
+        "viewport": { "width": 960, "height": 540 },
+        "dsf": 1,
+        "urlParams": "noBlendWarmup",
+        "serverProfile": "hosted"
+      },
+      "cases": [
+        {
+          "id": "cold_zip_mixed",
+          "store": "gate/zip_mixed.luxar.zarr.zip",
+          "workload": { "kind": "coldLoad" },
+          "metrics": [
+            { "name": "firstFrameMs", "better": "lower", "kind": "timing" },
+            { "name": "settledMs", "better": "lower", "kind": "timing" },
+            { "name": "requestsToFirstFrame", "better": "lower", "kind": "counter" },
+            { "name": "maxInflight", "better": "higher", "kind": "counter" }
+          ]
+        },
+        {
+          "id": "cold_sp64_closeup",
+          "store": "gate/sp64.luxar.zarr",
+          "pose": { "position": [3, 3, 8], "target": [3, 3, 0], "up": [0, 1, 0], "fov": 40 },
+          "workload": { "kind": "coldLoad" },
+          "metrics": [
+            { "name": "partition.partsInitialised", "better": "lower", "kind": "counter" },
+            { "name": "requestsToFirstFrame", "better": "lower", "kind": "counter" },
+            { "name": "firstFrameMs", "better": "lower", "kind": "timing" }
+          ]
+        },
+        {
+          "id": "cold_sp64_full",
+          "store": "gate/sp64.luxar.zarr",
+          "workload": { "kind": "coldLoad" },
+          "metrics": [
+            { "name": "firstFrameMs", "better": "lower", "kind": "timing" },
+            { "name": "settledMs", "better": "lower", "kind": "timing" },
+            { "name": "requestsToFirstFrame", "better": "lower", "kind": "counter" },
+            { "name": "bytesToFirstFrame", "better": "lower", "kind": "counter" },
+            { "name": "serialDepth", "better": "lower", "kind": "counter", "tol": 1 }
+          ]
+        }
+      ]
+    },
+    "trees": {
+      "defaults": {
+        "rounds": 5,
+        "backends": ["webgl"],
+        "viewport": { "width": 960, "height": 540 },
+        "dsf": 1,
+        "urlParams": "noBlendWarmup",
+        "serverProfile": "local"
+      },
+      "cases": [
+        {
+          "id": "step_tp50",
+          "store": "gate/tp50.luxar.zarr",
+          "workload": { "kind": "scrub", "mode": "step", "steps": 5 },
+          "metrics": [
+            { "name": "stepMs", "better": "lower", "kind": "timing" },
+            { "name": "scene.getObjectByName", "better": "lower", "kind": "counter" },
+            { "name": "console.calls", "better": "lower", "kind": "counter" },
+            { "name": "profiler.mergeMs", "better": "lower", "kind": "timing" }
+          ]
+        },
+        {
+          "id": "step_tp2000",
+          "store": "gate/tp2000.luxar.zarr",
+          "heavy": true,
+          "workload": { "kind": "scrub", "mode": "step", "steps": 5 },
+          "metrics": [
+            { "name": "stepMs", "better": "lower", "kind": "timing" },
+            { "name": "scene.getObjectByName", "better": "lower", "kind": "counter" },
+            { "name": "console.calls", "better": "lower", "kind": "counter" },
+            { "name": "profiler.mergeMs", "better": "lower", "kind": "timing" }
+          ]
+        },
+        {
+          "id": "orbit_lod_ladder",
+          "store": "gate/lod_ladder.luxar.zarr",
+          "pose": { "position": [0, 6, 22], "target": [0, 2, 0], "up": [0, 1, 0] },
+          "workload": { "kind": "orbit", "steps": 120, "revolutions": 1 },
+          "metrics": [
+            { "name": "lod.levelSwaps", "better": "lower", "kind": "counter" },
+            { "name": "levelFlips", "better": "lower", "kind": "counter" },
+            { "name": "render.count", "better": "lower", "kind": "counter" }
+          ]
+        }
+      ]
+    },
+    "cache": {
+      "defaults": {
+        "rounds": 3,
+        "backends": ["webgl"],
+        "viewport": { "width": 960, "height": 540 },
+        "dsf": 1,
+        "urlParams": "noBlendWarmup",
+        "serverProfile": "local"
+      },
+      "cases": [
+        {
+          "id": "playback_loops_tp50",
+          "store": "gate/tp50.luxar.zarr",
+          "workload": { "kind": "playback", "fps": 20, "loops": 3 },
+          "metrics": [
+            { "name": "decode.duplicates", "better": "lower", "kind": "counter" },
+            { "name": "decode.count", "better": "lower", "kind": "counter" },
+            { "name": "scache.pinnedBytes", "better": "lower", "kind": "counter" },
+            { "name": "serverRequests", "better": "lower", "kind": "counter" }
+          ]
+        }
+      ]
+    }
   }
 }

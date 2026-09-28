@@ -1,0 +1,136 @@
+import { describe, expect, it } from 'vitest';
+
+import { judgeMetric, meetsExpectation, serverMetrics, validateExpectations } from './suites.mjs';
+
+const manifestSuites = {
+  counters: {
+    cases: [
+      {
+        id: 'a',
+        metrics: [
+          { name: 'render.count', kind: 'counter', better: 'lower' },
+          { name: 'fps', kind: 'timing', better: 'higher' },
+        ],
+      },
+    ],
+  },
+};
+
+describe('validateExpectations', () => {
+  it('accepts declared cases and metrics', () => {
+    const e = { a: { 'render.count': 'zero', fps: 'win' } };
+    expect(validateExpectations(e, manifestSuites)).toEqual(e);
+  });
+
+  it('rejects an unknown case, an undeclared metric and a bad value', () => {
+    expect(() => validateExpectations({ b: {} }, manifestSuites)).toThrow(/unknown case 'b'/);
+    expect(() => validateExpectations({ a: { nope: 'win' } }, manifestSuites)).toThrow(
+      /no metric 'nope'/
+    );
+    expect(() => validateExpectations({ a: { fps: 'better' } }, manifestSuites)).toThrow(
+      /not one of/
+    );
+  });
+});
+
+describe('meetsExpectation', () => {
+  it('never counts n/a as met', () => {
+    for (const want of ['win', 'zero', 'same', 'pass']) {
+      expect(meetsExpectation(want, { verdict: 'n/a' }, 'counter')).toBe(false);
+    }
+  });
+
+  it('applies each expectation', () => {
+    expect(meetsExpectation('win', { verdict: 'win' }, 'counter')).toBe(true);
+    expect(meetsExpectation('win', { verdict: 'pass' }, 'counter')).toBe(false);
+    expect(meetsExpectation('zero', { verdict: 'win', candMedian: 0 }, 'counter')).toBe(true);
+    expect(meetsExpectation('zero', { verdict: 'win', candMedian: 1 }, 'counter')).toBe(false);
+    expect(
+      meetsExpectation('same', { verdict: 'pass', baseMedian: 3, candMedian: 3 }, 'counter')
+    ).toBe(true);
+    expect(
+      meetsExpectation('same', { verdict: 'pass', baseMedian: 3, candMedian: 3.2 }, 'counter')
+    ).toBe(false);
+    expect(
+      meetsExpectation('same', { verdict: 'pass', baseMedian: 3, candMedian: 3.2 }, 'timing')
+    ).toBe(true);
+    expect(meetsExpectation('pass', { verdict: 'win' }, 'timing')).toBe(true);
+    expect(meetsExpectation('pass', { verdict: 'fail' }, 'timing')).toBe(false);
+  });
+});
+
+describe('judgeMetric', () => {
+  const arm = (vals, key) => vals.map((v) => ({ [key]: v }));
+
+  it('judges counters exactly and timings with direction', () => {
+    const counter = judgeMetric(
+      { name: 'render.count', kind: 'counter' },
+      {
+        base: arm([5, 5, 5], 'render.count'),
+        base2: arm([5, 5, 5], 'render.count'),
+        cand: arm([0, 0, 0], 'render.count'),
+      }
+    );
+    expect(counter).toMatchObject({
+      verdict: 'win',
+      baseMedian: 5,
+      candMedian: 0,
+      kind: 'counter',
+    });
+    const fps = [10, 10.1, 9.9, 10, 10.05];
+    const timing = judgeMetric(
+      { name: 'fps', kind: 'timing', better: 'higher' },
+      {
+        base: arm(fps, 'fps'),
+        base2: arm(fps, 'fps'),
+        cand: arm(
+          fps.map((v) => v * 1.5),
+          'fps'
+        ),
+      }
+    );
+    expect(timing.verdict).toBe('win');
+  });
+
+  it('reads n/a when a build does not report the metric', () => {
+    const missing = judgeMetric(
+      { name: 'decode.duplicates', kind: 'counter' },
+      { base: [{}, {}], base2: [{}, {}], cand: arm([0, 0], 'decode.duplicates') }
+    );
+    expect(missing.verdict).toBe('n/a');
+    const timing = judgeMetric(
+      { name: 'x', kind: 'timing' },
+      { base: [{}], base2: [{}], cand: [{ x: 1 }] }
+    );
+    expect(timing.verdict).toBe('n/a');
+  });
+});
+
+describe('serverMetrics', () => {
+  const e = (url, startMs, bytes) => ({ url, startMs, endMs: startMs + 50, bytes });
+
+  it('counts dataset requests before the first frame and their start waves', () => {
+    const log = [
+      e('/index.html', 0, 1000),
+      e('/datasets/s/zarr.json', 10, 100),
+      e('/datasets/s/a/zarr.json', 120, 50),
+      e('/datasets/s/b/zarr.json', 125, 50),
+      e('/datasets/s/a/c/0', 240, 4000),
+      e('/datasets/s/a/c/1', 900, 4000),
+    ];
+    const m = serverMetrics(log, { navT: 0, firstFrameMs: 500, latencyMs: 100, maxInflight: 3 });
+    expect(m).toEqual({
+      serverRequests: 5,
+      serverBytes: 8200,
+      maxInflight: 3,
+      requestsToFirstFrame: 4,
+      bytesToFirstFrame: 4200,
+      serialDepth: 3,
+    });
+  });
+
+  it('omits the first-frame figures when the workload reported no first frame', () => {
+    const m = serverMetrics([], { navT: 0, firstFrameMs: undefined, maxInflight: 0 });
+    expect(m).toEqual({ serverRequests: 0, serverBytes: 0, maxInflight: 0 });
+  });
+});

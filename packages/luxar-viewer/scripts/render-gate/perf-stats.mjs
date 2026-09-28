@@ -75,7 +75,7 @@ export function noiseFloor(baseA, baseB, minFloor = 0.01) {
 }
 
 /**
- * Perf verdict for one metric (lower is better).
+ * Perf verdict for one metric.
  *
  * The test is on the POINT ratio of medians: `floor` is the band a
  * no-change comparison (the A/A control, same session, same rounds) spans,
@@ -87,18 +87,89 @@ export function noiseFloor(baseA, baseB, minFloor = 0.01) {
  * @param {number[]} base Baseline samples.
  * @param {number[]} cand Candidate samples.
  * @param {number} floor Noise floor for this scene/metric from the A/A control.
+ * @param {number} [absTolerance=0] A median difference within this is never judged.
+ * @param {{ better?: 'lower'|'higher' }} [opts] Direction of improvement.
  * @returns {{ ratio: number, lo: number, hi: number, floor: number,
- *   verdict: 'pass'|'fail'|'win' }} `fail` above 1 + floor, `win` below 1 − floor.
+ *   verdict: 'pass'|'fail'|'win' }} For `better: 'lower'` (the default), `fail`
+ *   above 1 + floor and `win` below 1 − floor; mirrored for `'higher'`.
  */
-export function judgePerf(base, cand, floor, absTolerance = 0) {
+export function judgePerf(base, cand, floor, absTolerance = 0, { better = 'lower' } = {}) {
   const ci = ratioCI(base, cand);
   // A metric near the timer's resolution (a wake that blocks ~0 ms) has a
   // ratio of 0/0 or x/0: a difference within `absTolerance` of the baseline
   // is too small to judge either way.
   const delta = median(cand) - median(base);
+  const higher = better === 'higher';
+  const worse = higher ? ci.ratio < 1 - floor : ci.ratio > 1 + floor;
+  const improved = higher ? ci.ratio > 1 + floor : ci.ratio < 1 - floor;
   let verdict = 'pass';
   if (Math.abs(delta) <= absTolerance) verdict = 'pass';
-  else if (ci.ratio > 1 + floor) verdict = 'fail';
-  else if (ci.ratio < 1 - floor) verdict = 'win';
+  else if (worse) verdict = 'fail';
+  else if (improved) verdict = 'win';
   return { ...ci, floor, verdict };
 }
+
+/**
+ * True when any arm is empty or holds a missing sample (undefined, null or
+ * NaN). A metric a build does not report (a counter an older baseline lacks)
+ * is not comparable and must read `n/a`, never `pass`.
+ *
+ * @param {...Array<number|undefined|null>} arms Sample arrays.
+ * @returns {boolean}
+ */
+export function anyMissing(...arms) {
+  return arms.some(
+    (a) =>
+      !Array.isArray(a) || a.length === 0 || a.some((v) => typeof v !== 'number' || Number.isNaN(v))
+  );
+}
+
+/**
+ * Verdict for a COUNTER metric (bytes uploaded, renders, decodes, ...).
+ *
+ * Counters are usually deterministic: when both baseline arms agree on one
+ * single value there is no noise to estimate a floor from, and any change is
+ * real, so the medians are compared exactly (`|delta| <= tol` passes, a move
+ * in the `better` direction wins, the other way fails). A counter that does
+ * vary between baseline arms (a render count that depends on frame timing) is
+ * judged like a timing, against its A/A noise floor.
+ *
+ * @param {number[]} base Baseline samples.
+ * @param {number[]} cand Candidate samples.
+ * @param {number[]} base2 Second baseline arm (the A/A control).
+ * @param {{ better?: 'lower'|'higher', tol?: number }} [opts]
+ * @returns {{ verdict: 'pass'|'fail'|'win'|'n/a', baseMedian?: number,
+ *   candMedian?: number, ratio?: number, exact?: boolean, floor?: number,
+ *   lo?: number, hi?: number }}
+ */
+export function judgeCounter(base, cand, base2, { better = 'lower', tol = 0 } = {}) {
+  if (anyMissing(base, cand, base2)) return { verdict: 'n/a' };
+  const baseMedian = median(base);
+  const candMedian = median(cand);
+  const first = base[0];
+  if ([...base, ...base2].every((v) => v === first)) {
+    const delta = candMedian - baseMedian;
+    let verdict = 'pass';
+    if (Math.abs(delta) > tol) {
+      const improved = better === 'higher' ? delta > 0 : delta < 0;
+      verdict = improved ? 'win' : 'fail';
+    }
+    return { verdict, baseMedian, candMedian, ratio: candMedian / baseMedian, exact: true };
+  }
+  return {
+    baseMedian,
+    candMedian,
+    exact: false,
+    ...judgePerf(base, cand, noiseFloor(base, base2), tol, { better }),
+  };
+}
+
+/**
+ * The A/B/A2 arm order per round, rotating so no arm always runs first (a
+ * warm browser, a thermally throttled GPU) or last.
+ */
+export const ROTATIONS = [
+  ['base', 'cand', 'base2'],
+  ['cand', 'base2', 'base'],
+  ['base2', 'base', 'cand'],
+];

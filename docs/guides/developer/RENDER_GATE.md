@@ -13,7 +13,13 @@ make render-gate BASE=HEAD~1 CAND=HEAD CLASS=ULP              # a math-moving co
 make render-gate BASE=HEAD~1 CAND=HEAD INTENDED=env_splats    # declared intended change
 make render-gate BASE=origin/main CAND=HEAD SUITE=perf        # performance only
 make render-gate BASE=HEAD CAND=WORKTREE ONLY=mixed           # uncommitted work, one case
+make render-gate BASE=HEAD~1 CAND=HEAD SUITE=counters GATE_ARGS="--expect exp.json"
+make render-gate BASE=origin/main CAND=HEAD SUITE=all GATE_ARGS="--heavy"
 ```
+
+`SUITE` is `exact`, `perf`, any suite declared in the manifest's `suites` block
+(`counters`, `playback`, `hosted`, `trees`, `cache`; see
+[Workload suites](#workload-suites)), or `all` for every one of them.
 
 The script behind it is `packages/luxar-viewer/scripts/render-gate/run-gate.mjs`
 (pass extra flags with `GATE_ARGS=`, e.g. `GATE_ARGS="--backends webgl --dsf 1"`).
@@ -175,13 +181,182 @@ heavy on its GPU. In headless Chrome with vsync off, rAF does not wait for the
 GPU, so `frameMs` is effectively CPU-bound frame cost and `gpuMs` carries the GPU
 cost. Keep the two apart when reading a result.
 
+## Workload suites
+
+A perf programme gates each commit on two things: exactness (the exact suite)
+and a MEASURED improvement of a metric the commit declares. The workload suites
+provide the second. Each is a key of the manifest's `suites` block and is run by
+`scripts/render-gate/suites.mjs`:
+
+| suite | what its starter cases do |
+|---|---|
+| `counters` | idle after a small drag (renders, bytes uploaded, stale frame); WebGPU uploads while idle |
+| `playback` | play a hidden time axis (achieved fps, renders, last timepoint shown, duplicate decodes); a slider drag over it |
+| `hosted` | cold loads over the simulated hosted link (first frame, settle, requests and bytes to first frame, concurrency) |
+| `trees` | single timeline steps on a time-partitioned tree (step latency, lookups, console calls); an orbit over a LOD ladder |
+| `cache` | several playback loops (duplicate decodes, pinned bytes, server requests) |
+
+### Declaring a case
+
+```json
+"suites": {
+  "counters": {
+    "defaults": { "rounds": 5, "backends": ["webgl", "webgpu"],
+                  "viewport": { "width": 960, "height": 540 }, "dsf": 1,
+                  "urlParams": "noBlendWarmup", "serverProfile": "local" },
+    "cases": [
+      { "id": "idle_after_drag_mixed", "store": "gate/mixed.luxar.zarr",
+        "pose": { "position": [14, 9, 16], "target": [0, 0, 0], "up": [0, 1, 0] },
+        "workload": { "kind": "drag", "px": 4, "tailMs": 3000 },
+        "staleFrameCheck": true,
+        "metrics": [
+          { "name": "render.count", "better": "lower", "kind": "counter" },
+          { "name": "ext.gpuUploadBytes", "better": "lower", "kind": "counter" } ] } ] } }
+```
+
+A case takes `store` (relative to `datasets/`) or `synthetic` (as in the exact
+suite), optional `urlParams` (appended to the defaults), `backends`, `pose`,
+`projection`, `heavy` and `staleFrameCheck`. A missing store makes the case an
+`error` row, not a crash. `heavy: true` cases run only with `--heavy`.
+
+Per arm the runner opens the case in a fresh context, applies the pose, settles
+(skipped for a cold load), zeroes the counters, runs the workload and reads the
+metric object. A metric `name` may be:
+
+- a field the workload returns (below);
+- any viewer perf counter by name (`render.count`, `gpu.uploadBytes`,
+  `decode.duplicates`, ...: every counter in `__luxarDebug.getPerf().counters`
+  is in the object, so a newly added counter can be declared without touching
+  the harness);
+- an ext counter, prefixed `ext.` (below);
+- a server-side figure: `serverRequests`, `serverBytes` (dataset requests of
+  the arm), `maxInflight` (the server's peak concurrent requests), and after a
+  cold load `requestsToFirstFrame`, `bytesToFirstFrame`, `serialDepth`.
+
+`kind: "counter"` is judged by `judgeCounter`: when both baseline arms report
+one single value, the medians are compared EXACTLY (`|delta| <= tol` passes; a
+move in the `better` direction is a win, the other way a fail). A counter that
+varies between baseline arms falls back to the A/A floor. `kind: "timing"` is
+judged by `judgePerf` against the A/A floor, in the declared `better`
+direction. A metric an arm does not report (an older baseline has no viewer
+counters) reads `n/a`: never a pass for an expected metric.
+
+### Workloads
+
+The in-page halves are self-contained functions in `page-ops.mjs`. They use only
+surfaces older builds also have (`__luxarDebug.{app, camera, renderOnce,
+getPerf, getSceneLoader, inputHandler, sceneDimsManager}`, `app.getCameraPose /
+setCameraPose / getDimensions / setDimensionValue / awaitDimensionUpdate`,
+`postProcessing.render` wrapped to count renders), and the counter APIs only
+behind `?.`.
+
+| kind | params | returns |
+|---|---|---|
+| `idle` | `ms` | `renders`, `frames` |
+| `drag` | `px`, `tailMs` | `renders` (drag + tail), `tailRenders`, `tailFrames` |
+| `playback` | `dim?`, `fps`, `durationMs` or `loops` | `ticks`, `achievedFps`, `renders`, `rendersPerTick`, `lastTimepointShown`, `wraps`, `tickLatencyP50Ms`/`P90Ms` (records only) |
+| `scrub` | `dim?`, `mode: step\|drag`, `steps`, `intervalMs` | step: `stepMs` (p50), `stepP90Ms`; drag: `commitsDuringDrag`, `dragFrames` |
+| `orbit` | `radius?`, `steps`, `revolutions` | `levelFlips`, `renders` |
+| `zoom` | `from`, `to`, `steps` | `levelFlips`, `renders` |
+| `coldLoad` | (case `pose`) | `firstFrameMs`, `ttfpMs`, `settledMs` |
+
+Notes on method:
+
+- `drag` uses real input (Playwright's mouse, dispatched through CDP): an
+  in-page synthetic `PointerEvent` has no active pointer, and the controls'
+  `setPointerCapture` throws on it.
+- `playback` drives the viewer's own playback
+  (`inputHandler.getAnimationManager().play(dim, { targetFPS, loopMode: 'loop' })`)
+  after moving the axis to its minimum; `dim` defaults to the first hidden
+  dimension. Ticks come from the `playback.tick` records when the build has
+  them, else from the axis value observed each animation frame.
+  `lastTimepointShown` is 1 when the range maximum was ever applied.
+- `scrub` in drag mode counts the frames in which committed geometry changed,
+  from a build-independent signature of every geometry node (effective
+  visibility, geometry id, attribute and index `version`s, drawn count, draw
+  range, and the `version` of every texture uniform: points keep positions in a
+  data texture).
+- `orbit`/`zoom` `levelFlips` polls each LOD group's `displayedChildIndex`
+  (`getSceneLoader().getDefaultLoader().lodGroupRegistry.list()`), the same
+  way on every build; the viewer's own `lod.levelSwaps` counter is separate.
+- `coldLoad` runs right after navigation and forces nothing. `firstFrameMs` is
+  the earliest `timeline.firstCommit`, in ms since navigation start (so it
+  includes fetching the viewer); `settledMs` is when `isSettled` has held for 3
+  frames. A case `pose` is applied at once and again at `sceneLoaded`, because
+  loading the scene frames the camera and no URL parameter sets a pose.
+- `staleFrameCheck: true` screenshots the page without forcing a render, then
+  renders once and screenshots again. The PNGs must be byte-identical; a
+  candidate arm that differs fails the row with reason `stale-frame` (a stale
+  baseline is only reported).
+
+### Ext counters
+
+`ext-counters.mjs` is installed with `context.addInitScript`, before any page
+script, and wraps browser APIs rather than viewer code, so its numbers exist on
+ANY baseline build. It counts bytes and calls of WebGL `bufferData`,
+`bufferSubData`, `texImage2D/3D`, `texSubImage2D/3D` and WebGPU
+`GPUQueue.writeBuffer/writeTexture` (`ext.gpuUploadBytes`, `...Calls`, split
+`...Buffer`/`...Texture`), main-thread `fetch` calls, resource-timing
+`transferSize`/`encodedBodySize` sums and peak resources in flight,
+`console.{log,info,warn,error,debug}` calls (`ext.consoleCalls`) and
+`Worker.postMessage` calls. Fetches and resource timing are per realm: requests
+a worker makes are not seen (the server-side figures do see them).
+
+### Expectations: `--expect`
+
+A commit that claims an improvement declares it:
+
+```json
+{ "idle_after_drag_mixed": { "render.count": "zero", "ext.gpuUploadBytes": "win" } }
+```
+
+After judging, an unmet expectation fails the row with reason `expectation`:
+`win` needs a win verdict; `zero` a candidate median of exactly 0; `same` a pass
+with equal medians (for counters); `pass` no regression (pass or win). `n/a`
+never meets an expectation. A case or metric the manifest does not declare is a
+harness error (exit 2). An expectation on a `heavy` case that was skipped fails
+too; pass `--heavy`.
+
+### Server profiles
+
+The workload suites serve both builds from servers configured by a profile in
+the manifest's `serverProfiles` (the suite's `defaults.serverProfile`, or
+`--server-profile` for the whole run):
+
+- `local`: the plain server plus single-range `Range` support (206 with
+  `Content-Range`, 416 when unsatisfiable, suffix `bytes=-n` included), which a
+  `.zarr.zip` store needs;
+- `hosted`: 100 ms latency before every response's headers, ONE shared token
+  bucket at 25 Mbit/s, HTTP/2 over TLS (a self-signed certificate generated
+  once into `delme/gate-certs/`; the browser gets
+  `--ignore-certificate-errors`), a strong `ETag` with `If-None-Match` → 304,
+  and `Cache-Control: max-age=300`.
+
+The exact and perf suites keep the unconfigured server, whose responses are
+unchanged. Every server logs its requests (`GET /__gate/requests`, cleared by
+`POST /__gate/reset`). `serialDepth` approximates the longest dependent request
+chain before the first frame as the number of start WAVES: dataset requests
+sorted by start, where a start at least `max(latencyMs, 20)` ms after the
+previous one opens a new wave (a dependent request cannot start before its
+parent's response, which takes at least the latency). It is an approximation;
+give it a `tol`.
+
+### Report
+
+Each suite adds a table (case, backend, metric, base median, candidate median,
+ratio, verdict, and any expectation) to `report.md`; `report.json` carries the
+rows under `suites.<name>`.
+
 ## When a run is not a pass
 
 - **FAIL** (exit 1): a case broke its class, element counts diverged, a page
-  errored or did not settle, or a perf metric regressed beyond its floor.
+  errored or did not settle, a perf metric regressed beyond its floor, a
+  workload suite row regressed, showed a stale frame or missed an expectation,
+  or a declared store is missing.
 - **INCOMPLETE** (exit 3): no failure, but some views were excluded as
   nondeterministic. Fix the nondeterminism or remove the case; do not ignore it.
-- exit 2: the harness itself crashed (build failure, server port in use).
+- exit 2: the harness itself crashed (build failure, server port in use), or
+  the invocation was bad (unknown suite, profile, or expectation).
 
 A browser that dies mid-run (a GPU-process crash, or the OOM killer on a busy
 host) is relaunched, and the case it interrupted is retried once; the report

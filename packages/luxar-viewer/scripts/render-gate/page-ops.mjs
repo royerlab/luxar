@@ -509,3 +509,500 @@ export async function rendererInfo() {
   );
   return { api: 'webgl', gpu, usable: true };
 }
+
+// ---------------------------------------------------------------------------
+// Suite workloads
+//
+// Each is SELF-CONTAINED (no shared helpers: `page.evaluate` serializes one
+// function). They use only surfaces present on older builds too —
+// `__luxarDebug.{app, camera, renderOnce, getPerf, getSceneLoader,
+// inputHandler, sceneDimsManager}`, `app.{getCameraPose, setCameraPose,
+// getDimensions, setDimensionValue, awaitDimensionUpdate}` and
+// `sceneManager.postProcessing.render` (wrapped to count renders) — plus the
+// perf-counter APIs (`resetPerfCounters`, `getPerfRecords`), always behind
+// `?.`. The suite runner reads the counters after the workload; a workload
+// that has to move the scene first (to the start of a timeline) zeroes them
+// again itself once it is in place.
+// ---------------------------------------------------------------------------
+
+/** Zero the viewer's perf counters (if the build has them) and the gate's ext counters. */
+export function resetCounters() {
+  window.__luxarDebug.resetPerfCounters?.();
+  window.__gateExtReset?.();
+  return true;
+}
+
+/** Flat snapshot of the viewer's perf counters (`{}` on a build without them). */
+export function readCounters() {
+  return { ...(window.__luxarDebug.getPerf?.()?.counters ?? {}) };
+}
+
+/** Snapshot of the build-independent ext counters (`ext-counters.mjs`). */
+export function readExtCounters() {
+  return window.__gateExtSnapshot?.() ?? {};
+}
+
+/**
+ * Start counting `postProcessing.render` calls into `window.__gateRenders`
+ * (the render count every build exposes, counters or not).
+ */
+export function beginRenderCount() {
+  const pp = window.__luxarDebug.app.sceneManager.postProcessing;
+  if (pp.__gateOriginalRender) return true;
+  window.__gateRenders = 0;
+  pp.__gateOriginalRender = pp.render;
+  pp.render = function countedRender(...args) {
+    window.__gateRenders++;
+    return pp.__gateOriginalRender.apply(this, args);
+  };
+  return true;
+}
+
+/** Stop counting renders; returns the count since `beginRenderCount`. */
+export function endRenderCount() {
+  const pp = window.__luxarDebug.app.sceneManager.postProcessing;
+  if (pp.__gateOriginalRender) {
+    pp.render = pp.__gateOriginalRender;
+    delete pp.__gateOriginalRender;
+  }
+  return window.__gateRenders ?? 0;
+}
+
+/**
+ * Do nothing for `ms` and count what the viewer does anyway: renders and
+ * animation frames. An idle viewer should render nothing.
+ *
+ * @param {{ ms?: number }} opts
+ * @returns {Promise<{ renders: number, frames: number, idleMs: number }>}
+ */
+export async function idle({ ms = 1000 }) {
+  const pp = window.__luxarDebug.app.sceneManager.postProcessing;
+  let renders = 0;
+  const original = pp.render;
+  pp.render = function countedRender(...args) {
+    renders++;
+    return original.apply(this, args);
+  };
+  let frames = 0;
+  let live = true;
+  const count = () => {
+    if (!live) return;
+    frames++;
+    requestAnimationFrame(count);
+  };
+  requestAnimationFrame(count);
+  try {
+    await new Promise((r) => setTimeout(r, ms));
+  } finally {
+    live = false;
+    pp.render = original;
+  }
+  return { renders, frames, idleMs: ms };
+}
+
+/**
+ * Play a hidden dimension through the viewer's own playback
+ * (`inputHandler.getAnimationManager().play(dim, { targetFPS, loopMode })`)
+ * and measure what it delivered.
+ *
+ * The dimension is first moved to its range minimum and allowed to load; the
+ * counters are zeroed after that, so they cover playback only. Runs for
+ * `durationMs`, or with `loops` until the value has wrapped that many times.
+ *
+ * Returns:
+ * - `ticks`: value advances (from `playback.tick` records when the build has
+ *   them, else the observed changes of the dimension's value per frame);
+ * - `achievedFps`: ticks per second over the first..last tick;
+ * - `renders`, `rendersPerTick`: `postProcessing.render` calls;
+ * - `lastTimepointShown`: 1 if the range maximum was ever applied, else 0;
+ * - `tickLatencyP50Ms` / `tickLatencyP90Ms`: lateness `t - due` of the ticks
+ *   (records only; absent otherwise);
+ * - `wraps`, `durationMs`.
+ *
+ * @param {{ dim?: number, fps?: number, durationMs?: number, loops?: number,
+ *   timeoutMs?: number }} opts `dim` defaults to the first non-displayed dimension.
+ */
+export async function playback({ dim, fps = 10, durationMs = 6000, loops, timeoutMs = 180000 }) {
+  const dbg = window.__luxarDebug;
+  const app = dbg.app;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const dims = app.getDimensions();
+  const d = dim ?? dims.metadata.findIndex((_, i) => !dims.displayed.includes(i));
+  if (!(d >= 0 && d < dims.ndim)) throw new Error(`playback: no hidden dimension (dim=${dim})`);
+  const [lo, hi] = dims.ranges[d];
+  const manager = (dbg.inputHandler ?? app.inputHandler)?.getAnimationManager?.();
+  if (!manager) throw new Error('playback: no dimension animation manager');
+  const valueOf = () =>
+    dbg.sceneDimsManager?.getDims?.()?.currentStep?.[d] ?? app.getDimensions().currentStep[d];
+
+  app.setDimensionValue(d, lo);
+  await app.awaitDimensionUpdate();
+  for (let i = 0; i < 10; i++) await frame();
+  dbg.resetPerfCounters?.();
+  window.__gateExtReset?.();
+
+  const pp = app.sceneManager.postProcessing;
+  let renders = 0;
+  const original = pp.render;
+  pp.render = function countedRender(...args) {
+    renders++;
+    return original.apply(this, args);
+  };
+  const eps = Math.max(1e-9, Math.abs(hi - lo) * 1e-6);
+  const observed = [];
+  let last = valueOf();
+  let wraps = 0;
+  let sawMax = Math.abs(last - hi) <= eps;
+  const t0 = performance.now();
+  manager.play(d, { targetFPS: fps, loopMode: 'loop' });
+  try {
+    for (;;) {
+      await frame();
+      const v = valueOf();
+      if (v !== last) {
+        observed.push({ t: performance.now(), value: v });
+        if (v < last) wraps++;
+        if (Math.abs(v - hi) <= eps) sawMax = true;
+        last = v;
+      }
+      const elapsed = performance.now() - t0;
+      if (loops ? wraps >= loops || elapsed > timeoutMs : elapsed >= durationMs) break;
+    }
+  } finally {
+    manager.pause(d);
+    pp.render = original;
+  }
+  const records = (dbg.getPerfRecords?.('playback.tick') ?? []).filter((r) => r.dim === d);
+  const ticksSrc = records.length > 0 ? records : observed;
+  const ticks = ticksSrc.length;
+  const span = ticks > 1 ? ticksSrc[ticks - 1].t - ticksSrc[0].t : 0;
+  const out = {
+    ticks,
+    achievedFps: span > 0 ? ((ticks - 1) * 1000) / span : 0,
+    renders,
+    rendersPerTick: ticks > 0 ? renders / ticks : null,
+    lastTimepointShown: sawMax || records.some((r) => Math.abs(r.value - hi) <= eps) ? 1 : 0,
+    wraps,
+    durationMs: performance.now() - t0,
+    tickSource: records.length > 0 ? 'records' : 'observed',
+  };
+  const lateness = records
+    .filter((r) => typeof r.due === 'number')
+    .map((r) => r.t - r.due)
+    .sort((a, b) => a - b);
+  if (lateness.length > 0) {
+    const q = (p) => lateness[Math.min(lateness.length - 1, Math.floor(p * lateness.length))];
+    out.tickLatencyP50Ms = q(0.5);
+    out.tickLatencyP90Ms = q(0.9);
+  }
+  return out;
+}
+
+/**
+ * Scrub a hidden dimension the way a user does with its slider.
+ *
+ * - `mode: 'step'`: `steps` single steps of the dimension's step size, each
+ *   via `app.setDimensionValue` then waiting for `awaitDimensionUpdate` and
+ *   for `getPerf().isSettled` to hold for 3 frames (when the build reports
+ *   it). `stepMs` is the median step latency, `stepP90Ms` the p90.
+ * - `mode: 'drag'`: `steps` values `intervalMs` apart WITHOUT waiting (a
+ *   slider drag), then a settle. `commitsDuringDrag` counts the animation
+ *   frames during the drag in which committed geometry changed. "Changed" is
+ *   a build-independent signature over every geometry node: its effective
+ *   visibility, geometry id,
+ *   every attribute's (and the index's) `version`, the drawn count
+ *   (`visible*Count` / `instanceCount` / draw range) and the `version` of
+ *   every texture uniform on its material (points keep positions in a data
+ *   texture). A commit uploads, and an upload bumps a version.
+ *
+ * The dimension starts at its range minimum; counters are zeroed after that.
+ *
+ * @param {{ dim?: number, mode?: 'step'|'drag', steps?: number,
+ *   intervalMs?: number, settleTimeoutMs?: number }} opts
+ */
+export async function scrub({
+  dim,
+  mode = 'step',
+  steps = 5,
+  intervalMs = 50,
+  settleTimeoutMs = 60000,
+}) {
+  const dbg = window.__luxarDebug;
+  const app = dbg.app;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const dims = app.getDimensions();
+  const d = dim ?? dims.metadata.findIndex((_, i) => !dims.displayed.includes(i));
+  if (!(d >= 0 && d < dims.ndim)) throw new Error(`scrub: no hidden dimension (dim=${dim})`);
+  const [lo, hi] = dims.ranges[d];
+  const step = dims.metadata[d]?.step || (hi - lo) / Math.max(1, steps);
+  const valueAt = (i) => {
+    const n = Math.max(1, Math.round((hi - lo) / step) + 1);
+    return lo + (i % n) * step;
+  };
+  const settled = async () => {
+    const t0 = performance.now();
+    let streak = 0;
+    while (performance.now() - t0 < settleTimeoutMs) {
+      await frame();
+      const s = dbg.getPerf?.()?.isSettled;
+      streak = s === false ? 0 : streak + 1;
+      if (streak >= 3) return true;
+    }
+    return false;
+  };
+  const signature = () => {
+    const parts = [];
+    app.sceneManager.scene.traverse((o) => {
+      const u = o.userData;
+      if (!u?.nodeType || !o.geometry) return;
+      const g = o.geometry;
+      let shown = true;
+      for (let n = o; n; n = n.parent) shown = shown && n.visible;
+      let s = `${shown ? 1 : 0}:${g.id}:${g.index?.version ?? '-'}`;
+      for (const k in g.attributes) s += `:${g.attributes[k].version}`;
+      s += `|${u.visiblePointCount ?? u.visibleSplatCount ?? u.visibleSegmentCount ?? u.committedVertexCount ?? g.instanceCount ?? ''}`;
+      s += `|${g.drawRange?.start}-${g.drawRange?.count}`;
+      const uniforms = o.material?.uniforms;
+      if (uniforms) {
+        for (const k in uniforms) {
+          const v = uniforms[k]?.value;
+          if (v?.isTexture) s += `|${k}:${v.id}:${v.version}`;
+        }
+      }
+      parts.push(s);
+    });
+    return parts.join(';');
+  };
+
+  app.setDimensionValue(d, lo);
+  await app.awaitDimensionUpdate();
+  await settled();
+  dbg.resetPerfCounters?.();
+  window.__gateExtReset?.();
+
+  if (mode === 'drag') {
+    let commits = 0;
+    let sig = signature();
+    let live = true;
+    let frames = 0;
+    const watch = () => {
+      if (!live) return;
+      frames++;
+      const s = signature();
+      if (s !== sig) {
+        commits++;
+        sig = s;
+      }
+      requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
+    const t0 = performance.now();
+    for (let i = 1; i <= steps; i++) {
+      app.setDimensionValue(d, valueAt(i));
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    const dragMs = performance.now() - t0;
+    live = false;
+    const ok = await settled();
+    return { commitsDuringDrag: commits, dragFrames: frames, dragMs, settled: ok ? 1 : 0 };
+  }
+
+  const lat = [];
+  let allSettled = true;
+  for (let i = 1; i <= steps; i++) {
+    const t0 = performance.now();
+    app.setDimensionValue(d, valueAt(i));
+    await app.awaitDimensionUpdate();
+    allSettled = (await settled()) && allSettled;
+    lat.push(performance.now() - t0);
+  }
+  const sorted = [...lat].sort((a, b) => a - b);
+  const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+  return { stepMs: q(0.5), stepP90Ms: q(0.9), steps: lat.length, settled: allSettled ? 1 : 0 };
+}
+
+/**
+ * Orbit the camera around the current pose's target: `revolutions` turns of
+ * `steps` frames each, at `radius` (default: the current horizontal distance)
+ * and the current height. One step per animation frame.
+ *
+ * `levelFlips` counts, build-independently, how often a LOD group's DISPLAYED
+ * level changed between frames, polled from
+ * `getSceneLoader().getDefaultLoader().lodGroupRegistry.list()` entries'
+ * `displayedChildIndex` (null when the registry is unreachable). The viewer's
+ * own `lod.levelSwaps` counter, when present, is in the counters.
+ *
+ * @param {{ radius?: number, steps?: number, revolutions?: number }} opts
+ */
+export async function orbit({ radius, steps = 120, revolutions = 1 }) {
+  const dbg = window.__luxarDebug;
+  const app = dbg.app;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const registry = () => dbg.getSceneLoader?.()?.getDefaultLoader?.()?.lodGroupRegistry ?? null;
+  const lodState = () => {
+    const reg = registry();
+    if (!reg?.list) return null;
+    return reg.list().map((e) => `${e.path ?? ''}=${e.displayedChildIndex ?? '-'}`);
+  };
+  const pose = app.getCameraPose();
+  const [tx, ty, tz] = pose.target;
+  const dx = pose.position[0] - tx;
+  const dz = pose.position[2] - tz;
+  const r = radius ?? Math.hypot(dx, dz);
+  const height = pose.position[1] - ty;
+  const phase = Math.atan2(dz, dx);
+  const pp = app.sceneManager.postProcessing;
+  let renders = 0;
+  const original = pp.render;
+  pp.render = function countedRender(...args) {
+    renders++;
+    return original.apply(this, args);
+  };
+  let flips = 0;
+  let prev = lodState();
+  const total = Math.max(1, Math.round(steps * revolutions));
+  try {
+    for (let i = 1; i <= total; i++) {
+      const a = phase + (2 * Math.PI * i) / steps;
+      const position = [tx + r * Math.cos(a), ty + height, tz + r * Math.sin(a)];
+      const cam = dbg.camera;
+      cam.position.fromArray(position);
+      cam.up.fromArray(pose.up);
+      cam.lookAt(tx, ty, tz);
+      cam.updateMatrixWorld();
+      app.setCameraPose({ ...app.getCameraPose(), position, target: pose.target, up: pose.up });
+      dbg.renderOnce();
+      await frame();
+      const now = lodState();
+      if (prev && now) {
+        for (let k = 0; k < Math.min(prev.length, now.length); k++) if (prev[k] !== now[k]) flips++;
+      }
+      prev = now;
+    }
+  } finally {
+    pp.render = original;
+  }
+  return { levelFlips: prev === null ? null : flips, renders, frames: total };
+}
+
+/**
+ * Dolly the camera along its view axis from distance `from` to `to` (from the
+ * current target) in `steps` frames. Reports renders and `levelFlips` (see
+ * `orbit`).
+ *
+ * @param {{ from: number, to: number, steps?: number }} opts
+ */
+export async function zoom({ from, to, steps = 60 }) {
+  const dbg = window.__luxarDebug;
+  const app = dbg.app;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const lodState = () => {
+    const reg = dbg.getSceneLoader?.()?.getDefaultLoader?.()?.lodGroupRegistry;
+    if (!reg?.list) return null;
+    return reg.list().map((e) => `${e.path ?? ''}=${e.displayedChildIndex ?? '-'}`);
+  };
+  const pose = app.getCameraPose();
+  const t = pose.target;
+  const dir = [0, 1, 2].map((k) => pose.position[k] - t[k]);
+  const len = Math.hypot(...dir) || 1;
+  const unit = dir.map((v) => v / len);
+  const pp = app.sceneManager.postProcessing;
+  let renders = 0;
+  const original = pp.render;
+  pp.render = function countedRender(...args) {
+    renders++;
+    return original.apply(this, args);
+  };
+  let flips = 0;
+  let prev = lodState();
+  try {
+    for (let i = 0; i <= steps; i++) {
+      const dist = from + ((to - from) * i) / Math.max(1, steps);
+      const position = unit.map((u, k) => t[k] + u * dist);
+      const cam = dbg.camera;
+      cam.position.fromArray(position);
+      cam.up.fromArray(pose.up);
+      cam.lookAt(t[0], t[1], t[2]);
+      cam.updateMatrixWorld();
+      app.setCameraPose({ ...app.getCameraPose(), position, target: t, up: pose.up });
+      dbg.renderOnce();
+      await frame();
+      const now = lodState();
+      if (prev && now) {
+        for (let k = 0; k < Math.min(prev.length, now.length); k++) if (prev[k] !== now[k]) flips++;
+      }
+      prev = now;
+    }
+  } finally {
+    pp.render = original;
+  }
+  return { levelFlips: prev === null ? null : flips, renders, frames: steps + 1 };
+}
+
+/**
+ * A cold load, called on a fresh context right after navigation (the page
+ * is at `debugReady`). Nothing is forced: it only watches animation frames.
+ *
+ * - `firstFrameMs`: the earliest `getPerf().timeline.firstCommit` of any
+ *   geometry kind, in ms since navigation start (`performance.now()` origin,
+ *   so it includes fetching the viewer itself);
+ * - `ttfpMs`: `timeline.measures.ttfpMs` (from the viewer's own `loadStart`);
+ * - `settledMs`: first frame, in ms since navigation, at which
+ *   `getPerf().isSettled` has held for 3 frames after a first commit.
+ *
+ * A `pose` is applied at once and again when `sceneLoaded` is first marked,
+ * because loading the scene frames the camera on it (no URL parameter sets
+ * a pose before the load starts).
+ *
+ * @param {{ pose?: object, timeoutMs?: number }} opts
+ */
+export async function coldLoad({ pose, timeoutMs = 300000 }) {
+  const dbg = window.__luxarDebug;
+  const app = dbg.app;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const place = () => {
+    if (!pose) return;
+    const cam = dbg.camera;
+    cam.position.fromArray(pose.position);
+    cam.up.fromArray(pose.up);
+    cam.lookAt(pose.target[0], pose.target[1], pose.target[2]);
+    cam.updateMatrixWorld();
+    app.setCameraPose({
+      ...app.getCameraPose(),
+      position: pose.position,
+      target: pose.target,
+      up: pose.up,
+    });
+  };
+  place();
+  let repositioned = false;
+  let streak = 0;
+  const t0 = performance.now();
+  while (performance.now() - t0 < timeoutMs) {
+    await frame();
+    const perf = dbg.getPerf?.();
+    const tl = perf?.timeline;
+    if (!repositioned && tl?.milestones?.sceneLoaded !== undefined) {
+      repositioned = true;
+      place();
+    }
+    const commits = Object.values(tl?.firstCommit ?? {});
+    streak = commits.length > 0 && perf?.isSettled === true ? streak + 1 : 0;
+    if (streak >= 3) {
+      return {
+        firstFrameMs: Math.min(...commits),
+        ttfpMs: tl.measures?.ttfpMs ?? null,
+        settledMs: performance.now(),
+        settled: 1,
+      };
+    }
+  }
+  const tl = dbg.getPerf?.()?.timeline;
+  const commits = Object.values(tl?.firstCommit ?? {});
+  return {
+    firstFrameMs: commits.length ? Math.min(...commits) : null,
+    ttfpMs: tl?.measures?.ttfpMs ?? null,
+    settledMs: null,
+    settled: 0,
+  };
+}

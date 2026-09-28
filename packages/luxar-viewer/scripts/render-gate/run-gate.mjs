@@ -5,10 +5,16 @@
  * when the candidate fails its declared verdict class.
  *
  *   node scripts/render-gate/run-gate.mjs --base origin/main --cand HEAD \
- *     [--suite exact|perf|all] [--class IDENTICAL|ULP] [--intended id,id] \
- *     [--only id,id] [--backends webgl,webgpu] [--rounds 7] [--out <dir>]
+ *     [--suite exact|perf|counters|playback|scrub|hosted|trees|cache|all] \
+ *     [--class IDENTICAL|ULP] [--intended id,id] [--only id,id] \
+ *     [--backends webgl,webgpu] [--rounds 7] [--heavy] [--expect <file.json>] \
+ *     [--server-profile local|hosted] [--out <dir>]
  *   node scripts/render-gate/run-gate.mjs --from-json <dir>/report.json
  *     (rewrite <dir>/report.md from a saved report, measuring nothing)
+ *
+ * `exact` and `perf` are built in; every other suite is declared in the
+ * manifest's `suites` block and run by `suites.mjs` (workload + declared
+ * metrics, judged against an A/A control).
  *
  * Both builds are served from their own `dist/` (cached per commit SHA, see
  * `builds.mjs`) with the checkout's `datasets/` mounted at `/datasets/`, and
@@ -27,14 +33,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from '@playwright/test';
 
+import { browserKit } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
 import { judge, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
-import { judgePerf, median, noiseFloor } from './perf-stats.mjs';
+import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
+import { loadExpectations, runSuite, suiteMarkdown } from './suites.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '../..');
@@ -72,9 +79,18 @@ const opts = {
   candDist: arg('cand-dist', null),
   // Re-render report.md from a saved report.json, measuring nothing.
   fromJson: arg('from-json', null),
+  // Manifest suites: include `heavy: true` cases, check declared expectations,
+  // and override the suites' server profile.
+  heavy: arg('heavy', false) === true,
+  expect: arg('expect', null),
+  serverProfile: arg('server-profile', null),
 };
-if (!['exact', 'perf', 'all'].includes(opts.suite)) throw new Error(`bad --suite ${opts.suite}`);
-if (!['IDENTICAL', 'ULP'].includes(opts.cls)) throw new Error(`bad --class ${opts.cls}`);
+/** A bad invocation is a harness error (exit 2), never a FAIL verdict (exit 1). */
+function configError(message) {
+  console.error(`[render-gate] ${message}`);
+  process.exit(2);
+}
+if (!['IDENTICAL', 'ULP'].includes(opts.cls)) configError(`bad --class ${opts.cls}`);
 
 const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
   cwd: viewerRoot,
@@ -82,6 +98,40 @@ const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
 }).trim();
 const manifest = JSON.parse(readFileSync(opts.scenes, 'utf8'));
 const log = (m) => console.log(`[render-gate] ${m}`);
+const manifestSuites = manifest.suites ?? {};
+const BUILT_IN = ['exact', 'perf'];
+if (opts.suite !== 'all' && !BUILT_IN.includes(opts.suite) && !manifestSuites[opts.suite]) {
+  configError(
+    `bad --suite ${opts.suite} (known: ${[...BUILT_IN, ...Object.keys(manifestSuites), 'all'].join(', ')})`
+  );
+}
+/** The manifest suites this run executes, in manifest order. */
+const selectedSuites =
+  opts.suite === 'all'
+    ? Object.keys(manifestSuites)
+    : manifestSuites[opts.suite]
+      ? [opts.suite]
+      : [];
+const runsBuiltIn = (name) => opts.suite === 'all' || opts.suite === name;
+if (opts.serverProfile && !manifest.serverProfiles?.[opts.serverProfile]) {
+  configError(`unknown --server-profile ${opts.serverProfile}`);
+}
+let expectations = null;
+if (opts.expect) {
+  try {
+    expectations = loadExpectations(opts.expect, manifestSuites);
+  } catch (e) {
+    configError(e.message);
+  }
+}
+const kit = browserKit({
+  channel: opts.channel,
+  headless: opts.headless,
+  chromeArgs: opts.chromeArgs,
+  log,
+});
+const { seenGpus, openCase } = kit;
+const browserSession = kit.browserSession;
 
 // ---------------------------------------------------------------------------
 // Decoding captures
@@ -116,125 +166,6 @@ function decode(packed) {
   return new Float32Array(
     bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
   );
-}
-
-// ---------------------------------------------------------------------------
-// Browser + page setup
-// ---------------------------------------------------------------------------
-
-function browserArgs(perf) {
-  const a = [
-    '--ignore-gpu-blocklist',
-    '--enable-unsafe-webgpu',
-    '--enable-webgpu-developer-features',
-  ];
-  if (process.platform === 'linux') {
-    // ANGLE on Vulkan puts WebGL on the discrete GPU (the default is
-    // SwiftShader headless). Do NOT add the `Vulkan` feature: it moves
-    // Chrome's own compositor onto Skia-Vulkan, which has no window surface
-    // in headless mode ("Failed to initialize vulkan surface"), and the first
-    // composited WebGL frame then loses the context (restored ~1 s later).
-    // Measured on obsidian (system Chrome 146, RTX 3070): with
-    // `--enable-features=Vulkan,WebGPU` every WebGL page lost its context;
-    // with `WebGPU` alone none did, and both backends stayed on the NVIDIA
-    // card. Not a viewer bug: a bare canvas clearing each frame reproduces it.
-    a.push(
-      '--use-angle=vulkan',
-      '--enable-features=WebGPU',
-      '--no-sandbox',
-      '--disable-dev-shm-usage'
-    );
-  }
-  if (perf) a.push('--disable-gpu-vsync', '--disable-frame-rate-limit');
-  return [...a, ...opts.chromeArgs];
-}
-
-/**
- * The suite's browser, relaunched when it has died.
- *
- * A browser that crashes mid-run (seen on obsidian under systemd-oomd memory
- * pressure) used to take every later case down with it: each reported
- * "browser has been closed" and the run's verdict became FAIL with nothing
- * wrong in the build. `run(fn)` hands `fn` a live browser and, when `fn` throws
- * BECAUSE the browser disconnected, relaunches and retries it once. A case that
- * kills the browser twice is reported as the error it is.
- */
-function browserSession(perf) {
-  let browser = null;
-  let relaunches = 0;
-  const launch = () =>
-    chromium.launch({ channel: opts.channel, headless: opts.headless, args: browserArgs(perf) });
-  const live = async () => {
-    if (!browser?.isConnected()) {
-      if (browser) {
-        relaunches++;
-        log('browser disconnected; relaunching');
-      }
-      browser = await launch();
-    }
-    return browser;
-  };
-  return {
-    async run(fn) {
-      try {
-        return await fn(await live());
-      } catch (e) {
-        if (browser?.isConnected()) throw e;
-        return fn(await live());
-      }
-    },
-    relaunches: () => relaunches,
-    async close() {
-      if (browser?.isConnected()) await browser.close();
-    },
-  };
-}
-
-/**
- * A case's URL: the suite defaults, then the case's own `urlParams` appended.
- * `liveLod: true` drops the defaults' `lodFinest`, which every other exact case
- * wants (deterministic finest content) and which would otherwise pin a LOD
- * case to its finest level, so the gate never saw LOD selection change.
- */
-function caseUrl(origin, c, backend, dsf, urlParams) {
-  const params = [];
-  if (c.store) params.push(`src=${origin}/datasets/${c.store}`);
-  params.push('debug', `dpr=${dsf}`, `renderer=${backend}`);
-  const defaults = c.liveLod
-    ? urlParams
-        ?.split('&')
-        .filter((p) => p !== 'lodFinest')
-        .join('&')
-    : urlParams;
-  if (defaults) params.push(defaults);
-  if (c.urlParams) params.push(c.urlParams);
-  return `${origin}/?${params.join('&')}`;
-}
-
-const SOFTWARE = /swiftshader|llvmpipe|software|basic render/i;
-/** Every adapter string a page reported, for the report header. */
-const seenGpus = new Set();
-
-async function openCase(browser, origin, c, { backend, dsf, viewport, urlParams }) {
-  const context = await browser.newContext({ viewport, deviceScaleFactor: dsf });
-  const page = await context.newPage();
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(caseUrl(origin, c, backend, dsf, urlParams), { timeout: 300000 });
-  await page.waitForFunction(ops.debugReady, undefined, { timeout: 300000 });
-  const info = await page.evaluate(ops.rendererInfo);
-  seenGpus.add(`${info.api}: ${info.gpu}`);
-  if (!info.usable)
-    throw new Error(`${info.why} (${info.gpu || 'no adapter string'}); refusing to measure`);
-  if (SOFTWARE.test(info.gpu))
-    throw new Error(`software renderer (${info.gpu}); refusing to measure`);
-  if (info.api !== backend) throw new Error(`asked for ${backend}, got ${info.api} (${info.gpu})`);
-  if (c.synthetic) {
-    await page.waitForFunction(ops.closeDatasetBrowser, undefined, { timeout: 10000 });
-    await page.evaluate(ops.injectSynthetic, c.synthetic);
-  }
-  await page.evaluate(ops.disableEffects);
-  return { context, page, info, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -450,11 +381,6 @@ const PERF_METRICS = [
  * 0 or 0.1 ms: two quanta are never judged.
  */
 const PERF_ABS_TOLERANCE = { wakeBlockMs: 0.2 };
-const ROTATIONS = [
-  ['base', 'cand', 'base2'],
-  ['cand', 'base2', 'base'],
-  ['base2', 'base', 'cand'],
-];
 
 async function runPerf(session, servers) {
   const d = manifest.perfDefaults;
@@ -510,7 +436,7 @@ function fmtScore(s) {
   return `${s.differing} px, drift ${s.maxDriftUlp.toFixed(1)}, p99.99 ${s.p9999Ulp.toFixed(1)}, flips ${s.flips}`;
 }
 
-function markdown(meta, exact, perf) {
+function markdown(meta, exact, perf, suites) {
   const lines = [
     `# Render gate: ${meta.label}`,
     '',
@@ -560,7 +486,9 @@ function markdown(meta, exact, perf) {
         );
       }
     }
+    lines.push('');
   }
+  for (const [name, rows] of Object.entries(suites ?? {})) lines.push(...suiteMarkdown(name, rows));
   return `${lines.join('\n')}\n`;
 }
 
@@ -582,38 +510,88 @@ async function main() {
   mkdirSync(outDir, { recursive: true });
 
   const dataRoot = join(repoRoot, 'datasets');
-  const servers = {
-    base: await startServer({ distDir: base.distDir, dataRoot, port: opts.basePort }),
-    cand: await startServer({ distDir: cand.distDir, dataRoot, port: opts.basePort + 1 }),
-  };
   let exact = null;
   let perf = null;
+  const suites = {};
   let browserRelaunches = 0;
 
-  try {
-    if (opts.suite !== 'perf') {
-      const session = browserSession(false);
-      try {
-        exact = await runExact(session, servers, outDir);
-      } finally {
-        browserRelaunches += session.relaunches();
-        await session.close();
+  if (runsBuiltIn('exact') || runsBuiltIn('perf')) {
+    const servers = {
+      base: await startServer({ distDir: base.distDir, dataRoot, port: opts.basePort }),
+      cand: await startServer({ distDir: cand.distDir, dataRoot, port: opts.basePort + 1 }),
+    };
+    try {
+      if (runsBuiltIn('exact')) {
+        const session = browserSession(false);
+        try {
+          exact = await runExact(session, servers, outDir);
+        } finally {
+          browserRelaunches += session.relaunches();
+          await session.close();
+        }
       }
-    }
-    if (opts.suite !== 'exact') {
-      const session = browserSession(true);
-      try {
-        perf = await runPerf(session, servers);
-      } finally {
-        browserRelaunches += session.relaunches();
-        await session.close();
+      if (runsBuiltIn('perf')) {
+        const session = browserSession(true);
+        try {
+          perf = await runPerf(session, servers);
+        } finally {
+          browserRelaunches += session.relaunches();
+          await session.close();
+        }
       }
+    } finally {
+      await servers.base.close();
+      await servers.cand.close();
     }
-  } finally {
-    await servers.base.close();
-    await servers.cand.close();
   }
-  const rows = [...(exact ?? []), ...(perf ?? [])];
+
+  // Manifest suites: each gets its own server pair on the same two ports,
+  // configured by its server profile (a hosted suite simulates the link).
+  for (const name of selectedSuites) {
+    const suite = manifestSuites[name];
+    const profileName = opts.serverProfile ?? suite.defaults?.serverProfile ?? 'local';
+    const profile = manifest.serverProfiles?.[profileName];
+    if (!profile) throw new Error(`suite ${name}: unknown server profile ${profileName}`);
+    const certDir = join(repoRoot, 'delme', 'gate-certs');
+    const servers = {
+      base: await startServer({
+        distDir: base.distDir,
+        dataRoot,
+        port: opts.basePort,
+        certDir,
+        ...profile,
+      }),
+      cand: await startServer({
+        distDir: cand.distDir,
+        dataRoot,
+        port: opts.basePort + 1,
+        certDir,
+        ...profile,
+      }),
+    };
+    const session = browserSession(false, profile.h2 ? ['--ignore-certificate-errors'] : []);
+    try {
+      suites[name] = await runSuite({
+        name,
+        suite,
+        profile: { name: profileName, ...profile },
+        session,
+        openCase,
+        servers,
+        dataRoot,
+        opts,
+        expectations,
+        log,
+      });
+    } finally {
+      browserRelaunches += session.relaunches();
+      await session.close();
+      await servers.base.close();
+      await servers.cand.close();
+    }
+  }
+
+  const rows = [...(exact ?? []), ...(perf ?? []), ...Object.values(suites).flat()];
   const failed = rows.some((r) => r.status === 'fail' || r.status === 'error');
   // An excluded row is a view the gate could not see (nondeterministic
   // baseline). It must never read as a pass: the gate is INCOMPLETE until
@@ -630,16 +608,19 @@ async function main() {
     verdict,
     options: opts,
   };
-  writeFileSync(join(outDir, 'report.json'), JSON.stringify({ meta, exact, perf }, null, 2));
-  writeFileSync(join(outDir, 'report.md'), markdown(meta, exact, perf));
+  writeFileSync(
+    join(outDir, 'report.json'),
+    JSON.stringify({ meta, exact, perf, suites }, null, 2)
+  );
+  writeFileSync(join(outDir, 'report.md'), markdown(meta, exact, perf, suites));
   log(`${verdict}: ${join(outDir, 'report.md')}`);
   process.exit(verdict === 'PASS' ? 0 : verdict === 'FAIL' ? 1 : 3);
 }
 
 function rerender(jsonPath) {
-  const { meta, exact, perf } = JSON.parse(readFileSync(jsonPath, 'utf8'));
+  const { meta, exact, perf, suites } = JSON.parse(readFileSync(jsonPath, 'utf8'));
   const mdPath = join(dirname(resolve(jsonPath)), 'report.md');
-  writeFileSync(mdPath, markdown(meta, exact, perf));
+  writeFileSync(mdPath, markdown(meta, exact, perf, suites));
   log(`${meta.verdict}: ${mdPath}`);
 }
 
