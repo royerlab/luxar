@@ -437,6 +437,7 @@
           "store": "gate/tp50.luxar.zarr",
           "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
           "metrics": [
+            { "name": "gpu.uploadBytes", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "achievedFps", "better": "higher", "kind": "timing" },
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
@@ -530,7 +531,12 @@
           "workload": { "kind": "scrub", "mode": "step", "steps": 5 },
           "metrics": [
             { "name": "stepMs", "better": "lower", "kind": "timing" },
-            { "name": "scene.getObjectByName", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "scene.getObjectByName",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "console.calls", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "profiler.mergeMs", "better": "lower", "kind": "timing" }
           ]
@@ -542,7 +548,12 @@
           "workload": { "kind": "scrub", "mode": "step", "steps": 5 },
           "metrics": [
             { "name": "stepMs", "better": "lower", "kind": "timing" },
-            { "name": "scene.getObjectByName", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "scene.getObjectByName",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "console.calls", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "profiler.mergeMs", "better": "lower", "kind": "timing" }
           ]
