@@ -74,7 +74,7 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 - `initTimeoutRetryPending` / `initTimeoutCount` / `initRetryNotBeforeMs` / `initRetryWakeTimer` — starved-retry bookkeeping: whether a retry is armed, deadline misses so far (bounds the attempts), the `performance.now()` instant the next attempt may start, and the one self-wake `setTimeout` armed alongside it
 - `nodeStates: Map<string, NodeSortState>` — per-node tracking (generation, in-flight flag, last sort pose, queued re-sort, registered flag)
 - `nextGeneration` — monotonic counter (unique across a node's LIFETIMES, not just within one)
-- Injected callbacks: `getCamera` (getter, not captured reference), `requestRender`, `requestReprocess`, `isLoadInProgress`, `getProfiler`
+- Injected callbacks: `getCamera` (getter, not captured reference), `requestRender`, `requestReprocess`, `isLoadInProgress`, `getProfiler`, `getDisplayDims`
 - Session master switch: `depthSortEnabled` (from `config.depthSort.enabled` + `?depthSort=0`)
 
 **Module state** (render-order.ts):
@@ -400,17 +400,23 @@ The sibling partition-footprint cache in `scene/lod-group-registry.ts` uses push
 ### App Init (core/app/init/pipeline.ts)
 
 ```typescript
-configureDepthSort({
-  getCamera: () => sceneManager.camera, // GETTER, not captured reference
-  requestRender: () => animationController.requestRender(),
-  requestReprocess: () => sceneLoader.updateView({}),
-  isLoadInProgress: () => sceneLoader.isUpdateInProgress(),
-  getProfiler: () => updateProfiler ?? null,
-});
+// Session master switch: bootstrap threads `?depthSort=0` into the app options.
+setDepthSortEnabled(config.depthSort.enabled && (ports.options.depthSort ?? true));
 
-// Session master switch
-const depthSortEnabled = config.depthSort.enabled && urlParams.get('depthSort') !== '0';
-setDepthSortEnabled(depthSortEnabled);
+configureDepthSort({
+  getCamera: () => sceneManager.camera, // GETTER, not a captured reference
+  requestRender: () => animationController.requestRender('depthSort'),
+  // The loader changes per dataset, so it is resolved at call time.
+  requestReprocess: () => {
+    void getSceneLoader('default')?.updateView({});
+  },
+  isLoadInProgress: () => getSceneLoader('default')?.isUpdateInProgress() ?? false,
+  getProfiler: () => SceneLoaderManager.getInstance().getProfiler(),
+  // Partition painter's order maps the BSP `axis` column through the
+  // displayed dims; read live so nD navigation is tracked.
+  getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
+});
+warmUpDepthSortWorker();
 ```
 
 ### Per-Frame Registration
