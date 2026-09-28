@@ -903,3 +903,72 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.userData.bspTree).toEqual(bspTree);
   });
 });
+
+describe('loadPartitionGroupNode — gated loading (B4)', () => {
+  type Dim = { name: string; unit: string; scale: number; discrete?: boolean; step?: number };
+  const TIME_DIMS: Dim[] = [
+    { name: 'X', unit: 'um', scale: 1 },
+    { name: 'Y', unit: 'um', scale: 1 },
+    { name: 'Z', unit: 'um', scale: 1 },
+    { name: 'Time', unit: 'frame', scale: 1, discrete: true, step: 1 },
+  ];
+
+  function timePart(index: number, t: number): SceneNode {
+    return makePartNode(`/partition/part_${index}`, 'gsplats', {
+      child_index: index,
+      position_bounds: { min: [0, 0, 0, t], max: [1, 1, 1, t] },
+    });
+  }
+
+  function timeCtx(registerPartition: ReturnType<typeof vi.fn>, dimensions: Dim[]): NodeBuildCtx {
+    return makeTestNodeBuildCtx({
+      nodeFactory: { applyTransform: vi.fn() } as unknown as NodeBuildCtx['nodeFactory'],
+      lodGroupRegistry: { registerPartition } as unknown as NodeBuildCtx['lodGroupRegistry'],
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+        dimensions,
+      },
+    });
+  }
+
+  it.fails('out-of-slice parts do not initialise their higher rungs', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    const children = [timePart(0, 0), timePart(1, 1), timePart(2, 2)];
+
+    const wrapper = await loadPartitionGroupNode(
+      makePartitionGroupNode(children, { display_type: 'gsplats' }),
+      new THREE.Group(),
+      makeStubLoc(),
+      timeCtx(registerPartition, TIME_DIMS),
+      loadSceneNodesMock
+    );
+
+    // Only the part at the current timepoint loads: an out-of-slice part is
+    // never initialised, so it never fetches a rung (first or higher).
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(1);
+    expect(loadSceneNodesMock.mock.calls[0][0].path).toBe('/partition/part_1');
+    // Every part still has a slot in authored order, so the registry can
+    // frustum/slice-gate it and draw order is unchanged once it loads.
+    expect(wrapper.children.map((c) => c.userData.partIndex)).toEqual([0, 1, 2]);
+    expect(registerPartition).toHaveBeenCalledOnce();
+    expect(registerPartition.mock.calls[0][0].children).toHaveLength(3);
+  });
+
+  it('loads every part when the scene has no discrete hidden dimension', async () => {
+    attachStubChildren();
+    const continuous = TIME_DIMS.map((dim) => ({ ...dim, discrete: false }));
+
+    await loadPartitionGroupNode(
+      makePartitionGroupNode([timePart(0, 0), timePart(1, 1), timePart(2, 2)]),
+      new THREE.Group(),
+      makeStubLoc(),
+      timeCtx(vi.fn(), continuous),
+      loadSceneNodesMock
+    );
+
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(3);
+  });
+});
